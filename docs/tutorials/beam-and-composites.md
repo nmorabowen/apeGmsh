@@ -480,10 +480,12 @@ deformed-shape view right in your Jupyter cell. (The static figure above is plai
 matplotlib over the captured slab — the right tool in scripts and CI; `show_web()`
 is the interactive one for notebooks.)
 
-!!! warning "Don't call `results.viewer()` in a notebook"
-    The desktop viewer (`results.viewer()`, default `blocking=True`) runs a
-    native VTK + Qt loop that **crashes a Jupyter or VS Code kernel**. In a
-    notebook, reach for `results.show_web()` instead.
+!!! warning "Don't pass `blocking=True` in a notebook"
+    `results.viewer()` defaults to `blocking=None` (auto): scripts get
+    the in-process Qt window; a Jupyter / VS Code kernel spawns a
+    subprocess (or `show_web()` for in-memory Results). An **explicit**
+    `blocking=True` still runs a native VTK + Qt loop that **crashes
+    the kernel**. In a notebook, reach for `results.show_web()`.
 
 ## A peek ahead — mass for a modal analysis
 

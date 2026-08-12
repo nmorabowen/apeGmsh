@@ -424,19 +424,27 @@ lin = results.lineage            # Lineage(...) — NEVER raises
 
 disp = results.nodes.get(component="displacement_z", pg="Top")
 
+# After-solve check — inspect, not a Qt window (ADR 0094 S0).
+print(fem.inspect.summary())
+print(results.inspect.summary())
+results.inspect.components()
+print(results.inspect.diagnose("displacement_z"))
+print(results.lineage.warnings)     # () = clean; never raises
+
 # Static matplotlib (headless; needs the [plot] extra)
 results.plot.contour("displacement_z", step=-1)
 ```
 
-**Viewers — kernel safety.** `blocking=None` is the DEFAULT and
-auto-detects (`True` in scripts, `False` in a Jupyter kernel); forcing
-`results.viewer(blocking=True)` in a notebook **crashes the kernel**
-(blocking VTK+Qt). In notebooks use the web viewer (kernel-safe trame)
-or the subprocess viewer:
+**Agents do not open a viewer to check a solve.** Qt / web windows are
+for humans who asked to look. `results.viewer()` default is
+`blocking=None` (auto): `True` in scripts / CLI, `False` (subprocess)
+in a Jupyter kernel; in-memory Results in a notebook fall back to
+`show_web()`. An **explicit** `blocking=True` still crashes the kernel.
 
 ```python
+# Only if the human asked to look:
 results.show_web()                  # inline trame/pyvista; step slider + layer toggles
-results.viewer(blocking=False)      # subprocess; kernel keeps running
+results.viewer()                    # auto-detect (or pass blocking=False to force subprocess)
 
 # Standalone web app (outside a notebook; blocks until Ctrl-C):
 # results.serve_web(render_mode="client", port=8080)
@@ -449,7 +457,8 @@ Results.demo().show_web()
 `show_web`/`serve_web` take `render_mode` in `{"client"` (default, browser
 WebGL, fast)`, "server"` (kernel-side, image-streamed)`, "hybrid"}`, and
 need the `[viewer]` extra (trame; ipywidgets for the inline controls). Full
-surface (`results.stages`, `eigen_modes`, slabs, controls) in `results.md`.
+surface (`results.inspect`, `results.stages`, `eigen_modes`, slabs) in
+`results.md`.
 
 ---
 
@@ -577,6 +586,9 @@ Reading the diagnostic:
   rotational DOFs — use `ndf=6` for 3-D frame/shell models.
 - **Omitting `model=`/`model_h5=` on a `Results` constructor.** Raises
   `TypeError` since ADR 0020 — every constructor needs a model.
-- **Forcing `results.viewer(blocking=True)` in a notebook.** Crashes the
-  kernel — the `blocking=None` default already auto-detects; otherwise use
-  `results.show_web()` or `results.viewer(blocking=False)`.
+- **Opening Qt to check a solve.** After `Results.from_*` / `get_fem_data`,
+  print `fem.inspect.summary()`, `results.inspect.summary()` /
+  `components()` / `diagnose(...)`, and `results.lineage.warnings`.
+  `results.viewer()` default is auto (`blocking=None`); an explicit
+  `blocking=True` still crashes a Jupyter kernel. Open a viewer only
+  when the human asked.

@@ -74,8 +74,9 @@ apeGmsh vocabulary: `displacement_x/y/z`, `reaction_force_x/y/z`,
   — the five execution strategies that produce the file you read here,
   and how `reaction_force` is declared on each.
 - **Visual:** for a kernel-safe view of the same results in a notebook,
-  use `results.show_web()` (trame web viewer); avoid the default blocking
-  `results.viewer()`, which crashes the Jupyter kernel.
+  use `results.show_web()` (trame web viewer). `results.viewer()`
+  defaults to `blocking=None` (auto); an explicit `blocking=True`
+  still crashes the Jupyter kernel.
 - **API:** [`apeGmsh.results.Results`](../api/results.md) — composite
   methods, the slab dataclasses, and `from_native` / `from_mpco` /
   `from_recorders` signatures.

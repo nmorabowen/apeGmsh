@@ -93,14 +93,17 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, **user-defined scalar expressions**
+  `results.lineage`, the **after-solve inspect check**
+  (`fem.inspect`, `results.inspect.summary()` / `components()` /
+  `diagnose()`, not Qt), **user-defined scalar expressions**
   (`results.nodes.define` / `results.elements.gauss.define`, `mag(...)`,
   ADR 0076 — custom fields like `"von_mises_stress/250"` that show in the
   viewer picker), the **web viewers** (`show_web` / `serve_web`,
-  kernel-safe), **headless video/GIF export** (`results.export_animation`),
-  and the desktop-viewer **concurrent geometries** API
-  (`director.geometries`, ADR 0058 — multiple deform states / offsets / stage
-  pins side-by-side). Read for anything reading back solver results or plotting.
+  kernel-safe; humans who asked to look), **headless video/GIF export**
+  (`results.export_animation`), and the desktop-viewer **concurrent
+  geometries** API (`director.geometries`, ADR 0058 — multiple deform
+  states / offsets / stage pins side-by-side). Read for anything reading
+  back solver results or plotting.
 - **`references/compose.md`** — model composition: `g.compose(...)`,
   `apeGmsh.from_h5(...)` chain-phase sessions, anchors vs translate, nested
   compose, and the string-keyed `'Module'` viewer color modes. Read when
@@ -277,10 +280,14 @@ matching reference — don't improvise.
 6. **`Results.from_native(...)` raises `TypeError`** — the constructor now
    *requires* `model=` (`from_mpco` requires `model_h5=`). See
    `references/results.md`.
-7. **`results.viewer(blocking=True)` kills the Jupyter kernel** — blocking
-   VTK+Qt in-process. The `blocking=None` default auto-detects the kernel;
-   don't override it. In notebooks use `results.show_web()` or
-   `results.viewer(blocking=False)`. See `references/results.md`.
+7. **Don't open Qt to check a solve.** After `get_fem_data` /
+   `Results.from_*`, print `fem.inspect.summary()`,
+   `results.inspect.summary()` / `components()` / `diagnose(...)`, and
+   `results.lineage.warnings`. Qt / web viewers are for humans who
+   asked to look. `results.viewer()` default is `blocking=None` (auto:
+   scripts block, a Jupyter kernel spawns a subprocess or falls back
+   to `show_web()` for in-memory Results). An explicit `blocking=True`
+   still kills a Jupyter kernel. See `references/results.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →

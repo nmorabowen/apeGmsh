@@ -408,8 +408,9 @@ for mode in results.modes:
     shape = mode.nodes.get(component="displacement_z")
 
 # Visualize — in a notebook use the kernel-safe web viewer.
-# results.viewer() defaults to blocking=True, which CRASHES the
-# Jupyter kernel; use show_web() (trame) or viewer(blocking=False).
+# results.viewer() defaults to blocking=None (auto): scripts block;
+# a Jupyter kernel takes the subprocess / show_web path. Explicit
+# blocking=True still CRASHES the kernel.
 results.show_web()
 ```
 

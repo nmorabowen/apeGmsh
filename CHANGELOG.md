@@ -12,6 +12,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
+
+Sidecar `apeGmsh.assess` (`fem.assess()` / `results.assess()`, inspect
+stays inventory) and `apeGmsh.viewers.render` (Qt-look stills from the
+scene/diagram pipeline, no event loop). Agents do not drive Qt windows.
+S0 of that ADR (stale `blocking=True` skill/docs) is the other commit
+on this PR. Implementation of S2+ is not in this change.
+
+### FIXED — skill/docs: `results.viewer()` default is auto, not `blocking=True` (ADR 0094 S0)
+
+`Results.viewer(blocking=None)` already auto-detects — scripts and the
+CLI still get the in-process Qt window; a Jupyter kernel takes the
+subprocess path, or `show_web()` for in-memory Results. The skill and
+published docs still taught the old "default `blocking=True` crashes
+Jupyter" line. Corrected that claim; the after-solve agent check is now
+`fem.inspect` / `results.inspect.summary()` / `components()` /
+`diagnose()` / `results.lineage`, not a Qt window. `sec.viewer` /
+`g.model.viewer` / `g.mesh.viewer` still default to `blocking=True` and
+were left alone.
 ### REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)
 
 A full-library audit (vulture + import-graph, four verification agents)

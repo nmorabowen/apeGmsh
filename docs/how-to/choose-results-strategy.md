@@ -69,8 +69,9 @@ sigma = results.elements.gauss.get(pg="Body", component="stress_xx")
 for mode in results.modes:
     print(mode.mode_index, mode.frequency_hz)
 
-# Notebook-safe viewer. results.viewer() defaults to blocking=True and
-# CRASHES a Jupyter kernel — use show_web() instead.
+# Human-facing viewer. results.viewer() defaults to blocking=None (auto):
+# scripts block; a Jupyter kernel takes the subprocess / show_web path.
+# Explicit blocking=True still crashes a Jupyter kernel.
 results.show_web()
 ```
 
