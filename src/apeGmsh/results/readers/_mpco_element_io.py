@@ -315,7 +315,6 @@ def read_bucket_slab(
     layout = bucket.layout
     if canonical_component not in layout.component_layout:
         return None
-    component_idx = layout.component_layout.index(canonical_component)
 
     validate_bucket_meta(
         bucket_grp, layout, bracket_key=bucket.bracket_key,

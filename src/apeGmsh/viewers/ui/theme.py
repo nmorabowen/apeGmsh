@@ -660,7 +660,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     from ._layout_metrics import LAYOUT
     rad = LAYOUT.corner_radius
     rad_sm = LAYOUT.corner_radius_small
-    rad_lg = LAYOUT.corner_radius_large
     sep_w = LAYOUT.dock_separator_width
     split_w = LAYOUT.splitter_handle_width
     return f"""
@@ -1412,8 +1411,6 @@ THEME = ThemeManager()
 BASE      = PALETTE_DARK.base
 MANTLE    = PALETTE_DARK.mantle
 SURFACE0  = PALETTE_DARK.surface0
-SURFACE1  = PALETTE_DARK.surface1
-SURFACE2  = PALETTE_DARK.surface2
 TEXT      = PALETTE_DARK.text
 SUBTEXT   = PALETTE_DARK.subtext
 OVERLAY   = PALETTE_DARK.overlay

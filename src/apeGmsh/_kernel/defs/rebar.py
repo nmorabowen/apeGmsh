@@ -58,7 +58,7 @@ _TURN_TOKENS = frozenset(
 def _parse_db_token(value: Any) -> float | None:
     """Return ``k > 0`` for a ``"<k>db"`` token, else ``None``.
 
-    The one place the token grammar lives; both :func:`_is_db_token`
+    The one place the token grammar lives; both :func:`_validate_length`
     (L1 acceptance) and the detailing ``resolve_length`` (bind-time
     resolution) go through it, so a ``"0db"`` can never be accepted at
     construction and then explode at resolve.
@@ -70,11 +70,6 @@ def _parse_db_token(value: Any) -> float | None:
         return None
     k = float(m.group(1))
     return k if k > 0.0 else None
-
-
-def _is_db_token(value: Any) -> bool:
-    """True iff *value* is a valid (positive) ``"<k>db"`` length string."""
-    return _parse_db_token(value) is not None
 
 
 def _validate_length(value: float | str, *, field_name: str, owner: str,

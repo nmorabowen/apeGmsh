@@ -318,10 +318,6 @@ class DiagramRegistry:
         self._diagrams.remove(diagram)
         self._notify()
 
-    def remove_at(self, index: int) -> None:
-        if 0 <= index < len(self._diagrams):
-            self.remove(self._diagrams[index])
-
     def replace(self, old: Diagram, new: Diagram) -> Diagram:
         """Swap ``old`` for ``new`` at the same registry index.
 
@@ -445,9 +441,6 @@ class DiagramRegistry:
     def diagrams(self) -> list[Diagram]:
         """Live snapshot copy of the diagram list."""
         return list(self._diagrams)
-
-    def visible_diagrams(self) -> list[Diagram]:
-        return [d for d in self._diagrams if d.is_attached and d.is_visible]
 
     # ------------------------------------------------------------------
     # Observer plumbing
