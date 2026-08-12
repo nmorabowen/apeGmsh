@@ -113,18 +113,61 @@ def test_import_path_editable_match_is_ok(monkeypatch, tmp_path):
     assert f.severity == "info"
 
 
-def test_import_path_nested_worktree_reports_drift(monkeypatch, tmp_path):
-    """A worktree nested under the install root is still drift.
+def test_import_path_nested_dir_reports_drift(monkeypatch, tmp_path):
+    """A nested tree that is NOT a git worktree is drift.
 
     Its path is textually *inside* the install root, so a containment
     test would call it healthy — the check must compare exactly.
     """
     root = tmp_path / "apeGmsh"
-    worktree = root / ".claude" / "worktrees" / "wt" / "src" / "apeGmsh"
-    f = _run_import_path_check(monkeypatch, root, worktree)
+    nested = root / ".claude" / "worktrees" / "wt" / "src" / "apeGmsh"
+    f = _run_import_path_check(monkeypatch, root, nested)
     assert f.severity == "warning"
     assert "drift" in f.message.lower()
-    assert str(worktree) in f.message
+    assert str(nested) in f.message
+
+
+def _make_linked_worktree(tree_root: Path, gitdir: Path) -> None:
+    """Give ``tree_root`` the ``.git`` FILE that marks a linked worktree."""
+    tree_root.mkdir(parents=True, exist_ok=True)
+    (tree_root / ".git").write_text(f"gitdir: {gitdir.as_posix()}\n",
+                                    encoding="utf-8")
+
+
+def test_worktree_of_the_same_repo_is_info(monkeypatch, tmp_path):
+    """Working in a worktree is normal — it must not warn every run."""
+    root = tmp_path / "apeGmsh"
+    (root / ".git").mkdir(parents=True)  # install root: ordinary checkout
+    tree = root / ".claude" / "worktrees" / "wt"
+    _make_linked_worktree(tree, root / ".git" / "worktrees" / "wt")
+
+    f = _run_import_path_check(monkeypatch, root, tree / "src" / "apeGmsh")
+    assert f.severity == "info"
+    assert "worktree of that same repo" in f.message
+
+
+def test_worktree_of_a_different_repo_still_warns(monkeypatch, tmp_path):
+    """Same structure, foreign gitdir — that is shadowing, not a branch."""
+    root = tmp_path / "apeGmsh"
+    (root / ".git").mkdir(parents=True)
+    other = tmp_path / "somewhere-else"
+    tree = root / ".claude" / "worktrees" / "wt"
+    _make_linked_worktree(tree, other / ".git" / "worktrees" / "wt")
+
+    f = _run_import_path_check(monkeypatch, root, tree / "src" / "apeGmsh")
+    assert f.severity == "warning"
+    assert "drift" in f.message.lower()
+
+
+def test_ordinary_checkout_is_not_mistaken_for_a_worktree(monkeypatch, tmp_path):
+    """A `.git` DIRECTORY in the drifting tree is not a worktree pointer."""
+    root = tmp_path / "apeGmsh"
+    (root / ".git").mkdir(parents=True)
+    tree = root / "vendored" / "clone"
+    (tree / ".git").mkdir(parents=True)
+
+    f = _run_import_path_check(monkeypatch, root, tree / "src" / "apeGmsh")
+    assert f.severity == "warning"
 
 
 def _fake_counterpart(payload: str) -> list[str]:

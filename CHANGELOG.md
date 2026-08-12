@@ -22,9 +22,12 @@ coded findings and exits `1` if any is error-severity, `0` otherwise
 - `D1` interpreter identity — office venv vs a system/other interpreter,
   the wrong-interpreter `ModuleNotFoundError` that reads like a bug;
 - `D2` import-path drift — the imported tree vs where the editable
-  install maps it (exact match, so a git worktree nested under the repo
-  root is correctly reported as drift rather than passing a containment
-  test);
+  install maps it, matched exactly (a containment test would call a tree
+  nested under the repo root healthy). A linked git **worktree of that
+  same repo** is `info`, not a warning: working in one is the normal way
+  to run a branch. Verified structurally — the tree's `.git` must be a
+  worktree pointer *into* the install root's own `.git` — so a worktree
+  of a different repo, or a vendored clone, still warns;
 - `D3` `import gmsh`;
 - `D4` viewer/GL stack, including that `QT_QPA_PLATFORM=offscreen` on
   Windows makes `ViewerWindow` refuse to start (it cannot host the VTK

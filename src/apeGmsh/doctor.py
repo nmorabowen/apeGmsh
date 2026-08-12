@@ -183,6 +183,33 @@ def _is_under(child: Path, root: Path) -> bool:
         return False
 
 
+def _linked_worktree_gitdir(pkg_dir: Path) -> Path | None:
+    """The gitdir a linked git worktree containing ``pkg_dir`` points at.
+
+    ``None`` when no enclosing tree is a linked worktree. The signal is
+    structural and needs no ``git`` subprocess: a linked worktree's
+    ``.git`` is a *file* holding ``gitdir: <path>``, whereas an ordinary
+    checkout's ``.git`` is a directory.
+
+    Searches a few levels up because the package may sit at
+    ``<tree>/src/apeGmsh`` (src layout) or ``<tree>/apeGmsh`` (flat).
+    """
+    for parent in list(pkg_dir.parents)[:4]:
+        dot_git = parent / ".git"
+        if dot_git.is_dir():
+            return None  # ordinary checkout — stop, don't look further up
+        if not dot_git.is_file():
+            continue
+        try:
+            text = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        if not text.startswith("gitdir:"):
+            return None
+        return Path(text.split(":", 1)[1].strip())
+    return None
+
+
 def _find_spec_ok(name: str) -> bool:
     import importlib.util
 
@@ -347,13 +374,34 @@ def _check_import_path() -> list[DoctorFinding]:
         f" PYTHONPATH entry {shadow[0]} shadows the install." if shadow
         else " A sys.path entry (PYTHONPATH or cwd) shadows the install."
     )
+    # A linked git worktree OF THE SAME REPO is expected drift, not a
+    # finding: working in one is the normal way to run a branch, and a
+    # warning every run is noise. Verified structurally rather than by
+    # path shape — the tree's ``.git`` must be a worktree pointer INTO
+    # the install root's own ``.git``, so a worktree of some *other*
+    # repo shadowing the install still warns.
+    gitdir = _linked_worktree_gitdir(pkg_dir)
+    if gitdir is not None:
+        detail["worktree_gitdir"] = str(gitdir)
+        if _is_under(gitdir, url_root / ".git"):
+            return [DoctorFinding(
+                code="D2",
+                severity="info",
+                message=(
+                    f"Editable install at {url_root}, but the import "
+                    f"resolves to a git worktree of that same repo "
+                    f"({pkg_dir}) — expected; you are running the "
+                    "worktree's code, not the install's checkout."
+                ),
+                detail=detail,
+            )]
     return [DoctorFinding(
         code="D2",
         severity="warning",
         message=(
             f"Import-path drift: apeGmsh imported from {pkg_dir}, but "
-            f"the editable install registers {url_root}.{via} Deliberate "
-            "in git worktrees; otherwise you are running unexpected code."
+            f"the editable install registers {url_root}.{via} Not a git "
+            "worktree of that repo, so this is unexpected code."
         ),
         detail=detail,
     )]
