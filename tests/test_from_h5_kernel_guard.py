@@ -479,6 +479,47 @@ class TestPlotRaises:
 
 
 # ---------------------------------------------------------------------
+# The last four kernel-touching reads
+# ---------------------------------------------------------------------
+
+
+class TestRemainingReadsRaise:
+    """Lower severity than the mutations and exporters — these fail
+    with a raw gmsh error rather than corrupting anything — but they
+    are the last kernel-touching surfaces without a named error."""
+
+    def test_recipe_check_raises(self, g: apeGmsh) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.mesh.recipe.check()
+
+    def test_parts_build_face_map_raises(self, g: apeGmsh) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.parts.build_face_map({})
+
+    def test_rebar_resolve_raises(self, g: apeGmsh) -> None:
+        """Guarded even though _emit_members is empty here: the empty
+        case would silently return [] and read as 'no rebar in this
+        model', which is a wrong answer rather than a missing one."""
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.rebar.resolve()
+
+    def test_sections_plot_faces_raises(self, g: apeGmsh) -> None:
+        pytest.importorskip("matplotlib")
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.sections.plot_faces()
+
+    def test_messages_are_composite_specific(self, g: apeGmsh) -> None:
+        """Each names a counterpart that actually holds the data."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.parts.build_face_map({})
+        assert "fem.elements" in str(exc.value)
+
+        with pytest.raises(ChainPhaseError) as exc:
+            g.sections.plot_faces()
+        assert "BRep geometry is not stored" in str(exc.value)
+
+
+# ---------------------------------------------------------------------
 # Live sessions and stub parents pass the guard untouched
 # ---------------------------------------------------------------------
 

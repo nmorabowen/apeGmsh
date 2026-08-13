@@ -68,17 +68,15 @@ MUTATING_PREFIXES = (
 )
 WRITE_APIS = {"write"}
 
-# Reads that legitimately reach gmsh with no kernel guard. Each is a
-# recorded decision, not an oversight: they fail with a raw gmsh error
-# on a from_h5 session but cannot corrupt state or emit a bad artifact.
-# Adding to this list should be a conscious review step — that is the
-# point of the test.
-KNOWN_UNGUARDED_READS = {
-    ("g.mesh.recipe", "check"),
-    ("g.parts", "build_face_map"),
-    ("g.rebar", "resolve"),
-    ("g.sections", "plot_faces"),
-}
+# Reads that legitimately reach gmsh with no kernel guard. Each entry
+# would be a recorded decision rather than an oversight — a read fails
+# with a raw gmsh error on a from_h5 session but cannot corrupt state
+# or emit a bad artifact, so exempting one is defensible.
+#
+# Currently empty: every kernel-touching read is guarded. Adding an
+# entry should be a conscious review step, which is the point of
+# keeping the mechanism after the list emptied.
+KNOWN_UNGUARDED_READS: set[tuple[str, str]] = set()
 
 
 def _attr_root(node: ast.Attribute) -> str | None:
@@ -289,10 +287,21 @@ def test_sweep_actually_covers_methods() -> None:
     If the AST walk broke (a refactor to nested classes, say) every
     test above would pass vacuously. Pin a floor on what it sees.
     """
-    seen = list(_classify())
     total = 0
     for label, (rel, cls_filter) in COMPOSITES.items():
         for _c, (methods, _f, _k, _a) in _scan(SRC / rel, cls_filter).items():
             total += sum(1 for m in methods if not m.startswith("_"))
     assert total > 150, f"sweep saw only {total} public methods — walk broken?"
-    assert len(seen) >= len(KNOWN_UNGUARDED_READS)
+
+    # The exporter gate passes trivially if the sweep stops recognising
+    # exporters at all, so assert it still finds them.  These are the
+    # five known gmsh.write() sites; the gate then checks they are
+    # guarded.
+    exporters = {
+        (label, name) for v, label, name, *_ in _classify()
+        if v == "WRITES_OUT"
+    }
+    assert ("g.model.io", "save_step") in exporters, (
+        f"sweep no longer classifies the exporters ({exporters}) — "
+        "test_no_unguarded_exporters would pass vacuously"
+    )

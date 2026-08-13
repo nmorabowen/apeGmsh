@@ -238,6 +238,10 @@ class apeGmsh(_SessionBase):
                                    frozen instead (below)
         ``g.model.<geometry>``     ``find_stale_metadata``, and
                                    ``validate_pre_mesh`` through it
+        ``g.mesh.recipe``          ``check``
+        ``g.parts``                ``build_face_map``
+        ``g.rebar``                ``resolve``
+        ``g.sections``             ``plot_faces``
         ``g.view``                 ``add_element_scalar`` /
                                    ``add_element_vector`` /
                                    ``add_node_scalar`` /

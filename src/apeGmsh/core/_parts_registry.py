@@ -1252,6 +1252,15 @@ class PartsRegistry(_PartsFragmentationMixin):
 
         Returns ``{label: face_connectivity_array}``.
         """
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.parts.build_face_map()",
+            alternative=(
+                "fem.elements, where fem = g.mesh.queries.get_fem_data() "
+                "— the surface connectivity this partitions is already "
+                "in the broker"
+            ),
+        )
         faces = self._collect_surface_faces()
         if faces.size == 0:
             return {label: np.empty((0, 0), dtype=int)
