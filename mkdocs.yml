@@ -177,6 +177,7 @@ nav:
           - Tie non-matching meshes: how-to/tie-meshes.md
       - Solve:
           - Compute section properties: how-to/section-properties.md
+          - Author a section document: how-to/author-a-section-document.md
           - Export to Tcl / openseespy: how-to/export-script.md
           - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
       - Results:

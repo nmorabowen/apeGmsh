@@ -782,54 +782,17 @@ class SectionDocument:
         role."""
         if self.kind == "continuum":
             return self._to_computed_fiber(ops, name=name)
-        from apeGmsh.opensees.section.fiber import (
-            CircPatch,
-            FiberPoint,
-            RectPatch,
-            StraightLayer,
-        )
-
         recipe = self._build_fiber()
         used = sorted({
             i["material"]
             for i in (*recipe.patches, *recipe.layers, *recipe.points)
         })
         mats = self._resolve_uniaxial(ops, used)
-
-        typed_patches: list[Any] = []
-        for p in recipe.patches:
-            if p["kind"] == "rect":
-                typed_patches.append(RectPatch(
-                    material=mats[p["material"]],
-                    ny=p["ny"], nz=p["nz"],
-                    yI=p["yI"], zI=p["zI"], yJ=p["yJ"], zJ=p["zJ"],
-                ))
-            else:
-                typed_patches.append(CircPatch(
-                    material=mats[p["material"]],
-                    n_circ=p["n_circ"], n_rad=p["n_rad"],
-                    yC=p["yC"], zC=p["zC"],
-                    int_rad=p["int_rad"], ext_rad=p["ext_rad"],
-                    start_ang=p.get("start_ang", 0.0),
-                    end_ang=p.get("end_ang", 360.0),
-                ))
-        typed_layers = tuple(
-            StraightLayer(
-                material=mats[la["material"]],
-                n_bars=la["n_bars"], area=la["area"],
-                yI=la["yI"], zI=la["zI"], yJ=la["yJ"], zJ=la["zJ"],
-            )
-            for la in recipe.layers
-        )
-        typed_points = tuple(
-            FiberPoint(
-                material=mats[pt["material"]],
-                y=pt["y"], z=pt["z"], area=pt["area"],
-            )
-            for pt in recipe.points
+        typed_patches, typed_layers, typed_points = typed_fiber_items(
+            recipe, mats,
         )
         return ops.section.Fiber(
-            patches=tuple(typed_patches),
+            patches=typed_patches,
             layers=typed_layers,
             fibers=typed_points,
             GJ=recipe.GJ,
@@ -1006,6 +969,59 @@ class SectionDocument:
 
 
 # ── module helpers ───────────────────────────────────────────────────
+
+
+def typed_fiber_items(
+    recipe: "FiberRecipe", mats: "Mapping[str, Any]",
+) -> "tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]":
+    """Turn a :class:`FiberRecipe` plus a ``{material name → bridge
+    UniaxialMaterial}`` map into the typed ``(patches, layers, points)``
+    value objects a ``section Fiber`` is built from.
+
+    Shared by :meth:`SectionDocument.to_section` (bridge handoff) and
+    :mod:`._mc` (the moment–curvature harness), so both lower the same
+    document through exactly the same construction.
+    """
+    from apeGmsh.opensees.section.fiber import (
+        CircPatch,
+        FiberPoint,
+        RectPatch,
+        StraightLayer,
+    )
+
+    patches: list[Any] = []
+    for p in recipe.patches:
+        if p["kind"] == "rect":
+            patches.append(RectPatch(
+                material=mats[p["material"]],
+                ny=p["ny"], nz=p["nz"],
+                yI=p["yI"], zI=p["zI"], yJ=p["yJ"], zJ=p["zJ"],
+            ))
+        else:
+            patches.append(CircPatch(
+                material=mats[p["material"]],
+                n_circ=p["n_circ"], n_rad=p["n_rad"],
+                yC=p["yC"], zC=p["zC"],
+                int_rad=p["int_rad"], ext_rad=p["ext_rad"],
+                start_ang=p.get("start_ang", 0.0),
+                end_ang=p.get("end_ang", 360.0),
+            ))
+    layers = tuple(
+        StraightLayer(
+            material=mats[la["material"]],
+            n_bars=la["n_bars"], area=la["area"],
+            yI=la["yI"], zI=la["zI"], yJ=la["yJ"], zJ=la["zJ"],
+        )
+        for la in recipe.layers
+    )
+    points = tuple(
+        FiberPoint(
+            material=mats[pt["material"]],
+            y=pt["y"], z=pt["z"], area=pt["area"],
+        )
+        for pt in recipe.points
+    )
+    return tuple(patches), layers, points
 
 
 def _validate(data: dict[str, Any]) -> None:

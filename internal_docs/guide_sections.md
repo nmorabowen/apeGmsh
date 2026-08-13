@@ -418,6 +418,91 @@ y ≡ local y → `Ixx_c→Iz`, `Iyy_c→Iy`, `As_y/A→alphaY`,
 `As_x/A→alphaZ`); composites require explicit reference `E=`/`G=`
 (transformed-section constants, fail-loud at emit otherwise).
 
+## Section documents and the builder GUI (`SectionDocument`, ADR 0080)
+
+A `SectionDocument` is versioned JSON describing one cross-section, and it
+is the source of truth: the headless API below and the Qt builder are both
+clients of it (the **parity law** — every GUI action is a document
+mutation). Two lanes, one per document:
+
+```python
+from apeGmsh.sections import SectionDocument, launch_builder
+
+launch_builder()                          # blank continuum document
+launch_builder("col500.section.json")     # notebooks: blocking=False
+doc = SectionDocument.open("col500.section.json")
+```
+
+### Continuum lane
+
+Parametric shapes (the eight `*_face` builders 1:1), freehand polygons,
+booleans, per-region materials, mesh prefs, `disconnected` policy;
+`build()` runs a private session and returns a `SectionProperties`.
+
+```python
+doc = SectionDocument.new(name="src600")
+doc.set_material("concrete", E=25e3, nu=0.2)
+doc.set_material("steel", E=200e3, nu=0.3, fy=345.0)
+doc.add_shape("rect_face", id="concrete", b=600.0, h=600.0)
+doc.add_shape("W_face", id="steel", bf=300.0, tf=20.0, h=360.0, tw=12.0)
+doc.add_embed("concrete", "steel")     # cut-then-fragment, one step
+doc.set_mesh(lc=20.0, order=2)
+sec = doc.build()
+```
+
+`add_embed` is the composite-partition primitive: the double-cover trap
+documented above is **not expressible** through it. Raw `add_cut` /
+`add_fragment_pair` stay available for non-overlapping compositions.
+`add_bar` / `add_bar_line` attach a discrete rebar overlay resolved at
+handoff through the `kind="fiber"` lowering (ADR 0080 B3).
+
+### Fiber lane
+
+Patches / layers / points plus parametric RC templates —
+`rc_rect_column`, `rc_circ_column`, `rc_beam` — stored as parameters and
+re-expanded on every build, so editing `cover` moves every bar.
+`core_split=True` partitions the concrete exactly into confined core +
+cover shell (you assign the materials; the template never computes
+confinement parameters). `build()` returns a `FiberRecipe`;
+`doc.to_section(ops)` registers it as an `ops.section.Fiber`.
+
+Traps: `cover` is to the **bar centre**; `bars_x`/`bars_y` **include
+corners** (4/4 is 12 bars, not 16).
+
+### Moment–curvature
+
+```python
+from apeGmsh.sections import moment_curvature
+
+mc = moment_curvature(doc, axis="z", kappa_max=8e-5, n_steps=60, axial=-1500e3)
+mc.EI0, mc.M_max, mc.complete
+```
+
+Fiber lane only. `axis="z"` is DOF 6 (`EIxx_c`), `"y"` is DOF 5
+(`EIyy_c`); `kappa_max` is signed; `axial` is OpenSees-signed
+(compression negative), applied first and held. **It wipes the global
+OpenSees domain** and runs synchronously on the calling thread — do not
+move it to a worker (openseespy is a non-reentrant process-global
+runtime; the B6 properties worker is threaded only because it drives
+Gmsh).
+
+### Export and handoff
+
+`doc.export_script(path)` writes the equivalent plain apeGmsh script
+(one-way). `handoff_snippet(doc, path=...)` writes the few paste-ready
+lines that put the section on a bridge — the GUI's **Copy handoff**
+button. Both render fiber sections through the same helpers, so a
+snippet and an export can never disagree.
+
+### Optional dependencies (both fail-soft, never required headless)
+
+- **apeSteel** → the catalog picker prefills the `W_face` form from AISC
+  v16 / EN designations, in millimetres. Absent → the picker is hidden.
+  Enumeration reads a private apeSteel table and degrades to a free-text
+  field if that shape ever changes.
+- **openseespy / the Ladruno fork** → the M–κ button. Absent → greyed
+  with guidance.
+
 ??? note "For maintainers — source map"
     - `src/apeGmsh/sections/_builder.py` — `SectionsBuilder` composite
     - `src/apeGmsh/sections/solid.py` — solid-element section geometry
@@ -426,3 +511,13 @@ y ≡ local y → `Ixx_c→Iz`, `Iyy_c→Iy`, `As_y/A→alphaY`,
     - `src/apeGmsh/sections/_lowering.py` — the single authoring→OpenSees mapping
     - `src/apeGmsh/opensees/section/computed.py` — `ComputedSection` primitive
     - `src/apeGmsh/sections/_inspector.py` — Qt section inspector (`sec.viewer()`)
+    - `src/apeGmsh/sections/_document.py` — `SectionDocument` (ADR 0080 B1/B2)
+    - `src/apeGmsh/sections/_rc_templates.py` — the three RC generators
+    - `src/apeGmsh/sections/_script_export.py` — `export_script` + the shared
+      fiber-rendering helpers
+    - `src/apeGmsh/sections/_handoff.py` — `handoff_snippet` (B7)
+    - `src/apeGmsh/sections/_mc.py` — `moment_curvature` harness (B7)
+    - `src/apeGmsh/sections/_catalog.py` — apeSteel catalog bridge (B7)
+    - `src/apeGmsh/sections/_builder_gui.py` — the Qt builder (B5/B6/B7)
+    - `src/apeGmsh/sections/_drafting.py` — Qt-free snap / ortho / typed input
+    - `src/apeGmsh/sections/_properties.py` — B6 worker-thread build controller

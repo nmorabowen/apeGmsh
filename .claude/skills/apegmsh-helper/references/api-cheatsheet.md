@@ -429,6 +429,33 @@ on composites — use `transformed(e_ref=...)`. Ratio quantities
 (`rx/ry/r11/r22`, `alpha_x/alpha_y`) are reference-free, valid always.
 Omit `materials=` entirely for geometric-only mode (classic numbers).
 
+## `SectionDocument` — declarative sections + builder (ADR 0080)
+
+Versioned JSON describing one section; `launch_builder()` is an editor
+for it (parity law: every GUI action is a document mutation).
+
+```python
+from apeGmsh.sections import (
+    SectionDocument, launch_builder, moment_curvature, handoff_snippet,
+)
+doc = SectionDocument.new(name="col500", kind="fiber")   # or "continuum"
+doc.set_material("bars", uniaxial=("Steel01", {"fy": 420.0, "E": 200e3, "b": 0.01}))
+doc.add_template("rc_rect_column", materials={"concrete": "c", "bars": "bars"},
+                 b=500.0, h=500.0, cover=40.0, bars_x=4, bars_y=4, bar_area=491.0)
+doc.save("col500.section.json"); doc.build()      # -> FiberRecipe / SectionProperties
+sec = doc.to_section(ops)                          # bridge handoff
+mc = moment_curvature(doc, axis="z", kappa_max=8e-5, n_steps=60, axial=-1500e3)
+```
+
+Continuum lane: `add_shape/add_polygon` + **`add_embed(outer, inner)`**
+(the composite primitive — cut-then-fragment in one step, so the
+double-cover trap above is unrepresentable) + `set_mesh(lc=, order=2)`
++ `add_bar`/`add_bar_line` overlay. Fiber lane: patches / layers /
+points / RC templates (`cover` is to the BAR CENTRE; `bars_x`/`bars_y`
+INCLUDE corners → 4/4 is 12 bars). `moment_curvature` wipes the global
+OpenSees domain and must stay on the calling thread. Full contract:
+`section-properties.md` §10.
+
 OpenSees handoff (single lowering owns authoring x≡local z, y≡local y →
 `Ixx_c→Iz`, `Iyy_c→Iy`, `As_y/A→alphaY`, `As_x/A→alphaZ`):
 

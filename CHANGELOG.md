@@ -12,6 +12,92 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
+
+- **`moment_curvature(doc, *, axis="z", kappa_max, n_steps=40, axial=0.0,
+  tol=1e-8, max_iter=25)`** (exported from `apeGmsh.sections`) — the
+  in-process `zeroLengthSection` M–κ harness that gates G-D/G-E proved,
+  productized for **fiber-lane** `SectionDocument`s. Returns a frozen
+  `MomentCurvature` (`curvature` / `moment` tuples starting at `(0, 0)`,
+  `EI0`, `M_max`, `axial`, `complete`). `axis="z"` is DOF 6 (elastic slope
+  = `EIxx_c`), `"y"` is DOF 5 (`EIyy_c`); `kappa_max` is **signed**;
+  `axial` follows the OpenSees convention (compression negative), applied
+  first and held with `loadConst`. A step that fails to converge ends the
+  curve with `complete=False` rather than raising — a fully-plastified
+  section IS the end of its curve.
+- The section is lowered through **exactly** the bridge handoff's
+  construction: `SectionDocument.to_section`'s typed-item building was
+  extracted to `_document.py::typed_fiber_items`, and both paths now call
+  it, then emit through each primitive's own `_emit` on a `LiveOpsEmitter`.
+  An M–κ curve and a deck built from one document therefore integrate the
+  same fibers with the same material tags — nothing is re-derived.
+- **Two hard contracts, both documented and both deliberate**: the harness
+  `wipe()`s the process-global OpenSees domain (do not call it with a live
+  analysis open), and it runs **synchronously on the calling thread**.
+  openseespy is a non-reentrant process-global C++ runtime, so putting it
+  on a worker would abort the interpreter below Python's reach; the ADR
+  0080 B6 properties worker is threaded only because it drives Gmsh.
+  Documents declaring no `GJ` get an inert placeholder — OpenSees refuses a
+  3-D fiber section with no torsion at all, and the harness fixes the
+  torsional DOF at both nodes, so the value provably cannot reach the
+  answer.
+- Gate: the elastic slope equals the **exact fiber sum** `ΣE·A·r²` on both
+  axes (a points/layer section where the two differ by 4×, so an axis swap
+  cannot pass both), and a rect patch reproduces its own midpoint-rule
+  discretization `(b·h³/12)(1 − 1/ny²)` — not the continuum value.
+  Keystone: `ElasticPP` fibers pushed to 20·κ_y plateau at `fy·b·h²/4` in
+  **both signs**, and a constant axial pre-load reduces that plateau by the
+  closed-form `(1 − n²)` (`tests/sections/test_mc_b7.py`, 13 tests).
+- **`handoff_snippet(doc, *, path=None)`** — the paste-ready bridge lines
+  the builder's new **Copy handoff** toolbar action copies. Fiber lane:
+  literal `ops.uniaxialMaterial.<Type>` + `ops.section.Fiber(...)`
+  construction with template provenance comments. Continuum lane: a
+  `SectionDocument.open(path)` that lowers **late** —
+  `ComputedSection(analysis=doc.build())`, or `doc.to_section(ops)` when a
+  `bars` overlay exists (the elastic lowering would silently drop it), so
+  numbers are never hand-copied out of a GUI. `_script_export.py`'s fiber
+  renderers were extracted (`fiber_material_lines` /
+  `fiber_template_comments` / `fiber_collection_lines`) and are now shared,
+  so a snippet and an export cannot disagree. Gate: the snippet exec'd on
+  one bridge emits a deck **byte-identical** to `doc.to_section` on another
+  (`tests/sections/test_b7_extras.py`).
+- **apeSteel catalog picker** (`sections/_catalog.py`, fail-soft) — an
+  editable designation box in the builder's shape group that prefills the
+  `W_face` form from any AISC v16 or EN doubly-symmetric I shape.
+  Millimetres (apeSteel's base), and `h` is mapped from
+  `web_clear_height_hw` — the **clear web height**, not the catalog depth
+  `d`, which is the one-line error the picker exists to prevent. apeSteel
+  absent → the picker is not built at all and the builder is otherwise
+  unchanged. Label enumeration reads a private apeSteel table and is
+  **best-effort by contract**: if that shape ever changes, `catalog_labels()`
+  returns `()` and the box degrades to free text while resolution keeps
+  working.
+- Parity reaches the picker: prefill-then-add writes the same document as
+  `add_shape("W_face", **catalog_shape_params(...))`, and a prefill alone
+  mutates nothing (it fills GUI fields, so it stays off the undo stack).
+  M–κ controls are fiber-lane only and grey with install guidance when no
+  backend is importable (`tests/sections/test_builder_gui_b7.py`).
+- **Order of operations**: `moment_curvature` resolves the *document*
+  before it imports a backend, so a material with no uniaxial spec (or an
+  unknown primitive type) reports its own problem whether or not a solver
+  is installed — those are errors the user fixes in their editor. The
+  backend `ImportError` comes second.
+- The backend probe does not answer for a **package**. apeGmsh's own
+  `tests/opensees/` directory registers as a top-level `opensees` module
+  whenever pytest imports in importlib mode — the same impostor
+  `emitter/live.py::_resolve_ops` already rejects after importing it — so
+  a bare `find_spec("opensees")` claimed a backend that cannot be
+  imported. A real backend is an extension module, never a package;
+  `backend_available()` now checks that, which is what keeps the builder's
+  M–κ button honest (and the backend-gated tests skipping) inside any
+  pytest process. Those tests also carry the house `live` marker, so
+  native OpenSees stays out of the curated suite's shared process even
+  where a backend is installed.
+- Close-out: new how-to page **Author a section document**, a fourth
+  "Sections you author" section in `concepts/sections.md`, the API page,
+  `internal_docs/guide_sections.md`, and skill reference §10
+  (`references/section-properties.md`) + cheatsheet entry. **ADR 0080 is
+  Accepted** — B1–B7 shipped as #840–#847 plus this slice.
 ### FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
 
 `results.render` / `fem.render` no longer treat every exception as
