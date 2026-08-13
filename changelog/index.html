@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmshviewers-render-adr-0094-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh.viewers render (ADR 0094 S5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7394,6 +7405,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmshviewers-render-adr-0094-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh.viewers render (ADR 0094 S5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11381,6 +11403,16 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-python-m-apegmshviewers-render-adr-0094-s5">ADDED — <code>python -m apeGmsh.viewers render</code> (ADR 0094 S5)<a class="headerlink" href="#added-python-m-apegmshviewers-render-adr-0094-s5" title="Permanent link">&para;</a></h3>
+<p>Off-kernel stills CLI next to the existing interactive
+<code>python -m apeGmsh.viewers &lt;path&gt;</code>. First token <code>render</code> dispatches
+to <code>results.render</code> / <code>results.render_pack</code> / <code>fem.render</code>;
+anything else (including a file named <code>render.h5</code>) still opens the
+Qt viewer. Skip (<code>APEGMSH_SKIP_VIEWER</code> / no GL) is exit 0 with the
+existing <code>[skip viewer]</code> notice. Bad flags, missing files, and
+<code>ValueError</code> (bad view, out-of-range step, deformed with no <code>u</code>)
+are non-zero on stderr. A standalone <code>model.h5</code> calls <code>fem.render</code>.
+No live-session door for <code>g.model.render</code> / <code>g.mesh.render</code>.</p>
 <h3 id="added-resultsrender_pack-assessfigurestrue-adr-0094-s3">ADDED — <code>results.render_pack</code> + <code>assess(figures=True)</code> (ADR 0094 S3)<a class="headerlink" href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" title="Permanent link">&para;</a></h3>
 <p>Canned report pack of Qt-look stills (<code>mesh</code> / last-step primary contour /
 same deformed at the S1 0.12 auto-scale / static reactions if recorded /
