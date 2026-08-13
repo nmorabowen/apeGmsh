@@ -204,6 +204,77 @@ guessing a modulus. The full recipes — the SRC composite, the disconnected
 multi-part policy, the gotchas — are in
 [Compute section properties](../how-to/section-properties.md).
 
+## Sections you author: the document
+
+The three layers above all assume the section already exists — as code you
+wrote, as primitives you declared, as a face you meshed. The fourth layer is
+about *building* it, and about the section surviving the script that built
+it.
+
+A `SectionDocument` is a versioned JSON description of one cross-section,
+and it is the source of truth: the headless API and the Qt builder GUI are
+both clients of it. It comes in the same two lanes the rest of this page
+does — a **continuum** document (parametric shapes, freehand polygons,
+booleans, per-region materials, mesh preferences) that builds into a
+`SectionProperties`, and a **fiber** document (patches, layers, points, and
+parametric RC templates) that builds into a resolved fiber recipe:
+
+```python
+from apeGmsh.sections import SectionDocument
+
+doc = SectionDocument.new(name="col500", kind="fiber", units="N, mm")
+doc.set_material("conc", uniaxial=("Concrete01", {...}))
+doc.set_material("bars", uniaxial=("Steel01", {"fy": 420.0, "E": 200e3, "b": 0.01}))
+doc.add_template(
+    "rc_rect_column", materials={"concrete": "conc", "bars": "bars"},
+    b=500.0, h=500.0, cover=40.0, bars_x=4, bars_y=4, bar_area=491.0,
+)
+doc.save("col500.section.json")
+```
+
+Two properties make this more than a serialization format. First, RC finally
+has a first-class path: `rc_rect_column`, `rc_circ_column`, and `rc_beam`
+are stored **as parameters** and re-expanded on every build, so changing
+`cover` moves every bar rather than requiring you to re-derive coordinates —
+and `core_split=True` partitions the concrete exactly into a confined core
+and a cover shell for you to assign Mander-style materials to. Second, the
+document owns the composite-partition law: `add_embed(outer, inner)` is
+cut-then-fragment as one step, so the double-cover trap that
+[Compute section properties](../how-to/section-properties.md) warns about
+is not expressible.
+
+The builder GUI (`launch_builder()`) is an editor for that document, with
+AutoCAD-style drafting aids for the freehand polygon tool — grid and object
+snap, ortho, typed `length<angle` input. Its governing rule is the **parity
+law**: every GUI action is a document mutation, so a script can do anything
+the window can. What the window adds is convenience — a live properties
+panel that rebuilds off the UI thread, an apeSteel catalog picker that
+prefills a `W_face` form, and one-click moment–curvature.
+
+That last one is also a headless API:
+
+```python
+from apeGmsh.sections import moment_curvature
+
+mc = moment_curvature(doc, axis="z", kappa_max=8e-5, n_steps=60, axial=-1500e3)
+mc.EI0        # initial stiffness — the exact fiber sum ΣE·A·y²
+mc.M_max      # largest |M| reached, signed
+mc.complete   # False when the section lost stiffness before κ max
+```
+
+It builds the section on a two-node `zeroLengthSection` harness in-process,
+which means it **wipes the global OpenSees domain** and must not be called
+while a live analysis is open.
+
+The document never becomes the only route. `export_script()` writes the
+plain apeGmsh script the document is equivalent to (one-way, for reading and
+for escaping the format), and `handoff_snippet()` writes the few lines that
+put the finished section on a bridge — for a fiber document, the literal
+`ops.section.Fiber(...)` construction; for a continuum one, a
+`SectionDocument.open(...)` that lowers late, so numbers are never
+hand-copied out of a GUI. Start at
+[Author a section document](../how-to/author-a-section-document.md).
+
 ---
 
 *Next: [Constraints](constraints.md).*

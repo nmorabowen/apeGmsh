@@ -105,9 +105,14 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   OpenSees handoff (`ops.section.ComputedSection(analysis=)` /
   `to_elastic_section` — one lowering owns `Ixx_c→Iz` / `As_y/A→alphaY`,
   `ndm=` form selection, composite reference-moduli rules), and the Qt
-  inspector (`sec.viewer(blocking=False)` in notebooks). Read for any
-  section-property, torsion-constant, shear-area, or "compute my custom
-  section" task.
+  inspector (`sec.viewer(blocking=False)` in notebooks). §10 covers ADR
+  0080 — `SectionDocument` (versioned JSON, continuum + fiber lanes, RC
+  templates, the `add_embed` composite primitive, the `bars=` overlay),
+  the `launch_builder()` Qt editor and its parity law, `moment_curvature`
+  (fiber lane, wipes the OpenSees domain, never on a worker), and
+  `handoff_snippet` / `export_script`. Read for any section-property,
+  torsion-constant, shear-area, RC-section, moment–curvature, or
+  "compute / author my custom section" task.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.

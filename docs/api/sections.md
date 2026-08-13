@@ -40,3 +40,23 @@ Mid-surface geometry for shell elements (dim=2).
 2D cross-sections for fiber analysis or sweep operations.
 
 ::: apeGmsh.sections.profile.W_profile
+
+## Section documents
+
+Declarative, versioned JSON descriptions of a cross-section — the source of
+truth the Qt builder edits. See
+[Author a section document](../how-to/author-a-section-document.md).
+
+::: apeGmsh.sections._document.SectionDocument
+
+::: apeGmsh.sections._document.FiberRecipe
+
+::: apeGmsh.sections._builder_gui.launch_builder
+
+::: apeGmsh.sections._handoff.handoff_snippet
+
+## Moment–curvature
+
+::: apeGmsh.sections._mc.moment_curvature
+
+::: apeGmsh.sections._mc.MomentCurvature

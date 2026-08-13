@@ -39,8 +39,17 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Any
 
+from ._catalog import (
+    CATALOG_SHAPE,
+    catalog_available,
+    catalog_labels,
+    catalog_shape_params,
+)
 from ._document import _SHAPE_PARAMS, SectionDocument, SectionDocumentError
+from ._handoff import handoff_snippet
+from ._mc import MomentCurvatureError, backend_available, moment_curvature
 from ._properties import PropertiesController
+from ._script_export import _ident
 from ._drafting import (
     GridSpec,
     constrain_segment,
@@ -116,7 +125,11 @@ def launch_builder(
         )
 
     doc = _coerce_document(path_or_doc)
-    win = SectionBuilderWindow(doc)
+    on_disk = (
+        None if path_or_doc is None or isinstance(path_or_doc, SectionDocument)
+        else path_or_doc
+    )
+    win = SectionBuilderWindow(doc, path=on_disk)
     win.set_live_properties(True)   # real launches solve live (B6)
     win.show()
     if blocking:
@@ -145,11 +158,16 @@ class SectionBuilderWindow:
     """The builder window. Offscreen-constructible (the screenshot
     tests build it directly, bypassing the win32 launch guard)."""
 
-    def __init__(self, doc: SectionDocument) -> None:
+    def __init__(
+        self, doc: SectionDocument, *, path: "str | Path | None" = None,
+    ) -> None:
         QtWidgets, QtCore, _QtGui = _import_qt()
         self._qt = (QtWidgets, QtCore, _QtGui)
 
         self.doc = doc
+        #: where the document lives on disk, when it came from / went to
+        #: a file — the continuum handoff snippet re-opens it by path.
+        self._path: "str | Path | None" = path
         self._undo: list[dict[str, Any]] = []
         self._redo: list[dict[str, Any]] = []
 
@@ -327,6 +345,7 @@ class SectionBuilderWindow:
         self._shape_combo = QtWidgets.QComboBox()
         self._shape_combo.addItems([*_SHAPE_PARAMS.keys(), "polygon"])
         v.addWidget(self._shape_combo)
+        self._build_catalog_picker(QtWidgets, v)
         self._shape_form_host = QtWidgets.QWidget()
         self._shape_form = QtWidgets.QFormLayout(self._shape_form_host)
         v.addWidget(self._shape_form_host)
@@ -370,6 +389,65 @@ class SectionBuilderWindow:
         self._shape_form.addRow("translate x", self._shape_tx)
         self._shape_form.addRow("translate y", self._shape_ty)
         self._shape_form.addRow("rotate°", self._shape_rot)
+
+    # ── catalog picker (ADR 0080 B7, apeSteel fail-soft) ─────────────
+
+    def _build_catalog_picker(self, QtWidgets: Any, layout: Any) -> None:
+        """A designation box that prefills the ``W_face`` form from
+        apeSteel. Hidden entirely when apeSteel is absent — never a hard
+        dependency."""
+        self._catalog_combo: Any = None
+        if not catalog_available():
+            return
+        row = QtWidgets.QHBoxLayout()
+        combo = QtWidgets.QComboBox()
+        combo.setEditable(True)          # any designation apeSteel knows
+        combo.addItems(list(catalog_labels()))
+        combo.setCurrentText("")
+        combo.setToolTip(
+            "apeSteel catalog (AISC v16 / EN) — prefills the W_face "
+            "form in millimetres. h is the CLEAR web height, not the "
+            "catalog depth d."
+        )
+        btn = QtWidgets.QPushButton("Prefill")
+        # via a lambda: ``clicked`` would otherwise bind its ``checked``
+        # bool to the ``label`` parameter.
+        btn.clicked.connect(lambda *_: self.prefill_from_catalog())
+        row.addWidget(combo, stretch=1)
+        row.addWidget(btn)
+        layout.addLayout(row)
+        self._catalog_combo = combo
+
+    def prefill_from_catalog(self, label: "str | None" = None) -> bool:
+        """Resolve a catalog designation and write it into the shape
+        form. Returns ``True`` when the form was filled.
+
+        Not a document mutation — the form is GUI-layer state, so this
+        stays outside the undo stack (as with every other field edit).
+        The user still presses "Add shape" to commit.
+        """
+        if self._catalog_combo is None:
+            return False
+        designation = (
+            label if label is not None
+            else self._catalog_combo.currentText().strip()
+        )
+        if not designation:
+            self._flash("✗ pick or type a catalog designation first.")
+            return False
+        try:
+            params = catalog_shape_params(designation)
+        except (ImportError, ValueError) as exc:
+            self._flash(f"✗ {exc}")
+            return False
+        if self._shape_combo.currentText() != CATALOG_SHAPE:
+            self._shape_combo.setCurrentText(CATALOG_SHAPE)  # rebuilds form
+        for key, value in params.items():
+            self._shape_param_fields[key].setText(f"{value:g}")
+        if not self._shape_id.text().strip():
+            self._shape_id.setText(_ident(designation))
+        self._flash(f"prefilled {designation} → {CATALOG_SHAPE} (mm)")
+        return True
 
     def _build_boolean_group(self, QtWidgets: Any) -> None:
         box = QtWidgets.QGroupBox("Boolean")
@@ -489,6 +567,7 @@ class SectionBuilderWindow:
         for text, slot in (
             ("Open", self._open_dialog), ("Save", self._save_dialog),
             ("Undo", self.undo), ("Redo", self.redo),
+            ("Copy handoff", self.copy_handoff),
         ):
             act = tb.addAction(text)
             act.triggered.connect(slot)
@@ -534,6 +613,7 @@ class SectionBuilderWindow:
     def _refresh(self) -> None:
         self._redraw()
         self._update_status()
+        self._sync_mc_controls()
         self._maybe_request_properties()
 
     def _flash(self, msg: str) -> None:
@@ -782,6 +862,7 @@ class SectionBuilderWindow:
 
     def open_document(self, path: "str | Path") -> None:
         self.doc = SectionDocument.open(path)
+        self._path = path
         self._undo.clear()
         self._redo.clear()
         self._poly_active = False
@@ -795,6 +876,7 @@ class SectionBuilderWindow:
 
     def save_document(self, path: "str | Path") -> None:
         self.doc.save(path)
+        self._path = path
         self._flash(f"saved → {path}")
 
     def _open_dialog(self) -> None:  # pragma: no cover - Qt dialog
@@ -863,6 +945,8 @@ class SectionBuilderWindow:
         controls.addStretch(1)
         v.addLayout(controls)
 
+        self._build_mc_controls(QtWidgets, v)
+
         self._props_status = QtWidgets.QLabel("(properties off)")
         v.addWidget(self._props_status)
         self._props_body_host = QtWidgets.QWidget()
@@ -873,6 +957,146 @@ class SectionBuilderWindow:
         self.window.addDockWidget(
             _QtCore.Qt.RightDockWidgetArea, dock,
         )
+
+    # ── moment–curvature preview (ADR 0080 B7, openseespy fail-soft) ─
+
+    def _build_mc_controls(self, QtWidgets: Any, layout: Any) -> None:
+        """κ_max / axis / axial inputs + the M–κ button. Fiber lane only
+        (a continuum document lowers to fibers on a bridge, not here);
+        disabled with guidance when no OpenSees backend is installed."""
+        box = QtWidgets.QGroupBox("Moment–curvature")
+        form = QtWidgets.QFormLayout(box)
+        self._mc_axis = QtWidgets.QComboBox()
+        self._mc_axis.addItems(["z", "y"])
+        self._mc_kappa = self._line()
+        self._mc_steps = self._line("40")
+        self._mc_axial = self._line("0")
+        form.addRow("axis", self._mc_axis)
+        form.addRow("κ max", self._mc_kappa)
+        form.addRow("steps", self._mc_steps)
+        form.addRow("axial (− = compr.)", self._mc_axial)
+        self._mc_button = QtWidgets.QPushButton("Run M–κ")
+        self._mc_button.clicked.connect(self.run_moment_curvature)
+        form.addRow(self._mc_button)
+        layout.addWidget(box)
+        self._mc_box = box
+        # probed once — find_spec on every repaint would be wasteful and
+        # the answer cannot change inside one process.
+        self._backend_ok = backend_available()
+        self._mc_button.setEnabled(self._backend_ok)
+        self._mc_button.setToolTip(
+            "Push the section to κ max on a zeroLengthSection harness. "
+            "Runs in-process and WIPES the OpenSees domain."
+            if self._backend_ok else
+            "No OpenSees backend found. Install one — pip install "
+            "openseespy — or point APEGMSH_OPENSEES_BIN at the Ladruno "
+            "fork's dist\\bin."
+        )
+        self._sync_mc_controls()
+
+    def _sync_mc_controls(self) -> None:
+        """Show the M–κ box on fiber documents only — a continuum
+        document lowers to fibers on a bridge, not here."""
+        if hasattr(self, "_mc_box"):
+            self._mc_box.setVisible(self.doc.kind == "fiber")
+
+    def run_moment_curvature(self) -> Any:
+        """Solve and show the M–κ curve for the current document.
+
+        Synchronous **by design** — openseespy is a process-global C++
+        runtime with no reentrancy, so this must never move to the
+        properties worker thread. The harness is a 2-node model; the
+        cost is the step count, not a mesh.
+        """
+        QtWidgets, QtCore, _QtGui = self._qt
+        try:
+            kappa_max = self._read_float(self._mc_kappa, "κ max")
+            n_steps = int(self._read_float(self._mc_steps, "steps"))
+            axial = self._read_float(self._mc_axial, "axial", default=0.0)
+        except ValueError as exc:
+            self._flash(f"✗ {exc}")
+            return None
+        self.window.setCursor(QtCore.Qt.WaitCursor)
+        try:
+            curve = moment_curvature(
+                self.doc,
+                axis=self._mc_axis.currentText(),
+                kappa_max=kappa_max,
+                n_steps=n_steps,
+                axial=axial,
+            )
+        except (
+            ImportError, MomentCurvatureError, SectionDocumentError,
+        ) as exc:
+            self._flash(f"✗ {exc}")
+            return None
+        finally:
+            self.window.unsetCursor()
+        self._last_mc = curve
+        note = "" if curve.complete else "  (stopped early)"
+        self._flash(
+            f"M–κ about {curve.axis}: EI₀ = {_mc_ei0(curve)}, "
+            f"M max = {curve.M_max:.6g}{note}"
+        )
+        self._show_mc_dialog(curve)
+        return curve
+
+    def _show_mc_dialog(self, curve: Any) -> Any:
+        """A modeless window plotting one :class:`MomentCurvature`."""
+        QtWidgets, _QtCore, _QtGui = self._qt
+        from matplotlib.figure import Figure
+        try:
+            from matplotlib.backends.backend_qtagg import (
+                FigureCanvasQTAgg as FigureCanvas,
+            )
+        except ImportError:  # matplotlib < 3.5
+            from matplotlib.backends.backend_qt5agg import (  # type: ignore[no-redef]
+                FigureCanvasQTAgg as FigureCanvas,
+            )
+
+        dialog = QtWidgets.QDialog(self.window)
+        dialog.setWindowTitle(
+            f"M–κ about {curve.axis} — {self.doc.name or 'section'}"
+        )
+        layout = QtWidgets.QVBoxLayout(dialog)
+        figure = Figure(figsize=(5.0, 3.8), layout="constrained")
+        ax = figure.add_subplot(111)
+        ax.plot(curve.curvature, curve.moment, "-o", markersize=3)
+        ax.set_xlabel("curvature κ")
+        ax.set_ylabel("moment M")
+        ax.grid(True, linewidth=0.4, alpha=0.5)
+        layout.addWidget(FigureCanvas(figure))
+        summary = (
+            f"EI₀ = {_mc_ei0(curve)}    M max = {curve.M_max:.6g}    "
+            f"axial = {curve.axial:g}"
+        )
+        if not curve.complete:
+            summary += (
+                f"    — stopped after {len(curve.curvature) - 1} step(s): "
+                f"the section lost stiffness before κ max"
+            )
+        layout.addWidget(QtWidgets.QLabel(summary))
+        dialog.resize(560, 460)
+        dialog.show()
+        self._mc_dialog = dialog
+        return dialog
+
+    # ── bridge handoff (ADR 0080 B7) ─────────────────────────────────
+
+    def handoff_text(self) -> str:
+        """The paste-ready bridge snippet for the current document."""
+        return handoff_snippet(self.doc, path=self._path)
+
+    def copy_handoff(self) -> str:
+        """Put :meth:`handoff_text` on the clipboard (the toolbar
+        action). Returns the text so tests need no clipboard."""
+        QtWidgets, _QtCore, _QtGui = self._qt
+        text = self.handoff_text()
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard is not None:    # pragma: no branch - always set
+            clipboard.setText(text)
+        self._flash("bridge handoff copied to the clipboard")
+        return text
 
     def _ensure_controller(self) -> PropertiesController:
         if self._controller is None:
@@ -968,6 +1192,19 @@ class SectionBuilderWindow:
         self.window.close()
         if self in _LIVE_BUILDERS:
             _LIVE_BUILDERS.remove(self)
+
+
+def _mc_ei0(curve: Any) -> str:
+    """``EI0`` formatted for a label, or ``"—"``.
+
+    A curve whose very first step failed has no converged point to take a
+    secant from, and ``MomentCurvature.EI0`` says so by raising — which a
+    button handler must not propagate into Qt.
+    """
+    try:
+        return f"{curve.EI0:.6g}"
+    except MomentCurvatureError:
+        return "—"
 
 
 def _key_sequence(key: str) -> Any:

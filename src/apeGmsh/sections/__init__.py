@@ -25,6 +25,12 @@ Section-properties analyzer (ADR 0078)::
 
     from apeGmsh.sections import SectionMaterial
     from apeGmsh import SectionProperties
+
+Declarative section documents + the builder GUI (ADR 0080)::
+
+    from apeGmsh.sections import (
+        SectionDocument, launch_builder, moment_curvature, handoff_snippet,
+    )
 """
 
 from .solid import (
@@ -47,6 +53,8 @@ from ._document import (
     SectionDocumentError,
 )
 from ._builder_gui import launch_builder
+from ._handoff import handoff_snippet
+from ._mc import MomentCurvature, MomentCurvatureError, moment_curvature
 from ._geometric import GeometricProperties
 from ._materials import SectionMaterial
 from ._plastic import PlasticProperties
@@ -77,6 +85,10 @@ __all__ = [
     "SECTION_DOC_VERSION",
     "FiberRecipe",
     "launch_builder",
+    "handoff_snippet",
+    "moment_curvature",
+    "MomentCurvature",
+    "MomentCurvatureError",
     "GeometricProperties",
     "WarpingProperties",
     "PlasticProperties",
