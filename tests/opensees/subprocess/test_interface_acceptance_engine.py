@@ -28,11 +28,11 @@ What lives here, against the ADR's S10 list:
   rotation must reproduce the unrotated run's reactions;
 * **MPCO springs channels (D6)** — ``Results.from_mpco(...)
   .elements.springs`` read back per pair against the engine's own
-  ``eleResponse``. The values match to 1e-12; the *identity* of the
-  columns on an unfiltered read does not, and that half is pinned as a
-  strict ``xfail`` naming the cause (interface rows are persisted with
-  a duplicated ``fem_eid``) rather than skipped or worked around
-  silently.
+  ``eleResponse`` — values to 1e-12, and one distinct element identity
+  per pair. The identity half started as a strict ``xfail``: this
+  battery found interface rows being persisted with a duplicated
+  ``fem_eid``, fixed on main by #951, and the gate is now a plain
+  assertion.
 
 Not here, deliberately:
 
@@ -804,10 +804,12 @@ def test_mpco_springs_channels_match_the_engine(springs) -> None:
     force and deformation.
 
     The read is made with an explicit ``ids=`` filter of the pairs'
-    OpenSees element tags. That is not incidental: the unfiltered read
-    mislabels the columns today, and
-    ``test_mpco_springs_unfiltered_read_mislabels_every_pair`` below
-    pins that separately rather than letting this test paper over it.
+    OpenSees element tags — the filtered path, kept distinct from the
+    unfiltered one that
+    ``test_mpco_springs_unfiltered_read_keeps_ops_tags_per_pair``
+    covers, because the two travel different branches of
+    ``ElementTagTranslator.read_translation`` and only the unfiltered
+    one depends on how the model h5 stamped these rows.
     """
     from apeGmsh.results import Results
 
@@ -846,40 +848,45 @@ def test_mpco_springs_channels_match_the_engine(springs) -> None:
         r.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ADR 0093 follow-up (found by this battery): interface zeroLength "
-        "rows are persisted into the model h5 with a DUPLICATED fem_eid — "
-        "measured fem_eids [32, 32, 32] for ops tags [11, 12, 13], where 32 "
-        "is the LAST QUAD's fem_eid — so ElementTagTranslator relabels all "
-        "three spring columns to the same wrong id on an unfiltered read. "
-        "The recorded VALUES are correct and per-pair; only the identity is "
-        "lost. Side-list records have no mesh element behind them, so the "
-        "right value is the MISSING_FEM_ELEMENT_ID sentinel (< 0), which "
-        "ElementTagTranslator.from_model already skips — leaving the ops "
-        "tags in place."
-    ),
-)
-def test_mpco_springs_unfiltered_read_mislabels_every_pair(springs) -> None:
-    """The identity half of D6, pinned as a known failure.
+def test_mpco_springs_unfiltered_read_keeps_ops_tags_per_pair(
+        springs) -> None:
+    """The identity half of D6: an UNFILTERED springs read labels every
+    column with its own pair.
 
-    ``springs.get(component=...)`` with no ``ids=`` filter must return
-    one distinct element id per pair. It returns the same id three
-    times. This test is ``xfail(strict=True)`` so it turns into a
-    failure — a loud "you fixed it, delete the marker" — the moment the
-    ``fem_eid`` stamping is corrected, and so the defect can never be
-    quietly re-introduced as "expected".
+    This gate started life as a strict ``xfail``. The battery found
+    that interface ``zeroLength`` rows were persisted into the model h5
+    with a duplicated ``fem_eid`` — measured ``[32, 32, 32]`` for ops
+    tags ``[11, 12, 13]``, 32 being the *last quad's* id — because
+    ``H5Emitter.element()`` inherited a stale per-element side channel
+    instead of defaulting to the ADR 0049 sentinel. The values were
+    right; only the identity was lost, which is the quiet kind of wrong
+    (a user plotting per-pair spring force would get three curves under
+    one label).
+
+    Fixed on main by #951: the emitter clears both side channels per
+    call, and element-minting sites install the sentinel explicitly, so
+    ``ElementTagTranslator.from_model`` skips these rows and the raw ops
+    tags survive into ``element_index``. This test now asserts that
+    directly — one distinct ops tag per pair, values still matching the
+    engine — so a regression re-labels itself loudly instead of going
+    back to being "expected".
     """
     from apeGmsh.results import Results
 
+    tags = springs["tags"]
     r = Results.from_mpco(springs["mpco"], model_h5=springs["model_h5"])
     try:
         stage = r.stage(r.stages[0].name)
         slab = stage.elements.springs.get(component="spring_force_0")
         index = [int(e) for e in slab.element_index]
         print(f"\nS10 MPCO springs unfiltered element_index: {index} "
-              f"(pairs are ops tags {springs['tags']})")
-        assert len(set(index)) == len(springs["tags"])
+              f"(pairs are ops tags {tags})")
+        assert index == tags, (
+            f"unfiltered springs read labelled the columns {index}, not "
+            f"the pairs' ops tags {tags}")
+        got = dict(zip(index, (float(v)
+                               for v in np.asarray(slab.values)[-1])))
+        for tag, ref in zip(tags, springs["force_0"]):
+            assert got[tag] == pytest.approx(ref, rel=1e-12, abs=1e-12)
     finally:
         r.close()
