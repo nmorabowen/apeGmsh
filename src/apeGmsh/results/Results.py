@@ -1165,14 +1165,18 @@ class Results:
     # Assess (ADR 0094 S2)
     # ------------------------------------------------------------------
 
-    def assess(self, *, figures: bool = False) -> "AssessmentReport":
+    def assess(
+        self,
+        *,
+        figures: bool = False,
+        out_dir: "str | Path | None" = None,
+    ) -> "AssessmentReport":
         """Compile a v1 :class:`~apeGmsh.assess.AssessmentReport`.
 
-        Findings only. ``figures=True`` ships in S3 and raises
-        :class:`NotImplementedError` here.
+        ``figures=True`` calls :meth:`render_pack`. Default is ``False``.
         """
         from apeGmsh.assess import assess_results
-        return assess_results(self, figures=figures)
+        return assess_results(self, figures=figures, out_dir=out_dir)
 
     # ------------------------------------------------------------------
     # Viewer
@@ -1316,6 +1320,25 @@ class Results:
             self, path,
             view=view, component=component, step=step,
             deform=deform, camera=camera, window_size=window_size,
+        )
+
+    def render_pack(
+        self,
+        out_dir: "str | Path",
+        *,
+        camera: str = "iso",
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> tuple[Path, ...]:
+        """Write the canned report pack (ADR 0094 S3).
+
+        Returns the tuple of written paths, or ``()`` under
+        ``APEGMSH_SKIP_VIEWER=1`` / no GL (and prints the
+        ``[skip viewer]`` notice). Closed ``view=`` set only; no
+        ``setup()``. There is no ``fem.render_pack``.
+        """
+        from apeGmsh.viewers.render import render_pack as _render_pack
+        return _render_pack(
+            self, out_dir, camera=camera, window_size=window_size,
         )
 
     def export_animation(

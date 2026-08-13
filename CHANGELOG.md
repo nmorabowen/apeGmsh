@@ -12,6 +12,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `results.render_pack` + `assess(figures=True)` (ADR 0094 S3)
+
+Canned report pack of Qt-look stills (`mesh` / last-step primary contour /
+same deformed at the S1 0.12 auto-scale / static reactions if recorded /
+optional matplotlib history at the extrema node, labeled `[matplotlib]`).
+Public door is `results.render_pack(out_dir) -> tuple[Path, ...]`. There
+is no `fem.render_pack` — a mesh-only pack would be one still, and that
+is already `fem.render`. `assess(figures=True)` (default still `False`)
+calls those broker methods; `apeGmsh.assess` still does not import
+viewers or gmsh. `APEGMSH_SKIP_VIEWER=1` or no GL returns `()` / empty
+`figures`, prints the existing `[skip viewer]` notice, and the report
+says "no stills; numbers only."
+
 ### FIXED — 2-D out-of-plane recovery: `LadrunoLST` was invisible to it, and the miss was silent
 
 A plane-strain model built from `LadrunoLST` — the fork's recommended

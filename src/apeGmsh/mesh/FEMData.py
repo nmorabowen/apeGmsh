@@ -2252,14 +2252,19 @@ class FEMData:
             f"{type(record).__name__!r} — expected MassRecord."
         )
 
-    def assess(self, *, figures: bool = False) -> "AssessmentReport":
-        """Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094 S2).
+    def assess(
+        self,
+        *,
+        figures: bool = False,
+        out_dir: "str | Path | None" = None,
+    ) -> "AssessmentReport":
+        """Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094).
 
-        Findings only. ``figures=True`` ships in S3 and raises
-        :class:`NotImplementedError` here.
+        ``figures=True`` writes one undeformed mesh still via
+        :meth:`render`. Default is ``False``.
         """
         from apeGmsh.assess import assess_fem
-        return assess_fem(self, figures=figures)
+        return assess_fem(self, figures=figures, out_dir=out_dir)
 
     def render(
         self,
