@@ -859,17 +859,50 @@ class SectionDocument:
         )
 
     def _build_continuum(self) -> "SectionProperties":
-        from apeGmsh import apeGmsh
+        self._require_mesh_lc()
+        self._resolve_materials()      # fail loud before any session opens
+        return self.analysis_from_fem(self.build_fem())
 
-        from ._analysis import SectionProperties
-
-        data = self._data
-        if data["mesh"].get("lc") is None:
+    def _require_mesh_lc(self) -> None:
+        if self._data["mesh"].get("lc") is None:
             raise SectionDocumentError(
                 f"{self.name or 'section document'}: set_mesh(lc=...) "
                 f"before build()."
             )
+
+    def analysis_from_fem(self, fem: Any) -> "SectionProperties":
+        """Wrap a :class:`FEMData` that :meth:`build_fem` produced for
+        *this* document into its analyzer.
+
+        Split out so the meshing can happen somewhere else — the ADR
+        0080 B6 properties worker meshes in a subprocess and calls this
+        with the ``FEMData`` that came back (see
+        :mod:`apeGmsh.sections._mesh_proc`).
+        """
+        from ._analysis import SectionProperties
+
         materials = self._resolve_materials()
+        return SectionProperties(
+            fem,
+            materials=materials or None,
+            name=self.name,
+            disconnected=self._data.get("disconnected", "raise"),
+        )
+
+    def build_fem(self) -> Any:
+        """The **gmsh half** of a continuum build: run the private
+        session (builders → booleans → mesh) and return the ``FEMData``
+        snapshot. No materials, no analyzer, no solve.
+
+        This is the only part of a section build that touches Gmsh, and
+        Gmsh is one process-global, non-reentrant C++ runtime — so this
+        is also the only part that has to be serialized against other
+        threads, or moved out of the process entirely.
+        """
+        from apeGmsh import apeGmsh
+
+        data = self._data
+        self._require_mesh_lc()
 
         sacrificial = self._sacrificial_ids()
 
@@ -901,13 +934,7 @@ class SectionDocument:
             fem = g.mesh.queries.get_fem_data(dim=2)
         finally:
             g.end()
-
-        return SectionProperties(
-            fem,
-            materials=materials or None,
-            name=self.name,
-            disconnected=data.get("disconnected", "raise"),
-        )
+        return fem
 
     # ── internals ────────────────────────────────────────────────────
 

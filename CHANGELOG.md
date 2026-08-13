@@ -12,6 +12,65 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — Gmsh from two threads aborts the process (ADR 0080 B6 follow-up)
+
+`_session.py` grows a process-wide **re-entrant runtime lock**, held from
+`_gmsh_acquire` to the matching `_gmsh_release`. `_GMSH_INIT_LOCK` only
+ever guarded the init **refcount** — never the `gmsh.model.*` calls
+between acquire and release — so two threads could each hold a valid
+session and interleave their model calls on what is one process-global,
+non-thread-safe, non-reentrant C++ runtime. The result is a C-level
+`abort()`: no Python traceback, no catchable exception, no `FAILED`
+line. It was found when a full Windows suite run died inside the ADR
+0080 B6 live-properties worker, and it is a **product** bug — a user
+toggling Live while a session is open in the same interpreter can lose
+the app with no diagnostic.
+
+Putting the lock inside the existing acquire/release pair covers every
+call site (sessions plus the standalone `_fem_factory` helper) with no
+new plumbing, and re-entrancy keeps nested sessions — a `Part` opened
+inside an `apeGmsh` session — from self-blocking. The deadlock rule is
+**never wait on another thread's gmsh work while holding it**; a session
+must also begin and end on the same thread, and releasing from another
+now says so instead of raising a bare "cannot release un-acquired lock".
+`gmsh_runtime_lock(timeout=…)` is the bounded-wait form for callers that
+cannot block forever.
+
+**The properties worker does not use the lock — it meshes in a child
+process** (`sections/_mesh_proc.py` + `_mesh_worker.py`). Serializing
+would have been *safe* but not *useful* there: a session the user left
+open holds the lock for its whole lifetime, so the worker would never
+get a turn and the panel would stay grey until they closed it. Moving
+the meshing out removes the contention instead of managing it. Only the
+mesh crosses the boundary — `FEMData` pickles in ~90 KB — and the
+analyzer is rebuilt and solved back in the worker thread, which is both
+the expensive half (0.1–1.0 s vs 330–580 ms of meshing on an SRC
+composite) and pure NumPy, so it needs no protection. Rebuilding it in
+the parent also keeps a **live** `SectionProperties` for the inspector
+to drive interactively with user-entered loads, which a "return the
+numbers" split would have lost. `SectionDocument` grows the seam:
+`build_fem()` (the gmsh half) and `analysis_from_fem(fem)`.
+
+Every child failure arrives as a message, never a hang: a document error
+carries the child's own diagnosis, a wedged mesh is stopped
+(`MESH_SUBPROCESS_TIMEOUT`), and a child that dies without writing its
+envelope — the abort case — becomes "the mesh process failed without
+reporting".
+
+`tests/test_gmsh_runtime_lock.py` asserts the invariant itself — eight
+threads opening real sessions, an occupancy counter never above 1 — plus
+re-entrancy, the bounded wait, that the worker builds *while another
+thread holds the runtime*, and that it takes zero acquires. The
+threading assertions run in **child interpreters**, because the
+invariant is a property of a process and the shared suite process has
+sessions of its own open; that is also what makes the **positive
+control automatic**: with the lock stubbed out and nothing else changed,
+the workload kills the interpreter outright.
+`tests/sections/test_mesh_subprocess.py` gates the relocation — the
+child's mesh reproduces an in-process build's area, `EIxx_c`, `GJ` and
+`Mp_xx`, and the rebuilt analyzer still solves stress on demand. The
+three B6 worker tests pass **unchanged**.
+
 ### ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
 
 - **`moment_curvature(doc, *, axis="z", kappa_max, n_steps=40, axial=0.0,

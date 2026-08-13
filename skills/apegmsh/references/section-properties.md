@@ -383,8 +383,15 @@ pass `blocking=False` (`%gui qt`). Same S6 contract as the inspector
 `RuntimeError` from the launcher, window class stays
 offscreen-constructible). Drafting aids on the polygon tool: **F7**
 grid, **F9** object snap, **F8** ortho, typed `length<angle` / `dx,dy`
-/ `x,y`; the resolvers live Qt-free in `_drafting.py`. Live properties
-panel builds on a worker thread. Two optional deps, both fail-soft and
+/ `x,y`; the resolvers live Qt-free in `_drafting.py`. The live
+properties panel solves on a worker thread and **meshes in a child
+process** — Gmsh is one process-global, non-reentrant runtime, so
+driving it from a background thread of a process that also drives it
+from the main thread aborts the interpreter (no traceback). The
+process-wide runtime lock in `_session.py` serializes every *other*
+threaded Gmsh use; the worker sidesteps it entirely, because a session
+left open would hold that lock for its lifetime. Two optional deps,
+both fail-soft and
 never required headless: **apeSteel** (catalog picker prefills the
 `W_face` form in MILLIMETRES — and its `h` is the CLEAR web height, not
 catalog `d`; absent → picker hidden) and **openseespy / the Ladruno

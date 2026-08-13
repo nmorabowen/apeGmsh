@@ -520,4 +520,13 @@ snippet and an export can never disagree.
     - `src/apeGmsh/sections/_catalog.py` — apeSteel catalog bridge (B7)
     - `src/apeGmsh/sections/_builder_gui.py` — the Qt builder (B5/B6/B7)
     - `src/apeGmsh/sections/_drafting.py` — Qt-free snap / ortho / typed input
-    - `src/apeGmsh/sections/_properties.py` — B6 worker-thread build controller
+    - `src/apeGmsh/sections/_properties.py` — B6 build controller (solves
+      on a worker thread; meshes out of process)
+    - `src/apeGmsh/sections/_mesh_proc.py` / `_mesh_worker.py` — the
+      child-process meshing seam. Gmsh is one process-global,
+      non-reentrant C++ runtime: driving it from a background thread of
+      a process that also drives it from the main thread aborts the
+      interpreter with no traceback. `_session.py`'s runtime lock
+      serializes every other threaded use; the worker meshes elsewhere
+      instead, because a session left open would hold that lock for its
+      whole lifetime and the panel would never refresh.
