@@ -103,11 +103,9 @@ _RENDER_ALLOW: dict[str, int] = {
     # model_viewer.py — 1 is the dispatcher's render binding; the
     # other 7 are V4-out-of-scope subsystems (dim filter, labels,
     # prefs point-size + pick-color, scene rebuild, hover recolor,
-    # selection recolor). The 8 call-site mutator renders + the
-    # on_changed render subscriber were deleted at V4. +1 is the new
-    # _toggle_pg_color render (model_viewer.py:1028) — a V4-out-of-scope
-    # subsystem render per ADR 0056, same rationale as the others.
-    "model_viewer.py": 9,
+    # selection recolor, _toggle_pg_color). The 8 call-site mutator
+    # renders + the on_changed render subscriber were deleted at V4.
+    "model_viewer.py": 8,
     # results_viewer.py — the results reconciler lives in this file
     # (ADR 0056 / ADR 0084 D5), so it enters the guard with a measured
     # budget, same precedent as mesh_viewer.py. Reconciler-legitimate:

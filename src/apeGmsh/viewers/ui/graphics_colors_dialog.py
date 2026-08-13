@@ -29,11 +29,13 @@ from .theme_editor_dialog import (
 
 # Okabe–Ito / Wong palette — remaining axis for protanopia.
 # Idle greys stay as-is; these four are the interaction/overlay roles.
+# Hex via _rgb_to_hex so this file stays G-HEX-clean (ADR 0087).
+_OKABE_SKY = _rgb_to_hex((86, 180, 233))
 OKABE_ITO_GRAPHICS: dict[str, object] = {
-    "hover_rgb": (240, 228, 66),       # #F0E442 yellow
-    "pick_rgb": (0, 114, 178),         # #0072B2 blue
-    "origin_marker_color": "#56B4E9",  # sky blue
-    "measure_color": "#56B4E9",
+    "hover_rgb": (240, 228, 66),       # Wong yellow
+    "pick_rgb": (0, 114, 178),         # Wong blue
+    "origin_marker_color": _OKABE_SKY,
+    "measure_color": _OKABE_SKY,
 }
 
 
@@ -158,16 +160,28 @@ class GraphicsColorsDialog:
             return _rgb_to_hex(tuple(int(c) for c in value))
         return str(value)
 
+    @staticmethod
+    def _swatch_fg(bg_hex: str) -> str:
+        r, g, b = _hex_to_rgb(bg_hex)
+        luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+        pal = THEME.current
+        return pal.base if luma > 0.55 else pal.text
+
     def _refresh_swatches(self) -> None:
         p = THEME.current
         idle = _rgb_to_hex(tuple(int(c) for c in p.dim_srf))
         hover = _rgb_to_hex(tuple(int(c) for c in p.hover_rgb))
         pick = _rgb_to_hex(tuple(int(c) for c in p.pick_rgb))
-        self._swatches.setText(
-            f'<span style="background:{idle};color:#000;padding:2px 8px;">Idle</span> '
-            f'<span style="background:{hover};color:#000;padding:2px 8px;">Hover</span> '
-            f'<span style="background:{pick};color:#fff;padding:2px 8px;">Pick</span>'
+        chips = (
+            ("Idle", idle),
+            ("Hover", hover),
+            ("Pick", pick),
         )
+        self._swatches.setText(" ".join(
+            f'<span style="background:{bg};color:{self._swatch_fg(bg)};'
+            f'padding:2px 8px;">{label}</span>'
+            for label, bg in chips
+        ))
 
     def _populate(self, palette: Any) -> None:
         kinds = {name: kind for name, _label, kind in _FIELDS}

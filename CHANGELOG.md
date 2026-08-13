@@ -12,6 +12,11 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — Graphics colors G-HEX + model-viewer G-RENDER ratchet
+
+Okabe–Ito preset and swatch contrast no longer carry hex string
+literals (ADR 0087). Model-viewer G-RENDER budget ratchets 9→8.
+
 ### CHANGED — skill: agent eyes are visors, not the OS desktop
 
 After a solve the agent looks at `.apegmsh/visors/` stills
