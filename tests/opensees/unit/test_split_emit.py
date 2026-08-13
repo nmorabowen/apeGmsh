@@ -17,6 +17,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from apeGmsh._kernel.records._constraints import (
+    InterfaceRecord,
+    NormalLaw,
+    TangentialLaw,
+)
+from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import BridgeError
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
@@ -39,6 +45,7 @@ def _composed_fem(
     *,
     node_module_label: "list[str] | None",
     elem_module_label: "list[str] | None",
+    interfaces: "list[InterfaceRecord] | None" = None,
 ) -> FEMData:
     """A 6-node / 3-element FEM with per-row compose labels.
 
@@ -78,6 +85,7 @@ def _composed_fem(
             None if elem_module_label is None
             else {1: np.array(elem_module_label, dtype=object)}
         ),
+        interfaces=interfaces,
     )
     info = MeshInfo(n_nodes=6, n_elems=3, bandwidth=1, types=[line_info])
     return FEMData(nodes=nodes, elements=elements, info=info)
@@ -229,6 +237,96 @@ def test_tcl_split_routes_elements_to_owning_module(tmp_path: Path) -> None:
     assert "element " not in text
     # The geomTransf definition stays driver-side.
     assert "geomTransf Linear" in text
+
+
+# ---------------------------------------------------------------------------
+# Side-lists that land driver-side — g.constraints.interface (ADR 0093)
+# ---------------------------------------------------------------------------
+
+def _interface_rec(master: int, slave: int) -> InterfaceRecord:
+    """An equal-ndf pair coupling module A's node to module B's — the
+    cross-module coupling a composed split deck exists to express."""
+    return InterfaceRecord(
+        kind=ConstraintKind.INTERFACE,
+        name="RockLiner",
+        master_node=master,
+        slave_node=slave,
+        backing_element=10,
+        orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        a_trib=0.25,
+        normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+        tangential_law=TangentialLaw(
+            kind="epp", k_per_area=1.0e5, tau_b=250.0),
+    )
+
+
+def _interface_bridge(fem: FEMData) -> apeSees:
+    # ndm=2: interface records only exist for 2D line masters (D2).
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    return ops
+
+
+def test_split_emits_interfaces_into_the_driver(tmp_path: Path) -> None:
+    """Regression (ADR 0093 S8 adversarial review, finding 5): the split
+    path emitted every other side-list but never ``emit_interfaces``, so
+    a model carrying ``g.constraints.interface()`` exported with
+    ``split="parts"`` silently lost the whole interface."""
+    fem = _composed_fem(
+        node_module_label=_NODE_LABELS,
+        elem_module_label=_ELEM_LABELS,
+        interfaces=[_interface_rec(3, 5)],
+    )
+    driver = tmp_path / "deck.tcl"
+    _interface_bridge(fem).tcl(str(driver), split=True)
+
+    text = driver.read_text(encoding="utf-8")
+    zl = [ln for ln in text.splitlines()
+          if ln.startswith("element zeroLength ")]
+    assert len(zl) == 1
+    # INV-1 node order + the pair's own frame survive the split path.
+    tok = zl[0].split()
+    assert tok[3] == "3" and tok[4] == "5"
+    i = tok.index("-orient")
+    assert [float(v) for v in tok[i + 1:i + 7]] == [
+        1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    # Both tributary-scaled uniaxials ride along.
+    assert "uniaxialMaterial ENT " in text
+    assert "uniaxialMaterial ElasticPP " in text
+
+    # The unit is cross-module, so it belongs driver-side — never in a
+    # fragment, which is sourced before the other module's nodes exist.
+    parts = tmp_path / "parts"
+    for frag in ("host.tcl", "A.tcl", "B.tcl"):
+        body = (parts / frag).read_text(encoding="utf-8")
+        assert "zeroLength" not in body
+        assert "uniaxialMaterial" not in body
+
+
+def test_split_and_single_file_agree_on_the_interface_block(
+    tmp_path: Path,
+) -> None:
+    """The split driver's interface lines are the same lines the
+    single-file deck emits — same order, same tags."""
+    def _iface_lines(deck: Path) -> "list[str]":
+        return [
+            ln for ln in deck.read_text(encoding="utf-8").splitlines()
+            if ln.startswith(("element zeroLength ", "uniaxialMaterial "))
+        ]
+
+    def _fem() -> FEMData:
+        return _composed_fem(
+            node_module_label=_NODE_LABELS,
+            elem_module_label=_ELEM_LABELS,
+            interfaces=[_interface_rec(3, 5), _interface_rec(4, 6)],
+        )
+
+    single = tmp_path / "single.tcl"
+    _interface_bridge(_fem()).tcl(str(single))
+    split = tmp_path / "deck.tcl"
+    _interface_bridge(_fem()).tcl(str(split), split=True)
+
+    assert _iface_lines(split) == _iface_lines(single)
 
 
 # ---------------------------------------------------------------------------
