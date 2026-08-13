@@ -419,7 +419,7 @@ by a single rank with the whole interface visible to it.
    every lane shares, so it was deliberately its own change, not a
    side-effect of S5.
 
-   **FIXED 2026-08-12.** All three emit paths (`_emit_flat`,
+   **FIXED 2026-08-12 (PR #945).** All three emit paths (`_emit_flat`,
    `_emit_split`, `_emit_partitioned`) now hoist the chain auto-emits
    (constraint handler; plus the INV-5 parallel numberer/system on the
    partitioned path) to immediately BEFORE the first user-declared
