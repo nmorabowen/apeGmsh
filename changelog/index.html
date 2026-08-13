@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-gmsh-from-two-threads-aborts-the-process-adr-0080-b6-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — Gmsh from two threads aborts the process (ADR 0080 B6 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7427,6 +7438,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-gmsh-from-two-threads-aborts-the-process-adr-0080-b6-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — Gmsh from two threads aborts the process (ADR 0080 B6 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11447,6 +11469,59 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-gmsh-from-two-threads-aborts-the-process-adr-0080-b6-follow-up">FIXED — Gmsh from two threads aborts the process (ADR 0080 B6 follow-up)<a class="headerlink" href="#fixed-gmsh-from-two-threads-aborts-the-process-adr-0080-b6-follow-up" title="Permanent link">&para;</a></h3>
+<p><code>_session.py</code> grows a process-wide <strong>re-entrant runtime lock</strong>, held from
+<code>_gmsh_acquire</code> to the matching <code>_gmsh_release</code>. <code>_GMSH_INIT_LOCK</code> only
+ever guarded the init <strong>refcount</strong> — never the <code>gmsh.model.*</code> calls
+between acquire and release — so two threads could each hold a valid
+session and interleave their model calls on what is one process-global,
+non-thread-safe, non-reentrant C++ runtime. The result is a C-level
+<code>abort()</code>: no Python traceback, no catchable exception, no <code>FAILED</code>
+line. It was found when a full Windows suite run died inside the ADR
+0080 B6 live-properties worker, and it is a <strong>product</strong> bug — a user
+toggling Live while a session is open in the same interpreter can lose
+the app with no diagnostic.</p>
+<p>Putting the lock inside the existing acquire/release pair covers every
+call site (sessions plus the standalone <code>_fem_factory</code> helper) with no
+new plumbing, and re-entrancy keeps nested sessions — a <code>Part</code> opened
+inside an <code>apeGmsh</code> session — from self-blocking. The deadlock rule is
+<strong>never wait on another thread's gmsh work while holding it</strong>; a session
+must also begin and end on the same thread, and releasing from another
+now says so instead of raising a bare "cannot release un-acquired lock".
+<code>gmsh_runtime_lock(timeout=…)</code> is the bounded-wait form for callers that
+cannot block forever.</p>
+<p><strong>The properties worker does not use the lock — it meshes in a child
+process</strong> (<code>sections/_mesh_proc.py</code> + <code>_mesh_worker.py</code>). Serializing
+would have been <em>safe</em> but not <em>useful</em> there: a session the user left
+open holds the lock for its whole lifetime, so the worker would never
+get a turn and the panel would stay grey until they closed it. Moving
+the meshing out removes the contention instead of managing it. Only the
+mesh crosses the boundary — <code>FEMData</code> pickles in ~90 KB — and the
+analyzer is rebuilt and solved back in the worker thread, which is both
+the expensive half (0.1–1.0 s vs 330–580 ms of meshing on an SRC
+composite) and pure NumPy, so it needs no protection. Rebuilding it in
+the parent also keeps a <strong>live</strong> <code>SectionProperties</code> for the inspector
+to drive interactively with user-entered loads, which a "return the
+numbers" split would have lost. <code>SectionDocument</code> grows the seam:
+<code>build_fem()</code> (the gmsh half) and <code>analysis_from_fem(fem)</code>.</p>
+<p>Every child failure arrives as a message, never a hang: a document error
+carries the child's own diagnosis, a wedged mesh is stopped
+(<code>MESH_SUBPROCESS_TIMEOUT</code>), and a child that dies without writing its
+envelope — the abort case — becomes "the mesh process failed without
+reporting".</p>
+<p><code>tests/test_gmsh_runtime_lock.py</code> asserts the invariant itself — eight
+threads opening real sessions, an occupancy counter never above 1 — plus
+re-entrancy, the bounded wait, that the worker builds <em>while another
+thread holds the runtime</em>, and that it takes zero acquires. The
+threading assertions run in <strong>child interpreters</strong>, because the
+invariant is a property of a process and the shared suite process has
+sessions of its own open; that is also what makes the <strong>positive
+control automatic</strong>: with the lock stubbed out and nothing else changed,
+the workload kills the interpreter outright.
+<code>tests/sections/test_mesh_subprocess.py</code> gates the relocation — the
+child's mesh reproduces an in-process build's area, <code>EIxx_c</code>, <code>GJ</code> and
+<code>Mp_xx</code>, and the rebuilt analyzer still solves stress on demand. The
+three B6 worker tests pass <strong>unchanged</strong>.</p>
 <h3 id="changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed">CHANGED — ADR 0094 Accepted: skill teaches <code>assess()</code>, Q1–Q3 closed<a class="headerlink" href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" title="Permanent link">&para;</a></h3>
 <p>After-solve check is <code>fem.assess()</code> / <code>results.assess(figures=True)</code> then
 <code>read_file</code> on <code>report.figures</code> — not <code>inspect</code> as the verdict, not Qt.
