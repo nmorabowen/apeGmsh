@@ -1017,6 +1017,8 @@
       
         
       
+        
+      
     
     
     
@@ -1074,6 +1076,34 @@
     
   
     Compute section properties
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/author-a-section-document/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Author a section document
   
 
     
@@ -1803,6 +1833,17 @@
     <span class="md-ellipsis">
       
         Sections you compute: the analyzer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sections-you-author-the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sections you author: the document
       
     </span>
   </a>
@@ -3455,6 +3496,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#sections-you-author-the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sections you author: the document
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3647,6 +3699,65 @@ composite without explicit reference <code>E=</code>/<code>G=</code> fails loud 
 guessing a modulus. The full recipes — the SRC composite, the disconnected
 multi-part policy, the gotchas — are in
 <a href="../../how-to/section-properties/">Compute section properties</a>.</p>
+<h2 id="sections-you-author-the-document">Sections you author: the document<a class="headerlink" href="#sections-you-author-the-document" title="Permanent link">&para;</a></h2>
+<p>The three layers above all assume the section already exists — as code you
+wrote, as primitives you declared, as a face you meshed. The fourth layer is
+about <em>building</em> it, and about the section surviving the script that built
+it.</p>
+<p>A <code>SectionDocument</code> is a versioned JSON description of one cross-section,
+and it is the source of truth: the headless API and the Qt builder GUI are
+both clients of it. It comes in the same two lanes the rest of this page
+does — a <strong>continuum</strong> document (parametric shapes, freehand polygons,
+booleans, per-region materials, mesh preferences) that builds into a
+<code>SectionProperties</code>, and a <strong>fiber</strong> document (patches, layers, points, and
+parametric RC templates) that builds into a resolved fiber recipe:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.sections</span><span class="w"> </span><span class="kn">import</span> <span class="n">SectionDocument</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">doc</span> <span class="o">=</span> <span class="n">SectionDocument</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;col500&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;fiber&quot;</span><span class="p">,</span> <span class="n">units</span><span class="o">=</span><span class="s2">&quot;N, mm&quot;</span><span class="p">)</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">doc</span><span class="o">.</span><span class="n">set_material</span><span class="p">(</span><span class="s2">&quot;conc&quot;</span><span class="p">,</span> <span class="n">uniaxial</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;Concrete01&quot;</span><span class="p">,</span> <span class="p">{</span><span class="o">...</span><span class="p">}))</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">doc</span><span class="o">.</span><span class="n">set_material</span><span class="p">(</span><span class="s2">&quot;bars&quot;</span><span class="p">,</span> <span class="n">uniaxial</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;Steel01&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;fy&quot;</span><span class="p">:</span> <span class="mf">420.0</span><span class="p">,</span> <span class="s2">&quot;E&quot;</span><span class="p">:</span> <span class="mf">200e3</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">:</span> <span class="mf">0.01</span><span class="p">}))</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">doc</span><span class="o">.</span><span class="n">add_template</span><span class="p">(</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="s2">&quot;rc_rect_column&quot;</span><span class="p">,</span> <span class="n">materials</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;concrete&quot;</span><span class="p">:</span> <span class="s2">&quot;conc&quot;</span><span class="p">,</span> <span class="s2">&quot;bars&quot;</span><span class="p">:</span> <span class="s2">&quot;bars&quot;</span><span class="p">},</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">b</span><span class="o">=</span><span class="mf">500.0</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mf">500.0</span><span class="p">,</span> <span class="n">cover</span><span class="o">=</span><span class="mf">40.0</span><span class="p">,</span> <span class="n">bars_x</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">bars_y</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">bar_area</span><span class="o">=</span><span class="mf">491.0</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="p">)</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="n">doc</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;col500.section.json&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Two properties make this more than a serialization format. First, RC finally
+has a first-class path: <code>rc_rect_column</code>, <code>rc_circ_column</code>, and <code>rc_beam</code>
+are stored <strong>as parameters</strong> and re-expanded on every build, so changing
+<code>cover</code> moves every bar rather than requiring you to re-derive coordinates —
+and <code>core_split=True</code> partitions the concrete exactly into a confined core
+and a cover shell for you to assign Mander-style materials to. Second, the
+document owns the composite-partition law: <code>add_embed(outer, inner)</code> is
+cut-then-fragment as one step, so the double-cover trap that
+<a href="../../how-to/section-properties/">Compute section properties</a> warns about
+is not expressible.</p>
+<p>The builder GUI (<code>launch_builder()</code>) is an editor for that document, with
+AutoCAD-style drafting aids for the freehand polygon tool — grid and object
+snap, ortho, typed <code>length&lt;angle</code> input. Its governing rule is the <strong>parity
+law</strong>: every GUI action is a document mutation, so a script can do anything
+the window can. What the window adds is convenience — a live properties
+panel that rebuilds off the UI thread, an apeSteel catalog picker that
+prefills a <code>W_face</code> form, and one-click moment–curvature.</p>
+<p>That last one is also a headless API:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.sections</span><span class="w"> </span><span class="kn">import</span> <span class="n">moment_curvature</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">mc</span> <span class="o">=</span> <span class="n">moment_curvature</span><span class="p">(</span><span class="n">doc</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="n">kappa_max</span><span class="o">=</span><span class="mf">8e-5</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span> <span class="n">axial</span><span class="o">=-</span><span class="mf">1500e3</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">mc</span><span class="o">.</span><span class="n">EI0</span>        <span class="c1"># initial stiffness — the exact fiber sum ΣE·A·y²</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">mc</span><span class="o">.</span><span class="n">M_max</span>      <span class="c1"># largest |M| reached, signed</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">mc</span><span class="o">.</span><span class="n">complete</span>   <span class="c1"># False when the section lost stiffness before κ max</span>
+</span></code></pre></div>
+<p>It builds the section on a two-node <code>zeroLengthSection</code> harness in-process,
+which means it <strong>wipes the global OpenSees domain</strong> and must not be called
+while a live analysis is open.</p>
+<p>The document never becomes the only route. <code>export_script()</code> writes the
+plain apeGmsh script the document is equivalent to (one-way, for reading and
+for escaping the format), and <code>handoff_snippet()</code> writes the few lines that
+put the finished section on a bridge — for a fiber document, the literal
+<code>ops.section.Fiber(...)</code> construction; for a continuum one, a
+<code>SectionDocument.open(...)</code> that lowers late, so numbers are never
+hand-copied out of a GUI. Start at
+<a href="../../how-to/author-a-section-document/">Author a section document</a>.</p>
 <hr />
 <p><em>Next: <a href="../constraints/">Constraints</a>.</em></p>
 

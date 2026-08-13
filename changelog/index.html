@@ -1015,6 +1015,8 @@
       
         
       
+        
+      
     
     
     
@@ -1072,6 +1074,34 @@
     
   
     Compute section properties
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/author-a-section-document/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Author a section document
   
 
     
@@ -3360,6 +3390,17 @@
   
     <nav class="md-nav" aria-label="Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + s.initial_stress PUSH (Phase SSI-2.D extension) · Phase SSI-2.E between-stage Domain mutators · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · higher-order line broker split (ADR 0037) · RecorderDeclaration element fan-out fix · orphan-geometry sweep unification + g.model.geometry validation API · split-sweep auto-validation (closed-world / open-world) · raw-PG channel for _user_intentional · g.model.geometry.add_arch (apex-as-vertex two-arc arch) · damping definition ops.damping / s.damping (ADR 0053, D1–D5) · Ladruno J2 plasticity materials (LadrunoJ2 / LadrunoUniaxialJ2 / LadrunoJ2Finite) · Ladruno material wrappers (LogStrain / InitDefGrad / StagedStrain / LadrunoRebarBuckling) · Ladruno live Monitor recorder (ops.recorder.Monitor + read_monitor / tail_monitor) · LadrunoBrick fail-loud on a finite-strain material under geom != &#34;finite&#34; · add_rectangle(plane=…) canonical-plane rectangles · ops.ndf for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half) · node-pair ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…) springs to a decoupled ground (ADR 0049) · g.parts.add_plane_wave_box — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a) · ASDAbsorbingBoundary3D bridge element + ops.element.absorbing_boundary (ADR 0054, AB-2) · s.activate_absorbing() staged absorbing-boundary flip (ADR 0054, AB-3) · plane-wave SSI worked example (ADR 0054, AB-4) · g.parts.add_absorbing_shell — bring-your-own-box absorbing skin (ADR 0054, AB-1b) · loads / masses fit the per-node ndf not the model envelope (mixed-ndf from_model silent-drop fix) · layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice) · absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out) · staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0) · results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state · REMOVED — deprecated standalone apeGmshViewer/ app · viewer state-contract V1 — dispatcher-always + owner-fired events + gesture_batch (ADR 0056) · ActiveObjects initial-state seed + qt-marked window tests runnable per-file · viewer state-contract V2 — AST guard test_viewer_state_contract.py (ADR 0056 INV-5) · viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard) · viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved) · viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked &#34;Load arrows&#34; scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete) · LadrunoQuad fork plane element (ops.element.LadrunoQuad, tag 33007) · LadrunoCST fork plane triangle (ops.element.LadrunoCST, tag 33008) · solution-strategy ladder + established profiles (ADR 0057 Phase A) · partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0) · fiber diagrams sit at the beam&#39;s TRUE integration stations (FiberSlab.station_natural_coord from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints) · g.constraints.kinematic_coupling now emits the fork LadrunoKinematicCoupling (RBE2, tag 33012) — BREAKING, replaces the equalDOF expansion · g.constraints.distributing_coupling (RBE3) ships — emits the fork LadrunoDistributingCoupling (tag 33011), replacing the NotImplementedError stub · degraded GP world-coordinate reconstructions are loud (WarnGaussCoordsApproximate) · diagram scalar-state consolidation — ScalarColorSupport mixin + base _scoped_results (a set_fmt now survives colormap changes on every diagram) · viewers consume the remaining recorder channels — diagrams orient from .ladruno LOCAL_AXES + plot.energy / plot.node_envelope + dim-based plot facets · static gauss contours (plot.contour(topology=&#34;gauss&#34;, averaging=&#34;averaged&#34;|&#34;discrete&#34;)) + plot.fibers dot cloud · local-axes overlay triads resolve recorder-first (parity with the diagram frames) · partitioned-deck getPID shim guards with info commands (every MPI rank built rank 0&#39;s submodel) · partitioned emit: shared-node mass / pattern load lines dedup to the node&#39;s primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass) · Ladruno recorder whole-model energy channel (ops.recorder.Ladruno(energy=True) → -G energy, emitted last) · deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead _sync_layer_grids walk removed) · declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into @register_diagram_kind; loads/reactions survive session restore + presets; reactions catalog options un-shadowed · geometry→scene resolution seam (ADR 0058 S1) — director.scene_for(geometry) + registry scene_resolver, per-geometry DEFORM pump + scoped fan-out, reference_points moves onto FEMSceneData; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW) · absorbing-boundary guide (internal_docs/guide_absorbing_boundary.md) · remote HPC job submission (apeGmsh.hpc — Cluster.submit/Job over SSH + SLURM, ADR 0060) · ops.run_remote one-call remote analysis + Job.wait (ADR 0060 sugar) · coupling control knobs — g.constraints.kinematic_coupling / distributing_coupling accept k / kr / enforce / bipenalty_dtcr / absolute (CouplingControl, neutral schema 2.12.0) · coupling-knob H5 schema completion — sr_cpl_* mirror lane on surface_coupling + dtype/parity test reconciliation (post-#630 main fix) · partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0) · staged domainChange is unconditional — pure-loading stages no longer merge into the previous MODEL_STAGE in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing) · RBE3 tributary-area weighting — distributing_coupling(weighting=&#34;area&#34;) computes per-independent areas and emits -w · RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for kinematic_coupling (was fail-loud) · docs: guide_constraints.md coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal) · per-rank Tcl deck emission — driver + ranks/rank&lt;K&gt;_&lt;seq&gt;.tcl sourced fragments (apeSees.tcl(per_rank=True), ADR 0061) · ADR 0055 ACCEPTED — compose filtered-audit (compose_inspect[&#39;filtered&#39;]) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete · partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3) · coupling host auto-scalers (k=&#34;auto&#34; / k_alpha / host / bipenalty_wcap) · concurrent geometry rendering — per-geometry visible flag (ADR 0058 S2b)">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added-section-builder-extras-catalog-picker-momentcurvature-handoff-snippet-adr-0080-b7-close-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" class="md-nav__link">
@@ -7243,6 +7284,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-builder-extras-catalog-picker-momentcurvature-handoff-snippet-adr-0080-b7-close-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11109,6 +11161,93 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-builder-extras-catalog-picker-momentcurvature-handoff-snippet-adr-0080-b7-close-out">ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)<a class="headerlink" href="#added-section-builder-extras-catalog-picker-momentcurvature-handoff-snippet-adr-0080-b7-close-out" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>moment_curvature(doc, *, axis="z", kappa_max, n_steps=40, axial=0.0,
+  tol=1e-8, max_iter=25)</code></strong> (exported from <code>apeGmsh.sections</code>) — the
+  in-process <code>zeroLengthSection</code> M–κ harness that gates G-D/G-E proved,
+  productized for <strong>fiber-lane</strong> <code>SectionDocument</code>s. Returns a frozen
+  <code>MomentCurvature</code> (<code>curvature</code> / <code>moment</code> tuples starting at <code>(0, 0)</code>,
+  <code>EI0</code>, <code>M_max</code>, <code>axial</code>, <code>complete</code>). <code>axis="z"</code> is DOF 6 (elastic slope
+  = <code>EIxx_c</code>), <code>"y"</code> is DOF 5 (<code>EIyy_c</code>); <code>kappa_max</code> is <strong>signed</strong>;
+  <code>axial</code> follows the OpenSees convention (compression negative), applied
+  first and held with <code>loadConst</code>. A step that fails to converge ends the
+  curve with <code>complete=False</code> rather than raising — a fully-plastified
+  section IS the end of its curve.</li>
+<li>The section is lowered through <strong>exactly</strong> the bridge handoff's
+  construction: <code>SectionDocument.to_section</code>'s typed-item building was
+  extracted to <code>_document.py::typed_fiber_items</code>, and both paths now call
+  it, then emit through each primitive's own <code>_emit</code> on a <code>LiveOpsEmitter</code>.
+  An M–κ curve and a deck built from one document therefore integrate the
+  same fibers with the same material tags — nothing is re-derived.</li>
+<li><strong>Two hard contracts, both documented and both deliberate</strong>: the harness
+  <code>wipe()</code>s the process-global OpenSees domain (do not call it with a live
+  analysis open), and it runs <strong>synchronously on the calling thread</strong>.
+  openseespy is a non-reentrant process-global C++ runtime, so putting it
+  on a worker would abort the interpreter below Python's reach; the ADR
+  0080 B6 properties worker is threaded only because it drives Gmsh.
+  Documents declaring no <code>GJ</code> get an inert placeholder — OpenSees refuses a
+  3-D fiber section with no torsion at all, and the harness fixes the
+  torsional DOF at both nodes, so the value provably cannot reach the
+  answer.</li>
+<li>Gate: the elastic slope equals the <strong>exact fiber sum</strong> <code>ΣE·A·r²</code> on both
+  axes (a points/layer section where the two differ by 4×, so an axis swap
+  cannot pass both), and a rect patch reproduces its own midpoint-rule
+  discretization <code>(b·h³/12)(1 − 1/ny²)</code> — not the continuum value.
+  Keystone: <code>ElasticPP</code> fibers pushed to 20·κ_y plateau at <code>fy·b·h²/4</code> in
+  <strong>both signs</strong>, and a constant axial pre-load reduces that plateau by the
+  closed-form <code>(1 − n²)</code> (<code>tests/sections/test_mc_b7.py</code>, 13 tests).</li>
+<li><strong><code>handoff_snippet(doc, *, path=None)</code></strong> — the paste-ready bridge lines
+  the builder's new <strong>Copy handoff</strong> toolbar action copies. Fiber lane:
+  literal <code>ops.uniaxialMaterial.&lt;Type&gt;</code> + <code>ops.section.Fiber(...)</code>
+  construction with template provenance comments. Continuum lane: a
+  <code>SectionDocument.open(path)</code> that lowers <strong>late</strong> —
+  <code>ComputedSection(analysis=doc.build())</code>, or <code>doc.to_section(ops)</code> when a
+  <code>bars</code> overlay exists (the elastic lowering would silently drop it), so
+  numbers are never hand-copied out of a GUI. <code>_script_export.py</code>'s fiber
+  renderers were extracted (<code>fiber_material_lines</code> /
+  <code>fiber_template_comments</code> / <code>fiber_collection_lines</code>) and are now shared,
+  so a snippet and an export cannot disagree. Gate: the snippet exec'd on
+  one bridge emits a deck <strong>byte-identical</strong> to <code>doc.to_section</code> on another
+  (<code>tests/sections/test_b7_extras.py</code>).</li>
+<li><strong>apeSteel catalog picker</strong> (<code>sections/_catalog.py</code>, fail-soft) — an
+  editable designation box in the builder's shape group that prefills the
+  <code>W_face</code> form from any AISC v16 or EN doubly-symmetric I shape.
+  Millimetres (apeSteel's base), and <code>h</code> is mapped from
+  <code>web_clear_height_hw</code> — the <strong>clear web height</strong>, not the catalog depth
+  <code>d</code>, which is the one-line error the picker exists to prevent. apeSteel
+  absent → the picker is not built at all and the builder is otherwise
+  unchanged. Label enumeration reads a private apeSteel table and is
+  <strong>best-effort by contract</strong>: if that shape ever changes, <code>catalog_labels()</code>
+  returns <code>()</code> and the box degrades to free text while resolution keeps
+  working.</li>
+<li>Parity reaches the picker: prefill-then-add writes the same document as
+  <code>add_shape("W_face", **catalog_shape_params(...))</code>, and a prefill alone
+  mutates nothing (it fills GUI fields, so it stays off the undo stack).
+  M–κ controls are fiber-lane only and grey with install guidance when no
+  backend is importable (<code>tests/sections/test_builder_gui_b7.py</code>).</li>
+<li><strong>Order of operations</strong>: <code>moment_curvature</code> resolves the <em>document</em>
+  before it imports a backend, so a material with no uniaxial spec (or an
+  unknown primitive type) reports its own problem whether or not a solver
+  is installed — those are errors the user fixes in their editor. The
+  backend <code>ImportError</code> comes second.</li>
+<li>The backend probe does not answer for a <strong>package</strong>. apeGmsh's own
+  <code>tests/opensees/</code> directory registers as a top-level <code>opensees</code> module
+  whenever pytest imports in importlib mode — the same impostor
+  <code>emitter/live.py::_resolve_ops</code> already rejects after importing it — so
+  a bare <code>find_spec("opensees")</code> claimed a backend that cannot be
+  imported. A real backend is an extension module, never a package;
+  <code>backend_available()</code> now checks that, which is what keeps the builder's
+  M–κ button honest (and the backend-gated tests skipping) inside any
+  pytest process. Those tests also carry the house <code>live</code> marker, so
+  native OpenSees stays out of the curated suite's shared process even
+  where a backend is installed.</li>
+<li>Close-out: new how-to page <strong>Author a section document</strong>, a fourth
+  "Sections you author" section in <code>concepts/sections.md</code>, the API page,
+  <code>internal_docs/guide_sections.md</code>, and skill reference §10
+  (<code>references/section-properties.md</code>) + cheatsheet entry. <strong>ADR 0080 is
+  Accepted</strong> — B1–B7 shipped as #840–#847 plus this slice.</li>
+</ul>
 <h3 id="fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1">FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)<a class="headerlink" href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" title="Permanent link">&para;</a></h3>
 <p><code>results.render</code> / <code>fem.render</code> no longer treat every exception as
 <code>[skip viewer] no GL context</code> — only <code>RuntimeError</code> / <code>OSError</code> from
