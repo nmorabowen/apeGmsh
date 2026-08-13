@@ -44,6 +44,7 @@ __all__ = [
     "ATTR_TAG_RESOLVER",
     "MISSING_FEM_ELEMENT_ID",
     "TagResolver",
+    "clear_element_emit_context",
     "current_element_nodes",
     "current_fem_element_id",
     "damp_args",
@@ -284,6 +285,29 @@ def is_stage_owned_node(emitter: object, tag: int) -> bool:
     if tags is None:
         return True
     return int(tag) in tags
+
+
+def clear_element_emit_context(emitter: object) -> None:
+    """Reset the per-element side channels (node tags + FEM element id).
+
+    Both channels are set by the bridge *per fan-out row* — but the
+    attributes are sticky, so an element minted OUTSIDE a mesh fan-out
+    (the side-list passes: interface zeroLengths, rebar bars, the
+    coupling / rigid-body / embedded-node elements) historically
+    inherited the LAST mesh row's values, persisting a wrong
+    ``fem_eid`` *and* a wrong connectivity into
+    ``/opensees/element_meta`` — which mislabels every per-pair
+    springs channel read through ``Results`` and corrupts the
+    argstack slicing (ADR 0093 S10 finding).
+
+    The H5 emitter calls this after consuming the channels at each
+    ``element(...)`` call, so the sentinel
+    (:data:`MISSING_FEM_ELEMENT_ID` + empty connectivity — the
+    ADR 0049 node-pair convention) is the default for any mint that
+    does not explicitly install its own context first.
+    """
+    setattr(emitter, ATTR_ELEMENT_NODES, None)
+    setattr(emitter, ATTR_CURRENT_FEM_ELEMENT_ID, MISSING_FEM_ELEMENT_ID)
 
 
 def set_current_fem_element_id(emitter: object, fem_eid: int) -> None:
