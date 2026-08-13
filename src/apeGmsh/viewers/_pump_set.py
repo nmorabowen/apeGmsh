@@ -115,6 +115,52 @@ def _compose_substrate_points(
     return pts
 
 
+def read_nodal_vector_field(
+    results: Any,
+    scene: Any,
+    field: str,
+    step: int,
+) -> Any:
+    """Read ``<field>_x/_y/_z`` at ``step``, aligned to ``scene.node_ids``.
+
+    Vectorized scatter (dense id lookup, same pattern as the viewer
+    deform reader). ``results`` should already be stage-scoped.
+    Returns ``(N, 3)`` or ``None`` if no axis is recorded.
+    """
+    import numpy as np
+
+    scene_ids = np.asarray(scene.node_ids, dtype=np.int64)
+    n = int(scene_ids.size)
+    if n == 0:
+        return None
+    lookup = np.full(int(scene_ids.max()) + 2, -1, dtype=np.int64)
+    lookup[scene_ids] = np.arange(n, dtype=np.int64)
+    out = np.zeros((n, 3), dtype=np.float64)
+    any_axis = False
+    for axis, suf in enumerate(("x", "y", "z")):
+        try:
+            slab = results.nodes.get(
+                ids=scene_ids,
+                component=f"{field}_{suf}",
+                time=[int(step)],
+            )
+        except Exception:
+            continue
+        if slab.values.size == 0:
+            continue
+        slab_ids = np.asarray(slab.node_ids, dtype=np.int64)
+        vals = np.asarray(slab.values[0], dtype=np.float64)
+        in_range = (slab_ids >= 0) & (slab_ids < lookup.size)
+        positions = np.full(slab_ids.shape, -1, dtype=np.int64)
+        positions[in_range] = lookup[slab_ids[in_range]]
+        valid = positions >= 0
+        if not bool(valid.any()):
+            continue
+        out[positions[valid], axis] = vals[valid]
+        any_axis = True
+    return out if any_axis else None
+
+
 def sync_render_surface_points(g_scene: Any, pts: Any = None) -> None:
     """Scatter substrate points onto the pre-extracted render surface.
 
@@ -521,4 +567,5 @@ __all__ = [
     "_compose_substrate_points",
     "_gate_visible_layer_ids",
     "_pump_failed",
+    "read_nodal_vector_field",
 ]

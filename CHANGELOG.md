@@ -38,6 +38,17 @@ skip-listed (orientation is not inversion). Unbound Results skip-list
 `MESH.*`; no-stage skip-lists `RES.NAN`. A non-finite last-step energy
 `ERR` is a finding. Energy `ValueError` on stage 0 no longer aborts the
 rest of the stages.
+### FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
+
+`results.render` / `fem.render` no longer treat every exception as
+`[skip viewer] no GL context` — only `RuntimeError` / `OSError` from
+plotter creation or screenshot. A failed still writes to a temp name
+and never unlinks a pre-existing file. Out-of-range `step=` raises
+(Python negatives still work). `view="deformed"` with no recorded
+displacement raises instead of writing an undeformed PNG. Deform
+vectors come from a shared vectorized reader in `_pump_set`. CI suite
+sets `APEGMSH_EXPECT_GL=1` so a silent VTK death fails the live-render
+test.
 
 ### ADDED — `fem.assess()` / `results.assess()` finding compiler (ADR 0094 S2)
 
