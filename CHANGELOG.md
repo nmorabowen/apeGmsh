@@ -12,6 +12,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 (Proposed): `apeGmsh.studio` agent + script + viewer habitat
+
+Sidecar `apeGmsh.studio` (same administrative shape as `hpc` / `assess`:
+not a session composite, not re-exported from `apeGmsh/__init__.py`).
+Cursor stays the IDE; a Python daemon owns refresh / last-good
+tessellation / assess / render / a names-first `SelectionEnvelope`; the
+existing Qt `ViewerWindow` is the v1 host. JSON-on-disk is the v0
+transport; MCP is a later wrap (the consumer ADR 0094 deferred). Electron
+is a skin, not the architecture. This PR is the ADR + index only (S0);
+no library yet.
+
+Amends ADR 0094 only in the disposition of “Later: optional MCP wrapping
+S5”. Assess, stills, and “agents do not drive Qt for diagnosis” stay in
+force.
+
 ### FIXED — `MESH.INVERTED` hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)
 
 The signed hex8 6-tet split copied MassResolver's connectivity, including
