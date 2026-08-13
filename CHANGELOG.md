@@ -23,6 +23,7 @@ displacement raises instead of writing an undeformed PNG. Deform
 vectors come from a shared vectorized reader in `_pump_set`. CI suite
 sets `APEGMSH_EXPECT_GL=1` so a silent VTK death fails the live-render
 test.
+
 ### FIXED — `MESH.INVERTED` hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)
 
 The signed hex8 6-tet split copied MassResolver's connectivity, including
