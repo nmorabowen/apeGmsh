@@ -16233,9 +16233,15 @@ excess, in_bounds
 <code>contact tag master slave …</code> verb (and the <code>LadrunoContact</code> handler). The
 master is always a faceted surface; the slave is a node set (NTS) or a
 faceted surface (mortar). Solver-agnostic — no OpenSees imports here.</p>
-<p><strong>Serial-only.</strong> The fork contact subsystem is not parallel (the handler's
-sendSelf/recvSelf are stubs), so contact records carry no partition
-tag-rewrite — a contact model emits/runs in a single domain.</p>
+<p><strong>Partition-aware since ADR 0092 S4</strong> (previously serial-only). Under
+partitioned (MPI) emit the whole interaction lands inside exactly ONE
+rank's block — the owner, picked master-side (INV-1) — with every
+non-native interface node ghost-declared there as <code>node</code> + replayed
+<code>fix</code> (INV-2). The record still carries no per-rank tag-rewrite
+fields: nothing is ever split across ranks, so there is nothing to
+rewrite. <code>soft=</code> / <code>edge_soft=</code> stay refused under partitioning
+(INV-3), and staged partitioned contact is refused too (see
+<code>BuiltModel._plan_partitioned_contacts</code>).</p>
 <h6 id="apeGmsh._kernel.records._constraints.ContactRecord--attributes">Attributes<a class="headerlink" href="#apeGmsh._kernel.records._constraints.ContactRecord--attributes" title="Permanent link">&para;</a></h6>
 <p>formulation
     <code>"nts"</code> (node-to-segment) or <code>"mortar"</code> (segment-to-segment ALM).
@@ -16335,7 +16341,11 @@ edge_consistent_tan, edge_soft, edge_alm, edge_aug_tol
 + <code>point</code>) with normal penalty <code>kn</code> — frictionless, no master mesh.
 Emitted as a <code>contactSurface -slave &lt;nodes&gt;</code> set + the <code>contactPlane</code>
 verb (+ the <code>LadrunoContact</code> handler). Solver-agnostic — no OpenSees
-imports here. <strong>Serial-only</strong> (the fork contact subsystem is not parallel).</p>
+imports here. <strong>Partition-aware since ADR 0092 S4</strong> (previously
+serial-only): the interaction emits inside exactly one owner rank's
+block — the plane has no master surface, so ownership is tallied from
+the SLAVE nodes — with non-native slave nodes ghost-declared there
+(INV-1/INV-2). <code>soft=</code> stays refused under partitioning (INV-3).</p>
 <h6 id="apeGmsh._kernel.records._constraints.ContactPlaneRecord--parameters">Parameters<a class="headerlink" href="#apeGmsh._kernel.records._constraints.ContactPlaneRecord--parameters" title="Permanent link">&para;</a></h6>
 <p>slave_nodes
     The slave surface node tags (the <code>contactSurface -slave</code> set).
@@ -16549,21 +16559,21 @@ records — the natural emission order for solvers.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_kernel/records/_constraints.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-675">675</a></span>
-<span class="normal"><a href="#__codelineno-0-676">676</a></span>
-<span class="normal"><a href="#__codelineno-0-677">677</a></span>
-<span class="normal"><a href="#__codelineno-0-678">678</a></span>
-<span class="normal"><a href="#__codelineno-0-679">679</a></span>
-<span class="normal"><a href="#__codelineno-0-680">680</a></span>
-<span class="normal"><a href="#__codelineno-0-681">681</a></span>
-<span class="normal"><a href="#__codelineno-0-682">682</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-675"><a id="__codelineno-0-675" name="__codelineno-0-675"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
-</span><span id="__span-0-676"><a id="__codelineno-0-676" name="__codelineno-0-676"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-677"><a id="__codelineno-0-677" name="__codelineno-0-677"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
-</span><span id="__span-0-678"><a id="__codelineno-0-678" name="__codelineno-0-678"></a>
-</span><span id="__span-0-679"><a id="__codelineno-0-679" name="__codelineno-0-679"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
-</span><span id="__span-0-680"><a id="__codelineno-0-680" name="__codelineno-0-680"></a><span class="sd">    records — the natural emission order for solvers.</span>
-</span><span id="__span-0-681"><a id="__codelineno-0-681" name="__codelineno-0-681"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-682"><a id="__codelineno-0-682" name="__codelineno-0-682"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-688">688</a></span>
+<span class="normal"><a href="#__codelineno-0-689">689</a></span>
+<span class="normal"><a href="#__codelineno-0-690">690</a></span>
+<span class="normal"><a href="#__codelineno-0-691">691</a></span>
+<span class="normal"><a href="#__codelineno-0-692">692</a></span>
+<span class="normal"><a href="#__codelineno-0-693">693</a></span>
+<span class="normal"><a href="#__codelineno-0-694">694</a></span>
+<span class="normal"><a href="#__codelineno-0-695">695</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-688"><a id="__codelineno-0-688" name="__codelineno-0-688"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
+</span><span id="__span-0-689"><a id="__codelineno-0-689" name="__codelineno-0-689"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-690"><a id="__codelineno-0-690" name="__codelineno-0-690"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
+</span><span id="__span-0-691"><a id="__codelineno-0-691" name="__codelineno-0-691"></a>
+</span><span id="__span-0-692"><a id="__codelineno-0-692" name="__codelineno-0-692"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
+</span><span id="__span-0-693"><a id="__codelineno-0-693" name="__codelineno-0-693"></a><span class="sd">    records — the natural emission order for solvers.</span>
+</span><span id="__span-0-694"><a id="__codelineno-0-694" name="__codelineno-0-694"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-695"><a id="__codelineno-0-695" name="__codelineno-0-695"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

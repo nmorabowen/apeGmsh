@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-partitioned-contact-review-fixes-displacement-driven-decks-refuse-instead-of-freeing-the-ghost-dof-and-the-cut-master-backstop-no-longer-disengages-on-a-partial-facet-map-adr-0092-review-f1f8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-staged-contact-model-no-longer-runs-with-the-contact-handler-silently-overridden-adr-0092" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7350,6 +7361,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-partitioned-contact-review-fixes-displacement-driven-decks-refuse-instead-of-freeing-the-ghost-dof-and-the-cut-master-backstop-no-longer-disengages-on-a-partial-facet-map-adr-0092-review-f1f8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-staged-contact-model-no-longer-runs-with-the-contact-handler-silently-overridden-adr-0092" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11293,6 +11315,61 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-partitioned-contact-review-fixes-displacement-driven-decks-refuse-instead-of-freeing-the-ghost-dof-and-the-cut-master-backstop-no-longer-disengages-on-a-partial-facet-map-adr-0092-review-f1f8">FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)<a class="headerlink" href="#fixed-partitioned-contact-review-fixes-displacement-driven-decks-refuse-instead-of-freeing-the-ghost-dof-and-the-cut-master-backstop-no-longer-disengages-on-a-partial-facet-map-adr-0092-review-f1f8" title="Permanent link">&para;</a></h3>
+<p>The 2026-08-13 adversarial review of the landed partitioned-contact emit
+lane (PR #927 + follow-ups #944/#945/#948) audited the refusal lattice
+and found two silent-wrong holes, both closed here, plus smaller
+diagnostic drift:</p>
+<ul>
+<li><strong>F1 (HIGH)</strong> — a pattern-borne <code>sp</code> on a contact-ghosted node was
+  neither mirrored nor refused: pattern sp lines fan out on a node's
+  NATIVE ranks only, so a displacement-driven contact deck (prescribed
+  motion on the slave surface — ordinary authoring) constrained the DOF
+  on the home rank while the owner rank's ghost copy stayed FREE — the
+  ADR 0027 INV-2 measured singular-matrix class. The contact planner now
+  runs the same plan-time sweep the interface lane already had
+  (<code>_refuse_pattern_sp_on_interface_ghosts</code>, <code>lane="contact"</code>), with a
+  contact-named error. Refusal, not mirroring — mirroring pattern sp
+  onto ghosts correctly (including under staging) is its own project,
+  and the error says so. Load-driven decks (the S5 shape) are
+  unaffected; the same model still emits serially.</li>
+<li><strong>F2 (MEDIUM)</strong> — the INV-4 cut-master + auto-sizing backstop silently
+  disengaged when the facet→element map was unresolvable, and the map
+  was all-or-nothing: ONE ambiguous facet anywhere dropped the WHOLE
+  surface to the node tally, so a genuinely cut master + <code>kn="auto"</code>
+  emitted a deck whose off-rank auto-kn facets the fork silently skips
+  (fork ADR-78 D5.2) — a silently partial interface.
+  <code>master_backing_element_ids</code> is now per-facet; the straddle check
+  runs on the resolved subset; and a partial map + a live auto knob + a
+  multi-rank master (node view, <code>master_node_rank_span</code>) refuses with a
+  named error. A cut master with a fully explicit penalty stays
+  permitted (documented).</li>
+<li><strong>F3</strong> — a backing element absent from every <code>PartitionRecord</code> now
+  warns loudly (and refuses under an auto knob, same shape as F2)
+  instead of silently degrading the exact owner pick to the node tally.</li>
+<li><strong>F4</strong> — the undecidable-tie refusal for <code>contact_plane</code> no longer
+  tells the user to disambiguate via master-element ownership (a plane
+  has no master surface and ownership is never consulted for it): the
+  plane lane names the slave tally and the fixes that actually apply.</li>
+<li><strong>F5</strong> — <code>soft_family_knobs</code> now mirrors <code>contact_args</code>' <code>edge_edge</code>
+  gate: <code>edge_soft</code> alongside <code>edge_edge=False</code> emits no <code>-edgeSoft</code>
+  token and is no longer refused under partitioning (a live <code>edge_soft</code>
+  still refuses, INV-3).</li>
+<li><strong>F6</strong> — the <code>suppress_analysis_chain_auto_emit</code> seam's
+  partitioned-only contract is documented at its producer (the
+  flat/split auto-emit sites never consult it; its sole producer
+  requires partitions, so it is unreachable on those lanes today).</li>
+<li><strong>F7</strong> — the partitioned-vs-serial tag-stream ordering difference is
+  recorded in the ADR as a known, accepted cosmetic divergence
+  (each deck is self-consistent; twins compare content).</li>
+<li><strong>F8</strong> — <code>ContactRecord</code> / <code>ContactPlaneRecord</code> docstrings no longer
+  claim "Serial-only" (false since S4).</li>
+</ul>
+<p>Full findings table + dispositions: ADR 0092 §Review-findings log.
+Tests:
+<code>tests/opensees/integration/test_contact_partitioned_review_fixes.py</code>
+(11) + per-facet / rank-span / plane-message / edge-gate units in
+<code>tests/_kernel/resolvers/</code>.</p>
 <h3 id="fixed-a-staged-contact-model-no-longer-runs-with-the-contact-handler-silently-overridden-adr-0092">FIXED — a STAGED contact model no longer runs with the contact handler silently overridden (ADR 0092)<a class="headerlink" href="#fixed-a-staged-contact-model-no-longer-runs-with-the-contact-handler-silently-overridden-adr-0092" title="Permanent link">&para;</a></h3>
 <p>The staged <strong>partitioned</strong> contact refusal (S4) names its own reason: the
 staged pipeline skips the analysis-chain auto-emit, "so the forced
