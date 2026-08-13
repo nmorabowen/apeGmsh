@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-femassess-resultsassess-finding-compiler-adr-0094-s2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — fem.assess() / results.assess() finding compiler (ADR 0094 S2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmsh-doctor-environment-preflight" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7199,6 +7210,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-femassess-resultsassess-finding-compiler-adr-0094-s2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — fem.assess() / results.assess() finding compiler (ADR 0094 S2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmsh-doctor-environment-preflight" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11015,12 +11037,20 @@
      Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
      Do NOT edit any existing line — in particular the single-line
      "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight now). CHANGELOG.md merges with the union driver
+     the highlight itself). CHANGELOG.md merges with the union driver
      (.gitattributes), which silently keeps BOTH sides of any edit to an
      existing line instead of conflicting — duplicated-header mangling is
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-femassess-resultsassess-finding-compiler-adr-0094-s2">ADDED — <code>fem.assess()</code> / <code>results.assess()</code> finding compiler (ADR 0094 S2)<a class="headerlink" href="#added-femassess-resultsassess-finding-compiler-adr-0094-s2" title="Permanent link">&para;</a></h3>
+<p>Standalone sidecar <code>apeGmsh.assess</code> (hpc-shaped: types + pure runners; not
+a session composite, not re-exported from <code>apeGmsh/__init__.py</code>) compiles a
+frozen <code>AssessmentReport</code> from the v1 catalog. Public doors are
+<code>fem.assess()</code> and <code>results.assess()</code>. Findings only — <code>figures=True</code> is
+S3 and raises. <code>model_diagonal</code> moved to numpy-only <code>results/_geometry.py</code>
+and is re-exported from <code>plot._arrows</code>. No viewers/gmsh import (INV-1 AST
+guard). <code>RES.ZERO_U</code> and <code>CAD.*</code> are not in this slice.</p>
 <h3 id="added-python-m-apegmsh-doctor-environment-preflight">ADDED — <code>python -m apeGmsh doctor</code> environment preflight<a class="headerlink" href="#added-python-m-apegmsh-doctor-environment-preflight" title="Permanent link">&para;</a></h3>
 <p>A one-shot preflight that answers "is this interpreter set up to run
 apeGmsh?" before a model does. It prints a short markdown report of
