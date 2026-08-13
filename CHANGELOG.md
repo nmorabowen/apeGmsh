@@ -12,6 +12,32 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — analysis-chain auto-emits now precede a user-declared `analysis` directive (ADR 0092 S5 open item)
+
+The bridge's auto-emitted chain components — `constraints LadrunoContact`
+(contact) / `Transformation` (MP constraints), and under partitioning the
+ADR 0027 INV-5 runtime-conditional `numberer ParallelPlain` / `system
+Mumps` — used to land AFTER a user-declared `ops.analysis.Static()` line.
+OpenSees constructs the analysis object AT the `analysis` command, and
+`constraints` / `numberer` do not retro-propagate into it (the engine
+back-propagates only `system` / `algorithm`), so the auto-emits were
+silently inert: measured in the ADR 0092 S5 harness, a contact deck
+relying on the auto-emit ran PlainHandler — the serial twin diverged and
+the 2-rank twin converged to a plausible-WRONG answer (w_top −5.714e−4
+vs the true −5.625e−3) with base reactions still balancing. All three
+emit paths (`_emit_flat`, `_emit_split`, `_emit_partitioned`) now hoist
+the auto-emits to immediately before the first user-declared `Analysis`
+primitive and skip the original post-topology site; decks with no user
+`analysis` primitive keep the original position byte-identically, and
+the `suppress_analysis_chain_auto_emit` seam (ADR 0077) is honored at
+both sites. The live (in-process) lane shares the same pass, so it is
+fixed too. Regression: deck-shape pins in
+`tests/opensees/integration/test_emit_partitioned_contact.py` + the
+numeric `*_auto_chain` twins in
+`tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py`
+(the exact pre-fix hazard decks now match the explicit-chain twin to
+≤ 1e−10).
+
 ### ADDED — partitioned (MPI) emit for `g.constraints.interface()` (ADR 0093 S8)
 
 - The S5 blanket refusal is lifted: an interface model now emits under

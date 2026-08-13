@@ -29,20 +29,28 @@ Negative controls (the comparison must be able to detect a wrong deck):
     and the run must not reproduce the serial answer (measured: Mumps
     "Matrix is Singular Numerically", ADR 0027 INV-2);
 (c) the contact verb duplicated into the second rank's block (master
-    interface ghost-declared there by the mutation) — the ADR-78 P0.d
-    double-enforcement deck. Measured: the fork's P1 hard error tears
-    down all ranks (``-kn auto`` cannot resolve the master's backing
-    solid on the non-owner), so the wrong deck fails LOUDLY instead of
-    converging to the P0.d half-penetration answer.
+    interface ghost-declared there by the mutation, the replayed verb
+    carrying an EXPLICIT kn — see ``_duplicate_verb_on_other_rank`` for
+    why the ``auto`` token would be silently inert there) — the ADR-78
+    P0.d double-enforcement class. Measured on the current fork: the
+    two would-be owners desynchronize the handler's collectives and the
+    run DEADLOCKS (handled by the tree-killing ``_run_mp_may_hang``);
+    a numeric completion or a loud teardown would equally count as
+    detected.
 
 Deck handling: everything model-side goes through the real apeGmsh API
 (no hand-patching); the harness only APPENDS a measurement fragment
 (``analyze`` + ``puts`` + ``wipe``) to each emitted deck, the same
-append-only convention as ``test_tcl_invocation.py``. The analysis chain
-(``LadrunoContact``/numberer/system/test/algorithm/integrator/analysis)
-is declared explicitly through ``ops.<family>`` — relying on the
-auto-emit instead would place the handler AFTER ``analysis Static``,
-where the Tcl engine ignores it (recorded as an open item in ADR 0092).
+append-only convention as ``test_tcl_invocation.py``. The reference
+twins declare the full analysis chain (``LadrunoContact``/numberer/
+system/test/algorithm/integrator/analysis) explicitly through
+``ops.<family>``. The formerly-hazardous auto-emit lane — relying on
+the auto-emitted handler while declaring ``analysis Static``, which
+used to place the handler AFTER the ``analysis`` line where the Tcl
+engine ignores it (the ADR 0092 S5 open item; measured: the serial
+twin diverged, the 2-rank twin converged plausible-wrong) — is now
+fixed (auto-emits hoisted before the user ``analysis`` directive) and
+pinned numerically by the ``*_auto_chain`` regression tests below.
 
 Requires (loud skip otherwise — CI has neither, so CI skips):
 
@@ -201,9 +209,9 @@ def _build_ops(fem, *, parallel_chain: bool, contact: bool = True) -> apeSees:
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as p:
         p.load(pg="top", forces=(0.0, 0.0, -2500.0))   # 4 nodes -> -1e4
-    # The FULL chain is declared through the API so `analysis Static`
-    # constructs with the contact handler in place (see module docstring
-    # + the ADR 0092 open item on auto-emit ordering).
+    # The FULL chain is declared through the API — the explicit-chain
+    # reference lane (see module docstring; the auto-emit lane is
+    # covered by the *_auto_chain regression tests).
     if contact:
         ops.constraints.LadrunoContact()
     else:
@@ -323,6 +331,68 @@ def _run_mp(deck: Path, env: "dict[str, str]") -> str:
         cwd=deck.parent, env=env,
         capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
     return r.stdout + r.stderr
+
+
+def _run_mp_may_hang(
+    deck: Path, env: "dict[str, str]", timeout_s: int = 90,
+) -> "tuple[str, bool]":
+    """``_run_mp`` for decks that may DEADLOCK (the dup-verb control:
+    two ranks both enforcing one interaction desynchronizes the fork
+    handler's collectives and the run never completes).
+
+    Windows-specific traps the plain runner cannot survive:
+    ``subprocess.run(capture_output=True)`` blocks past its timeout
+    because the orphaned rank processes inherit the pipe handles;
+    killing ``mpiexec`` alone leaves the ranks alive; and even
+    ``taskkill /T`` misses them (measured — the ``hydra_pmi_proxy``
+    layer survives the tree walk).  So: stdout to a FILE, then a
+    targeted sweep that stops every ``OpenSeesMP.exe`` whose command
+    line names THIS deck, plus each one's ``hydra_pmi_proxy`` parent.
+    Returns ``(output_text, timed_out)``."""
+    dist, mpi = _dist_bin(), _mpiexec()
+    assert dist is not None and mpi is not None
+    out_file = deck.with_suffix(".out")
+    with open(out_file, "w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            [str(mpi), "-n", "2", str(dist / "OpenSeesMP.exe"), str(deck)],
+            cwd=deck.parent, env=env,
+            stdout=fh, stderr=subprocess.STDOUT)
+        try:
+            proc.wait(timeout=timeout_s)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True)
+            _kill_ranks_running_deck(deck)
+            proc.wait(timeout=30)
+            timed_out = True
+    return out_file.read_text(encoding="utf-8", errors="replace"), timed_out
+
+
+def _kill_ranks_running_deck(deck: Path) -> None:
+    """Stop every ``OpenSeesMP.exe`` whose command line references
+    ``deck`` (match by the unique tmp-dir'd file name), then its
+    ``hydra_pmi_proxy`` parent.  Scoped to this deck so concurrent MPI
+    runs are untouched."""
+    ps = (
+        "$ranks = Get-CimInstance Win32_Process "
+        "-Filter \"Name='OpenSeesMP.exe'\" | "
+        f"Where-Object {{ $_.CommandLine -match [regex]::Escape('{deck.name}') }}; "
+        "$parents = $ranks | ForEach-Object { $_.ParentProcessId } | "
+        "Select-Object -Unique; "
+        "$ranks | ForEach-Object { "
+        "try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } "
+        "catch {} }; "
+        "foreach ($p in $parents) { "
+        "$par = Get-CimInstance Win32_Process -Filter \"ProcessId=$p\"; "
+        "if ($par -and $par.Name -eq 'hydra_pmi_proxy.exe') { "
+        "try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {} } }"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+        timeout=60,
+    )
 
 
 def _rel(a: float, b: float) -> float:
@@ -483,14 +553,35 @@ def _duplicate_verb_on_other_rank(
     extra_nodes: "dict[int, tuple[float, float, float]]",
 ) -> str:
     """ADR-78 P0.d surgery: replay the owner's contact block on the
-    other rank, ghost-declaring the master nodes it lacks."""
+    other rank, ghost-declaring the master nodes it lacks.
+
+    The replayed ``contact`` verb gets an EXPLICIT kn (the positional
+    ``auto`` token is replaced) — with ``auto`` the fork's D5.2 rule
+    silently SKIPS every facet whose backing solid is off-rank (none of
+    the master's solids live on the other rank), so the duplicate would
+    contribute nothing and the mutant would converge to the correct
+    answer.  (Before the ADR 0092 emit-order fix the duplicate happened
+    to fail loudly instead: the pre-fix deck re-constructed the handler
+    AFTER the contact verbs, so ``auto`` resolution blew up at
+    construction.  Post-fix every handler line executes at the top of
+    the deck, before any verb.)  An explicit kn re-creates the true
+    P0.d class: both ranks enforce, the answer is plausible and WRONG."""
+    def _force_explicit_kn(line: str) -> str:
+        toks = line.split()
+        if toks[0] == "contact" and "auto" in toks:
+            toks[toks.index("auto")] = "1.0e9"
+        return " ".join(toks)
+
     lines, spans = _rank_spans(text)
     lo, hi = next((s, e) for r, s, e in spans if r == owner_rank)
     contact_lines = [
-        lines[i].strip() for i in range(lo + 1, hi)
+        _force_explicit_kn(lines[i].strip())
+        for i in range(lo + 1, hi)
         if lines[i].strip().startswith(("contactSurface", "contact "))
     ]
     assert contact_lines, "owner block carries no contact lines?"
+    assert any("1.0e9" in ln for ln in contact_lines), (
+        "kn surgery was a no-op — the verb grammar moved?")
     close = next(e for r, _, e in spans if r == other_rank)
     insert = []
     for tag, (x, y, z) in sorted(extra_nodes.items()):
@@ -538,13 +629,18 @@ def test_control_duplicated_contact_verb_detected(
     mutated = _duplicate_verb_on_other_rank(
         twin["mp_deck_text"], p["rank_bottom"], p["rank_top"], master_xyz)
     deck.write_text(mutated + _mp_fragment(p), encoding="utf-8")
-    out = _run_mp(deck, twin["env"])
+    out, timed_out = _run_mp_may_hang(deck, twin["env"])
+    if timed_out:
+        # Measured on the current fork (ADR-78 P1/P2 parallel contact):
+        # two ranks each enforcing the interaction desynchronizes the
+        # handler's collectives and the run DEADLOCKS — it never
+        # produces the P0.d plausible-wrong answer. Loud, detected.
+        return
     got = _parse_mp(out)
     s = twin["serial"]
     if got is None:
-        # Measured behaviour on the current fork: the ADR-78 P1 hard
-        # error tears down all ranks ("-kn auto" cannot resolve the
-        # master's backing solid on the non-owner) — loud, detected.
+        # A loud death (e.g. a fork-side contact error tearing down the
+        # ranks) is also detection — just require it to name contact.
         assert "LadrunoContact" in out or "contact" in out.lower(), (
             f"duplicate-verb control died silently:\n{out[-2000:]}"
         )
@@ -558,3 +654,94 @@ def test_control_duplicated_contact_verb_detected(
         "this is exactly the ADR-78 P0.d silent-wrong deck the twin "
         f"comparison must catch: control={got} twin={s}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR 0092 S5 open item (fixed) — the auto-chain twins.  A deck that
+# declares ``analysis Static`` but relies on the AUTO-emitted handler
+# (and, partitioned, numberer/system) must run with an EFFECTIVE
+# LadrunoContact handler.  Pre-fix, the auto-emits landed after the
+# ``analysis`` line where the engine ignores them: measured, this exact
+# serial deck diverged and the 2-rank deck converged plausible-wrong
+# (w_top -5.714e-4 vs the true -5.625e-3) with balanced base reactions.
+# ---------------------------------------------------------------------------
+
+
+def _build_ops_auto_chain(fem, *, parallel_chain: bool) -> apeSees:
+    """The S5 hazard shape: user-declared ``analysis`` + auto-emitted
+    handler.  The serial lane keeps numberer/system explicit (the flat
+    path auto-emits only the handler); the partitioned lane omits all
+    three so the INV-5 auto-emits engage too."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e7, nu=0.0)
+    ops.element.stdBrick(pg="solid", material=mat)
+    ops.fix(pg="base", dofs=(1, 1, 1))
+    for pg in ("master", "slave", "top"):
+        ops.fix(pg=pg, dofs=(1, 1, 0))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(pg="top", forces=(0.0, 0.0, -2500.0))
+    # NO ops.constraints declaration — the handler must be auto-emitted
+    # BEFORE the user analysis directive to be effective.
+    if not parallel_chain:
+        ops.numberer.RCM()
+        ops.system.UmfPack()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    return ops
+
+
+def test_serial_auto_chain_matches_explicit_twin(twin, tmp_path: Path) -> None:
+    fem, p = twin["fem"], twin["probes"]
+    deck = tmp_path / "serial_auto_chain.tcl"
+    _build_ops_auto_chain(fem, parallel_chain=False).tcl(
+        str(deck), flat=True)
+    text = deck.read_text(encoding="utf-8")
+    assert text.index("constraints LadrunoContact") < text.index(
+        "analysis Static"), "auto handler landed after the analysis line"
+    with open(deck, "a", encoding="utf-8") as f:
+        f.write(_serial_fragment(p))
+    out = _run_serial(deck, twin["env"])
+    got = _parse_serial(out)
+    assert got is not None, (
+        f"auto-chain serial deck printed nothing:\n{out[-2000:]}")
+    assert got["ok"] == 0, (
+        f"auto-chain serial deck did not converge (the pre-fix measured "
+        f"failure mode): {got}")
+    s = twin["serial"]
+    bad = {k: _rel(got[k], s[k]) for k in ("wtop", "wslave", "wmaster", "R")
+           if _rel(got[k], s[k]) > REL_TOL}
+    assert not bad, (
+        f"auto-chain serial deck disagrees with the explicit-chain twin "
+        f"beyond {REL_TOL:.0e}: {bad}\nauto={got}\ntwin={s}")
+
+
+def test_mp_auto_chain_matches_explicit_twin(twin, tmp_path: Path) -> None:
+    fem, p = twin["fem"], twin["probes"]
+    deck = tmp_path / "mp_auto_chain.tcl"
+    _build_ops_auto_chain(fem, parallel_chain=True).tcl(str(deck))
+    text = deck.read_text(encoding="utf-8")
+    analysis_at = text.index("analysis Static")
+    for token in ("constraints LadrunoContact",
+                  "if {[catch {numberer ", "if {[catch {system "):
+        assert text.index(token) < analysis_at, (
+            f"auto-emitted {token!r} landed after the analysis line")
+    with open(deck, "a", encoding="utf-8") as f:
+        f.write(_mp_fragment(p))
+    out = _run_mp(deck, twin["env"])
+    got = _parse_mp(out)
+    assert got is not None, (
+        f"auto-chain mp deck printed nothing:\n{out[-2000:]}")
+    assert got["ok_owner"] == 0 and got["ok_slave"] == 0, (
+        f"auto-chain mp deck did not converge: {got}")
+    s = twin["serial"]
+    # w_top is the quantity the pre-fix deck got plausibly WRONG
+    # (-5.714e-4 vs -5.625e-3) while R still balanced — gate all four.
+    bad = {k: _rel(got[k], s[k]) for k in ("wtop", "wslave", "wmaster", "R")
+           if _rel(got[k], s[k]) > REL_TOL}
+    assert not bad, (
+        f"auto-chain 2-rank deck disagrees with the explicit-chain serial "
+        f"twin beyond {REL_TOL:.0e}: {bad}\nauto={got}\ntwin={s}")
