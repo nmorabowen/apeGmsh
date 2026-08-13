@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-mpi-emit-for-gconstraintsinterface-adr-0093-s8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned (MPI) emit for g.constraints.interface() (ADR 0093 S8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0092-s5-the-partitioned-contact-numeric-twin-actually-runs-serial-vs-2-rank-mpi-2e14" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7295,6 +7306,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-mpi-emit-for-gconstraintsinterface-adr-0093-s8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned (MPI) emit for g.constraints.interface() (ADR 0093 S8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0092-s5-the-partitioned-contact-numeric-twin-actually-runs-serial-vs-2-rank-mpi-2e14" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11183,6 +11205,51 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-partitioned-mpi-emit-for-gconstraintsinterface-adr-0093-s8">ADDED — partitioned (MPI) emit for <code>g.constraints.interface()</code> (ADR 0093 S8)<a class="headerlink" href="#added-partitioned-mpi-emit-for-gconstraintsinterface-adr-0093-s8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The S5 blanket refusal is lifted: an interface model now emits under
+  partitioned (MPI) emit. Each pair is an ATOMIC unit — mixed-ndf phantom +
+  nested <code>equalDOF</code> + two tributary-scaled uniaxials + one <code>zeroLength</code> —
+  landing inside <strong>exactly one</strong> rank's block: the rank owning the pair's
+  stamped backing continuum element (INV-5). Element-side ownership is the
+  point: the pair's nodes are co-located, so a cut hugging the interface
+  replicates both onto both ranks and node-tally ownership is undecidable
+  <em>by construction</em>; duplicate emission is the measured ADR 0092 failure
+  class (double stiffness, half penetration, base reactions still balance).
+  Two loud preconditions make the pick exact: the backing element must
+  appear in exactly ONE partition's element set (counted directly — never
+  the first-seen dedup), and the master node must be native to the owner.</li>
+<li>A foreign slave/beam node ghosts as <code>node</code> + the owner's replayed SP
+  stream (ADR 0027 machinery) with its <strong>home ndf</strong> explicit (a mixed-ndf
+  beam slave ghosts as <code>-ndf 3</code> under an ndf=2 envelope) — geometry + SP
+  only, never mass/elements/loads (ADR 0092 INV-7). The nested <code>equalDOF</code>
+  emits owner-only: the phantom exists on exactly one rank.</li>
+<li>Tag determinism (ADR 0027): every record's material + element tags are
+  pre-allocated in flat side-list order before the rank fan-out; the flat
+  and stage passes consume the same pre-pass (flat decks byte-identical to
+  before). Flat↔partitioned tag identity is <strong>conditional</strong> — it holds
+  when no other element-minting MP pass coexists (rigid-body / kinematic-
+  coupling / ASDEmbeddedNodeElement tags are minted inside the per-rank
+  loop; measured drift 21–24 vs 25–28 with a coexisting
+  <code>g.constraints.embedded</code>) — recorded as an INV-5 amendment and pinned by
+  a mixed-model regression. Exactly-once emission, global tag uniqueness
+  and cross-rank determinism hold unconditionally.</li>
+<li>Two refuter-driven refusals (adversarial review, same day): a
+  pattern-borne <code>sp</code> targeting a node the plan would ghost refuses at plan
+  time (pattern <code>sp</code> fans out on native ranks only and is never mirrored
+  onto a ghost — the ADR 0027 INV-2 measured singular-matrix case; use
+  <code>uncuttable_elements=</code>, <code>ops.fix</code>, or serial emit), and an UNCLAIMED
+  interface whose endpoint is a stage-bound node refuses on both the flat
+  and partitioned paths (the base pass would reference a node that only
+  exists inside the stage block; the fix is <code>s.interface(name=)</code>).
+  Stage-claimed interfaces under MPI stay refused, naming ADR 0093 S9.</li>
+<li>Tests: <code>tests/opensees/unit/test_interface_partitioned_emit.py</code> (owner
+  resolution, INV-5 violations, tag pre-pass) +
+  <code>tests/opensees/integration/test_interface_partitioned_emit.py</code> (1-vs-N
+  byte identity against the flat deck, the all-shared-cut degenerate
+  fixture, foreign-slave ghosting with ndf parity + SP replay + INV-7,
+  the new refusals, determinism).</li>
+</ul>
 <h3 id="added-adr-0092-s5-the-partitioned-contact-numeric-twin-actually-runs-serial-vs-2-rank-mpi-2e14">ADDED — ADR 0092 S5: the partitioned-contact numeric twin actually runs (serial vs 2-rank MPI, ≤ 2e−14)<a class="headerlink" href="#added-adr-0092-s5-the-partitioned-contact-numeric-twin-actually-runs-serial-vs-2-rank-mpi-2e14" title="Permanent link">&para;</a></h3>
 <p><code>tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py</code> — the
 run lane S4 still owed. One model definition (the fork ADR-78 P0 geometry
