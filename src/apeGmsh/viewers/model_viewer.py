@@ -12,7 +12,7 @@ Provides the same public API as the old ``SelectionPicker``:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import gmsh
 import numpy as np
@@ -93,6 +93,9 @@ class ModelViewer:
         Which entity dimensions to show (default: ``[0, 1, 2, 3]``).
     point_size, line_width, surface_opacity, show_surface_edges
         Visual properties forwarded to the scene builder.
+    on_selection_changed : callable, optional
+        ``callback(SelectionState)`` fired on every pick change
+        (ADR 0095 studio host). Dispatcher-legal owner mutator.
     """
 
     def __init__(
@@ -108,6 +111,7 @@ class ModelViewer:
         show_surface_edges: bool | None = None,
         origin_markers: list[tuple[float, float, float]] | None = None,
         origin_marker_show_coords: bool | None = None,
+        on_selection_changed: Callable[["SelectionState"], None] | None = None,
     ) -> None:
         from .ui.preferences_manager import PREFERENCES
         p = PREFERENCES.current
@@ -144,6 +148,9 @@ class ModelViewer:
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
         self._registry: "EntityRegistry | None" = None
+        # ADR 0095 S2: host publishes a SelectionEnvelope on pick.
+        # Dispatcher-legal (owner mutator callback); not Outline puppeteering.
+        self._on_selection_changed = on_selection_changed
 
         # Plan 04 step 4 — per-viewer ActiveObjects coordinator.
         # Constructed once a QApplication / window exists (in show()).
@@ -206,6 +213,8 @@ class ModelViewer:
         # these.
         _on_sel_changed = _cb_sel_tree = _cb_outline = _cb_parts_tree = None
         _cb_active = _cb_theme_sel = _cb_theme_tn = None
+        _cb_theme_origin = _cb_theme_measure = None
+        _studio_sel = None
 
         def _on_close():
             # Remove sel.on_changed subscribers registered by this viewer.
@@ -215,6 +224,7 @@ class ModelViewer:
                 _cb_outline,
                 _cb_parts_tree,
                 _cb_active,
+                _studio_sel,
             ):
                 if _cb is not None:
                     try:
@@ -223,7 +233,10 @@ class ModelViewer:
                         pass
             # Remove win._theme_callbacks subscribers registered by this viewer.
             # ViewerWindow has no off_theme_changed(), so we remove directly.
-            for _cb in (_cb_theme_sel, _cb_theme_tn):
+            for _cb in (
+                _cb_theme_sel, _cb_theme_tn,
+                _cb_theme_origin, _cb_theme_measure,
+            ):
                 try:
                     win._theme_callbacks.remove(_cb)
                 except ValueError:
@@ -518,6 +531,7 @@ class ModelViewer:
             # pass-through (ADR 0045 S5): with only volumes active, a
             # click on a volume's (coincident, ghosted) boundary surface
             # resolves to the volume, not the surface.
+            from .overlays.pref_helpers import filter_dim_opacity
             for dim in registry.dims:
                 in_active = dim in active_dims
                 registry.set_dim_pickable(dim, in_active)
@@ -525,11 +539,23 @@ class ModelViewer:
                 if actor is None:
                     continue
                 actor.GetProperty().SetOpacity(
-                    (self._surface_opacity if dim >= 2 else 1.0)
-                    if in_active else 0.1
+                    filter_dim_opacity(
+                        registry, dim,
+                        active=in_active,
+                        fallback=self._surface_opacity,
+                    )
                 )
             plotter.render()
             filter_tab.sync_active(active_dims)  # key→panel two-way sync
+            if not active_dims:
+                win.set_status("Dim filter: none")
+            elif set(active_dims) == set(self._dims):
+                win.set_status("Dim filter: all")
+            else:
+                win.set_status(
+                    "Dim filter: "
+                    + ", ".join(str(d) for d in sorted(active_dims))
+                )
 
         self._filter = FilterController(self._dims, on_change=_apply_filter)
         filter_tab = FilterTab(
@@ -950,25 +976,29 @@ class ModelViewer:
             plotter.render()
 
         _pref_line_width = make_line_width_cb(registry, plotter)
-        _pref_opacity = make_opacity_cb(registry, plotter)
+        _pref_opacity_inner = make_opacity_cb(registry, plotter)
+
+        def _pref_opacity(v: float):
+            # Keep the owner field in sync so scene rebuilds don't
+            # snap back to the constructor default. Then re-apply the
+            # dim filter so ghosted (inactive) dims stay ghosted —
+            # the inner callback writes every dim>=2 actor to ``v``.
+            self._surface_opacity = float(v)
+            _pref_opacity_inner(v)
+            _apply_filter(self._filter.active)
+
         _pref_edges = make_edges_cb(registry, plotter)
 
         def _pref_pick_color(hex_str: str):
             h = hex_str.lstrip("#")
             try:
-                rgb = np.array(
-                    [int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)],
-                    dtype=np.uint8,
+                rgb = (
+                    int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16),
                 )
             except ValueError:
                 return
-            color_mgr.set_pick_color(rgb)
-            color_mgr.recolor_all(
-                picks=set(sel.picks),
-                hidden=vis_mgr.hidden,
-                hover=pick_engine.hover_entity,
-            )
-            plotter.render()
+            from .ui.theme import THEME as _THEME
+            _THEME.update_current(pick_rgb=rgb)
 
         from .ui.theme import THEME
         prefs = PreferencesTab(
@@ -1004,6 +1034,9 @@ class ModelViewer:
             lambda: open_theme_editor(win.window)
         )
         prefs.widget.layout().addWidget(_btn_theme)
+        _btn_gfx = _QtW.QPushButton("Graphics colors…")
+        _btn_gfx.clicked.connect(win._open_graphics_colors)
+        prefs.widget.layout().addWidget(_btn_gfx)
         # Wrap in a scroll area so the (tall) Session panel never
         # forces a minimum size on the shared right-side tab group —
         # it scrolls instead of stretching its neighbours.
@@ -1447,6 +1480,9 @@ class ModelViewer:
             cam.SetFocalPoint(*cam_fp)
             cam.SetViewUp(*cam_up)
             cam.SetClippingRange(*cam_clip)
+            # Fresh actors come in at the live slider opacity; re-ghost
+            # whatever the pick filter currently has inactive.
+            _apply_filter(self._filter.active)
             plotter.render()
 
         parts_tree = None
@@ -1572,11 +1608,20 @@ class ModelViewer:
             win.set_status(f"{n} picked | group: {grp}")
 
         sel.on_changed.append(_on_sel_changed)
+        if self._on_selection_changed is not None:
+            def _studio_sel():
+                self._on_selection_changed(sel)
+            sel.on_changed.append(_studio_sel)
+            _studio_sel()
         # Repaint idle colors when the theme palette changes
         _cb_theme_sel = lambda _p: _on_sel_changed()
         win.on_theme_changed(_cb_theme_sel)
         _cb_theme_tn = lambda _p: tn_overlay.refresh_theme()
         win.on_theme_changed(_cb_theme_tn)
+        _cb_theme_origin = lambda _p: origin_overlay.refresh_theme()
+        win.on_theme_changed(_cb_theme_origin)
+        _cb_theme_measure = lambda _p: measure_overlay.refresh_theme()
+        win.on_theme_changed(_cb_theme_measure)
         _cb_sel_tree = lambda: sel_tree.update(sel.picks)
         sel.on_changed.append(_cb_sel_tree)
         _cb_outline = lambda: outline.update_active()
@@ -1853,13 +1898,15 @@ class ModelViewer:
         # Dim filters: 0=points, 1=curves, 2=surfaces, 3=volumes.
         # Ratified multi-select semantics (ADR 0045): a bare key TOGGLES
         # that dim in/out of the active set; 4 = all.
+        # ApplicationShortcut: VTK's QtInteractor swallows plotter
+        # add_key_event digit keys (same law as ResultsViewer Esc).
         for key, dim in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
-            plotter.add_key_event(
-                key,
-                lambda d=dim: self._filter.toggle(d),
+            win.add_shortcut(
+                key, lambda d=dim: self._filter.toggle(d), application=True,
             )
-        # 4 = all dims
-        plotter.add_key_event("4", lambda: self._filter.select_all())
+        win.add_shortcut(
+            "4", lambda: self._filter.select_all(), application=True,
+        )
 
         # Window-level (work regardless of focus / mouse position)
         win.add_shortcut("Escape", lambda: sel.clear())

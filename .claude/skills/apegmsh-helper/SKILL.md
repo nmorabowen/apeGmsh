@@ -47,7 +47,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes,
   `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
   `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
-  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`,
+  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`
+  / `apeGmsh.studio`,
   and the methods on each. **Read this first** for any non-trivial apeGmsh task
   — it saves you from guessing signatures.
 - **`references/fem-broker.md`** — deep dive on `FEMData`, the broker
@@ -236,6 +237,17 @@ This is the **happy path**. For anything more involved (multi-part assembly,
 coupled shell + frame, pushover, staged SSI, reading results back), read the
 matching reference — don't improvise.
 
+**Studio (ADR 0095).** `python -m apeGmsh.studio script.py` replays the
+script with the session held open and opens MeshViewer if the script
+generated a mesh, otherwise ModelViewer. Picks write
+`.apegmsh/selection.json` (cwd). Before a spatial edit, read that
+file — identity is `labels` / `physical_groups` / `phase`, not dimtags.
+An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.
+After solve, still `assess()` + `render()`, not `viewer()`.
+When the agent must look, write visors under `.apegmsh/visors/`
+(`results.render` / labeled matplotlib) and read those PNGs — never
+capture the OS desktop or the human Qt window.
+
 ## When things go wrong: the usual suspects
 
 1. **`RuntimeError: session is already open`** — `begin()` called twice, or a
@@ -257,14 +269,19 @@ matching reference — don't improvise.
 6. **`Results.from_native(...)` raises `TypeError`** — the constructor now
    *requires* `model=` (`from_mpco` requires `model_h5=`). See
    `references/results.md`.
-7. **Don't open Qt to check a solve.** After `get_fem_data` /
-   `Results.from_*`, print `fem.inspect.summary()`,
-   `results.inspect.summary()` / `components()` / `diagnose(...)`, and
-   `results.lineage.warnings`. Qt / web viewers are for humans who
-   asked to look. `results.viewer()` default is `blocking=None` (auto:
-   scripts block, a Jupyter kernel spawns a subprocess or falls back
-   to `show_web()` for in-memory Results). An explicit `blocking=True`
-   still kills a Jupyter kernel. See `references/results.md`.
+7. **Don't open Qt to check a solve — and don't capture the human's
+   screen.** After `get_fem_data` / `Results.from_*`, print
+   `fem.inspect.summary()`, `results.inspect.summary()` /
+   `components()` / `diagnose(...)`, and `results.lineage.warnings`.
+   Eyes go to **visors**: `results.render("…png")` (Qt-look stills,
+   ADR 0094) and labeled matplotlib (`results.plot.*`) written under
+   `.apegmsh/visors/`, then `read_file` those PNGs. Never
+   `CopyFromScreen` / OS screenshot the desktop or the live viewer.
+   Qt / web viewers are for humans who asked to look.
+   `results.viewer()` default is `blocking=None` (auto: scripts block,
+   a Jupyter kernel spawns a subprocess or falls back to `show_web()`
+   for in-memory Results). An explicit `blocking=True` still kills a
+   Jupyter kernel. See `references/results.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
@@ -290,10 +307,12 @@ signatures) lives in the references, which the file tells you to re-verify.
   0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
   `g.model.fuse`, `g.initialize`) → sub-composite forms; `apeGmshViewer` →
   `results.show_web()` / `ResultsViewer`.
-- **Two standalone modules** (separate imports, NOT session composites):
+- **Sidecar modules** (separate imports, NOT session composites):
   `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
-  `ops.run_remote`) and `from apeGmsh.sensitivity import Sensitivity` (FD
-  gradient/calibration). Details in `api-cheatsheet.md`.
+  `ops.run_remote`), `from apeGmsh.sensitivity import Sensitivity` (FD
+  gradient/calibration), `from apeGmsh.studio import SelectionEnvelope`
+  (`python -m apeGmsh.studio script.py` — live pick envelope at
+  `.apegmsh/selection.json`, ADR 0095). Details in `api-cheatsheet.md`.
 - **Schema constants** live in `fem-broker.md` (neutral + bridge zones, ADR
   0023) and the viewer session schema in `results.md` — they drift, so read the
   number from there, not from memory.

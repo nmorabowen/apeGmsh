@@ -258,6 +258,7 @@ class ViewerWindow:
         self._icon_actions: list[tuple[Any, str]] = []
         # Observers to notify on theme change (VTK content, etc.)
         self._theme_callbacks: list[Callable[[Any], None]] = []
+        self._graphics_colors_dialog: Any = None
 
         # ── Central: VTK plotter ────────────────────────────────────
         self._qt_interactor = QtInteractor(parent=self._window)
@@ -973,8 +974,29 @@ class ViewerWindow:
             open_theme_editor(self._window)
 
         editor.triggered.connect(_open_editor)
+        graphics = menu.addAction("Graphics colors…")
+        graphics.triggered.connect(
+            lambda _checked=False: self._open_graphics_colors(),
+        )
         # Keep the exclusivity group alive for the window's lifetime.
         self._theme_menu_group = group
+
+    def _open_graphics_colors(self) -> None:
+        """View → Theme → Graphics colors… (non-modal, live apply)."""
+        existing = self._graphics_colors_dialog
+        if existing is not None:
+            try:
+                dlg = existing.dialog
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    return
+            except RuntimeError:
+                self._graphics_colors_dialog = None
+        from .graphics_colors_dialog import open_graphics_colors
+        self._graphics_colors_dialog = open_graphics_colors(
+            parent=self._window,
+        )
 
     def install_camera_menu(self):
         """View → Camera submenu (presets, Fit view, Orthographic)."""
@@ -984,7 +1006,7 @@ class ViewerWindow:
         return menu
 
     def install_theme_menu(self):
-        """View → Theme submenu (palette roster + Theme editor…)."""
+        """View → Theme submenu (palette roster + Theme editor… + Graphics colors…)."""
         menu = self.add_view_menu_submenu("Theme")
         if menu is not None:
             self.populate_theme_menu(menu)
@@ -1091,7 +1113,9 @@ class ViewerWindow:
         """Add a separator to the toolbar."""
         self._toolbar.addSeparator()
 
-    def add_shortcut(self, key: str, callback) -> None:
+    def add_shortcut(
+        self, key: str, callback, *, application: bool = False,
+    ) -> None:
         """Add a window-level keyboard shortcut (works regardless of focus).
 
         Parameters
@@ -1100,10 +1124,17 @@ class ViewerWindow:
             Qt key sequence string, e.g. ``"Escape"``, ``"Q"``, ``"H"``.
         callback : callable
             Called when the key is pressed.
+        application : bool
+            If True, use ``ApplicationShortcut`` so the VTK
+            ``QtInteractor`` cannot swallow the key (the established
+            law for 0/1/2/3 dim-filter keys and Esc in ResultsViewer).
         """
         from qtpy.QtWidgets import QShortcut
         from qtpy.QtGui import QKeySequence
+        from qtpy.QtCore import Qt
         shortcut = QShortcut(QKeySequence(key), self._window)
+        if application:
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         shortcut.activated.connect(callback)
 
     def set_status(self, text: str, timeout: int = 0) -> None:

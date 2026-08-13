@@ -374,7 +374,7 @@ def test_view_menu_has_focus_mode_camera_and_theme(qapp):
     """ADR 0087 Appendix B: the results View menu carries Focus mode
     (Ctrl+H rendered in the item), a Camera submenu wired with the
     seven presets + Fit view + Orthographic, and a radio-checked Theme
-    submenu ending in Theme editor…."""
+    submenu ending in Theme editor… / Graphics colors…."""
     rs, win = _make_view_menu_stub(qapp)
     try:
         actions = rs._view_menu.actions()
@@ -400,7 +400,8 @@ def test_view_menu_has_focus_mode_camera_and_theme(qapp):
         assert len(radios) >= 10
         # Exactly one radio checked — the current theme.
         assert sum(1 for a in radios if a.isChecked()) == 1
-        assert theme_actions[-1].text() == "Theme editor…"
+        assert theme_actions[-2].text() == "Theme editor…"
+        assert theme_actions[-1].text() == "Graphics colors…"
     finally:
         win.deleteLater()
 

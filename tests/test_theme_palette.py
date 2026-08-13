@@ -169,3 +169,36 @@ def test_cad_neutral_palettes_have_black_wire_and_gray_fills():
         assert pal.dim_pt == (0, 0, 0)
         assert pal.dim_crv == (0, 0, 0)
     assert sum(dark_srf) > sum(light_srf)
+
+
+def test_update_current_live_mutates_without_touching_builtins(fresh_manager):
+    received: list[theme.Palette] = []
+    fresh_manager.subscribe(lambda p: received.append(p))
+    stock = theme.PALETTE_CATPPUCCIN_MOCHA
+    assert fresh_manager.current is stock
+
+    new = fresh_manager.update_current(pick_rgb=(0, 114, 178))
+    assert new.pick_rgb == (0, 114, 178)
+    assert new.name == stock.name
+    assert fresh_manager.current is new
+    assert theme.PALETTES["catppuccin_mocha"] is stock
+    assert received == [new]
+
+    fresh_manager.set_theme("catppuccin_mocha")
+    assert fresh_manager.current is stock
+    assert fresh_manager.current.pick_rgb == stock.pick_rgb
+
+
+def test_update_current_noop_when_unchanged(fresh_manager):
+    received: list[theme.Palette] = []
+    fresh_manager.subscribe(lambda p: received.append(p))
+    out = fresh_manager.update_current(pick_rgb=fresh_manager.current.pick_rgb)
+    assert out is fresh_manager.current or out == fresh_manager.current
+    assert received == []
+
+
+def test_every_palette_has_measure_color():
+    for pal in theme.PALETTES.values():
+        if pal.name in theme._BUILTIN_THEME_IDS:
+            assert pal.measure_color.startswith("#")
+            assert len(pal.measure_color) == 7

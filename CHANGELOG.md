@@ -12,6 +12,70 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — skill: agent eyes are visors, not the OS desktop
+
+After a solve the agent looks at `.apegmsh/visors/` stills
+(`results.render` / labeled `results.plot`), not a screenshot of the
+human's monitors or the live Qt window (ADR 0094).
+
+### FIXED — studio replay sets an absolute ``__file__``
+
+``run_until`` ``chdir``s into the script directory, then exec'd with a
+relative ``__file__``. ``Path(__file__).resolve()`` then doubled the
+folder (``.apegmsh/.apegmsh/...``). The replayed path is now resolved
+before exec.
+
+### ADDED — studio opens MeshViewer when the replayed script has a mesh
+
+`python -m apeGmsh.studio` gates the host on live Gmsh elements (INV-8):
+MeshViewer if the script called `generate()`, otherwise ModelViewer.
+Picks still write the names-first envelope (`phase="mesh"` or `"model"`).
+`MeshViewer` accepts `on_selection_changed` the same way `ModelViewer` does.
+
+### ADDED — ADR 0095 Part 6 / INV-9: host projects the script, does not own it
+
+Studio may show a read-only text view of the replayed `.py` (syntax +
+optional name colors matching the viewport) and a later PG→apeSees
+binding graph. Click highlights; the host does not write the file.
+Cursor remains the author. Live refresh and these projections stay
+in the Later slice.
+
+### FIXED — dim-filter toggles reset Display-panel surface opacity
+
+The 0/1/2/3 pick-filter rewrote actor opacity from the constructor
+default (0.35) instead of the live Display slider. Inactive dims still
+ghost to 0.1; turning a dim back on restores the slider value stored on
+the registry. The slider re-applies the filter so ghosted dims stay
+ghosted.
+
+### ADDED — View → Theme → Graphics colors… (live, non-modal)
+
+Non-modal Tool window for viewport roles (hover / pick / idle / origin /
+measure). Edits apply immediately via ``THEME.update_current`` so they
+can be tried while hovering and picking. Includes an Okabe–Ito
+(protanopia) preset: yellow hover, blue pick, sky-blue overlays.
+Session-only until Save as theme. Measure probe now reads
+``Palette.measure_color`` instead of hardcoded yellow.
+
+### FIXED — dim-filter keys 0/1/2/3/4 swallowed by VTK QtInteractor
+
+`0`/`1`/`2`/`3` (toggle point/curve/surface/volume) and `4` (all) were
+bound with `plotter.add_key_event`. The Qt interactor never delivered
+those digit keys, so the Help → Shortcuts contract was a no-op. They
+are now `QShortcut` with `ApplicationShortcut` — the same law as
+ResultsViewer Esc — on the model, mesh, and results viewers. Status bar
+reports the active dim set.
+
+### ADDED — ADR 0095 S1+S2: `python -m apeGmsh.studio` + names-first pick envelope
+
+Basic working studio habitat to test ADR 0095. `SelectionEnvelope` projects
+`SelectionState` to JSON whose identity is labels / physical groups / phase
+(not dimtags). `python -m apeGmsh.studio script.py` replays the script with
+the session held open, opens the Qt model viewer, and writes
+`.apegmsh/selection.json` on pick. Failed replay keeps the last good frame
+(INV-4, unit-tested on the runner). Sidecar: not a composite, not re-exported.
+No Electron, no MCP, no statement-step.
+
 ### ADDED — ADR 0095 (Proposed): `apeGmsh.studio` agent + script + viewer habitat
 
 Sidecar `apeGmsh.studio` (same administrative shape as `hpc` / `assess`:

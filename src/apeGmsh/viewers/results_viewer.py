@@ -2530,13 +2530,24 @@ class ResultsViewer:
             _dim_vals, on_change=_apply_results_filter
         )
         if _dim_vals:
+            # ApplicationShortcut: VTK's QtInteractor swallows
+            # plotter.add_key_event digit keys (same law as Esc below).
+            from qtpy.QtWidgets import QShortcut
+            from qtpy.QtGui import QKeySequence
+            from qtpy.QtCore import Qt
+            _dim_scs = []
             for _k, _d in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
-                plotter.add_key_event(
-                    _k, lambda dd=_d: self._results_filter.toggle(dd)
+                sc = QShortcut(QKeySequence(_k), win.window)
+                sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                sc.activated.connect(
+                    lambda dd=_d: self._results_filter.toggle(dd)
                 )
-            plotter.add_key_event(
-                "4", lambda: self._results_filter.select_all()
-            )
+                _dim_scs.append(sc)
+            sc4 = QShortcut(QKeySequence("4"), win.window)
+            sc4.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            sc4.activated.connect(self._results_filter.select_all)
+            _dim_scs.append(sc4)
+            self._dim_filter_shortcuts = _dim_scs
 
         # ── Stage activation filter (ADR 0055 viewer-consume V1) ────
         # When the Composed file carries a staged-analysis program

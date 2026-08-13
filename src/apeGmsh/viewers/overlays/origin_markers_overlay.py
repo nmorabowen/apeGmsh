@@ -78,6 +78,10 @@ class OriginMarkerOverlay:
         self.show_coords = bool(show)
         self._rebuild()
 
+    def refresh_theme(self) -> None:
+        """Rebuild glyphs so they pick up the active palette colour."""
+        self._rebuild()
+
     def set_size(self, size: float) -> None:
         self.size = float(size)
         self._rebuild()
