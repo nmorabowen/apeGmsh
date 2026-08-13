@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0092-s6-the-partitioned-contact-read-back-and-the-cross-library-filename-contract-nobody-had-executed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7328,6 +7339,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0092-s6-the-partitioned-contact-read-back-and-the-cross-library-filename-contract-nobody-had-executed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11249,6 +11271,46 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0092-s6-the-partitioned-contact-read-back-and-the-cross-library-filename-contract-nobody-had-executed">ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed<a class="headerlink" href="#added-adr-0092-s6-the-partitioned-contact-read-back-and-the-cross-library-filename-contract-nobody-had-executed" title="Permanent link">&para;</a></h3>
+<p><code>tests/opensees/subprocess/test_contact_partitioned_results_stitch.py</code> —
+the S5 model recorded (<code>ops.recorder.Ladruno</code>, unfiltered) and read back
+through <code>Results</code>. INV-6 predicted "work reduces to a regression test";
+writing it found the contract rests on three things, only one pinned:</p>
+<ul>
+<li><strong>The <code>.part-&lt;K&gt;</code> filename is a cross-library contract, and each side
+  had only tested its own half.</strong> apeGmsh emits the recorder line ONCE,
+  globally, with the filename verbatim — there is no <code>part-</code> anywhere in
+  <code>src/</code> outside the two <em>reader</em> modules. The suffix that
+  <code>discover_partition_files</code> matches is written by the FORK
+  (<code>SRC/recorder/LadrunoRecorder.cpp</code>, gated on <code>send_self_count</code> or an
+  MPI launcher's <code>PMI_*</code>/<code>OMPI_*</code>/<code>SLURM_NTASKS</code>). If the fork's
+  spelling drifted, every partitioned read would silently return ONE
+  rank's slice — a wrong answer shaped like a small model. Now asserted
+  against real 2-rank output.</li>
+<li><strong>The node stitch dedupes first-write-wins, and the contact ghost is
+  that duplicate.</strong> Measured: rank 0 recorded <strong>12</strong> nodes for the 8 it
+  owns — the 4 extra are exactly the slave-face ghosts — while rank 1
+  recorded its 8. <code>_merge_node_slabs</code> keeps the first copy and drops the
+  rest <em>without comparing them</em>, so the stitch is correct only because
+  ghost == native; the suite asserts that equality survives to the
+  recorder (not just the solver, where ADR-78 P0/S5 measured it) and
+  pins the stitched answer against the serial twin: 16 unique node ids,
+  no NaN, max relative Δ <strong>1.997e−14</strong> (gate 1e−10).</li>
+<li><strong>The element stitch does NOT dedupe</strong> — <code>_concat_element_slabs</code>
+  concatenates, assuming rank-disjoint elements, so an INV-7 violation
+  (a ghost carrying elements) would double-count in every partitioned
+  read with no error. Pinned: rank 0 {2}, rank 1 {3}, empty
+  intersection, union == the serial element set.</li>
+</ul>
+<p>Plus INV-6 proper on real contact output rather than a synthesized
+manifest (strip <code>ON_ELEMENTS</code> from one rank → the stitch still answers;
+from both → loud). The decks deliberately declare no constraint
+handler, riding the auto-emit, so the suite is also a live consumer of
+the S5 open-item fix below. Recorded in ADR 0092 for whoever extends
+this: <code>_per_partition</code>'s missing-rank tolerance does not wrap
+<code>read_layers</code>/<code>read_springs</code> (harmless only while both are
+always-empty stubs), and <code>opensees_model()</code> reads partition 0 only.
+Gated <code>subprocess</code> + <code>slow</code> with loud env skips, so CI skips it.</p>
 <h3 id="fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093">FIXED — <code>split="parts"</code> silently dropped <code>g.constraints.interface()</code> (ADR 0093)<a class="headerlink" href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" title="Permanent link">&para;</a></h3>
 <p><code>BuiltModel._emit_split</code> ran every other additive side-list pass
 (<code>emit_mp_constraints</code>, <code>emit_reinforce_ties</code>, <code>emit_embed_ties</code>,
