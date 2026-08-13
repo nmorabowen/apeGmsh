@@ -288,6 +288,34 @@ axes from the master face geometry, per-pair tributary-scaled materials.
   N-rank decks are byte-comparable. `uncuttable_elements=`
   (`mesh/_mesh_partitioning.py:289`) remains an optional optimization to
   reduce ghosting — never a correctness requirement.
+
+  *Amended during S8 (adversarial review).* Two scope corrections from
+  the shipped implementation:
+
+  1. **"Byte-comparable" is conditional as a flat↔partitioned claim.**
+     The interface pre-pass runs right after `allocate_element_tags`,
+     but the MP passes that also mint elements (rigid-body /
+     kinematic-coupling / ASDEmbeddedNodeElement) allocate **inside the
+     per-rank loop**, while the flat path allocates them *before*
+     `emit_interfaces` — so a model combining interfaces with an
+     element-minting MP record has interface tags that drift between
+     the flat and partitioned decks (measured: zeroLength 21-24
+     partitioned vs 25-28 flat with a coexisting
+     `g.constraints.embedded`). Cross-rank determinism, exactly-once
+     emission and global tag uniqueness hold unconditionally; full flat
+     identity for combined models would require pre-allocating the MP
+     element tags too — a named follow-up, not S8. Pinned by the
+     mixed-model regression in
+     `tests/opensees/integration/test_interface_partitioned_emit.py`.
+  2. **A pattern-borne `sp` on a ghosted slave is refused at plan
+     time.** The ghost replay stream carries the model-level `fix` tier
+     only; pattern `sp` lines fan out on a node's native ranks and are
+     never mirrored onto a ghost, so a prescribed displacement on a
+     ghosted interface slave would leave the owner rank's copy
+     unconstrained — the ADR 0027 INV-2 measured singular-matrix case.
+     Folding pattern `sp` into the ghost stream is a named follow-up;
+     until then the emit refuses loudly, advising
+     `uncuttable_elements=`, `ops.fix`, or serial emit.
 - **INV-6 — staged: claimable by name, emitted on the equilibrated ground.**
   `g.constraints.interface(..., name="RockLinerInterface")` +
   `s.interface(name="RockLinerInterface")` inside a stage claims the records
@@ -340,7 +368,8 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    carries a strain): `E ∝ A_trib` with `epsyP` constant across pairs for
    `epp`, `|Fy| ∝ A_trib` for `epp_gap`, `E ∝ A_trib` for `ent`; ordering
    phantom → equalDOF → materials → zeroLength; temporary named partitioned
-   refusal until S8. *(mid / top)*
+   refusal until S8 (*that refusal is lifted — S8 shipped 2026-08-12*).
+   *(mid / top)*
 6. **S6 — h5 round-trip + compose**: payload dtype
    (`mesh/_record_h5.py`, pattern `contact_payload_dtype:447`),
    encode/write/read/decode registered in `write_neutral_zone` and the read
@@ -368,6 +397,20 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    side-list emit in the codebase, not a port of an existing one. *(**top** implements / two independent mid-tier refuters —
    the ADR 0092 lesson: the duplicate-emission failure converges to a
    plausible wrong answer that equilibrium checks cannot catch)*
+
+   *Landed 2026-08-12; survived both refuters (no correctness
+   refutation; the suite mutation-tested — forced every-rank emission
+   fails 4/8 integration gates).* Shape: `_plan_rank_interfaces` +
+   `allocate_interface_tags` (`build.py`), `_emit_interfaces_partitioned`
+   at step 7c-bis of the per-rank loop (`apesees.py`), the shared
+   `_emit_interface_record` core consuming pre-allocated tag triples on
+   every path (flat decks verified byte-identical to pre-S8). Refuter
+   fixes folded in: the flat↔partitioned tag-identity conditional and
+   the pattern-`sp`-on-ghost refusal (both recorded as the INV-5 S8
+   amendment above), plus a shared flat/partitioned guard refusing an
+   UNCLAIMED interface whose endpoint is a stage-bound node (the base
+   pass would reference a node that only exists inside the stage block;
+   the fix is the S7 claim, `s.interface(name=)`).
 9. **S9 — partitioned + staged combo** (the campaign scenario): interface
    claimed into a stage under MPI; extends `_emit_stages_partitioned`
    (`apesees.py:2771`); ghost SP replay across the stage boundary. *(top /

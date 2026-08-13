@@ -12,7 +12,10 @@ answer:
   handler the mixed case must now get — its phantom-bridge ``equalDOF``
   is a real ``MP_Constraint`` that a Plain-style handler would leave
   unenforced under contact;
-* the temporary partitioned refusal, which holds until ADR 0093 S8;
+* the partitioned path, which since ADR 0093 S8 emits each pair's
+  atomic unit inside its owner rank's block (the deep gates live in
+  ``test_interface_partitioned_emit.py``; here only the lifted refusal
+  is pinned);
 * **ADR 0093 S7** — the staged liner-install: ``s.interface(name=)``
   moves the whole per-pair unit into the stage that activates the liner,
   on the ground the first stage equilibrated.
@@ -221,24 +224,23 @@ def test_declared_phantom_against_a_two_dof_slave_fails_loud(tmp_path):
 
 
 # ======================================================================
-# Partitioned refusal (temporary — ADR 0093 S8)
+# Partitioned emit (ADR 0093 S8 — the S5 refusal is LIFTED)
 # ======================================================================
-def test_partitioned_emit_refuses_interfaces(tmp_path):
+def test_partitioned_emit_no_longer_refuses_interfaces(tmp_path):
+    # S5's blanket refusal is gone: a partitioned interface model emits,
+    # and every zeroLength lands in the deck exactly once. The full S8
+    # gates (single owner block, ghost ndf parity, 1-vs-N byte
+    # identity) live in test_interface_partitioned_emit.py.
     fem = _fem(partition=2, n=4)
     assert len(fem.partitions) == 2
     assert fem.elements.interfaces
     ops = _quad_ops(fem, "rock", "liner")
-    with pytest.raises(BridgeError) as exc:
-        ops.tcl(str(tmp_path / "deck.tcl"))
-    assert str(exc.value) == (
-        "apeSees: g.constraints.interface() oriented coincident-pair "
-        "zeroLength interfaces are not yet supported under partitioned "
-        "(MPI) emit — the per-rank interface plan (element-side ownership, "
-        "ghost declarations with explicit ndf parity, up-front tag "
-        "allocation) is ADR 0093 S8. Emit the interface model "
-        "single-process (non-partitioned), or remove the interface for the "
-        "partitioned run."
-    )
+    path = tmp_path / "deck.tcl"
+    ops.tcl(str(path))
+    lines = [ln.strip() for ln in path.read_text().splitlines()]
+    assert len([ln for ln in lines
+                if ln.startswith("element zeroLength ")]) == len(
+        fem.elements.interfaces)
 
 
 # ======================================================================

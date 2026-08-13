@@ -12,6 +12,50 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — partitioned (MPI) emit for `g.constraints.interface()` (ADR 0093 S8)
+
+- The S5 blanket refusal is lifted: an interface model now emits under
+  partitioned (MPI) emit. Each pair is an ATOMIC unit — mixed-ndf phantom +
+  nested `equalDOF` + two tributary-scaled uniaxials + one `zeroLength` —
+  landing inside **exactly one** rank's block: the rank owning the pair's
+  stamped backing continuum element (INV-5). Element-side ownership is the
+  point: the pair's nodes are co-located, so a cut hugging the interface
+  replicates both onto both ranks and node-tally ownership is undecidable
+  *by construction*; duplicate emission is the measured ADR 0092 failure
+  class (double stiffness, half penetration, base reactions still balance).
+  Two loud preconditions make the pick exact: the backing element must
+  appear in exactly ONE partition's element set (counted directly — never
+  the first-seen dedup), and the master node must be native to the owner.
+- A foreign slave/beam node ghosts as `node` + the owner's replayed SP
+  stream (ADR 0027 machinery) with its **home ndf** explicit (a mixed-ndf
+  beam slave ghosts as `-ndf 3` under an ndf=2 envelope) — geometry + SP
+  only, never mass/elements/loads (ADR 0092 INV-7). The nested `equalDOF`
+  emits owner-only: the phantom exists on exactly one rank.
+- Tag determinism (ADR 0027): every record's material + element tags are
+  pre-allocated in flat side-list order before the rank fan-out; the flat
+  and stage passes consume the same pre-pass (flat decks byte-identical to
+  before). Flat↔partitioned tag identity is **conditional** — it holds
+  when no other element-minting MP pass coexists (rigid-body / kinematic-
+  coupling / ASDEmbeddedNodeElement tags are minted inside the per-rank
+  loop; measured drift 21–24 vs 25–28 with a coexisting
+  `g.constraints.embedded`) — recorded as an INV-5 amendment and pinned by
+  a mixed-model regression. Exactly-once emission, global tag uniqueness
+  and cross-rank determinism hold unconditionally.
+- Two refuter-driven refusals (adversarial review, same day): a
+  pattern-borne `sp` targeting a node the plan would ghost refuses at plan
+  time (pattern `sp` fans out on native ranks only and is never mirrored
+  onto a ghost — the ADR 0027 INV-2 measured singular-matrix case; use
+  `uncuttable_elements=`, `ops.fix`, or serial emit), and an UNCLAIMED
+  interface whose endpoint is a stage-bound node refuses on both the flat
+  and partitioned paths (the base pass would reference a node that only
+  exists inside the stage block; the fix is `s.interface(name=)`).
+  Stage-claimed interfaces under MPI stay refused, naming ADR 0093 S9.
+- Tests: `tests/opensees/unit/test_interface_partitioned_emit.py` (owner
+  resolution, INV-5 violations, tag pre-pass) +
+  `tests/opensees/integration/test_interface_partitioned_emit.py` (1-vs-N
+  byte identity against the flat deck, the all-shared-cut degenerate
+  fixture, foreign-slave ghosting with ndf parity + SP replay + INV-7,
+  the new refusals, determinism).
 ### ADDED — ADR 0092 S5: the partitioned-contact numeric twin actually runs (serial vs 2-rank MPI, ≤ 2e−14)
 
 `tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py` — the
