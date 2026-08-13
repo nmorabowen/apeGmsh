@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -370,6 +371,43 @@ def _run_mp_may_hang(
     return out_file.read_text(encoding="utf-8", errors="replace"), timed_out
 
 
+def _powershell() -> str:
+    """Absolute path to PowerShell.
+
+    Resolved absolutely and never as a bare ``"powershell"`` PATH
+    lookup.  This sweep is the ONLY thing that reaps the dup-verb
+    control's deliberately deadlocked ranks (per the docstring below,
+    ``taskkill /T`` provably misses them through ``hydra_pmi_proxy``),
+    so a launcher that cannot start does not merely fail one test — it
+    leaves live ``OpenSeesMP.exe`` ranks holding MPI runtime state, and
+    every later MPI test in the session inherits them.  That is exactly
+    how one missing PATH entry turns into "8-17 numeric-twin tests
+    error, count varies run to run" (measured during ADR 0093 S10:
+    ``FileNotFoundError [WinError 2]`` here, followed by mass fixture
+    errors downstream).
+    """
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    candidates = [
+        Path(root) / "System32" / "WindowsPowerShell" / "v1.0"
+        / "powershell.exe",
+        Path(root) / "SysWOW64" / "WindowsPowerShell" / "v1.0"
+        / "powershell.exe",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    for name in ("powershell", "pwsh"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise AssertionError(
+        "cannot locate powershell.exe to reap the deadlocked MPI ranks "
+        f"(looked at {[str(c) for c in candidates]} and on PATH). Leaving "
+        "them alive would poison every later MPI test in this session, so "
+        "this fails here rather than downstream."
+    )
+
+
 def _kill_ranks_running_deck(deck: Path) -> None:
     """Stop every ``OpenSeesMP.exe`` whose command line references
     ``deck`` (match by the unique tmp-dir'd file name), then its
@@ -390,7 +428,7 @@ def _kill_ranks_running_deck(deck: Path) -> None:
         "try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {} } }"
     )
     subprocess.run(
-        ["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+        [_powershell(), "-NoProfile", "-Command", ps], capture_output=True,
         timeout=60,
     )
 
@@ -745,3 +783,29 @@ def test_mp_auto_chain_matches_explicit_twin(twin, tmp_path: Path) -> None:
     assert not bad, (
         f"auto-chain 2-rank deck disagrees with the explicit-chain serial "
         f"twin beyond {REL_TOL:.0e}: {bad}\nauto={got}\ntwin={s}")
+
+
+# ---------------------------------------------------------------------------
+# Harness guard — the reaper must not depend on PATH
+# ---------------------------------------------------------------------------
+
+
+def test_powershell_resolves_without_path(monkeypatch) -> None:
+    """The rank reaper resolves PowerShell absolutely, not via PATH.
+
+    ``_kill_ranks_running_deck`` is the only thing that stops the
+    dup-verb control's deliberately deadlocked ranks — ``taskkill /T``
+    provably misses them through ``hydra_pmi_proxy``.  So if its
+    launcher cannot start, the ranks survive the test that spawned
+    them, keep holding MPI runtime state, and every later MPI test in
+    the session errors instead: measured during ADR 0093 S10 as
+    ``FileNotFoundError [WinError 2]`` here followed by 8-17 numeric-
+    twin tests erroring, the count varying only with how many twin
+    modules were still to run.  A bare ``"powershell"`` argv[0] made
+    one missing PATH entry a session-wide poisoning; pin that it is
+    resolved from ``%SystemRoot%`` instead.
+    """
+    monkeypatch.setenv("PATH", "")
+    resolved = _powershell()
+    assert Path(resolved).is_file()
+    assert Path(resolved).is_absolute()
