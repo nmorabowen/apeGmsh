@@ -546,6 +546,32 @@ by a single rank with the whole interface visible to it.
    target). What contact changes is not *what* is recorded but *who*
    records it — which is the ownership contract itself.
 
+## Review-findings log — 2026-08-13 post-lane adversarial review
+
+A second adversarial review ran over the landed lane (PR #927 +
+follow-ups #944/#945/#948, verified against `main` tip `d67bc9ee`) and
+audited the refusal lattice rather than the numerics. Eight findings;
+dispositions below. All fixes are refusal/diagnostic-lattice work — no
+emit output changes on any previously-permitted model.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| F1 | HIGH | A pattern-borne `sp` on a contact-ghosted node was neither mirrored nor refused: `_plan_partitioned_contacts` did no pattern sweep, the ghost replay carries the `fix` tier only, and pattern sp fans out on NATIVE ranks (`_emit_one_pattern_partitioned` filters on `owned_nodes`). A displacement-driven contact deck (pattern sp on the slave surface — ordinary authoring) left the owner rank's ghost DOF FREE — the exact constrained-DOF disagreement the INTERFACE lane already refuses (`_refuse_pattern_sp_on_interface_ghosts`, ADR 0027 INV-2's measured "Matrix is Singular Numerically"). | **FIXED.** The contact planner unions its planned ghost ids and runs the SAME sweep (`lane="contact"` — the machinery is record-shape-agnostic; only the error's header/invariant naming differs). Refusal, not mirroring: mirroring pattern sp onto ghosts correctly (including under staging) is its own project, and the error says so. |
+| F2 | MEDIUM | The INV-4 cut-master + auto backstop silently disengaged when the facet→element map was unresolvable — and the map was all-or-nothing: ONE ambiguous facet returned `None` for the WHOLE surface (`master_backing_element_ids`), skipping the backstop and falling back to the node tally (which only refuses the all-shared tie). Cut master + `kn="auto"` + one ambiguous facet ⇒ off-rank auto-kn facets silently D5.2-skipped. | **FIXED.** The resolver returns per-facet results (`tuple[int \| None, ...]`); the straddle check runs on the RESOLVED subset; and an unresolvable facet + an active auto knob + a master whose nodes span >1 rank (node view, `master_node_rank_span`) REFUSES with a named error. Explicit-kn cut masters stay permitted (documented — nothing else in the narrow phase reads elements). |
+| F3 | MED-LOW | An `element_owner.get()` miss (backing element absent from every `PartitionRecord`) silently degraded the exact owner pick to the node tally. | **FIXED.** Loud `UserWarning` always; folded into the F2 refusal shape when an auto knob is active (+ multi-rank master span). |
+| F4 | LOW | The undecidable-tie refusal told a `ContactPlaneRecord` user to "disambiguate with element ownership" — a plane has no master surface and ownership is never consulted for it. | **FIXED.** The plane lane has its own accurate message (slave-tallied; don't cut the slave surface / assign the slave region explicitly). Master-lane message unchanged. |
+| F5 | LOW | `soft_family_knobs` ignored the `edge_edge` gate while `contact_args` drops ALL edge knobs when `edge_edge=False` — a record with `edge_soft` + `edge_edge=False` (reachable at record level via H5/compose; the authoring layer refuses the combination) was refused under partitioning despite emitting no `-edgeSoft` serially. | **FIXED.** The predicate mirrors the builder: `edge_soft` counts only when `edge_edge` is truthy. Live `edge_soft` (edge_edge=True) still refuses (INV-3). |
+| F6 | INFO | `suppress_analysis_chain_auto_emit` is honored only on the partitioned path; the flat/split auto-emit sites never consult it. Unreachable today — the sole producer (`modal_deck` arpack) requires partitions. | **DOCUMENTED** (the smallest-possible option, per the finding): the partitioned-only contract is stated at the flag's producer, with the instruction that a future flat-reachable producer must wire the flat/split sites first. No refactor. |
+| F7 | INFO | Tag-stream ordering differs between the partitioned deck and its serial twin (self-consistent within each deck; the twins compare content, not tag identity, on the affected streams). | **ACCEPTED** as a known, cosmetic divergence. The determinism contract is per-lane: 1-rank and N-rank partitioned decks stay tag-identical (ADR 0027 tag determinism); serial-vs-partitioned comparisons are content-based (the S3/S4 measured node-set order note is the same class). Not scheduled. |
+| F8 | INFO | `ContactRecord` / `ContactPlaneRecord` docstrings still said "Serial-only" — false since S4. | **FIXED.** Both docstrings (and the `tag_rewrite_spec` comments) now state the S4 partition contract: whole interaction inside one owner rank's block, no per-rank rewrite fields because nothing is ever split. |
+
+Tests: `tests/opensees/integration/test_contact_partitioned_review_fixes.py`
+(F1 refusal + serial escape + load-driven control; F2 refusal /
+explicit-kn permission / uncut control; F3 warn + refuse; F5 dormant vs
+live edge_soft) + per-facet / span / plane-message / edge-gate units in
+`tests/_kernel/resolvers/test_contact_ownership.py` and
+`test_contact_soft_knobs.py`.
+
 ## Consequences
 
 - Contact models stop being capped by one node's RAM. That is the whole

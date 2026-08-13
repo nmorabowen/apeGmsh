@@ -2623,10 +2623,12 @@ class BuiltModel:
 
         # ADR 0092 S4 (INV-1): resolve each contact interaction's owner
         # rank + ghost node set ONCE, before any emission — every named
-        # refusal (undecidable owner, cut master under auto-sizing,
-        # staged deck) fires here, so a refused model emits nothing.
+        # refusal (undecidable owner, cut/partially-resolved master under
+        # auto-sizing, pattern-sp on a contact ghost, staged deck) fires
+        # here, so a refused model emits nothing.
         contact_plan_by_rank = self._plan_partitioned_contacts(
             partitions, element_owner, staged=staged,
+            inferred_ndf=inferred_ndf, post_element=post_element,
         )
 
         # ADR 0093 S8 (INV-5): resolve each interface record's owner
@@ -4897,6 +4899,8 @@ class BuiltModel:
         element_owner: "SortedIntToInt",
         *,
         staged: bool,
+        inferred_ndf: "dict[int, int]",
+        post_element: "list[Primitive]",
     ) -> "dict[int, list[tuple[str, Any, tuple[int, ...]]]]":
         """Resolve owner rank + ghost set for every contact interaction
         (ADR 0092 S4, INV-1/INV-2), or refuse with a NAMED error (INV-5).
@@ -4926,6 +4930,25 @@ class BuiltModel:
           ``"auto"``: the fork resolves the owning solid of each master
           segment on the emitting rank, so off-rank backing silently
           skips those facets' auto penalty (INV-4 / fork ADR-78 D5.2);
+        * **partially-resolvable backing under auto-sizing** (2026-08-13
+          review, F2/F3) — some facet's backing solid cannot be
+          identified (ambiguous facet → element resolution, or the
+          element is absent from every ``PartitionRecord``) while an
+          auto knob is active AND the master's nodes span several ranks
+          in the node view: the unresolved facets could hide exactly the
+          off-rank backing the previous refusal exists for, so falling
+          back to the node tally would re-open the silent-partial-
+          interface hole. A partial element→rank ownership map alone
+          (no auto knob, or a one-rank master) degrades to the tally
+          with a loud warning instead;
+        * **pattern-borne ``sp`` on a contact ghost** (2026-08-13
+          review, F1) — a prescribed displacement on a node this plan
+          will ghost-declare: pattern sp fans out on NATIVE ranks only,
+          so the owner rank's ghost DOF would stay free — the measured
+          ADR 0027 INV-2 constrained-DOF disagreement. Same sweep the
+          interface lane runs
+          (:meth:`_refuse_pattern_sp_on_interface_ghosts`,
+          ``lane="contact"``);
         * **staged model** — the partitioned staged pipeline skips the
           analysis-chain auto-emit (each stage carries its own chain), so
           the forced ``LadrunoContact`` handler would never be emitted
@@ -4947,6 +4970,7 @@ class BuiltModel:
 
         from apeGmsh._kernel.resolvers._contact_ownership import (
             master_backing_element_ids,
+            master_node_rank_span,
             resolve_contact_ownership,
         )
 
@@ -4985,39 +5009,100 @@ class BuiltModel:
                 label = f"#{idx}" + (
                     f" ({rec.name!r})" if getattr(rec, "name", None) else ""
                 )
+                auto_knobs = [
+                    knob for knob in
+                    ("kn", "eps_n", "eps_t", "edge_kn")
+                    if getattr(rec, knob, None) == "auto"
+                ]
                 backing_ranks: "tuple[int, ...] | None" = None
+                unresolved_facets = 0   # no unique backing element (F2)
+                unowned_backing = 0     # element in no PartitionRecord (F3)
                 if kind == "contact" and element_groups:
                     backing = master_backing_element_ids(rec, element_groups)
                     if backing is not None:
-                        ranks = [element_owner.get(int(e)) for e in backing]
-                        if all(r is not None for r in ranks):
-                            backing_ranks = tuple(
-                                int(r) for r in ranks if r is not None
-                            )
-                if backing_ranks and len(set(backing_ranks)) > 1:
-                    auto_knobs = [
-                        knob for knob in
-                        ("kn", "eps_n", "eps_t", "edge_kn")
-                        if getattr(rec, knob, None) == "auto"
-                    ]
-                    if auto_knobs:
+                        resolved_ranks: "list[int]" = []
+                        for eid in backing:
+                            if eid is None:
+                                unresolved_facets += 1
+                                continue
+                            rank = element_owner.get(int(eid))
+                            if rank is None:
+                                unowned_backing += 1
+                                continue
+                            resolved_ranks.append(int(rank))
+                        if resolved_ranks:
+                            backing_ranks = tuple(resolved_ranks)
+                if (backing_ranks and len(set(backing_ranks)) > 1
+                        and auto_knobs):
+                    raise BridgeError(
+                        f"apeSees: {verb} interaction {label} — the "
+                        "partitioner CUT the master surface (its "
+                        "backing solid elements straddle ranks "
+                        f"{sorted(set(backing_ranks))}) while "
+                        f"{' + '.join(k + '=' for k in auto_knobs)} is "
+                        "'auto' (ADR 0092 INV-4). The fork resolves "
+                        "the owning solid of each master segment on "
+                        "the emitting rank, so facets whose backing "
+                        "solid lives off-rank would silently SKIP the "
+                        "auto penalty sizing (fork ADR-78 D5.2). "
+                        "Re-partition with the master surface's "
+                        "backing elements declared uncuttable "
+                        "(g.mesh.partitioning.partition(n, "
+                        "uncuttable_elements=...)), or use an "
+                        "explicit numeric penalty."
+                    )
+                # 2026-08-13 review F2/F3: the INV-4 backstop above runs
+                # on the RESOLVED facet subset. Where the map is only
+                # partial (an ambiguous facet, or a backing element
+                # missing from every PartitionRecord) AND an auto knob
+                # is live AND the master's nodes span several ranks,
+                # the unresolved facets could hide exactly the off-rank
+                # backing that backstop exists to catch — refuse instead
+                # of silently degrading to the node tally.
+                if (unresolved_facets or unowned_backing) and auto_knobs:
+                    span = master_node_rank_span(rec, partitions)
+                    if len(span) > 1:
                         raise BridgeError(
-                            f"apeSees: {verb} interaction {label} — the "
-                            "partitioner CUT the master surface (its "
-                            "backing solid elements straddle ranks "
-                            f"{sorted(set(backing_ranks))}) while "
-                            f"{' + '.join(k + '=' for k in auto_knobs)} is "
-                            "'auto' (ADR 0092 INV-4). The fork resolves "
-                            "the owning solid of each master segment on "
-                            "the emitting rank, so facets whose backing "
-                            "solid lives off-rank would silently SKIP the "
-                            "auto penalty sizing (fork ADR-78 D5.2). "
-                            "Re-partition with the master surface's "
+                            f"apeSees: {verb} interaction {label} — "
+                            f"{unresolved_facets + unowned_backing} master "
+                            "facet(s) cannot be traced to a "
+                            "partition-owned backing solid element "
+                            f"({unresolved_facets} ambiguous/uncovered in "
+                            "the facet-to-element map, "
+                            f"{unowned_backing} whose backing element is "
+                            "absent from every PartitionRecord) while "
+                            f"{' + '.join(k + '=' for k in auto_knobs)} "
+                            "is 'auto' and the master surface's nodes "
+                            f"span ranks {list(span)} (ADR 0092 INV-4). "
+                            "The cut-master + auto-sizing backstop "
+                            "cannot verify that every facet's backing "
+                            "solid is owner-rank-local, and the fork "
+                            "silently SKIPS auto penalty sizing on "
+                            "facets whose backing solid lives off-rank "
+                            "(fork ADR-78 D5.2) — a silently PARTIAL "
+                            "interface. Use an explicit numeric penalty, "
+                            "or re-partition with the master surface's "
                             "backing elements declared uncuttable "
                             "(g.mesh.partitioning.partition(n, "
-                            "uncuttable_elements=...)), or use an "
-                            "explicit numeric penalty."
+                            "uncuttable_elements=...))."
                         )
+                if unowned_backing:
+                    # F3: a partial element→rank ownership map is never
+                    # silent — the exact owner pick quietly degrading to
+                    # the node tally is how a mis-owned interaction slips
+                    # through. (With an auto knob + multi-rank master it
+                    # refused above instead.)
+                    import warnings as _warnings
+                    _warnings.warn(
+                        f"apeSees: {verb} interaction {label} — "
+                        f"{unowned_backing} master facet backing "
+                        "element(s) are absent from every "
+                        "PartitionRecord (partial element-ownership "
+                        "map); the element-exact owner pick (ADR 0092 "
+                        "INV-1) degrades to the node tally for this "
+                        "interaction.",
+                        stacklevel=2,
+                    )
                 try:
                     ownership = resolve_contact_ownership(
                         rec, partitions,
@@ -5031,14 +5116,37 @@ class BuiltModel:
                         "exactly one owner rank; emitting on two ranks "
                         "converges to a plausible WRONG answer — half "
                         "the penetration — with no warning, fork ADR-78 "
-                        "P0.d). Re-partition so one rank owns the master "
-                        "surface (g.mesh.partitioning.partition(n, "
-                        "uncuttable_elements=...)), or emit serial "
-                        "(non-partitioned / flat=True)."
+                        "P0.d). Re-partition so one rank owns the "
+                        "interaction's deciding surface — the master "
+                        "surface, or the slave surface for a "
+                        "contact_plane — (g.mesh.partitioning."
+                        "partition(n, uncuttable_elements=...)), or emit "
+                        "serial (non-partitioned / flat=True)."
                     ) from exc
                 plan.setdefault(ownership.owner_rank, []).append(
                     (kind, rec, ownership.ghost_node_ids),
                 )
+
+        # 2026-08-13 review F1: a pattern-borne `sp` on a node this plan
+        # ghost-declares would constrain the DOF on its native rank while
+        # the owner rank's ghost copy stays FREE — the same constrained-
+        # DOF disagreement the interface lane refuses (ADR 0027 INV-2:
+        # measured 'Matrix is Singular Numerically'; and the HOLD variant
+        # runs CLEAN to a wrong answer). The ghost replay carries the fix
+        # tiers only, so refuse at plan time — before any emission —
+        # rather than mirror (mirroring pattern sp onto ghosts, correctly
+        # under staging, is its own project).
+        contact_ghosts = {
+            int(nid)
+            for entries in plan.values()
+            for _kind, _rec, ghost_ids in entries
+            for nid in ghost_ids
+        }
+        if contact_ghosts:
+            self._refuse_pattern_sp_on_interface_ghosts(
+                contact_ghosts, post_element, inferred_ndf,
+                lane="contact",
+            )
         return plan
 
     def _emit_contacts_partitioned(
@@ -5245,9 +5353,18 @@ class BuiltModel:
         ghost_ids: "set[int]",
         post_element: "list[Primitive]",
         inferred_ndf: "dict[int, int]",
+        *,
+        lane: str = "interface",
     ) -> None:
         """Refuse a pattern-borne ``sp`` targeting a node an interface
         plan will ghost-declare (ADR 0027 INV-2 / ADR 0093 INV-5).
+
+        ``lane`` selects the wording only — ``"interface"`` (the ADR
+        0093 pairs this sweep was written for) or ``"contact"`` (the
+        ADR 0092 contact/contact_plane ghost sets, 2026-08-13 review
+        F1). The machinery is record-shape-agnostic: it needs nothing
+        but the ghost id set, so both planners run the identical sweep
+        and only the error's header/invariant naming differs.
 
         The ghost replay stream carries the ``fix`` tiers only — the
         model-level ``ops.fix`` pool and, under staging, each stage's
@@ -5287,17 +5404,38 @@ class BuiltModel:
         """
         from .pattern.pattern import Plain
 
+        if lane == "contact":
+            what = "g.constraints.contact / g.constraints.contact_plane"
+            ghost_why = (
+                "their interaction's owner rank (contact interface "
+                "ghosts, ADR 0092 INV-2)"
+            )
+            mirroring = (
+                "Mirroring pattern sp into the contact ghost replay — "
+                "correctly, including under staging — is its own "
+                "project and is not wired yet."
+            )
+        else:
+            what = "g.constraints.interface()"
+            ghost_why = (
+                "their pair's owner rank (foreign slave/beam nodes, "
+                "ADR 0093 INV-5)"
+            )
+            mirroring = (
+                "Mirroring pattern sp into the ghost replay is not "
+                "wired yet."
+            )
+
         def _refuse(label: str, hits: "set[int]", consequence: str) -> None:
             raise BridgeError(
-                f"apeSees: g.constraints.interface() — node(s) "
-                f"{sorted(hits)} are ghost-declared on their pair's "
-                f"owner rank (foreign slave/beam nodes, ADR 0093 "
-                f"INV-5), but {label} prescribes sp displacement(s) on "
+                f"apeSees: {what} — node(s) "
+                f"{sorted(hits)} are ghost-declared on "
+                f"{ghost_why}, but {label} prescribes sp "
+                "displacement(s) on "
                 "them. Pattern-borne sp lines emit only on a node's "
                 f"NATIVE ranks, so the ghost copy would stay "
                 f"unconstrained on the owner rank — {consequence} "
-                "Mirroring pattern sp into the ghost "
-                "replay is not wired yet. Re-partition so the slave "
+                f"{mirroring} Re-partition so the slave "
                 "side is native to the owner rank "
                 "(g.mesh.partitioning.partition(n, "
                 "uncuttable_elements=...)), use ops.fix / s.fix for a "
@@ -9646,6 +9784,15 @@ class apeSees:
         # INV-5 auto-emit that would otherwise put a second (identical)
         # numberer/system pair above it. Nothing is lost: the auto-emit's
         # constraint handler is Transformation, which is what we force.
+        #
+        # CONTRACT (ADR 0092 review, F6): this seam is honored ONLY by
+        # the partitioned emit path — `_emit_partitioned` reads it; the
+        # flat/split auto-emit sites never consult it. That is sound
+        # here because this deck REQUIRES len(partitions) > 1 (guarded
+        # above), so the flat lane is unreachable. Any future producer
+        # that can reach `_emit_flat` / `_emit_split` must first wire
+        # the flag through those sites' `_maybe_auto_emit_*` calls, or
+        # the suppression will silently not happen there.
         emitter.suppress_analysis_chain_auto_emit = True  # type: ignore[attr-defined]
         bm.emit(emitter)
         # Forced eigen preamble, emitted adjacent to the solve so the deck

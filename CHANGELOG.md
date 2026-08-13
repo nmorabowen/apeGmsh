@@ -97,6 +97,62 @@ already have their own entries above.
 - Docs: `docs/api/constraints.md` gains a Tier 6 section,
   `docs/concepts/constraints.md` places interface springs against tie /
   contact / embedded, and `skills/apegmsh/` carries the verb.
+### FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
+
+The 2026-08-13 adversarial review of the landed partitioned-contact emit
+lane (PR #927 + follow-ups #944/#945/#948) audited the refusal lattice
+and found two silent-wrong holes, both closed here, plus smaller
+diagnostic drift:
+
+- **F1 (HIGH)** — a pattern-borne `sp` on a contact-ghosted node was
+  neither mirrored nor refused: pattern sp lines fan out on a node's
+  NATIVE ranks only, so a displacement-driven contact deck (prescribed
+  motion on the slave surface — ordinary authoring) constrained the DOF
+  on the home rank while the owner rank's ghost copy stayed FREE — the
+  ADR 0027 INV-2 measured singular-matrix class. The contact planner now
+  runs the same plan-time sweep the interface lane already had
+  (`_refuse_pattern_sp_on_interface_ghosts`, `lane="contact"`), with a
+  contact-named error. Refusal, not mirroring — mirroring pattern sp
+  onto ghosts correctly (including under staging) is its own project,
+  and the error says so. Load-driven decks (the S5 shape) are
+  unaffected; the same model still emits serially.
+- **F2 (MEDIUM)** — the INV-4 cut-master + auto-sizing backstop silently
+  disengaged when the facet→element map was unresolvable, and the map
+  was all-or-nothing: ONE ambiguous facet anywhere dropped the WHOLE
+  surface to the node tally, so a genuinely cut master + `kn="auto"`
+  emitted a deck whose off-rank auto-kn facets the fork silently skips
+  (fork ADR-78 D5.2) — a silently partial interface.
+  `master_backing_element_ids` is now per-facet; the straddle check
+  runs on the resolved subset; and a partial map + a live auto knob + a
+  multi-rank master (node view, `master_node_rank_span`) refuses with a
+  named error. A cut master with a fully explicit penalty stays
+  permitted (documented).
+- **F3** — a backing element absent from every `PartitionRecord` now
+  warns loudly (and refuses under an auto knob, same shape as F2)
+  instead of silently degrading the exact owner pick to the node tally.
+- **F4** — the undecidable-tie refusal for `contact_plane` no longer
+  tells the user to disambiguate via master-element ownership (a plane
+  has no master surface and ownership is never consulted for it): the
+  plane lane names the slave tally and the fixes that actually apply.
+- **F5** — `soft_family_knobs` now mirrors `contact_args`' `edge_edge`
+  gate: `edge_soft` alongside `edge_edge=False` emits no `-edgeSoft`
+  token and is no longer refused under partitioning (a live `edge_soft`
+  still refuses, INV-3).
+- **F6** — the `suppress_analysis_chain_auto_emit` seam's
+  partitioned-only contract is documented at its producer (the
+  flat/split auto-emit sites never consult it; its sole producer
+  requires partitions, so it is unreachable on those lanes today).
+- **F7** — the partitioned-vs-serial tag-stream ordering difference is
+  recorded in the ADR as a known, accepted cosmetic divergence
+  (each deck is self-consistent; twins compare content).
+- **F8** — `ContactRecord` / `ContactPlaneRecord` docstrings no longer
+  claim "Serial-only" (false since S4).
+
+Full findings table + dispositions: ADR 0092 §Review-findings log.
+Tests:
+`tests/opensees/integration/test_contact_partitioned_review_fixes.py`
+(11) + per-facet / rank-span / plane-message / edge-gate units in
+`tests/_kernel/resolvers/`.
 
 ### FIXED — a STAGED contact model no longer runs with the contact handler silently overridden (ADR 0092)
 

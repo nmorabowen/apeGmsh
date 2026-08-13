@@ -134,23 +134,54 @@ def _run_env(dist_bin: Path) -> "dict[str, str]":
     return env
 
 
+def _launch(cmd: "list[str]", deck: Path, env: "dict[str, str]") -> str:
+    """Run one deck and return its combined output, or fail with the
+    ACTUAL cause.
+
+    Both twin lanes are driven from a module-scoped fixture, so anything
+    that goes wrong here errors every test in the module at once.  That
+    makes diagnosability the whole game: without a returncode check a
+    launcher failure (a contended or half-installed MPI runtime, a
+    missing DLL, a rank that died mid-solve) surfaces only as the
+    downstream "printed no S9TWIN line" parse assert, which reads like a
+    product defect and sends the next reader hunting through emit code.
+    Check the exit status here and say what actually happened, once.
+    """
+    try:
+        r = subprocess.run(
+            cmd, cwd=deck.parent, env=env,
+            capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"{deck.name}: {cmd[0]} did not finish within "
+            f"{RUN_TIMEOUT_S}s — these are 8-node models, so a timeout "
+            f"means a hang or a pathologically loaded machine, not a slow "
+            f"solve.\ncmd: {cmd}\n"
+            f"output tail:\n{(exc.output or b'')[-2000:]!r}"
+        ) from exc
+    out = r.stdout + r.stderr
+    if r.returncode != 0:
+        raise AssertionError(
+            f"{deck.name}: {Path(cmd[0]).name} exited {r.returncode} — the "
+            f"deck never ran to completion, so the twin comparison below "
+            f"would be meaningless.\ncmd: {cmd}\n"
+            f"output tail:\n{out[-2000:]}"
+        )
+    return out
+
+
 def _run_serial(deck: Path, env: "dict[str, str]") -> str:
     dist = _dist_bin()
     assert dist is not None
-    r = subprocess.run(
-        [str(dist / "OpenSees.exe"), str(deck)], cwd=deck.parent, env=env,
-        capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
-    return r.stdout + r.stderr
+    return _launch([str(dist / "OpenSees.exe"), str(deck)], deck, env)
 
 
 def _run_mp(deck: Path, env: "dict[str, str]") -> str:
     dist, mpi = _dist_bin(), _mpiexec()
     assert dist is not None and mpi is not None
-    r = subprocess.run(
+    return _launch(
         [str(mpi), "-n", "2", str(dist / "OpenSeesMP.exe"), str(deck)],
-        cwd=deck.parent, env=env,
-        capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
-    return r.stdout + r.stderr
+        deck, env)
 
 
 def _rel(a: float, b: float) -> float:
