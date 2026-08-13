@@ -12,6 +12,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0092 S5: the partitioned-contact numeric twin actually runs (serial vs 2-rank MPI, ≤ 2e−14)
+
+`tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py` — the
+run lane S4 still owed. One model definition (the fork ADR-78 P0 geometry
+through the real API: two stacked single-hex blocks, 1e-3 initial
+penetration, `g.constraints.contact(kn="auto", outward=(0,0,1))`,
+`partition(2)`) emits both twins — serial `flat=True` and the S4
+partitioned deck — and both are EXECUTED: `OpenSees.exe` vs
+`mpiexec -n 2 OpenSeesMP.exe`. Measured serial-vs-2-rank relative deltas:
+w_top 1.8e−14, w_slave 2.0e−14, w_master 2.2e−16, ΣR_base 1.8e−16 (gate
+≤ 1e−10); the owner rank's ghost printed bit-identical to the slave
+rank's native displacement. Three negative controls prove the comparison
+detects a wrong deck (no-contact diverges; stripped ghost `fix` replay →
+Mumps numerically singular; the ADR-78 P0.d duplicated contact verb →
+the fork's P1 all-rank teardown). Gated on `subprocess` + loud env-var
+skips (`APEGMSH_OPENSEES_BIN`, Intel MPI) so CI is untouched. Also
+recorded in ADR 0092: an auto-emit ordering defect surfaced by the
+harness (auto-emitted `constraints LadrunoContact` / parallel
+numberer / system land after a user-declared `analysis Static`, where
+the engine ignores the handler — silently wrong under contact;
+workaround: declare the chain explicitly).
+
 ### ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
 
 - **`moment_curvature(doc, *, axis="z", kappa_max, n_steps=40, axial=0.0,
