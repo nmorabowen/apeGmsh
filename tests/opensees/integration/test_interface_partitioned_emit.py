@@ -17,15 +17,30 @@ What is pinned here, on real gmsh-meshed two-body models:
   the owner's block are byte-identical to the flat deck's (ghost decl
   prefixes aside, the ADR 0027 INV-1 phrasing), with IDENTICAL material
   and element tags, because the tag pre-pass allocates every record's
-  triple in flat side-list order BEFORE the rank fan-out;
+  triple in flat side-list order BEFORE the rank fan-out.
+  **Flat↔partitioned tag identity is CONDITIONAL** (ADR 0093 INV-5, as
+  amended during S8): it holds when no other element-minting MP pass
+  coexists. Rigid-body / kinematic-coupling / ASDEmbeddedNodeElement
+  tags are minted inside the per-rank 7b pass, after the interface
+  pre-pass, while the flat path mints them before ``emit_interfaces``
+  — so a combined model's interface tags drift between the two decks
+  (measured: 21-24 vs 25-28 with a coexisting ``g.constraints.
+  embedded``). What holds UNCONDITIONALLY — and is pinned by the
+  mixed-model regression below — is exactly-once emission, global tag
+  uniqueness within each deck, and cross-rank determinism;
 * **the all-shared-cut degenerate case** — the cut hugs the interface,
   both pair nodes verified replicated onto both ranks, and the owner is
   still exact via the backing element (no tie, no heuristic);
 * **foreign slave ghosting** — the owner's block declares a foreign
   slave with its HOME ndf (INV-5 ghost ndf parity: a mixed-ndf beam
   slave ghosts as ``-ndf 3`` even under an ndf=2 envelope) + the
-  owner's SP replay, and carries no mass / no element for it (ADR 0092
-  INV-7);
+  owner's SP replay, and carries no mass / no element / no load for it
+  (ADR 0092 INV-7);
+* **the pattern-sp-on-ghost refusal** — a pattern-borne ``sp`` on a
+  node the plan would ghost is refused at plan time (ADR 0027 INV-2:
+  pattern sp fans out on native ranks only and is never mirrored onto
+  a ghost, so the owner's copy would stay unconstrained — the measured
+  singular-matrix case);
 * **the S9 refusal** — a stage-claimed interface under MPI still
   refuses, naming its own slice, ahead of everything;
 * **determinism** — two partitioned emits are byte-identical.
@@ -168,17 +183,22 @@ def _partition_across(g, threshold: float) -> None:
     g.mesh.partitioning.partition_explicit(2, elem_tags, parts)
 
 
-def _fem(*, slave_ndf=None, n=4, cut=None, n_parts=None):
+def _fem(*, slave_ndf=None, n=4, cut=None, n_parts=None, embed=False):
     """``cut="split"`` puts the whole left body on rank 0 and the right
     on rank 1 (the cut hugs the interface from the side — foreign
     slaves); ``cut=("y", 0.5)`` runs the cut ACROSS the interface (the
     mid pair's nodes land on the partition boundary — the all-shared
-    case); ``n_parts=K`` uses the native METIS partitioner instead."""
+    case); ``n_parts=K`` uses the native METIS partitioner instead.
+    ``embed=True`` adds a coexisting element-minting MP pass
+    (``g.constraints.embedded`` → ASDEmbeddedNodeElement) for the
+    tag-identity-caveat regression."""
     with apeGmsh(model_name="iface_s8", verbose=False) as g:
         _two_squares(g, n=n)
         g.constraints.interface(
             "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
             thickness=THICKNESS, slave_ndf=slave_ndf, name="RockLiner")
+        if embed:
+            g.constraints.embedded("rock", "wire", name="Bond")
         if cut == "split":
             _partition_left_right(g)
         elif cut is not None:
@@ -283,16 +303,36 @@ def test_two_rank_owner_block_matches_the_flat_deck_byte_for_byte(tmp_path):
     )
     # Byte-for-byte — comments, uniaxialMaterial lines, zeroLength
     # lines, tags and all: the up-front tag pre-pass makes the flat and
-    # per-rank tag streams identical.
+    # per-rank tag streams identical. (Equal-ndf ghost decls carry no
+    # -ndf token, so they are filtered by tag here — the ADR 0027
+    # INV-1 helper form of this comparison is the mixed-ndf test
+    # below, where every ghost decl carries -ndf and the helper itself
+    # does the stripping.)
     assert owner_iface == flat_iface
-    # …and the locked ADR 0027 INV-1 phrasing (ghost decl prefixes are
-    # the sanctioned divergence; equal-ndf ghost decls carry no -ndf
-    # token, so they are pre-filtered by tag above and any -ndf ghost
-    # variant is stripped by the helper itself).
+
+
+def test_mixed_ndf_owner_block_matches_flat_modulo_ghost_decls(tmp_path):
+    # The ADR 0027 INV-1 phrasing, applied verbatim by the locked
+    # helper: the owner block's RAW interface portion and the flat
+    # deck's differ only by node-decl-with--ndf lines. Every mixed-ndf
+    # ghost decl carries the home ndf (-ndf 3) and every phantom decl
+    # its own (-ndf 2), so assert_partition_blocks_equivalent strips
+    # them on both sides itself — no pre-filtering, no tautology —
+    # and what remains (comments, equalDOF, materials, zeroLength,
+    # tags and all) must match byte-for-byte.
+    fem = _fem(slave_ndf=3, cut="split")
+    part_text = _deck_text(_mixed_ops(fem), tmp_path, "part.tcl")
+    flat_text = _deck_text(_mixed_ops(fem), tmp_path, "flat.tcl", flat=True)
+
+    blocks = _rank_lines(part_text)
+    owners = [r for r, lines in blocks.items() if _zl_lines(lines)]
+    assert owners == [0]
     assert_partition_blocks_equivalent(
-        "\n".join(owner_iface),
-        "\n".join(flat_iface),
-        label="iface-2rank",
+        "\n".join(_iface_portion(blocks[0])),
+        "\n".join(_iface_portion(
+            [ln.strip() for ln in flat_text.splitlines()],
+        )),
+        label="iface-mixed-2rank",
     )
 
 
@@ -395,7 +435,14 @@ def test_foreign_slave_ghosts_with_sp_replay_and_no_mass_or_elements(
     foreign = sorted(slave_ids - rank0_native)
     assert foreign, "fixture failure: no foreign slave to ghost"
 
-    text = _deck_text(_quad_ops(fem, fix_wire=(1, 0)), tmp_path)
+    ops = _quad_ops(fem, fix_wire=(1, 0))
+    # A real nodal load on the slave side, so INV-7's "never loads"
+    # half is asserted against a load that actually exists in the deck
+    # (it must land on the ghost's PRIMARY rank, never the owner's
+    # block).
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(pg="wire", forces=(0.0, -1.0e3))
+    text = _deck_text(ops, tmp_path)
     lines = _rank_lines(text)[0]
 
     for nid in foreign:
@@ -409,15 +456,23 @@ def test_foreign_slave_ghosts_with_sp_replay_and_no_mass_or_elements(
         # (ADR 0027 INV-2 machinery).
         assert lines[decls[0] + 1] == f"fix {nid} 1 0"
         # INV-7 / ADR 0092: geometry + SP only — never mass, never
-        # elements.
+        # elements, never loads.
         assert not [ln for ln in lines
                     if ln.startswith(f"mass {nid} ")]
+        assert not [ln for ln in lines
+                    if ln.startswith(f"load {nid} ")]
     # INV-7, element half: the ghost brings no slave-side quad with it —
     # rank 1's owned quads are absent from rank 0's block.
     rank1_lines = _rank_lines(text)[1]
     r1_quads = {ln for ln in rank1_lines if ln.startswith("element quad ")}
     r0_quads = {ln for ln in lines if ln.startswith("element quad ")}
     assert r1_quads and not (r0_quads & r1_quads)
+    # …and the "never loads" assertion above is not vacuous: the wire
+    # load exists, on the slave's primary (home) rank.
+    assert any(
+        ln.startswith(f"load {nid} ") for nid in foreign
+        for ln in rank1_lines
+    )
 
 
 def test_mixed_ndf_foreign_beam_slave_ghosts_with_home_ndf(tmp_path):
@@ -476,6 +531,111 @@ def test_mixed_ndf_foreign_beam_slave_ghosts_with_home_ndf(tmp_path):
     )
     assert len(_zl_lines(owner_lines)) == len(recs)
     assert not _zl_lines(blocks[1])
+
+
+# =====================================================================
+# (3b) Pattern-borne sp on a ghosted slave — refused at plan time
+# =====================================================================
+def test_pattern_sp_on_ghosted_slave_refuses(tmp_path):
+    # ghost_sp_ops replays the model-level `fix` tier only; pattern sp
+    # lines fan out on NATIVE ranks and are never mirrored onto a
+    # ghost, so the owner rank's copy would stay unconstrained — the
+    # ADR 0027 INV-2 measured singular-matrix case. The campaign's
+    # own shape: a prescribed displacement on the liner (wire) side.
+    fem = _fem(cut="split")
+    ops = _quad_ops(fem)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.sp(pg="wire", dof=1, value=0.01)
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    msg = str(exc.value)
+    assert "ADR 0027 INV-2" in msg
+    assert "ghost-declared" in msg and "ADR 0093" in msg
+    assert "uncuttable_elements" in msg          # the advertised fixes
+    assert "ops.fix" in msg
+
+
+def test_pattern_sp_on_node_target_ghosted_slave_refuses(tmp_path):
+    # Same refusal through the node= target form, naming the node.
+    fem = _fem(cut="split")
+    slave = int(list(fem.elements.interfaces)[0].slave_node)
+    ops = _quad_ops(fem)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.sp(node=slave, dof=2, value=-0.005)
+    with pytest.raises(BridgeError, match=rf"\[{slave}\]"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
+def test_pattern_sp_on_native_nodes_still_emits(tmp_path):
+    # Negative control: an sp on the master ("face") side — native to
+    # the owner rank, nothing ghosted — emits normally.
+    fem = _fem(cut="split")
+    ops = _quad_ops(fem)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.sp(pg="face", dof=1, value=0.01)
+    text = _deck_text(ops, tmp_path)
+    assert [ln for lines in _rank_lines(text).values()
+            for ln in lines if ln.startswith("sp ")]
+    assert len(_zl_lines(_rank_lines(text)[0])) == 4
+
+
+# =====================================================================
+# (3c) Coexisting element-minting MP pass — the tag-identity caveat
+# =====================================================================
+def test_interface_plus_embedded_exactly_once_with_documented_drift(
+    tmp_path,
+):
+    # Flat↔partitioned interface-tag identity is CONDITIONAL (module
+    # docstring / ADR 0093 INV-5 amended during S8): ASDEmbedded
+    # element tags are minted inside the per-rank 7b pass, AFTER the
+    # interface pre-pass, while the flat path mints them before
+    # emit_interfaces. What must hold regardless — and is pinned here —
+    # is exactly-once emission, global element-tag uniqueness within
+    # each deck, and the drift itself (so if allocation order ever
+    # unifies, this pin flags the docs for cleanup).
+    fem = _fem(cut="split", embed=True)
+    recs = list(fem.elements.interfaces)
+    assert recs
+
+    part_text = _deck_text(_quad_ops(fem), tmp_path, "part.tcl")
+    flat_text = _deck_text(_quad_ops(fem), tmp_path, "flat.tcl", flat=True)
+    flat_lines = [ln.strip() for ln in flat_text.splitlines()]
+    blocks = _rank_lines(part_text)
+    # The coexisting pass really mints elements in both decks.
+    assert [ln for ln in flat_lines
+            if ln.startswith("element ASDEmbeddedNodeElement ")]
+    assert [ln for lines in blocks.values() for ln in lines
+            if ln.startswith("element ASDEmbeddedNodeElement ")]
+
+    part_zl = [ln for lines in blocks.values() for ln in _zl_lines(lines)]
+    flat_zl = _zl_lines(flat_lines)
+    assert len(part_zl) == len(flat_zl) == len(recs)   # exactly once
+
+    def _ele_tags(lines):
+        return [int(ln.split()[2]) for ln in lines
+                if ln.startswith("element ")]
+
+    part_tags = [t for lines in blocks.values() for t in _ele_tags(lines)]
+    assert len(part_tags) == len(set(part_tags))       # globally unique
+    assert len(_ele_tags(flat_lines)) == len(set(_ele_tags(flat_lines)))
+
+    # Endpoints and orient match flat pair-for-pair; the TAGS drift —
+    # the documented conditional (measured 21-24 vs 25-28 on this
+    # model).
+    def _sans_tag(ln):
+        tok = ln.split()
+        return tuple(tok[:2] + tok[3:])
+
+    assert sorted(map(_sans_tag, part_zl)) == sorted(map(_sans_tag, flat_zl))
+    assert sorted(int(ln.split()[2]) for ln in part_zl) != \
+        sorted(int(ln.split()[2]) for ln in flat_zl), (
+            "flat and partitioned interface tags now MATCH with a "
+            "coexisting element-minting MP pass — the conditional "
+            "documented in ADR 0093 INV-5 (S8 amendment) and this "
+            "module's docstring can be retired"
+        )
+    # Cross-rank determinism is unconditional.
+    assert part_text == _deck_text(_quad_ops(fem), tmp_path, "part2.tcl")
 
 
 # =====================================================================

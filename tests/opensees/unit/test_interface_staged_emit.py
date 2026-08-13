@@ -432,7 +432,11 @@ def test_two_emits_are_byte_identical(tmp_path):
 # ======================================================================
 def test_unclaimed_interface_still_emits_in_the_base_pass(tmp_path):
     claimed = _iface(3, 5, name="RockLiner")
-    loose = _iface(4, 6, name="Bedrock", a_trib=0.5)
+    # The loose record's endpoints are GLOBAL nodes (3 and 4 sit on the
+    # always-on Rock quad) — an unclaimed record referencing a
+    # stage-bound node is refused since ADR 0093 S8 (see
+    # test_unclaimed_interface_on_stage_bound_node_refuses).
+    loose = _iface(3, 4, name="Bedrock", a_trib=0.5)
     lines = _deck(_staged(_fem([claimed, loose])), tmp_path)
 
     base = lines[:lines.index("# === Stage: ground ===")]
@@ -462,6 +466,38 @@ def test_partitioned_plus_staged_refuses_naming_s9(tmp_path):
     assert "s.interface(name=...) in stage(s) 'install'" in msg
 
 
+def test_unclaimed_interface_on_stage_bound_node_refuses(tmp_path):
+    # ADR 0093 S8 hardening: node 5 only comes online inside the
+    # 'install' stage (it belongs exclusively to the activated Liner
+    # PG), so an UNCLAIMED record referencing it would emit a base-pass
+    # zeroLength against a node declared only inside the stage block —
+    # a parse-time crash. Refused with the s.interface(name=) advice.
+    ops = _staged(_fem([_iface(3, 5, name="RockLiner")]), claim=None)
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    msg = str(exc.value)
+    assert "UNCLAIMED" in msg
+    assert "s.interface(name=...)" in msg
+    assert "interface #1 ('RockLiner'): slave node 5 is owned by " \
+        "stage 'install'" in msg
+    # The claim is exactly the advertised fix — same model, claimed,
+    # emits (the S7 lane).
+    ok = _staged(_fem([_iface(3, 5, name="RockLiner")]))
+    ok.tcl(str(tmp_path / "ok.tcl"))
+
+
+def test_unclaimed_interface_on_stage_bound_node_refuses_partitioned(
+    tmp_path,
+):
+    # Same hole on the partitioned path (the base per-rank interface
+    # pass, step 7c-bis, emits before any stage block).
+    fem = _fem([_iface(3, 5, name="RockLiner")])
+    fem.set_partitions([(0, [1, 2, 3, 4], [1]), (1, [3, 4, 5, 6], [2])])
+    ops = _staged(fem, claim=None)
+    with pytest.raises(BridgeError, match="UNCLAIMED"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
 def test_staged_h5_archive_refuses_a_claimed_interface(tmp_path):
     recs = [_iface(3, 5, name="RockLiner")]
     ops = _staged(_fem(recs))
@@ -475,7 +511,9 @@ def test_staged_h5_archive_refuses_a_claimed_interface(tmp_path):
 def test_unclaimed_interface_does_not_block_the_staged_h5_archive(tmp_path):
     """The refusal is scoped to the CLAIM, not to interfaces at all — an
     ordinary staged model whose interface emits in the base pass still
-    archives."""
-    ops = _staged(_fem([_iface(3, 5, name="RockLiner")]), claim=None)
+    archives. (Global-node endpoints: since ADR 0093 S8 an unclaimed
+    record on a stage-bound node refuses on every emit path, the h5
+    archive included.)"""
+    ops = _staged(_fem([_iface(3, 4, name="RockLiner")]), claim=None)
     ops.h5(str(tmp_path / "model.h5"))
     assert (tmp_path / "model.h5").exists()
