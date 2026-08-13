@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ContactOwnership",
     "master_backing_element_ids",
+    "master_node_rank_span",
     "resolve_contact_ownership",
     "soft_family_knobs",
 ]
@@ -101,7 +102,11 @@ def soft_family_knobs(
     A knob is *active* exactly when the args builder would emit its token:
     any value other than ``None``/``False`` (``True`` = fork default
     SOFSCL, a float = explicit SOFSCL — mirroring
-    ``opensees.element.contact.contact_args``).
+    ``opensees.element.contact.contact_args``). Mirroring the builder
+    includes its ``edge_edge`` gate (2026-08-13 review, F5):
+    ``contact_args`` drops ALL edge knobs when ``edge_edge`` is falsy, so
+    ``edge_soft`` set alongside ``edge_edge=False`` never emits an
+    ``-edgeSoft`` token and does NOT count as active here.
 
     Returns the active knob names in declaration order (``("soft",)``,
     ``("edge_soft",)``, ``("soft", "edge_soft")``) or ``()`` when the
@@ -109,11 +114,20 @@ def soft_family_knobs(
     """
     for kind, knobs in _SOFT_KNOBS_BY_KIND.items():
         if isinstance(record, kind):
-            return tuple(
-                knob for knob in knobs
-                if getattr(record, knob) is not None
-                and getattr(record, knob) is not False
-            )
+            active: list[str] = []
+            for knob in knobs:
+                value = getattr(record, knob)
+                if value is None or value is False:
+                    continue
+                if knob == "edge_soft" and not getattr(
+                    record, "edge_edge", False,
+                ):
+                    # contact_args emits the edge block (and so the
+                    # -edgeSoft token) only under -edgeedge; a dormant
+                    # edge_soft is partition-safe.
+                    continue
+                active.append(knob)
+            return tuple(active)
     raise TypeError(
         "soft_family_knobs: expected a ContactRecord or "
         f"ContactPlaneRecord, got {type(record).__name__}"
@@ -123,9 +137,10 @@ def soft_family_knobs(
 def master_backing_element_ids(
     record: ContactRecord,
     element_groups: "Iterable[tuple[np.ndarray, np.ndarray]]",
-) -> "tuple[int, ...] | None":
-    """Backing solid element id per master facet, or ``None`` when the
-    facet → element map cannot be resolved from the given connectivity.
+) -> "tuple[int | None, ...] | None":
+    """Backing solid element id per master facet (``None`` per facet that
+    cannot be resolved), or ``None`` when the record carries no usable
+    master-facet connectivity at all.
 
     ADR 0092 INV-1 (second amendment): node majority is a proxy; the
     property that actually matters is which rank owns the master surface's
@@ -147,12 +162,18 @@ def master_backing_element_ids(
 
     Returns
     -------
-    tuple[int, ...] | None
-        One backing element id per master facet (facet order preserved),
-        or ``None`` when any facet resolves to zero or several candidate
-        elements (an interior face, a non-conforming patch, or
-        connectivity that does not cover the surface). ``None`` means
-        "fall back to the node tally" — the caller must NOT guess.
+    tuple[int | None, ...] | None
+        One entry per master facet (facet order preserved): the backing
+        element id where exactly one candidate element contains every
+        facet node, ``None`` for a facet that resolves to zero or several
+        candidates (an interior face, a non-conforming patch, or
+        connectivity that does not cover the facet). The 2026-08-13
+        review (F2) made this per-facet — the old all-or-nothing ``None``
+        let ONE ambiguous facet silently disengage the INV-4
+        cut-master + auto-sizing backstop for the WHOLE surface. A
+        record-level ``None`` (no ``master_faces``, malformed stride)
+        still means "no facet map exists — fall back to the node tally";
+        the caller must NOT guess either way.
     """
     if record.master_faces is None:
         return None
@@ -181,21 +202,47 @@ def master_backing_element_ids(
             for nid in conn_arr[row][hit[row]]:
                 incidence.setdefault(int(nid), set()).add(eid)
 
-    backing: "list[int]" = []
+    backing: "list[int | None]" = []
     for facet in faces:
         candidate: "set[int] | None" = None
         for nid in facet:
             touching = incidence.get(int(nid))
             if not touching:
-                return None
+                candidate = set()
+                break
             candidate = (
                 set(touching) if candidate is None
                 else candidate & touching
             )
-        if candidate is None or len(candidate) != 1:
-            return None
-        backing.append(next(iter(candidate)))
+        backing.append(
+            next(iter(candidate))
+            if candidate is not None and len(candidate) == 1
+            else None
+        )
     return tuple(backing)
+
+
+def master_node_rank_span(
+    record: ContactRecord,
+    partitions: Iterable["PartitionRecord"],
+) -> tuple[int, ...]:
+    """Every rank whose partition holds at least one master-surface node.
+
+    The node-view answer to "could the master surface be cut across
+    ranks?" — used by the emit layer (ADR 0092 INV-4, 2026-08-13 review
+    F2/F3) when the facet → backing-element map is only PARTIALLY
+    resolvable: a span of one rank means the node tally is exact and
+    auto-sizing is safe; a span of several ranks means the unresolved
+    facets could hide off-rank backing solids, which the fork's ``-kn
+    auto`` silently skips (fork ADR-78 D5.2), so the caller must refuse
+    rather than fall back. Sorted, deduplicated; empty when no master
+    node appears in any partition.
+    """
+    owning_ranks = _owning_ranks(partitions)
+    span: set[int] = set()
+    for nid in _master_node_ids(record):
+        span.update(owning_ranks.get(int(nid), ()))
+    return tuple(sorted(span))
 
 
 def _owning_ranks(
@@ -218,9 +265,18 @@ def _owning_ranks(
 
 
 def _majority_owner(
-    node_ids: Iterable[int], owning_ranks: Mapping[int, tuple[int, ...]],
+    node_ids: Iterable[int],
+    owning_ranks: Mapping[int, tuple[int, ...]],
+    *,
+    lane: str = "master",
 ) -> int:
     """Rank owning the most of ``node_ids``; ties break to the lowest rank.
+
+    ``lane`` names which surface the tally runs over — ``"master"`` (a
+    :class:`ContactRecord`'s deciding surface) or ``"slave"`` (a
+    :class:`ContactPlaneRecord`, which has no master surface and never
+    consults element ownership) — so the undecidable-tie refusal can give
+    each lane an accurate message (2026-08-13 review, F4).
 
     Counts **uniquely-owned** nodes first. A partition-boundary node is
     replicated onto every rank whose elements touch it (``extract_partitions``
@@ -268,6 +324,25 @@ def _majority_owner(
     best = max(shared.values())
     leaders = sorted(rank for rank, count in shared.items() if count == best)
     if len(leaders) > 1:
+        if lane == "slave":
+            # ContactPlaneRecord: there is no master surface and element
+            # ownership is never consulted (the ownership resolver
+            # ignores master_element_ranks for a plane) — telling the
+            # user to disambiguate via master-element ownership would be
+            # advice the code cannot take (2026-08-13 review, F4).
+            raise ValueError(
+                "resolve_contact_ownership: cannot choose an owner rank "
+                f"-- every candidate slave node is shared, and ranks "
+                f"{leaders} hold equal counts ({best} each). A "
+                "contactPlane interaction has no master surface: its "
+                "owner is tallied from the SLAVE surface's nodes alone, "
+                "and element ownership is never consulted, so nothing "
+                "can break this tie (ADR 0092 INV-1). Re-partition so "
+                "one rank holds most of the slave surface (avoid "
+                "cutting the slave surface across ranks — e.g. declare "
+                "its backing elements uncuttable, or assign the slave "
+                "region's elements to a single partition explicitly)."
+            )
         raise ValueError(
             "resolve_contact_ownership: cannot choose an owner rank -- every "
             f"candidate node is shared, and ranks {leaders} hold equal counts "
@@ -353,7 +428,7 @@ def resolve_contact_ownership(
                 "resolve_contact_ownership: ContactPlaneRecord has no "
                 "slave nodes"
             )
-        owner_rank = _majority_owner(slave_ids, owning_ranks)
+        owner_rank = _majority_owner(slave_ids, owning_ranks, lane="slave")
         interface_ids: list[int] = slave_ids
     elif isinstance(record, ContactRecord):
         master_ids = _master_node_ids(record)
