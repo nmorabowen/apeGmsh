@@ -23,6 +23,17 @@ displacement raises instead of writing an undeformed PNG. Deform
 vectors come from a shared vectorized reader in `_pump_set`. CI suite
 sets `APEGMSH_EXPECT_GL=1` so a silent VTK death fails the live-render
 test.
+### FIXED — `MESH.INVERTED` hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)
+
+The signed hex8 6-tet split copied MassResolver's connectivity, including
+one negatively oriented tet. MassResolver takes `abs()` so it never
+saw it; assess used the signed sum and false-failed valid hexes
+(`MESH.INVERTED` is FAIL-reserved). That tet is now `(0, 2, 7, 6)`.
+2D `tri3`/`quad4` are judged only on a planar mesh; otherwise they are
+skip-listed (orientation is not inversion). Unbound Results skip-list
+`MESH.*`; no-stage skip-lists `RES.NAN`. A non-finite last-step energy
+`ERR` is a finding. Energy `ValueError` on stage 0 no longer aborts the
+rest of the stages.
 
 ### ADDED — `fem.assess()` / `results.assess()` finding compiler (ADR 0094 S2)
 

@@ -13,11 +13,18 @@ import numpy as np
 from numpy import ndarray
 
 # Same hex8 → 6-tet split as MassResolver, but *signed* (MassResolver
-# takes abs and cannot see inversion).
+# takes abs and cannot see inversion). The kernel list has tet
+# (0, 7, 2, 6) in negative orientation — fine under abs(), a false
+# MESH.INVERTED here. Flip to (0, 2, 7, 6) so all six tets are
+# positive on a right-handed hex (unit cube sums to 1.0).
 _HEX8_TETS = (
     (0, 1, 2, 5), (0, 2, 3, 7), (0, 5, 2, 6),
-    (0, 5, 6, 7), (0, 7, 2, 6), (0, 4, 5, 7),
+    (0, 5, 6, 7), (0, 2, 7, 6), (0, 4, 5, 7),
 )
+
+# Max distance to the best-fit plane, as a fraction of the bbox
+# diagonal, for a mesh to count as planar (A2).
+_PLANAR_REL_TOL = 1e-8
 
 
 def _tet_signed(pts: ndarray, a: int, b: int, c: int, d: int) -> float:
@@ -75,3 +82,24 @@ def measure_linear_cell(type_name: str, corner_xyz: ndarray) -> float | None:
     if fn is None:
         return None
     return fn(np.asarray(corner_xyz, dtype=np.float64))
+
+
+def coords_are_planar(
+    coords: ndarray, *, rel_tol: float = _PLANAR_REL_TOL,
+) -> bool:
+    """True when all points lie on one plane (2D cells may be judged).
+
+    A 3D shell's orientation is a viewing convention, not inversion.
+    Fewer than 4 points are trivially planar.
+    """
+    pts = np.asarray(coords, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[0] < 4:
+        return True
+    from apeGmsh.results._geometry import model_diagonal
+
+    diag = model_diagonal(pts)
+    centered = pts - pts.mean(axis=0)
+    # Smallest right-singular vector is the best-fit normal.
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    dist = np.abs(centered @ vt[-1])
+    return float(dist.max()) <= float(rel_tol) * diag
