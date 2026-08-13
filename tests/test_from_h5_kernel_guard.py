@@ -397,6 +397,18 @@ class TestModelQueriesRaise:
         assert "BRep geometry is not stored in model.h5" in msg
         assert "fem.nodes.node_coords" in msg
 
+    def test_find_stale_metadata_raises(self, g: apeGmsh) -> None:
+        """A read diagnostic, so it takes the kernel guard rather than
+        the freeze guard its `synchronize()` call might suggest."""
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.model.geometry.find_stale_metadata()
+
+    def test_validate_pre_mesh_inherits_the_guard(self, g: apeGmsh) -> None:
+        """It delegates to find_stale_metadata, so it needs no guard of
+        its own — this pins that the delegation actually carries it."""
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.model.geometry.validate_pre_mesh()
+
     def test_boundary_curves_names_itself(self, g: apeGmsh) -> None:
         """Guarded at its own verb, not at the boundary() delegate."""
         with pytest.raises(

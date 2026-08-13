@@ -236,6 +236,8 @@ class apeGmsh(_SessionBase):
                                    ``save_dxf``, ``save_msh`` — the
                                    exporters only; the importers are
                                    frozen instead (below)
+        ``g.model.<geometry>``     ``find_stale_metadata``, and
+                                   ``validate_pre_mesh`` through it
         ``g.view``                 ``add_element_scalar`` /
                                    ``add_element_vector`` /
                                    ``add_node_scalar`` /
@@ -266,7 +268,9 @@ class apeGmsh(_SessionBase):
         shared chokepoint, so the coverage is per-composite rather than
         the per-method enumeration given for the reads above.
 
-        * Geometry — ``g.model.<geometry>`` (via ``Model._register``),
+        * Geometry — ``g.model.<geometry>`` (via ``Model._register``,
+          plus ``add_wire``, which creates OCC geometry but is
+          deliberately not registered),
           ``g.model.boolean``, ``g.model.transforms``,
           ``g.model.io.heal_shapes`` / ``load_msh`` / ``load_geo``,
           and ``g.model.queries.remove`` / ``remove_duplicates`` /

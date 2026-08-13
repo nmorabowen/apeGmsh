@@ -350,6 +350,9 @@ class _Structured:
                 dim_tags=[(3, t) for t in vol_tags],
             )
         """
+        # The only sibling on this composite that never called _guard;
+        # it writes a mesh directive like the rest of them.
+        self._guard("set_transfinite_automatic")
         gmsh.model.mesh.setTransfiniteAutomatic(
             dimTags=dim_tags or [],
             cornerAngle=corner_angle,

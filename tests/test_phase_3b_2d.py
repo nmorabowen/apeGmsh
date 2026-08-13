@@ -208,6 +208,22 @@ class TestChainPhaseFreeze:
         assert "g.labels.rename" in msg
         assert "beam_top" in msg and "beam_bottom" in msg
 
+    def test_geometry_add_wire_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """add_wire creates OCC geometry but is deliberately absent
+        from the _register() chokepoint (a wire is transient and not
+        entered in the entity registry), so it needed its own guard."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.geometry.add_wire([1, 2])
+
+    def test_structured_set_transfinite_automatic_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """The one sibling on _Structured that never called _guard."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.mesh.structured.set_transfinite_automatic()
+
     def test_physical_set_name_blocked(
         self, chain_session: apeGmsh,
     ) -> None:
