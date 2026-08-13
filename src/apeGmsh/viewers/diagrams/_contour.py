@@ -187,10 +187,13 @@ class ContourDiagram(ScalarColorSupport, Diagram):
             # Pre-warm the visual store gauss slab now (at attach) so the
             # first step-change reads from the float16 RAM cache instead of
             # triggering a blocking full (T × GP) HDF5 read mid-playback.
-            self._visual_gauss_slab()
-            # Build the cached isin mask + nodal accumulator from the
-            # now-warm slab so per-frame work is minimal.
-            self._build_gauss_state()
+            # Skipped under a plane override — that cache holds the
+            # default-recovery values, so this diagram cannot use it.
+            if not self._plane_override_active():
+                self._visual_gauss_slab()
+                # Build the cached isin mask + nodal accumulator from the
+                # now-warm slab so per-frame work is minimal.
+                self._build_gauss_state()
         else:
             self._effective_topology = _EFFECTIVE_NODES
             self._attach_nodes(scene)
@@ -426,6 +429,25 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._finalize_layer()
 
     # ------------------------------------------------------------------
+    # Out-of-plane recovery override (2-D derived scalars)
+    # ------------------------------------------------------------------
+
+    def _plane_kwargs(self) -> dict:
+        """``plane=`` / ``nu=`` to pass to every gauss read."""
+        style: ContourStyle = self.spec.style    # type: ignore[assignment]
+        return {"plane": style.plane, "nu": style.nu}
+
+    def _plane_override_active(self) -> bool:
+        """True when this contour deviates from the default auto-recovery.
+
+        The visual store caches one slab per (stage, component) read with
+        the DEFAULT recovery, and it is shared across diagrams — so an
+        overriding contour must bypass it and re-read per step.
+        """
+        style: ContourStyle = self.spec.style    # type: ignore[assignment]
+        return style.plane != "auto" or style.nu is not None
+
+    # ------------------------------------------------------------------
     # Attach — gauss (element-constant) path
     # ------------------------------------------------------------------
 
@@ -447,6 +469,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
             ids=eids,
             component=self.spec.selector.component,
             time=[0],
+            **self._plane_kwargs(),
         )
         if slab_step0.values.size == 0:
             raise NoDataError(
@@ -757,6 +780,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
                 ids=eids,
                 component=self.spec.selector.component,
                 time=[int(step_index)],
+                **self._plane_kwargs(),
             )
         if slab.values.size == 0:
             return
@@ -908,9 +932,13 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         # whole time history so the scale doesn't collapse to step 0's range
         # (often the undeformed/zero state). Falls back to the per-step finite
         # range when no store is stamped or the component is uncached.
-        global_clim = self._visual_color_limits()
-        if global_clim is not None:
-            return global_clim
+        # A plane override makes the store's range the WRONG scale (it was
+        # fitted to the default-recovery values) — fall through to the
+        # per-step range instead.
+        if not self._plane_override_active():
+            global_clim = self._visual_color_limits()
+            if global_clim is not None:
+                return global_clim
         finite = data[np.isfinite(data)]
         if finite.size:
             lo = float(finite.min())
@@ -972,6 +1000,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
                 ids=self._fem_eids_to_read,
                 component=self.spec.selector.component,
                 time=[int(step_index)],
+                **self._plane_kwargs(),
             )
         if slab.values.size == 0:
             return None
@@ -1006,6 +1035,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
                 ids=eids,
                 component=self.spec.selector.component,
                 time=[int(step_index)],
+                **self._plane_kwargs(),
             )
         if slab.values.size == 0:
             return None
@@ -1108,7 +1138,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         ``np.isin`` over the stage GP rows (RAM-only - the HDF5
         full-(T,N) read that made playback crawl is gone).
         """
-        if eids is None:
+        if eids is None or self._plane_override_active():
             return None
         full = self._visual_gauss_slab()
         if full is None:

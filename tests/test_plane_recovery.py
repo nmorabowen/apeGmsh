@@ -1,6 +1,7 @@
 """Per-element out-of-plane recovery: model-record parsing + σ_zz/ε_zz fill."""
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 
 import numpy as np
@@ -27,8 +28,10 @@ def _mat(token, tag, params):
 @pytest.fixture(autouse=True)
 def _clear_cache():
     pr._CACHE.clear()
+    pr._WARNED.clear()
     yield
     pr._CACHE.clear()
+    pr._WARNED.clear()
 
 
 # ---------------------------------------------------------------------
@@ -65,6 +68,41 @@ def test_ladruno_quad_type_flag_and_default():
         [_mat("ElasticIsotropic", 5, (1.0, 0.3, 0.0))],
     )
     assert pr.plane_recovery_map(m2) == {2: ("PlaneStrain", 0.3)}
+
+
+def test_ladruno_lst_classified():
+    """The 6-node LST is a flag-style 2-D element like its CST sibling."""
+    # no -type flag → the fork's PlaneStrain default
+    m1 = _model(
+        [_elem("LadrunoLST", (4, "-geom", "finite", "-thick", 1.0), 1)],
+        [_mat("ElasticIsotropic", 4, (1.0, 0.3, 0.0))],
+    )
+    assert pr.plane_recovery_map(m1) == {1: ("PlaneStrain", 0.3)}
+    pr._CACHE.clear()
+    m2 = _model(
+        [_elem("LadrunoLST", (4, "-type", "PlaneStress", "-thick", 1.0), 2)],
+        [_mat("ElasticIsotropic", 4, (1.0, 0.3, 0.0))],
+    )
+    assert pr.plane_recovery_map(m2) == {2: ("PlaneStress", 0.3)}
+
+
+def test_ladruno_up_2d_is_plane_strain_3d_is_not():
+    """LadrunoUP spans both dimensions; the perm component count decides."""
+    m2d = _model(
+        [_elem("LadrunoUP",
+               (6, "-thick", 1.0, "-Kf", 2.2e9, "-poro", 0.4, "-rhoF", 1000.0,
+                "-perm", 1e-9, 1e-9), 1)],
+        [_mat("ElasticIsotropic", 6, (1.0, 0.3, 0.0))],
+    )
+    assert pr.plane_recovery_map(m2d) == {1: ("PlaneStrain", 0.3)}
+    pr._CACHE.clear()
+    m3d = _model(
+        [_elem("LadrunoUP",
+               (6, "-Kf", 2.2e9, "-poro", 0.4, "-rhoF", 1000.0,
+                "-permH", 1e-5, 1e-5, 1e-5, "-gammaW", 9810.0), 1)],
+        [_mat("ElasticIsotropic", 6, (1.0, 0.3, 0.0))],
+    )
+    assert pr.plane_recovery_map(m3d) == {}
 
 
 def test_kg_material_nu_derivation():
@@ -165,6 +203,62 @@ def test_recorded_zz_finite_used_verbatim():
                    [_mat("ElasticIsotropic", 1, (1.0, 0.3, 0.0))])
     assert pr.inject_out_of_plane(cols, np.array([1]), prefix="stress", model=model) is False
     np.testing.assert_allclose(cols["stress_zz"], [[7.0]])
+
+
+# ---------------------------------------------------------------------
+# Unrecoverable elements are reported, never silent
+# ---------------------------------------------------------------------
+
+def test_warns_and_names_unclassifiable_token():
+    """The whole point: an unknown 2-D token must not fail silently."""
+    model = _model(
+        [_elem("SomeFutureTri9", (7, "-thick", 1.0), fem_eid=1)],
+        [_mat("ElasticIsotropic", 7, (1.0, 0.3, 0.0))],
+    )
+    cols = _stress_cols([10.0], [0.0])
+    with pytest.warns(pr.OutOfPlaneRecoveryWarning, match="SomeFutureTri9"):
+        assert pr.inject_out_of_plane(
+            cols, np.array([1]), prefix="stress", model=model,
+        ) is False
+    assert "stress_zz" not in cols
+
+
+def test_warns_when_plane_strain_material_nu_unreadable():
+    model = _model(
+        [_elem("quad", (0.5, "PlaneStrain", 1), fem_eid=1)],
+        [_mat("SomeExoticNDMaterial", 1, (1.0, 2.0, 3.0))],   # no ν to read
+    )
+    cols = _stress_cols([10.0], [0.0])
+    with pytest.warns(pr.OutOfPlaneRecoveryWarning, match="Poisson"):
+        pr.inject_out_of_plane(cols, np.array([1]), prefix="stress", model=model)
+    np.testing.assert_allclose(cols["stress_zz"], [[0.0]])
+
+
+def test_no_warning_when_zero_is_the_exact_answer():
+    """Plane stress → σ_zz = 0 exactly; nothing to report."""
+    model = _model(
+        [_elem("quad", (0.5, "PlaneStress", 1), fem_eid=1)],
+        [_mat("ElasticIsotropic", 1, (1.0, 0.3, 0.0))],
+    )
+    cols = _stress_cols([10.0], [0.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pr.OutOfPlaneRecoveryWarning)
+        pr.inject_out_of_plane(cols, np.array([1]), prefix="stress", model=model)
+
+
+def test_warning_fires_once_per_situation():
+    """The viewer re-reads every frame — one warning, not one per redraw."""
+    model = _model([_elem("SomeFutureTri9", (7,), fem_eid=1)], [])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for _ in range(5):
+            pr.inject_out_of_plane(
+                _stress_cols([10.0], [0.0]), np.array([1]),
+                prefix="stress", model=model,
+            )
+    assert sum(
+        issubclass(w.category, pr.OutOfPlaneRecoveryWarning) for w in caught
+    ) == 1
 
 
 def test_recorded_zz_nan_sentinel_reconstructed_per_gp():
