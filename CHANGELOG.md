@@ -12,6 +12,53 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `split="parts"` silently dropped `g.constraints.interface()` (ADR 0093)
+
+`BuiltModel._emit_split` ran every other additive side-list pass
+(`emit_mp_constraints`, `emit_reinforce_ties`, `emit_embed_ties`,
+`emit_contacts`, `emit_contact_planes`, `emit_rebar_elements`) but never
+`emit_interfaces`, so a model carrying `g.constraints.interface()`
+exported with `split="parts"` lost the ENTIRE interface — no
+`zeroLength`, no tributary-scaled uniaxials, no mixed-ndf phantom — and
+the deck still loaded and ran, as a fully bonded model where the user
+asked for a unilateral one. Found by the ADR 0093 S8 adversarial review
+(refuter A, finding 5). The pass now runs at the flat path's position
+(after `emit_contact_planes`, before `emit_rebar_elements`), driver-side
+with the MP constraints: an interface is cross-module by construction, so
+its unit must land after every fragment has declared its nodes. The
+constraint-handler auto-emit already saw mixed-ndf interfaces through
+`_fem_has_interface_equal_dofs`, so the split deck's handler was never
+wrong — only its interface was missing. Regression:
+`tests/opensees/unit/test_split_emit.py` (the driver carries the block
+and the fragments do not; the split driver's interface lines equal the
+single-file deck's, same order, same tags).
+
+### FIXED — analysis-chain auto-emits now precede a user-declared `analysis` directive (ADR 0092 S5 open item)
+
+The bridge's auto-emitted chain components — `constraints LadrunoContact`
+(contact) / `Transformation` (MP constraints), and under partitioning the
+ADR 0027 INV-5 runtime-conditional `numberer ParallelPlain` / `system
+Mumps` — used to land AFTER a user-declared `ops.analysis.Static()` line.
+OpenSees constructs the analysis object AT the `analysis` command, and
+`constraints` / `numberer` do not retro-propagate into it (the engine
+back-propagates only `system` / `algorithm`), so the auto-emits were
+silently inert: measured in the ADR 0092 S5 harness, a contact deck
+relying on the auto-emit ran PlainHandler — the serial twin diverged and
+the 2-rank twin converged to a plausible-WRONG answer (w_top −5.714e−4
+vs the true −5.625e−3) with base reactions still balancing. All three
+emit paths (`_emit_flat`, `_emit_split`, `_emit_partitioned`) now hoist
+the auto-emits to immediately before the first user-declared `Analysis`
+primitive and skip the original post-topology site; decks with no user
+`analysis` primitive keep the original position byte-identically, and
+the `suppress_analysis_chain_auto_emit` seam (ADR 0077) is honored at
+both sites. The live (in-process) lane shares the same pass, so it is
+fixed too. Regression: deck-shape pins in
+`tests/opensees/integration/test_emit_partitioned_contact.py` + the
+numeric `*_auto_chain` twins in
+`tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py`
+(the exact pre-fix hazard decks now match the explicit-chain twin to
+≤ 1e−10).
+
 ### ADDED — partitioned (MPI) emit for `g.constraints.interface()` (ADR 0093 S8)
 
 - The S5 blanket refusal is lifted: an interface model now emits under

@@ -5017,7 +5017,10 @@ def _plan_rank_interfaces(
     holder_ranks: "dict[int, list[int]]" = {}
     native_nodes: "dict[int, set[int]]" = {}
     for idx, part in enumerate(parts):
-        rank = runtime_rank_from_partition_record(part, idx)
+        # Duck-typed seam (stub FEMs) — the record itself is not
+        # consulted by the conversion; see the helper's contract.
+        rank = runtime_rank_from_partition_record(
+            cast("PartitionRecord", part), idx)
         eids = np.asarray(
             getattr(part, "element_ids", ()), dtype=np.int64,
         )
