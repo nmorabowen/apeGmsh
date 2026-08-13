@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0094 Accepted: skill teaches assess(), Q1–Q3 closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmshviewers-render-adr-0094-s5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7416,6 +7427,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0094 Accepted: skill teaches assess(), Q1–Q3 closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmshviewers-render-adr-0094-s5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11425,6 +11447,15 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed">CHANGED — ADR 0094 Accepted: skill teaches <code>assess()</code>, Q1–Q3 closed<a class="headerlink" href="#changed-adr-0094-accepted-skill-teaches-assess-q1q3-closed" title="Permanent link">&para;</a></h3>
+<p>After-solve check is <code>fem.assess()</code> / <code>results.assess(figures=True)</code> then
+<code>read_file</code> on <code>report.figures</code> — not <code>inspect</code> as the verdict, not Qt.
+New <code>skills/apegmsh/references/assess.md</code> (and the helper copy) owns the
+v1 catalog and code → next action. Happy path / gotcha 7 / <code>results.md</code>
+§3b / <code>workflows.md</code> §6 point there. Open questions closed: coarse BRep
+tessellation (Q1), ladder 1+3 only — no hidden-window fallback (Q2),
+<code>stills.py</code> stays a poster script (Q3). No new finding codes, no
+<code>g.assess</code>, no <code>OpenSeesModel.assess()</code>.</p>
 <h3 id="added-python-m-apegmshviewers-render-adr-0094-s5">ADDED — <code>python -m apeGmsh.viewers render</code> (ADR 0094 S5)<a class="headerlink" href="#added-python-m-apegmshviewers-render-adr-0094-s5" title="Permanent link">&para;</a></h3>
 <p>Off-kernel stills CLI next to the existing interactive
 <code>python -m apeGmsh.viewers &lt;path&gt;</code>. First token <code>render</code> dispatches
