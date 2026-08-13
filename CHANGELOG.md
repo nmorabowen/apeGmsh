@@ -12,6 +12,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `python -m apeGmsh.viewers render` (ADR 0094 S5)
+
+Off-kernel stills CLI next to the existing interactive
+``python -m apeGmsh.viewers <path>``. First token ``render`` dispatches
+to ``results.render`` / ``results.render_pack`` / ``fem.render``;
+anything else (including a file named ``render.h5``) still opens the
+Qt viewer. Skip (``APEGMSH_SKIP_VIEWER`` / no GL) is exit 0 with the
+existing ``[skip viewer]`` notice. Bad flags, missing files, and
+``ValueError`` (bad view, out-of-range step, deformed with no ``u``)
+are non-zero on stderr. A standalone ``model.h5`` calls ``fem.render``.
+No live-session door for ``g.model.render`` / ``g.mesh.render``.
+
 ### ADDED — `results.render_pack` + `assess(figures=True)` (ADR 0094 S3)
 
 Canned report pack of Qt-look stills (`mesh` / last-step primary contour /
