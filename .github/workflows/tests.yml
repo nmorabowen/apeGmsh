@@ -230,6 +230,9 @@ jobs:
   # skip cleanly.
   suite:
     runs-on: ubuntu-latest
+    env:
+      # Mesa is installed; live VTK offscreen must produce a Path.
+      APEGMSH_EXPECT_GL: "1"
     # A test that blocks (a real Qt window with no display, a lost
     # close path) otherwise eats the 6 h job limit and reports nothing
     # — the job stays "in progress" and its logs are unreadable until
