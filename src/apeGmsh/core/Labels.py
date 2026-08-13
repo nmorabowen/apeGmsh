@@ -1051,8 +1051,23 @@ class Labels(_HasLogging):
 
     _log_prefix = "Labels"
 
+    # H5-safe counterpart quoted when a query is refused on a
+    # chain-phase session — labels snapshot onto the broker as a
+    # LabelSet, not as the PhysicalGroupSet the default text names.
+    _H5_ALTERNATIVE = (
+        "fem.nodes.labels / fem.elements.labels (LabelSet), where "
+        "fem = g.mesh.queries.get_fem_data()"
+    )
+
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
+
+    def _require_kernel(self, verb: str) -> None:
+        """Refuse a query that would read the absent gmsh kernel."""
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, verb, alternative=self._H5_ALTERNATIVE,
+        )
 
     # ------------------------------------------------------------------
     # Create / update
@@ -1179,6 +1194,7 @@ class Labels(_HasLogging):
             When ``dim=None`` and the label exists at multiple
             dimensions.
         """
+        self._require_kernel(f"g.labels.entities({name!r})")
         prefixed = add_prefix(name)
 
         if dim is not None:
@@ -1235,6 +1251,7 @@ class Labels(_HasLogging):
         dim : int, default -1
             Filter by dimension.  ``-1`` returns all dimensions.
         """
+        self._require_kernel("g.labels.get_all()")
         names: list[str] = []
         for d, t in gmsh.model.getPhysicalGroups(dim):
             pg_name = gmsh.model.getPhysicalName(d, t)
@@ -1253,6 +1270,7 @@ class Labels(_HasLogging):
         pd.DataFrame  indexed by ``(dim, pg_tag)`` with columns
         ``name``, ``n_entities``, ``entity_tags``.
         """
+        self._require_kernel("g.labels.summary()")
         import pandas as pd
         rows: list[dict] = []
         for d, t in gmsh.model.getPhysicalGroups():
@@ -1279,6 +1297,9 @@ class Labels(_HasLogging):
 
     def has(self, name: str, *, dim: int | None = None) -> bool:
         """Return True if a label with this name exists."""
+        # Guarded ahead of the delegation so the message names has(),
+        # not the entities() call underneath it.
+        self._require_kernel(f"g.labels.has({name!r})")
         try:
             self.entities(name, dim=dim)
             return True
@@ -1305,6 +1326,11 @@ class Labels(_HasLogging):
         KeyError
             When no label with this name exists.
         """
+        # Frozen post-extraction for the same reason as add(): the
+        # broker's LabelSet is a snapshot, so deleting the backing PG
+        # here would leave the two disagreeing about what exists.
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(self._parent, f"g.labels.remove({name!r})")
         prefixed = add_prefix(name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         removed = False
@@ -1339,6 +1365,10 @@ class Labels(_HasLogging):
         KeyError
             When no label with *old_name* exists.
         """
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._parent, f"g.labels.rename({old_name!r} -> {new_name!r})",
+        )
         old_prefixed = add_prefix(old_name)
         new_prefixed = add_prefix(new_name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
@@ -1395,6 +1425,14 @@ class Labels(_HasLogging):
         int
             Physical-group tag of the new PG.
         """
+        # Creates a solver-facing PG, so it is a PG mutation and frozen
+        # on the same terms as g.physical.add().  Guarded ahead of the
+        # entities() read below so a chain-phase caller gets the
+        # mutation message rather than the query one.
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._parent, f"g.labels.promote_to_physical({label_name!r})",
+        )
         tags = self.entities(label_name, dim=dim)
         out_name = pg_name or label_name
 
@@ -1431,6 +1469,7 @@ class Labels(_HasLogging):
         dim : int, default -1
             Filter by dimension.  ``-1`` returns all dimensions.
         """
+        self._require_kernel("g.labels.reverse_map()")
         result: dict[DimTag, str] = {}
         for d, pg_tag in gmsh.model.getPhysicalGroups(dim):
             pg_name = gmsh.model.getPhysicalName(d, pg_tag)
@@ -1443,6 +1482,7 @@ class Labels(_HasLogging):
 
     def labels_for_entity(self, dim: int, tag: int) -> list[str]:
         """Return all label names that contain the given entity."""
+        self._require_kernel("g.labels.labels_for_entity()")
         names: list[str] = []
         for d, pg_tag in gmsh.model.getPhysicalGroups(dim):
             pg_name = gmsh.model.getPhysicalName(d, pg_tag)
@@ -1454,6 +1494,14 @@ class Labels(_HasLogging):
         return names
 
     def __repr__(self) -> str:
+        # Reports the no-kernel case rather than raising: __repr__ runs
+        # in debuggers, logging and pytest output, where an exception
+        # would mask whatever is actually being inspected.  Checked
+        # before the try/except so a chain-phase session is not
+        # mislabelled "session closed" — it was never open.
+        from ._compose_errors import is_kernelless_session
+        if is_kernelless_session(self._parent):
+            return "Labels(no live gmsh kernel — from_h5 session)"
         try:
             labels = self.get_all()
             return f"Labels({len(labels)} labels: {labels[:5]}{'...' if len(labels) > 5 else ''})"

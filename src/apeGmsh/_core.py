@@ -160,15 +160,13 @@ class apeGmsh(_SessionBase):
     ) -> "apeGmsh":
         """Construct a session in chain phase directly from a saved FEMData.
 
-        Skips the gmsh build phase entirely. The loaded FEMData becomes
-        the session's ``_fem`` chain head; ``compose(...)`` /
-        ``compose_inspect(...)`` / ``compose_list()`` and the
-        :meth:`save` API are all functional.  Geometry / mesh / PG
-        operations (``g.model.X``, ``g.mesh.generation.X``, etc.) are
-        NOT supported on a chain-phase session — they have no gmsh
-        state to mutate; calls into them will fail with the underlying
-        gmsh / composite error (the explicit ``ChainPhaseError`` lands
-        in Phase 3B.2d).
+        Skips the gmsh build phase entirely: the loaded FEMData becomes
+        the session's chain head and **there is no gmsh kernel behind
+        this session at all**.  ``model.h5`` persists the FEMData
+        snapshot (nodes, elements, physical groups, labels) — not the
+        geometry kernel — so anything that would read or mutate BRep /
+        mesh state raises :class:`~.core._compose_errors.ChainPhaseError`
+        naming the H5-safe alternative.
 
         Useful for cross-session composition workflows::
 
@@ -182,6 +180,127 @@ class apeGmsh(_SessionBase):
             g.compose("module_b.h5", label="B")
             g.save("final.h5")
 
+        What works
+        ----------
+        * ``g.mesh.queries.get_fem_data()`` — the chain head, and the
+          surface every refusal below points back at.
+        * ``g.compose(...)`` / ``compose_inspect(...)`` /
+          ``compose_list()`` and :meth:`save`.
+        * The chain-phase authoring shims, routed through
+          ``FEMData.with_*``: ``g.constraints.bc`` / ``tie`` /
+          ``embedded`` / ``tied_contact`` / ``equalDOF`` /
+          ``rigid_link`` / ``rigid_diaphragm``, plus point
+          ``g.loads.X`` / ``g.masses.X``.
+        * Kernel-free helpers: ``g.model.queries.plane`` /
+          ``registry``, ``g.view.list_views`` / ``count``,
+          ``g.plot.show`` / ``savefig`` / ``clear`` / ``figsize`` /
+          ``use_axes``.
+        * ``repr()`` of any composite.  The two kernel-backed reprs
+          (``g.physical``, ``g.labels``) report
+          ``"no live gmsh kernel — from_h5 session"`` rather than
+          raising, so debuggers and logging stay usable.
+
+        Refused — no live kernel to read
+        --------------------------------
+        These need the gmsh model and raise on a ``from_h5`` session
+        specifically (a live session still has a kernel, so they stay
+        legal there).  Each message names the broker counterpart.
+
+        =========================  ==================================
+        Surface                    Guarded members
+        =========================  ==================================
+        ``g.inspect``              ``get_geometry_info``,
+                                   ``get_mesh_info``, ``print_summary``
+        ``g.physical``             ``get_all``, ``get_entities``,
+                                   ``entities``,
+                                   ``get_groups_for_entity``,
+                                   ``get_name``, ``get_tag``,
+                                   ``summary``, ``get_nodes``
+        ``g.labels``               ``entities``, ``get_all``,
+                                   ``summary``, ``has``,
+                                   ``reverse_map``,
+                                   ``labels_for_entity``
+        ``g.mesh.queries``         ``get_nodes``, ``get_elements``,
+                                   ``get_element_properties``,
+                                   ``get_element_qualities``,
+                                   ``quality_report``
+        ``g.model.queries``        ``bounding_box``,
+                                   ``center_of_mass``, ``mass``,
+                                   ``boundary``, ``boundary_curves``,
+                                   ``boundary_points``,
+                                   ``adjacencies``,
+                                   ``entities_in_bounding_box``
+        ``g.mesh.partitioning``    ``n_partitions``, ``summary``,
+                                   ``entity_table``, ``save``
+        ``g.model.io``             ``save_step``, ``save_iges``,
+                                   ``save_dxf``, ``save_msh`` — the
+                                   exporters only; the importers are
+                                   frozen instead (below)
+        ``g.model.<geometry>``     ``find_stale_metadata``, and
+                                   ``validate_pre_mesh`` through it
+        ``g.mesh.recipe``          ``check``
+        ``g.parts``                ``build_face_map``
+        ``g.rebar``                ``resolve``
+        ``g.sections``             ``plot_faces``
+        ``g.view``                 ``add_element_scalar`` /
+                                   ``add_element_vector`` /
+                                   ``add_node_scalar`` /
+                                   ``add_node_vector``
+        ``g.plot``                 ``geometry``, ``mesh``, ``quality``,
+                                   ``label_entities``, ``label_nodes``,
+                                   ``label_elements``,
+                                   ``physical_groups``,
+                                   ``physical_groups_mesh``
+        =========================  ==================================
+
+        Counterparts: ``fem.inspect`` for summaries, ``fem.physical``
+        (:class:`~.mesh._group_set.PhysicalGroupSet`) for physical
+        groups, ``fem.nodes.labels`` / ``fem.elements.labels``
+        (:class:`~.mesh._group_set.LabelSet`) for labels,
+        ``fem.nodes`` / ``fem.elements`` / ``fem.info`` for mesh data,
+        and ``results.inspect`` for post-processing — where
+        ``fem = g.mesh.queries.get_fem_data()``.  BRep geometry has no
+        counterpart: derive it from mesh coordinates or rebuild the
+        geometry in a live session.
+
+        Refused — model frozen
+        ----------------------
+        Mutations are refused on **any** chain-phase session, not just
+        this one: once a FEMData snapshot exists the broker is
+        canonical, and mutating gmsh would silently desync the two.
+        Listed by composite — each guards its mutating operations at a
+        shared chokepoint, so the coverage is per-composite rather than
+        the per-method enumeration given for the reads above.
+
+        * Geometry — ``g.model.<geometry>`` (via ``Model._register``,
+          plus ``add_wire``, which creates OCC geometry but is
+          deliberately not registered),
+          ``g.model.boolean``, ``g.model.transforms``,
+          ``g.model.io.heal_shapes`` / ``load_msh`` / ``load_geo``,
+          and ``g.model.queries.remove`` / ``remove_duplicates`` /
+          ``make_conformal`` (mutations despite the composite name).
+        * Mesh — ``g.mesh.generation``, ``g.mesh.editing``,
+          ``g.mesh.sizing``, ``g.mesh.structured``, ``g.mesh.recipe``,
+          and ``g.mesh.partitioning`` (its mutating ops ``partition`` /
+          ``partition_explicit`` / ``unpartition`` / ``renumber``; the
+          composite's four readers take the kernel guard instead, and
+          are listed in the read table above).
+        * Naming — ``g.physical.add`` / ``set_name`` / ``remove`` /
+          ``remove_name`` / ``remove_all``, and ``g.labels.add`` /
+          ``remove`` / ``rename`` / ``promote_to_physical``.
+        * Assembly — ``g.parts`` instance registration,
+          ``g.sections`` builds, ``g.rebar.place``.
+
+        Refused — resolves from live geometry
+        -------------------------------------
+        ``g.constraints.contact`` / ``contact_plane`` / ``interface``,
+        ``g.embed``, ``g.reinforce`` and ``g.decouple_node`` record
+        definitions that are resolved against live gmsh at extraction.
+        A ``from_h5`` session never re-extracts, so the definition
+        would be stored and silently never applied — declare these in
+        the source part session before saving; the resolved records
+        round-trip through ``model.h5`` and survive ``g.compose``.
+
         Parameters
         ----------
         path : str or Path
@@ -192,6 +311,12 @@ class apeGmsh(_SessionBase):
             Defaults to the source file's stem.
         verbose : bool, default False
             Verbose-mode flag forwarded to the constructor.
+
+        Raises
+        ------
+        ~.core._compose_errors.ChainPhaseError
+            From any surface listed above.  The message names the
+            offending call and the alternative that answers it.
         """
         from .mesh.FEMData import FEMData
 
@@ -208,12 +333,10 @@ class apeGmsh(_SessionBase):
         # touch ``g.mesh.queries.get_fem_data()`` / ``g.compose`` /
         # ``g.save`` work without ``begin()`` ever running.  No gmsh
         # state is created here — composite constructors only require
-        # the parent session, and the gmsh-backed sub-APIs (e.g.
-        # ``g.mesh.generation.generate(...)``) will fail with their
-        # own native gmsh errors if the user accidentally invokes
-        # them on a chain-phase session.  Phase 3B.2d adds the
-        # explicit :class:`ChainPhaseError` raises on those entry
-        # points.
+        # the parent session.  Every gmsh-backed sub-API is guarded
+        # (kernel reads via ``raise_if_no_live_kernel``, mutations via
+        # the chain-phase freeze guard); the docstring above lists the
+        # surfaces and their H5-safe counterparts.
         instance._create_composites()
         return instance
 

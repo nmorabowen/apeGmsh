@@ -98,6 +98,33 @@
   `internal_docs/guide_sections.md`, and skill reference §10
   (`references/section-properties.md`) + cheatsheet entry. **ADR 0080 is
   Accepted** — B1–B7 shipped as #840–#847 plus this slice.
+### FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
+
+`results.render` / `fem.render` no longer treat every exception as
+`[skip viewer] no GL context` — only `RuntimeError` / `OSError` from
+plotter creation or screenshot. A failed still writes to a temp name
+and never unlinks a pre-existing file. Out-of-range `step=` raises
+(Python negatives still work). `view="deformed"` with no recorded
+displacement raises instead of writing an undeformed PNG. Deform
+vectors come from a shared vectorized reader in `_pump_set`. CI suite
+sets `APEGMSH_EXPECT_GL=1` so a silent VTK death fails the live-render
+test.
+
+### ADDED — ADR 0095 (Proposed): `apeGmsh.studio` agent + script + viewer habitat
+
+Sidecar `apeGmsh.studio` (same administrative shape as `hpc` / `assess`:
+not a session composite, not re-exported from `apeGmsh/__init__.py`).
+Cursor stays the IDE; a Python daemon owns refresh / last-good
+tessellation / assess / render / a names-first `SelectionEnvelope`; the
+existing Qt `ViewerWindow` is the v1 host. JSON-on-disk is the v0
+transport; MCP is a later wrap (the consumer ADR 0094 deferred). Electron
+is a skin, not the architecture. This PR is the ADR + index only (S0);
+no library yet.
+
+Amends ADR 0094 only in the disposition of “Later: optional MCP wrapping
+S5”. Assess, stills, and “agents do not drive Qt for diagnosis” stay in
+force.
+
 ### FIXED — `MESH.INVERTED` hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)
 
 The signed hex8 6-tet split copied MassResolver's connectivity, including

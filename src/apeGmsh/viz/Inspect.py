@@ -48,6 +48,8 @@ class Inspect:
         global_summary : pd.DataFrame
             Single table with entity counts and types across all dimensions.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.inspect.get_geometry_info()")
         entity_labels: dict[int, str] = {
             0: 'points',
             1: 'curves',
@@ -266,6 +268,8 @@ class Inspect:
         global_summary : pd.DataFrame
             Single table with node / element counts indexed by dim.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.inspect.get_mesh_info()")
         # --- nodes -----------------------------------------------------
         node_tags, node_xyz, _ = gmsh.model.mesh.getNodes(
             dim=-1, tag=-1, includeBoundary=True
@@ -395,6 +399,8 @@ class Inspect:
         str
             The formatted summary text (also printed to stdout).
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.inspect.print_summary()")
         import math as _math
         lines: list[str] = []
         _hr = "=" * 72

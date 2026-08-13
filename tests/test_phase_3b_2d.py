@@ -180,6 +180,165 @@ class TestChainPhaseFreeze:
         with pytest.raises(ChainPhaseError):
             chain_session.labels.add(0, [1], "test_label")
 
+    def test_labels_remove_blocked(self, chain_session: apeGmsh) -> None:
+        """Deleting a label desyncs the broker's LabelSet exactly as
+        adding one does — both are frozen post-extraction."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.labels.remove("test_label")
+
+    def test_labels_rename_blocked(self, chain_session: apeGmsh) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.labels.rename("old", "new")
+
+    def test_labels_promote_to_physical_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Promotion creates a solver-facing PG, so it is frozen on the
+        same terms as g.physical.add()."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.labels.promote_to_physical("test_label")
+
+    def test_label_mutation_message_names_the_verb(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Each label mutation names itself, not a shared stand-in."""
+        with pytest.raises(ChainPhaseError) as exc_info:
+            chain_session.labels.rename("beam_top", "beam_bottom")
+        msg = str(exc_info.value)
+        assert "g.labels.rename" in msg
+        assert "beam_top" in msg and "beam_bottom" in msg
+
+    def test_geometry_add_wire_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """add_wire creates OCC geometry but is deliberately absent
+        from the _register() chokepoint (a wire is transient and not
+        entered in the entity registry), so it needed its own guard."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.geometry.add_wire([1, 2])
+
+    def test_structured_set_transfinite_automatic_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """The one sibling on _Structured that never called _guard."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.mesh.structured.set_transfinite_automatic()
+
+    def test_physical_set_name_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """add() was frozen but its four sibling PG mutations were not
+        — you could not create a physical group post-extraction, yet
+        could rename or delete one, desyncing the broker identically."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.set_name(2, 1, "renamed")
+
+    def test_physical_remove_name_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove_name("face")
+
+    def test_physical_remove_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove([(2, 1)])
+
+    def test_physical_remove_all_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove_all()
+
+    def test_physical_mutations_frozen_on_live_session_too(self) -> None:
+        """Freeze semantics, not kernel semantics: a live session that
+        has extracted once is frozen for PG mutations as well, while
+        the exporters (kernel guard) stay legal there."""
+        from apeGmsh.mesh.PhysicalGroups import PhysicalGroups
+
+        live = apeGmsh(model_name="live")     # never begin()s — no gmsh
+        live._fem = _make_fem()               # simulate post-extraction
+        assert live._fem_from_h5 is False
+
+        with pytest.raises(ChainPhaseError):
+            PhysicalGroups(live).remove_all()
+
+        # ...whereas the exporter guard is kernel-scoped and silent here.
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(live, "g.model.io.save_step()")
+
+    def test_model_queries_remove_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Three members of g.model.queries mutate geometry despite the
+        module name — they are frozen like any other geometry op."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.remove([(3, 1)])
+
+    def test_model_queries_remove_duplicates_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.remove_duplicates()
+
+    def test_model_queries_make_conformal_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """The costliest one to get wrong: fragment() rewrites every
+        entity tag and rebuilds Model._metadata, so a stale broker
+        would point at tags that no longer mean the same thing."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.make_conformal()
+
+    def test_model_queries_reads_use_the_other_guard(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Reads on this same composite refuse via the kernel guard,
+        which quotes the no-BRep message — the two guards coexist on
+        one composite and must not be conflated."""
+        with pytest.raises(ChainPhaseError) as exc:
+            chain_session.model.queries.center_of_mass(1)
+        assert "BRep geometry is not stored" in str(exc.value)
+
+    def test_label_mutations_frozen_on_live_session_too(
+        self, tmp_path: Path,
+    ) -> None:
+        """The freeze keys on ``_fem``, not on ``_fem_from_h5`` — a
+        LIVE session that has extracted once is frozen for label
+        mutations as well.
+
+        This is the whole difference between the mutation guard and
+        the kernel-read guard: the latter fires only for from_h5
+        sessions (a live session still has a kernel to read), while a
+        mutation desyncs the broker on any chain-phase session.
+        """
+        from apeGmsh.core.Labels import Labels
+
+        live = apeGmsh(model_name="live")       # never begin()s — no gmsh
+        live._fem = _make_fem()                 # simulate post-extraction
+        assert live._fem_from_h5 is False       # NOT a from_h5 session
+
+        labels = Labels(live)
+        with pytest.raises(ChainPhaseError):
+            labels.remove("anything")
+
+        # ...while the kernel-READ guard stays silent here, because a
+        # live session does have a kernel to answer from.
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(live, "g.labels.get_all()")
+
+    def test_label_mutations_precede_missing_label_error(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """The freeze fires before the KeyError these raise for an
+        unknown label — otherwise a chain-phase caller is told the
+        label is missing when the real answer is that the model is
+        frozen.  promote_to_physical is the one at risk: it reads via
+        entities() before mutating."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.labels.promote_to_physical("no_such_label")
+
     def test_physical_add_blocked(self, chain_session: apeGmsh) -> None:
         with pytest.raises(ChainPhaseError):
             chain_session.physical.add(0, [1], name="test_pg")

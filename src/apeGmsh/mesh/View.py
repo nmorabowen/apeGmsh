@@ -75,6 +75,8 @@ class View(_HasLogging):
         -------
         int  Gmsh view tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.view.add_element_scalar()")
         tags = [int(t) for t in elem_tags]
         data = [[float(v)] for v in values]
 
@@ -106,6 +108,8 @@ class View(_HasLogging):
         ----------
         vectors : shape ``(nElem, 3)`` — ``[vx, vy, vz]`` per element
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.view.add_element_vector()")
         tags = [int(t) for t in elem_tags]
         data = [[float(vectors[i, 0]), float(vectors[i, 1]), float(vectors[i, 2])]
                 for i in range(len(tags))]
@@ -140,6 +144,8 @@ class View(_HasLogging):
         node_tags : Gmsh node tags
         values    : one scalar per node, same order as *node_tags*
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.view.add_node_scalar()")
         tags = [int(t) for t in node_tags]
         data = [[float(v)] for v in values]
 
@@ -172,6 +178,8 @@ class View(_HasLogging):
         vectors     : shape ``(nNode, 2)`` or ``(nNode, 3)`` — missing components are zero-padded
         vector_type : Gmsh display style (1=arrows, 2=cones, 5=displacement)
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.view.add_node_vector()")
         vecs = np.asarray(vectors)
         if vecs.ndim == 1:
             vecs = vecs.reshape(-1, 1)
