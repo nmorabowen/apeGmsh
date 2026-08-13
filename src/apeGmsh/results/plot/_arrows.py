@@ -9,14 +9,7 @@ from __future__ import annotations
 import numpy as np
 from numpy import ndarray
 
-
-def model_diagonal(coords: ndarray) -> float:
-    """Return the bbox diagonal of ``coords`` (or 1.0 if empty)."""
-    if coords.size == 0:
-        return 1.0
-    span = coords.max(axis=0) - coords.min(axis=0)
-    diag = float(np.linalg.norm(span))
-    return diag if diag > 0.0 else 1.0
+from .._geometry import model_diagonal
 
 
 def auto_arrow_scale(
