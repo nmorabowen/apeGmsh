@@ -533,7 +533,7 @@ interface(master, slave, *, normal, tangential, thickness, tolerance=1e-6, slave
     master_entities=None, slave_entities=None, name=None)
 #   normal=NormalLaw(kind="ent"|"epp_gap"|"elastic", k_per_area, tau_b_n=None, gap=None)
 #   tangential=TangentialLaw(kind="epp"|"elastic", k_per_area, tau_b=None)
-#   from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw   # no public alias yet
+#   from apeGmsh import NormalLaw, TangentialLaw
 mortar(master_label, slave_label, *, eps_n="auto", outward, ...)   # DEPRECATED alias → contact(formulation="mortar", tie=True)
 
 # Fork coupling elements (RBE2 / RBE3) — shared control knobs:
@@ -641,7 +641,7 @@ normal, `_1` = tangential. Records persist to `/interfaces` (schema 2.29.0).
 
 ```python
 # verified: tests/opensees/integration/test_interface_acceptance_battery.py::test_curved_master_orientation_swings_with_the_face
-from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+from apeGmsh import NormalLaw, TangentialLaw
 
 g.constraints.interface(
     "face", "wire",                                    # master = rock rim (a FREE boundary curve of the continuum)

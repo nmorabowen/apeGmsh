@@ -354,7 +354,7 @@ tension whatsoever) with an `epp` tangential capped at the bond
 strength:
 
 ```python
-from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+from apeGmsh import NormalLaw, TangentialLaw
 
 g.constraints.interface(
     "face", "wire",                                    # rock rim, liner rim
