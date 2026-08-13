@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7232,6 +7243,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11087,6 +11109,16 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1">FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)<a class="headerlink" href="#fixed-offscreen-render-gl-skip-step-range-deform-field-adr-0094-s1" title="Permanent link">&para;</a></h3>
+<p><code>results.render</code> / <code>fem.render</code> no longer treat every exception as
+<code>[skip viewer] no GL context</code> — only <code>RuntimeError</code> / <code>OSError</code> from
+plotter creation or screenshot. A failed still writes to a temp name
+and never unlinks a pre-existing file. Out-of-range <code>step=</code> raises
+(Python negatives still work). <code>view="deformed"</code> with no recorded
+displacement raises instead of writing an undeformed PNG. Deform
+vectors come from a shared vectorized reader in <code>_pump_set</code>. CI suite
+sets <code>APEGMSH_EXPECT_GL=1</code> so a silent VTK death fails the live-render
+test.</p>
 <h3 id="added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat">ADDED — ADR 0095 (Proposed): <code>apeGmsh.studio</code> agent + script + viewer habitat<a class="headerlink" href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" title="Permanent link">&para;</a></h3>
 <p>Sidecar <code>apeGmsh.studio</code> (same administrative shape as <code>hpc</code> / <code>assess</code>:
 not a session composite, not re-exported from <code>apeGmsh/__init__.py</code>).
