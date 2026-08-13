@@ -5177,25 +5177,62 @@ class BuiltModel:
         """Refuse a pattern-borne ``sp`` targeting a node an interface
         plan will ghost-declare (ADR 0027 INV-2 / ADR 0093 INV-5).
 
-        The ghost replay stream (``ghost_sp_ops``) is built from the
-        model-level ``fix`` tier only; pattern ``sp`` lines fan out on
-        the node's NATIVE ranks (:func:`_emit_pattern_sp_partitioned`
-        filters on ``owned_nodes``) and are never mirrored onto a
-        ghost. A prescribed displacement on a ghosted interface slave
-        would therefore constrain the DOF on the home rank while the
-        owner rank's ghost copy stays free — the exact constrained-DOF
+        The ghost replay stream carries the ``fix`` tiers only — the
+        model-level ``ops.fix`` pool and, under staging, each stage's
+        ``s.fix`` / ``s.remove_sp`` history (``stage_ghost_sp_ops``).
+        Pattern ``sp`` lines fan out on the node's NATIVE ranks
+        (:func:`_emit_pattern_sp_partitioned` filters on
+        ``owned_nodes``) and are never mirrored onto a ghost. A
+        prescribed displacement on a ghosted interface slave would
+        therefore constrain the DOF on the home rank while the owner
+        rank's ghost copy stays free — the exact constrained-DOF
         disagreement ADR 0027 INV-2 documents as a measured Mumps
         "Matrix is Singular Numerically" under ``numberer
         ParallelPlain``. Folding pattern sp into the ghost stream is a
         named follow-up; until it lands, refusing loudly at plan time
         is the honest behaviour.
 
+        ADR 0052 HOLD supports (``s.support``) are pattern-borne sp
+        too — a per-stage dedicated ``Plain`` pattern of ``sp <node>
+        <dof> [nodeDisp …] -const`` lines, fanned out on native ranks
+        only (``rank_support`` filters on ``rank_owned``). Worse than
+        the singular-matrix case: a HOLD on a ghosted slave leaves the
+        owner rank's copy free and the 2-rank deck runs CLEAN to a
+        plausible wrong answer — measured (S9 probe, ``mpiexec -n 2``)
+        26.4% error on the base reaction and 12.5% on the master
+        displacement, while ``s.fix`` in the same slot agrees with
+        serial to 1e-16. Mirroring the HOLD sp onto a ghost would need
+        the runtime ``[nodeDisp …]`` capture replayed on the owner
+        rank — a named follow-up; refused here.
+
         Sweeps every :class:`Plain` pattern — the global pool
         (``post_element``) and each stage's ``pattern_specs`` — over
         its explicit ``sp`` records (node and pg targets) and its
-        ``from_model(case)`` sp imports.
+        ``from_model(case)`` sp imports, then every stage's
+        ``support_records``. Called with the UNION-of-ghosts of the
+        base (unclaimed, S8) plan and of every stage's claimed (S9)
+        plan, so both paths are covered.
         """
         from .pattern.pattern import Plain
+
+        def _refuse(label: str, hits: "set[int]", consequence: str) -> None:
+            raise BridgeError(
+                f"apeSees: g.constraints.interface() — node(s) "
+                f"{sorted(hits)} are ghost-declared on their pair's "
+                f"owner rank (foreign slave/beam nodes, ADR 0093 "
+                f"INV-5), but {label} prescribes sp displacement(s) on "
+                "them. Pattern-borne sp lines emit only on a node's "
+                f"NATIVE ranks, so the ghost copy would stay "
+                f"unconstrained on the owner rank — {consequence} "
+                "Mirroring pattern sp into the ghost "
+                "replay is not wired yet. Re-partition so the slave "
+                "side is native to the owner rank "
+                "(g.mesh.partitioning.partition(n, "
+                "uncuttable_elements=...)), use ops.fix / s.fix for a "
+                "homogeneous constraint (the fix tier IS replayed "
+                "onto ghosts), or emit serial (non-partitioned / "
+                "flat=True)."
+            )
 
         pools: "list[tuple[str, Any]]" = [
             ("pattern", p) for p in post_element if isinstance(p, Plain)
@@ -5236,24 +5273,34 @@ class BuiltModel:
                 continue
             tag = self.tag_for.get(id(p))
             label = f"{kind} (tag {tag})" if tag is not None else kind
-            raise BridgeError(
-                f"apeSees: g.constraints.interface() — node(s) "
-                f"{sorted(hits)} are ghost-declared on their pair's "
-                f"owner rank (foreign slave/beam nodes, ADR 0093 "
-                f"INV-5), but {label} prescribes sp displacement(s) on "
-                "them. Pattern-borne sp lines emit only on a node's "
-                "NATIVE ranks, so the ghost copy would stay "
-                "unconstrained on the owner rank — the constrained-DOF "
-                "disagreement ADR 0027 INV-2 documents as a measured "
-                "'Matrix is Singular Numerically' under numberer "
-                "ParallelPlain. Mirroring pattern sp into the ghost "
-                "replay is not wired yet. Re-partition so the slave "
-                "side is native to the owner rank "
-                "(g.mesh.partitioning.partition(n, "
-                "uncuttable_elements=...)), use ops.fix for a "
-                "homogeneous constraint (fix IS replayed onto ghosts), "
-                "or emit serial (non-partitioned / flat=True)."
+            _refuse(
+                label, hits,
+                "the constrained-DOF disagreement ADR 0027 INV-2 "
+                "documents as a measured 'Matrix is Singular "
+                "Numerically' under numberer ParallelPlain.",
             )
+
+        # ADR 0052 HOLD supports — see the docstring: on a ghosted
+        # slave the deck runs CLEAN to the wrong answer (measured
+        # 26.4% / 12.5%), the ADR 0092 silent-error class.
+        for st in self.stage_records:
+            hold_hits: "set[int]" = set()
+            for srec in st.support_records:
+                if not any(srec.dofs):
+                    continue
+                for nid in self._resolve_node_target(srec.pg, srec.nodes):
+                    if int(nid) in ghost_ids:
+                        hold_hits.add(int(nid))
+            if hold_hits:
+                _refuse(
+                    f"stage {st.name!r} s.support (an ADR 0052 HOLD "
+                    "is a pattern-borne sp)",
+                    hold_hits,
+                    "the 2-rank deck runs CLEAN and converges to a "
+                    "plausible wrong answer (measured: 26.4% error on "
+                    "the base reaction, 12.5% on the master "
+                    "displacement — the ADR 0092 silent-error class).",
+                )
 
     def _validate_interfaces_not_stage_bound(
         self, node_owner_stage: "dict[int, int]",

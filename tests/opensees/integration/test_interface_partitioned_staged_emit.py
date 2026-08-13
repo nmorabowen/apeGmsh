@@ -372,6 +372,71 @@ def test_ghost_replays_stage_fix_and_later_stage_fix_mirrors(tmp_path):
         )
 
 
+def test_ghost_replays_the_cumulative_multi_tier_sp_stream(tmp_path):
+    """The whole ADR 0027 INV-2 contract on one ghost, both directions:
+    the declaration replays the CUMULATIVE stream — model-level
+    ``ops.fix`` + an earlier stage's ``s.fix`` + the declaring stage's
+    own ``s.remove_sp`` — in the owner's emit order, and a LATER
+    stage's ordered delta (``remove sp`` then re-``fix``) is mirrored
+    onto the held ghost."""
+    fem = _fem()
+    slave_ids = sorted(int(r.slave_node) for r in fem.elements.interfaces)
+
+    # Liner always-on (claim-only stage), so the wire nodes are GLOBAL
+    # and every tier below is legal against them.
+    ops = _quad_ops(fem)
+    ops.fix(pg="wire", dofs=(1, 0))                 # model tier: dof 1
+    with ops.stage(name="ground") as s:
+        s.fix(pg="wire", dofs=(0, 1))               # earlier stage: dof 2
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.interface(name="RockLiner")               # declares the ghosts
+        s.remove_sp(pg="wire", dofs=(2,))           # declaring stage delta
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="service") as s:
+        s.remove_sp(pg="wire", dofs=(1,))           # forward: release…
+        s.fix(pg="wire", dofs=(1, 0))               # …and re-fix, in order
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    lines = _lines(_deck_text(ops, tmp_path))
+
+    install_owner = _rank_brackets(_stage_block(lines, "install"))[0]
+    for nid in slave_ids:
+        i = next(i for i, ln in enumerate(install_owner)
+                 if ln.split()[0] == "node" and int(ln.split()[1]) == nid)
+        # The full multi-tier stream, contiguous, in the owner's emit
+        # order: model fix → ground s.fix → install s.remove_sp.
+        assert install_owner[i + 1:i + 4] == [
+            f"fix {nid} 1 0",
+            f"fix {nid} 0 1",
+            f"remove sp {nid} 2",
+        ], (
+            f"ghost {nid} replay is not the cumulative multi-tier "
+            f"stream: {install_owner[i + 1:i + 4]}"
+        )
+        # …and the stream ends there (nothing double-replayed).
+        nxt = install_owner[i + 4].split()
+        assert not (
+            (nxt[0] == "fix" or nxt[:2] == ["remove", "sp"])
+            and int(nxt[2 if nxt[0] == "remove" else 1]) == nid
+        )
+
+    service = _stage_block(lines, "service")
+    brackets = _rank_brackets(service)
+    for nid in slave_ids:
+        # Home rank: the native ordered delta.
+        i_rm = brackets[1].index(f"remove sp {nid} 1")
+        assert f"fix {nid} 1 0" in brackets[1][i_rm + 1:]
+        # Owner rank: the SAME ordered delta mirrored onto the held
+        # ghost — release before re-fix, or the ghost drifts stiffer.
+        i_rm0 = brackets[0].index(f"remove sp {nid} 1")
+        assert f"fix {nid} 1 0" in brackets[0][i_rm0 + 1:], (
+            f"service delta on ghost {nid} not mirrored in order"
+        )
+
+
 # =====================================================================
 # (4) A claim-only stage still opens the owner bracket + global-tier
 #     fix replay
@@ -428,6 +493,81 @@ def test_stage_pattern_sp_on_ghosted_claimed_slave_refuses(tmp_path):
     # time, before a single line is emitted).
     slave_ids = {int(r.slave_node) for r in fem.elements.interfaces}
     assert any(str(nid) in msg for nid in slave_ids)
+
+
+# =====================================================================
+# (5b) s.support (ADR 0052 HOLD) on a ghosted slave — the S9 probe's
+#      measured 26.4%/12.5% silent-error case, refused at plan time
+# =====================================================================
+def test_stage_support_on_ghosted_claimed_slave_refuses(tmp_path):
+    # The probe's own scenario: the campaign's one-liner — s.support on
+    # the installed liner's wire — emits `sp <n> <dof> [nodeDisp ...]
+    # -const` on the NATIVE rank only, the owner rank's ghost stays
+    # free, and the 2-rank deck runs CLEAN to a wrong answer (measured
+    # 26.4% base reaction / 12.5% master displacement). Refused before
+    # a single line is emitted.
+    fem = _fem()
+    ops = _quad_ops(fem)
+    with ops.stage(name="ground") as s:
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["liner"])
+        s.interface(name="RockLiner")
+        s.support(pg="wire", dofs=(1, 0))
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    msg = str(exc.value)
+    assert "stage 'install' s.support" in msg
+    assert "ADR 0052" in msg and "ghost-declared" in msg
+    assert "26.4%" in msg and "12.5%" in msg     # the measured class
+    assert "s.fix" in msg                        # the working alternative
+    slave_ids = {int(r.slave_node) for r in fem.elements.interfaces}
+    assert any(str(nid) in msg for nid in slave_ids)
+
+
+def test_stage_support_on_ghosted_unclaimed_slave_refuses(tmp_path):
+    # The identical hole on the base/S8 UNCLAIMED plan (probe
+    # verified): liner always-on, interface in the base pass, a stage
+    # HOLD on the wire — the base plan's ghosts sweep the stage
+    # support_records too.
+    fem = _fem()
+    ops = _quad_ops(fem)
+    with ops.stage(name="hold") as s:
+        s.support(pg="wire", dofs=(1, 0))
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    msg = str(exc.value)
+    assert "stage 'hold' s.support" in msg
+    assert "ghost-declared" in msg and "ADR 0093" in msg
+
+
+def test_stage_support_on_native_side_still_emits(tmp_path):
+    # Negative control: a HOLD on the master ("face") side — native to
+    # the owner rank, nothing ghosted — emits its sp-hold lines
+    # normally inside the stage.
+    fem = _fem()
+    n_pairs = len(fem.elements.interfaces)
+    ops = _quad_ops(fem)
+    with ops.stage(name="ground") as s:
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["liner"])
+        s.interface(name="RockLiner")
+        s.support(pg="face", dofs=(1, 0))
+        s.analysis(**_pchain(ops))
+        s.run(n_increments=1, dt=1.0)
+    lines = _lines(_deck_text(ops, tmp_path))
+    install = _stage_block(lines, "install")
+    holds = [ln for ln in install if ln.startswith("sp ") and "-const" in ln]
+    face_ids = {int(n) for n in fem.nodes.select(pg="face").ids}
+    assert holds and {int(ln.split()[1]) for ln in holds} <= face_ids
+    assert len(_zl(install)) == n_pairs          # the claim still emits
 
 
 # =====================================================================

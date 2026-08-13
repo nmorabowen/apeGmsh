@@ -468,23 +468,44 @@ def _build_ops_b(fem, *, parallel: bool, service: bool) -> apeSees:
     return ops
 
 
-def _fragment_b_serial(p: "dict[str, object]") -> str:
+def _fragment_b_serial(p: "dict[str, object]",
+                       zl_tag: "int | None" = None) -> str:
     b = " ".join(str(n) for n in p["base"])       # type: ignore[union-attr]
+    # ``def`` = the mid pair's zeroLength NORMAL deformation via
+    # eleResponse — the born-strain-free claim measured AT SOURCE (and
+    # a dead spring cannot answer eleResponse, so the alternative that
+    # the element simply never engaged dies here too).
+    if zl_tag is None:
+        fmt, extra = "", ""
+    else:
+        fmt = " def=%.16e"
+        extra = f" [lindex [eleResponse {zl_tag} deformation] 0]"
     return f"""
 reactions
 set Rb 0.0
 foreach n {{{b}}} {{ set Rb [expr {{$Rb + [nodeReaction $n 1]}}] }}
-puts [format "S9TWINB lane=serial uxm=%.16e uxs=%.16e uys=%.16e Rb=%.16e" [nodeDisp {p['n_face']} 1] [nodeDisp {p['n_slave']} 1] [nodeDisp {p['n_slave']} 2] $Rb]
+puts [format "S9TWINB lane=serial uxm=%.16e uxs=%.16e uys=%.16e Rb=%.16e{fmt}" [nodeDisp {p['n_face']} 1] [nodeDisp {p['n_slave']} 1] [nodeDisp {p['n_slave']} 2] $Rb{extra}]
 wipe
 """
 
 
-def _fragment_b_mp(p: "dict[str, object]") -> str:
+def _fragment_b_mp(p: "dict[str, object]",
+                   zl_tag: "int | None" = None) -> str:
     """Rank 0 (liner-native side, also holds base + anchor) prints the
     slave's native value + the base reaction sum; rank 1 (the pairs'
-    owner — it holds the backing rock quads AND the slave GHOSTS)
-    prints the face value + the ghost copy of the slave."""
+    owner — it holds the backing rock quads, the slave GHOSTS and the
+    zeroLength elements themselves) prints the face value, the ghost
+    copy of the slave, and the mid pair's eleResponse deformation."""
     b = " ".join(str(n) for n in p["base"])       # type: ignore[union-attr]
+    if zl_tag is None:
+        owner_fmt = "uxm=%.16e gxs=%.16e"
+        owner_args = (f"[nodeDisp {p['n_face']} 1] "
+                      f"[nodeDisp {p['n_slave']} 1]")
+    else:
+        owner_fmt = "uxm=%.16e gxs=%.16e def=%.16e"
+        owner_args = (f"[nodeDisp {p['n_face']} 1] "
+                      f"[nodeDisp {p['n_slave']} 1] "
+                      f"[lindex [eleResponse {zl_tag} deformation] 0]")
     return f"""
 if {{[getPID] == {p['rank_rock']}}} {{
     reactions
@@ -493,36 +514,39 @@ if {{[getPID] == {p['rank_rock']}}} {{
     puts [format "S9TWINB lane=mp who=linernative uxs=%.16e uys=%.16e Rb=%.16e" [nodeDisp {p['n_slave']} 1] [nodeDisp {p['n_slave']} 2] $Rb]
 }}
 if {{[getPID] == {1 - p['rank_rock']}}} {{
-    puts [format "S9TWINB lane=mp who=owner uxm=%.16e gxs=%.16e" [nodeDisp {p['n_face']} 1] [nodeDisp {p['n_slave']} 1]]
+    puts [format "S9TWINB lane=mp who=owner {owner_fmt}" {owner_args}]
 }}
 wipe
 """
 
 
 _B_SER_RE = re.compile(
-    r"S9TWINB lane=serial uxm=(\S+) uxs=(\S+) uys=(\S+) Rb=(\S+)")
+    r"S9TWINB lane=serial uxm=(\S+) uxs=(\S+) uys=(\S+) Rb=(\S+)"
+    r"(?: def=(\S+))?")
 _B_MP_NATIVE_RE = re.compile(
     r"S9TWINB lane=mp who=linernative uxs=(\S+) uys=(\S+) Rb=(\S+)")
 _B_MP_OWNER_RE = re.compile(
-    r"S9TWINB lane=mp who=owner uxm=(\S+) gxs=(\S+)")
+    r"S9TWINB lane=mp who=owner uxm=(\S+) gxs=(\S+)(?: def=(\S+))?")
 
 
-def _parse_b_serial(out: str) -> "dict[str, float] | None":
+def _parse_b_serial(out: str) -> "dict[str, float | None] | None":
     m = _B_SER_RE.search(out)
     if not m:
         return None
     return {"uxm": float(m.group(1)), "uxs": float(m.group(2)),
-            "uys": float(m.group(3)), "Rb": float(m.group(4))}
+            "uys": float(m.group(3)), "Rb": float(m.group(4)),
+            "def0": float(m.group(5)) if m.group(5) else None}
 
 
-def _parse_b_mp(out: str) -> "dict[str, float] | None":
+def _parse_b_mp(out: str) -> "dict[str, float | None] | None":
     mn = _B_MP_NATIVE_RE.search(out)
     mo = _B_MP_OWNER_RE.search(out)
     if not (mn and mo):
         return None
     return {"uxs": float(mn.group(1)), "uys": float(mn.group(2)),
             "Rb": float(mn.group(3)),
-            "uxm": float(mo.group(1)), "gxs": float(mo.group(2))}
+            "uxm": float(mo.group(1)), "gxs": float(mo.group(2)),
+            "def0": float(mo.group(3)) if mo.group(3) else None}
 
 
 def _run_case_b(tmp_dir: Path, env: "dict[str, str]", *,
@@ -539,10 +563,32 @@ def _run_case_b(tmp_dir: Path, env: "dict[str, str]", *,
     _build_ops_b(fem, parallel=False, service=service).tcl(
         str(serial_deck), flat=True)
     _build_ops_b(fem, parallel=True, service=service).tcl(str(mp_deck))
+
+    # The install lane also reads the mid pair's zeroLength deformation
+    # via eleResponse (F5): recover its element tag from each emitted
+    # deck (equal-ndf: iNode = mid master, jNode = mid slave).
+    zl_serial = zl_mp = None
+    if not service:
+        mid_master = next(
+            int(r.master_node) for r in fem.elements.interfaces
+            if int(r.slave_node) == p["n_slave"])
+
+        def _zl_tag(path: Path) -> int:
+            m = re.search(
+                rf"element zeroLength (\d+) {mid_master} {p['n_slave']} ",
+                path.read_text(encoding="utf-8"))
+            assert m, f"mid pair zeroLength not found in {path.name}"
+            return int(m.group(1))
+
+        zl_serial, zl_mp = _zl_tag(serial_deck), _zl_tag(mp_deck)
+        # Serial-staged ↔ partitioned-staged tag identity (the S9 tag
+        # pre-pass) — the same element answers in both lanes.
+        assert zl_serial == zl_mp
+
     with open(serial_deck, "a", encoding="utf-8") as f:
-        f.write(_fragment_b_serial(p))
+        f.write(_fragment_b_serial(p, zl_serial))
     with open(mp_deck, "a", encoding="utf-8") as f:
-        f.write(_fragment_b_mp(p))
+        f.write(_fragment_b_mp(p, zl_mp))
     serial_out = _run_serial(serial_deck, env)
     mp_out = _run_mp(mp_deck, env)
     serial = _parse_b_serial(serial_out)
@@ -656,7 +702,8 @@ def test_case_b_install_is_stress_free_and_matches_serial(twins) -> None:
     partitioned-staged agree at twin tolerance."""
     s, m = twins["install"]["serial"], twins["install"]["mp"]
     deltas = {"uxm": _rel(s["uxm"], m["uxm"]), "Rb": _rel(s["Rb"], m["Rb"])}
-    print(f"\nS9 case B (install) serial-vs-2-rank deltas: {deltas}")
+    print(f"\nS9 case B (install) serial-vs-2-rank deltas: {deltas} "
+          f"eleResponse def0: serial={s['def0']!r} mp={m['def0']!r}")
     bad = {k: v for k, v in deltas.items() if v > REL_TOL}
     assert not bad, (
         f"case B install twin diverged: {bad}\nserial={s}\nmp={m}")
@@ -670,6 +717,20 @@ def test_case_b_install_is_stress_free_and_matches_serial(twins) -> None:
     # (absolute, at twin scale).
     assert abs(s["uxs"] - m["uxs"]) < REL_TOL * scale
     assert abs(s["uys"] - m["uys"]) < REL_TOL * scale
+    # F5 — the born-strain-free claim AT SOURCE: the mid pair's own
+    # eleResponse deformation is (numerically exactly) zero right
+    # after install, against a raw relative displacement of ~2.3e-4 —
+    # so the zero is an engineered reference offset, not a dead
+    # spring (a dead spring could not answer eleResponse at all, and
+    # the parse above would have failed).
+    raw_rel = abs(s["uxs"] - s["uxm"])
+    assert raw_rel > 1e-5, f"fixture lost its ground gap: {s}"
+    for lane, got in (("serial", s), ("mp", m)):
+        assert got["def0"] is not None, f"{lane}: no def= printed"
+        assert abs(got["def0"]) < 1e-12 * raw_rel, (
+            f"{lane}: install-stage zeroLength deformation is not "
+            f"born-zero: def={got['def0']!r} vs raw relative "
+            f"displacement {raw_rel!r}")
 
 
 def test_case_b_service_increment_engages_and_matches_serial(twins) -> None:

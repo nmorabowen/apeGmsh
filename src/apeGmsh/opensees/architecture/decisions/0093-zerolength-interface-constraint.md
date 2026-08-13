@@ -436,11 +436,27 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    INV-2, both directions). Measured (the interface numeric twin,
    `tests/opensees/subprocess/test_interface_partitioned_numeric_twin.py`,
    serial vs 2-rank OpenSeesMP): worst relative delta 3.6e-15 across
-   the S8 base push/pull/slip case and the staged liner install; the
-   staged `zeroLength` is born STRAIN-FREE on the equilibrated ground
-   (install-stage liner motion at solver zero; post-install
-   increments carry the compression ordering in increment space) —
-   the INV-6 install-on-equilibrated-ground semantics, now measured.
+   the S8 base push+shear / pull cases and the staged liner install +
+   service increment (the service increment is the case that actually
+   loads the staged interface; tangential slip saturation is S10
+   acceptance territory); the staged `zeroLength` is born STRAIN-FREE
+   on the equilibrated ground (install-stage `eleResponse …
+   deformation` exactly 0.0 against a raw relative displacement of
+   2.3e-4; post-install increments carry the compression ordering in
+   increment space) — the INV-6 install-on-equilibrated-ground
+   semantics, now measured.
+
+   *Probe fix (S9 refuter).* An ADR 0052 `s.support` HOLD on a
+   ghosted interface slave was neither refused nor mirrored — the
+   HOLD's `sp … [nodeDisp …] -const` lines fan out on native ranks
+   only, the owner rank's ghost stays free, and the 2-rank deck runs
+   CLEAN to a plausible wrong answer (measured: 26.4% base-reaction /
+   12.5% master-displacement error, while `s.fix` in the same slot
+   agrees with serial to 1e-16). The ghost-sp refusal now sweeps
+   every stage's `support_records` for both the unclaimed (S8) and
+   claimed (S9) plans. Folding the HOLD into the ghost replay would
+   need the runtime `[nodeDisp …]` capture replayed on the owner
+   rank — a named follow-up, not S9.
 10. **S10 — acceptance battery** (the requester's own checks): bonded limit
     (stiff bilateral laws) reproduces `tie` on the same mesh; unilateral
     zero-tension with free separation, both signs, curved master, for both
