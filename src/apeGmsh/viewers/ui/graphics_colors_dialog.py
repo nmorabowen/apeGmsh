@@ -30,7 +30,7 @@ from .theme_editor_dialog import (
 # Okabe–Ito / Wong palette — remaining axis for protanopia.
 # Idle greys stay as-is; these four are the interaction/overlay roles.
 # Hex via _rgb_to_hex so this file stays G-HEX-clean (ADR 0087).
-_OKABE_SKY = _rgb_to_hex((86, 180, 233))
+_OKABE_SKY = _rgb_to_hex((86, 180, 233)).upper()
 OKABE_ITO_GRAPHICS: dict[str, object] = {
     "hover_rgb": (240, 228, 66),       # Wong yellow
     "pick_rgb": (0, 114, 178),         # Wong blue
