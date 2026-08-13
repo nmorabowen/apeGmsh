@@ -6,7 +6,7 @@
      Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
      Do NOT edit any existing line — in particular the single-line
      "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight now). CHANGELOG.md merges with the union driver
+     the highlight itself). CHANGELOG.md merges with the union driver
      (.gitattributes), which silently keeps BOTH sides of any edit to an
      existing line instead of conflicting — duplicated-header mangling is
      guarded by tests/test_changelog_structure.py.
@@ -82,6 +82,27 @@
   `internal_docs/guide_sections.md`, and skill reference §10
   (`references/section-properties.md`) + cheatsheet entry. **ADR 0080 is
   Accepted** — B1–B7 shipped as #840–#847 plus this slice.
+### FIXED — `MESH.INVERTED` hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)
+
+The signed hex8 6-tet split copied MassResolver's connectivity, including
+one negatively oriented tet. MassResolver takes `abs()` so it never
+saw it; assess used the signed sum and false-failed valid hexes
+(`MESH.INVERTED` is FAIL-reserved). That tet is now `(0, 2, 7, 6)`.
+2D `tri3`/`quad4` are judged only on a planar mesh; otherwise they are
+skip-listed (orientation is not inversion). Unbound Results skip-list
+`MESH.*`; no-stage skip-lists `RES.NAN`. A non-finite last-step energy
+`ERR` is a finding. Energy `ValueError` on stage 0 no longer aborts the
+rest of the stages.
+
+### ADDED — `fem.assess()` / `results.assess()` finding compiler (ADR 0094 S2)
+
+Standalone sidecar `apeGmsh.assess` (hpc-shaped: types + pure runners; not
+a session composite, not re-exported from `apeGmsh/__init__.py`) compiles a
+frozen `AssessmentReport` from the v1 catalog. Public doors are
+`fem.assess()` and `results.assess()`. Findings only — `figures=True` is
+S3 and raises. `model_diagonal` moved to numpy-only `results/_geometry.py`
+and is re-exported from `plot._arrows`. No viewers/gmsh import (INV-1 AST
+guard). `RES.ZERO_U` and `CAD.*` are not in this slice.
 
 ### ADDED — `python -m apeGmsh doctor` environment preflight
 
@@ -163,6 +184,7 @@ Jupyter" line. Corrected that claim; the after-solve agent check is now
 `diagnose()` / `results.lineage`, not a Qt window. `sec.viewer` /
 `g.model.viewer` / `g.mesh.viewer` still default to `blocking=True` and
 were left alone.
+
 ### REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)
 
 A full-library audit (vulture + import-graph, four verification agents)
