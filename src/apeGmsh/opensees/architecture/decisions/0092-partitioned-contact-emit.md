@@ -410,14 +410,44 @@ by a single rank with the whole interface visible to it.
    answer* (w_top −5.714e−4 vs the true −5.625e−3) with base reactions
    still balancing (1e4), the exact silent-wrong shape this ADR exists
    to prevent. The live (Python) lane constructs the analysis the same
-   way, so the hazard is not Tcl-specific. Workaround (what S5 does):
+   way, so the hazard is not Tcl-specific. Workaround (what S5 did):
    declare `ops.constraints.LadrunoContact()` + numberer + system
    explicitly so they emit in the pre-`analysis` chain section; the
    auto-emit then re-emits the handler post-`analysis` (inert,
    harmless, warned). The fix — emitting the auto-emit chain pieces
    before any user-declared `Analysis` primitive — reorders emit output
-   every lane shares, so it is deliberately its own change, not a
+   every lane shares, so it was deliberately its own change, not a
    side-effect of S5.
+
+   **FIXED 2026-08-12.** All three emit paths (`_emit_flat`,
+   `_emit_split`, `_emit_partitioned`) now hoist the chain auto-emits
+   (constraint handler; plus the INV-5 parallel numberer/system on the
+   partitioned path) to immediately BEFORE the first user-declared
+   `Analysis` primitive in the pre-element pass, and skip the original
+   post-topology site. Decks with no user `analysis` primitive keep
+   the original position byte-identically, and the
+   `suppress_analysis_chain_auto_emit` seam (ADR 0077 Tier 1B) is
+   honored at both sites. The hoisted position is the position the S5
+   workaround already proved numerically. Regression: deck-shape pins
+   in `tests/opensees/integration/test_emit_partitioned_contact.py`
+   (auto handler/numberer/system precede `analysis Static`; the
+   no-user-analysis position is unchanged) + the numeric auto-chain
+   twins in the S5 harness (`*_auto_chain` — the serial and 2-rank
+   hazard decks now converge to the explicit-chain twin's answer
+   within 1e-10). One knock-on: the S5 negative control (c) had leaned
+   on an accident of the old ordering — the post-verbs handler
+   re-construction blew up on the duplicated `-kn auto` verb. With
+   every handler line now preceding the verbs, runtime D5.2 silently
+   skips auto-kn facets whose backing is off-rank (the duplicate
+   contributes nothing and the mutant converges CORRECTLY), so the
+   control now forces an explicit kn on the replayed verb to re-create
+   the true P0.d double-enforcement class. Measured on the current
+   fork, that deck DEADLOCKS (the two would-be owners desynchronize
+   the handler's collectives) — the control treats the hang, a loud
+   teardown, or a numeric deviation all as detection, via a
+   tree-killing bounded runner (`_run_mp_may_hang`; plain
+   `subprocess.run(capture_output=True)` blocks past its timeout on
+   Windows because orphaned ranks inherit the pipe handles).
 6. **S6 — `Results` ownership contract** (INV-6).
 
 ## Consequences

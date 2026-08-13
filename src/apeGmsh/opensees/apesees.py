@@ -1511,9 +1511,22 @@ class BuiltModel:
         # (excluding patterns + recorders).  Phase SSI-2.A: skip
         # analysis-chain primitives when stages are declared — each
         # stage re-emits its own chain below.
+        # ADR 0092 S5 open item: when the user declared an ``analysis``
+        # directive, the constraint-handler auto-emit must land BEFORE
+        # it — OpenSees constructs the analysis object AT the
+        # ``analysis`` command, and a later ``constraints`` line does
+        # not retro-propagate into it (silently inert; measured as a
+        # plausible-wrong converged answer).  Hoist the auto-emit here
+        # and skip the step-7c site.  Decks with no user ``analysis``
+        # primitive keep the step-7c position byte-identically.
+        chain_auto_emitted = False
         for p in pre_element:
             if staged and _is_analysis_chain_primitive(p):
                 continue
+            if not chain_auto_emitted and isinstance(p, Analysis):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -1647,7 +1660,10 @@ class BuiltModel:
         )
 
         # 7c. Auto-emit constraint handler when MP constraints present.
-        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+        # Skipped when already hoisted before a user ``analysis`` line
+        # (ADR 0092 S5 open item — see step 4a).
+        if not chain_auto_emitted:
+            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         # 7d. Initial stress (Phase SSI-1).  Emit the step_hook_ramp
         # bundle (dispatcher + parameter decls + proc + lappend), then
@@ -1800,8 +1816,15 @@ class BuiltModel:
 
         # -- driver-pre: definitions + analysis chain (no nodes —
         #    nodes are per-module).  Mirrors _emit_flat step 4a; staged
-        #    skip is unreachable here (gated out above).
+        #    skip is unreachable here (gated out above).  ADR 0092 S5
+        #    open item: hoist the constraint-handler auto-emit before a
+        #    user-declared ``analysis`` directive (see _emit_flat 4a).
+        chain_auto_emitted = False
         for p in pre_element:
+            if not chain_auto_emitted and isinstance(p, Analysis):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             p._emit(emitter, self.tag_for[id(p)])
 
         overrides = emit_transform_specs(
@@ -1913,7 +1936,10 @@ class BuiltModel:
         emit_rebar_elements(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
-        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+        # Skipped when already hoisted before a user ``analysis`` line
+        # (ADR 0092 S5 open item — see driver-pre above).
+        if not chain_auto_emitted:
+            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()
         for p in post_element:
@@ -2603,9 +2629,30 @@ class BuiltModel:
         # -- 1. Pre-element global primitives. ----------------------------
         # Phase SSI-2.C: skip analysis-chain primitives when staged —
         # each stage re-emits its own chain inside its stage block.
+        # ADR 0092 S5 open item: the INV-5 auto-emits (constraint
+        # handler + parallel numberer/system) must precede a user-
+        # declared ``analysis`` directive — OpenSees constructs the
+        # analysis object AT that command, and ``constraints`` /
+        # ``numberer`` do not retro-propagate into it (silently inert;
+        # measured: PlainHandler ran and the 2-rank twin converged to a
+        # plausible-wrong answer).  Hoist them here when a user
+        # ``Analysis`` primitive exists and skip the step-3 site; decks
+        # without one keep the step-3 position byte-identically.
+        suppress_chain_auto = bool(getattr(
+            emitter, "suppress_analysis_chain_auto_emit", False))
+        chain_auto_emitted = False
         for p in pre_element:
             if staged and _is_analysis_chain_primitive(p):
                 continue
+            if (not chain_auto_emitted and not suppress_chain_auto
+                    and isinstance(p, Analysis)):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                self._maybe_auto_emit_parallel_numberer(
+                    emitter, pre_element)
+                self._maybe_auto_emit_parallel_system(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -2953,9 +3000,9 @@ class BuiltModel:
         # load-bearing there, INV-8), so it opts out of the auto-emit
         # rather than carry a second identical numberer/system pair above
         # it. Same emitter-attribute seam as ``supports_partitions``.
-        if not staged and not getattr(
-            emitter, "suppress_analysis_chain_auto_emit", False,
-        ):
+        # ADR 0092 S5 open item: skipped when already hoisted before a
+        # user-declared ``analysis`` directive in the step-1 pass.
+        if not staged and not suppress_chain_auto and not chain_auto_emitted:
             self._maybe_auto_emit_constraint_handler(emitter, pre_element)
             self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
             self._maybe_auto_emit_parallel_system(emitter, pre_element)
