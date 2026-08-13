@@ -328,3 +328,51 @@ def test_flat_escape_hatch_emits_a_partitioned_interface_model(tmp_path):
     assert len([ln for ln in lines
                 if ln.startswith("element zeroLength ")]) == 4
     assert "getPID" not in "\n".join(lines)
+
+
+# ======================================================================
+# H5 element_meta identity (ADR 0093 S10 finding)
+# ======================================================================
+def test_h5_element_meta_interface_rows_carry_sentinel_and_true_pair(tmp_path):
+    """Interface zeroLengths persist as ADR 0049 node-pair rows.
+
+    Before the fix the H5 emitter's sticky side channels leaked the
+    LAST quad's ``fem_eid`` (and connectivity) onto every interface
+    row — ``ElementTagTranslator.from_model`` then mapped all spring
+    ops tags to one wrong element id, so an unfiltered
+    ``results.elements.springs.get(...)`` labelled every per-pair
+    value with a single duplicated id, and the argstack slicing
+    dropped the first four args of each zeroLength line on replay.
+
+    Correct persistence: ``fem_eid == -1`` (sentinel — the translator
+    skips it, leaving the raw ops tags in ``element_index``) plus the
+    TRUE endpoint pair in ``inline_connectivity``.
+    """
+    import h5py
+    import numpy as np
+
+    fem = _fem()
+    recs = fem.elements.interfaces
+    ops = _quad_ops(fem, "rock", "liner")
+    path = tmp_path / "model_deck.h5"
+    ops.h5(str(path))
+
+    with h5py.File(str(path), "r") as f:
+        zl = f["opensees/element_meta/zeroLength"]
+        fem_eids = np.asarray(zl["fem_eids"])
+        assert (fem_eids == -1).all(), (
+            f"interface rows must carry the ADR 0049 sentinel, got "
+            f"{fem_eids.tolist()}"
+        )
+        inline = zl["inline_connectivity"]
+        got_pairs = {tuple(int(v) for v in row) for row in inline}
+        want_pairs = {
+            (int(r.master_node), int(r.slave_node)) for r in recs
+        }
+        assert got_pairs == want_pairs
+
+        # ...and the mesh elements keep their REAL, unique fem ids.
+        quad = f["opensees/element_meta/quad"]
+        quad_eids = np.asarray(quad["fem_eids"])
+        assert (quad_eids >= 0).all()
+        assert len(set(quad_eids.tolist())) == len(quad_eids)
