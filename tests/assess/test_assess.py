@@ -180,6 +180,100 @@ def test_inverted_tet4_is_mesh_inverted() -> None:
     _assert_catalog_severities(report)
 
 
+def _hex8_info(*, count: int = 1):
+    return make_type_info(
+        code=5, gmsh_name="Hexahedron 8", dim=3, order=1, npe=8, count=count,
+    )
+
+
+def _tri3_info(*, count: int = 1):
+    return make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=count,
+    )
+
+
+_VALID_SKEWED_HEX8 = [
+    ( 0.258, -0.357, -0.363),
+    ( 1.087, -0.350, -0.320),
+    ( 0.588,  1.381, -0.319),
+    ( 0.260,  1.254,  0.224),
+    (-0.369,  0.155,  0.888),
+    ( 0.855, -0.028,  0.712),
+    ( 1.416,  1.030,  0.805),
+    (-0.392,  0.747,  0.764),
+]
+
+
+def test_unit_cube_hex8_is_not_inverted() -> None:
+    info = _hex8_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4, 5, 6, 7, 8],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0), (1.0, 0.0, 1.0),
+            (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+        ],
+        groups=[(info, [1], [[1, 2, 3, 4, 5, 6, 7, 8]])],
+    )
+    assert "MESH.INVERTED" not in _codes(fem.assess())
+
+
+def test_valid_skewed_hex8_is_not_inverted() -> None:
+    info = _hex8_info()
+    fem = _make_fem(
+        node_ids=list(range(1, 9)),
+        coords=_VALID_SKEWED_HEX8,
+        groups=[(info, [1], [[1, 2, 3, 4, 5, 6, 7, 8]])],
+    )
+    assert "MESH.INVERTED" not in _codes(fem.assess())
+
+
+def test_inverted_skewed_hex8_is_mesh_inverted() -> None:
+    # Swap corners 0/2 (1-based nodes 1/3). A 6/7 swap stays positive
+    # under the corrected tet split; 0/2 does not.
+    info = _hex8_info()
+    conn = [3, 2, 1, 4, 5, 6, 7, 8]
+    fem = _make_fem(
+        node_ids=list(range(1, 9)),
+        coords=_VALID_SKEWED_HEX8,
+        groups=[(info, [3], [conn])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" in _codes(report)
+    finding = next(f for f in report.findings if f.code == "MESH.INVERTED")
+    assert 3 in finding.detail["ids"]
+    _assert_catalog_severities(report)
+
+
+def test_planar_inclined_tri3_is_judged() -> None:
+    info = _tri3_info()
+    # Right-handed on the plane z = x (all nodes coplanar).
+    fem = _make_fem(
+        node_ids=[1, 2, 3],
+        coords=[(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 0.0, 1.0)],
+        groups=[(info, [1], [[1, 2, 3]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" not in _codes(report)
+    assert "non-planar" not in report.text
+
+
+def test_tri3_in_nonplanar_mesh_is_skipped_not_judged() -> None:
+    info = _tri3_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 1.0), (0.0, 1.0, 0.0),
+            (0.0, 0.0, 2.0),
+        ],
+        groups=[(info, [1], [[1, 2, 3]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" not in _codes(report)
+    assert "2D cells in non-planar 3D space" in report.text
+
+
 def test_quadratic_cells_are_skipped_not_judged() -> None:
     info = _tet10_info()
     fem = _make_fem(
@@ -296,6 +390,9 @@ def test_unbound_fem_and_no_stage(tmp_path: Path) -> None:
     codes = _codes(report)
     assert "RES.UNBOUND_FEM" in codes
     assert "RES.NO_STAGE" in codes
+    assert "MESH.*" in report.text
+    assert "no bound FEMData" in report.text
+    assert "`RES.NAN` — no stages" in report.text
     _assert_catalog_severities(report)
 
 
@@ -311,6 +408,59 @@ def test_energy_err_skip_is_not_pass(tmp_path: Path) -> None:
     assert "RES.ENERGY_ERR" not in _codes(report)
     assert "RES.ENERGY_ERR" in report.text
     assert "Skipped" in report.text
+
+
+def test_nonfinite_energy_err_is_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _nan_energy(self, *, region=None, stage=None):
+        return pd.DataFrame({"ERR": [np.nan]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _nan_energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert "non-finite" in finding.message
+    _assert_catalog_severities(report)
+
+
+def test_energy_valueerror_on_first_stage_tries_later(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pandas as pd
+
+    path = tmp_path / "two_stages.h5"
+    node_ids = np.array([1], dtype=np.int64)
+    ux = np.zeros((1, 1))
+    time = np.array([0.0])
+    with NativeWriter(path) as w:
+        w.open(source_type="domain_capture")
+        s0 = w.begin_stage(name="a", kind="static", time=time, stage_id="a")
+        w.write_nodes(s0, "partition_0", node_ids=node_ids, components={"displacement_x": ux})
+        w.end_stage()
+        s1 = w.begin_stage(name="b", kind="static", time=time, stage_id="b")
+        w.write_nodes(s1, "partition_0", node_ids=node_ids, components={"displacement_x": ux})
+        w.end_stage()
+
+    def _energy(self, *, region=None, stage=None):
+        if stage == "a":
+            raise ValueError("channel absent")
+        return pd.DataFrame({"ERR": [0.05]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.detail["stage"] == "b"
+    assert "0.05" in finding.message
 
 
 def test_u_vs_diag_is_always_info(tmp_path: Path) -> None:

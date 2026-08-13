@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
-from ._inverted import measure_linear_cell
+from ._inverted import coords_are_planar, measure_linear_cell
 from ._report import render_text
 from ._types import AssessmentReport, Finding
 
@@ -80,10 +80,15 @@ def _check_inverted(
     inverted: list[int] = []
     skipped_types: list[str] = []
     seen_skip: set[str] = set()
+    planar = coords_are_planar(coords)
+    skip_2d_nonplanar = False
 
     for group in fem.elements:
         et = group.element_type
         name = et.name
+        if name in {"tri3", "quad4"} and et.order == 1 and not planar:
+            skip_2d_nonplanar = True
+            continue
         if et.order != 1 or name not in {"tri3", "quad4", "tet4", "hex8"}:
             if et.dim >= 2 and name not in seen_skip:
                 seen_skip.add(name)
@@ -104,6 +109,11 @@ def _check_inverted(
                 continue
             inverted.append(int(eid))
 
+    if skip_2d_nonplanar:
+        skipped.append((
+            "MESH.INVERTED",
+            "2D cells in non-planar 3D space — orientation is not inversion",
+        ))
     if skipped_types:
         skipped.append((
             "MESH.INVERTED",
