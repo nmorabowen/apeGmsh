@@ -856,8 +856,16 @@ result = import_structural_model(g, model, *, self_mass=True)   # geometry+PGs+l
 apply_subgrade_springs(g, model, result)                        # after mesh, before fem
 ops    = build_opensees(fem, model, result, *, ndm=3, ndf=6, shell_element="ASDShellT3")
 solve_and_extract(model, *, case=None, global_size=1.0, ...) -> SolveResult  # all-in-one static
+
+# apeGmsh.studio — agent + script + viewer habitat (ADR 0095 S1–S2).
+# Not a composite. python -m apeGmsh.studio script.py opens MeshViewer
+# if the script generated a mesh, otherwise ModelViewer.
+from apeGmsh.studio import read_envelope, envelope_path
+# Before a spatial edit, read cwd/.apegmsh/selection.json (names first).
+env = read_envelope(envelope_path())
+env.labels / env.physical_groups / env.phase / env.unnamed
 ```
-`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py`
+`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
 
 ## FEMData & persistence (see `fem-broker.md`, `results.md`)
 

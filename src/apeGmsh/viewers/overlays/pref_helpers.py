@@ -47,6 +47,37 @@ def make_opacity_cb(
     return _cb
 
 
+# Ghosted (inactive-dim) opacity used by the model-viewer pick filter.
+# Inactive dims stay visible so a click can pass through to the active
+# dim underneath (ADR 0045 S5); they must not clobber the user's slider.
+GHOST_DIM_OPACITY = 0.1
+
+
+def filter_dim_opacity(
+    registry: Any,
+    dim: int,
+    *,
+    active: bool,
+    fallback: float,
+    ghost: float = GHOST_DIM_OPACITY,
+) -> float:
+    """Opacity the dim-filter should apply to ``dim``.
+
+    Active surfaces/volumes use the live Display-panel value stored on
+    ``registry._add_mesh_kwargs[dim]['opacity']`` (falling back to
+    ``fallback``, the constructor default). Inactive dims ghost to
+    ``ghost``. Points/curves stay opaque when active.
+    """
+    if not active:
+        return float(ghost)
+    if dim < 2:
+        return 1.0
+    kw = getattr(registry, "_add_mesh_kwargs", {}).get(dim, {})
+    if "opacity" in kw:
+        return float(kw["opacity"])
+    return float(fallback)
+
+
 def make_edges_cb(
     registry: Any,
     plotter: Any,

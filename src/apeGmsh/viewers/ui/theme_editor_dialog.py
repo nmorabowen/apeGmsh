@@ -64,6 +64,7 @@ _FIELD_GROUPS: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("Viewport — mesh edges & nodes", (
         "mesh_edge_color", "node_accent", "origin_marker_color",
+        "measure_color",
     )),
     ("Axis scene", (
         "grid_major", "grid_minor", "bbox_color", "bbox_line_px",
@@ -88,7 +89,7 @@ def _is_hex_field(name: str) -> bool:
         "accent", "icon", "success", "warning", "error", "info",
         "bg_top", "bg_bottom",
         "outline_color", "mesh_edge_color", "node_accent",
-        "origin_marker_color",
+        "origin_marker_color", "measure_color",
         "grid_major", "grid_minor", "bbox_color",
     }
 

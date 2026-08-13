@@ -15,7 +15,7 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import gmsh
 import numpy as np
@@ -103,6 +103,9 @@ class MeshViewer:
         commit 6 renamed this kwarg from ``fem`` to ``view``.
     fast : bool
         Ignored (always fast). Kept for backward compatibility.
+    on_selection_changed : callable, optional
+        ``callback(SelectionState)`` fired on every BREP pick change
+        (ADR 0095 studio host). Dispatcher-legal owner mutator.
     """
 
     def __init__(
@@ -118,6 +121,7 @@ class MeshViewer:
         origin_marker_show_coords: bool | None = None,
         view: "ViewerData | None" = None,
         fast: bool = True,
+        on_selection_changed: Callable[["SelectionState"], None] | None = None,
         **kwargs: Any,
     ) -> None:
         from .ui.preferences_manager import PREFERENCES
@@ -158,6 +162,8 @@ class MeshViewer:
             else p.origin_marker_show_coords
         )
         self._view: "ViewerData | None" = view
+        # ADR 0095 S2: host publishes a SelectionEnvelope on pick.
+        self._on_selection_changed = on_selection_changed
 
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
@@ -639,6 +645,11 @@ class MeshViewer:
 
         # Selection changed -> recolor
         sel.on_changed.append(self._handle_sel_changed)
+        if self._on_selection_changed is not None:
+            def _studio_sel() -> None:
+                self._on_selection_changed(sel)
+            sel.on_changed.append(_studio_sel)
+            _studio_sel()
         # Plan 04 step 3 — selection bridge into ActiveObjects.
         # ``SelectionState`` keeps its legacy ``on_changed`` list (the
         # plan doc marks it as a one-release compatibility shim); this
@@ -666,6 +677,7 @@ class MeshViewer:
             lambda _p: self._mesh_tn_overlay.refresh_theme()
             if self._mesh_tn_overlay is not None else None
         )
+        win.on_theme_changed(lambda _p: origin_overlay.refresh_theme())
 
         # ── Navigation ──────────────────────────────────────────────
         install_navigation(
@@ -722,11 +734,15 @@ class MeshViewer:
 
         # Dim filters (ADR 0045 S2 — closes the missing-keys gap, HARD
         # REQ 2): a bare key TOGGLES that dim (multi-select); 4 = all.
-        # Bound for 0/1/2/3 uniformly with the model viewer; a dim absent
-        # from this mesh (e.g. 0) is a harmless no-op in the controller.
+        # ApplicationShortcut: VTK's QtInteractor swallows plotter
+        # add_key_event digit keys (same law as ResultsViewer Esc).
         for _key, _dim in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
-            plotter.add_key_event(_key, lambda d=_dim: self._filter.toggle(d))
-        plotter.add_key_event("4", lambda: self._filter.select_all())
+            win.add_shortcut(
+                _key, lambda d=_dim: self._filter.toggle(d), application=True,
+            )
+        win.add_shortcut(
+            "4", lambda: self._filter.select_all(), application=True,
+        )
 
         # ── File menu (ADR 0087 Appendix B) ─────────────────────────
         # Save image… mirrors the toolbar action; Preferences… opens
@@ -913,6 +929,9 @@ class MeshViewer:
             lambda: open_theme_editor(win.window)
         )
         prefs.widget.layout().addWidget(_btn_theme)
+        _btn_gfx = _QtW.QPushButton("Graphics colors…")
+        _btn_gfx.clicked.connect(win._open_graphics_colors)
+        prefs.widget.layout().addWidget(_btn_gfx)
         # Wrap in a scroll area so the (tall) Session panel never
         # forces a minimum size on the shared tab group — it scrolls
         # instead of stretching its neighbours (same as model.viewer).

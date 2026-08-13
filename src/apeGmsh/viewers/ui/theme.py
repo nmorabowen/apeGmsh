@@ -20,7 +20,7 @@ Usage::
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Literal
 
 
@@ -98,9 +98,13 @@ class Palette:
     # user JSON themes keep loading without them. The edge default is
     # near-black — edge luminance must sit BELOW the ambient-lifted
     # shading floor (darker than ≈ RGB 100), which the legacy #444444
-    # only met by accident on lit faces.
+    # only met by accident on lit faces. ``measure_color`` is the
+    # measure-probe overlay (historical hardcoded yellow).
     substrate_color: str = "#bfbfbf"        # surface fill of the FEM mesh
     substrate_edge_color: str = "#1a1a1a"   # element-edge line color
+    # Measure-probe overlay (spheres / segments / label). Default
+    # matches the historical hardcoded ``"yellow"``.
+    measure_color: str = "#ffff00"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1347,9 +1351,28 @@ class ThemeManager:
             return
         self._current = new
         self._save(new)
+        self._notify(new)
+
+    def update_current(self, **overrides: object) -> Palette:
+        """Live-mutate the active palette in memory (session only).
+
+        Used by the Graphics colors window so hover / pick / overlay
+        colours can be tried without writing a custom theme. Built-in
+        entries in ``PALETTES`` are left untouched — ``set_theme`` of
+        the same name restores the stock palette. Does not persist to
+        QSettings (the theme *name* is unchanged).
+        """
+        new = replace(self._current, **overrides)
+        if new == self._current:
+            return self._current
+        self._current = new
+        self._notify(new)
+        return new
+
+    def _notify(self, palette: Palette) -> None:
         for cb in list(self._observers):
             try:
-                cb(new)
+                cb(palette)
             except Exception:
                 import logging
                 logging.getLogger("apeGmsh.viewer.theme").exception(

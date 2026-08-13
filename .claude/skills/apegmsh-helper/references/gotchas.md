@@ -78,6 +78,13 @@ pattern: `Results.from_native(path, model=OpenSeesModel.from_h5(path, fem_root="
 Same for `Results.from_mpco(model_h5=)` and `Results.from_recorders(model=)`.
 See `results.md`.
 
+### ❌ OS-capturing the human's desktop to "look" → ✅ visors
+Agents do not screenshot monitors or the live Qt window (that is the
+human's desk: other apps, secrets, the wrong display). ✅ Write
+`.apegmsh/visors/*.png` with `results.render` / `fem.render` (ADR 0094
+offscreen stills) and labeled `results.plot.*`, then read those files.
+`viewer()` stays the human surface.
+
 ### ❌ `Results.viewer(model_h5=...)`
 The kwarg was removed — the viewer reads `results.model` directly. CLI:
 `python -m apeGmsh.viewers run.h5` auto-resolves native Composed files;

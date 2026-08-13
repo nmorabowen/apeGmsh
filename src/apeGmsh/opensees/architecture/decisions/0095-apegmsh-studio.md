@@ -1,6 +1,7 @@
 # ADR 0095 — `apeGmsh.studio`: agent + script + viewer habitat
 
-**Status:** Proposed (2026-08-12; owner workshop the same day)
+**Status:** Proposed (2026-08-12; owner workshop the same day;
+host-projection / INV-9 workshop 2026-08-13)
 
 **Amends** [ADR 0094](0094-agent-assess-and-viewer-render.md) **only**
 in the disposition of “Later: optional MCP wrapping S5” and the
@@ -161,6 +162,34 @@ host is replaceable.
   users. That is a product-habitat decision, recorded here as a
   named fork, not a 3D one. The daemon does not change.
 
+### Part 6 — Host projections: see the script, do not own it
+
+The human needs to *observe* the declaration next to the solid
+without leaving the viewport. That is not a second IDE.
+
+The host MAY project the file that `run_until` just replayed as a
+**read-only text view** (plaintext with syntax color; optional name
+tints that follow the viewport PG / label palette so `Footing` is
+the same color in 3D, in the binding graph, and in the source).
+Click a graph node or a picked name → scroll / highlight that name
+in the text. Stale or last-good (INV-4) is visually distinct from
+the current file on disk.
+
+This view is a **projection of the last good replay**, same refresh
+cycle as the tessellation. It does not:
+
+- write the `.py`, OCC, or `model.h5` (INV-2);
+- grow an editor, undo stack, or prompt;
+- become Grasshopper: a later **binding graph** (geometry / PGs /
+  loads / constraints → `FEMData` → one or more `apeSees(fem)`
+  lowerings, `pg=` edges) is the same class of projection — click
+  highlights, it does not wire decks.
+
+Cursor remains the author. The graph and the text view are how the
+host *shows* the self-declarative script; they are how
+implementations stay maneuverable (highlight, color, last-good)
+without studio owning the source.
+
 ## Invariants
 
 - **INV-1 (sidecar).** `apeGmsh.studio` is not on `_COMPOSITES` and
@@ -182,6 +211,11 @@ host is replaceable.
   mutators. No Outline-click automation, no second reconciler.
 - **INV-8 (phase gate).** Results mode is disabled until `Results`
   exists; mesh mode until `FEMData` exists. No fake contours.
+- **INV-9 (project, do not own).** The host may show the replayed
+  `.py` and a PG→apeSees binding graph as read-only projections of
+  the last good `run_until`. It does not edit or write those
+  artifacts. Name colors MAY match the viewport palette. Cursor
+  remains the author.
 
 ## Alternatives rejected
 
@@ -197,7 +231,8 @@ host is replaceable.
 | **Shadow temp `.py` as source of truth** | Forks from Cursor. The temp artifact is the tessellation. |
 | **Viewer as parametric CAD** | apeGmsh refuses to be CAD. Geometry stays declared in Python. |
 | **Merge the three viewer aesthetics** | Model / mesh / results answer different questions. Unify the host and the envelope, not shading or id space (ADR 0045 INV-3). |
-| **ADR 0094-only (stills, human types the pick)** | Honest and already 80% of agent eyes; fails the live pick requirement this ADR exists to close. |
+| **Studio code editor / write-back from the text view** | Second author, second undo, forks from Cursor. Observe in the host; edit in Cursor. INV-9. |
+| **Binding graph as Grasshopper (wires write `pg=` / elements)** | Same veto as a studio editor. The graph projects `apeSees` records after replay; it does not author decks. |
 
 ## Slices
 
@@ -208,7 +243,7 @@ host is replaceable.
 | **S2** | `apeGmsh.studio` daemon: `run_until` = subprocess replay of the current file, last-good tessellation via `build_brep_scene` / `viewers.render`, geometry-hash skip remesh. `python -m apeGmsh.studio` opens the Qt host (phase tabs on `ViewerWindow`). | S1, ADR 0088, 0094 S1 |
 | **S3** | Qt protocol: `highlight(names)` mutator; phase resource. Same payload as the JSON. | S2, ADR 0056 |
 | **S4** | MCP wrapping S1–S3 (`get_selection`, `highlight`, `run_until`, `assess`, `render`, `promote_selection`). Cursor MCP config. | S3; this is 0094’s “MCP wrapping S5” consumer |
-| **Later** | Statement-step BRep (geometry only). Electron/trame chrome after ADR 0047 R-D, only if non-3D studio UI outgrows Qt. In-app agent habitat (the Electron-as-shell fork) — requires an explicit habitat amendment, not a drive-by. | S4 |
+| **Later** | Statement-step BRep (geometry only). Host projections (read-only script view + PG→apeSees binding graph, INV-9). Live refresh loop (file-watch / Refresh, worker replay, camera-preserving scene swap). Electron/trame chrome after ADR 0047 R-D, only if non-3D studio UI outgrows Qt. In-app agent habitat (the Electron-as-shell fork) — requires an explicit habitat amendment, not a drive-by. | S4 |
 
 S0 can merge alone (this PR). Claiming the feature “done” requires
 S0 + S1 + S2 (a human can pick, an agent can read the envelope and
@@ -239,6 +274,8 @@ Resolved in this draft (veto here):
    Statement-step is Later.
 5. **Cursor stays the IDE** — yes, until an explicit habitat
    amendment.
+6. **Host may project the script read-only** — yes (INV-9). Not an
+   editor. Binding graph is the same class of projection.
 
 Still open (do not block S0–S2):
 

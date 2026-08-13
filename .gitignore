@@ -81,3 +81,6 @@ examples/**/viewer.err
 # OS
 .DS_Store
 Thumbs.db
+
+# Studio pick envelope (ADR 0095) — live host state, not source
+.apegmsh/
