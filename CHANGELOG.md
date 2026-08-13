@@ -12,6 +12,38 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — 2-D out-of-plane recovery: `LadrunoLST` was invisible to it, and the miss was silent
+
+A plane-strain model built from `LadrunoLST` — the fork's recommended
+quadratic triangle for near-incompressible plane-strain plasticity, i.e.
+exactly where σ_zz carries the most weight — rendered wrong von Mises,
+principal, and mean stresses with no warning. `_plane_recovery` recognised
+only `LadrunoQuad` and `LadrunoCST`, so `plane="auto"` failed to classify the
+model, σ_zz fell back to 0 instead of ν(σ_xx+σ_yy), and the contour path
+offered no way to say otherwise. Reported from the Cerro Lindo SSI program
+(ADR-0005 rung M4), whose `m4_render.py` had to compute plane-strain von Mises
+by hand.
+
+- **The missing tokens.** `LadrunoLST` joins the flag-style 2-D set. Audit of
+  the rest: `tri6n` / `SixNodeTri` and `BezierTri6` were already covered by
+  the positional set, and `SSPquad` has no typed primitive to emit it. One
+  more real gap closed — `LadrunoUP`, whose 2-D shapes are plane strain by
+  construction; the token spans both dimensions, so the per-axis permeability
+  count (`-perm` / `-permH`) is read as its dimensional witness.
+- **Silence was the actual defect.** An element the recovery cannot classify —
+  or one whose material Poisson's ratio it cannot read — now raises
+  `OutOfPlaneRecoveryWarning` (exported from `apeGmsh.results`, so it is
+  filterable) naming the offending `type_token` and the fix. An element
+  correctly recovered as zero (plane stress for σ, plane strain for ε) is not
+  reported: that zero is exact. Deduped per situation, because the viewer
+  re-reads every frame.
+- **Auto-detection is no longer the only word.** `ContourStyle` gains
+  `plane=` / `nu=` (honored on `topology="gauss"`, mirroring
+  `PrincipalGlyphStyle`), and `results.plot.contour(...)` gains the same pair
+  — both already existed on `results.elements.gauss.get`. A contour that
+  overrides the recovery bypasses the shared visual store (its float16 cache
+  and global colour range hold default-recovery values) and re-reads per step.
+
 ### ADDED — `g.constraints.interface()`: a coincident-pair interface that can let go (ADR 0093)
 
 The constraints roster gains its first non-bond. `g.constraints.interface(

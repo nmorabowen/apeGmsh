@@ -164,6 +164,8 @@ class ResultsPlot:
         stage: Optional[str] = None,
         topology: str = "nodes",
         averaging: str = "averaged",
+        plane: Optional[str] = "auto",
+        nu: Optional[float] = None,
         ax: Optional["Axes3D"] = None,
         cmap: str = "viridis",
         clim: Optional[tuple[float, float]] = None,
@@ -207,6 +209,15 @@ class ResultsPlot:
             corner values (no cross-element averaging), so element-
             boundary jumps stay visible — matplotlib's flat per-face
             shading renders this exactly.
+        plane, nu
+            Only honored when ``topology == "gauss"`` and ``component``
+            is a *derived* scalar (von Mises, principals, …) computed
+            from a 2-D tensor. ``"auto"`` (default) reads each element's
+            plane idealization + ν from the model; ``plane="strain"`` +
+            ``nu`` forces σ_zz = ν(σ_xx+σ_yy) globally; ``plane=None``
+            leaves the out-of-plane component at zero. Set it when
+            auto-detection cannot classify the elements (the read then
+            warns) or to override what the model says.
         ax
             Existing 3-D axes to draw into. If ``None``, a new figure
             is created at ``self.figsize``.
@@ -277,7 +288,7 @@ class ResultsPlot:
         # ── gauss topology ──────────────────────────────────────────
         fem = self._r._fem
         slab = self._r.elements.gauss.get(
-            component=component, time=step, stage=stage,
+            component=component, time=step, stage=stage, plane=plane, nu=nu,
         )
         if slab.values.size == 0:
             raise RuntimeError(

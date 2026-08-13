@@ -23,9 +23,13 @@ reconstruction is skipped.
 Everything here is best-effort and defensive: any element/material it
 cannot parse contributes no recovery (that element falls back to a zero
 out-of-plane component, i.e. plane stress for σ / plane strain for ε).
+That fallback is *reported*, not silent — an unrecoverable element
+raises :class:`OutOfPlaneRecoveryWarning` at read time, because a
+wrong-but-confident σ_zz corrupts every invariant built on it.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional
 
 import numpy as np
@@ -48,9 +52,30 @@ _POSITIONAL_PLANE_ELEMENTS = frozenset({
 })
 # 2-D Ladruno elements: args are [mat_tag, ...flags]; plane_type is the
 # value after a "-type" flag (absent → the "PlaneStrain" default).
-_FLAG_PLANE_ELEMENTS = frozenset({"LadrunoQuad", "LadrunoCST"})
+_FLAG_PLANE_ELEMENTS = frozenset({
+    "LadrunoQuad", "LadrunoCST", "LadrunoLST",
+})
+# LadrunoUP is one token spanning 2-D and 3-D shapes; in 2-D it is plane
+# strain by construction (no -type flag exists). Its only dimensional
+# witness in the arg tail is the per-axis permeability count.
+_UP_PLANE_ELEMENT = "LadrunoUP"
 
 _CACHE: dict[object, dict[int, tuple[Optional[str], Optional[float]]]] = {}
+# Warning dedupe: inject_out_of_plane runs per frame in the viewer, so a
+# raw warnings.warn would fire once per redraw.
+_WARNED: set[tuple] = set()
+
+
+class OutOfPlaneRecoveryWarning(UserWarning):
+    """A 2-D element's out-of-plane component could not be recovered.
+
+    Raised by :func:`inject_out_of_plane` when the model does not tell it
+    an element's plane idealization (unknown ``type_token``) or its
+    material's Poisson's ratio. The component is left at zero there, which
+    silently corrupts every derived scalar built on the 3-D tensor
+    (von Mises, principals, mean stress, triaxiality) — force the
+    idealization with ``plane=`` / ``nu=`` on the read instead.
+    """
 
 
 def _cache_key(model: Any) -> object:
@@ -102,6 +127,24 @@ def _material_nu(rec: Any) -> Optional[float]:
     return None
 
 
+def _up_perm_dim(args: tuple) -> Optional[int]:
+    """Spatial dimension a ``LadrunoUP`` record declares, or ``None``.
+
+    The permeability flag (``-perm k1 k2 <k3>`` or its ``-permH`` sugar)
+    carries one value per axis and is always emitted, so counting the
+    numeric run after it is the record's dimensional witness.
+    """
+    for i, a in enumerate(args):
+        if a in ("-perm", "-permH"):
+            n = 0
+            for v in args[i + 1:]:
+                if isinstance(v, str):
+                    break
+                n += 1
+            return n
+    return None
+
+
 def _element_plane_and_mat(rec: Any) -> tuple[Optional[str], Optional[int]]:
     """``(plane_type, mat_tag)`` for a 2-D element record, else ``(None, None)``."""
     token = getattr(rec, "type_token", "")
@@ -117,6 +160,13 @@ def _element_plane_and_mat(rec: Any) -> tuple[Optional[str], Optional[int]]:
                     plane = _normalize_plane(args[i + 1]) or plane
                     break
             return plane, mat_tag
+        if token == _UP_PLANE_ELEMENT and len(args) >= 1:
+            # 2-D u-p is plane strain by construction; a 3-D record is
+            # left unclassified (its σ_zz is recorded, so it never
+            # reaches this recovery anyway).
+            if _up_perm_dim(args) == 2:
+                return "PlaneStrain", int(args[0])
+            return None, None
     except Exception:
         return None, None
     return None, None
@@ -167,6 +217,81 @@ def plane_recovery_map(
     return out
 
 
+def _element_tokens(model: Any, fem_eids: np.ndarray) -> tuple[str, ...]:
+    """Distinct ``type_token``s behind a set of fem element ids.
+
+    Only walked on the warning path — naming the offending element type
+    is what turns "your invariants are wrong" into an actionable report.
+    """
+    want = {int(e) for e in fem_eids}
+    try:
+        elements = model.elements()
+    except Exception:
+        return ()
+    toks: set[str] = set()
+    for rec in elements or ():
+        fem_eid = getattr(rec, "fem_eid", None)
+        if fem_eid is not None and int(fem_eid) in want:
+            toks.add(str(getattr(rec, "type_token", "") or "?"))
+    return tuple(sorted(toks))
+
+
+def _warn_unrecovered(
+    model: Any, uniq: np.ndarray, code_u: np.ndarray, nu_u: np.ndarray,
+    *, prefix: str,
+) -> None:
+    """Warn about elements whose out-of-plane component stays a wrong zero.
+
+    Two failure modes, both of which leave ``{prefix}_zz`` at 0:
+
+    * the element's plane idealization is unknown (its ``type_token`` is
+      not one this module parses, or the model carries no records at all);
+    * it *is* the idealization whose fill needs ν, but the material's
+      Poisson's ratio could not be read.
+
+    An element correctly recovered as zero (plane stress for σ, plane
+    strain for ε) is not reported — that zero is exact.
+    """
+    # The code whose nonzero fill needs ν: plane strain (1) for stress,
+    # plane stress (2) for strain.
+    needs_nu = 1 if prefix == "stress" else 2
+    unknown = code_u == 0
+    no_nu = (code_u == needs_nu) & ~np.isfinite(nu_u)
+    n_unknown, n_no_nu = int(unknown.sum()), int(no_nu.sum())
+    if not (n_unknown or n_no_nu):
+        return
+
+    tokens = _element_tokens(model, uniq[unknown]) if n_unknown else ()
+    key = (_cache_key(model), prefix, n_unknown, n_no_nu, tokens)
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+
+    zz = f"{prefix}_zz"
+    parts: list[str] = []
+    if n_unknown:
+        named = f" (type_token: {', '.join(tokens)})" if tokens else ""
+        parts.append(
+            f"{n_unknown} of {uniq.size} element(s) could not be classified "
+            f"as plane stress / plane strain{named}"
+        )
+    if n_no_nu:
+        parts.append(
+            f"{n_no_nu} element(s) need Poisson's ratio, which could not be "
+            f"read from their material"
+        )
+    warnings.warn(
+        f"Out-of-plane {zz} recovery is incomplete: " + "; ".join(parts)
+        + f". {zz} is left at 0 there, so every derived scalar built on the "
+        f"3-D tensor (von Mises, principal stresses, mean stress) is wrong "
+        f"for those elements. Force the idealization explicitly with "
+        f"plane='strain' (or 'stress') + nu=... on the read — "
+        f"results.elements.gauss.get(...), ContourStyle, "
+        f"PrincipalGlyphStyle, results.plot.contour(...).",
+        OutOfPlaneRecoveryWarning, stacklevel=3,
+    )
+
+
 def inject_out_of_plane(
     columns: dict[str, np.ndarray], element_index: np.ndarray, *,
     prefix: str, model: Any,
@@ -180,6 +305,9 @@ def inject_out_of_plane(
     model resolves no 2-D element — the caller then leaves the
     out-of-plane component at zero. Returns ``True`` if a column was
     injected.
+
+    Any element left with a possibly-wrong zero raises
+    :class:`OutOfPlaneRecoveryWarning` (once per distinct situation).
     """
     zz_key = f"{prefix}_zz"
     stored_zz = columns.get(zz_key)
@@ -194,8 +322,6 @@ def inject_out_of_plane(
     if xx is None or yy is None:
         return False
     pmap = plane_recovery_map(model)
-    if not pmap:
-        return False
 
     eidx = np.asarray(element_index, dtype=np.int64)
     uniq, inv = np.unique(eidx, return_inverse=True)
@@ -210,6 +336,11 @@ def inject_out_of_plane(
             code_u[i] = 2
         if nu is not None:
             nu_u[i] = nu
+    # Report before the empty-map bail-out: a model whose 2-D elements are
+    # ALL unclassifiable is exactly the case worth warning about.
+    _warn_unrecovered(model, uniq, code_u, nu_u, prefix=prefix)
+    if not pmap:
+        return False
     code_gp = code_u[inv]          # (N,)
     nu_gp = nu_u[inv]              # (N,)
     has_nu = np.isfinite(nu_gp)
