@@ -465,6 +465,26 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
     precision; h5 round-trip → emit byte-identity; compose invariance;
     1-vs-N rank identity; MPCO springs channels readable per pair. *(mid /
     light runs+verifies)*
+
+    *Amended 2026-08-13 during S10 — the bonded reference is `equal_dof`,
+    not `tie`.* The two verbs' domains are **disjoint in v1, so the
+    comparison as written is not constructible**: `tie` is a face
+    constraint that refuses anything but dim=2 surfaces or dim=3 volumes
+    (`_faces_from_dimtags`, `core/ConstraintsComposite.py:2449-2456`),
+    while `interface()` is 2D-line-masters-only (D2) — there is no mesh
+    both verbs accept. `equal_dof` is also the *stronger* reference:
+    `tie`'s default enforcement is itself a penalty
+    (`ASDEmbeddedNodeElement`), so bonded-limit-vs-`tie` would have
+    compared one penalty against another, whereas `equal_dof` is an exact
+    kinematic constraint on the very coincident pairs the verb produces.
+    Measured convergence is clean 1/k: max nodal displacement error
+    1.79e-07 (x) / 2.18e-07 (y) at `k_per_area=1e14`, 1.79e-09 / 2.18e-09
+    at 1e16 — ratio 99.9999 over the 100× stiffness step, against a bound
+    derived from the spring bed's axial, shear **and rotational**
+    compliance (`θ = 12M/k·t·L³`, the dominant term; an axial-only bound
+    predicts 8e-8 and would have failed the honest check). The `tie`
+    comparison becomes constructible when 3D surface masters land, and is
+    owed then.
 11. **S11 — docs + skill**: `docs/api/constraints.md` taxonomy row + tier
     section + mkdocstrings block; a placing paragraph in
     `docs/concepts/constraints.md`; CHANGELOG below the anchor (union-merge
