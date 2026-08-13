@@ -24,6 +24,18 @@ existing ``[skip viewer]`` notice. Bad flags, missing files, and
 are non-zero on stderr. A standalone ``model.h5`` calls ``fem.render``.
 No live-session door for ``g.model.render`` / ``g.mesh.render``.
 
+### ADDED — `g.model.render` / `g.mesh.render` live stills (ADR 0094 S4)
+
+Offscreen BRep and undeformed-mesh stills on a live session, same VTK
+path as `fem.render` / `results.render` (`pv.Plotter(off_screen=True)`,
+theme, `camera=` / `window_size=`, `.partial.png` then replace).
+`g.model.render` uses `build_brep_scene` (ModelViewer's tessellation,
+including a throwaway coarse 2-D mesh when none exists).
+`g.mesh.render` uses `build_mesh_scene` (MeshViewer's live Gmsh scene),
+not `get_fem_data` + `build_fem_scene`. A `from_h5` / closed session
+raises `RuntimeError` — no faked BRep still from FEMData. `APEGMSH_SKIP_VIEWER=1`
+or no GL returns `None` and prints the existing `[skip viewer]` notice.
+
 ### ADDED — `results.render_pack` + `assess(figures=True)` (ADR 0094 S3)
 
 Canned report pack of Qt-look stills (`mesh` / last-step primary contour /

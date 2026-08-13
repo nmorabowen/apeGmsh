@@ -11,6 +11,8 @@ from ._model_queries import _Queries
 from ._model_transforms import _Transforms
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from apeGmsh._types import SessionProtocol as _SessionBase
 
 from apeGmsh._logging import _HasLogging
@@ -38,6 +40,7 @@ class Model(_HasLogging):
 
     * ``g.model.sync()`` — flush the OCC kernel
     * ``g.model.viewer()`` — open the interactive Qt viewer
+    * ``g.model.render(path)`` — offscreen BRep still (ADR 0094 S4)
     * ``g.model.gui()`` / ``g.model.launch_picker()`` — native Gmsh viewers
 
     Example
@@ -322,6 +325,30 @@ class Model(_HasLogging):
         p = ModelViewer(parent=self._parent, model=self, **kwargs)
         p.show()
         return p
+
+    def render(
+        self,
+        path: "str | Path",
+        *,
+        camera: str = "iso",
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> "Path | None":
+        """Write one offscreen BRep still (ADR 0094 S4).
+
+        Live session only. Uses ``build_brep_scene`` (same tessellation
+        as :meth:`viewer`, including a throwaway coarse 2-D mesh when
+        none exists). VTK offscreen — no Qt window, no event loop.
+
+        Returns the written :class:`~pathlib.Path`, or ``None`` (and
+        prints the ``[skip viewer]`` notice) under
+        ``APEGMSH_SKIP_VIEWER=1`` or with no GL. Raises
+        ``RuntimeError`` on a ``from_h5`` / closed session.
+        """
+        from apeGmsh.viewers.render import render_model
+
+        return render_model(
+            self._parent, path, camera=camera, window_size=window_size,
+        )
 
     def preview(
         self,
