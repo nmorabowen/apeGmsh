@@ -3403,6 +3403,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-gmodelrender-gmeshrender-live-stills-adr-0094-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.model.render / g.mesh.render live stills (ADR 0094 S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7416,6 +7427,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-gmodelrender-gmeshrender-live-stills-adr-0094-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.model.render / g.mesh.render live stills (ADR 0094 S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11413,6 +11435,16 @@ existing <code>[skip viewer]</code> notice. Bad flags, missing files, and
 <code>ValueError</code> (bad view, out-of-range step, deformed with no <code>u</code>)
 are non-zero on stderr. A standalone <code>model.h5</code> calls <code>fem.render</code>.
 No live-session door for <code>g.model.render</code> / <code>g.mesh.render</code>.</p>
+<h3 id="added-gmodelrender-gmeshrender-live-stills-adr-0094-s4">ADDED — <code>g.model.render</code> / <code>g.mesh.render</code> live stills (ADR 0094 S4)<a class="headerlink" href="#added-gmodelrender-gmeshrender-live-stills-adr-0094-s4" title="Permanent link">&para;</a></h3>
+<p>Offscreen BRep and undeformed-mesh stills on a live session, same VTK
+path as <code>fem.render</code> / <code>results.render</code> (<code>pv.Plotter(off_screen=True)</code>,
+theme, <code>camera=</code> / <code>window_size=</code>, <code>.partial.png</code> then replace).
+<code>g.model.render</code> uses <code>build_brep_scene</code> (ModelViewer's tessellation,
+including a throwaway coarse 2-D mesh when none exists).
+<code>g.mesh.render</code> uses <code>build_mesh_scene</code> (MeshViewer's live Gmsh scene),
+not <code>get_fem_data</code> + <code>build_fem_scene</code>. A <code>from_h5</code> / closed session
+raises <code>RuntimeError</code> — no faked BRep still from FEMData. <code>APEGMSH_SKIP_VIEWER=1</code>
+or no GL returns <code>None</code> and prints the existing <code>[skip viewer]</code> notice.</p>
 <h3 id="added-resultsrender_pack-assessfigurestrue-adr-0094-s3">ADDED — <code>results.render_pack</code> + <code>assess(figures=True)</code> (ADR 0094 S3)<a class="headerlink" href="#added-resultsrender_pack-assessfigurestrue-adr-0094-s3" title="Permanent link">&para;</a></h3>
 <p>Canned report pack of Qt-look stills (<code>mesh</code> / last-step primary contour /
 same deformed at the S1 0.12 auto-scale / static reactions if recorded /
