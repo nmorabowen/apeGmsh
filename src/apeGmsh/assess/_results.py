@@ -42,6 +42,7 @@ def assess_results(results: Results, *, figures: bool = False) -> AssessmentRepo
             "RES.UNBOUND_FEM",
             "Results has no bound FEMData",
         ))
+        skipped.append(("MESH.*", "no bound FEMData"))
     else:
         fem_findings, fem_skipped = collect_fem(fem)
         findings.extend(fem_findings)
@@ -63,6 +64,7 @@ def assess_results(results: Results, *, figures: bool = False) -> AssessmentRepo
             "RES.NO_STAGE",
             "Results file has no stages",
         ))
+        skipped.append(("RES.NAN", "no stages"))
         skipped.append(("RES.U_VS_DIAG", "no stages"))
         skipped.append(("RES.ENERGY_ERR", "no stages"))
     else:
@@ -264,8 +266,8 @@ def _check_energy(
     findings: list[Finding],
     skipped: list[tuple[str, str]],
 ) -> None:
-    # TypeError: native / MPCO have no energy channel → skip.
-    # ValueError: Ladruno file but energy was not recorded → skip.
+    # TypeError is reader-wide (native / MPCO). ValueError is
+    # per-stage (channel absent on this stage) — keep walking.
     try:
         results.energy(stage=stages[0].id)
     except TypeError:
@@ -275,19 +277,23 @@ def _check_energy(
         ))
         return
     except ValueError:
-        skipped.append((
-            "RES.ENERGY_ERR",
-            "energy channel absent (Results.energy() raised ValueError)",
-        ))
-        return
+        pass
 
+    saw_table = False
     for stage in stages:
         if stage.kind == "mode":
             continue
         try:
             df = results.energy(stage=stage.id)
-        except (TypeError, ValueError):
+        except TypeError:
+            skipped.append((
+                "RES.ENERGY_ERR",
+                "no energy channel (Results.energy() raised TypeError)",
+            ))
+            return
+        except ValueError:
             continue
+        saw_table = True
         if "ERR" not in getattr(df, "columns", ()):
             skipped.append((
                 "RES.ENERGY_ERR",
@@ -295,10 +301,26 @@ def _check_energy(
             ))
             continue
         err = float(df["ERR"].iloc[-1])
-        if not np.isfinite(err) or np.isclose(err, 0.0):
+        if not np.isfinite(err):
+            findings.append(_finding(
+                "RES.ENERGY_ERR",
+                (
+                    f"energy balance ERR is non-finite "
+                    f"at last step (stage={stage.id!r})"
+                ),
+                {"ERR": err, "stage": stage.id},
+            ))
+            continue
+        if np.isclose(err, 0.0):
+            # Default atol — unit-scale sensitive (N·mm·tonne).
             continue
         findings.append(_finding(
             "RES.ENERGY_ERR",
             f"energy balance |ERR| = {err:.4g} at last step (stage={stage.id!r})",
             {"ERR": err, "stage": stage.id},
+        ))
+    if not saw_table:
+        skipped.append((
+            "RES.ENERGY_ERR",
+            "energy channel absent on all stages",
         ))
