@@ -41,8 +41,11 @@ What is pinned here, on real gmsh-meshed two-body models:
   pattern sp fans out on native ranks only and is never mirrored onto
   a ghost, so the owner's copy would stay unconstrained — the measured
   singular-matrix case);
-* **the S9 refusal** — a stage-claimed interface under MPI still
-  refuses, naming its own slice, ahead of everything;
+* **the staged combo emits** — the S9 refusal that stood here is
+  RETIRED (ADR 0093 S9): a stage-claimed interface under MPI now emits
+  inside its owner rank's STAGE block (smoke here; the deep staged +
+  partitioned gates live in
+  ``test_interface_partitioned_staged_emit.py``);
 * **determinism** — two partitioned emits are byte-identical.
 
 Emit-time only — no OpenSees run needed.
@@ -639,12 +642,18 @@ def test_interface_plus_embedded_exactly_once_with_documented_drift(
 
 
 # =====================================================================
-# (4) Staged + partitioned stays refused, naming S9
+# (4) Staged + partitioned emits (the S9 refusal is RETIRED)
 # =====================================================================
-def test_stage_claimed_interface_under_mpi_still_refuses_naming_s9(
+def test_stage_claimed_interface_under_mpi_emits_in_the_stage_block(
     tmp_path,
 ):
+    # ADR 0093 S9: the refusal this test used to pin is gone. The
+    # claimed unit emits inside the claiming stage's block, on the
+    # owner rank, exactly once — nothing falls through to a base-pass
+    # emit (the liner installed at t = 0). Deep staged + partitioned
+    # gates live in test_interface_partitioned_staged_emit.py.
     fem = _fem(cut="split")
+    n_pairs = len(fem.elements.interfaces)
     ops = _quad_ops(fem)
     chain = {
         "test":        ops.test.NormDispIncr(tol=1e-6, max_iter=25),
@@ -659,13 +668,13 @@ def test_stage_claimed_interface_under_mpi_still_refuses_naming_s9(
         s.interface(name="RockLiner")
         s.analysis(**chain)
         s.run(n_increments=1, dt=1.0)
-    with pytest.raises(BridgeError) as exc:
-        ops.tcl(str(tmp_path / "deck.tcl"))
-    msg = str(exc.value)
-    assert "ADR 0093 S9" in msg
-    # Lifting the S8 side-list refusal must NOT have let the staged
-    # claim fall through to a base-pass emit.
-    assert "s.interface(name=" in msg
+    text = _deck_text(ops, tmp_path)
+    lines = [ln.strip() for ln in text.splitlines()]
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == n_pairs                     # exactly once each
+    # Every unit sits AFTER the stage banner — never in the base pass.
+    i_stage = lines.index("# === Stage: install ===")
+    assert all(lines.index(ln) > i_stage for ln in zl)
 
 
 # =====================================================================

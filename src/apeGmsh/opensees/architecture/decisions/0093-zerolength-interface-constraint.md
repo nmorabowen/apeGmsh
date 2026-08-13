@@ -415,6 +415,32 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    claimed into a stage under MPI; extends `_emit_stages_partitioned`
    (`apesees.py:2771`); ghost SP replay across the stage boundary. *(top /
    mid)*
+
+   *Landed 2026-08-12 (probe pending).* Shape: the S9 refusal is
+   retired; the base per-rank plan takes the UNCLAIMED subset and
+   `_plan_stage_interfaces_partitioned` builds one INV-5 owner/ghost
+   plan per stage (same single-owner + master-native assertions, same
+   pattern-sp-on-ghost refusal, plus a named refusal for claiming
+   into a stage EARLIER than the one owning an endpoint's topology —
+   under MP that deck would run with the interface pushing on a
+   floating ghost). Claimed rows join the S8 tag pre-pass in the
+   sequence the serial-staged deck consumes the allocator (unclaimed
+   flat order, then per-stage claim order), so serial-staged and
+   partitioned-staged decks are tag-comparable under the same S8
+   conditional. The unit emits inside the owner rank's stage bracket
+   after the stage MP constraints (the flat `emit_stage_interfaces`
+   position), reusing `_emit_interfaces_partitioned` with the
+   stage-inclusive ghost SP stream and the rank's live ghost registry
+   — ghosts replay stage-bound `s.fix` across the stage boundary and
+   later stages mirror their SP deltas onto held ghosts (ADR 0027
+   INV-2, both directions). Measured (the interface numeric twin,
+   `tests/opensees/subprocess/test_interface_partitioned_numeric_twin.py`,
+   serial vs 2-rank OpenSeesMP): worst relative delta 3.6e-15 across
+   the S8 base push/pull/slip case and the staged liner install; the
+   staged `zeroLength` is born STRAIN-FREE on the equilibrated ground
+   (install-stage liner motion at solver zero; post-install
+   increments carry the compression ordering in increment space) —
+   the INV-6 install-on-equilibrated-ground semantics, now measured.
 10. **S10 — acceptance battery** (the requester's own checks): bonded limit
     (stiff bilateral laws) reproduces `tie` on the same mesh; unilateral
     zero-tension with free separation, both signs, curved master, for both
