@@ -53,6 +53,26 @@ this: `_per_partition`'s missing-rank tolerance does not wrap
 `read_layers`/`read_springs` (harmless only while both are
 always-empty stubs), and `opensees_model()` reads partition 0 only.
 Gated `subprocess` + `slow` with loud env skips, so CI skips it.
+### FIXED — `split="parts"` silently dropped `g.constraints.interface()` (ADR 0093)
+
+`BuiltModel._emit_split` ran every other additive side-list pass
+(`emit_mp_constraints`, `emit_reinforce_ties`, `emit_embed_ties`,
+`emit_contacts`, `emit_contact_planes`, `emit_rebar_elements`) but never
+`emit_interfaces`, so a model carrying `g.constraints.interface()`
+exported with `split="parts"` lost the ENTIRE interface — no
+`zeroLength`, no tributary-scaled uniaxials, no mixed-ndf phantom — and
+the deck still loaded and ran, as a fully bonded model where the user
+asked for a unilateral one. Found by the ADR 0093 S8 adversarial review
+(refuter A, finding 5). The pass now runs at the flat path's position
+(after `emit_contact_planes`, before `emit_rebar_elements`), driver-side
+with the MP constraints: an interface is cross-module by construction, so
+its unit must land after every fragment has declared its nodes. The
+constraint-handler auto-emit already saw mixed-ndf interfaces through
+`_fem_has_interface_equal_dofs`, so the split deck's handler was never
+wrong — only its interface was missing. Regression:
+`tests/opensees/unit/test_split_emit.py` (the driver carries the block
+and the fragments do not; the split driver's interface lines equal the
+single-file deck's, same order, same tags).
 
 ### FIXED — analysis-chain auto-emits now precede a user-declared `analysis` directive (ADR 0092 S5 open item)
 

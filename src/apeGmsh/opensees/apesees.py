@@ -1943,6 +1943,21 @@ class BuiltModel:
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
         emit_contact_planes(emitter, self.fem, tags)
+        # Oriented coincident-pair zeroLength interfaces
+        # (g.constraints.interface, ADR 0093 D5) — same position as the
+        # flat path.  An interface is cross-module by construction (it
+        # couples a composed module to its host), so like the MP
+        # constraints above it belongs in driver-post, after every
+        # fragment has declared its nodes.  ``claimed_ids`` is empty here
+        # by the staged guard at the top of this method; it is passed so
+        # the two paths cannot drift if that guard is ever lifted.
+        emit_interfaces(
+            emitter, self.fem, tags,
+            effective_ndf=inferred_ndf,
+            envelope_ndf=self.ndf,
+            ndm=self.ndm,
+            claimed_ids=frozenset(self._claimed_interface_ids()),
+        )
         emit_rebar_elements(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
