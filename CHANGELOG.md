@@ -12,6 +12,88 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a STAGED contact model no longer runs with the contact handler silently overridden (ADR 0092)
+
+The staged **partitioned** contact refusal (S4) names its own reason: the
+staged pipeline skips the analysis-chain auto-emit, "so the forced
+`LadrunoContact` handler would never be emitted and the interaction would
+be silently unenforced". That reasoning was never partition-specific —
+the **serial** staged path had the same hole, and it hid better, because
+the global auto-emit *does* emit `constraints LadrunoContact`, so the
+deck looks covered. It isn't: a stage re-declares the entire analysis
+chain, so its own `constraints` line lands after the global one and
+before the stage's `analysis`, and OpenSees builds the analysis with
+whatever is current at that moment. Measured on a staged two-block
+contact deck whose stage declared `Transformation`:
+
+```
+contact 1 1 2 …             ← the interaction
+constraints LadrunoContact  ← global auto-emit
+constraints Transformation  ← the stage's handler
+analysis Static             ← constructed with Transformation
+```
+
+The contact FE adapters are never injected — the interaction does
+nothing, and nothing says so. Since `s.analysis()` *requires*
+`constraints=`, the wrong handler was always reachable; there was no
+"just don't declare one" escape.
+
+`BuiltModel._validate_staged_contact_handlers` (the contact twin of the
+ADR 0068 Open-item-5 EQ guard, called from both staged emit paths) now
+requires every stage of a contact model to declare
+`s.constraints.LadrunoContact()`, else a `BridgeError` naming the stage,
+the handler it declared, and the consequence. Non-contact staged models
+are untouched.
+
+Also fixed the warning that was crying wolf next door: the contact
+auto-emit warned "a constraint handler was declared … overriding your
+handler" for **any** declaration — including `LadrunoContact` itself,
+i.e. on every correct staged contact model, and while claiming an
+override that actually runs the other way. It now fires only on a
+genuinely conflicting handler, names it, and says that emit ORDER
+decides which handler the analysis is built with.
+
+### ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed
+
+`tests/opensees/subprocess/test_contact_partitioned_results_stitch.py` —
+the S5 model recorded (`ops.recorder.Ladruno`, unfiltered) and read back
+through `Results`. INV-6 predicted "work reduces to a regression test";
+writing it found the contract rests on three things, only one pinned:
+
+- **The `.part-<K>` filename is a cross-library contract, and each side
+  had only tested its own half.** apeGmsh emits the recorder line ONCE,
+  globally, with the filename verbatim — there is no `part-` anywhere in
+  `src/` outside the two *reader* modules. The suffix that
+  `discover_partition_files` matches is written by the FORK
+  (`SRC/recorder/LadrunoRecorder.cpp`, gated on `send_self_count` or an
+  MPI launcher's `PMI_*`/`OMPI_*`/`SLURM_NTASKS`). If the fork's
+  spelling drifted, every partitioned read would silently return ONE
+  rank's slice — a wrong answer shaped like a small model. Now asserted
+  against real 2-rank output.
+- **The node stitch dedupes first-write-wins, and the contact ghost is
+  that duplicate.** Measured: rank 0 recorded **12** nodes for the 8 it
+  owns — the 4 extra are exactly the slave-face ghosts — while rank 1
+  recorded its 8. `_merge_node_slabs` keeps the first copy and drops the
+  rest *without comparing them*, so the stitch is correct only because
+  ghost == native; the suite asserts that equality survives to the
+  recorder (not just the solver, where ADR-78 P0/S5 measured it) and
+  pins the stitched answer against the serial twin: 16 unique node ids,
+  no NaN, max relative Δ **1.997e−14** (gate 1e−10).
+- **The element stitch does NOT dedupe** — `_concat_element_slabs`
+  concatenates, assuming rank-disjoint elements, so an INV-7 violation
+  (a ghost carrying elements) would double-count in every partitioned
+  read with no error. Pinned: rank 0 {2}, rank 1 {3}, empty
+  intersection, union == the serial element set.
+
+Plus INV-6 proper on real contact output rather than a synthesized
+manifest (strip `ON_ELEMENTS` from one rank → the stitch still answers;
+from both → loud). The decks deliberately declare no constraint
+handler, riding the auto-emit, so the suite is also a live consumer of
+the S5 open-item fix below. Recorded in ADR 0092 for whoever extends
+this: `_per_partition`'s missing-rank tolerance does not wrap
+`read_layers`/`read_springs` (harmless only while both are
+always-empty stubs), and `opensees_model()` reads partition 0 only.
+Gated `subprocess` + `slow` with loud env skips, so CI skips it.
 ### FIXED — `split="parts"` silently dropped `g.constraints.interface()` (ADR 0093)
 
 `BuiltModel._emit_split` ran every other additive side-list pass

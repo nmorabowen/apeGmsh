@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Literal, Sequence
 
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
+    clear_element_emit_context,
     current_fem_element_id,
 )
 from .._internal.typed_records import (
@@ -1628,6 +1629,12 @@ class H5Emitter:
         # (sentinel ``-1`` when called outside a bridge fan-out — see
         # `_internal/tag_resolution.MISSING_FEM_ELEMENT_ID`).
         fem_eid = current_fem_element_id(self)
+        # Consume both side channels: the bridge re-installs them per
+        # fan-out row, and a sticky value would otherwise leak the LAST
+        # mesh row's fem_eid + connectivity onto elements minted by the
+        # side-list passes (interfaces / rebar / couplings — the
+        # ADR 0093 S10 mislabeled-springs finding).
+        clear_element_emit_context(self)
         self._elements.append(
             _ElementRecord(
                 type_token=ele_type, tag=int(tag),

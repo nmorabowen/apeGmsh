@@ -5140,6 +5140,14 @@ def _emit_interface_record(
         "-dir", 1, 2,
         "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
     ]
+    # ADR 0049 node-pair convention for a minted (mesh-less) element:
+    # sentinel fem_eid + the TRUE endpoint pair.  Without this the H5
+    # emitter's sticky side channels leak the last mesh row's fem_eid
+    # and connectivity onto every interface zeroLength — mislabeling
+    # the per-pair springs channels in ``Results`` and corrupting the
+    # argstack slicing (ADR 0093 S10 finding).
+    set_current_fem_element_id(emitter, MISSING_FEM_ELEMENT_ID)
+    set_element_nodes(emitter, (int(rec.master_node), j_node))
     emitter.element("zeroLength", ele_tag, *args)
 
 
@@ -5327,6 +5335,12 @@ def emit_rebar_elements(
             )
         for i_node, j_node in rec.connectivity:
             ele_tag = tags.allocate("element")
+            # Minted bar cell — no backing mesh element, args start with
+            # the node pair: ADR 0049 node-pair convention (sentinel
+            # fem_eid + true endpoints), same rationale as the interface
+            # zeroLength above (ADR 0093 S10 finding).
+            set_current_fem_element_id(emitter, MISSING_FEM_ELEMENT_ID)
+            set_element_nodes(emitter, (int(i_node), int(j_node)))
             emitter.element(
                 "CorotTruss", ele_tag, int(i_node), int(j_node),
                 float(rec.area), int(mat_tag),

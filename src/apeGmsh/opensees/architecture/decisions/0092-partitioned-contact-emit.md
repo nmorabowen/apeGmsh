@@ -329,6 +329,39 @@ by a single rank with the whole interface visible to it.
      stage blocks (the ADR 0027 amended machinery) is wired but
      unproven for contact ghosts. Unstaged partitioned contact — the
      first-ship class from sign-off Q3 — is unaffected.
+
+     **Follow-up 2026-08-13: the first reason applied to the SERIAL
+     staged path too, and there it was not refused — it was silently
+     wrong.** The refusal's own rationale is not partition-specific: any
+     staged model re-declares the whole analysis chain per stage, so the
+     stage's `constraints` line lands AFTER the global auto-emit and
+     BEFORE the stage's `analysis`, and the analysis is constructed with
+     the stage's handler. Serial staging hid it better precisely because
+     the global auto-emit *does* emit `constraints LadrunoContact`, so
+     the deck looks covered. Measured on a staged two-block contact deck
+     whose stage declared `Transformation`:
+
+     ```
+     contact 1 1 2 …             ← the interaction
+     constraints LadrunoContact  ← global auto-emit
+     constraints Transformation  ← the stage's handler
+     analysis Static             ← constructed with Transformation
+     ```
+
+     The contact FE adapters are never injected — the interaction does
+     nothing and nothing says so. `s.analysis()` *requires*
+     `constraints=`, so the wrong handler is always reachable; there is
+     no "just don't declare one" escape. Fixed by
+     `BuiltModel._validate_staged_contact_handlers`, the contact twin of
+     the ADR 0068 Open-item-5 EQ guard, called from both staged emit
+     paths: every stage of a contact model must declare
+     `s.constraints.LadrunoContact()`, else a `BridgeError` naming the
+     stage, its handler, and the consequence. The auto-emit warning was
+     also cried-wolf — it fired for ANY declared handler including
+     `LadrunoContact` itself, i.e. on every correct staged contact model
+     — so it now fires only on a genuinely conflicting handler and says
+     that emit ORDER decides the winner. Tests:
+     `tests/opensees/integration/test_staged_contact_handler.py`.
    - Tests: `tests/opensees/integration/test_emit_partitioned_contact.py`
      (one owner block; every referenced node declared; ghosts carry no
      mass/elements/loads; SP replay matches the owner's stream and is
@@ -449,6 +482,69 @@ by a single rank with the whole interface visible to it.
    `subprocess.run(capture_output=True)` blocks past its timeout on
    Windows because orphaned ranks inherit the pipe handles).
 6. **S6 — `Results` ownership contract** (INV-6).
+
+   *Landed 2026-08-13* —
+   `tests/opensees/subprocess/test_contact_partitioned_results_stitch.py`,
+   the S5 model recorded and read back. INV-6 predicted "work reduces to
+   a regression test"; writing it found the contract rests on **three**
+   things, only one of which was pinned anywhere.
+
+   - **The filename grammar is a CROSS-LIBRARY contract nothing had
+     executed.** apeGmsh emits the recorder line ONCE, globally, with the
+     name verbatim (there is no `part-` anywhere in `src/`); the
+     `<stem>.part-<K>.ladruno` suffix that `discover_partition_files`
+     matches is written by the FORK (`SRC/recorder/LadrunoRecorder.cpp`,
+     which detects partitioning via `send_self_count` or an MPI
+     launcher's `PMI_*` / `OMPI_*` / `SLURM_NTASKS` pair, then rewrites
+     the stem). Each side tested its own half. A drift in the fork's
+     spelling would make every partitioned read silently return ONE
+     rank's slice — a wrong answer shaped like a small model. Now
+     asserted against real 2-rank output.
+   - **The node stitch dedupes first-write-wins** (`_merge_node_slabs`,
+     `_merge_partition_fems`), and the contact ghost IS that duplicate.
+     Measured: rank 0 recorded **12** nodes for the 8 it owns — the 4
+     extra are exactly the slave-face ghosts {10, 12, 14, 16} — while
+     rank 1 recorded its 8. The merge keeps whichever copy it meets
+     first and drops the rest **without comparing them**, so the stitch
+     is correct only because ghost == native. That equality is a fork
+     property (ADR-78 P0 / S5, bit-identical at the solver level); S6
+     asserts it survives to the recorder, which is what the reader
+     actually consumes, and pins the stitched result against the serial
+     twin (16 unique node ids, no NaN, max rel Δ **1.997e−14**, gate
+     1e−10; the ghost copy is the one that wins, and it agrees).
+   - **The element stitch does NOT dedupe** (`_concat_element_slabs`
+     concatenates, assuming rank-disjoint elements), so an INV-7
+     violation — a ghost carrying elements — would double-count in
+     every partitioned read with no error. Pinned on real output:
+     rank 0 {2}, rank 1 {3}, empty intersection, union == the serial
+     element set.
+
+   Plus the INV-6 statement proper, now on real contact output rather
+   than a synthesized manifest: strip `ON_ELEMENTS` from one rank and
+   the stitch still answers; strip it from both and the read is loud.
+
+   Two notes for whoever extends this. `_per_partition` (the
+   tolerate-a-missing-rank wrapper) covers `read_elements` /
+   `read_line_stations` / `read_gauss` / `read_fibers` but NOT
+   `read_layers` / `read_springs` — harmless today only because both
+   are always-empty stubs on the `.ladruno` reader that never raise
+   `MissingElementResults`; if either ever becomes real, INV-6 breaks
+   there. And `opensees_model()` reads **partition 0 only**, so when the
+   contact owner is not rank 0 the minimal broker comes from a rank that
+   knows nothing about the interaction.
+
+   The suite deliberately does NOT declare a constraint handler: it
+   rides the auto-emit, so it is also a live consumer of the S5
+   open-item fix (a regressed hoist runs PlainHandler and the numbers
+   stop matching). "Contact families" resolves to **ordinary node /
+   element results on a model that has contact** — the fork exposes no
+   recordable contact response at all (`LadrunoContactHandler` is a
+   `ConstraintHandler`, `LadrunoContactFE` an analysis-layer
+   `FE_Element`, `LadrunoContactDomain` not even a `TaggedObject`; no
+   `setResponse`/`getResponse` anywhere, and `element/contact.py`
+   defines no `Element` class, so no tag exists for a recorder to
+   target). What contact changes is not *what* is recorded but *who*
+   records it — which is the ownership contract itself.
 
 ## Consequences
 
