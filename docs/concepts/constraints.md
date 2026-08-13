@@ -236,6 +236,29 @@ One historical note, since older material mentions it: `g.constraints.mortar()`
 still exists but is a deprecated alias that delegates to
 `contact(formulation="mortar", tie=True)` and warns. Call `contact()` directly.
 
+Between a bond and full contact sits a third thing, and the model that paid for
+it is a tunnel liner in squeezing rock. `g.constraints.interface(...)` puts one
+spring per coincident node pair across a 2D continuum boundary — unilateral in
+the normal direction, capped at a bond strength in the tangential one. It needs
+no contact search and no exclusive handler, because the pairing is plain
+co-location, the same matching `equal_dof` does. What separates it from
+`equal_dof`, `tie` and `embedded` is that it is not a bond at all: the normal
+law carries compression and nothing else, and the tangential law stops carrying
+shear once `τ_b × A_trib` is reached.
+
+That distinction is mechanical, not cosmetic. With a bilateral bond the model
+cannot reproduce demand saturation — the ground converges, the tie transmits
+whatever force that convergence implies, and the liner's demand grows without
+bound, while the field record shows metre-class convergence coexisting with
+damaged-but-standing arches. Capping the bond puts a ceiling on what the ground
+can hand the structure, and letting the interface open means it carries nothing
+where the two sides have parted. The surface, including the sign convention you
+should check once per model, is in
+[the constraints API](../api/constraints.md#tier-6-interface-springs); the two
+things to get right at declaration are the out-of-plane `thickness` (required,
+never guessed) and `slave_ndf=` when the coincident wire will be meshed as a
+beam.
+
 ## Reading back what you declared
 
 After resolution the snapshot can tell you what actually happened —

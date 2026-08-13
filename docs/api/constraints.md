@@ -29,7 +29,7 @@ the FEM broker:
 
 ## Constraint taxonomy
 
-Six tiers, ordered by topology:
+Seven tiers, ordered by topology:
 
 | Tier         | Methods                                                                                                   | Record family               |
 | ------------ | --------------------------------------------------------------------------------------------------------- | --------------------------- |
@@ -39,12 +39,16 @@ Six tiers, ordered by topology:
 | 3 — Surface  | [`tie`](#tier-3-node-to-surface), [`distributing_coupling`](#tier-3-node-to-surface), [`embedded`](#tier-3-node-to-surface) | `InterpolationRecord`       |
 | 4 — Contact  | [`tied_contact`](#tier-4-surface-to-surface)                                                              | `SurfaceCouplingRecord`     |
 | 5 — Fork     | `contact`, `mortar` (deprecated alias for `contact(formulation="mortar", tie=True)`)                      | `ContactRecord`             |
+| 6 — Interface | [`interface`](#tier-6-interface-springs)                                                                 | `InterfaceRecord`           |
 
-All constraints ultimately express the linear MPC equation
-`u_slave = C · u_master`. Tiers differ in **how** `C` is built:
+Tiers 1 to 4 ultimately express the linear MPC equation
+`u_slave = C · u_master`, and differ in **how** `C` is built:
 node co-location (Tier 1), kinematic transformation around a master
 point (Tier 2), shape-function interpolation (Tier 3), or numerical
-integration on the interface (Tier 4).
+integration on the interface (Tier 4). Tiers 5 and 6 are not
+equations at all — they resolve onto their own additive side-lists
+(`fem.elements.contacts`, `fem.elements.interfaces`) and emit
+*elements*, which is how they can carry a force that drops to zero.
 
 ## Target identification
 
@@ -324,6 +328,92 @@ clearly picked as finer than the other and you want a symmetric
 treatment.
 
 ::: apeGmsh._kernel.defs.constraints.TiedContactDef
+    options:
+      heading_level: 3
+
+## Tier 6 — Interface springs
+
+Every tier above is a bond: the slave follows the master in tension
+as in compression, for as long as the analysis runs.
+`g.constraints.interface(master, slave, ...)` is the one that can let
+go. It emits one `zeroLength` per coincident node pair between a 2D
+continuum boundary and a node-for-node coincident wire, with a
+**unilateral** normal law (compression only, separation free) and a
+**strength-capped** tangential law (elastic until the bond shear
+`tau_b` is reached, then slip). That is the soil- or rock-to-structure
+bond. A tunnel liner in converging ground takes load until the bond
+slips and no more; with a bilateral tie the ground keeps converging
+and the liner's demand grows with it, without a ceiling.
+
+The two laws are *declared*, not built. `NormalLaw` and
+`TangentialLaw` are flat-scalar dataclasses carrying stiffness **per
+unit area** — apeGmsh translates each into a typed uniaxial material
+at emit, scaled by that pair's own tributary area. The Cerro Lindo
+shape, a steel arch against a tunnel face, is an `ent` normal (no
+tension whatsoever) with an `epp` tangential capped at the bond
+strength:
+
+```python
+from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+
+g.constraints.interface(
+    "face", "wire",                                    # rock rim, liner rim
+    normal=NormalLaw(kind="ent", k_per_area=1.0e9),    # [F/L³]
+    tangential=TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5),
+    thickness=0.5,                                     # out-of-plane, required
+    name="RockLinerInterface",
+)
+```
+
+You never compute the tributary areas that scaling needs. The
+resolver accumulates `0.5 × edge_length` along the master polyline,
+multiplies by `thickness`, and asserts the total closes on the master
+face's length × thickness before a line is emitted; a pair with a zero
+share is an error, not a quiet no-op. `thickness` itself is required
+and has no default, because a guessed out-of-plane dimension would
+scale every force in the interface and say nothing.
+
+Local-x of each pair is the **outward normal of the master face**,
+derived per pair from the master's own boundary edges, so a curved
+master's frame swings with the arc instead of collapsing onto one
+average direction. ZeroLength deformation is `x̂·(u_j − u_i)` with the
+master always as `i`, so separation reads as positive elongation and
+an `ent` normal carries exactly zero force there, while closure is
+compression. That is observable and worth observing once on a new
+model: pull the slave off the master and the pair's `spring_force_0`
+must be zero. The mirror-image convention converges just as happily
+into a tension-only interface that is wrong everywhere, which is why
+the signs are applied by the emit-time translation and are never
+yours to pass.
+
+The slave's `ndf` is a declaration, not an inference. Left at `None`
+(or `2`) the slave is taken to match the 2D continuum and the spring
+joins the two real nodes. Pass `slave_ndf=3` when the wire will become
+a beam: the engine refuses a `zeroLength` whose endpoints disagree on
+`ndf`, so each pair instead gets a 2-DOF phantom at the slave's
+coordinates, an `equalDOF(retained=beam node, constrained=phantom,
+dofs=[1, 2])`, and a spring running master → phantom — leaving the
+beam's rotation free, which is the hinge behaviour you want at a
+liner-to-ground contact. It has to be explicit because element classes
+are assigned at `ops.element` time, *after* resolution: when the
+resolver runs there is genuinely nothing in the model that says
+whether your wire becomes a truss or a beam. Declare it wrong and the
+bridge refuses at emit, naming the ndf it actually found.
+
+Two-dimensional line masters only, for now. A 3D model raises
+`NotImplementedError` at the call, and an interior edge — material on
+both sides, so no outward direction exists — raises at resolve; both
+are loud, neither degrades into a guess. Partitioned (MPI) emit is
+supported: each pair's whole unit lands on the one rank owning the
+master node's backing continuum element, because the pair's nodes are
+co-located and node-tally ownership cannot decide between the ranks.
+And an interface given a `name=` can be claimed into a stage with
+`s.interface(name="RockLinerInterface")`, which installs it on ground
+the earlier stages already equilibrated — the liner-install pattern,
+and the reason the springs are born strain-free instead of
+pre-loaded by the convergence that happened before they existed.
+
+::: apeGmsh._kernel.defs.constraints.InterfaceDef
     options:
       heading_level: 3
 

@@ -526,6 +526,14 @@ contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
     master_entities=None, slave_entities=None, name=None)
 contact_plane(slave, *, normal, point, kn, visc=None, soft=None,   # rigid analytical plane (fork contactPlane)
     slave_entities=None, name=None)               # frictionless, no master mesh; kn REQUIRED (no "auto")
+
+# Coincident-pair interface springs (ADR 0093) — stock OpenSees zeroLength, no fork needed;
+# resolves to fem.elements.interfaces. Bare master/slave (NOT master_label/slave_label):
+interface(master, slave, *, normal, tangential, thickness, tolerance=1e-6, slave_ndf=None,
+    master_entities=None, slave_entities=None, name=None)
+#   normal=NormalLaw(kind="ent"|"epp_gap"|"elastic", k_per_area, tau_b_n=None, gap=None)
+#   tangential=TangentialLaw(kind="epp"|"elastic", k_per_area, tau_b=None)
+#   from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw   # no public alias yet
 mortar(master_label, slave_label, *, eps_n="auto", outward, ...)   # DEPRECATED alias → contact(formulation="mortar", tie=True)
 
 # Fork coupling elements (RBE2 / RBE3) — shared control knobs:
@@ -602,6 +610,48 @@ the neutral `model.h5` (`/contacts`, base schema 2.21.0; `cell` 2.23.0,
 edge-edge fields 2.25.0); contact planes to `/contact_planes` (2.24.0); embed
 ties to `/embed_ties` (2.22.0).
 `# src/apeGmsh/core/ConstraintsComposite.py:298 (contact), :497 (contact_plane), :1835 (mortar); EmbedmentsComposite.py:129 (embed)`
+
+**Interface springs (ADR 0093) — the only NON-BOND in `g.constraints`.**
+`interface()` emits one **stock-OpenSees** `zeroLength` per coincident
+(master, slave) node pair: unilateral normal (`ent` = compression only,
+separation free) + slip-capped tangential (`epp`, yield at `tau_b·A_trib`).
+Use it for a soil/rock–structure bond where a bilateral `tie`/`equal_dof`
+would let the liner's demand grow without bound as the ground converges.
+The laws are declarative per-**area** kernel dataclasses (`[F/L³]`),
+translated to typed uniaxials scaled by each pair's tributary area at emit
+(`ent → ENT(E=k·A)`; `epp → ElasticPP(E=k·A, epsyP=tau_b/k)` — `ElasticPP`
+takes a yield STRAIN, so the yield force is the emergent `E × epsyP`;
+`epp_gap → ElasticPPGap(E=k·A, Fy=−tau_b_n·A, gap≤0)`). **INV-1 sign
+convention:** `iNode` is always the real continuum master node and local-x
+is the **master face's outward normal**, derived per pair (a curved master's
+frame follows the arc), so `x̂·(u_j − u_i)` makes separation a positive
+elongation carrying zero force. Never pass signs yourself — the emit-time
+translation forces them; a flipped convention gives a tension-only interface
+that converges fine and is wrong everywhere. **`slave_ndf=` is explicit, not
+inferred** (`None`/`2` = direct pair; `3` = beam wire, so each pair gets a
+2-dof phantom + `equalDOF(retained=beam, constrained=phantom, 1 2)` and the
+spring runs master→phantom, beam rotation untouched): element classes are
+assigned at `ops.element` time, *after* resolve, so apeGmsh cannot tell a
+truss wire from a beam wire. Staged claim with `s.interface(name=)` (the
+liner-install pattern — the springs are born strain-free on the equilibrated
+ground); partitioned/MPI supported, each pair's whole unit on the single rank
+owning the master node's backing continuum element. Per-pair read-back via
+MPCO `results.elements.springs`: `spring_force_0`/`spring_deformation_0` =
+normal, `_1` = tangential. Records persist to `/interfaces` (schema 2.29.0).
+
+```python
+# verified: tests/opensees/integration/test_interface_acceptance_battery.py::test_curved_master_orientation_swings_with_the_face
+from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+
+g.constraints.interface(
+    "face", "wire",                                    # master = rock rim (a FREE boundary curve of the continuum)
+    normal=NormalLaw(kind="ent", k_per_area=1.0e9),
+    tangential=TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5),
+    thickness=0.5,                                     # REQUIRED, no default
+    name="RockLiner",                                  # the handle for s.interface(name=)
+)
+```
+`# src/apeGmsh/core/ConstraintsComposite.py:610 (interface); _kernel/resolvers/_interface_resolver.py; opensees/_internal/build.py (emit_interfaces)`
 
 ## `g.loads` — load patterns & definitions
 

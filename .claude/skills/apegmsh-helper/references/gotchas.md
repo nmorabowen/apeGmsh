@@ -206,3 +206,29 @@ facets straddle master face boundaries.
 dim-2 element groups — a part saved from `get_fem_data(dim=3)` has none and
 the chain-phase router raises `ValueError("re-extract with dim=None")`.
 ✅ Always `get_fem_data(dim=None)` before `g.save()` on tie-bearing parts.
+
+## Interface springs (ADR 0093) — the two that bite first
+
+### ❌ `interface(...)` without `thickness=` → ✅ pass it, always
+`thickness` is a **required kwarg with no default** — `A_trib = ell_trib ×
+thickness`, and every spring stiffness and slip force in the interface is
+scaled by it. The verb refuses to guess an out-of-plane dimension (a wrong
+guess would rescale the whole interface and say nothing), so a missing
+`thickness` is a `ValueError` at declaration, never a silent 1.0. Same
+fail-loud class: master and slave node sets must be disjoint (a shared node
+would spring against itself), every slave must find a master inside
+`tolerance`, and a master edge with material on **both** sides — an interior
+edge, so no outward direction exists — raises at resolve. Nothing degrades
+to a guess.
+
+### ❌ `interface()` on a 3D model / a surface master → ✅ 2D line masters only
+v1 implements 2D line masters. A 3D model raises `NotImplementedError` at the
+`g.constraints.interface(...)` call (and again at resolve, plus per-edge for
+an out-of-plane master edge) naming ADR 0093 D2 — a surface master needs
+per-facet frames and a surface tributary model, both deferred. For a 3D
+interface use `g.constraints.contact()` (unilateral, fork-only) or `tie()`
+(bonded). Related: `slave_ndf=` is **explicit, never inferred** — leave it
+`None`/`2` for a slave matching the 2D continuum, pass `3` for a beam wire.
+apeGmsh cannot know which, because element classes are assigned at
+`ops.element` time, *after* resolve; get it wrong and emit refuses with a
+`BridgeError` naming the ndf it actually found.
