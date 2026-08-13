@@ -12,6 +12,47 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a STAGED contact model no longer runs with the contact handler silently overridden (ADR 0092)
+
+The staged **partitioned** contact refusal (S4) names its own reason: the
+staged pipeline skips the analysis-chain auto-emit, "so the forced
+`LadrunoContact` handler would never be emitted and the interaction would
+be silently unenforced". That reasoning was never partition-specific —
+the **serial** staged path had the same hole, and it hid better, because
+the global auto-emit *does* emit `constraints LadrunoContact`, so the
+deck looks covered. It isn't: a stage re-declares the entire analysis
+chain, so its own `constraints` line lands after the global one and
+before the stage's `analysis`, and OpenSees builds the analysis with
+whatever is current at that moment. Measured on a staged two-block
+contact deck whose stage declared `Transformation`:
+
+```
+contact 1 1 2 …             ← the interaction
+constraints LadrunoContact  ← global auto-emit
+constraints Transformation  ← the stage's handler
+analysis Static             ← constructed with Transformation
+```
+
+The contact FE adapters are never injected — the interaction does
+nothing, and nothing says so. Since `s.analysis()` *requires*
+`constraints=`, the wrong handler was always reachable; there was no
+"just don't declare one" escape.
+
+`BuiltModel._validate_staged_contact_handlers` (the contact twin of the
+ADR 0068 Open-item-5 EQ guard, called from both staged emit paths) now
+requires every stage of a contact model to declare
+`s.constraints.LadrunoContact()`, else a `BridgeError` naming the stage,
+the handler it declared, and the consequence. Non-contact staged models
+are untouched.
+
+Also fixed the warning that was crying wolf next door: the contact
+auto-emit warned "a constraint handler was declared … overriding your
+handler" for **any** declaration — including `LadrunoContact` itself,
+i.e. on every correct staged contact model, and while claiming an
+override that actually runs the other way. It now fires only on a
+genuinely conflicting handler, names it, and says that emit ORDER
+decides which handler the analysis is built with.
+
 ### ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed
 
 `tests/opensees/subprocess/test_contact_partitioned_results_stitch.py` —

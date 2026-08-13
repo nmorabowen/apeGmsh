@@ -2083,6 +2083,11 @@ class BuiltModel:
         # skipped for staged models, so validate each stage's declared
         # handler against any equation tie (fail loud, not silent-drop).
         self._validate_staged_eq_handlers()
+        # ADR 0092: the same disease, contact edition — a stage's own
+        # ``constraints`` line lands after the global auto-emit and
+        # before the stage's ``analysis``, so a non-contact handler
+        # silently wins and the interaction is never enforced.
+        self._validate_staged_contact_handlers()
 
         # Pre-compute reverse maps: stage_index → list of owned nodes
         # / owned element-spec ids, for efficient per-stage lookup.
@@ -3243,6 +3248,11 @@ class BuiltModel:
         # ADR 0068 Open item 5: per-stage EQ handler guard (the global
         # auto-emit is skipped for staged models) — same as the flat path.
         self._validate_staged_eq_handlers()
+        # ADR 0092: the same disease, contact edition — a stage's own
+        # ``constraints`` line lands after the global auto-emit and
+        # before the stage's ``analysis``, so a non-contact handler
+        # silently wins and the interaction is never enforced.
+        self._validate_staged_contact_handlers()
 
         # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
         # per owning rank below — each rank opens the stage's dedicated
@@ -6400,14 +6410,26 @@ class BuiltModel:
                     "as_element are handler-independent elements and are fine "
                     "with contact.)"
                 )
+            from .analysis.constraint_handler import (
+                LadrunoContact as _LadrunoContactHandler,
+            )
             declared = next(
                 (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
-            if declared is not None:
+            # Declaring 'LadrunoContact' yourself is agreement, not conflict —
+            # warning there cried wolf on the one correct choice (and on every
+            # staged contact model, where _validate_staged_contact_handlers now
+            # REQUIRES each stage to declare exactly this handler).
+            if declared is not None and not isinstance(
+                declared, _LadrunoContactHandler,
+            ):
                 _warnings.warn(
                     "Contact interactions are present but a constraint handler "
-                    "was declared — contact requires 'LadrunoContact', so it is "
-                    "(re)emitted, overriding your handler. Remove the explicit "
-                    "handler to silence this.",
+                    f"('{type(declared).__name__}') was declared — contact "
+                    "requires 'LadrunoContact', so it is (re)emitted here. NOTE "
+                    "the emit ORDER decides which one the analysis is built "
+                    "with: a later declaration (e.g. a stage's own chain) wins. "
+                    "Remove the explicit handler, or declare "
+                    "ops.constraints.LadrunoContact(), to silence this.",
                     OpenSeesAutoEmitWarning, stacklevel=2,
                 )
             emitter.constraints("LadrunoContact")
@@ -6627,6 +6649,65 @@ class BuiltModel:
                 f"drop the tie. Declare s.constraints.Lagrange() (implicit) "
                 f"or s.constraints.LadrunoProjection() (explicit, fork) on "
                 f"the stage, or switch the tie to enforce='penalty'."
+            )
+
+    def _validate_staged_contact_handlers(self) -> None:
+        """ADR 0092 — staged-path CONTACT handler guard.
+
+        The contact analogue of :meth:`_validate_staged_eq_handlers`,
+        and the same failure mode the staged **partitioned** refusal
+        already names: "the partitioned staged pipeline skips the
+        analysis-chain auto-emit … so the forced ``LadrunoContact``
+        handler would never be emitted and the interaction would be
+        silently unenforced". That reasoning is not partition-specific
+        — the SERIAL staged path had the same hole, hidden because the
+        global auto-emit *does* emit ``constraints LadrunoContact`` and
+        so looks like cover. It is not: every stage re-declares the
+        whole chain, so the stage's own ``constraints`` line lands
+        AFTER the global one and BEFORE the stage's ``analysis``, and
+        the analysis is constructed with the stage's handler.
+
+        Measured on a staged two-block contact deck whose stage
+        declared ``Transformation``::
+
+            contact 1 1 2 …            ← the interaction
+            constraints LadrunoContact ← global auto-emit
+            constraints Transformation ← the stage's handler
+            analysis Static            ← constructed with Transformation
+
+        The contact FE adapters are never injected, so the interaction
+        does nothing and nothing says so — the exact silent-wrong class
+        ADR 0092 exists to prevent. Since ``s.analysis()`` *requires*
+        ``constraints=``, the wrong handler is always reachable.
+
+        Fail loud, naming the stage and its handler. No-op when the
+        model carries no contact interaction.
+        """
+        if not self.stage_records or not _fem_has_contacts(self.fem):
+            return
+        from .analysis.constraint_handler import (
+            LadrunoContact as _LadrunoContact,
+        )
+        for stage in self.stage_records:
+            handler = stage.constraints
+            if isinstance(handler, _LadrunoContact):
+                continue
+            detail = (
+                "declares no constraint handler"
+                if handler is None
+                else f"declares constraint handler "
+                     f"'{type(handler).__name__}'"
+            )
+            raise BridgeError(
+                f"stage {stage.name!r}: a g.constraints.contact / "
+                f"contact_plane interaction is present but the stage "
+                f"{detail} — contact requires 'LadrunoContact' (it injects "
+                f"the contact FE adapters into the assembly), and a stage "
+                f"re-declares the whole analysis chain, so the stage's "
+                f"handler is the one the stage's 'analysis' is built with. "
+                f"The deck would run with the interaction SILENTLY "
+                f"UNENFORCED. Declare s.constraints.LadrunoContact() on "
+                f"every stage of a contact model."
             )
 
     # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------

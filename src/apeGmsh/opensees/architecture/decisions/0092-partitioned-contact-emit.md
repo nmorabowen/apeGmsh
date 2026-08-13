@@ -329,6 +329,39 @@ by a single rank with the whole interface visible to it.
      stage blocks (the ADR 0027 amended machinery) is wired but
      unproven for contact ghosts. Unstaged partitioned contact — the
      first-ship class from sign-off Q3 — is unaffected.
+
+     **Follow-up 2026-08-13: the first reason applied to the SERIAL
+     staged path too, and there it was not refused — it was silently
+     wrong.** The refusal's own rationale is not partition-specific: any
+     staged model re-declares the whole analysis chain per stage, so the
+     stage's `constraints` line lands AFTER the global auto-emit and
+     BEFORE the stage's `analysis`, and the analysis is constructed with
+     the stage's handler. Serial staging hid it better precisely because
+     the global auto-emit *does* emit `constraints LadrunoContact`, so
+     the deck looks covered. Measured on a staged two-block contact deck
+     whose stage declared `Transformation`:
+
+     ```
+     contact 1 1 2 …             ← the interaction
+     constraints LadrunoContact  ← global auto-emit
+     constraints Transformation  ← the stage's handler
+     analysis Static             ← constructed with Transformation
+     ```
+
+     The contact FE adapters are never injected — the interaction does
+     nothing and nothing says so. `s.analysis()` *requires*
+     `constraints=`, so the wrong handler is always reachable; there is
+     no "just don't declare one" escape. Fixed by
+     `BuiltModel._validate_staged_contact_handlers`, the contact twin of
+     the ADR 0068 Open-item-5 EQ guard, called from both staged emit
+     paths: every stage of a contact model must declare
+     `s.constraints.LadrunoContact()`, else a `BridgeError` naming the
+     stage, its handler, and the consequence. The auto-emit warning was
+     also cried-wolf — it fired for ANY declared handler including
+     `LadrunoContact` itself, i.e. on every correct staged contact model
+     — so it now fires only on a genuinely conflicting handler and says
+     that emit ORDER decides the winner. Tests:
+     `tests/opensees/integration/test_staged_contact_handler.py`.
    - Tests: `tests/opensees/integration/test_emit_partitioned_contact.py`
      (one owner block; every referenced node declared; ghosts carry no
      mass/elements/loads; SP replay matches the owner's stream and is
