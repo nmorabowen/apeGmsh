@@ -23,8 +23,24 @@ if TYPE_CHECKING:
 class _Queries:
     """Read-only mesh data extraction and quality reporting."""
 
+    # ``get_fem_data`` is deliberately NOT guarded — it is the chain
+    # head every from_h5 session is built around, and the surface the
+    # other refusals on this composite point callers towards.
+    _H5_ALTERNATIVE = (
+        "fem.nodes / fem.elements / fem.info, where "
+        "fem = g.mesh.queries.get_fem_data() — which remains the "
+        "supported call on this composite in chain phase"
+    )
+
     def __init__(self, parent_mesh: "Mesh") -> None:
         self._mesh = parent_mesh
+
+    def _require_kernel(self, verb: str) -> None:
+        """Refuse a query that would read the absent gmsh kernel."""
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._mesh._parent, verb, alternative=self._H5_ALTERNATIVE,
+        )
 
     # ------------------------------------------------------------------
     # Nodes / elements
@@ -48,6 +64,7 @@ class _Queries:
             ``'coords'``            : ndarray(N, 3) — XYZ coordinates
             ``'parametric_coords'`` : ndarray       — only if requested
         """
+        self._require_kernel("g.mesh.queries.get_nodes()")
         node_tags, coords, param = gmsh.model.mesh.getNodes(
             dim=dim, tag=tag,
             includeBoundary=include_boundary,
@@ -78,6 +95,7 @@ class _Queries:
             ``'tags'``      : list[ndarray]     — element tags per type
             ``'node_tags'`` : list[ndarray]     — connectivity per type
         """
+        self._require_kernel("g.mesh.queries.get_elements()")
         elem_types, elem_tags, node_tags = gmsh.model.mesh.getElements(
             dim=dim, tag=tag
         )
@@ -103,6 +121,11 @@ class _Queries:
             ``'name'``, ``'dim'``, ``'order'``, ``'n_nodes'``,
             ``'n_primary_nodes'``, ``'local_coords'``.
         """
+        # Model-INdependent (a pure lookup on the type code), so unlike
+        # the reads above it cannot answer from the wrong model — but it
+        # still needs the runtime up, and a chain-phase caller wanting
+        # element-type metadata is better served by fem.info.types.
+        self._require_kernel("g.mesh.queries.get_element_properties()")
         name, dim, order, n_nodes, local_coords, n_primary = \
             gmsh.model.mesh.getElementProperties(element_type)
         d = max(dim, 1)
@@ -255,6 +278,7 @@ class _Queries:
         quality_name : ``"minSICN"``, ``"minSIGE"``, ``"gamma"``, or
                        ``"minSJ"``
         """
+        self._require_kernel("g.mesh.queries.get_element_qualities()")
         tags = list(element_tags) if not isinstance(element_tags, list) else element_tags
         q = gmsh.model.mesh.getElementQualities(tags, qualityName=quality_name)
         return np.asarray(q)
@@ -281,6 +305,7 @@ class _Queries:
             g.mesh.generation.generate(2)
             print(g.mesh.queries.quality_report().to_string())
         """
+        self._require_kernel("g.mesh.queries.quality_report()")
         import pandas as pd
 
         if metrics is None:

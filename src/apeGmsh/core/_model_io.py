@@ -342,8 +342,25 @@ class _DXFImporter:
 class _IO:
     """IO sub-composite — import/export IGES, STEP, DXF, MSH."""
 
+    # The importers mutate the model and carry the freeze guard.  The
+    # exporters only read it out, so they take the kernel guard and
+    # stay legal on a live post-extraction session, which still has a
+    # model worth writing.
+    _H5_ALTERNATIVE = (
+        "g.save(path) to persist the chain-phase model as model.h5; to "
+        "emit a CAD/mesh file, run the export in the source session "
+        "that still owns the gmsh geometry"
+    )
+
     def __init__(self, model: "Model") -> None:
         self._model = model
+
+    def _require_kernel(self, verb: str) -> None:
+        """Refuse an export that would read the absent gmsh kernel."""
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._model._parent, verb, alternative=self._H5_ALTERNATIVE,
+        )
 
     # ------------------------------------------------------------------
     # IO
@@ -740,6 +757,10 @@ class _IO:
 
         The ``.iges`` extension is appended automatically if omitted.
         """
+        # Guarded before the write: on a kernel-less session gmsh.write
+        # does not fail, it emits whatever empty model it holds — a
+        # plausible-looking CAD file with nothing in it.
+        self._require_kernel("g.model.io.save_iges()")
         file_path = Path(file_path).with_suffix('.iges')
         gmsh.write(str(file_path))
         self._model._log(f"saved IGES -> {file_path}")
@@ -750,6 +771,7 @@ class _IO:
 
         The ``.step`` extension is appended automatically if omitted.
         """
+        self._require_kernel("g.model.io.save_step()")
         file_path = Path(file_path).with_suffix('.step')
         gmsh.write(str(file_path))
         self._model._log(f"saved STEP -> {file_path}")
@@ -824,6 +846,7 @@ class _IO:
 
         The ``.dxf`` extension is appended automatically if omitted.
         """
+        self._require_kernel("g.model.io.save_dxf()")
         file_path = Path(file_path).with_suffix('.dxf')
         gmsh.write(str(file_path))
         self._model._log(f"saved DXF -> {file_path}")
@@ -837,6 +860,7 @@ class _IO:
 
         The ``.msh`` extension is appended automatically if omitted.
         """
+        self._require_kernel("g.model.io.save_msh()")
         file_path = Path(file_path).with_suffix('.msh')
         gmsh.option.setNumber("Mesh.SaveAll", 1)
         gmsh.write(str(file_path))

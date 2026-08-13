@@ -1208,6 +1208,12 @@ class _Geometry:
             path = g.model.geometry.add_wire([l1, l2, l3])
             g.model.transforms.sweep(section, path)
         """
+        # Creates OCC geometry, so it is frozen like the other add_*
+        # primitives — it is only absent from the usual _register()
+        # chokepoint because a wire is transient and deliberately not
+        # entered in the entity registry (see Note above).
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(self._model._parent, "g.model.geometry.add_wire")
         if label is not None:
             raise ValueError(
                 "add_wire does not accept label=: an OpenCASCADE wire "
@@ -2705,6 +2711,22 @@ class _Geometry:
             list means every registered key still points at a live
             OCC entity.
         """
+        # A read diagnostic, not a mutation: synchronize() pushes OCC
+        # into the model but changes no content, so this takes the
+        # kernel guard rather than the freeze guard.  validate_pre_mesh
+        # inherits it through this call, which is why it needs none of
+        # its own — and Mesh.generate, its only internal caller, is
+        # already frozen upstream.
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._model._parent,
+            "g.model.geometry.find_stale_metadata()",
+            alternative=(
+                "there is nothing to check on a chain-phase session — "
+                "the broker snapshot has no OCC entities behind it, so "
+                "no _metadata key can be stale"
+            ),
+        )
         gmsh.model.occ.synchronize()
         live: set[DimTag] = set()
         for d in range(4):
