@@ -308,10 +308,19 @@ def test_empty_named_pg() -> None:
     assert "EmptyFace" in finding.detail["names"]
 
 
-def test_figures_true_raises_on_fem() -> None:
-    fem = _make_fem(node_ids=[1], coords=[(0.0, 0.0, 0.0)])
-    with pytest.raises(NotImplementedError, match="S3"):
-        fem.assess(figures=True)
+def test_figures_true_skip_viewer_keeps_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    fem = _make_fem(node_ids=[], coords=[])
+    dest = tmp_path / "figs"
+    report = fem.assess(figures=True, out_dir=dest)
+    assert "MODEL.EMPTY" in _codes(report)
+    assert report.figures == ()
+    assert "no stills; numbers only" in report.text
+    assert "[skip viewer] APEGMSH_SKIP_VIEWER set" in capsys.readouterr().out
+    assert not dest.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -523,15 +532,36 @@ def test_results_assess_sees_planted_coincident_pair(tmp_path: Path) -> None:
     assert "MESH.COINCIDENT_UNBRIDGED" in _codes(report)
 
 
-def test_figures_true_raises_on_results(tmp_path: Path) -> None:
+def test_figures_true_skip_viewer_keeps_results_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    fem = _make_fem(
+        node_ids=[1, 2],
+        coords=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
+    )
     path = _write_nodes(
         tmp_path,
-        node_ids=np.array([1], dtype=np.int64),
-        components={"displacement_x": np.zeros((1, 1))},
+        node_ids=np.array([1, 2], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 2))},
     )
-    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
-        with pytest.raises(NotImplementedError, match="S3"):
-            r.assess(figures=True)
+    dest = tmp_path / "figs"
+    with Results.from_native(
+        path, model=_open_model_from_h5(path), fem=fem,
+    ) as r:
+        report = r.assess(figures=True, out_dir=dest)
+    assert report.findings  # catalog still ran
+    assert report.figures == ()
+    assert "no stills; numbers only" in report.text
+    assert "[skip viewer] APEGMSH_SKIP_VIEWER set" in capsys.readouterr().out
+
+
+def test_figures_false_is_still_the_default() -> None:
+    fem = _make_fem(node_ids=[], coords=[])
+    report = fem.assess()
+    assert report.figures == ()
+    assert "Figures" not in report.text
 
 
 def test_report_is_frozen() -> None:

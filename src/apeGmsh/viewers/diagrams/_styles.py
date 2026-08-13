@@ -100,6 +100,15 @@ class ContourStyle(DiagramStyle):
         For elements with one Gauss point, ``"discrete"`` paints flat
         cell data; ``"averaged"`` smears the cell value to corners and
         averages across neighbours.
+    plane, nu
+        2-D out-of-plane recovery for a *derived* Gauss scalar (von
+        Mises, principals, mean stress — see the derived-scalar layer).
+        Only honored when ``topology == "gauss"``; nodal contours carry
+        no tensor. ``"auto"`` (default) reads each element's plane type
+        + ν from the model; ``plane="strain"`` + ``nu`` forces
+        σ_zz = ν(σ_xx+σ_yy) globally; ``plane=None`` leaves it at zero.
+        Set it when auto-detection cannot classify the elements (the
+        read then warns) or to override what the model says.
     """
     cmap: str = field(default_factory=_default_contour_cmap)
     clim: Optional[tuple[float, float]] = None
@@ -111,6 +120,8 @@ class ContourStyle(DiagramStyle):
     scalar_bar_scale: float = 1.0
     topology: str = "nodes"
     averaging: str = "averaged"
+    plane: Optional[str] = "auto"
+    nu: Optional[float] = None
 
 
 @dataclass(frozen=True)

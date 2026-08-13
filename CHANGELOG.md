@@ -70,6 +70,411 @@ the workload kills the interpreter outright.
 child's mesh reproduces an in-process build's area, `EIxx_c`, `GJ` and
 `Mp_xx`, and the rebuilt analyzer still solves stress on demand. The
 three B6 worker tests pass **unchanged**.
+### ADDED — `python -m apeGmsh.viewers render` (ADR 0094 S5)
+
+Off-kernel stills CLI next to the existing interactive
+``python -m apeGmsh.viewers <path>``. First token ``render`` dispatches
+to ``results.render`` / ``results.render_pack`` / ``fem.render``;
+anything else (including a file named ``render.h5``) still opens the
+Qt viewer. Skip (``APEGMSH_SKIP_VIEWER`` / no GL) is exit 0 with the
+existing ``[skip viewer]`` notice. Bad flags, missing files, and
+``ValueError`` (bad view, out-of-range step, deformed with no ``u``)
+are non-zero on stderr. A standalone ``model.h5`` calls ``fem.render``.
+No live-session door for ``g.model.render`` / ``g.mesh.render``.
+
+### ADDED — `g.model.render` / `g.mesh.render` live stills (ADR 0094 S4)
+
+Offscreen BRep and undeformed-mesh stills on a live session, same VTK
+path as `fem.render` / `results.render` (`pv.Plotter(off_screen=True)`,
+theme, `camera=` / `window_size=`, `.partial.png` then replace).
+`g.model.render` uses `build_brep_scene` (ModelViewer's tessellation,
+including a throwaway coarse 2-D mesh when none exists).
+`g.mesh.render` uses `build_mesh_scene` (MeshViewer's live Gmsh scene),
+not `get_fem_data` + `build_fem_scene`. A `from_h5` / closed session
+raises `RuntimeError` — no faked BRep still from FEMData. `APEGMSH_SKIP_VIEWER=1`
+or no GL returns `None` and prints the existing `[skip viewer]` notice.
+
+### ADDED — `results.render_pack` + `assess(figures=True)` (ADR 0094 S3)
+
+Canned report pack of Qt-look stills (`mesh` / last-step primary contour /
+same deformed at the S1 0.12 auto-scale / static reactions if recorded /
+optional matplotlib history at the extrema node, labeled `[matplotlib]`).
+Public door is `results.render_pack(out_dir) -> tuple[Path, ...]`. There
+is no `fem.render_pack` — a mesh-only pack would be one still, and that
+is already `fem.render`. `assess(figures=True)` (default still `False`)
+calls those broker methods; `apeGmsh.assess` still does not import
+viewers or gmsh. `APEGMSH_SKIP_VIEWER=1` or no GL returns `()` / empty
+`figures`, prints the existing `[skip viewer]` notice, and the report
+says "no stills; numbers only."
+
+### FIXED — 2-D out-of-plane recovery: `LadrunoLST` was invisible to it, and the miss was silent
+
+A plane-strain model built from `LadrunoLST` — the fork's recommended
+quadratic triangle for near-incompressible plane-strain plasticity, i.e.
+exactly where σ_zz carries the most weight — rendered wrong von Mises,
+principal, and mean stresses with no warning. `_plane_recovery` recognised
+only `LadrunoQuad` and `LadrunoCST`, so `plane="auto"` failed to classify the
+model, σ_zz fell back to 0 instead of ν(σ_xx+σ_yy), and the contour path
+offered no way to say otherwise. Reported from the Cerro Lindo SSI program
+(ADR-0005 rung M4), whose `m4_render.py` had to compute plane-strain von Mises
+by hand.
+
+- **The missing tokens.** `LadrunoLST` joins the flag-style 2-D set. Audit of
+  the rest: `tri6n` / `SixNodeTri` and `BezierTri6` were already covered by
+  the positional set, and `SSPquad` has no typed primitive to emit it. One
+  more real gap closed — `LadrunoUP`, whose 2-D shapes are plane strain by
+  construction; the token spans both dimensions, so the per-axis permeability
+  count (`-perm` / `-permH`) is read as its dimensional witness.
+- **Silence was the actual defect.** An element the recovery cannot classify —
+  or one whose material Poisson's ratio it cannot read — now raises
+  `OutOfPlaneRecoveryWarning` (exported from `apeGmsh.results`, so it is
+  filterable) naming the offending `type_token` and the fix. An element
+  correctly recovered as zero (plane stress for σ, plane strain for ε) is not
+  reported: that zero is exact. Deduped per situation, because the viewer
+  re-reads every frame.
+- **Auto-detection is no longer the only word.** `ContourStyle` gains
+  `plane=` / `nu=` (honored on `topology="gauss"`, mirroring
+  `PrincipalGlyphStyle`), and `results.plot.contour(...)` gains the same pair
+  — both already existed on `results.elements.gauss.get`. A contour that
+  overrides the recovery bypasses the shared visual store (its float16 cache
+  and global colour range hold default-recovery values) and re-reads per step.
+
+### ADDED — `g.constraints.interface()`: a coincident-pair interface that can let go (ADR 0093)
+
+The constraints roster gains its first non-bond. `g.constraints.interface(
+master, slave, *, normal=, tangential=, thickness=, tolerance=1e-6,
+slave_ndf=None, master_entities=None, slave_entities=None, name=None)` emits
+one `zeroLength` per coincident node pair between a 2D continuum boundary and
+a node-for-node coincident wire: **unilateral** in the normal direction
+(compression only, separation free) and **strength-capped** in the tangential
+one. That is the soil/rock-to-structure bond the Cerro Lindo SSI campaign
+needs — with a bilateral tie the ground converges and the liner's demand grows
+without a ceiling, which the field record (metre-class convergence, arches
+damaged but standing) falsifies. Everything below ships together; the
+`ElasticPP` / `ElasticPPGap` primitives (S2) and the partitioned emit (S8)
+already have their own entries above.
+
+- **Laws are declarative, translated only at emit.** `NormalLaw(kind="ent" |
+  "epp_gap" | "elastic", k_per_area, tau_b_n=, gap=)` and
+  `TangentialLaw(kind="epp" | "elastic", k_per_area, tau_b=)` are flat-scalar
+  kernel dataclasses carrying stiffness **per unit area**; `build.py`'s
+  translation table turns each into a typed uniaxial scaled by that pair's
+  `A_trib` (`ent → ENT(E=k·A)`, `epp → ElasticPP(E=k·A, epsyP=tau_b/k)` — the
+  yield force `tau_b·A` is the emergent `E × epsyP` — `epp_gap →
+  ElasticPPGap(E=k·A, Fy=−tau_b_n·A, gap≤0)`). The first `g.*` verb carrying
+  material data, and `core`/`_kernel` still import nothing from
+  `apeGmsh.opensees`.
+- **The signs are the library's, and they are the point.** Local-x is the
+  master face's **outward normal**, derived per pair from the master's own
+  boundary edges — a curved master's frame follows the arc instead of
+  collapsing to one average direction, and the sign is fixed against the
+  adjacent domain element's centroid, never the mesh's edge winding. With
+  `iNode` always the real continuum node, `x̂·(u_j − u_i)` makes separation a
+  positive elongation, so an `ent` normal carries zero force open and
+  compression closed; `epp_gap` gets `Fy < 0` **and** `gap ≤ 0` forced by
+  `-abs(...)` at emit. Flipping either half yields a tension-only interface
+  that converges beautifully and is wrong everywhere — the whole silent-error
+  class this verb exists to kill, gated on a curved master for both normal
+  law kinds.
+- **Tributary bookkeeping is not the user's.** `A_trib = ell_trib ×
+  thickness` from a `0.5 × edge_length` accumulation along the master
+  polyline, with closure on `face length × thickness` asserted at resolve
+  time and a zero share raised, not skipped. `thickness` is required with no
+  default (the verb refuses to guess an out-of-plane dimension).
+- **Mixed ndf via an explicit `slave_ndf=`.** `ZeroLength::setDomain` refuses
+  `dofNd1 != dofNd2`, so `slave_ndf=3` (a beam wire) mints a 2-dof phantom at
+  the slave's coordinates plus `equalDOF(retained=beam, constrained=phantom,
+  1 2)` and runs the spring master → phantom, leaving the beam's rotation
+  free. Explicit because element classes are assigned at `ops.element` time,
+  *after* resolution — apeGmsh cannot know whether a wire becomes a truss or
+  a beam. A mismatch between the declaration and the ndf the deck actually
+  carries is refused at emit, naming both.
+- **Scope is loud.** 3D models and surface masters raise
+  `NotImplementedError` at the call and again at resolve (ADR 0093 D2); an
+  interior master edge (material both sides, no outward direction), a
+  reentrant corner, overlapping master/slave node sets, an unmatched slave
+  and an out-of-plane master edge each raise by name.
+- **The full record lifecycle**, not a half one: `InterfaceRecord` on
+  `fem.elements.interfaces`, h5 persistence (neutral schema 2.29.0) with
+  orient rotation and phantom transform under `g.compose` (INV-2, rotation
+  case gated), stage claim via `s.interface(name=)` so the unit installs on
+  ground the earlier stages equilibrated (measured born strain-free:
+  install-stage `deformation` exactly 0.0 against a raw relative
+  displacement of 2.3e−4), and partitioned + staged together — the
+  campaign's actual scenario — at worst relative delta **3.6e−15** serial vs
+  2-rank OpenSeesMP.
+- **Acceptance battery**, split deck-level / engine-level across
+  `tests/opensees/integration/test_interface_acceptance_battery.py` and
+  `tests/opensees/subprocess/test_interface_acceptance_engine.py`:
+  the bonded limit converges 1/k on
+  `equal_dof` (max nodal error 1.79e−07 at `k_per_area=1e14`, 1.79e−09 at
+  1e16 — ratio 99.9999 over the 100× step, against a bound that includes the
+  spring bed's rotational compliance; an axial-only bound predicts 8e−8 and
+  would have passed a wrong implementation), zero-tension with free
+  separation on the curved master in both signs and both normal kinds, slip
+  saturation at `tau_b × L × t`, INV-3 closure read back off the *emitted
+  material lines*, h5 round-trip → emit byte-identity, compose invariance,
+  and per-pair MPCO `springs` channels (`spring_force_0` / `_1`,
+  `spring_deformation_0` / `_1`) read back against the engine. The ADR's
+  bonded-limit reference was amended from `tie` to `equal_dof` during S10:
+  `tie` takes only dim-2 surfaces / dim-3 volumes while `interface()` is
+  2D-line-masters-only, so no mesh exists that both verbs accept — and
+  `equal_dof` is the stronger reference anyway, being exact where `tie`'s
+  default enforcement is itself a penalty.
+- Docs: `docs/api/constraints.md` gains a Tier 6 section,
+  `docs/concepts/constraints.md` places interface springs against tie /
+  contact / embedded, and `skills/apegmsh/` carries the verb.
+### FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
+
+The 2026-08-13 adversarial review of the landed partitioned-contact emit
+lane (PR #927 + follow-ups #944/#945/#948) audited the refusal lattice
+and found two silent-wrong holes, both closed here, plus smaller
+diagnostic drift:
+
+- **F1 (HIGH)** — a pattern-borne `sp` on a contact-ghosted node was
+  neither mirrored nor refused: pattern sp lines fan out on a node's
+  NATIVE ranks only, so a displacement-driven contact deck (prescribed
+  motion on the slave surface — ordinary authoring) constrained the DOF
+  on the home rank while the owner rank's ghost copy stayed FREE — the
+  ADR 0027 INV-2 measured singular-matrix class. The contact planner now
+  runs the same plan-time sweep the interface lane already had
+  (`_refuse_pattern_sp_on_interface_ghosts`, `lane="contact"`), with a
+  contact-named error. Refusal, not mirroring — mirroring pattern sp
+  onto ghosts correctly (including under staging) is its own project,
+  and the error says so. Load-driven decks (the S5 shape) are
+  unaffected; the same model still emits serially.
+- **F2 (MEDIUM)** — the INV-4 cut-master + auto-sizing backstop silently
+  disengaged when the facet→element map was unresolvable, and the map
+  was all-or-nothing: ONE ambiguous facet anywhere dropped the WHOLE
+  surface to the node tally, so a genuinely cut master + `kn="auto"`
+  emitted a deck whose off-rank auto-kn facets the fork silently skips
+  (fork ADR-78 D5.2) — a silently partial interface.
+  `master_backing_element_ids` is now per-facet; the straddle check
+  runs on the resolved subset; and a partial map + a live auto knob + a
+  multi-rank master (node view, `master_node_rank_span`) refuses with a
+  named error. A cut master with a fully explicit penalty stays
+  permitted (documented).
+- **F3** — a backing element absent from every `PartitionRecord` now
+  warns loudly (and refuses under an auto knob, same shape as F2)
+  instead of silently degrading the exact owner pick to the node tally.
+- **F4** — the undecidable-tie refusal for `contact_plane` no longer
+  tells the user to disambiguate via master-element ownership (a plane
+  has no master surface and ownership is never consulted for it): the
+  plane lane names the slave tally and the fixes that actually apply.
+- **F5** — `soft_family_knobs` now mirrors `contact_args`' `edge_edge`
+  gate: `edge_soft` alongside `edge_edge=False` emits no `-edgeSoft`
+  token and is no longer refused under partitioning (a live `edge_soft`
+  still refuses, INV-3).
+- **F6** — the `suppress_analysis_chain_auto_emit` seam's
+  partitioned-only contract is documented at its producer (the
+  flat/split auto-emit sites never consult it; its sole producer
+  requires partitions, so it is unreachable on those lanes today).
+- **F7** — the partitioned-vs-serial tag-stream ordering difference is
+  recorded in the ADR as a known, accepted cosmetic divergence
+  (each deck is self-consistent; twins compare content).
+- **F8** — `ContactRecord` / `ContactPlaneRecord` docstrings no longer
+  claim "Serial-only" (false since S4).
+
+Full findings table + dispositions: ADR 0092 §Review-findings log.
+Tests:
+`tests/opensees/integration/test_contact_partitioned_review_fixes.py`
+(11) + per-facet / rank-span / plane-message / edge-gate units in
+`tests/_kernel/resolvers/`.
+
+### FIXED — a STAGED contact model no longer runs with the contact handler silently overridden (ADR 0092)
+
+The staged **partitioned** contact refusal (S4) names its own reason: the
+staged pipeline skips the analysis-chain auto-emit, "so the forced
+`LadrunoContact` handler would never be emitted and the interaction would
+be silently unenforced". That reasoning was never partition-specific —
+the **serial** staged path had the same hole, and it hid better, because
+the global auto-emit *does* emit `constraints LadrunoContact`, so the
+deck looks covered. It isn't: a stage re-declares the entire analysis
+chain, so its own `constraints` line lands after the global one and
+before the stage's `analysis`, and OpenSees builds the analysis with
+whatever is current at that moment. Measured on a staged two-block
+contact deck whose stage declared `Transformation`:
+
+```
+contact 1 1 2 …             ← the interaction
+constraints LadrunoContact  ← global auto-emit
+constraints Transformation  ← the stage's handler
+analysis Static             ← constructed with Transformation
+```
+
+The contact FE adapters are never injected — the interaction does
+nothing, and nothing says so. Since `s.analysis()` *requires*
+`constraints=`, the wrong handler was always reachable; there was no
+"just don't declare one" escape.
+
+`BuiltModel._validate_staged_contact_handlers` (the contact twin of the
+ADR 0068 Open-item-5 EQ guard, called from both staged emit paths) now
+requires every stage of a contact model to declare
+`s.constraints.LadrunoContact()`, else a `BridgeError` naming the stage,
+the handler it declared, and the consequence. Non-contact staged models
+are untouched.
+
+Also fixed the warning that was crying wolf next door: the contact
+auto-emit warned "a constraint handler was declared … overriding your
+handler" for **any** declaration — including `LadrunoContact` itself,
+i.e. on every correct staged contact model, and while claiming an
+override that actually runs the other way. It now fires only on a
+genuinely conflicting handler, names it, and says that emit ORDER
+decides which handler the analysis is built with.
+
+### ADDED — ADR 0092 S6: the partitioned-contact read-back, and the cross-library filename contract nobody had executed
+
+`tests/opensees/subprocess/test_contact_partitioned_results_stitch.py` —
+the S5 model recorded (`ops.recorder.Ladruno`, unfiltered) and read back
+through `Results`. INV-6 predicted "work reduces to a regression test";
+writing it found the contract rests on three things, only one pinned:
+
+- **The `.part-<K>` filename is a cross-library contract, and each side
+  had only tested its own half.** apeGmsh emits the recorder line ONCE,
+  globally, with the filename verbatim — there is no `part-` anywhere in
+  `src/` outside the two *reader* modules. The suffix that
+  `discover_partition_files` matches is written by the FORK
+  (`SRC/recorder/LadrunoRecorder.cpp`, gated on `send_self_count` or an
+  MPI launcher's `PMI_*`/`OMPI_*`/`SLURM_NTASKS`). If the fork's
+  spelling drifted, every partitioned read would silently return ONE
+  rank's slice — a wrong answer shaped like a small model. Now asserted
+  against real 2-rank output.
+- **The node stitch dedupes first-write-wins, and the contact ghost is
+  that duplicate.** Measured: rank 0 recorded **12** nodes for the 8 it
+  owns — the 4 extra are exactly the slave-face ghosts — while rank 1
+  recorded its 8. `_merge_node_slabs` keeps the first copy and drops the
+  rest *without comparing them*, so the stitch is correct only because
+  ghost == native; the suite asserts that equality survives to the
+  recorder (not just the solver, where ADR-78 P0/S5 measured it) and
+  pins the stitched answer against the serial twin: 16 unique node ids,
+  no NaN, max relative Δ **1.997e−14** (gate 1e−10).
+- **The element stitch does NOT dedupe** — `_concat_element_slabs`
+  concatenates, assuming rank-disjoint elements, so an INV-7 violation
+  (a ghost carrying elements) would double-count in every partitioned
+  read with no error. Pinned: rank 0 {2}, rank 1 {3}, empty
+  intersection, union == the serial element set.
+
+Plus INV-6 proper on real contact output rather than a synthesized
+manifest (strip `ON_ELEMENTS` from one rank → the stitch still answers;
+from both → loud). The decks deliberately declare no constraint
+handler, riding the auto-emit, so the suite is also a live consumer of
+the S5 open-item fix below. Recorded in ADR 0092 for whoever extends
+this: `_per_partition`'s missing-rank tolerance does not wrap
+`read_layers`/`read_springs` (harmless only while both are
+always-empty stubs), and `opensees_model()` reads partition 0 only.
+Gated `subprocess` + `slow` with loud env skips, so CI skips it.
+### FIXED — `split="parts"` silently dropped `g.constraints.interface()` (ADR 0093)
+
+`BuiltModel._emit_split` ran every other additive side-list pass
+(`emit_mp_constraints`, `emit_reinforce_ties`, `emit_embed_ties`,
+`emit_contacts`, `emit_contact_planes`, `emit_rebar_elements`) but never
+`emit_interfaces`, so a model carrying `g.constraints.interface()`
+exported with `split="parts"` lost the ENTIRE interface — no
+`zeroLength`, no tributary-scaled uniaxials, no mixed-ndf phantom — and
+the deck still loaded and ran, as a fully bonded model where the user
+asked for a unilateral one. Found by the ADR 0093 S8 adversarial review
+(refuter A, finding 5). The pass now runs at the flat path's position
+(after `emit_contact_planes`, before `emit_rebar_elements`), driver-side
+with the MP constraints: an interface is cross-module by construction, so
+its unit must land after every fragment has declared its nodes. The
+constraint-handler auto-emit already saw mixed-ndf interfaces through
+`_fem_has_interface_equal_dofs`, so the split deck's handler was never
+wrong — only its interface was missing. Regression:
+`tests/opensees/unit/test_split_emit.py` (the driver carries the block
+and the fragments do not; the split driver's interface lines equal the
+single-file deck's, same order, same tags).
+
+### FIXED — analysis-chain auto-emits now precede a user-declared `analysis` directive (ADR 0092 S5 open item)
+
+The bridge's auto-emitted chain components — `constraints LadrunoContact`
+(contact) / `Transformation` (MP constraints), and under partitioning the
+ADR 0027 INV-5 runtime-conditional `numberer ParallelPlain` / `system
+Mumps` — used to land AFTER a user-declared `ops.analysis.Static()` line.
+OpenSees constructs the analysis object AT the `analysis` command, and
+`constraints` / `numberer` do not retro-propagate into it (the engine
+back-propagates only `system` / `algorithm`), so the auto-emits were
+silently inert: measured in the ADR 0092 S5 harness, a contact deck
+relying on the auto-emit ran PlainHandler — the serial twin diverged and
+the 2-rank twin converged to a plausible-WRONG answer (w_top −5.714e−4
+vs the true −5.625e−3) with base reactions still balancing. All three
+emit paths (`_emit_flat`, `_emit_split`, `_emit_partitioned`) now hoist
+the auto-emits to immediately before the first user-declared `Analysis`
+primitive and skip the original post-topology site; decks with no user
+`analysis` primitive keep the original position byte-identically, and
+the `suppress_analysis_chain_auto_emit` seam (ADR 0077) is honored at
+both sites. The live (in-process) lane shares the same pass, so it is
+fixed too. Regression: deck-shape pins in
+`tests/opensees/integration/test_emit_partitioned_contact.py` + the
+numeric `*_auto_chain` twins in
+`tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py`
+(the exact pre-fix hazard decks now match the explicit-chain twin to
+≤ 1e−10).
+
+### ADDED — partitioned (MPI) emit for `g.constraints.interface()` (ADR 0093 S8)
+
+- The S5 blanket refusal is lifted: an interface model now emits under
+  partitioned (MPI) emit. Each pair is an ATOMIC unit — mixed-ndf phantom +
+  nested `equalDOF` + two tributary-scaled uniaxials + one `zeroLength` —
+  landing inside **exactly one** rank's block: the rank owning the pair's
+  stamped backing continuum element (INV-5). Element-side ownership is the
+  point: the pair's nodes are co-located, so a cut hugging the interface
+  replicates both onto both ranks and node-tally ownership is undecidable
+  *by construction*; duplicate emission is the measured ADR 0092 failure
+  class (double stiffness, half penetration, base reactions still balance).
+  Two loud preconditions make the pick exact: the backing element must
+  appear in exactly ONE partition's element set (counted directly — never
+  the first-seen dedup), and the master node must be native to the owner.
+- A foreign slave/beam node ghosts as `node` + the owner's replayed SP
+  stream (ADR 0027 machinery) with its **home ndf** explicit (a mixed-ndf
+  beam slave ghosts as `-ndf 3` under an ndf=2 envelope) — geometry + SP
+  only, never mass/elements/loads (ADR 0092 INV-7). The nested `equalDOF`
+  emits owner-only: the phantom exists on exactly one rank.
+- Tag determinism (ADR 0027): every record's material + element tags are
+  pre-allocated in flat side-list order before the rank fan-out; the flat
+  and stage passes consume the same pre-pass (flat decks byte-identical to
+  before). Flat↔partitioned tag identity is **conditional** — it holds
+  when no other element-minting MP pass coexists (rigid-body / kinematic-
+  coupling / ASDEmbeddedNodeElement tags are minted inside the per-rank
+  loop; measured drift 21–24 vs 25–28 with a coexisting
+  `g.constraints.embedded`) — recorded as an INV-5 amendment and pinned by
+  a mixed-model regression. Exactly-once emission, global tag uniqueness
+  and cross-rank determinism hold unconditionally.
+- Two refuter-driven refusals (adversarial review, same day): a
+  pattern-borne `sp` targeting a node the plan would ghost refuses at plan
+  time (pattern `sp` fans out on native ranks only and is never mirrored
+  onto a ghost — the ADR 0027 INV-2 measured singular-matrix case; use
+  `uncuttable_elements=`, `ops.fix`, or serial emit), and an UNCLAIMED
+  interface whose endpoint is a stage-bound node refuses on both the flat
+  and partitioned paths (the base pass would reference a node that only
+  exists inside the stage block; the fix is `s.interface(name=)`).
+  Stage-claimed interfaces under MPI stay refused, naming ADR 0093 S9.
+- Tests: `tests/opensees/unit/test_interface_partitioned_emit.py` (owner
+  resolution, INV-5 violations, tag pre-pass) +
+  `tests/opensees/integration/test_interface_partitioned_emit.py` (1-vs-N
+  byte identity against the flat deck, the all-shared-cut degenerate
+  fixture, foreign-slave ghosting with ndf parity + SP replay + INV-7,
+  the new refusals, determinism).
+### ADDED — ADR 0092 S5: the partitioned-contact numeric twin actually runs (serial vs 2-rank MPI, ≤ 2e−14)
+
+`tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py` — the
+run lane S4 still owed. One model definition (the fork ADR-78 P0 geometry
+through the real API: two stacked single-hex blocks, 1e-3 initial
+penetration, `g.constraints.contact(kn="auto", outward=(0,0,1))`,
+`partition(2)`) emits both twins — serial `flat=True` and the S4
+partitioned deck — and both are EXECUTED: `OpenSees.exe` vs
+`mpiexec -n 2 OpenSeesMP.exe`. Measured serial-vs-2-rank relative deltas:
+w_top 1.8e−14, w_slave 2.0e−14, w_master 2.2e−16, ΣR_base 1.8e−16 (gate
+≤ 1e−10); the owner rank's ghost printed bit-identical to the slave
+rank's native displacement. Three negative controls prove the comparison
+detects a wrong deck (no-contact diverges; stripped ghost `fix` replay →
+Mumps numerically singular; the ADR-78 P0.d duplicated contact verb →
+the fork's P1 all-rank teardown). Gated on `subprocess` + loud env-var
+skips (`APEGMSH_OPENSEES_BIN`, Intel MPI) so CI is untouched. Also
+recorded in ADR 0092: an auto-emit ordering defect surfaced by the
+harness (auto-emitted `constraints LadrunoContact` / parallel
+numberer / system land after a user-declared `analysis Static`, where
+the engine ignores the handler — silently wrong under contact;
+workaround: declare the chain explicitly).
 
 ### ADDED — section-builder extras: catalog picker, moment–curvature, handoff snippet (ADR 0080 B7 + close-out)
 

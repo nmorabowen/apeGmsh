@@ -135,6 +135,35 @@ def test_h5emitter_element_without_connectivity_context_uses_empty_tuple() -> No
     assert e._elements[0].connectivity == ()
 
 
+def test_h5emitter_element_consumes_both_sidechannels() -> None:
+    """The per-element side channels are per-CALL, not sticky.
+
+    An element minted without its own context (the side-list passes:
+    interface zeroLengths, rebar bars, coupling elements) must get the
+    ADR 0049 sentinel + empty connectivity — NOT the previous mesh
+    row's fem_eid and connectivity.  Before the ADR 0093 S10 fix the
+    stale values leaked, mislabeling every per-pair springs channel in
+    ``Results`` and corrupting the argstack slicing.
+    """
+    from apeGmsh.opensees._internal.tag_resolution import (
+        MISSING_FEM_ELEMENT_ID,
+        set_current_fem_element_id,
+    )
+
+    e = H5Emitter()
+    set_element_nodes(e, (10, 11, 12, 13))
+    set_current_fem_element_id(e, 32)
+    e.element("quad", 5, 10, 11, 12, 13, 0.5, "PlaneStrain", 1)
+    assert e._elements[0].fem_eid == 32
+    assert e._elements[0].connectivity == (10, 11, 12, 13)
+
+    # The very next element, minted with NO context of its own, must
+    # not inherit the quad's identity.
+    e.element("zeroLength", 6, 2, 19, "-mat", 1, 2, "-dir", 1, 2)
+    assert e._elements[1].fem_eid == MISSING_FEM_ELEMENT_ID
+    assert e._elements[1].connectivity == ()
+
+
 def test_h5emitter_time_series() -> None:
     e = H5Emitter()
     e.timeSeries("Linear", 1, "-factor", 1.0)

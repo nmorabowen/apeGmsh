@@ -57,6 +57,12 @@ from ._internal.build import (
     emit_interfaces,
     emit_rebar_elements,
     emit_ghost_sp_ops,
+    emit_stage_interfaces,
+    allocate_interface_tags,
+    _emit_interface_record,
+    _plan_rank_interfaces,
+    _register_interface_phantoms,
+    _validate_interface_records,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     plan_stage_mp_constraints_partitioned,
@@ -159,7 +165,10 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
-    from apeGmsh._kernel.records._constraints import ConstraintRecord
+    from apeGmsh._kernel.records._constraints import (
+        ConstraintRecord,
+        InterfaceRecord,
+    )
     from ._internal.build import StiffnessResolver
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
@@ -907,6 +916,30 @@ class BuiltModel:
                         ids.add(id(slave))
         return ids
 
+    def _claimed_interface_ids(self) -> "set[int]":
+        """``id(...)``-set of ``InterfaceRecord`` rows claimed by stage
+        builders via ``s.interface(name=)`` (ADR 0093 S7 / INV-6).
+
+        The records stay on ``fem.elements.interfaces`` (the broker is
+        immutable from the bridge's perspective, and every predicate
+        that must still count them — ``_fem_has_interface_equal_dofs``
+        among others — reads that side-list), but the base
+        ``emit_interfaces`` pass SKIPS them: each emits inside its
+        owning stage's block — via ``emit_stage_interfaces`` on the
+        flat path, via the per-stage owner-rank plan
+        (:meth:`_plan_stage_interfaces_partitioned`, ADR 0093 S9) under
+        MP — on the equilibrated ground.  Mirrors
+        :meth:`_claimed_constraint_ids`;
+        no nested-record expansion is needed (an interface record's
+        nested ``equal_dof_records`` are emitted by the interface pass
+        itself, never by the MP pass).
+        """
+        return {
+            id(r)
+            for stage in self.stage_records
+            for r in stage.stage_interface_records
+        }
+
     def _claimed_pattern_ids(self) -> "set[int]":
         """``id(...)``-set of load patterns claimed by stage builders
         via ``s.pattern(series=)`` (ADR 0051 BL-3).
@@ -1169,6 +1202,39 @@ class BuiltModel:
             ],
         )
 
+        # ADR 0093 S7: a stage-CLAIMED interface cannot ride the staged
+        # H5 archive.  The claim itself is bridge-side state — nothing
+        # in ``/opensees/stages`` records WHICH interface a stage owns,
+        # and the records themselves persist in the neutral zone
+        # (S6), where the read side hands them back on
+        # ``fem.elements.interfaces`` with no stage attribution.  A
+        # replayed archive would therefore emit the whole unit in the
+        # BASE pass — the liner installed at t = 0 on the unloaded
+        # ground, silently a different model.  The mixed-ndf half also
+        # trips the Phase-2 stage phantom guard
+        # (``H5Emitter.set_stage_records``), but the equal-ndf half
+        # would sail through, so refuse here for both.
+        if _emitter_is_archival and any(
+            st.stage_interface_records for st in self.stage_records
+        ):
+            claimed = sorted({
+                str(r.name) for st in self.stage_records
+                for r in st.stage_interface_records if r.name
+            })
+            raise BridgeError(
+                "apeSees.h5: stage-claimed g.constraints.interface() "
+                "records (s.interface(name=...): "
+                + (", ".join(repr(n) for n in claimed) or "<unnamed>")
+                + ") cannot be archived — the stage CLAIM has no home in "
+                "/opensees/stages, so a replayed archive would emit the "
+                "interface in the base pass instead of inside its stage "
+                "(the liner installed at t = 0 on unloaded ground). "
+                "Per-stage interface archival is an ADR 0093 S7 "
+                "follow-up. Write the staged deck with ops.tcl(path) / "
+                "ops.py(path), or drop the s.interface(name=) claim so "
+                "the interface emits in the base pass."
+            )
+
         # ADR 0048 — per-node ndf is INFERRED from the declared element
         # classes (authoritative). Guard ndm against the elements, then
         # resolve the per-node ndf map once; every node-emit site below
@@ -1404,6 +1470,11 @@ class BuiltModel:
                 element_owner_stage,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             )
+            # ADR 0093 S8 hardening: an UNCLAIMED interface record whose
+            # endpoint is a stage-bound node would emit a base-pass
+            # zeroLength referencing a node that only exists inside the
+            # stage block.
+            self._validate_interfaces_not_stage_bound(node_owner_stage)
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
@@ -1423,9 +1494,22 @@ class BuiltModel:
         # (excluding patterns + recorders).  Phase SSI-2.A: skip
         # analysis-chain primitives when stages are declared — each
         # stage re-emits its own chain below.
+        # ADR 0092 S5 open item: when the user declared an ``analysis``
+        # directive, the constraint-handler auto-emit must land BEFORE
+        # it — OpenSees constructs the analysis object AT the
+        # ``analysis`` command, and a later ``constraints`` line does
+        # not retro-propagate into it (silently inert; measured as a
+        # plausible-wrong converged answer).  Hoist the auto-emit here
+        # and skip the step-7c site.  Decks with no user ``analysis``
+        # primitive keep the step-7c position byte-identically.
+        chain_auto_emitted = False
         for p in pre_element:
             if staged and _is_analysis_chain_primitive(p):
                 continue
+            if not chain_auto_emitted and isinstance(p, Analysis):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -1540,11 +1624,14 @@ class BuiltModel:
         # phantom + its equalDOF, two tributary-scaled uniaxials, one
         # zeroLength with the pair's own -orient frame. Handler-
         # independent (no exclusive handler like contact's).
+        # Records claimed by ``s.interface(name=)`` are SKIPPED here —
+        # they emit inside their owning stage's block (ADR 0093 S7).
         emit_interfaces(
             emitter, self.fem, tags,
             effective_ndf=inferred_ndf,
             envelope_ndf=self.ndf,
             ndm=self.ndm,
+            claimed_ids=frozenset(self._claimed_interface_ids()),
         )
 
         # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
@@ -1556,7 +1643,10 @@ class BuiltModel:
         )
 
         # 7c. Auto-emit constraint handler when MP constraints present.
-        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+        # Skipped when already hoisted before a user ``analysis`` line
+        # (ADR 0092 S5 open item — see step 4a).
+        if not chain_auto_emitted:
+            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         # 7d. Initial stress (Phase SSI-1).  Emit the step_hook_ramp
         # bundle (dispatcher + parameter decls + proc + lappend), then
@@ -1709,8 +1799,15 @@ class BuiltModel:
 
         # -- driver-pre: definitions + analysis chain (no nodes —
         #    nodes are per-module).  Mirrors _emit_flat step 4a; staged
-        #    skip is unreachable here (gated out above).
+        #    skip is unreachable here (gated out above).  ADR 0092 S5
+        #    open item: hoist the constraint-handler auto-emit before a
+        #    user-declared ``analysis`` directive (see _emit_flat 4a).
+        chain_auto_emitted = False
         for p in pre_element:
+            if not chain_auto_emitted and isinstance(p, Analysis):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             p._emit(emitter, self.tag_for[id(p)])
 
         overrides = emit_transform_specs(
@@ -1819,10 +1916,28 @@ class BuiltModel:
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
         emit_contact_planes(emitter, self.fem, tags)
+        # Oriented coincident-pair zeroLength interfaces
+        # (g.constraints.interface, ADR 0093 D5) — same position as the
+        # flat path.  An interface is cross-module by construction (it
+        # couples a composed module to its host), so like the MP
+        # constraints above it belongs in driver-post, after every
+        # fragment has declared its nodes.  ``claimed_ids`` is empty here
+        # by the staged guard at the top of this method; it is passed so
+        # the two paths cannot drift if that guard is ever lifted.
+        emit_interfaces(
+            emitter, self.fem, tags,
+            effective_ndf=inferred_ndf,
+            envelope_ndf=self.ndf,
+            ndm=self.ndm,
+            claimed_ids=frozenset(self._claimed_interface_ids()),
+        )
         emit_rebar_elements(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
-        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+        # Skipped when already hoisted before a user ``analysis`` line
+        # (ADR 0092 S5 open item — see driver-pre above).
+        if not chain_auto_emitted:
+            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()
         for p in post_element:
@@ -1968,6 +2083,11 @@ class BuiltModel:
         # skipped for staged models, so validate each stage's declared
         # handler against any equation tie (fail loud, not silent-drop).
         self._validate_staged_eq_handlers()
+        # ADR 0092: the same disease, contact edition — a stage's own
+        # ``constraints`` line lands after the global auto-emit and
+        # before the stage's ``analysis``, so a non-contact handler
+        # silently wins and the interaction is never enforced.
+        self._validate_staged_contact_handlers()
 
         # Pre-compute reverse maps: stage_index → list of owned nodes
         # / owned element-spec ids, for efficient per-stage lookup.
@@ -2118,6 +2238,20 @@ class BuiltModel:
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
                 )
+
+            # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
+            # liner-install pattern.  Emitted AFTER the stage MP
+            # constraints and BEFORE ``domain_change``, for the same
+            # reason: the pair's endpoints (and the phantom this pass
+            # mints for a mixed-ndf pair) must be in the Domain when
+            # the ``zeroLength`` references them.  Element / material
+            # tags continue the shared allocator.
+            emit_stage_interfaces(
+                stage.stage_interface_records, emitter, tags,
+                effective_ndf=inferred_ndf,
+                envelope_ndf=self.ndf,
+                ndm=self.ndm,
+            )
 
             # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
             # constraints, BEFORE domain_change.  Each flagged DOF emits
@@ -2406,23 +2540,24 @@ class BuiltModel:
         # cases (undecidable owner, cut master + auto-sizing, staged decks)
         # live in the planner.
 
-        # g.constraints.interface (ADR 0093): each pair is an ATOMIC unit —
-        # phantom + nested equalDOF + two materials + one zeroLength — that
-        # must land inside exactly one rank's block, owned by the rank
-        # holding the master node's backing continuum element (INV-5).
-        # That per-rank plan is ADR 0093 S8; until it lands, refuse loudly
-        # rather than silently drop the interface (the flat path emits these
-        # via emit_interfaces; the partitioned path has no such call).
-        if getattr(elements_comp, "interfaces", None):
-            raise BridgeError(
-                "apeSees: g.constraints.interface() oriented coincident-pair "
-                "zeroLength interfaces are not yet supported under "
-                "partitioned (MPI) emit — the per-rank interface plan "
-                "(element-side ownership, ghost declarations with explicit "
-                "ndf parity, up-front tag allocation) is ADR 0093 S8. Emit "
-                "the interface model single-process (non-partitioned), or "
-                "remove the interface for the partitioned run."
-            )
+        # ADR 0093 S9: the staged + partitioned interface refusal that
+        # stood here is GONE — a stage-claimed interface now emits
+        # inside its owner rank's STAGE block (the campaign's actual
+        # scenario: the liner installed on the equilibrated ground,
+        # under MPI).  The per-stage plans are built below alongside
+        # the base-pass plan and consumed by _emit_stages_partitioned.
+
+        # ADR 0093 S8: the blanket interface refusal that stood here is
+        # GONE — g.constraints.interface() now emits under partitioning.
+        # Each pair is an ATOMIC unit — phantom + nested equalDOF + two
+        # materials + one zeroLength — that lands inside exactly one
+        # rank's block, owned by the rank holding the pair's backing
+        # continuum element (INV-5). The plan is built below (see
+        # _plan_partitioned_interfaces — every INV-5 assertion fires
+        # before a single line is emitted) and emitted inside the
+        # per-rank loop (step 7c-bis); material + element tags are
+        # pre-allocated in flat record order before the rank fan-out so
+        # 1-rank and N-rank decks stay byte-comparable (ADR 0027).
 
         # ADR 0049: a node-pair zeroLength-family element
         # (ops.element.*(nodes=...)) has no backing FEM element id, so
@@ -2476,6 +2611,11 @@ class BuiltModel:
                 element_owner_stage,
                 fem_eid_to_ops_tag=early_fem_eid_to_ops_tag,
             )
+            # ADR 0093 S8 hardening: same UNCLAIMED-interface stage-
+            # bound-node check as the flat path — the base per-rank
+            # interface pass (step 7c-bis) emits before any stage
+            # block.
+            self._validate_interfaces_not_stage_bound(node_owner_stage)
 
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
@@ -2483,18 +2623,80 @@ class BuiltModel:
 
         # ADR 0092 S4 (INV-1): resolve each contact interaction's owner
         # rank + ghost node set ONCE, before any emission — every named
-        # refusal (undecidable owner, cut master under auto-sizing,
-        # staged deck) fires here, so a refused model emits nothing.
+        # refusal (undecidable owner, cut/partially-resolved master under
+        # auto-sizing, pattern-sp on a contact ghost, staged deck) fires
+        # here, so a refused model emits nothing.
         contact_plan_by_rank = self._plan_partitioned_contacts(
             partitions, element_owner, staged=staged,
+            inferred_ndf=inferred_ndf, post_element=post_element,
+        )
+
+        # ADR 0093 S8 (INV-5): resolve each interface record's owner
+        # rank (element-side, via the stamped backing continuum
+        # element) + foreign slave ghost set ONCE, before any emission —
+        # the single-owner and master-native assertions fire here, and
+        # so does the pattern-borne-sp-on-ghost refusal, so a refused
+        # model emits nothing. ADR 0093 S9: records claimed by
+        # ``s.interface(name=)`` are EXCLUDED from the base-pass plan —
+        # each claimed unit is planned per stage below and emits inside
+        # its owner rank's stage block (_emit_stages_partitioned),
+        # never step 7c-bis. The side-list is read ONCE into a local —
+        # the tag pre-pass below keys its plan by id(record), so every
+        # consumer must see the same objects.
+        interface_records = list(
+            getattr(elements_comp, "interfaces", None) or ()
+        )
+        stage_claimed_interface_ids = frozenset(
+            self._claimed_interface_ids()
+        )
+        unclaimed_interfaces = [
+            rec for rec in interface_records
+            if id(rec) not in stage_claimed_interface_ids
+        ]
+        interface_plan_by_rank = self._plan_partitioned_interfaces(
+            unclaimed_interfaces, partitions,
+            inferred_ndf=inferred_ndf,
+            post_element=post_element,
+        )
+        # ADR 0093 S9 (INV-6 under INV-5): per-stage owner/ghost plans
+        # for the CLAIMED records — the same _plan_rank_interfaces
+        # assertions (a claimed pair's owner is still the rank holding
+        # its stamped backing continuum element) and the same
+        # pattern-sp-on-ghost refusal, all before any emission.
+        stage_interface_plans = self._plan_stage_interfaces_partitioned(
+            partitions,
+            inferred_ndf=inferred_ndf,
+            post_element=post_element,
+            node_owner_stage=node_owner_stage,
         )
 
         # -- 1. Pre-element global primitives. ----------------------------
         # Phase SSI-2.C: skip analysis-chain primitives when staged —
         # each stage re-emits its own chain inside its stage block.
+        # ADR 0092 S5 open item: the INV-5 auto-emits (constraint
+        # handler + parallel numberer/system) must precede a user-
+        # declared ``analysis`` directive — OpenSees constructs the
+        # analysis object AT that command, and ``constraints`` /
+        # ``numberer`` do not retro-propagate into it (silently inert;
+        # measured: PlainHandler ran and the 2-rank twin converged to a
+        # plausible-wrong answer).  Hoist them here when a user
+        # ``Analysis`` primitive exists and skip the step-3 site; decks
+        # without one keep the step-3 position byte-identically.
+        suppress_chain_auto = bool(getattr(
+            emitter, "suppress_analysis_chain_auto_emit", False))
+        chain_auto_emitted = False
         for p in pre_element:
             if staged and _is_analysis_chain_primitive(p):
                 continue
+            if (not chain_auto_emitted and not suppress_chain_auto
+                    and isinstance(p, Analysis)):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                self._maybe_auto_emit_parallel_numberer(
+                    emitter, pre_element)
+                self._maybe_auto_emit_parallel_system(
+                    emitter, pre_element)
+                chain_auto_emitted = True
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -2538,6 +2740,42 @@ class BuiltModel:
             # SSI-1).  ADR 0065 v2 B3: columnar tag map off the plan
             # (no per-element boxed dict).
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
+
+        # ADR 0093 S8 / ADR 0027 §"Tag determinism": every interface
+        # record's material + element tags are allocated HERE, in flat
+        # side-list order, before the rank fan-out — a record's tags
+        # must not depend on which rank owns it, or 1-rank and N-rank
+        # decks stop being byte-comparable ACROSS RANKS. Allocated
+        # right after the structural element tags. Flat↔partitioned
+        # tag IDENTITY additionally holds only for a model with no
+        # other element-minting MP pass: rigid-body / kinematic-
+        # coupling / ASDEmbeddedNodeElement tags are minted inside the
+        # per-rank 7b pass below, while the flat path mints them
+        # BEFORE emit_interfaces — measured drift for a combined
+        # model: interface zeroLength tags 21-24 partitioned vs 25-28
+        # flat with a coexisting g.constraints.embedded (exactly-once
+        # emission and global tag uniqueness hold regardless; ADR 0093
+        # INV-5, amended during S8).
+        interface_tag_plan: "dict[int, tuple[int, int, int]]" = {}
+        if interface_records:
+            # ADR 0093 S9: claimed records join the SAME pre-pass, in
+            # the sequence the serial-staged deck consumes the
+            # allocator — unclaimed rows in flat side-list order first
+            # (the base pass), then each stage's claimed rows in stage
+            # order (the stage passes). Claimed and unclaimed records
+            # therefore draw from ONE deterministic sequence regardless
+            # of which path emits them, and serial-staged vs
+            # partitioned-staged decks stay tag-comparable under the
+            # same conditional documented above (no coexisting
+            # element-minting MP pass).
+            ordered_interface_records = unclaimed_interfaces + [
+                rec
+                for stage in self.stage_records
+                for rec in stage.stage_interface_records
+            ]
+            interface_tag_plan = allocate_interface_tags(
+                ordered_interface_records, tags,
+            )
 
         # Initial stress — global side (parameter declarations + proc +
         # lappend) emits ONCE outside any ``partition_open`` block.
@@ -2625,11 +2863,20 @@ class BuiltModel:
         # rank-independent SP stream MP-constraint ghosts do (ADR 0027
         # INV-2), so the by_node view is also built whenever a contact
         # interaction may declare one.
+        # ADR 0093 S8: an interface's foreign slave/beam node ghosts
+        # with the same replayed SP stream (INV-5 — geometry + SP only,
+        # never mass, per ADR 0092 INV-7), so the by_node view is also
+        # built whenever an interface may declare one — including a
+        # STAGE-CLAIMED one (ADR 0093 S9), whose ghost is declared
+        # inside its owner rank's stage block and must replay the
+        # model-level ``fix`` tier plus the stage history.
         fix_plan_by_rank, ghost_sp_ops = self._bucket_fix_targets_by_rank(
             node_owners,
             by_node=(
                 _fem_has_mp_constraints(self.fem)
                 or bool(contact_plan_by_rank)
+                or bool(interface_plan_by_rank)
+                or any(bool(p) for p in stage_interface_plans)
             ),
         )
         # Which real (non-phantom) ghosts each rank declared in the
@@ -2786,6 +3033,36 @@ class BuiltModel:
                     node_idx_lookup=node_idx_lookup,
                 )
 
+                # 7c-bis. Interface units owned by THIS rank (ADR 0093
+                # S8, INV-5): per record, the foreign slave's ghost
+                # `node` declaration (home ndf) + the owner's SP replay
+                # first, then the ATOMIC unit — phantom → equalDOF →
+                # materials → zeroLength — inside exactly one rank's
+                # block. Duplicate emission converges to a plausible
+                # WRONG answer (double stiffness, half penetration)
+                # while base reactions still balance (ADR 0092 /
+                # fork ADR-78 P0), so single-rank emission is
+                # structural: the plan maps each record to exactly one
+                # owner and this step reads only plan[rank]. Runs
+                # AFTER 7b/7c so already-declared ghosts are not
+                # re-declared. Flat-order position parity: the flat
+                # path emits interfaces after contacts too. The
+                # per-rank phantom re-registration inside this call is
+                # LOAD-BEARING: step 7b's emit_mp_constraints_partitioned
+                # REPLACES the emitter's phantom-tag set each rank
+                # (set_phantom_node_tags, not a union), so interface
+                # phantoms must be re-unioned after every rank's 7b or
+                # the H5 emitter misclassifies them as real nodes.
+                self._emit_interfaces_partitioned(
+                    emitter,
+                    interface_plan_by_rank.get(rank, []),
+                    interface_tag_plan=interface_tag_plan,
+                    declared_ghosts=ghost_tags_by_rank[rank],
+                    ghost_sp_ops=ghost_sp_ops,
+                    inferred_ndf=inferred_ndf,
+                    node_idx_lookup=node_idx_lookup,
+                )
+
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
                 # out for owned elements only (Phase SSI-1).  The
                 # global step_hook_ramp was emitted before the per-rank
@@ -2842,9 +3119,9 @@ class BuiltModel:
         # load-bearing there, INV-8), so it opts out of the auto-emit
         # rather than carry a second identical numberer/system pair above
         # it. Same emitter-attribute seam as ``supports_partitions``.
-        if not staged and not getattr(
-            emitter, "suppress_analysis_chain_auto_emit", False,
-        ):
+        # ADR 0092 S5 open item: skipped when already hoisted before a
+        # user-declared ``analysis`` directive in the step-1 pass.
+        if not staged and not suppress_chain_auto and not chain_auto_emitted:
             self._maybe_auto_emit_constraint_handler(emitter, pre_element)
             self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
             self._maybe_auto_emit_parallel_system(emitter, pre_element)
@@ -2904,6 +3181,8 @@ class BuiltModel:
                 base_resolver=base_resolver,
                 ghost_sp_ops=ghost_sp_ops,
                 ghost_tags_by_rank=ghost_tags_by_rank,
+                interface_tag_plan=interface_tag_plan,
+                stage_interface_plans=stage_interface_plans,
             )
 
     # -- Partitioned staged emit (Phase SSI-2.C) --------------------------
@@ -2927,6 +3206,10 @@ class BuiltModel:
         base_resolver: object,
         ghost_sp_ops: "dict[int, list[Any]] | None" = None,
         ghost_tags_by_rank: "dict[int, set[int]] | None" = None,
+        interface_tag_plan: "dict[int, tuple[int, int, int]] | None" = None,
+        stage_interface_plans: (
+            "list[dict[int, list[tuple[Any, tuple[int, ...]]]]] | None"
+        ) = None,
     ) -> None:
         """Phase SSI-2.C / 2.D: emit each stage block in registration order under MP.
 
@@ -2967,6 +3250,11 @@ class BuiltModel:
         # ADR 0068 Open item 5: per-stage EQ handler guard (the global
         # auto-emit is skipped for staged models) — same as the flat path.
         self._validate_staged_eq_handlers()
+        # ADR 0092: the same disease, contact edition — a stage's own
+        # ``constraints`` line lands after the global auto-emit and
+        # before the stage's ``analysis``, so a non-contact handler
+        # silently wins and the interaction is never enforced.
+        self._validate_staged_contact_handlers()
 
         # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
         # per owning rank below — each rank opens the stage's dedicated
@@ -3066,6 +3354,19 @@ class BuiltModel:
             # fire even when ``s.support`` is the only content in the
             # stage).
             has_supports = bool(stage.support_records)
+            # ADR 0093 S9: this stage's claimed-interface owner/ghost
+            # plan (built by _plan_stage_interfaces_partitioned before
+            # any emission).  Drives the unified gate too — a stage
+            # whose ONLY content is a claimed interface must still open
+            # the owner rank's bracket, or the unit silently vanishes
+            # (the measured s.equal_dof-alone failure mode below).
+            stage_iface_plan: (
+                "dict[int, list[tuple[Any, tuple[int, ...]]]]"
+            ) = (
+                stage_interface_plans[stage_idx]
+                if stage_interface_plans else {}
+            )
+            has_stage_interfaces = bool(stage_iface_plan)
 
             # Phase SSI-2.D PR-B + PR-C: pre-resolve stage-bound BC
             # targets ONCE (rank-independent), then filter per rank
@@ -3176,7 +3477,10 @@ class BuiltModel:
             # SSI-2.E widens with removals (remove_sp / remove_element).
             # Empty-bracket ranks are skipped so the Py emitter never
             # produces an empty ``if getPID() == K:`` block.
-            if has_activation or has_bcs or has_removals or has_supports:
+            if (
+                has_activation or has_bcs or has_removals or has_supports
+                or has_stage_interfaces
+            ):
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
                     # Owned-node sets are stage-invariant — computed once
@@ -3259,6 +3563,10 @@ class BuiltModel:
                         for nid, ops in stage_sp_delta.items()
                         if nid in ghosts_held.get(rank, ())
                     ]
+                    # ADR 0093 S9: the claimed interface units THIS rank
+                    # owns in this stage — [] for every non-owner rank,
+                    # so the empty-bracket skip stays exact.
+                    rank_iface_entries = stage_iface_plan.get(rank, [])
                     rank_has_content = bool(
                         rank_stage_nodes
                         or rank_has_elements
@@ -3269,6 +3577,7 @@ class BuiltModel:
                         or rank_remove_element
                         or rank_support
                         or rank_ghost_sp
+                        or rank_iface_entries
                         or stage_constraint_plan is not None
                     )
                     if not rank_has_content:
@@ -3370,6 +3679,41 @@ class BuiltModel:
                             # on they take the per-stage mirror instead.
                             ghosts_held.setdefault(rank, set()).update(
                                 stage_constraint_plan.plan.foreign_node_tags
+                            )
+                        # ADR 0093 S9 (INV-6 under INV-5): the claimed
+                        # interface units this rank owns — emitted AFTER
+                        # the stage MP constraints and BEFORE the HOLD
+                        # supports / domain_change, mirroring the flat
+                        # staged order (emit_stage_interfaces).  Same
+                        # per-record shape as the base 7c-bis pass: a
+                        # foreign slave/beam node is ghost-declared
+                        # first (home ndf) with the owner's SP stream
+                        # replayed up to AND INCLUDING this stage
+                        # (``stage_ghost_sp_ops`` — the stage-bound
+                        # ``s.fix`` tier crosses the boundary per
+                        # ADR 0027 INV-2), then the atomic unit consumes
+                        # its pre-allocated tag triple.
+                        # ``declared_ghosts=ghosts_held[rank]`` both
+                        # skips already-held ghosts (7b/7c/7c-bis and
+                        # earlier stages, plus this stage's MP pass) and
+                        # registers new ones, so LATER stages' SP deltas
+                        # mirror onto them via ``rank_ghost_sp`` — the
+                        # forward half of INV-2.  The per-rank phantom
+                        # re-registration inside the call is
+                        # load-bearing here too: the stage MP pass above
+                        # replaces the emitter's phantom-tag set.
+                        if rank_iface_entries:
+                            self._emit_interfaces_partitioned(
+                                emitter, rank_iface_entries,
+                                interface_tag_plan=(
+                                    interface_tag_plan or {}
+                                ),
+                                declared_ghosts=ghosts_held.setdefault(
+                                    rank, set(),
+                                ),
+                                ghost_sp_ops=stage_ghost_sp_ops,
+                                inferred_ndf=inferred_ndf,
+                                node_idx_lookup=node_idx_lookup,
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
@@ -4555,6 +4899,8 @@ class BuiltModel:
         element_owner: "SortedIntToInt",
         *,
         staged: bool,
+        inferred_ndf: "dict[int, int]",
+        post_element: "list[Primitive]",
     ) -> "dict[int, list[tuple[str, Any, tuple[int, ...]]]]":
         """Resolve owner rank + ghost set for every contact interaction
         (ADR 0092 S4, INV-1/INV-2), or refuse with a NAMED error (INV-5).
@@ -4584,6 +4930,25 @@ class BuiltModel:
           ``"auto"``: the fork resolves the owning solid of each master
           segment on the emitting rank, so off-rank backing silently
           skips those facets' auto penalty (INV-4 / fork ADR-78 D5.2);
+        * **partially-resolvable backing under auto-sizing** (2026-08-13
+          review, F2/F3) — some facet's backing solid cannot be
+          identified (ambiguous facet → element resolution, or the
+          element is absent from every ``PartitionRecord``) while an
+          auto knob is active AND the master's nodes span several ranks
+          in the node view: the unresolved facets could hide exactly the
+          off-rank backing the previous refusal exists for, so falling
+          back to the node tally would re-open the silent-partial-
+          interface hole. A partial element→rank ownership map alone
+          (no auto knob, or a one-rank master) degrades to the tally
+          with a loud warning instead;
+        * **pattern-borne ``sp`` on a contact ghost** (2026-08-13
+          review, F1) — a prescribed displacement on a node this plan
+          will ghost-declare: pattern sp fans out on NATIVE ranks only,
+          so the owner rank's ghost DOF would stay free — the measured
+          ADR 0027 INV-2 constrained-DOF disagreement. Same sweep the
+          interface lane runs
+          (:meth:`_refuse_pattern_sp_on_interface_ghosts`,
+          ``lane="contact"``);
         * **staged model** — the partitioned staged pipeline skips the
           analysis-chain auto-emit (each stage carries its own chain), so
           the forced ``LadrunoContact`` handler would never be emitted
@@ -4605,6 +4970,7 @@ class BuiltModel:
 
         from apeGmsh._kernel.resolvers._contact_ownership import (
             master_backing_element_ids,
+            master_node_rank_span,
             resolve_contact_ownership,
         )
 
@@ -4643,39 +5009,100 @@ class BuiltModel:
                 label = f"#{idx}" + (
                     f" ({rec.name!r})" if getattr(rec, "name", None) else ""
                 )
+                auto_knobs = [
+                    knob for knob in
+                    ("kn", "eps_n", "eps_t", "edge_kn")
+                    if getattr(rec, knob, None) == "auto"
+                ]
                 backing_ranks: "tuple[int, ...] | None" = None
+                unresolved_facets = 0   # no unique backing element (F2)
+                unowned_backing = 0     # element in no PartitionRecord (F3)
                 if kind == "contact" and element_groups:
                     backing = master_backing_element_ids(rec, element_groups)
                     if backing is not None:
-                        ranks = [element_owner.get(int(e)) for e in backing]
-                        if all(r is not None for r in ranks):
-                            backing_ranks = tuple(
-                                int(r) for r in ranks if r is not None
-                            )
-                if backing_ranks and len(set(backing_ranks)) > 1:
-                    auto_knobs = [
-                        knob for knob in
-                        ("kn", "eps_n", "eps_t", "edge_kn")
-                        if getattr(rec, knob, None) == "auto"
-                    ]
-                    if auto_knobs:
+                        resolved_ranks: "list[int]" = []
+                        for eid in backing:
+                            if eid is None:
+                                unresolved_facets += 1
+                                continue
+                            rank = element_owner.get(int(eid))
+                            if rank is None:
+                                unowned_backing += 1
+                                continue
+                            resolved_ranks.append(int(rank))
+                        if resolved_ranks:
+                            backing_ranks = tuple(resolved_ranks)
+                if (backing_ranks and len(set(backing_ranks)) > 1
+                        and auto_knobs):
+                    raise BridgeError(
+                        f"apeSees: {verb} interaction {label} — the "
+                        "partitioner CUT the master surface (its "
+                        "backing solid elements straddle ranks "
+                        f"{sorted(set(backing_ranks))}) while "
+                        f"{' + '.join(k + '=' for k in auto_knobs)} is "
+                        "'auto' (ADR 0092 INV-4). The fork resolves "
+                        "the owning solid of each master segment on "
+                        "the emitting rank, so facets whose backing "
+                        "solid lives off-rank would silently SKIP the "
+                        "auto penalty sizing (fork ADR-78 D5.2). "
+                        "Re-partition with the master surface's "
+                        "backing elements declared uncuttable "
+                        "(g.mesh.partitioning.partition(n, "
+                        "uncuttable_elements=...)), or use an "
+                        "explicit numeric penalty."
+                    )
+                # 2026-08-13 review F2/F3: the INV-4 backstop above runs
+                # on the RESOLVED facet subset. Where the map is only
+                # partial (an ambiguous facet, or a backing element
+                # missing from every PartitionRecord) AND an auto knob
+                # is live AND the master's nodes span several ranks,
+                # the unresolved facets could hide exactly the off-rank
+                # backing that backstop exists to catch — refuse instead
+                # of silently degrading to the node tally.
+                if (unresolved_facets or unowned_backing) and auto_knobs:
+                    span = master_node_rank_span(rec, partitions)
+                    if len(span) > 1:
                         raise BridgeError(
-                            f"apeSees: {verb} interaction {label} — the "
-                            "partitioner CUT the master surface (its "
-                            "backing solid elements straddle ranks "
-                            f"{sorted(set(backing_ranks))}) while "
-                            f"{' + '.join(k + '=' for k in auto_knobs)} is "
-                            "'auto' (ADR 0092 INV-4). The fork resolves "
-                            "the owning solid of each master segment on "
-                            "the emitting rank, so facets whose backing "
-                            "solid lives off-rank would silently SKIP the "
-                            "auto penalty sizing (fork ADR-78 D5.2). "
-                            "Re-partition with the master surface's "
+                            f"apeSees: {verb} interaction {label} — "
+                            f"{unresolved_facets + unowned_backing} master "
+                            "facet(s) cannot be traced to a "
+                            "partition-owned backing solid element "
+                            f"({unresolved_facets} ambiguous/uncovered in "
+                            "the facet-to-element map, "
+                            f"{unowned_backing} whose backing element is "
+                            "absent from every PartitionRecord) while "
+                            f"{' + '.join(k + '=' for k in auto_knobs)} "
+                            "is 'auto' and the master surface's nodes "
+                            f"span ranks {list(span)} (ADR 0092 INV-4). "
+                            "The cut-master + auto-sizing backstop "
+                            "cannot verify that every facet's backing "
+                            "solid is owner-rank-local, and the fork "
+                            "silently SKIPS auto penalty sizing on "
+                            "facets whose backing solid lives off-rank "
+                            "(fork ADR-78 D5.2) — a silently PARTIAL "
+                            "interface. Use an explicit numeric penalty, "
+                            "or re-partition with the master surface's "
                             "backing elements declared uncuttable "
                             "(g.mesh.partitioning.partition(n, "
-                            "uncuttable_elements=...)), or use an "
-                            "explicit numeric penalty."
+                            "uncuttable_elements=...))."
                         )
+                if unowned_backing:
+                    # F3: a partial element→rank ownership map is never
+                    # silent — the exact owner pick quietly degrading to
+                    # the node tally is how a mis-owned interaction slips
+                    # through. (With an auto knob + multi-rank master it
+                    # refused above instead.)
+                    import warnings as _warnings
+                    _warnings.warn(
+                        f"apeSees: {verb} interaction {label} — "
+                        f"{unowned_backing} master facet backing "
+                        "element(s) are absent from every "
+                        "PartitionRecord (partial element-ownership "
+                        "map); the element-exact owner pick (ADR 0092 "
+                        "INV-1) degrades to the node tally for this "
+                        "interaction.",
+                        stacklevel=2,
+                    )
                 try:
                     ownership = resolve_contact_ownership(
                         rec, partitions,
@@ -4689,14 +5116,37 @@ class BuiltModel:
                         "exactly one owner rank; emitting on two ranks "
                         "converges to a plausible WRONG answer — half "
                         "the penetration — with no warning, fork ADR-78 "
-                        "P0.d). Re-partition so one rank owns the master "
-                        "surface (g.mesh.partitioning.partition(n, "
-                        "uncuttable_elements=...)), or emit serial "
-                        "(non-partitioned / flat=True)."
+                        "P0.d). Re-partition so one rank owns the "
+                        "interaction's deciding surface — the master "
+                        "surface, or the slave surface for a "
+                        "contact_plane — (g.mesh.partitioning."
+                        "partition(n, uncuttable_elements=...)), or emit "
+                        "serial (non-partitioned / flat=True)."
                     ) from exc
                 plan.setdefault(ownership.owner_rank, []).append(
                     (kind, rec, ownership.ghost_node_ids),
                 )
+
+        # 2026-08-13 review F1: a pattern-borne `sp` on a node this plan
+        # ghost-declares would constrain the DOF on its native rank while
+        # the owner rank's ghost copy stays FREE — the same constrained-
+        # DOF disagreement the interface lane refuses (ADR 0027 INV-2:
+        # measured 'Matrix is Singular Numerically'; and the HOLD variant
+        # runs CLEAN to a wrong answer). The ghost replay carries the fix
+        # tiers only, so refuse at plan time — before any emission —
+        # rather than mirror (mirroring pattern sp onto ghosts, correctly
+        # under staging, is its own project).
+        contact_ghosts = {
+            int(nid)
+            for entries in plan.values()
+            for _kind, _rec, ghost_ids in entries
+            for nid in ghost_ids
+        }
+        if contact_ghosts:
+            self._refuse_pattern_sp_on_interface_ghosts(
+                contact_ghosts, post_element, inferred_ndf,
+                lane="contact",
+            )
         return plan
 
     def _emit_contacts_partitioned(
@@ -4759,6 +5209,453 @@ class BuiltModel:
                 emit_contacts(emitter, self.fem, tags, records=(rec,))
             else:
                 emit_contact_planes(emitter, self.fem, tags, records=(rec,))
+
+    def _plan_partitioned_interfaces(
+        self,
+        records: "list[Any]",
+        partitions: "list[Any]",
+        *,
+        inferred_ndf: "dict[int, int]",
+        post_element: "list[Primitive]",
+    ) -> "dict[int, list[tuple[Any, tuple[int, ...]]]]":
+        """Resolve owner rank + ghost set for every interface record
+        (ADR 0093 S8, INV-5), or refuse with a NAMED error.
+
+        Returns ``{owner_rank: [(record, ghost_node_ids), ...]}`` —
+        what step 7c-bis of the per-rank loop emits inside the owner's
+        block. Empty when the model carries no interface records.
+
+        Validation-before-emission, same discipline as the flat pass:
+        the whole pool runs :func:`_validate_interface_records` (the
+        ndf gate, the orient refusal, the phantom-coords guard), then
+        :func:`_plan_rank_interfaces` (the INV-5 single-owner and
+        master-native assertions), then the pattern-borne-sp sweep
+        (:meth:`_refuse_pattern_sp_on_interface_ghosts` — a prescribed
+        displacement on a node this plan will ghost cannot be honoured
+        yet) — all before a single line is emitted, so a refused model
+        emits nothing.
+
+        Stage-claimed records are planned separately
+        (:meth:`_plan_stage_interfaces_partitioned`, ADR 0093 S9) —
+        the caller passes only the UNCLAIMED subset here, so every
+        record in ``records`` is base-pass.
+        """
+        if not records:
+            return {}
+        _validate_interface_records(
+            records, effective_ndf=inferred_ndf,
+            envelope_ndf=self.ndf, ndm=self.ndm,
+        )
+        plan = _plan_rank_interfaces(records, partitions)
+        ghost_ids = {
+            int(nid)
+            for entries in plan.values()
+            for _rec, ghosts in entries
+            for nid in ghosts
+        }
+        if ghost_ids:
+            self._refuse_pattern_sp_on_interface_ghosts(
+                ghost_ids, post_element, inferred_ndf,
+            )
+        return plan
+
+    def _plan_stage_interfaces_partitioned(
+        self,
+        partitions: "list[Any]",
+        *,
+        inferred_ndf: "dict[int, int]",
+        post_element: "list[Primitive]",
+        node_owner_stage: "dict[int, int]",
+    ) -> "list[dict[int, list[tuple[Any, tuple[int, ...]]]]]":
+        """Owner/ghost plans for every stage's CLAIMED interface records
+        (ADR 0093 S9 — INV-5 ownership applied inside INV-6's stage
+        claim), or refuse with a NAMED error.
+
+        Returns one plan per stage, indexed like ``self.stage_records``
+        — each the ``{owner_rank: [(record, ghost_node_ids), ...]}``
+        shape :meth:`_emit_stages_partitioned` consumes inside the
+        stage's per-rank loop. Empty dicts for stages that claimed
+        nothing; an empty list only when the model has no stages.
+
+        Validation-before-emission, same discipline as the base-pass
+        plan: per stage, the claimed subset runs
+        :func:`_validate_interface_records`, then
+        :func:`_plan_rank_interfaces` — the INV-5 single-owner and
+        master-native assertions apply unchanged, because a claimed
+        pair's owner is still the rank holding its stamped backing
+        continuum element. The pattern-sp-on-ghost refusal sweeps the
+        UNION of every stage's ghost set (the sweep itself already
+        covers both the global pattern pool and each stage's
+        ``pattern_specs``), so a stage pattern prescribing displacement
+        on a slave that another stage's plan will ghost is refused too.
+
+        One stage-specific refusal lives here: a claimed record whose
+        master or slave node is owned by a LATER stage than the
+        claiming one. On the flat path that deck fails loud at OpenSees
+        parse time (the stage block references a node not yet
+        declared); under MP the owner rank would ghost-declare the
+        node stages before its home rank brings it online, the deck
+        RUNS, and the interface pushes on a floating ghost — the
+        ADR 0092 plausible-wrong-answer class, so it refuses at plan
+        time instead.
+        """
+        plans: "list[dict[int, list[tuple[Any, tuple[int, ...]]]]]" = []
+        all_ghosts: "set[int]" = set()
+        for stage_idx, stage in enumerate(self.stage_records):
+            recs = list(stage.stage_interface_records)
+            if not recs:
+                plans.append({})
+                continue
+            _validate_interface_records(
+                recs, effective_ndf=inferred_ndf,
+                envelope_ndf=self.ndf, ndm=self.ndm,
+            )
+            for pos, rec in enumerate(recs, start=1):
+                name = getattr(rec, "name", None)
+                label = f"#{pos}" + (f" ({name!r})" if name else "")
+                for role, nid in (
+                    ("master", int(rec.master_node)),
+                    ("slave", int(rec.slave_node)),
+                ):
+                    sidx = node_owner_stage.get(nid)
+                    if sidx is not None and sidx > stage_idx:
+                        raise BridgeError(
+                            f"apeSees: stage {stage.name!r} claims "
+                            f"interface record {label}, but its {role} "
+                            f"node {nid} is owned by the LATER stage "
+                            f"{self.stage_records[sidx].name!r} — the "
+                            "claiming stage's block would reference a "
+                            "node whose topology only comes online "
+                            "stages later (under MP the owner rank "
+                            "would ghost-declare it early and the "
+                            "interface would push on a floating ghost "
+                            "— a plausible-wrong answer, ADR 0092 / "
+                            "ADR 0093 S9). Claim the interface into "
+                            "the stage that activates its topology, "
+                            "or a later one."
+                        )
+            plan = _plan_rank_interfaces(recs, partitions)
+            plans.append(plan)
+            all_ghosts.update(
+                int(nid)
+                for entries in plan.values()
+                for _rec, ghosts in entries
+                for nid in ghosts
+            )
+        if all_ghosts:
+            self._refuse_pattern_sp_on_interface_ghosts(
+                all_ghosts, post_element, inferred_ndf,
+            )
+        return plans
+
+    def _refuse_pattern_sp_on_interface_ghosts(
+        self,
+        ghost_ids: "set[int]",
+        post_element: "list[Primitive]",
+        inferred_ndf: "dict[int, int]",
+        *,
+        lane: str = "interface",
+    ) -> None:
+        """Refuse a pattern-borne ``sp`` targeting a node an interface
+        plan will ghost-declare (ADR 0027 INV-2 / ADR 0093 INV-5).
+
+        ``lane`` selects the wording only — ``"interface"`` (the ADR
+        0093 pairs this sweep was written for) or ``"contact"`` (the
+        ADR 0092 contact/contact_plane ghost sets, 2026-08-13 review
+        F1). The machinery is record-shape-agnostic: it needs nothing
+        but the ghost id set, so both planners run the identical sweep
+        and only the error's header/invariant naming differs.
+
+        The ghost replay stream carries the ``fix`` tiers only — the
+        model-level ``ops.fix`` pool and, under staging, each stage's
+        ``s.fix`` / ``s.remove_sp`` history (``stage_ghost_sp_ops``).
+        Pattern ``sp`` lines fan out on the node's NATIVE ranks
+        (:func:`_emit_pattern_sp_partitioned` filters on
+        ``owned_nodes``) and are never mirrored onto a ghost. A
+        prescribed displacement on a ghosted interface slave would
+        therefore constrain the DOF on the home rank while the owner
+        rank's ghost copy stays free — the exact constrained-DOF
+        disagreement ADR 0027 INV-2 documents as a measured Mumps
+        "Matrix is Singular Numerically" under ``numberer
+        ParallelPlain``. Folding pattern sp into the ghost stream is a
+        named follow-up; until it lands, refusing loudly at plan time
+        is the honest behaviour.
+
+        ADR 0052 HOLD supports (``s.support``) are pattern-borne sp
+        too — a per-stage dedicated ``Plain`` pattern of ``sp <node>
+        <dof> [nodeDisp …] -const`` lines, fanned out on native ranks
+        only (``rank_support`` filters on ``rank_owned``). Worse than
+        the singular-matrix case: a HOLD on a ghosted slave leaves the
+        owner rank's copy free and the 2-rank deck runs CLEAN to a
+        plausible wrong answer — measured (S9 probe, ``mpiexec -n 2``)
+        26.4% error on the base reaction and 12.5% on the master
+        displacement, while ``s.fix`` in the same slot agrees with
+        serial to 1e-16. Mirroring the HOLD sp onto a ghost would need
+        the runtime ``[nodeDisp …]`` capture replayed on the owner
+        rank — a named follow-up; refused here.
+
+        Sweeps every :class:`Plain` pattern — the global pool
+        (``post_element``) and each stage's ``pattern_specs`` — over
+        its explicit ``sp`` records (node and pg targets) and its
+        ``from_model(case)`` sp imports, then every stage's
+        ``support_records``. Called with the UNION-of-ghosts of the
+        base (unclaimed, S8) plan and of every stage's claimed (S9)
+        plan, so both paths are covered.
+        """
+        from .pattern.pattern import Plain
+
+        if lane == "contact":
+            what = "g.constraints.contact / g.constraints.contact_plane"
+            ghost_why = (
+                "their interaction's owner rank (contact interface "
+                "ghosts, ADR 0092 INV-2)"
+            )
+            mirroring = (
+                "Mirroring pattern sp into the contact ghost replay — "
+                "correctly, including under staging — is its own "
+                "project and is not wired yet."
+            )
+        else:
+            what = "g.constraints.interface()"
+            ghost_why = (
+                "their pair's owner rank (foreign slave/beam nodes, "
+                "ADR 0093 INV-5)"
+            )
+            mirroring = (
+                "Mirroring pattern sp into the ghost replay is not "
+                "wired yet."
+            )
+
+        def _refuse(label: str, hits: "set[int]", consequence: str) -> None:
+            raise BridgeError(
+                f"apeSees: {what} — node(s) "
+                f"{sorted(hits)} are ghost-declared on "
+                f"{ghost_why}, but {label} prescribes sp "
+                "displacement(s) on "
+                "them. Pattern-borne sp lines emit only on a node's "
+                f"NATIVE ranks, so the ghost copy would stay "
+                f"unconstrained on the owner rank — {consequence} "
+                f"{mirroring} Re-partition so the slave "
+                "side is native to the owner rank "
+                "(g.mesh.partitioning.partition(n, "
+                "uncuttable_elements=...)), use ops.fix / s.fix for a "
+                "homogeneous constraint (the fix tier IS replayed "
+                "onto ghosts), or emit serial (non-partitioned / "
+                "flat=True)."
+            )
+
+        pools: "list[tuple[str, Any]]" = [
+            ("pattern", p) for p in post_element if isinstance(p, Plain)
+        ]
+        pools += [
+            (f"stage {st.name!r} pattern", p)
+            for st in self.stage_records
+            for p in st.pattern_specs
+            if isinstance(p, Plain)
+        ]
+        for kind, p in pools:
+            hits: "set[int]" = set()
+            for sp_rec in p.sps:
+                if sp_rec.target_kind == "node":
+                    try:
+                        nid = int(sp_rec.target)
+                    except (TypeError, ValueError):
+                        continue
+                    if nid in ghost_ids:
+                        hits.add(nid)
+                    continue
+                try:
+                    ids = self.fem.nodes.select(pg=sp_rec.target).ids
+                except (KeyError, ValueError, AttributeError):
+                    continue
+                hits.update(
+                    int(n) for n in ids if int(n) in ghost_ids
+                )
+            if not hits and p.from_model_cases:
+                _fm_loads, fm_sps = self._owned_from_model_lines(
+                    p.from_model_cases,
+                    load_nodes=set(),
+                    sp_nodes=set(ghost_ids),
+                    inferred_ndf=inferred_ndf,
+                )
+                hits.update(int(nid) for nid, _dof, _val in fm_sps)
+            if not hits:
+                continue
+            tag = self.tag_for.get(id(p))
+            label = f"{kind} (tag {tag})" if tag is not None else kind
+            _refuse(
+                label, hits,
+                "the constrained-DOF disagreement ADR 0027 INV-2 "
+                "documents as a measured 'Matrix is Singular "
+                "Numerically' under numberer ParallelPlain.",
+            )
+
+        # ADR 0052 HOLD supports — see the docstring: on a ghosted
+        # slave the deck runs CLEAN to the wrong answer (measured
+        # 26.4% / 12.5%), the ADR 0092 silent-error class.
+        for st in self.stage_records:
+            hold_hits: "set[int]" = set()
+            for srec in st.support_records:
+                if not any(srec.dofs):
+                    continue
+                for nid in self._resolve_node_target(srec.pg, srec.nodes):
+                    if int(nid) in ghost_ids:
+                        hold_hits.add(int(nid))
+            if hold_hits:
+                _refuse(
+                    f"stage {st.name!r} s.support (an ADR 0052 HOLD "
+                    "is a pattern-borne sp)",
+                    hold_hits,
+                    "the 2-rank deck runs CLEAN and converges to a "
+                    "plausible wrong answer (measured: 26.4% error on "
+                    "the base reaction, 12.5% on the master "
+                    "displacement — the ADR 0092 silent-error class).",
+                )
+
+    def _validate_interfaces_not_stage_bound(
+        self, node_owner_stage: "dict[int, int]",
+    ) -> None:
+        """Refuse UNCLAIMED interface records whose endpoints are
+        stage-bound nodes (ADR 0093 S8 hardening; shared by the flat
+        and partitioned paths).
+
+        The base interface pass emits before any ``stage_open``, so an
+        unclaimed record whose master/slave node only comes online
+        inside a stage block (``s.activate(pgs=[...])``) would emit a
+        ``zeroLength`` (and, mixed-ndf, an ``equalDOF``) referencing a
+        non-existent OpenSees node — a parse-time crash at best. Same
+        failure mode as the H1 global-BC case
+        (:meth:`_validate_no_stage_bound_node_targets`). Claimed
+        records are exempt: they emit inside their owning stage's
+        block, after the stage's activated topology (ADR 0093 INV-6).
+        """
+        if not node_owner_stage:
+            return
+        elements_comp = getattr(self.fem, "elements", None)
+        records = list(getattr(elements_comp, "interfaces", None) or ())
+        if not records:
+            return
+        claimed = self._claimed_interface_ids()
+        offenders: "list[str]" = []
+        for pos, rec in enumerate(records, start=1):
+            if id(rec) in claimed:
+                continue
+            name = getattr(rec, "name", None)
+            label = f"#{pos}" + (f" ({name!r})" if name else "")
+            for role, nid in (
+                ("master", int(rec.master_node)),
+                ("slave", int(rec.slave_node)),
+            ):
+                sidx = node_owner_stage.get(int(nid))
+                if sidx is None:
+                    continue
+                stage_name = self.stage_records[sidx].name
+                offenders.append(
+                    f"  • interface {label}: {role} node {nid} is "
+                    f"owned by stage {stage_name!r}"
+                )
+        if not offenders:
+            return
+        raise BridgeError(
+            "Stage-bound nodes referenced by UNCLAIMED "
+            "g.constraints.interface() records — the base interface "
+            "pass emits before any stage_open, so the zeroLength (and "
+            "a mixed-ndf pair's equalDOF) would reference a "
+            "non-existent OpenSees node, crashing at parse time. "
+            "Claim the interface into the stage that activates its "
+            "topology: s.interface(name=...) inside the owning "
+            "``with ops.stage(...) as s`` block (ADR 0093 INV-6). "
+            "Offenders:\n" + "\n".join(offenders)
+        )
+
+    def _emit_interfaces_partitioned(
+        self,
+        emitter: Emitter,
+        entries: "list[tuple[Any, tuple[int, ...]]]",
+        *,
+        interface_tag_plan: "dict[int, tuple[int, int, int]]",
+        declared_ghosts: "set[int]",
+        ghost_sp_ops: "dict[int, list[Any]]",
+        inferred_ndf: "dict[int, int]",
+        node_idx_lookup: "dict[int, int]",
+    ) -> None:
+        """Emit this rank's owned interface units (ADR 0093 S8/S9).
+
+        Two call sites, one shape: the base per-rank pass (step 7c-bis
+        of :meth:`_emit_partitioned`, unclaimed records) and the
+        stage-claimed pass inside a stage's per-rank bracket
+        (:meth:`_emit_stages_partitioned`, ADR 0093 S9 — where
+        ``ghost_sp_ops`` is the stage-inclusive
+        ``stage_ghost_sp_ops`` stream and ``declared_ghosts`` is the
+        rank's live ``ghosts_held`` registry, so ghost declarations
+        replay the owner's SP history up to and including the claiming
+        stage and later stages mirror their deltas onto them).
+
+        For each planned ``(record, ghost_node_ids)`` entry: first
+        declare the foreign slave/beam node — ``node tag x y z`` with
+        the SAME inferred/envelope ndf its home rank emits (INV-5 ghost
+        ndf parity: mixed-ndf models are exactly where per-node ndf is
+        live, so the declaration goes through the same
+        ``_emit_node_with_inferred_ndf`` the home rank's native pass
+        uses), immediately followed by the owner's replayed SP stream
+        (ADR 0027 INV-2 machinery) — then the atomic unit via the
+        shared :func:`_emit_interface_record` core, consuming this
+        record's pre-allocated tag triple.
+
+        ADR 0092 INV-7 holds structurally: a ghost gets a ``node`` line
+        + SP replay and NOTHING else — mass buckets by primary owner,
+        loads by primary owner, elements by element owner, all of which
+        point at the ghost's native rank, never here. The phantom is
+        minted here (owner-only) and registered with the phantom-tag
+        predicate before its ``node()`` call, same as the S5/S7 passes.
+
+        The nested equalDOF emits on the owner rank ONLY — deviating
+        from the ADR 0027 MP replication rule for the reason INV-5
+        states: the constrained node is a phantom that exists on
+        exactly one rank (the owner mints it), so there is nothing to
+        replicate; the retained beam node's DOFs are shared by tag
+        through the ghost mechanism.
+
+        ``declared_ghosts`` is this rank's live ghost registry
+        (``ghost_tags_by_rank[rank]``, already holding 7b's
+        MP-constraint ghosts and 7c's contact ghosts): a node already
+        declared is not re-declared (a duplicate ``node`` line is an
+        OpenSees parse error), and every ghost declared here is
+        registered back into it so a staged model keeps its SP state
+        in sync across later stage blocks.
+        """
+        if not entries:
+            return
+        _register_interface_phantoms(
+            emitter, [rec for rec, _ghosts in entries],
+        )
+        for rec, ghost_ids in entries:
+            for nid_raw in ghost_ids:
+                nid = int(nid_raw)
+                if nid in declared_ghosts:
+                    continue
+                node_idx = node_idx_lookup.get(nid)
+                if node_idx is None:
+                    raise BridgeError(
+                        f"apeSees: interface slave node {nid} is not in "
+                        "the FEM snapshot — cannot ghost-declare it on "
+                        "the pair's owner rank (ADR 0093 INV-5). The "
+                        "interface record references a node the mesh "
+                        "does not carry."
+                    )
+                xyz = self.fem.nodes.coords[node_idx]
+                _emit_node_with_inferred_ndf(
+                    emitter, inferred_ndf, nid,
+                    (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                    self.ndf,
+                )
+                emit_ghost_sp_ops(
+                    emitter, nid, ghost_sp_ops.get(nid, ()),
+                )
+                declared_ghosts.add(nid)
+            _emit_interface_record(
+                emitter, rec, interface_tag_plan[id(rec)],
+            )
 
     def _emit_rayleigh(
         self,
@@ -5651,14 +6548,26 @@ class BuiltModel:
                     "as_element are handler-independent elements and are fine "
                     "with contact.)"
                 )
+            from .analysis.constraint_handler import (
+                LadrunoContact as _LadrunoContactHandler,
+            )
             declared = next(
                 (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
-            if declared is not None:
+            # Declaring 'LadrunoContact' yourself is agreement, not conflict —
+            # warning there cried wolf on the one correct choice (and on every
+            # staged contact model, where _validate_staged_contact_handlers now
+            # REQUIRES each stage to declare exactly this handler).
+            if declared is not None and not isinstance(
+                declared, _LadrunoContactHandler,
+            ):
                 _warnings.warn(
                     "Contact interactions are present but a constraint handler "
-                    "was declared — contact requires 'LadrunoContact', so it is "
-                    "(re)emitted, overriding your handler. Remove the explicit "
-                    "handler to silence this.",
+                    f"('{type(declared).__name__}') was declared — contact "
+                    "requires 'LadrunoContact', so it is (re)emitted here. NOTE "
+                    "the emit ORDER decides which one the analysis is built "
+                    "with: a later declaration (e.g. a stage's own chain) wins. "
+                    "Remove the explicit handler, or declare "
+                    "ops.constraints.LadrunoContact(), to silence this.",
                     OpenSeesAutoEmitWarning, stacklevel=2,
                 )
             emitter.constraints("LadrunoContact")
@@ -5878,6 +6787,65 @@ class BuiltModel:
                 f"drop the tie. Declare s.constraints.Lagrange() (implicit) "
                 f"or s.constraints.LadrunoProjection() (explicit, fork) on "
                 f"the stage, or switch the tie to enforce='penalty'."
+            )
+
+    def _validate_staged_contact_handlers(self) -> None:
+        """ADR 0092 — staged-path CONTACT handler guard.
+
+        The contact analogue of :meth:`_validate_staged_eq_handlers`,
+        and the same failure mode the staged **partitioned** refusal
+        already names: "the partitioned staged pipeline skips the
+        analysis-chain auto-emit … so the forced ``LadrunoContact``
+        handler would never be emitted and the interaction would be
+        silently unenforced". That reasoning is not partition-specific
+        — the SERIAL staged path had the same hole, hidden because the
+        global auto-emit *does* emit ``constraints LadrunoContact`` and
+        so looks like cover. It is not: every stage re-declares the
+        whole chain, so the stage's own ``constraints`` line lands
+        AFTER the global one and BEFORE the stage's ``analysis``, and
+        the analysis is constructed with the stage's handler.
+
+        Measured on a staged two-block contact deck whose stage
+        declared ``Transformation``::
+
+            contact 1 1 2 …            ← the interaction
+            constraints LadrunoContact ← global auto-emit
+            constraints Transformation ← the stage's handler
+            analysis Static            ← constructed with Transformation
+
+        The contact FE adapters are never injected, so the interaction
+        does nothing and nothing says so — the exact silent-wrong class
+        ADR 0092 exists to prevent. Since ``s.analysis()`` *requires*
+        ``constraints=``, the wrong handler is always reachable.
+
+        Fail loud, naming the stage and its handler. No-op when the
+        model carries no contact interaction.
+        """
+        if not self.stage_records or not _fem_has_contacts(self.fem):
+            return
+        from .analysis.constraint_handler import (
+            LadrunoContact as _LadrunoContact,
+        )
+        for stage in self.stage_records:
+            handler = stage.constraints
+            if isinstance(handler, _LadrunoContact):
+                continue
+            detail = (
+                "declares no constraint handler"
+                if handler is None
+                else f"declares constraint handler "
+                     f"'{type(handler).__name__}'"
+            )
+            raise BridgeError(
+                f"stage {stage.name!r}: a g.constraints.contact / "
+                f"contact_plane interaction is present but the stage "
+                f"{detail} — contact requires 'LadrunoContact' (it injects "
+                f"the contact FE adapters into the assembly), and a stage "
+                f"re-declares the whole analysis chain, so the stage's "
+                f"handler is the one the stage's 'analysis' is built with. "
+                f"The deck would run with the interaction SILENTLY "
+                f"UNENFORCED. Declare s.constraints.LadrunoContact() on "
+                f"every stage of a contact model."
             )
 
     # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------
@@ -6179,6 +7147,16 @@ class apeSees:
         # via ``emit_stage_mp_constraints``.  Doubles as the
         # double-claim detector across stage builders.
         self._stage_claimed_constraint_ids: set[int] = set()
+        # ADR 0093 S7 (INV-6) stage-bound INTERFACE claiming, kept as a
+        # PARALLEL id-set rather than folded into the MP set above: the
+        # two pools are released and re-emitted by different passes
+        # (``emit_stage_mp_constraints`` vs ``emit_stage_interfaces``),
+        # and a shared set would let an interface claim satisfy — or
+        # collide with — an MP claim.  Same semantics otherwise: the
+        # record stays on ``fem.elements.interfaces`` and the base
+        # ``emit_interfaces`` pass SKIPS it; doubles as the double-claim
+        # detector across stage builders.
+        self._stage_claimed_interface_ids: set[int] = set()
         # ADR 0051 (BL-3) stage-scoped pattern claiming: when
         # ``s.pattern(series=)`` creates a stage-owned ``Plain``, its
         # ``id(...)`` lands here so the global post-element pattern emit
@@ -8806,6 +9784,15 @@ class apeSees:
         # INV-5 auto-emit that would otherwise put a second (identical)
         # numberer/system pair above it. Nothing is lost: the auto-emit's
         # constraint handler is Transformation, which is what we force.
+        #
+        # CONTRACT (ADR 0092 review, F6): this seam is honored ONLY by
+        # the partitioned emit path — `_emit_partitioned` reads it; the
+        # flat/split auto-emit sites never consult it. That is sound
+        # here because this deck REQUIRES len(partitions) > 1 (guarded
+        # above), so the flat lane is unreachable. Any future producer
+        # that can reach `_emit_flat` / `_emit_split` must first wire
+        # the flag through those sites' `_maybe_auto_emit_*` calls, or
+        # the suppression will silently not happen there.
         emitter.suppress_analysis_chain_auto_emit = True  # type: ignore[attr-defined]
         bm.emit(emitter)
         # Forced eigen preamble, emitted adjacent to the solve so the deck
@@ -9690,6 +10677,9 @@ class _StageBuilder:
         # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
         # s.kinematic_coupling / s.node_to_surface.
         "_stage_constraint_records",
+        # ADR 0093 S7: stage-bound interface pool — populated by
+        # s.interface(name=), kept apart from the MP pool above.
+        "_stage_interface_records",
         # Phase SSI-2.E: between-stage Domain mutators.  Removal pools
         # emit BEFORE the stage's new fix / mass / region lines; the
         # three scalar fields emit at well-defined slots (set_time +
@@ -9737,6 +10727,9 @@ class _StageBuilder:
         # ConstraintRecord instances.  Emit-time dispatches by
         # isinstance into the six per-kind emit helpers.
         self._stage_constraint_records: list["ConstraintRecord"] = []
+        # ADR 0093 S7: stage-claimed InterfaceRecord rows (see
+        # :meth:`interface`).
+        self._stage_interface_records: list["InterfaceRecord"] = []
         # Phase SSI-2.E: between-stage Domain mutators.
         self._remove_sp_records: list[SPRemovalRecord] = []
         self._remove_element_records: list[ElementRemovalRecord] = []
@@ -9812,6 +10805,7 @@ class _StageBuilder:
             support_records=tuple(self._support_records),
             support_pattern=self._support_pattern,
             stage_constraint_records=tuple(self._stage_constraint_records),
+            stage_interface_records=tuple(self._stage_interface_records),
             remove_sp_records=tuple(self._remove_sp_records),
             remove_element_records=tuple(self._remove_element_records),
             set_time=self._set_time,
@@ -10105,6 +11099,116 @@ class _StageBuilder:
             kind="tied_contact",
             scope="elements",
         )
+
+    def interface(self, *, name: str) -> "tuple[InterfaceRecord, ...]":
+        """Claim resolved ``g.constraints.interface()`` records by name
+        for this stage — the liner-install pattern (ADR 0093 S7 / INV-6).
+
+        ``g.constraints.interface(..., name="RockLiner")`` resolves at
+        apeGmsh time into one
+        :class:`~apeGmsh._kernel.records._constraints.InterfaceRecord`
+        per coincident node pair on ``fem.elements.interfaces``.
+        Claiming the name here moves the whole per-pair unit — the
+        mixed-ndf phantom, its nested ``equalDOF``, the two
+        tributary-scaled uniaxials and the ``zeroLength`` — out of the
+        base pass and into this stage's block, emitted after the
+        stage's activated topology and before its ``domain_change``.
+        The interface is therefore installed on the ground the previous
+        stages already equilibrated, and carries only the load
+        increments applied from this stage onward.
+
+        Deliberately NOT routed through
+        :meth:`_claim_constraints_by_name`: that helper walks
+        ``fem.{nodes,elements}.constraints`` and lands its matches in
+        the stage's MP pool, whose emit shape is wrong for an
+        interface.  This is the FIRST stage-claim path for any
+        side-list record and is kept thin on purpose — contacts,
+        embeds and reinforce ties still have no stage-claim path
+        (ADR 0093 INV-6).
+
+        Parameters
+        ----------
+        name
+            The ``name=`` passed to ``g.constraints.interface(...)`` at
+            apeGmsh time.
+
+        Returns
+        -------
+        tuple[InterfaceRecord, ...]
+            The claimed records, in broker registration order.
+
+        Raises
+        ------
+        ValueError
+            Empty ``name=``; no interface record carries that name
+            (the message lists the names that exist); or the name is
+            already claimed by another stage.
+        """
+        return self._claim_interfaces_by_name(name=name)
+
+    def _claim_interfaces_by_name(
+        self, *, name: str,
+    ) -> "tuple[InterfaceRecord, ...]":
+        """Walk ``fem.elements.interfaces``, claim matches by name.
+
+        Duck-typed access to the side-list (the neutral-zone writers /
+        fem-likes contract): ``getattr(..., "interfaces", None)``, never
+        a bare attribute read.
+        """
+        from apeGmsh._kernel.records._kinds import ConstraintKind
+
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: name= must be "
+                "non-empty (claim-by-name requires the user to have "
+                "passed a unique name= to g.constraints.interface at "
+                "apeGmsh time)."
+            )
+        fem = self._bridge._fem
+        elements = getattr(fem, "elements", None)
+        container = (
+            getattr(elements, "interfaces", None)
+            if elements is not None else None
+        )
+        if not container:
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: this model carries "
+                "no g.constraints.interface() records at all "
+                "(fem.elements.interfaces is empty) — nothing to claim. "
+                f"Declare g.constraints.interface(..., name={name!r}) "
+                "at apeGmsh time."
+            )
+        matched = [
+            rec for rec in container
+            if getattr(rec, "name", None) == name
+            and getattr(rec, "kind", None) == ConstraintKind.INTERFACE
+        ]
+        if not matched:
+            available = sorted({
+                str(getattr(rec, "name", None))
+                for rec in container
+                if getattr(rec, "name", None)
+            })
+            known = ", ".join(repr(n) for n in available) or "<none named>"
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: no resolved "
+                f"interface records found with name={name!r} on "
+                f"fem.elements.interfaces. Available interface names: "
+                f"{known}."
+            )
+        already = self._bridge._stage_claimed_interface_ids
+        for rec in matched:
+            if id(rec) in already:
+                raise ValueError(
+                    f"Stage {self._name!r}.s.interface: interface "
+                    f"name={name!r} is already claimed by another "
+                    "stage — each named interface may bind to at most "
+                    "one stage (ADR 0093 S7)."
+                )
+        for rec in matched:
+            already.add(id(rec))
+            self._stage_interface_records.append(rec)
+        return tuple(matched)
 
     # NOTE: s.mortar is intentionally out of scope. As of ADR 0073
     # ``g.constraints.mortar`` delegates to the fork contact-tie and resolves

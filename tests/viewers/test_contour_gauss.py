@@ -419,3 +419,102 @@ def test_detach_clears_gauss_state(
     assert diagram._fem_eids_to_read is None
     assert diagram._discrete_cell_point_offsets is None
     assert diagram._effective_topology is None
+
+
+# =====================================================================
+# 2-D out-of-plane recovery override (plane= / nu=)
+# =====================================================================
+
+
+@pytest.fixture
+def results_2d_plane_gauss(g, tmp_path: Path):
+    """2-D plate with a uniaxial in-plane stress tensor, 1 GP per element.
+
+    ``stress_xx = eid * 10``, ``stress_yy = stress_xy = 0``. The file
+    carries no ``/opensees`` zone, so per-element plane recovery resolves
+    nothing — the case where ``plane="auto"`` cannot classify the model.
+    """
+    g.model.geometry.add_rectangle(0, 0, 0, 2, 1, label="plate")
+    g.physical.add_surface("plate", name="Plate")
+    g.mesh.sizing.set_global_size(10.0)
+    g.mesh.generation.generate(dim=2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+
+    elem_ids = np.asarray(
+        sorted(
+            int(x)
+            for group in fem.elements if group.element_type.dim == 2
+            for x in group.ids
+        ),
+        dtype=np.int64,
+    )
+    sxx = (elem_ids * 10.0).reshape(1, -1, 1)
+    zeros = np.zeros_like(sxx)
+    nat = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+
+    path = tmp_path / "plane_2d.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="grav", kind="static", time=np.zeros(1, dtype=np.float64),
+        )
+        w.write_gauss_group(
+            sid, "partition_0", "group_0",
+            class_tag=4, int_rule=1,
+            element_index=elem_ids, natural_coords=nat,
+            components={
+                "stress_xx": sxx, "stress_yy": zeros, "stress_xy": zeros,
+            },
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def _von_mises_spec(plane="auto", nu=None) -> DiagramSpec:
+    return DiagramSpec(
+        kind="contour",
+        selector=SlabSelector(component="von_mises_stress"),
+        style=ContourStyle(
+            topology="gauss", averaging="discrete", plane=plane, nu=nu,
+        ),
+    )
+
+
+def test_contour_plane_override_changes_derived_values(
+    results_2d_plane_gauss, headless_plotter,
+):
+    """``plane="strain"`` recovers sigma_zz the auto path cannot find.
+
+    Uniaxial sigma_xx = S: plane stress gives von Mises = |S|; plane
+    strain adds sigma_zz = nu*S, giving |S|*sqrt(1 - nu + nu^2).
+    """
+    r = results_2d_plane_gauss
+    scene = build_fem_scene(r.fem)
+
+    auto = ContourDiagram(_von_mises_spec(), r)
+    auto.attach(headless_plotter, r.fem, scene)
+    baseline = auto._fem_eids_to_read.astype(np.float64) * 10.0
+    np.testing.assert_allclose(np.asarray(auto._scalar_values), baseline)
+
+    nu = 0.3
+    forced = ContourDiagram(_von_mises_spec(plane="strain", nu=nu), r)
+    forced.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    np.testing.assert_allclose(
+        np.asarray(forced._scalar_values),
+        baseline * np.sqrt(1.0 - nu + nu * nu),
+    )
+
+
+def test_contour_plane_override_bypasses_visual_store(
+    results_2d_plane_gauss, headless_plotter,
+):
+    """The store caches default-recovery values and is shared — an
+    overriding contour must not read from it."""
+    r = results_2d_plane_gauss
+    default = ContourDiagram(_von_mises_spec(), r)
+    forced = ContourDiagram(_von_mises_spec(plane="strain", nu=0.3), r)
+    assert default._plane_override_active() is False
+    assert forced._plane_override_active() is True
+
+    forced.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    assert forced._visual_gauss_step_subslab(0, forced._fem_eids_to_read) is None

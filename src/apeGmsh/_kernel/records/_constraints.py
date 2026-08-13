@@ -442,9 +442,15 @@ class ContactRecord(ConstraintRecord):
     master is always a faceted surface; the slave is a node set (NTS) or a
     faceted surface (mortar). Solver-agnostic — no OpenSees imports here.
 
-    **Serial-only.** The fork contact subsystem is not parallel (the handler's
-    sendSelf/recvSelf are stubs), so contact records carry no partition
-    tag-rewrite — a contact model emits/runs in a single domain.
+    **Partition-aware since ADR 0092 S4** (previously serial-only). Under
+    partitioned (MPI) emit the whole interaction lands inside exactly ONE
+    rank's block — the owner, picked master-side (INV-1) — with every
+    non-native interface node ghost-declared there as ``node`` + replayed
+    ``fix`` (INV-2). The record still carries no per-rank tag-rewrite
+    fields: nothing is ever split across ranks, so there is nothing to
+    rewrite. ``soft=`` / ``edge_soft=`` stay refused under partitioning
+    (INV-3), and staged partitioned contact is refused too (see
+    ``BuiltModel._plan_partitioned_contacts``).
 
     Attributes
     ----------
@@ -523,8 +529,10 @@ class ContactRecord(ConstraintRecord):
     edge_aug_tol: float | None = None
 
     # Compose-aware: every master/slave node tag offsets into the module's
-    # reservation window (ADR 0038). Serial-only refers to PARTITIONS (no
-    # per-rank rewrite fields — see class docstring), not to compose.
+    # reservation window (ADR 0038). No per-rank rewrite fields on purpose:
+    # under partitioning the whole interaction emits inside one owner
+    # rank's block (ADR 0092 S4 — see class docstring), so nothing is
+    # split; compose rewrite below is unaffected.
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": (),
         "tag_fields_array": ("master_faces", "slave_nodes", "slave_faces"),
@@ -540,7 +548,11 @@ class ContactPlaneRecord(ConstraintRecord):
     + ``point``) with normal penalty ``kn`` — frictionless, no master mesh.
     Emitted as a ``contactSurface -slave <nodes>`` set + the ``contactPlane``
     verb (+ the ``LadrunoContact`` handler). Solver-agnostic — no OpenSees
-    imports here. **Serial-only** (the fork contact subsystem is not parallel).
+    imports here. **Partition-aware since ADR 0092 S4** (previously
+    serial-only): the interaction emits inside exactly one owner rank's
+    block — the plane has no master surface, so ownership is tallied from
+    the SLAVE nodes — with non-native slave nodes ghost-declared there
+    (INV-1/INV-2). ``soft=`` stays refused under partitioning (INV-3).
 
     Parameters
     ----------
@@ -565,8 +577,9 @@ class ContactPlaneRecord(ConstraintRecord):
     soft: float | bool | None = None
 
     # Compose-aware: slave node tags offset into the module's reservation
-    # window (ADR 0038). Serial-only refers to PARTITIONS (no per-rank
-    # rewrite fields — see class docstring), not to compose.
+    # window (ADR 0038). No per-rank rewrite fields on purpose: under
+    # partitioning the whole interaction emits inside one owner rank's
+    # block (ADR 0092 S4 — see class docstring); compose is unaffected.
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": (),
         "tag_fields_array": ("slave_nodes",),

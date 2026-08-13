@@ -67,7 +67,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/api-cheatsheet.md`** — one-page map of every session
   composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
   `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
-  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes,
+  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes
+  + `interface()` unilateral coincident-pair springs,
   `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
   `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
   standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`,
@@ -217,7 +218,11 @@ carries multi-point constraints (`fem.nodes.constraints`,
 `equalDOF` / `rigidLink` / `rigidDiaphragm` / `ASDEmbeddedNodeElement` deck
 lines (and an `ops.constraints.Transformation()` handler when present); per-node
 ndf is inferred from element classes and wired in too. **Do not hand-emit
-these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.)
+these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.) The
+same is true of the side-lists that emit *elements* rather than MP equations:
+`fem.elements.contacts` and `fem.elements.interfaces`
+(`g.constraints.interface()`, the unilateral + slip-capped coincident-pair
+`zeroLength` bed — ADR 0093).
 
 ## Core workflow
 

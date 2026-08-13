@@ -329,6 +329,39 @@ by a single rank with the whole interface visible to it.
      stage blocks (the ADR 0027 amended machinery) is wired but
      unproven for contact ghosts. Unstaged partitioned contact — the
      first-ship class from sign-off Q3 — is unaffected.
+
+     **Follow-up 2026-08-13: the first reason applied to the SERIAL
+     staged path too, and there it was not refused — it was silently
+     wrong.** The refusal's own rationale is not partition-specific: any
+     staged model re-declares the whole analysis chain per stage, so the
+     stage's `constraints` line lands AFTER the global auto-emit and
+     BEFORE the stage's `analysis`, and the analysis is constructed with
+     the stage's handler. Serial staging hid it better precisely because
+     the global auto-emit *does* emit `constraints LadrunoContact`, so
+     the deck looks covered. Measured on a staged two-block contact deck
+     whose stage declared `Transformation`:
+
+     ```
+     contact 1 1 2 …             ← the interaction
+     constraints LadrunoContact  ← global auto-emit
+     constraints Transformation  ← the stage's handler
+     analysis Static             ← constructed with Transformation
+     ```
+
+     The contact FE adapters are never injected — the interaction does
+     nothing and nothing says so. `s.analysis()` *requires*
+     `constraints=`, so the wrong handler is always reachable; there is
+     no "just don't declare one" escape. Fixed by
+     `BuiltModel._validate_staged_contact_handlers`, the contact twin of
+     the ADR 0068 Open-item-5 EQ guard, called from both staged emit
+     paths: every stage of a contact model must declare
+     `s.constraints.LadrunoContact()`, else a `BridgeError` naming the
+     stage, its handler, and the consequence. The auto-emit warning was
+     also cried-wolf — it fired for ANY declared handler including
+     `LadrunoContact` itself, i.e. on every correct staged contact model
+     — so it now fires only on a genuinely conflicting handler and says
+     that emit ORDER decides the winner. Tests:
+     `tests/opensees/integration/test_staged_contact_handler.py`.
    - Tests: `tests/opensees/integration/test_emit_partitioned_contact.py`
      (one owner block; every referenced node declared; ghosts carry no
      mass/elements/loads; SP replay matches the owner's stream and is
@@ -343,7 +376,201 @@ by a single rank with the whole interface visible to it.
    `tests/opensees/integration/test_emit_partitioned_staged_mp_constraints.py`:
    a 2-rank two-body pounding deck, asserting the `contact` verb appears in
    exactly one rank block and every referenced node is declared in that block.
+
+   *Landed 2026-08-12 — as the NUMERIC twin, not another shape assertion.*
+   S4's own suite already pins the shape, so S5 shipped as the run lane:
+   `tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py`
+   emits both twins from ONE model definition — the fork P0 geometry
+   through the real API (two stacked single-`stdBrick` blocks via
+   transfinite hex meshing, 1e-3 initial penetration, lateral-fixed 1-D
+   column, 4×(−2500) on the top face, `kn="auto"` + `outward=(0,0,1)`;
+   `partition(2)` puts one body per rank, no uncuttable override needed)
+   — and RUNS them: the serial `flat=True` deck under `OpenSees.exe`
+   (RCM/UmfPack), the partitioned deck under `mpiexec -n 2 OpenSeesMP.exe`
+   (ParallelPlain/Mumps). The harness appends only a measurement fragment
+   (`analyze` + `puts` + `wipe`); the emitted decks run as-is. Gate:
+   relative agreement ≤ 1e−10 per quantity. **Measured 2026-08-12**
+   (fork build `d29de577`, the ADR-78 P2 tip):
+
+   | quantity | serial | 2-rank | rel Δ |
+   |---|---|---|---|
+   | w_top (top-block tip) | −5.6249999999999998e−03 | −5.6249999999998966e−03 | 1.8e−14 |
+   | w_slave (interface, native rank) | −5.1249999999999993e−03 | −5.1249999999998979e−03 | 2.0e−14 |
+   | w_master (master face) | −5.0000000000000012e−04 | −5.0000000000000001e−04 | 2.2e−16 |
+   | ΣR_base | 1.0000000000000000e+04 | 1.0000000000000002e+04 | 1.8e−16 |
+
+   Ghost pin: the owner rank's ghost of the slave interface node printed
+   **bit-identical** to the slave rank's native value (asserted < 1e−14;
+   measured 0.0) — the same identity fork P0 measured. Physics anchors:
+   ΣR = 1e4 balances the applied load exactly; w_master = −5.000e−4 =
+   P·h/(E·A) analytically.
+
+   Negative controls (the comparison detects a wrong deck):
+
+   - **no-contact twin** — serial analyze fails (−3, NormDispIncr blows
+     up): contact is load-bearing in the comparison;
+   - **ghost `fix` replay stripped from the owner block** — Mumps
+     "Matrix is Singular Numerically", analyze −3 on both ranks (the
+     ADR 0027 INV-2 measured failure mode);
+   - **contact verb duplicated into the slave rank's block** (master
+     interface ghost-declared there by the mutation — the ADR-78 P0.d
+     deck): the fork's P1 hard error tears down all ranks
+     ("LadrunoContactHandler: tearing down all 2 MPI ranks…") because
+     `-kn auto` cannot resolve the master's backing solid on the
+     non-owner. The P0.d silent-wrong case now fails LOUDLY on the
+     current fork — better than the measured half-penetration.
+
+   Gating: `subprocess` + `slow` markers with loud skips on
+   `APEGMSH_OPENSEES_BIN` (must hold `OpenSees.exe` + `OpenSeesMP.exe`)
+   and Intel MPI's `mpiexec` (`I_MPI_ROOT`); the CI suite lane excludes
+   `subprocess`, so CI skips it by construction. The MPI launch
+   environment is the fork's proven recipe (libfabric under
+   `%I_MPI_ROOT%\opt\mpi\libfabric\bin`, compiler runtime, binaries dir
+   on PATH, `TCL_LIBRARY` from the sibling `lib/tcl8.6`).
+
+   **Open item surfaced by S5 — auto-emit ordering (real defect, not
+   fixed here).** The step-7c auto-emits (`constraints LadrunoContact`,
+   the runtime-conditional `numberer ParallelPlain` / `system Mumps`)
+   land AFTER a user-declared `analysis Static` in the emitted deck. The
+   OpenSees Tcl engine constructs the analysis at the `analysis` command
+   with whatever components exist at that moment, and `constraints` /
+   `numberer` do **not** retro-propagate into an existing analysis (fork
+   `SRC/tcl/commands.cpp` back-propagates only `system` → `setLinearSOE`
+   and `algorithm` → `setAlgorithm`). Measured in the S5 harness: a
+   contact deck relying on the auto-emit while declaring
+   `ops.analysis.Static()` ran **PlainHandler silently** — the serial
+   twin diverged, and the 2-rank twin *converged to a plausible-wrong
+   answer* (w_top −5.714e−4 vs the true −5.625e−3) with base reactions
+   still balancing (1e4), the exact silent-wrong shape this ADR exists
+   to prevent. The live (Python) lane constructs the analysis the same
+   way, so the hazard is not Tcl-specific. Workaround (what S5 did):
+   declare `ops.constraints.LadrunoContact()` + numberer + system
+   explicitly so they emit in the pre-`analysis` chain section; the
+   auto-emit then re-emits the handler post-`analysis` (inert,
+   harmless, warned). The fix — emitting the auto-emit chain pieces
+   before any user-declared `Analysis` primitive — reorders emit output
+   every lane shares, so it was deliberately its own change, not a
+   side-effect of S5.
+
+   **FIXED 2026-08-12 (PR #945).** All three emit paths (`_emit_flat`,
+   `_emit_split`, `_emit_partitioned`) now hoist the chain auto-emits
+   (constraint handler; plus the INV-5 parallel numberer/system on the
+   partitioned path) to immediately BEFORE the first user-declared
+   `Analysis` primitive in the pre-element pass, and skip the original
+   post-topology site. Decks with no user `analysis` primitive keep
+   the original position byte-identically, and the
+   `suppress_analysis_chain_auto_emit` seam (ADR 0077 Tier 1B) is
+   honored at both sites. The hoisted position is the position the S5
+   workaround already proved numerically. Regression: deck-shape pins
+   in `tests/opensees/integration/test_emit_partitioned_contact.py`
+   (auto handler/numberer/system precede `analysis Static`; the
+   no-user-analysis position is unchanged) + the numeric auto-chain
+   twins in the S5 harness (`*_auto_chain` — the serial and 2-rank
+   hazard decks now converge to the explicit-chain twin's answer
+   within 1e-10). One knock-on: the S5 negative control (c) had leaned
+   on an accident of the old ordering — the post-verbs handler
+   re-construction blew up on the duplicated `-kn auto` verb. With
+   every handler line now preceding the verbs, runtime D5.2 silently
+   skips auto-kn facets whose backing is off-rank (the duplicate
+   contributes nothing and the mutant converges CORRECTLY), so the
+   control now forces an explicit kn on the replayed verb to re-create
+   the true P0.d double-enforcement class. Measured on the current
+   fork, that deck DEADLOCKS (the two would-be owners desynchronize
+   the handler's collectives) — the control treats the hang, a loud
+   teardown, or a numeric deviation all as detection, via a
+   tree-killing bounded runner (`_run_mp_may_hang`; plain
+   `subprocess.run(capture_output=True)` blocks past its timeout on
+   Windows because orphaned ranks inherit the pipe handles).
 6. **S6 — `Results` ownership contract** (INV-6).
+
+   *Landed 2026-08-13* —
+   `tests/opensees/subprocess/test_contact_partitioned_results_stitch.py`,
+   the S5 model recorded and read back. INV-6 predicted "work reduces to
+   a regression test"; writing it found the contract rests on **three**
+   things, only one of which was pinned anywhere.
+
+   - **The filename grammar is a CROSS-LIBRARY contract nothing had
+     executed.** apeGmsh emits the recorder line ONCE, globally, with the
+     name verbatim (there is no `part-` anywhere in `src/`); the
+     `<stem>.part-<K>.ladruno` suffix that `discover_partition_files`
+     matches is written by the FORK (`SRC/recorder/LadrunoRecorder.cpp`,
+     which detects partitioning via `send_self_count` or an MPI
+     launcher's `PMI_*` / `OMPI_*` / `SLURM_NTASKS` pair, then rewrites
+     the stem). Each side tested its own half. A drift in the fork's
+     spelling would make every partitioned read silently return ONE
+     rank's slice — a wrong answer shaped like a small model. Now
+     asserted against real 2-rank output.
+   - **The node stitch dedupes first-write-wins** (`_merge_node_slabs`,
+     `_merge_partition_fems`), and the contact ghost IS that duplicate.
+     Measured: rank 0 recorded **12** nodes for the 8 it owns — the 4
+     extra are exactly the slave-face ghosts {10, 12, 14, 16} — while
+     rank 1 recorded its 8. The merge keeps whichever copy it meets
+     first and drops the rest **without comparing them**, so the stitch
+     is correct only because ghost == native. That equality is a fork
+     property (ADR-78 P0 / S5, bit-identical at the solver level); S6
+     asserts it survives to the recorder, which is what the reader
+     actually consumes, and pins the stitched result against the serial
+     twin (16 unique node ids, no NaN, max rel Δ **1.997e−14**, gate
+     1e−10; the ghost copy is the one that wins, and it agrees).
+   - **The element stitch does NOT dedupe** (`_concat_element_slabs`
+     concatenates, assuming rank-disjoint elements), so an INV-7
+     violation — a ghost carrying elements — would double-count in
+     every partitioned read with no error. Pinned on real output:
+     rank 0 {2}, rank 1 {3}, empty intersection, union == the serial
+     element set.
+
+   Plus the INV-6 statement proper, now on real contact output rather
+   than a synthesized manifest: strip `ON_ELEMENTS` from one rank and
+   the stitch still answers; strip it from both and the read is loud.
+
+   Two notes for whoever extends this. `_per_partition` (the
+   tolerate-a-missing-rank wrapper) covers `read_elements` /
+   `read_line_stations` / `read_gauss` / `read_fibers` but NOT
+   `read_layers` / `read_springs` — harmless today only because both
+   are always-empty stubs on the `.ladruno` reader that never raise
+   `MissingElementResults`; if either ever becomes real, INV-6 breaks
+   there. And `opensees_model()` reads **partition 0 only**, so when the
+   contact owner is not rank 0 the minimal broker comes from a rank that
+   knows nothing about the interaction.
+
+   The suite deliberately does NOT declare a constraint handler: it
+   rides the auto-emit, so it is also a live consumer of the S5
+   open-item fix (a regressed hoist runs PlainHandler and the numbers
+   stop matching). "Contact families" resolves to **ordinary node /
+   element results on a model that has contact** — the fork exposes no
+   recordable contact response at all (`LadrunoContactHandler` is a
+   `ConstraintHandler`, `LadrunoContactFE` an analysis-layer
+   `FE_Element`, `LadrunoContactDomain` not even a `TaggedObject`; no
+   `setResponse`/`getResponse` anywhere, and `element/contact.py`
+   defines no `Element` class, so no tag exists for a recorder to
+   target). What contact changes is not *what* is recorded but *who*
+   records it — which is the ownership contract itself.
+
+## Review-findings log — 2026-08-13 post-lane adversarial review
+
+A second adversarial review ran over the landed lane (PR #927 +
+follow-ups #944/#945/#948, verified against `main` tip `d67bc9ee`) and
+audited the refusal lattice rather than the numerics. Eight findings;
+dispositions below. All fixes are refusal/diagnostic-lattice work — no
+emit output changes on any previously-permitted model.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| F1 | HIGH | A pattern-borne `sp` on a contact-ghosted node was neither mirrored nor refused: `_plan_partitioned_contacts` did no pattern sweep, the ghost replay carries the `fix` tier only, and pattern sp fans out on NATIVE ranks (`_emit_one_pattern_partitioned` filters on `owned_nodes`). A displacement-driven contact deck (pattern sp on the slave surface — ordinary authoring) left the owner rank's ghost DOF FREE — the exact constrained-DOF disagreement the INTERFACE lane already refuses (`_refuse_pattern_sp_on_interface_ghosts`, ADR 0027 INV-2's measured "Matrix is Singular Numerically"). | **FIXED.** The contact planner unions its planned ghost ids and runs the SAME sweep (`lane="contact"` — the machinery is record-shape-agnostic; only the error's header/invariant naming differs). Refusal, not mirroring: mirroring pattern sp onto ghosts correctly (including under staging) is its own project, and the error says so. |
+| F2 | MEDIUM | The INV-4 cut-master + auto backstop silently disengaged when the facet→element map was unresolvable — and the map was all-or-nothing: ONE ambiguous facet returned `None` for the WHOLE surface (`master_backing_element_ids`), skipping the backstop and falling back to the node tally (which only refuses the all-shared tie). Cut master + `kn="auto"` + one ambiguous facet ⇒ off-rank auto-kn facets silently D5.2-skipped. | **FIXED.** The resolver returns per-facet results (`tuple[int \| None, ...]`); the straddle check runs on the RESOLVED subset; and an unresolvable facet + an active auto knob + a master whose nodes span >1 rank (node view, `master_node_rank_span`) REFUSES with a named error. Explicit-kn cut masters stay permitted (documented — nothing else in the narrow phase reads elements). |
+| F3 | MED-LOW | An `element_owner.get()` miss (backing element absent from every `PartitionRecord`) silently degraded the exact owner pick to the node tally. | **FIXED.** Loud `UserWarning` always; folded into the F2 refusal shape when an auto knob is active (+ multi-rank master span). |
+| F4 | LOW | The undecidable-tie refusal told a `ContactPlaneRecord` user to "disambiguate with element ownership" — a plane has no master surface and ownership is never consulted for it. | **FIXED.** The plane lane has its own accurate message (slave-tallied; don't cut the slave surface / assign the slave region explicitly). Master-lane message unchanged. |
+| F5 | LOW | `soft_family_knobs` ignored the `edge_edge` gate while `contact_args` drops ALL edge knobs when `edge_edge=False` — a record with `edge_soft` + `edge_edge=False` (reachable at record level via H5/compose; the authoring layer refuses the combination) was refused under partitioning despite emitting no `-edgeSoft` serially. | **FIXED.** The predicate mirrors the builder: `edge_soft` counts only when `edge_edge` is truthy. Live `edge_soft` (edge_edge=True) still refuses (INV-3). |
+| F6 | INFO | `suppress_analysis_chain_auto_emit` is honored only on the partitioned path; the flat/split auto-emit sites never consult it. Unreachable today — the sole producer (`modal_deck` arpack) requires partitions. | **DOCUMENTED** (the smallest-possible option, per the finding): the partitioned-only contract is stated at the flag's producer, with the instruction that a future flat-reachable producer must wire the flat/split sites first. No refactor. |
+| F7 | INFO | Tag-stream ordering differs between the partitioned deck and its serial twin (self-consistent within each deck; the twins compare content, not tag identity, on the affected streams). | **ACCEPTED** as a known, cosmetic divergence. The determinism contract is per-lane: 1-rank and N-rank partitioned decks stay tag-identical (ADR 0027 tag determinism); serial-vs-partitioned comparisons are content-based (the S3/S4 measured node-set order note is the same class). Not scheduled. |
+| F8 | INFO | `ContactRecord` / `ContactPlaneRecord` docstrings still said "Serial-only" — false since S4. | **FIXED.** Both docstrings (and the `tag_rewrite_spec` comments) now state the S4 partition contract: whole interaction inside one owner rank's block, no per-rank rewrite fields because nothing is ever split. |
+
+Tests: `tests/opensees/integration/test_contact_partitioned_review_fixes.py`
+(F1 refusal + serial escape + load-driven control; F2 refusal /
+explicit-kn permission / uncut control; F3 warn + refuse; F5 dormant vs
+live edge_soft) + per-facet / span / plane-message / edge-gate units in
+`tests/_kernel/resolvers/test_contact_ownership.py` and
+`test_contact_soft_knobs.py`.
 
 ## Consequences
 

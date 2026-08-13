@@ -399,6 +399,113 @@ def test_staged_partitioned_contact_refused_named(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# ADR 0092 S5 open item (fixed) — auto-emitted analysis-chain components
+# precede a user-declared ``analysis`` directive
+# ---------------------------------------------------------------------------
+#
+# OpenSees constructs the analysis object AT the ``analysis`` command with
+# whatever chain components exist at that moment; ``constraints`` and
+# ``numberer`` do NOT retro-propagate into an existing analysis (the fork's
+# ``commands.cpp`` back-propagates only ``system`` and ``algorithm``).  The
+# pre-fix emitter placed the auto-emits after the pre-element pass, so a deck
+# relying on the auto-emit while declaring ``ops.analysis.Static()`` ran
+# PlainHandler silently — the serial twin diverged and the 2-rank twin
+# converged to a plausible-wrong answer (w_top -5.714e-4 vs the true
+# -5.625e-3) with balanced base reactions.  The numeric proof lives in
+# ``tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py``
+# (the auto-chain twins); these tests pin the deck SHAPE in CI.
+
+
+def _ops_with_user_analysis(fem):
+    """The S5 hazard shape: the user declares the ``analysis`` directive
+    but relies on the auto-emit for handler / numberer / system."""
+    ops = _ops(fem)
+    ops.test.NormDispIncr(tol=1e-8, max_iter=20)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    return ops
+
+
+def _only_index(lines: "list[str]", predicate, label: str) -> int:
+    hits = [i for i, ln in enumerate(lines) if predicate(ln)]
+    assert len(hits) == 1, f"expected exactly one {label} line, got {hits}"
+    return hits[0]
+
+
+def test_auto_emitted_chain_precedes_user_analysis_partitioned(
+    pounding_deck, tmp_path,
+):
+    fem, _ = pounding_deck
+    deck = tmp_path / "user_analysis_mp.tcl"
+    _ops_with_user_analysis(fem).tcl(str(deck))
+    lines = [
+        ln.strip() for ln in deck.read_text(encoding="utf-8").splitlines()
+    ]
+    analysis_at = _only_index(
+        lines, lambda ln: ln == "analysis Static", "analysis")
+    handler_at = _only_index(
+        lines, lambda ln: ln == "constraints LadrunoContact",
+        "constraints LadrunoContact")
+    numberer_at = _only_index(
+        lines, lambda ln: ln.startswith("if {[catch {numberer "),
+        "runtime-conditional numberer")
+    system_at = _only_index(
+        lines, lambda ln: ln.startswith("if {[catch {system "),
+        "runtime-conditional system")
+    late = {
+        name: at
+        for name, at in [("constraints", handler_at),
+                         ("numberer", numberer_at), ("system", system_at)]
+        if at > analysis_at
+    }
+    assert not late, (
+        f"auto-emitted chain component(s) {late} land AFTER the user "
+        f"'analysis Static' line (index {analysis_at}) — the engine "
+        "constructs the analysis there, so they are silently inert "
+        "(ADR 0092 S5 open item)"
+    )
+
+
+def test_auto_emitted_handler_precedes_user_analysis_serial_flat(
+    pounding_deck, tmp_path,
+):
+    fem, _ = pounding_deck
+    deck = tmp_path / "user_analysis_flat.tcl"
+    _ops_with_user_analysis(fem).tcl(str(deck), flat=True)
+    lines = [
+        ln.strip() for ln in deck.read_text(encoding="utf-8").splitlines()
+    ]
+    analysis_at = _only_index(
+        lines, lambda ln: ln == "analysis Static", "analysis")
+    handler_at = _only_index(
+        lines, lambda ln: ln == "constraints LadrunoContact",
+        "constraints LadrunoContact")
+    assert handler_at < analysis_at, (
+        "flat lane: 'constraints LadrunoContact' lands after 'analysis "
+        "Static' — silently inert (ADR 0092 S5 open item)"
+    )
+
+
+def test_auto_emit_position_unchanged_without_user_analysis(pounding_deck):
+    """Decks with NO user ``analysis`` primitive keep the original
+    post-topology auto-emit position — the hoist must not reorder the
+    lanes that were already correct (byte-stability)."""
+    fem, text = pounding_deck
+    lines = [ln.strip() for ln in text.splitlines()]
+    handler_at = _only_index(
+        lines, lambda ln: ln == "constraints LadrunoContact",
+        "constraints LadrunoContact")
+    last_contact_at = max(
+        i for i, ln in enumerate(lines) if ln.startswith("contact ")
+    )
+    assert handler_at > last_contact_at, (
+        "without a user analysis directive the auto-emit should keep its "
+        "post-topology (step-3) position"
+    )
+
+
+# ---------------------------------------------------------------------------
 # serial emit is untouched (byte-identical serial emit is a hard rule)
 # ---------------------------------------------------------------------------
 
