@@ -30,9 +30,18 @@ E = 200e3
 FY = 345.0
 B, H = 200.0, 400.0
 
-requires_backend = pytest.mark.skipif(
-    not backend_available(), reason="no OpenSees backend installed"
-)
+def requires_backend(fn):
+    """Gate a test that drives an OpenSees backend **in process**.
+
+    Two mechanisms on purpose. ``live`` is the house marker the curated
+    CI suite deselects, so native OpenSees never enters the shared
+    process even if a backend is installed there; the ``skipif`` is the
+    honest per-machine check for everywhere else.
+    """
+    fn = pytest.mark.live(fn)
+    return pytest.mark.skipif(
+        not backend_available(), reason="no OpenSees backend installed",
+    )(fn)
 
 
 def _points_doc() -> SectionDocument:
@@ -248,6 +257,33 @@ def test_unknown_uniaxial_type_fails_loud():
     doc.add_point(material="m", y=1.0, z=0.0, area=1.0)
     with pytest.raises(MomentCurvatureError, match="no typed uniaxial"):
         moment_curvature(doc, kappa_max=1e-6)
+
+
+def test_backend_probe_rejects_the_tests_opensees_package(monkeypatch):
+    """``tests/opensees/`` registers as a top-level ``opensees`` when
+    pytest imports in importlib mode — the same impostor
+    ``_resolve_ops`` guards against. The probe must not claim a backend
+    it cannot import: a real one is an extension module, never a
+    package.
+    """
+    import importlib.util
+
+    from apeGmsh.sections import _mc
+
+    real = importlib.util.find_spec
+
+    def _fake(name, *a, **k):
+        if name == "openseespy":
+            return None
+        if name == "opensees":
+            return importlib.util.spec_from_file_location(
+                "opensees", __file__,
+                submodule_search_locations=[],   # marks it a package
+            )
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(importlib.util, "find_spec", _fake)
+    assert _mc.backend_available() is False
 
 
 def test_backend_absent_raises_guided_import_error(monkeypatch):

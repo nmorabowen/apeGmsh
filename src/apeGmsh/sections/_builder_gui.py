@@ -1038,11 +1038,18 @@ class SectionBuilderWindow:
             f"M–κ about {curve.axis}: EI₀ = {_mc_ei0(curve)}, "
             f"M max = {curve.M_max:.6g}{note}"
         )
-        self._show_mc_dialog(curve)
+        self._mc_dialog = self._build_mc_dialog(curve)
+        self._mc_dialog.show()
         return curve
 
-    def _show_mc_dialog(self, curve: Any) -> Any:
-        """A modeless window plotting one :class:`MomentCurvature`."""
+    def _build_mc_dialog(self, curve: Any) -> Any:
+        """Build (but do not open) a modeless window plotting one
+        :class:`MomentCurvature`.
+
+        Showing is the caller's job — so the widget tests can exercise
+        the plotting and the summary line without opening a real window
+        in a lane that excludes them.
+        """
         QtWidgets, _QtCore, _QtGui = self._qt
         from matplotlib.figure import Figure
         try:
@@ -1077,8 +1084,6 @@ class SectionBuilderWindow:
             )
         layout.addWidget(QtWidgets.QLabel(summary))
         dialog.resize(560, 460)
-        dialog.show()
-        self._mc_dialog = dialog
         return dialog
 
     # ── bridge handoff (ADR 0080 B7) ─────────────────────────────────

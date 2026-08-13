@@ -48,19 +48,33 @@ def backend_available() -> bool:
     """``True`` when an OpenSees backend module appears importable.
 
     A cheap :func:`importlib.util.find_spec` probe — it never imports
-    the backend (which is slow and prints the fork's banner). Used only
-    to enable/disable the builder's M–κ button; the real gate is
-    :func:`moment_curvature` itself, which fails soft with guidance.
+    the backend (which is slow and prints the fork's banner). Used to
+    enable/disable the builder's M–κ button and to gate the tests; the
+    real gate is :func:`moment_curvature` itself, which fails soft with
+    guidance.
+
+    The bare name ``opensees`` needs a second look: a real backend is an
+    **extension module** (the fork's ``opensees.pyd`` / ``.so``), never a
+    package. apeGmsh's own ``tests/opensees/`` directory registers under
+    exactly that name when pytest runs in importlib mode — the impostor
+    :func:`~apeGmsh.opensees.emitter.live._resolve_ops` also guards
+    against — and answering ``True`` for it would claim a backend that
+    cannot be imported.
     """
     from importlib.util import find_spec
 
-    for module in ("opensees", "openseespy"):
-        try:
-            if find_spec(module) is not None:
-                return True
-        except (ImportError, ValueError):    # pragma: no cover - odd paths
-            continue
-    return False
+    try:
+        if find_spec("openseespy") is not None:
+            return True
+    except (ImportError, ValueError):        # pragma: no cover - odd paths
+        pass
+    try:
+        spec = find_spec("opensees")
+    except (ImportError, ValueError):        # pragma: no cover - odd paths
+        return False
+    # submodule_search_locations set => a package => not an extension
+    # module => not a backend.
+    return spec is not None and spec.submodule_search_locations is None
 
 
 #: axis label → the OpenSees node DOF that bends about it. ``"z"`` is
@@ -163,11 +177,15 @@ def _material_from_spec(name: str, spec: "dict[str, Any] | None") -> Any:
         ) from exc
 
 
-def _emit_section(ops: Any, doc: "SectionDocument") -> None:
-    """Emit the document's materials + ``section Fiber 1`` into the live
-    domain, through the primitives' own ``_emit``."""
-    from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
-    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+def _prepare_section(doc: "SectionDocument") -> "tuple[dict[str, Any], Any]":
+    """Resolve the document into ``({name: material}, Fiber)``.
+
+    **Pure** — no OpenSees backend is touched, which is why
+    :func:`moment_curvature` runs this *before* importing one: a
+    document error (a material with no uniaxial spec, an unknown
+    primitive type) is the user's to fix in their editor, and they
+    should hear about it whether or not a solver is installed.
+    """
     from apeGmsh.opensees.section.fiber import Fiber
 
     from ._document import typed_fiber_items
@@ -191,6 +209,14 @@ def _emit_section(ops: Any, doc: "SectionDocument") -> None:
         # cannot reach the answer.
         GJ=recipe.GJ if recipe.GJ is not None else _PLACEHOLDER_GJ,
     )
+    return mats, section
+
+
+def _emit_section(mats: "dict[str, Any]", section: Any) -> None:
+    """Emit the resolved materials + ``section Fiber 1`` into the live
+    domain, through the primitives' own ``_emit``."""
+    from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
     tags = {id(m): i for i, m in enumerate(mats.values(), start=1)}
     emitter = LiveOpsEmitter(wipe=False)
@@ -243,11 +269,14 @@ def moment_curvature(
 
     Raises
     ------
-    ImportError
-        No OpenSees backend is installed.
     MomentCurvatureError
-        The document is not fiber-lane, a material has no usable
-        uniaxial spec, or the axial pre-load did not converge.
+        The document is not fiber-lane, an argument is out of range, a
+        material has no usable uniaxial spec, or the axial pre-load did
+        not converge.
+    ImportError
+        No OpenSees backend is installed. Raised **after** the document
+        is resolved, so a malformed document reports its own problem
+        whether or not a solver is present.
 
     Notes
     -----
@@ -271,6 +300,10 @@ def moment_curvature(
             f"n_steps must be >= 1, got {n_steps}."
         )
 
+    # resolve the document FIRST: its errors are the user's to fix and
+    # do not depend on a solver being installed.
+    mats, section = _prepare_section(doc)
+
     ops = _ops_module()
     dof = _DOF_OF_AXIS[axis]
 
@@ -284,7 +317,7 @@ def moment_curvature(
     # rest — the same restraint set gate G-D used.
     ops.fix(2, 0, 1, 1, 1, 0, 0)
 
-    _emit_section(ops, doc)
+    _emit_section(mats, section)
     ops.element("zeroLengthSection", 1, 1, 2, 1)
 
     ops.system("BandGeneral")

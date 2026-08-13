@@ -77,6 +77,22 @@
   mutates nothing (it fills GUI fields, so it stays off the undo stack).
   M–κ controls are fiber-lane only and grey with install guidance when no
   backend is importable (`tests/sections/test_builder_gui_b7.py`).
+- **Order of operations**: `moment_curvature` resolves the *document*
+  before it imports a backend, so a material with no uniaxial spec (or an
+  unknown primitive type) reports its own problem whether or not a solver
+  is installed — those are errors the user fixes in their editor. The
+  backend `ImportError` comes second.
+- The backend probe does not answer for a **package**. apeGmsh's own
+  `tests/opensees/` directory registers as a top-level `opensees` module
+  whenever pytest imports in importlib mode — the same impostor
+  `emitter/live.py::_resolve_ops` already rejects after importing it — so
+  a bare `find_spec("opensees")` claimed a backend that cannot be
+  imported. A real backend is an extension module, never a package;
+  `backend_available()` now checks that, which is what keeps the builder's
+  M–κ button honest (and the backend-gated tests skipping) inside any
+  pytest process. Those tests also carry the house `live` marker, so
+  native OpenSees stays out of the curated suite's shared process even
+  where a backend is installed.
 - Close-out: new how-to page **Author a section document**, a fourth
   "Sections you author" section in `concepts/sections.md`, the API page,
   `internal_docs/guide_sections.md`, and skill reference §10

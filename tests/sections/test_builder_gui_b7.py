@@ -31,9 +31,13 @@ from apeGmsh.sections._mc import backend_available  # noqa: E402
 requires_apesteel = pytest.mark.skipif(
     not catalog_available(), reason="apeSteel not installed"
 )
-requires_backend = pytest.mark.skipif(
-    not backend_available(), reason="no OpenSees backend installed"
-)
+def requires_backend(fn):
+    """``live`` (deselected by the curated suite) + an honest per-machine
+    skip — see ``test_mc_b7.py`` for why both."""
+    fn = pytest.mark.live(fn)
+    return pytest.mark.skipif(
+        not backend_available(), reason="no OpenSees backend installed",
+    )(fn)
 
 
 def _qapp():
@@ -232,7 +236,7 @@ def test_a_curve_with_no_converged_step_still_renders():
     assert _mc_ei0(stillborn) == "—"
     win = _win(_fiber_doc())
     try:
-        dialog = win._show_mc_dialog(stillborn)
+        dialog = win._build_mc_dialog(stillborn)   # built, not shown
         assert dialog is not None
     finally:
         win.close()
