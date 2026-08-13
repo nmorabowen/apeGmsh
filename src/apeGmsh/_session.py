@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import importlib
 import threading
-from typing import ClassVar
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, ClassVar
 
 import gmsh
+
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterator
 
 from ._optional import MissingOptionalDependency
 
@@ -46,16 +50,93 @@ from ._optional import MissingOptionalDependency
 _GMSH_INIT_LOCK = threading.Lock()
 _GMSH_INIT_COUNT = 0
 
+# ----------------------------------------------------------------------
+# gmsh runtime lock — one thread inside gmsh at a time
+# ----------------------------------------------------------------------
+# ``_GMSH_INIT_LOCK`` above guards the *refcount*, nothing more.  Two
+# threads could each hold a valid session and still interleave their
+# ``gmsh.model.*`` calls, and gmsh is one process-global C++ runtime
+# that is neither thread-safe nor reentrant: interleaved model calls
+# trip a C-level assert and ``abort()`` the interpreter, below the
+# reach of any Python ``except``.
+#
+# This RLock closes that hole.  It is held from ``_gmsh_acquire`` to
+# the matching ``_gmsh_release`` — i.e. for a session's whole lifetime
+# — so gmsh work from different threads serializes instead of
+# interleaving.  Re-entrant because sessions nest (a ``Part`` opened
+# inside an ``apeGmsh`` session) and because helpers acquire briefly
+# inside a session; those are the same thread and must not self-block.
+#
+# **The deadlock rule**: never wait on another thread's gmsh work while
+# holding this lock.  The one caller that could — the ADR 0080 B6
+# properties worker, whose UI thread joins it — takes the lock with a
+# timeout via :func:`gmsh_runtime_lock` and reports a busy runtime
+# rather than blocking.  A thread must release what it acquired
+# (``RLock`` is owner-bound), so a session begun on one thread cannot
+# be ended on another.
+_GMSH_RUNTIME_LOCK = threading.RLock()
+
+
+class GmshBusyError(RuntimeError):
+    """Another thread holds the gmsh runtime and the wait timed out.
+
+    Raised only by :func:`gmsh_runtime_lock` with a ``timeout``; the
+    plain :func:`_gmsh_acquire` path waits as long as it takes.
+    """
+
+
+@contextmanager
+def gmsh_runtime_lock(timeout: "float | None" = None) -> "Iterator[None]":
+    """Hold the gmsh runtime lock across a block.
+
+    For callers that must **not** block indefinitely — a background
+    worker whose UI thread is waiting on it. Sessions opened inside the
+    block re-enter the lock for free (same thread), so this is a
+    "reserve the runtime, then do gmsh work" wrapper rather than a
+    second locking scheme.
+
+    Raises :class:`GmshBusyError` when ``timeout`` elapses first.
+    """
+    if timeout is None:
+        _GMSH_RUNTIME_LOCK.acquire()
+    elif not _GMSH_RUNTIME_LOCK.acquire(timeout=timeout):
+        raise GmshBusyError(
+            f"another thread has held the Gmsh runtime for more than "
+            f"{timeout:g} s. Gmsh is a single process-global runtime, so "
+            f"only one thread may drive it at a time."
+        )
+    try:
+        yield
+    finally:
+        _GMSH_RUNTIME_LOCK.release()
+
 
 def _gmsh_acquire() -> None:
-    """Increment the gmsh init refcount.
+    """Take the gmsh runtime lock and increment the init refcount.
 
     Calls ``gmsh.initialize()`` exactly once (the first acquire when
     gmsh is not already initialized).  Subsequent acquires are no-ops
     on the gmsh runtime.  Safe across threads via the lock; safe
     across nested sessions via the refcount.  Idempotent on already-
     initialized gmsh (defensive against external init).
+
+    Blocks until any other thread's gmsh work finishes — see the
+    runtime-lock note above, and use :func:`gmsh_runtime_lock` when
+    waiting forever is not acceptable.
     """
+    global _GMSH_INIT_COUNT
+    _GMSH_RUNTIME_LOCK.acquire()
+    try:
+        _gmsh_init_locked()
+    except BaseException:
+        # nothing was counted, so nothing will release for us
+        _GMSH_RUNTIME_LOCK.release()
+        raise
+
+
+def _gmsh_init_locked() -> None:
+    """The refcount + ``gmsh.initialize`` half of :func:`_gmsh_acquire`,
+    with the runtime lock already held."""
     global _GMSH_INIT_COUNT
     with _GMSH_INIT_LOCK:
         if not gmsh.isInitialized():
@@ -83,12 +164,13 @@ def _gmsh_acquire() -> None:
 
 
 def _gmsh_release() -> None:
-    """Decrement the gmsh init refcount.
+    """Decrement the gmsh init refcount and drop the runtime lock.
 
     Calls ``gmsh.finalize()`` only when the last session releases
     (refcount hits 0).  Raises ``RuntimeError`` if the refcount
     underflows — a release without a matching acquire indicates a
-    session-lifecycle bug.
+    session-lifecycle bug — **without** touching the runtime lock,
+    since this thread never took it.
     """
     global _GMSH_INIT_COUNT
     with _GMSH_INIT_LOCK:
@@ -100,6 +182,14 @@ def _gmsh_release() -> None:
         if _GMSH_INIT_COUNT == 0:
             if gmsh.isInitialized():
                 gmsh.finalize()
+    try:
+        _GMSH_RUNTIME_LOCK.release()
+    except RuntimeError as exc:      # owner-bound: wrong thread released
+        raise RuntimeError(
+            "gmsh released from a thread that did not acquire it. A Gmsh "
+            "session must begin and end on the same thread — the runtime "
+            "is process-global and its lock is owner-bound."
+        ) from exc
 
 
 class _SessionBase:

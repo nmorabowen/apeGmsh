@@ -346,30 +346,54 @@ gate G-E is blocking for exactly that reason.
 
 ## Recorded follow-ups (not in this runway)
 
-- **Gmsh on the B6 properties worker can abort the process
-  (Windows-observed, open).** `PropertiesController._work` runs
-  `build_document` — which opens a private apeGmsh session — on a
-  background thread, while the interpreter's main thread may be driving
-  its own Gmsh sessions. Gmsh is one process-global C++ runtime and is
-  neither thread-safe nor reentrant; `_session.py`'s `_GMSH_INIT_LOCK`
-  guards the **init refcount only**, not the `gmsh.model.*` calls
-  between acquire and release, so two live sessions interleave. The
-  failure is a C-level `abort()`, which `build_document`'s
-  `except Exception  # worker isolation` cannot catch and which leaves
-  no Python traceback. Observed once in a full Windows suite run
-  (`tests/sections/test_builder_gui_b6.py::
-  test_panel_matches_headless_build_off_ui_thread` — the only test in
-  that file that uses the real builder; the others inject a stub);
-  determinism not yet established, and it does not reproduce on Linux
-  CI. This is a **product** bug, not a test artifact: a user toggling
-  Live mid-session can lose the app with no diagnostic. Candidate
-  fixes, cheapest first — widen the existing lock to session lifetime
-  (trap: the UI thread must never hold it while joining the worker);
-  a dedicated gmsh owner thread with a work queue; or run the build in
-  a **subprocess**, the only option that removes the class rather than
-  managing it (the input is already a plain dict; the catch is making
-  `BuildResult.analysis` picklable or reducing it to the panel's
-  numbers). Do not resolve it by skipping or marking the test.
+- ~~**Gmsh on the B6 properties worker can abort the process.**~~
+  **RESOLVED** — `_session.py` grows a process-wide re-entrant
+  **runtime lock** held from `_gmsh_acquire` to the matching
+  `_gmsh_release`, so gmsh work from different threads serializes
+  instead of interleaving. `_GMSH_INIT_LOCK` guarded the init refcount
+  only, never the `gmsh.model.*` calls between acquire and release;
+  two live sessions therefore interleaved on one process-global,
+  non-reentrant C++ runtime and tripped a C-level `abort()` that
+  `build_document`'s `except Exception` could not catch.
+
+  The lock lives inside `_gmsh_acquire`/`_gmsh_release`, so it covers
+  every call site with no new plumbing, and is re-entrant so nested
+  sessions do not self-block. Its rule: **never wait on another
+  thread's gmsh work while holding it.**
+
+  **The B6 worker does not take the lock — it meshes in a child
+  process** (`sections/_mesh_proc.py` + `_mesh_worker.py`). Serializing
+  the worker was tried first and is safe but not useful: a session the
+  user left open holds the lock for its whole lifetime, so the worker
+  never gets a turn and the panel stays grey until they close it. (That
+  showed up immediately — three B6 tests began failing in the shared
+  suite, correctly, because sessions there outlive individual tests.)
+  Moving the meshing out removes the contention rather than managing
+  it.
+
+  The split is cheap because the analyzer touches no gmsh at all —
+  `_analysis`, `_geometric`, `_warping`, `_plastic`, `_stress`, `_fe`
+  work purely over the `FEMData` snapshot — and `FEMData` pickles in
+  ~90 KB. So only the mesh crosses the boundary (330–580 ms on an SRC
+  composite) while the solve, the *expensive* half at 0.1–1.0 s, is
+  rebuilt and run back on the worker thread. Rebuilding there also
+  keeps a **live** `SectionProperties` for the inspector to drive
+  interactively (`analysis.stress(**loads)`), which a "return the
+  numbers" split would have lost. `SectionDocument` grows the seam:
+  `build_fem()` and `analysis_from_fem(fem)`.
+
+  Gate: `tests/test_gmsh_runtime_lock.py` asserts the invariant itself —
+  eight threads opening real sessions, occupancy never above 1 — plus
+  re-entrancy, the bounded wait, that the worker builds *while another
+  thread holds the runtime*, and that it takes zero acquires. Those
+  threading assertions run in **child interpreters**: the invariant is a
+  property of a process, and the shared suite process has sessions of
+  its own open. That also makes the **positive control automatic** — with
+  the lock stubbed out and nothing else changed, the workload kills the
+  interpreter outright, no traceback.
+  `tests/sections/test_mesh_subprocess.py` gates the relocation (the
+  child's mesh reproduces an in-process build's area, `EIxx_c`, `GJ`,
+  `Mp_xx`), and the three B6 worker tests pass **unchanged**.
 - **A1 payload `"doc"` key** — record the originating document in the
   `/opensees/computed_sections` provenance sidecar (raised at
   ratification, deliberately not implemented here).
