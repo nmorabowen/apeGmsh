@@ -343,6 +343,81 @@ by a single rank with the whole interface visible to it.
    `tests/opensees/integration/test_emit_partitioned_staged_mp_constraints.py`:
    a 2-rank two-body pounding deck, asserting the `contact` verb appears in
    exactly one rank block and every referenced node is declared in that block.
+
+   *Landed 2026-08-12 — as the NUMERIC twin, not another shape assertion.*
+   S4's own suite already pins the shape, so S5 shipped as the run lane:
+   `tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py`
+   emits both twins from ONE model definition — the fork P0 geometry
+   through the real API (two stacked single-`stdBrick` blocks via
+   transfinite hex meshing, 1e-3 initial penetration, lateral-fixed 1-D
+   column, 4×(−2500) on the top face, `kn="auto"` + `outward=(0,0,1)`;
+   `partition(2)` puts one body per rank, no uncuttable override needed)
+   — and RUNS them: the serial `flat=True` deck under `OpenSees.exe`
+   (RCM/UmfPack), the partitioned deck under `mpiexec -n 2 OpenSeesMP.exe`
+   (ParallelPlain/Mumps). The harness appends only a measurement fragment
+   (`analyze` + `puts` + `wipe`); the emitted decks run as-is. Gate:
+   relative agreement ≤ 1e−10 per quantity. **Measured 2026-08-12**
+   (fork build `d29de577`, the ADR-78 P2 tip):
+
+   | quantity | serial | 2-rank | rel Δ |
+   |---|---|---|---|
+   | w_top (top-block tip) | −5.6249999999999998e−03 | −5.6249999999998966e−03 | 1.8e−14 |
+   | w_slave (interface, native rank) | −5.1249999999999993e−03 | −5.1249999999998979e−03 | 2.0e−14 |
+   | w_master (master face) | −5.0000000000000012e−04 | −5.0000000000000001e−04 | 2.2e−16 |
+   | ΣR_base | 1.0000000000000000e+04 | 1.0000000000000002e+04 | 1.8e−16 |
+
+   Ghost pin: the owner rank's ghost of the slave interface node printed
+   **bit-identical** to the slave rank's native value (asserted < 1e−14;
+   measured 0.0) — the same identity fork P0 measured. Physics anchors:
+   ΣR = 1e4 balances the applied load exactly; w_master = −5.000e−4 =
+   P·h/(E·A) analytically.
+
+   Negative controls (the comparison detects a wrong deck):
+
+   - **no-contact twin** — serial analyze fails (−3, NormDispIncr blows
+     up): contact is load-bearing in the comparison;
+   - **ghost `fix` replay stripped from the owner block** — Mumps
+     "Matrix is Singular Numerically", analyze −3 on both ranks (the
+     ADR 0027 INV-2 measured failure mode);
+   - **contact verb duplicated into the slave rank's block** (master
+     interface ghost-declared there by the mutation — the ADR-78 P0.d
+     deck): the fork's P1 hard error tears down all ranks
+     ("LadrunoContactHandler: tearing down all 2 MPI ranks…") because
+     `-kn auto` cannot resolve the master's backing solid on the
+     non-owner. The P0.d silent-wrong case now fails LOUDLY on the
+     current fork — better than the measured half-penetration.
+
+   Gating: `subprocess` + `slow` markers with loud skips on
+   `APEGMSH_OPENSEES_BIN` (must hold `OpenSees.exe` + `OpenSeesMP.exe`)
+   and Intel MPI's `mpiexec` (`I_MPI_ROOT`); the CI suite lane excludes
+   `subprocess`, so CI skips it by construction. The MPI launch
+   environment is the fork's proven recipe (libfabric under
+   `%I_MPI_ROOT%\opt\mpi\libfabric\bin`, compiler runtime, binaries dir
+   on PATH, `TCL_LIBRARY` from the sibling `lib/tcl8.6`).
+
+   **Open item surfaced by S5 — auto-emit ordering (real defect, not
+   fixed here).** The step-7c auto-emits (`constraints LadrunoContact`,
+   the runtime-conditional `numberer ParallelPlain` / `system Mumps`)
+   land AFTER a user-declared `analysis Static` in the emitted deck. The
+   OpenSees Tcl engine constructs the analysis at the `analysis` command
+   with whatever components exist at that moment, and `constraints` /
+   `numberer` do **not** retro-propagate into an existing analysis (fork
+   `SRC/tcl/commands.cpp` back-propagates only `system` → `setLinearSOE`
+   and `algorithm` → `setAlgorithm`). Measured in the S5 harness: a
+   contact deck relying on the auto-emit while declaring
+   `ops.analysis.Static()` ran **PlainHandler silently** — the serial
+   twin diverged, and the 2-rank twin *converged to a plausible-wrong
+   answer* (w_top −5.714e−4 vs the true −5.625e−3) with base reactions
+   still balancing (1e4), the exact silent-wrong shape this ADR exists
+   to prevent. The live (Python) lane constructs the analysis the same
+   way, so the hazard is not Tcl-specific. Workaround (what S5 does):
+   declare `ops.constraints.LadrunoContact()` + numberer + system
+   explicitly so they emit in the pre-`analysis` chain section; the
+   auto-emit then re-emits the handler post-`analysis` (inert,
+   harmless, warned). The fix — emitting the auto-emit chain pieces
+   before any user-declared `Analysis` primitive — reorders emit output
+   every lane shares, so it is deliberately its own change, not a
+   side-effect of S5.
 6. **S6 — `Results` ownership contract** (INV-6).
 
 ## Consequences
