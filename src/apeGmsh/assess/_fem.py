@@ -1,27 +1,36 @@
 """FEMData catalog: MODEL.* and MESH.*."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
 from ._inverted import coords_are_planar, measure_linear_cell
-from ._report import render_text
+from ._report import NO_STILLS, render_text
 from ._types import AssessmentReport, Finding
 
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
 
-def assess_fem(fem: FEMData, *, figures: bool = False) -> AssessmentReport:
-    """Run the v1 FEM catalog. ``figures=True`` is S3."""
-    _refuse_figures(figures)
+def assess_fem(
+    fem: FEMData,
+    *,
+    figures: bool = False,
+    out_dir: str | Path | None = None,
+) -> AssessmentReport:
+    """Run the v1 FEM catalog. ``figures=True`` writes one mesh still."""
     findings, skipped = collect_fem(fem)
+    fig_paths, fig_note = _fem_figures(fem, figures, out_dir)
     return AssessmentReport(
         findings=findings,
-        text=render_text(findings, skipped, source="FEMData"),
-        figures=(),
+        text=render_text(
+            findings, skipped, source="FEMData",
+            figures=fig_paths, figure_note=fig_note,
+        ),
+        figures=fig_paths,
         lineage=None,
     )
 
@@ -38,12 +47,26 @@ def collect_fem(
     return tuple(findings), tuple(skipped)
 
 
-def _refuse_figures(figures: bool) -> None:
-    if figures:
-        raise NotImplementedError(
-            "assess(figures=True) is ADR 0094 S3. "
-            "S2 implements findings only; pass figures=False (the default)."
-        )
+def resolve_out_dir(out_dir: str | Path | None) -> Path:
+    """Directory for stills. ``None`` → a fresh temp dir."""
+    if out_dir is None:
+        import tempfile
+        return Path(tempfile.mkdtemp(prefix="apegmsh-assess-"))
+    return Path(out_dir)
+
+
+def _fem_figures(
+    fem: FEMData,
+    figures: bool,
+    out_dir: str | Path | None,
+) -> tuple[tuple[Path, ...], str | None]:
+    if not figures:
+        return (), None
+    # Broker method — lazy-imports viewers.render (INV-1).
+    written = fem.render(resolve_out_dir(out_dir) / "mesh.png")
+    if written is None:
+        return (), NO_STILLS
+    return (written,), None
 
 
 def _finding(code: str, message: str, detail: dict[str, object] | None = None) -> Finding:

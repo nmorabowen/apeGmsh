@@ -12,7 +12,13 @@ answer:
   handler the mixed case must now get — its phantom-bridge ``equalDOF``
   is a real ``MP_Constraint`` that a Plain-style handler would leave
   unenforced under contact;
-* the temporary partitioned refusal, which holds until ADR 0093 S8.
+* the partitioned path, which since ADR 0093 S8 emits each pair's
+  atomic unit inside its owner rank's block (the deep gates live in
+  ``test_interface_partitioned_emit.py``; here only the lifted refusal
+  is pinned);
+* **ADR 0093 S7** — the staged liner-install: ``s.interface(name=)``
+  moves the whole per-pair unit into the stage that activates the liner,
+  on the ground the first stage equilibrated.
 """
 from __future__ import annotations
 
@@ -218,24 +224,98 @@ def test_declared_phantom_against_a_two_dof_slave_fails_loud(tmp_path):
 
 
 # ======================================================================
-# Partitioned refusal (temporary — ADR 0093 S8)
+# Partitioned emit (ADR 0093 S8 — the S5 refusal is LIFTED)
 # ======================================================================
-def test_partitioned_emit_refuses_interfaces(tmp_path):
+def test_partitioned_emit_no_longer_refuses_interfaces(tmp_path):
+    # S5's blanket refusal is gone: a partitioned interface model emits,
+    # and every zeroLength lands in the deck exactly once. The full S8
+    # gates (single owner block, ghost ndf parity, 1-vs-N byte
+    # identity) live in test_interface_partitioned_emit.py.
     fem = _fem(partition=2, n=4)
     assert len(fem.partitions) == 2
     assert fem.elements.interfaces
     ops = _quad_ops(fem, "rock", "liner")
-    with pytest.raises(BridgeError) as exc:
-        ops.tcl(str(tmp_path / "deck.tcl"))
-    assert str(exc.value) == (
-        "apeSees: g.constraints.interface() oriented coincident-pair "
-        "zeroLength interfaces are not yet supported under partitioned "
-        "(MPI) emit — the per-rank interface plan (element-side ownership, "
-        "ghost declarations with explicit ndf parity, up-front tag "
-        "allocation) is ADR 0093 S8. Emit the interface model "
-        "single-process (non-partitioned), or remove the interface for the "
-        "partitioned run."
+    path = tmp_path / "deck.tcl"
+    ops.tcl(str(path))
+    lines = [ln.strip() for ln in path.read_text().splitlines()]
+    assert len([ln for ln in lines
+                if ln.startswith("element zeroLength ")]) == len(
+        fem.elements.interfaces)
+
+
+# ======================================================================
+# Staged liner install (ADR 0093 S7)
+# ======================================================================
+def _chain(ops):
+    return {
+        "test":        ops.test.NormDispIncr(tol=1e-6, max_iter=25),
+        "algorithm":   ops.algorithm.Newton(),
+        "integrator":  ops.integrator.LoadControl(dlam=1.0),
+        "constraints": ops.constraints.Transformation(),
+        "numberer":    ops.numberer.RCM(),
+        "system":      ops.system.UmfPack(),
+        "analysis":    ops.analysis.Static(),
+    }
+
+
+def _staged_ops(fem):
+    """Stage 1 loads the bare ground; stage 2 activates the liner PG and
+    claims the interface, so the liner is installed on the equilibrated
+    ground and carries only post-install increments."""
+    ops = _quad_ops(fem, "rock", "liner")
+    with ops.stage(name="ground") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["liner"])
+        s.interface(name="RockLiner")
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    return ops
+
+
+def test_staged_claim_moves_the_whole_unit_into_the_stage(tmp_path):
+    fem = _fem()
+    lines = _deck(_staged_ops(fem), tmp_path)
+
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == 2                       # once per pair, not twice
+
+    open_ground = lines.index("# === Stage: ground ===")
+    open_install = lines.index("# === Stage: install ===")
+    first_zl = min(lines.index(ln) for ln in zl)
+    # Nothing interface-shaped before the stages; everything inside the
+    # stage that activates the liner.
+    assert first_zl > open_install > open_ground
+    assert not [ln for ln in lines[:open_ground]
+                if ln.startswith("uniaxialMaterial ENT ")]
+    # …and each zeroLength lands after the liner's own quads and before
+    # this stage's domainChange barrier.
+    install = lines[open_install:]
+    last_quad = max(
+        i for i, ln in enumerate(install) if ln.startswith("element quad ")
     )
+    barrier = install.index("domainChange")
+    for ln in zl:
+        assert last_quad < install.index(ln) < barrier
+
+
+def test_staged_interface_tags_continue_the_base_allocator(tmp_path):
+    fem = _fem()
+    lines = _deck(_staged_ops(fem), tmp_path)
+    ele_tags = [int(ln.split()[2]) for ln in lines if ln.startswith("element ")]
+    assert len(ele_tags) == len(set(ele_tags))
+    zl_tags = [int(ln.split()[2]) for ln in lines
+               if ln.startswith("element zeroLength ")]
+    mesh_tags = [int(ln.split()[2]) for ln in lines
+                 if ln.startswith("element quad ")]
+    assert min(zl_tags) > max(mesh_tags)
+
+
+def test_staged_deck_is_reproducible(tmp_path):
+    first = _deck(_staged_ops(_fem()), tmp_path, "a.tcl")
+    second = _deck(_staged_ops(_fem()), tmp_path, "b.tcl")
+    assert first == second
 
 
 def test_flat_escape_hatch_emits_a_partitioned_interface_model(tmp_path):
@@ -248,3 +328,51 @@ def test_flat_escape_hatch_emits_a_partitioned_interface_model(tmp_path):
     assert len([ln for ln in lines
                 if ln.startswith("element zeroLength ")]) == 4
     assert "getPID" not in "\n".join(lines)
+
+
+# ======================================================================
+# H5 element_meta identity (ADR 0093 S10 finding)
+# ======================================================================
+def test_h5_element_meta_interface_rows_carry_sentinel_and_true_pair(tmp_path):
+    """Interface zeroLengths persist as ADR 0049 node-pair rows.
+
+    Before the fix the H5 emitter's sticky side channels leaked the
+    LAST quad's ``fem_eid`` (and connectivity) onto every interface
+    row — ``ElementTagTranslator.from_model`` then mapped all spring
+    ops tags to one wrong element id, so an unfiltered
+    ``results.elements.springs.get(...)`` labelled every per-pair
+    value with a single duplicated id, and the argstack slicing
+    dropped the first four args of each zeroLength line on replay.
+
+    Correct persistence: ``fem_eid == -1`` (sentinel — the translator
+    skips it, leaving the raw ops tags in ``element_index``) plus the
+    TRUE endpoint pair in ``inline_connectivity``.
+    """
+    import h5py
+    import numpy as np
+
+    fem = _fem()
+    recs = fem.elements.interfaces
+    ops = _quad_ops(fem, "rock", "liner")
+    path = tmp_path / "model_deck.h5"
+    ops.h5(str(path))
+
+    with h5py.File(str(path), "r") as f:
+        zl = f["opensees/element_meta/zeroLength"]
+        fem_eids = np.asarray(zl["fem_eids"])
+        assert (fem_eids == -1).all(), (
+            f"interface rows must carry the ADR 0049 sentinel, got "
+            f"{fem_eids.tolist()}"
+        )
+        inline = zl["inline_connectivity"]
+        got_pairs = {tuple(int(v) for v in row) for row in inline}
+        want_pairs = {
+            (int(r.master_node), int(r.slave_node)) for r in recs
+        }
+        assert got_pairs == want_pairs
+
+        # ...and the mesh elements keep their REAL, unique fem ids.
+        quad = f["opensees/element_meta/quad"]
+        quad_eids = np.asarray(quad["fem_eids"])
+        assert (quad_eids >= 0).all()
+        assert len(set(quad_eids.tolist())) == len(quad_eids)

@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from apeGmsh._kernel._coupling_control import CouplingControl
     from apeGmsh._kernel.records._constraints import (
         ConstraintRecord,
+        InterfaceRecord,
         InterpolationRecord,
     )
     from apeGmsh._kernel.records._partitions import PartitionRecord
@@ -1284,6 +1285,17 @@ class StageRecord:
     # appends resolved records here.  Default ``()`` keeps existing
     # construction sites and tests working unmodified.
     stage_constraint_records: tuple["ConstraintRecord", ...] = ()
+    # ADR 0093 S7 (INV-6): stage-bound interface pool.  Populated by
+    # ``_StageBuilder.interface(name=)``, which CLAIMS resolved
+    # :class:`InterfaceRecord` rows off ``fem.elements.interfaces`` (the
+    # records stay on the broker — only the emit moves).  Deliberately
+    # NOT folded into ``stage_constraint_records``: an interface is not
+    # an MP constraint, and its emit shape is the atomic per-pair unit
+    # (phantom → equalDOF → two materials → zeroLength) that
+    # :func:`emit_stage_interfaces` writes AFTER the stage's MP
+    # constraints and BEFORE the stage's ``domain_change``.  Default
+    # ``()`` keeps existing construction sites working unmodified.
+    stage_interface_records: tuple["InterfaceRecord", ...] = ()
     # Phase SSI-2.E: between-stage Domain mutators.  Removals emit
     # BEFORE the stage's new fix / mass / region lines so a stage can
     # release a prior-stage support and immediately re-apply a new
@@ -4853,12 +4865,341 @@ def _validate_interface_ndf(
         )
 
 
+def _validate_interface_records(
+    records: "Sequence[InterfaceRecord]",
+    *,
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    ndm: int,
+) -> None:
+    """Gate a whole interface pool before a single line is emitted — a
+    deck half-written then aborted is worse than one never started.
+
+    Shared by the base pass (:func:`emit_interfaces`, which validates
+    the WHOLE side-list including stage-claimed rows) and the stage
+    pass (:func:`emit_stage_interfaces`).
+    """
+    for rec in records:
+        _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
+        if rec.orient is None:
+            raise BridgeError(
+                f"interface: record for pair (master="
+                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
+                f"carries no orient 6-tuple. Emitting the zeroLength "
+                f"without -orient would silently fall back to the GLOBAL "
+                f"frame, i.e. a normal law acting along global x — the "
+                f"silent sign error ADR 0093 INV-1 exists to kill."
+            )
+        if rec.phantom_node is not None and rec.phantom_coords is None:
+            raise BridgeError(
+                f"interface: record for pair (master="
+                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
+                f"carries phantom_node={int(rec.phantom_node)} but no "
+                f"phantom_coords — the phantom cannot be declared."
+            )
+
+
+def _register_interface_phantoms(
+    emitter: "Emitter", records: "Sequence[InterfaceRecord]",
+) -> None:
+    """ADR 0093 D4(b): interface phantoms must join the phantom-tag
+    predicate BEFORE their ``node()`` calls, or the H5 emitter
+    classifies them as ordinary (real broker) nodes.
+
+    Additive union — the MP pass (``emit_mp_constraints`` step 0) may
+    already have installed its own set; same pattern as
+    :func:`emit_stage_mp_constraints`.  The predicate is consulted
+    **per ``node()`` call** (``H5Emitter.node`` → :func:`is_phantom_node`),
+    so each pass registering its own records right before emitting them
+    is sufficient: a stage-claimed phantom registers inside the stage
+    block, immediately before the ``node()`` that declares it.
+    """
+    from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
+
+    phantoms = {
+        int(rec.phantom_node) for rec in records
+        if rec.phantom_node is not None
+    }
+    if phantoms:
+        existing: "frozenset[int]" = getattr(
+            emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        set_phantom_node_tags(emitter, set(existing) | phantoms)
+
+
+def allocate_interface_tags(
+    records: "Sequence[InterfaceRecord]", tags: TagAllocator,
+) -> "dict[int, tuple[int, int, int]]":
+    """Pre-allocate every record's material + element tags in the given
+    (flat side-list) order — ADR 0093 INV-5 / ADR 0027 §"Tag
+    determinism".
+
+    Returns ``{id(record): (normal_mat_tag, tangential_mat_tag,
+    element_tag)}``.  Per record the allocator is consumed in the same
+    ``(uniaxialMaterial, uniaxialMaterial, element)`` sequence the
+    pre-S8 inline allocation used, so the resulting tag values are
+    byte-identical on the flat path — the per-kind counters advance
+    exactly as before.
+
+    Splitting allocation from emission is what lets the partitioned
+    path allocate ALL interface tags before the per-rank fan-out (so a
+    record's tags do not depend on which rank owns it, and 1-rank and
+    N-rank decks stay byte-comparable), while the flat and stage passes
+    consume the SAME pre-pass so the two paths cannot drift.
+    """
+    plan: "dict[int, tuple[int, int, int]]" = {}
+    for rec in records:
+        n_tag = tags.allocate("uniaxialMaterial")
+        t_tag = tags.allocate("uniaxialMaterial")
+        ele_tag = tags.allocate("element")
+        plan[id(rec)] = (n_tag, t_tag, ele_tag)
+    return plan
+
+
+def _plan_rank_interfaces(
+    records: "Sequence[InterfaceRecord]",
+    partitions: "Iterable[object]",
+) -> "dict[int, list[tuple[InterfaceRecord, tuple[int, ...]]]]":
+    """Resolve each interface record's owner rank + ghost node set
+    (ADR 0093 INV-5 — element-side ownership).
+
+    Owner = the rank owning the record's ``backing_element`` (a
+    highest-dimension domain continuum element, stamped at resolve
+    time).  Node-tally ownership (ADR 0092 INV-1) is wrong here *by
+    construction*: the pair's nodes are co-located, so a cut hugging
+    the interface replicates both onto both ranks and the tally is
+    undecidable — the backing element is the locality information the
+    nodes cannot carry.
+
+    Two loud preconditions make the pick exact rather than heuristic
+    (INV-5, as scoped by the adversarial review):
+
+    * **Single owner, asserted directly.** The backing element must
+      appear in EXACTLY ONE partition's ``element_ids``.  Membership is
+      counted across ``fem.partitions[*]`` here — NOT read off
+      :func:`build_element_partition_owner`, whose documented
+      first-seen tiebreak would silently hide a duplicated element.
+      ``_extract_partitions`` replicates multi-partition boundary-entity
+      elements across every partition holding the entity; a stamped
+      element that turns out replicated (or absent) is a resolver-
+      contract violation and refuses with the record, the element and
+      the partitions holding it.
+    * **Master node native to the owner.** The backing element lives on
+      the owner rank, and an element's nodes are in its partition's
+      node set by ``extract_partitions`` construction — asserted anyway,
+      loudly, so a drift in extraction semantics cannot silently ghost
+      the master.
+
+    The ghost set is the record's real slave node when the owner does
+    not natively own it (the foreign beam/slave node of ADR 0093 INV-5,
+    ghosted as geometry + SP only per ADR 0092 INV-7).  The phantom is
+    minted by the owner rank and is never foreign.
+
+    Returns ``{owner_rank: [(record, ghost_node_ids), ...]}`` with each
+    rank's records in the given (flat side-list) order.  Pure — no
+    emitter access, no tag allocation.
+    """
+    recs = list(records)
+    if not recs:
+        return {}
+    parts = list(partitions)
+
+    backing = np.asarray(
+        sorted({int(r.backing_element) for r in recs}), dtype=np.int64,
+    )
+    needed_nodes = np.asarray(
+        sorted({int(r.master_node) for r in recs}
+               | {int(r.slave_node) for r in recs}),
+        dtype=np.int64,
+    )
+
+    # element -> [every rank whose partition holds it] (NOT first-seen),
+    # and rank -> {the master/slave nodes it natively owns}.
+    holder_ranks: "dict[int, list[int]]" = {}
+    native_nodes: "dict[int, set[int]]" = {}
+    for idx, part in enumerate(parts):
+        # Duck-typed seam (stub FEMs) — the record itself is not
+        # consulted by the conversion; see the helper's contract.
+        rank = runtime_rank_from_partition_record(
+            cast("PartitionRecord", part), idx)
+        eids = np.asarray(
+            getattr(part, "element_ids", ()), dtype=np.int64,
+        )
+        if eids.size:
+            for eid in backing[np.isin(backing, eids)]:
+                holder_ranks.setdefault(int(eid), []).append(rank)
+        nids = np.asarray(getattr(part, "node_ids", ()), dtype=np.int64)
+        native_nodes[rank] = (
+            {int(n) for n in needed_nodes[np.isin(needed_nodes, nids)]}
+            if nids.size else set()
+        )
+
+    plan: "dict[int, list[tuple[InterfaceRecord, tuple[int, ...]]]]" = {}
+    for pos, rec in enumerate(recs, start=1):
+        name = getattr(rec, "name", None)
+        label = f"#{pos}" + (f" ({name!r})" if name else "")
+        eid = int(rec.backing_element)
+        holders = holder_ranks.get(eid, [])
+        if len(holders) != 1:
+            where = (
+                "NO partition's element set" if not holders else
+                f"{len(holders)} partitions' element sets (runtime ranks "
+                f"{holders})"
+            )
+            raise BridgeError(
+                f"apeSees: g.constraints.interface() record {label} "
+                f"(master={int(rec.master_node)}, "
+                f"slave={int(rec.slave_node)}) stamps backing element "
+                f"{eid}, which appears in {where}. ADR 0093 INV-5 "
+                "requires the stamped backing element to be a "
+                "highest-dimension DOMAIN continuum element owned by "
+                "exactly one partition — top-dimension elements are "
+                "never replicated across partitions, so this indicates "
+                "a boundary-entity element was stamped (or the "
+                "partition records are inconsistent with the resolved "
+                "interface). The owner pick is exact under this "
+                "asserted precondition, and explicit when it fails — "
+                "never silently first-seen."
+            )
+        owner = holders[0]
+        master = int(rec.master_node)
+        if master not in native_nodes.get(owner, ()):
+            raise BridgeError(
+                f"apeSees: g.constraints.interface() record {label} — "
+                f"owner rank {owner} holds backing element {eid} but "
+                f"does not natively own the master node {master} "
+                "(ADR 0093 INV-5). extract_partitions puts every "
+                "element's nodes in its partition's node set, so the "
+                "master node of a pair is native to the backing "
+                "element's rank by construction — a violation means "
+                "the partition records and the resolved interface "
+                "disagree, and emitting would ghost the master onto "
+                "its own owner."
+            )
+        slave = int(rec.slave_node)
+        ghosts: "tuple[int, ...]" = (
+            () if slave in native_nodes.get(owner, set()) else (slave,)
+        )
+        plan.setdefault(owner, []).append((rec, ghosts))
+    return plan
+
+
+def _emit_interface_record(
+    emitter: "Emitter", rec: "InterfaceRecord",
+    pre_allocated: "tuple[int, int, int]",
+) -> None:
+    """Emit ONE record's atomic unit — phantom ``node`` → nested
+    ``equalDOF`` → the two tributary-scaled uniaxials → the
+    ``zeroLength``.
+
+    The single per-record core shared by the base pass
+    (:func:`emit_interfaces`), the stage-block pass
+    (:func:`emit_stage_interfaces`, ADR 0093 S7) and the partitioned
+    owner-rank pass (ADR 0093 S8), so the D1 translation table and
+    INV-1's node order exist in exactly one place.
+
+    ``pre_allocated`` is this record's ``(normal_mat_tag,
+    tangential_mat_tag, element_tag)`` triple from
+    :func:`allocate_interface_tags` — allocation is separated from
+    emission so the partitioned path can allocate every record's tags
+    in flat order BEFORE the rank fan-out (ADR 0027 tag determinism).
+    """
+    _emit_name(emitter, rec.name)
+
+    if rec.phantom_node is not None:
+        # ``phantom_coords`` / ``phantom_ndf`` / ``orient`` below are
+        # Optional on the record but PROVEN non-None by
+        # :func:`_validate_interface_records`, which every caller runs
+        # over the whole pool before the first line is emitted — hence
+        # the narrow ignores rather than re-raising here.
+        xyz = rec.phantom_coords
+        emitter.node(
+            int(rec.phantom_node),
+            float(xyz[0]), float(xyz[1]), float(xyz[2]),  # type: ignore[index]
+            ndf=int(rec.phantom_ndf),  # type: ignore[arg-type]
+        )
+        for pair in rec.equal_dof_records:
+            emitter.equalDOF(
+                int(pair.master_node), int(pair.slave_node),
+                *(int(d) for d in pair.dofs),
+            )
+        j_node = int(rec.phantom_node)
+    else:
+        j_node = int(rec.slave_node)
+
+    a_trib = float(rec.a_trib)
+    m_normal = _interface_normal_material(a_trib, rec.normal_law)
+    m_tangential = _interface_tangential_material(
+        a_trib, rec.tangential_law)
+    n_tag, t_tag, ele_tag = pre_allocated
+    m_normal._emit(emitter, n_tag)
+    m_tangential._emit(emitter, t_tag)
+
+    args: "list[int | float | str]" = [
+        int(rec.master_node), j_node,
+        "-mat", n_tag, t_tag,
+        "-dir", 1, 2,
+        "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
+    ]
+    # ADR 0049 node-pair convention for a minted (mesh-less) element:
+    # sentinel fem_eid + the TRUE endpoint pair.  Without this the H5
+    # emitter's sticky side channels leak the last mesh row's fem_eid
+    # and connectivity onto every interface zeroLength — mislabeling
+    # the per-pair springs channels in ``Results`` and corrupting the
+    # argstack slicing (ADR 0093 S10 finding).
+    set_current_fem_element_id(emitter, MISSING_FEM_ELEMENT_ID)
+    set_element_nodes(emitter, (int(rec.master_node), j_node))
+    emitter.element("zeroLength", ele_tag, *args)
+
+
+def emit_stage_interfaces(
+    records: "Sequence[InterfaceRecord]",
+    emitter: "Emitter", tags: TagAllocator,
+    *,
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    ndm: int,
+) -> None:
+    """Emit a stage's CLAIMED interface records inside the stage block
+    (flat path, ADR 0093 S7 / INV-6).
+
+    The liner-install pattern: ``g.constraints.interface(...,
+    name="RockLiner")`` + ``s.interface(name="RockLiner")`` inside an
+    ``ops.stage(...)`` block moves the whole per-pair unit out of the
+    base pass and into the stage's block, so the interface is installed
+    on the ALREADY-EQUILIBRATED ground rather than at ``t = 0``.
+
+    Emitted AFTER the stage's activated topology and stage MP
+    constraints, BEFORE the stage's ``domain_change`` barrier — the
+    ``zeroLength``'s two endpoints (and, for a mixed-ndf pair, the
+    phantom this pass mints) must be in the Domain when the element
+    references them.  Element and material tags come from the SAME
+    :class:`TagAllocator` the base pass draws from, continuing the
+    shared namespace (the ``_emit_rigid_body_elements`` /
+    :func:`emit_stage_mp_constraints` element-minting-in-stage
+    precedent).
+
+    No-op when the stage claimed nothing.
+    """
+    if not records:
+        return
+    recs = list(records)
+    _validate_interface_records(
+        recs, effective_ndf=effective_ndf,
+        envelope_ndf=envelope_ndf, ndm=ndm,
+    )
+    _register_interface_phantoms(emitter, recs)
+    tag_plan = allocate_interface_tags(recs, tags)
+    for rec in recs:
+        _emit_interface_record(emitter, rec, tag_plan[id(rec)])
+
+
 def emit_interfaces(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *,
     effective_ndf: "Mapping[int, int]",
     envelope_ndf: int,
     ndm: int,
+    claimed_ids: "frozenset[int]" = frozenset(),
 ) -> None:
     """Emit one oriented coincident-pair ``zeroLength`` per resolved
     interface record (``g.constraints.interface``, ADR 0093 D5).
@@ -4898,12 +5239,18 @@ def emit_interfaces(
     element-nodes context and resolves material tags through the
     bridge's primitive-identity resolver — neither exists for records.
 
-    Serial-only: the partitioned path refuses interfaces up front until
-    ADR 0093 S8 lands. No-op when the FEM snapshot exposes no
-    ``elements.interfaces``.
-    """
-    from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
+    Records claimed by ``s.interface(name=)`` (ADR 0093 S7) are SKIPPED
+    here — their ``id(...)`` is in ``claimed_ids`` and they emit inside
+    their owning stage's block via :func:`emit_stage_interfaces`.  They
+    are still VALIDATED here, so a bad record fails loud before any
+    line is written regardless of which pass owns its emit.
 
+    Flat-path only: the partitioned path plans ownership per record
+    (:func:`_plan_rank_interfaces`, ADR 0093 S8 / INV-5) and emits each
+    atomic unit inside its owner rank's block via the same
+    :func:`_emit_interface_record` core. No-op when the FEM snapshot
+    exposes no ``elements.interfaces``.
+    """
     elements = getattr(fem, "elements", None)
     interfaces = (
         getattr(elements, "interfaces", None)
@@ -4912,78 +5259,21 @@ def emit_interfaces(
     if not interfaces:
         return
 
-    # Validate the WHOLE side-list before emitting a single line — a
-    # deck half-written then aborted is worse than one never started.
-    for rec in interfaces:
-        _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
-        if rec.orient is None:
-            raise BridgeError(
-                f"interface: record for pair (master="
-                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
-                f"carries no orient 6-tuple. Emitting the zeroLength "
-                f"without -orient would silently fall back to the GLOBAL "
-                f"frame, i.e. a normal law acting along global x — the "
-                f"silent sign error ADR 0093 INV-1 exists to kill."
-            )
-        if rec.phantom_node is not None and rec.phantom_coords is None:
-            raise BridgeError(
-                f"interface: record for pair (master="
-                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
-                f"carries phantom_node={int(rec.phantom_node)} but no "
-                f"phantom_coords — the phantom cannot be declared."
-            )
+    # Validate the WHOLE side-list — claimed rows included — before
+    # emitting a single line.
+    all_records = list(interfaces)
+    _validate_interface_records(
+        all_records, effective_ndf=effective_ndf,
+        envelope_ndf=envelope_ndf, ndm=ndm,
+    )
 
-    # ADR 0093 D4(b): interface phantoms must join the phantom-tag
-    # predicate BEFORE their ``node()`` calls, or the H5 emitter
-    # classifies them as ordinary (real broker) nodes. Additive union —
-    # the MP pass (emit_mp_constraints step 0) may already have
-    # installed its own set; same pattern as
-    # :func:`emit_stage_mp_constraints`.
-    iface_phantoms = {
-        int(rec.phantom_node) for rec in interfaces
-        if rec.phantom_node is not None
-    }
-    if iface_phantoms:
-        existing: "frozenset[int]" = getattr(
-            emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
-        set_phantom_node_tags(emitter, set(existing) | iface_phantoms)
-
-    for rec in interfaces:
-        _emit_name(emitter, rec.name)
-
-        if rec.phantom_node is not None:
-            xyz = rec.phantom_coords
-            emitter.node(
-                int(rec.phantom_node),
-                float(xyz[0]), float(xyz[1]), float(xyz[2]),
-                ndf=int(rec.phantom_ndf),
-            )
-            for pair in rec.equal_dof_records:
-                emitter.equalDOF(
-                    int(pair.master_node), int(pair.slave_node),
-                    *(int(d) for d in pair.dofs),
-                )
-            j_node = int(rec.phantom_node)
-        else:
-            j_node = int(rec.slave_node)
-
-        a_trib = float(rec.a_trib)
-        m_normal = _interface_normal_material(a_trib, rec.normal_law)
-        m_tangential = _interface_tangential_material(
-            a_trib, rec.tangential_law)
-        n_tag = tags.allocate("uniaxialMaterial")
-        m_normal._emit(emitter, n_tag)
-        t_tag = tags.allocate("uniaxialMaterial")
-        m_tangential._emit(emitter, t_tag)
-
-        ele_tag = tags.allocate("element")
-        args: "list[int | float | str]" = [
-            int(rec.master_node), j_node,
-            "-mat", n_tag, t_tag,
-            "-dir", 1, 2,
-            "-orient", *(float(v) for v in rec.orient),
-        ]
-        emitter.element("zeroLength", ele_tag, *args)
+    unclaimed = [rec for rec in all_records if id(rec) not in claimed_ids]
+    if not unclaimed:
+        return
+    _register_interface_phantoms(emitter, unclaimed)
+    tag_plan = allocate_interface_tags(unclaimed, tags)
+    for rec in unclaimed:
+        _emit_interface_record(emitter, rec, tag_plan[id(rec)])
 
 
 def emit_rebar_elements(
@@ -5045,6 +5335,12 @@ def emit_rebar_elements(
             )
         for i_node, j_node in rec.connectivity:
             ele_tag = tags.allocate("element")
+            # Minted bar cell — no backing mesh element, args start with
+            # the node pair: ADR 0049 node-pair convention (sentinel
+            # fem_eid + true endpoints), same rationale as the interface
+            # zeroLength above (ADR 0093 S10 finding).
+            set_current_fem_element_id(emitter, MISSING_FEM_ELEMENT_ID)
+            set_element_nodes(emitter, (int(i_node), int(j_node)))
             emitter.element(
                 "CorotTruss", ele_tag, int(i_node), int(j_node),
                 float(rec.area), int(mat_tag),

@@ -59,6 +59,16 @@ class PhysicalGroups(_HasLogging):
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
 
+    def _require_unfrozen(self, verb: str) -> None:
+        """Refuse a PG mutation once the broker snapshot is canonical.
+
+        The freeze guard, matching :meth:`add` — these desync the
+        broker on any chain-phase session, not only the kernel-less
+        ``from_h5`` ones the read queries guard against.
+        """
+        from apeGmsh.core._compose_errors import chain_phase_guard
+        chain_phase_guard(self._parent, verb)
+
     # ------------------------------------------------------------------
     # Creation
     # ------------------------------------------------------------------
@@ -286,6 +296,10 @@ class PhysicalGroups(_HasLogging):
         tag  : physical-group tag
         name : new label
         """
+        # Frozen on the same terms as add(): the broker's
+        # PhysicalGroupSet is a snapshot keyed by name, so renaming a
+        # PG here leaves the two disagreeing about what exists.
+        self._require_unfrozen(f"g.physical.set_name({name!r})")
         gmsh.model.setPhysicalName(dim, tag, name)
         self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})")
         return self
@@ -296,6 +310,7 @@ class PhysicalGroups(_HasLogging):
 
         The physical group itself is not deleted — only the name entry.
         """
+        self._require_unfrozen(f"g.physical.remove_name({name!r})")
         gmsh.model.removePhysicalName(name)
         self._log(f"remove_name({name!r})")
         return self
@@ -312,12 +327,14 @@ class PhysicalGroups(_HasLogging):
         ----------
         dim_tags : ``[(dim, pg_tag), ...]`` pairs identifying groups to remove
         """
+        self._require_unfrozen("g.physical.remove()")
         gmsh.model.removePhysicalGroups(dimTags=dim_tags)
         self._log(f"remove({dim_tags})")
         return self
 
     def remove_all(self) -> PhysicalGroups:
         """Remove every physical group in the current model."""
+        self._require_unfrozen("g.physical.remove_all()")
         gmsh.model.removePhysicalGroups()
         self._log("remove_all()")
         return self
@@ -337,6 +354,8 @@ class PhysicalGroups(_HasLogging):
         ----------
         dim : filter to a single dimension (``-1`` = all)
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_all()")
         return [
             (d, t) for d, t in gmsh.model.getPhysicalGroups(dim=dim)
             if not is_label_pg(gmsh.model.getPhysicalName(d, t))
@@ -351,6 +370,8 @@ class PhysicalGroups(_HasLogging):
         dim : dimension of the physical group
         tag : physical-group tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_entities()")
         return list(gmsh.model.getEntitiesForPhysicalGroup(dim, tag))
 
     def entities(
@@ -388,6 +409,8 @@ class PhysicalGroups(_HasLogging):
         TypeError
             If ``name_or_tag`` is an int but ``dim`` is not provided.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.entities()")
         if isinstance(name_or_tag, str):
             if dim is None:
                 matches = [
@@ -436,6 +459,9 @@ class PhysicalGroups(_HasLogging):
         dim : entity dimension
         tag : model-entity tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.physical.get_groups_for_entity()")
         return list(gmsh.model.getPhysicalGroupsForEntity(dim, tag))
 
     def get_name(self, dim: int, tag: Tag) -> str:
@@ -447,6 +473,8 @@ class PhysicalGroups(_HasLogging):
         dim : dimension of the physical group
         tag : physical-group tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_name()")
         return gmsh.model.getPhysicalName(dim, tag)
 
     def get_tag(self, dim: int, name: str) -> Tag | None:
@@ -460,6 +488,8 @@ class PhysicalGroups(_HasLogging):
         dim  : dimension to search
         name : human-readable label
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_tag()")
         for _, pg_tag in gmsh.model.getPhysicalGroups(dim=dim):
             pg_name = gmsh.model.getPhysicalName(dim, pg_tag)
             if is_label_pg(pg_name):
@@ -483,6 +513,8 @@ class PhysicalGroups(_HasLogging):
         ``n_entities``    number of model entities in the group
         ``entity_tags``   comma-separated entity tags as a string
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.summary()")
         rows: list[dict] = []
         for dim, pg_tag in gmsh.model.getPhysicalGroups():
             name = gmsh.model.getPhysicalName(dim, pg_tag)
@@ -539,6 +571,8 @@ class PhysicalGroups(_HasLogging):
             ``'tags'``   : ndarray(N,)   — node tags
             ``'coords'`` : ndarray(N, 3) — XYZ coordinates
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_nodes()")
         import numpy as np
         node_tags, coords = gmsh.model.mesh.getNodesForPhysicalGroup(dim, tag)
         result = {
@@ -556,6 +590,15 @@ class PhysicalGroups(_HasLogging):
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
+        # Reports the no-kernel case rather than raising: __repr__ runs
+        # in debuggers, logging and pytest output, where an exception
+        # would mask whatever is actually being inspected.
+        from apeGmsh.core._compose_errors import is_kernelless_session
+        if is_kernelless_session(self._parent):
+            return (
+                f"PhysicalGroups(model={self._parent.name!r}, "
+                f"no live gmsh kernel — from_h5 session)"
+            )
         groups = gmsh.model.getPhysicalGroups()
         return (
             f"PhysicalGroups(model={self._parent.name!r}, "

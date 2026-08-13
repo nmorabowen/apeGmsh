@@ -298,6 +298,105 @@ on Windows → `RuntimeError`. Everything is equally reachable headless:
   `TclEmitter().lines()`; count solves by monkeypatching
   `apeGmsh.sections._analysis.compute_warping`.
 
+## 10. Section documents + the builder GUI (ADR 0080)
+
+`SectionDocument` is versioned JSON (`SECTION_DOC_VERSION`, ADR 0023
+additive-minor window) describing ONE section. It is the source of
+truth; `launch_builder()` is an editor for it. **Parity law** — every
+GUI action is a document mutation, so anything the window does a
+script can do. One document, one lane.
+
+```python
+from apeGmsh.sections import (
+    SectionDocument, launch_builder, moment_curvature, handoff_snippet,
+)
+doc = SectionDocument.new(name="col500", kind="fiber", units="N, mm")   # or "continuum"
+doc = SectionDocument.open("col500.section.json"); doc.save(path)
+```
+
+**Continuum lane** — `add_shape(<one of the eight *_face>, id=, material=,
+translate=, rotate=, **params)`, `add_polygon(points, id=)`,
+`set_mesh(lc=, order=2)`, `set_disconnected("raise"|"sum")`;
+`build()` → `SectionProperties`. Booleans: **`add_embed(outer, inner)`
+is THE composite primitive** (cut with `remove_tool=False` then
+`fragment_pair`, one step) — the double-cover trap of §3 is not
+expressible through it. Raw `add_cut(target, tool, remove_tool=)` /
+`add_fragment_pair(a, b)` remain for non-overlapping work and
+sacrificial hole tools.
+
+**Fiber lane** — `add_patch_rect` / `add_patch_circ` /
+`add_layer_straight` / `add_point` / `set_GJ`, plus RC templates via
+`add_template(name, materials={role: mat_name}, **params)` with
+`rc_rect_column` / `rc_circ_column` / `rc_beam`. Templates are stored
+AS PARAMETERS and re-expanded on every `build()` (→ `FiberRecipe`), so
+editing `cover` moves every bar. `core_split=True` splits the concrete
+into confined-core + cover patches — roles become `("core", "cover",
+"bars")` instead of `("concrete", "bars")`, and `materials=` must cover
+the roles **exactly**.
+
+Template traps: `cover` is to the **bar centre**; `bars_x`/`bars_y`
+count bars per face **including corners** (4/4 → 12 bars, not 16: two
+straight layers of 4 plus `bars_y-2` interior points per side).
+
+**Materials** are dual-role: `set_material(name, E=, nu=, G=, fy=,
+density=, uniaxial=("<Type>", {...}))`. The continuum build needs the
+first role on used materials; the fiber handoff needs the second.
+`<Type>` is the token `ops.uniaxialMaterial.<Type>` takes (so
+`"ElasticMaterial"`, not `"Elastic"`).
+
+**Bars overlay** (continuum only, ADR 0080 B3): `add_bar(material=, x=,
+y=, area=)` / `add_bar_line(material=, n=, area=, start=, end=)` in
+AUTHORING coords. Resolved at handoff by appending bar `FiberPoint`s to
+the Gauss fibers. Concrete area is NOT deducted at bar locations.
+
+**Handoff** — fiber: `doc.to_section(ops)` → registered
+`ops.section.Fiber`. Continuum: `ops.section.ComputedSection(
+analysis=doc.build())` for the elastic lowering, `doc.to_section(ops)`
+when a bars overlay exists (the elastic lowering would silently drop
+it). `handoff_snippet(doc, path=...)` renders those lines paste-ready
+(the GUI's "Copy handoff"); `doc.export_script(path)` writes the
+equivalent plain apeGmsh script — one-way, round-trip editing is the
+JSON's job.
+
+**Moment–curvature** (fiber lane only):
+
+```python
+mc = moment_curvature(doc, axis="z", kappa_max=8e-5, n_steps=60, axial=-1500e3)
+mc.EI0        # first-step secant = the EXACT fiber sum ΣE·A·r²
+mc.M_max      # largest |M|, signed;  mc.curvature / mc.moment are tuples
+mc.complete   # False -> a step failed before κ max; the partial curve is valid
+```
+
+`axis="z"` is DOF 6 (elastic slope = `EIxx_c`), `"y"` is DOF 5
+(`EIyy_c`). `kappa_max` is SIGNED. `axial` is OpenSees-signed
+(compression negative), applied first then held with `loadConst`.
+**Two hard contracts**: it `wipe()`s the process-global OpenSees domain
+(never call it with a live analysis open), and it runs synchronously on
+the calling thread — openseespy is a non-reentrant C++ runtime, so it
+must NOT be moved onto a worker. (The B6 properties worker is threaded
+only because it drives Gmsh.) Documents with no `GJ` get an inert
+placeholder — the harness fixes the torsional DOF at both nodes.
+
+**GUI** — `launch_builder(path_or_doc=None, blocking=True)`; notebooks
+pass `blocking=False` (`%gui qt`). Same S6 contract as the inspector
+(Qt absent → `ImportError`; `QT_QPA_PLATFORM=offscreen` on Windows →
+`RuntimeError` from the launcher, window class stays
+offscreen-constructible). Drafting aids on the polygon tool: **F7**
+grid, **F9** object snap, **F8** ortho, typed `length<angle` / `dx,dy`
+/ `x,y`; the resolvers live Qt-free in `_drafting.py`. The live
+properties panel solves on a worker thread and **meshes in a child
+process** — Gmsh is one process-global, non-reentrant runtime, so
+driving it from a background thread of a process that also drives it
+from the main thread aborts the interpreter (no traceback). The
+process-wide runtime lock in `_session.py` serializes every *other*
+threaded Gmsh use; the worker sidesteps it entirely, because a session
+left open would hold that lock for its lifetime. Two optional deps,
+both fail-soft and
+never required headless: **apeSteel** (catalog picker prefills the
+`W_face` form in MILLIMETRES — and its `h` is the CLEAR web height, not
+catalog `d`; absent → picker hidden) and **openseespy / the Ladruno
+fork** (M–κ button; absent → greyed with guidance).
+
 ## Source map
 
 `src/apeGmsh/sections/`: `_analysis.py` (broker) · `_snapshot.py`
@@ -305,6 +404,13 @@ on Windows → `RuntimeError`. Everything is equally reachable headless:
 `_stress.py` (analyses) · `_lowering.py` (THE axis mapping — nothing
 else maps axes) · `_inspector.py` (Qt panel) · `_builder.py`
 (`g.sections` incl. `*_face`) · `_materials.py` / `_errors.py`.
+ADR 0080: `_document.py` (`SectionDocument`, and
+`typed_fiber_items` — THE recipe→primitives construction, shared by
+the handoff and the M–κ harness) · `_rc_templates.py` ·
+`_script_export.py` (export + the shared fiber renderers) ·
+`_handoff.py` · `_mc.py` · `_catalog.py` · `_builder_gui.py` ·
+`_drafting.py` · `_properties.py`.
 Bridge: `src/apeGmsh/opensees/section/computed.py`. Authoritative
-contract: ADR 0078; user guide:
-<https://nmorabowen.github.io/apeGmsh/concepts/sections/>.
+contracts: ADR 0078 (analyzer) + ADR 0080 (document/builder); user
+guides: <https://nmorabowen.github.io/apeGmsh/concepts/sections/> and
+<https://nmorabowen.github.io/apeGmsh/how-to/author-a-section-document/>.

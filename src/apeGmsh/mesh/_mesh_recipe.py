@@ -296,6 +296,15 @@ class _Recipe:
             prisms/tets conform to triangles), or make the neighbor
             structured too.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._mesh._parent, "g.mesh.recipe.check()",
+            alternative=(
+                "there is nothing to check on a chain-phase session — "
+                "this is a pre-mesh guard, and the broker snapshot is "
+                "already meshed"
+            ),
+        )
         conflicts = self._find_mixed_interfaces()
         if conflicts:
             lines = [

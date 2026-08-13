@@ -424,12 +424,10 @@ lin = results.lineage            # Lineage(...) — NEVER raises
 
 disp = results.nodes.get(component="displacement_z", pg="Top")
 
-# After-solve check — inspect, not a Qt window (ADR 0094 S0).
-print(fem.inspect.summary())
-print(results.inspect.summary())
-results.inspect.components()
-print(results.inspect.diagnose("displacement_z"))
-print(results.lineage.warnings)     # () = clean; never raises
+# After-solve check — assess, not a Qt window (ADR 0094). See assess.md.
+report = results.assess(figures=True)
+print(report.text)
+# report.figures: read_file each PNG; () if SKIP_VIEWER / no GL
 
 # Static matplotlib (headless; needs the [plot] extra)
 results.plot.contour("displacement_z", step=-1)
@@ -587,8 +585,8 @@ Reading the diagnostic:
 - **Omitting `model=`/`model_h5=` on a `Results` constructor.** Raises
   `TypeError` since ADR 0020 — every constructor needs a model.
 - **Opening Qt to check a solve.** After `Results.from_*` / `get_fem_data`,
-  print `fem.inspect.summary()`, `results.inspect.summary()` /
-  `components()` / `diagnose(...)`, and `results.lineage.warnings`.
-  `results.viewer()` default is auto (`blocking=None`); an explicit
-  `blocking=True` still crashes a Jupyter kernel. Open a viewer only
-  when the human asked.
+  `report = results.assess(figures=True)` (or `fem.assess()` pre-solve);
+  print `report.text`; `read_file` each PNG. Inspect is inventory. See
+  `assess.md`. `results.viewer()` default is auto (`blocking=None`); an
+  explicit `blocking=True` still crashes a Jupyter kernel. Open a viewer
+  only when the human asked.

@@ -76,6 +76,12 @@ from apeGmsh.core.Part import Part
 from apeGmsh.core._parts_registry import PartsRegistry, Instance
 from apeGmsh.parts import Axis1D, DRMBox, DRMBoxResult
 from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
+# The two interface-law value types (ADR 0093 D1) are exported here
+# because, unlike every other constraint def, the USER constructs them
+# and passes them to `g.constraints.interface(...)`. Reaching into
+# `_kernel.records._constraints` for a headline argument would make a
+# private module part of the public contract.
+from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
 from apeGmsh.mesh.FEMData import FEMData, MeshInfo
 from apeGmsh.mesh._group_set import PhysicalGroupSet, LabelSet
 from apeGmsh.mesh.Mesh import (
@@ -192,6 +198,8 @@ __all__ = [
     "DRMBox",
     "DRMBoxResult",
     "ConstraintsComposite",
+    "NormalLaw",
+    "TangentialLaw",
     "FEMData",
     "MeshInfo",
     "PhysicalGroupSet",

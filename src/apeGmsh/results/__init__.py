@@ -22,6 +22,7 @@ Quick start
     for mode in results.modes:
         print(mode.mode_index, mode.frequency_hz)
 """
+from ._plane_recovery import OutOfPlaneRecoveryWarning
 from ._slabs import (
     ElementSlab,
     FiberSlab,
@@ -65,4 +66,6 @@ __all__ = [
     "FiberSlab",
     "LayerSlab",
     "LocalAxes",
+    # 2-D out-of-plane recovery advisory (filterable)
+    "OutOfPlaneRecoveryWarning",
 ]

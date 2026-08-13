@@ -979,6 +979,15 @@ class SectionsBuilder(_HasLogging):
         covering it (the ``*_face`` builders' auto-PG) — falling back
         to the entity tag.  Matplotlib only; returns the ``Axes``.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.sections.plot_faces()",
+            alternative=(
+                "BRep geometry is not stored in model.h5, so there is "
+                "nothing to preview — run this in the session that "
+                "still owns the geometry, before saving"
+            ),
+        )
         import matplotlib.pyplot as plt
         import numpy as np
 

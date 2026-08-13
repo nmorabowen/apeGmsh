@@ -529,6 +529,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.geometry()")
         _, ax = self._ensure_axes()
         collected: list[ndarray] = []
 
@@ -634,6 +636,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.mesh()")
         _, ax = self._ensure_axes()
 
         # Collect every entity whose mesh elements we can draw.  Both
@@ -737,6 +741,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.quality()")
         fig, ax = self._ensure_axes()
 
         coords = self._build_node_lookup()
@@ -828,6 +834,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.label_entities()")
         _, ax = self._ensure_axes()
         dim_colors = {
             0: self.COLOR_POINTS,
@@ -906,6 +914,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.label_nodes()")
         _, ax = self._ensure_axes()
 
         node_tags, coords_flat, _ = gmsh.model.mesh.getNodes(
@@ -960,6 +970,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.label_elements()")
         _, ax = self._ensure_axes()
 
         # Build node-tag -> XYZ lookup (needed for centroid computation)
@@ -1099,6 +1111,8 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.plot.physical_groups()")
         gmsh.model.occ.synchronize()
         _, ax = self._ensure_axes()
 
@@ -1253,6 +1267,9 @@ class Plot(_HasLogging):
         -------
         self — for method chaining
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.plot.physical_groups_mesh()")
         _, ax = self._ensure_axes()
 
         groups = list(gmsh.model.getPhysicalGroups())

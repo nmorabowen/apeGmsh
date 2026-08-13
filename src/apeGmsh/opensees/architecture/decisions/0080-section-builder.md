@@ -1,9 +1,13 @@
 # ADR 0080 — Interactive section builder (`SectionDocument` + Qt builder GUI)
 
-**Status:** Proposed (2026-07-19) — **design RATIFIED by the user
-2026-07-19** after the drafting-aids addition (#838): the runway
-B1–B7 is authorized; this ADR flips to Accepted at close-out with the
-per-slice PR numbers, per house convention. Ratified scope decisions:
+**Status:** Accepted (2026-08-12) — **design RATIFIED by the user
+2026-07-19** after the drafting-aids addition (#838); shipped in seven
+slices, all `--base main`: B1 continuum document #840 · B2 fiber lane +
+RC templates #841 · B3 `bars=` overlay #842 (gate **G-E passed**) ·
+B1–B3 adversarial-review hardening #844 · B4 script export #845 · B5
+GUI shell + drafting aids #846 · B6 live properties panel + worker
+builds #847 · B7 extras + close-out (this flip + docs + skill §10).
+Ratified scope decisions:
 authoring = parametric palette **plus** a straight-segment
 freehand polygon tool in v1, with AutoCAD-style drafting aids (grid +
 object snap, ortho, dynamic length/angle input — see the canvas
@@ -309,6 +313,95 @@ gate G-E is blocking for exactly that reason.
 | B6 | Live properties panel (inspector embed) + worker-thread build | no-solve-on-UI-thread assertion; panel refresh == headless `build()` results |
 | B7 | Extras: catalog picker (apeSteel fail-soft), `moment_curvature` + M–κ preview (openseespy fail-soft), handoff snippet | catalog prefill vs apeSteel values; M–κ slope vs analyzer/fiber-sum `EI`; snippet round-trip compiles |
 | — | Close-out: how-to + guide + skill reference §, CHANGELOG, flip to Accepted | docs build; skill mirror sync; completeness critic pass |
+
+### B7 as shipped — three deltas from the plan above
+
+1. **`moment_curvature` is synchronous and stays that way.** The plan
+   said "in-process openseespy"; the shipped contract makes the thread
+   an *invariant*, not an implementation detail. openseespy is a
+   non-reentrant process-global C++ runtime, so a worker-thread M–κ
+   would abort the interpreter below Python's reach — the same class as
+   the open B6 finding below. The GUI therefore calls it directly on
+   the UI thread (a 2-node harness; cost is the step count, not a
+   mesh), which is a deliberate carve-out from the S6 no-solve-on-the-
+   UI-thread law: that law exists to keep *Gmsh meshing and warping
+   solves* off the UI thread, and the alternative here trades a
+   sub-second block for a crash class. The function also `wipe()`s the
+   global domain, which is documented at every entry point.
+2. **The catalog picker is scoped to doubly-symmetric I shapes.**
+   apeSteel exposes clean plate geometry only through
+   `get_doubly_symmetric_i_geometry`, which maps 1:1 onto `W_face`;
+   HSS / pipe / channel / angle / tee have no geometry accessor to
+   prefill from. The fiber lane has no `W` item to prefill either (a
+   `W_fiber`-style document item would be new schema, out of B7's
+   scope), so the picker is continuum-lane only. Label enumeration
+   reads a private apeSteel table and is best-effort by contract.
+3. **Two extractions instead of two copies.** `to_section`'s typed-item
+   construction became `_document.py::typed_fiber_items` and
+   `_script_export`'s fiber renderers became shared helpers, so the M–κ
+   harness, the deck handoff, the script export, and the snippet all
+   lower one document exactly one way. This is what makes the B7 gate
+   ("snippet deck == `to_section` deck, byte-identical") structurally
+   true rather than coincidentally true.
+
+## Recorded follow-ups (not in this runway)
+
+- ~~**Gmsh on the B6 properties worker can abort the process.**~~
+  **RESOLVED** — `_session.py` grows a process-wide re-entrant
+  **runtime lock** held from `_gmsh_acquire` to the matching
+  `_gmsh_release`, so gmsh work from different threads serializes
+  instead of interleaving. `_GMSH_INIT_LOCK` guarded the init refcount
+  only, never the `gmsh.model.*` calls between acquire and release;
+  two live sessions therefore interleaved on one process-global,
+  non-reentrant C++ runtime and tripped a C-level `abort()` that
+  `build_document`'s `except Exception` could not catch.
+
+  The lock lives inside `_gmsh_acquire`/`_gmsh_release`, so it covers
+  every call site with no new plumbing, and is re-entrant so nested
+  sessions do not self-block. Its rule: **never wait on another
+  thread's gmsh work while holding it.**
+
+  **The B6 worker does not take the lock — it meshes in a child
+  process** (`sections/_mesh_proc.py` + `_mesh_worker.py`). Serializing
+  the worker was tried first and is safe but not useful: a session the
+  user left open holds the lock for its whole lifetime, so the worker
+  never gets a turn and the panel stays grey until they close it. (That
+  showed up immediately — three B6 tests began failing in the shared
+  suite, correctly, because sessions there outlive individual tests.)
+  Moving the meshing out removes the contention rather than managing
+  it.
+
+  The split is cheap because the analyzer touches no gmsh at all —
+  `_analysis`, `_geometric`, `_warping`, `_plastic`, `_stress`, `_fe`
+  work purely over the `FEMData` snapshot — and `FEMData` pickles in
+  ~90 KB. So only the mesh crosses the boundary (330–580 ms on an SRC
+  composite) while the solve, the *expensive* half at 0.1–1.0 s, is
+  rebuilt and run back on the worker thread. Rebuilding there also
+  keeps a **live** `SectionProperties` for the inspector to drive
+  interactively (`analysis.stress(**loads)`), which a "return the
+  numbers" split would have lost. `SectionDocument` grows the seam:
+  `build_fem()` and `analysis_from_fem(fem)`.
+
+  Gate: `tests/test_gmsh_runtime_lock.py` asserts the invariant itself —
+  eight threads opening real sessions, occupancy never above 1 — plus
+  re-entrancy, the bounded wait, that the worker builds *while another
+  thread holds the runtime*, and that it takes zero acquires. Those
+  threading assertions run in **child interpreters**: the invariant is a
+  property of a process, and the shared suite process has sessions of
+  its own open. That also makes the **positive control automatic** — with
+  the lock stubbed out and nothing else changed, the workload kills the
+  interpreter outright, no traceback.
+  `tests/sections/test_mesh_subprocess.py` gates the relocation (the
+  child's mesh reproduces an in-process build's area, `EIxx_c`, `GJ`,
+  `Mp_xx`), and the three B6 worker tests pass **unchanged**.
+- **A1 payload `"doc"` key** — record the originating document in the
+  `/opensees/computed_sections` provenance sidecar (raised at
+  ratification, deliberately not implemented here).
+- **The pre-ADR `src/sections/` package** (`RectangularColumnSection`,
+  used by `examples/moment_curvature_fiber_section.ipynb`) is now
+  superseded in substance by `rc_rect_column` + `moment_curvature`, and
+  becomes a delete candidate once that notebook is ported. PR 935's
+  dead-code sweep deliberately kept it; nothing else offered M–κ then.
 
 ## Reference
 

@@ -1143,6 +1143,18 @@ class RebarComposite:
         path). A Line3 cell keeps its two corner endpoints (the structural
         bar is straight-segment in v1). No-op when nothing opted in.
         """
+        # Reached only from the live extraction path (_fem_factory,
+        # itself gated on a non-empty _emit_members), so this fires
+        # only for a direct call on a chain-phase session.
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.rebar.resolve()",
+            alternative=(
+                "fem.elements — the resolved RebarElementRecords are "
+                "captured at extraction and round-trip through model.h5, "
+                "so a chain-phase session already carries them"
+            ),
+        )
         out: list[RebarElementRecord] = []
         for m in self._emit_members:
             segments: list[tuple[int, int]] = []

@@ -44,7 +44,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/api-cheatsheet.md`** — one-page map of every session
   composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
   `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
-  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes,
+  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes
+  + `interface()` unilateral coincident-pair springs,
   `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
   `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
   standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`
@@ -68,12 +69,17 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   **remote SLURM runs** (`ops.run_remote` / `apeGmsh.hpc`, ADR 0060), and
   **which OpenSees runs** (`OpenSeesTarget` / `ops.capabilities()`). Read this
   for any OpenSees generation task.
+- **`references/assess.md`** — after `generate()` / `get_fem_data` /
+  `Results.from_*`: `assess()` (verdict) then stills; closed finding
+  catalog and code → next action. Not Qt. Read this for any
+  post-mesh / post-solve check.
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, the **after-solve inspect check**
-  (`fem.inspect`, `results.inspect.summary()` / `components()` /
-  `diagnose()`, not Qt), **user-defined scalar expressions**
+  `results.lineage`, the **after-solve assess check**
+  (`fem.assess()` / `results.assess()`, then `read_file` on
+  `report.figures`; inspect stays inventory — see `assess.md`),
+  **user-defined scalar expressions**
   (`results.nodes.define` / `results.elements.gauss.define`, `mag(...)`,
   ADR 0076 — custom fields like `"von_mises_stress/250"` that show in the
   viewer picker), the **web viewers** (`show_web` / `serve_web`,
@@ -106,9 +112,14 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   OpenSees handoff (`ops.section.ComputedSection(analysis=)` /
   `to_elastic_section` — one lowering owns `Ixx_c→Iz` / `As_y/A→alphaY`,
   `ndm=` form selection, composite reference-moduli rules), and the Qt
-  inspector (`sec.viewer(blocking=False)` in notebooks). Read for any
-  section-property, torsion-constant, shear-area, or "compute my custom
-  section" task.
+  inspector (`sec.viewer(blocking=False)` in notebooks). §10 covers ADR
+  0080 — `SectionDocument` (versioned JSON, continuum + fiber lanes, RC
+  templates, the `add_embed` composite primitive, the `bars=` overlay),
+  the `launch_builder()` Qt editor and its parity law, `moment_curvature`
+  (fiber lane, wipes the OpenSees domain, never on a worker), and
+  `handoff_snippet` / `export_script`. Read for any section-property,
+  torsion-constant, shear-area, RC-section, moment–curvature, or
+  "compute / author my custom section" task.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.
@@ -190,7 +201,11 @@ carries multi-point constraints (`fem.nodes.constraints`,
 `equalDOF` / `rigidLink` / `rigidDiaphragm` / `ASDEmbeddedNodeElement` deck
 lines (and an `ops.constraints.Transformation()` handler when present); per-node
 ndf is inferred from element classes and wired in too. **Do not hand-emit
-these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.)
+these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.) The
+same is true of the side-lists that emit *elements* rather than MP equations:
+`fem.elements.contacts` and `fem.elements.interfaces`
+(`g.constraints.interface()`, the unilateral + slip-capped coincident-pair
+`zeroLength` bed — ADR 0093).
 
 ## Core workflow
 
@@ -270,22 +285,22 @@ capture the OS desktop or the human Qt window.
    *requires* `model=` (`from_mpco` requires `model_h5=`). See
    `references/results.md`.
 7. **Don't open Qt to check a solve — and don't capture the human's
-   screen.** After `get_fem_data` / `Results.from_*`, print
-   `fem.inspect.summary()`, `results.inspect.summary()` /
-   `components()` / `diagnose(...)`, and `results.lineage.warnings`.
-   Eyes go to **visors**: `results.render("…png")` (Qt-look stills,
-   ADR 0094) and labeled matplotlib (`results.plot.*`) written under
-   `.apegmsh/visors/`, then `read_file` those PNGs. Never
-   `CopyFromScreen` / OS screenshot the desktop or the live viewer.
-   Qt / web viewers are for humans who asked to look.
+   screen.** After `get_fem_data` / `Results.from_*`,
+   `report = fem.assess()` / `results.assess(figures=True)`; print
+   `report.text`; `read_file` each PNG in `report.figures`; act on
+   `severity="error"`. Inspect is inventory, not the verdict. Extra
+   stills go under `.apegmsh/visors/` via `results.render` / labeled
+   `results.plot.*` — never OS-screenshot the desktop or the live
+   viewer. Qt / web viewers are for humans who asked to look.
    `results.viewer()` default is `blocking=None` (auto: scripts block,
    a Jupyter kernel spawns a subprocess or falls back to `show_web()`
    for in-memory Results). An explicit `blocking=True` still kills a
-   Jupyter kernel. See `references/results.md`.
+   Jupyter kernel. See `references/assess.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
-`fem-broker.md`; `LineageError` / viewer crash → `results.md`;
+`fem-broker.md`; finding codes / after-solve check → `assess.md`;
+`LineageError` / viewer crash → `results.md`;
 `MeshRecipeError` / selection → `api-cheatsheet.md`; `GeometryValidationError`
 → `gotchas.md`; `SectionMeshError` / `CompositeSectionError` /
 `SectionAnalysisError` → `section-properties.md`.

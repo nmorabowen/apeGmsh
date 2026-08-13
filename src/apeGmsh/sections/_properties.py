@@ -82,28 +82,44 @@ def fiber_identities(recipe: Any) -> "dict[str, Any]":
 def build_document(doc_dict: "dict[str, Any]") -> BuildResult:
     """Build + analyze one document state (the default heavy builder).
 
-    Continuum: a private Gmsh session → analyzer → geometric/warping/
-    plastic + unit stress fields (via
+    Continuum: mesh → analyzer → geometric/warping/plastic + unit stress
+    fields (via
     :func:`~apeGmsh.sections._inspector.precompute_analyses`). Fiber: the
     deterministic recipe expansion → :func:`fiber_identities`. Any
     failure (unset mesh, disconnected section, mesh error) is captured
     as ``error`` rather than raised — a bad edit greys the panel, it
     does not crash the worker.
+
+    **The meshing runs in a child process; the solve runs here.** Gmsh
+    is one process-global, non-reentrant C++ runtime: driving it from
+    this worker while the main thread drives its own sessions aborts the
+    interpreter outright, below the reach of the ``except`` below.
+    Serializing with the runtime lock would be safe but not *useful*
+    here — a session the user left open holds that lock for its whole
+    lifetime, so the panel would never refresh. Meshing out of process
+    removes the contention instead (:mod:`._mesh_proc`).
+
+    The analyzer stays in-process on this worker thread: it is pure
+    NumPy over the returned snapshot, it is the expensive half, and
+    keeping it here leaves the panel a **live** ``SectionProperties`` to
+    drive interactively.
     """
     from ._document import SectionDocument
     from ._inspector import precompute_analyses
+    from ._mesh_proc import mesh_document
 
     key = canonical_state(doc_dict)
     try:
         doc = SectionDocument(doc_dict)
         if doc.kind == "continuum":
-            analysis = doc.build()
-            stress_ok = precompute_analyses(analysis)
+            fem = mesh_document(doc_dict)               # child process
+            analysis = doc.analysis_from_fem(fem)
+            stress_ok = precompute_analyses(analysis)   # here, no gmsh
             return BuildResult(
                 key=key, kind="continuum",
                 analysis=analysis, stress_available=stress_ok,
             )
-        recipe = doc.build()
+        recipe = doc.build()        # fiber lane opens no session
         return BuildResult(
             key=key, kind="fiber",
             identities=fiber_identities(recipe),

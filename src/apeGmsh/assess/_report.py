@@ -1,9 +1,12 @@
 """Markdown report text for :class:`AssessmentReport`."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from ._types import Finding
 
 _MAX_LISTED = 24
+NO_STILLS = "no stills; numbers only"
 
 
 def render_text(
@@ -11,6 +14,8 @@ def render_text(
     skipped: tuple[tuple[str, str], ...],
     *,
     source: str,
+    figures: tuple[Path, ...] = (),
+    figure_note: str | None = None,
 ) -> str:
     """Build the agent-facing markdown (target ~40–80 lines when busy)."""
     errors = [f for f in findings if f.severity == "error"]
@@ -57,6 +62,17 @@ def render_text(
         for code, reason in skipped:
             lines.append(f"- `{code}` — {reason}")
         lines.append("")
+
+    if figure_note is not None or figures:
+        lines.append("## Figures")
+        lines.append("")
+        if figure_note is not None:
+            lines.append(figure_note)
+            lines.append("")
+        else:
+            for path in figures:
+                lines.append(f"- `{path}`")
+            lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 

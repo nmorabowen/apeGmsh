@@ -159,6 +159,17 @@ class _Partitioning:
     Accessed via ``g.mesh.partitioning``.
     """
 
+    # The partition *mutations* below carry the freeze guard; these
+    # four members instead READ the kernel (or write it out), so they
+    # take the kernel guard and stay legal on a live post-extraction
+    # session, which still has a partitioned mesh to report on.
+    _H5_ALTERNATIVE = (
+        "fem.partitions (PartitionSet), where "
+        "fem = g.mesh.queries.get_fem_data(); to persist a chain-phase "
+        "model use g.save(path), which round-trips partitions through "
+        "model.h5"
+    )
+
     def __init__(self, parent_mesh: "Mesh") -> None:
         self._mesh = parent_mesh
         # Per-element weights from the most-recent weighted ``partition()``
@@ -166,6 +177,13 @@ class _Partitioning:
         # entry so ``summary()``/``_gather_partition_info()`` know whether
         # to populate ``PartitionInfo.weights_per_partition``.
         self._last_weights: dict[int, float] | None = None
+
+    def _require_kernel(self, verb: str) -> None:
+        """Refuse a query that would read the absent gmsh kernel."""
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._mesh._parent, verb, alternative=self._H5_ALTERNATIVE,
+        )
 
     # ------------------------------------------------------------------
     # Renumbering
@@ -909,10 +927,16 @@ class _Partitioning:
 
     def n_partitions(self) -> int:
         """Return the current number of partitions (0 if not partitioned)."""
+        self._require_kernel("g.mesh.partitioning.n_partitions()")
         return gmsh.model.getNumberOfPartitions()
 
     def summary(self) -> str:
         """Concise text summary of the partition state."""
+        # Guarded at its own verb rather than inheriting the one from
+        # n_partitions() below: unguarded against an empty kernel this
+        # reports "not partitioned" for a model whose broker may hold
+        # partitions — a wrong answer, not a failure.
+        self._require_kernel("g.mesh.partitioning.summary()")
         n = self.n_partitions()
         model_name = getattr(
             getattr(self._mesh, '_parent', None), 'name', '?')
@@ -950,6 +974,7 @@ class _Partitioning:
             Columns: ``dim``, ``tag``, ``partitions``,
             ``parent_dim``, ``parent_tag``.
         """
+        self._require_kernel("g.mesh.partitioning.entity_table()")
         import pandas as pd
 
         rows: list[dict] = []
@@ -1009,6 +1034,10 @@ class _Partitioning:
         -------
         self — for chaining
         """
+        # Without this, a kernel-less session does not merely fail — it
+        # writes whatever empty model gmsh happens to hold, producing a
+        # plausible-looking mesh file with no elements in it.
+        self._require_kernel("g.mesh.partitioning.save()")
         path = Path(path)
         gmsh.option.setNumber(
             "Mesh.PartitionCreateTopology", int(create_topology))

@@ -288,6 +288,34 @@ axes from the master face geometry, per-pair tributary-scaled materials.
   N-rank decks are byte-comparable. `uncuttable_elements=`
   (`mesh/_mesh_partitioning.py:289`) remains an optional optimization to
   reduce ghosting — never a correctness requirement.
+
+  *Amended during S8 (adversarial review).* Two scope corrections from
+  the shipped implementation:
+
+  1. **"Byte-comparable" is conditional as a flat↔partitioned claim.**
+     The interface pre-pass runs right after `allocate_element_tags`,
+     but the MP passes that also mint elements (rigid-body /
+     kinematic-coupling / ASDEmbeddedNodeElement) allocate **inside the
+     per-rank loop**, while the flat path allocates them *before*
+     `emit_interfaces` — so a model combining interfaces with an
+     element-minting MP record has interface tags that drift between
+     the flat and partitioned decks (measured: zeroLength 21-24
+     partitioned vs 25-28 flat with a coexisting
+     `g.constraints.embedded`). Cross-rank determinism, exactly-once
+     emission and global tag uniqueness hold unconditionally; full flat
+     identity for combined models would require pre-allocating the MP
+     element tags too — a named follow-up, not S8. Pinned by the
+     mixed-model regression in
+     `tests/opensees/integration/test_interface_partitioned_emit.py`.
+  2. **A pattern-borne `sp` on a ghosted slave is refused at plan
+     time.** The ghost replay stream carries the model-level `fix` tier
+     only; pattern `sp` lines fan out on a node's native ranks and are
+     never mirrored onto a ghost, so a prescribed displacement on a
+     ghosted interface slave would leave the owner rank's copy
+     unconstrained — the ADR 0027 INV-2 measured singular-matrix case.
+     Folding pattern `sp` into the ghost stream is a named follow-up;
+     until then the emit refuses loudly, advising
+     `uncuttable_elements=`, `ops.fix`, or serial emit.
 - **INV-6 — staged: claimable by name, emitted on the equilibrated ground.**
   `g.constraints.interface(..., name="RockLinerInterface")` +
   `s.interface(name="RockLinerInterface")` inside a stage claims the records
@@ -340,7 +368,8 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    carries a strain): `E ∝ A_trib` with `epsyP` constant across pairs for
    `epp`, `|Fy| ∝ A_trib` for `epp_gap`, `E ∝ A_trib` for `ent`; ordering
    phantom → equalDOF → materials → zeroLength; temporary named partitioned
-   refusal until S8. *(mid / top)*
+   refusal until S8 (*that refusal is lifted — S8 shipped 2026-08-12*).
+   *(mid / top)*
 6. **S6 — h5 round-trip + compose**: payload dtype
    (`mesh/_record_h5.py`, pattern `contact_payload_dtype:447`),
    encode/write/read/decode registered in `write_neutral_zone` and the read
@@ -368,10 +397,66 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    side-list emit in the codebase, not a port of an existing one. *(**top** implements / two independent mid-tier refuters —
    the ADR 0092 lesson: the duplicate-emission failure converges to a
    plausible wrong answer that equilibrium checks cannot catch)*
+
+   *Landed 2026-08-12; survived both refuters (no correctness
+   refutation; the suite mutation-tested — forced every-rank emission
+   fails 4/8 integration gates).* Shape: `_plan_rank_interfaces` +
+   `allocate_interface_tags` (`build.py`), `_emit_interfaces_partitioned`
+   at step 7c-bis of the per-rank loop (`apesees.py`), the shared
+   `_emit_interface_record` core consuming pre-allocated tag triples on
+   every path (flat decks verified byte-identical to pre-S8). Refuter
+   fixes folded in: the flat↔partitioned tag-identity conditional and
+   the pattern-`sp`-on-ghost refusal (both recorded as the INV-5 S8
+   amendment above), plus a shared flat/partitioned guard refusing an
+   UNCLAIMED interface whose endpoint is a stage-bound node (the base
+   pass would reference a node that only exists inside the stage block;
+   the fix is the S7 claim, `s.interface(name=)`).
 9. **S9 — partitioned + staged combo** (the campaign scenario): interface
    claimed into a stage under MPI; extends `_emit_stages_partitioned`
    (`apesees.py:2771`); ghost SP replay across the stage boundary. *(top /
    mid)*
+
+   *Landed 2026-08-12 (probe pending).* Shape: the S9 refusal is
+   retired; the base per-rank plan takes the UNCLAIMED subset and
+   `_plan_stage_interfaces_partitioned` builds one INV-5 owner/ghost
+   plan per stage (same single-owner + master-native assertions, same
+   pattern-sp-on-ghost refusal, plus a named refusal for claiming
+   into a stage EARLIER than the one owning an endpoint's topology —
+   under MP that deck would run with the interface pushing on a
+   floating ghost). Claimed rows join the S8 tag pre-pass in the
+   sequence the serial-staged deck consumes the allocator (unclaimed
+   flat order, then per-stage claim order), so serial-staged and
+   partitioned-staged decks are tag-comparable under the same S8
+   conditional. The unit emits inside the owner rank's stage bracket
+   after the stage MP constraints (the flat `emit_stage_interfaces`
+   position), reusing `_emit_interfaces_partitioned` with the
+   stage-inclusive ghost SP stream and the rank's live ghost registry
+   — ghosts replay stage-bound `s.fix` across the stage boundary and
+   later stages mirror their SP deltas onto held ghosts (ADR 0027
+   INV-2, both directions). Measured (the interface numeric twin,
+   `tests/opensees/subprocess/test_interface_partitioned_numeric_twin.py`,
+   serial vs 2-rank OpenSeesMP): worst relative delta 3.6e-15 across
+   the S8 base push+shear / pull cases and the staged liner install +
+   service increment (the service increment is the case that actually
+   loads the staged interface; tangential slip saturation is S10
+   acceptance territory); the staged `zeroLength` is born STRAIN-FREE
+   on the equilibrated ground (install-stage `eleResponse …
+   deformation` exactly 0.0 against a raw relative displacement of
+   2.3e-4; post-install increments carry the compression ordering in
+   increment space) — the INV-6 install-on-equilibrated-ground
+   semantics, now measured.
+
+   *Probe fix (S9 refuter).* An ADR 0052 `s.support` HOLD on a
+   ghosted interface slave was neither refused nor mirrored — the
+   HOLD's `sp … [nodeDisp …] -const` lines fan out on native ranks
+   only, the owner rank's ghost stays free, and the 2-rank deck runs
+   CLEAN to a plausible wrong answer (measured: 26.4% base-reaction /
+   12.5% master-displacement error, while `s.fix` in the same slot
+   agrees with serial to 1e-16). The ghost-sp refusal now sweeps
+   every stage's `support_records` for both the unclaimed (S8) and
+   claimed (S9) plans. Folding the HOLD into the ghost replay would
+   need the runtime `[nodeDisp …]` capture replayed on the owner
+   rank — a named follow-up, not S9.
 10. **S10 — acceptance battery** (the requester's own checks): bonded limit
     (stiff bilateral laws) reproduces `tie` on the same mesh; unilateral
     zero-tension with free separation, both signs, curved master, for both
@@ -380,6 +465,26 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
     precision; h5 round-trip → emit byte-identity; compose invariance;
     1-vs-N rank identity; MPCO springs channels readable per pair. *(mid /
     light runs+verifies)*
+
+    *Amended 2026-08-13 during S10 — the bonded reference is `equal_dof`,
+    not `tie`.* The two verbs' domains are **disjoint in v1, so the
+    comparison as written is not constructible**: `tie` is a face
+    constraint that refuses anything but dim=2 surfaces or dim=3 volumes
+    (`_faces_from_dimtags`, `core/ConstraintsComposite.py:2449-2456`),
+    while `interface()` is 2D-line-masters-only (D2) — there is no mesh
+    both verbs accept. `equal_dof` is also the *stronger* reference:
+    `tie`'s default enforcement is itself a penalty
+    (`ASDEmbeddedNodeElement`), so bonded-limit-vs-`tie` would have
+    compared one penalty against another, whereas `equal_dof` is an exact
+    kinematic constraint on the very coincident pairs the verb produces.
+    Measured convergence is clean 1/k: max nodal displacement error
+    1.79e-07 (x) / 2.18e-07 (y) at `k_per_area=1e14`, 1.79e-09 / 2.18e-09
+    at 1e16 — ratio 99.9999 over the 100× stiffness step, against a bound
+    derived from the spring bed's axial, shear **and rotational**
+    compliance (`θ = 12M/k·t·L³`, the dominant term; an axial-only bound
+    predicts 8e-8 and would have failed the honest check). The `tie`
+    comparison becomes constructible when 3D surface masters land, and is
+    owed then.
 11. **S11 — docs + skill**: `docs/api/constraints.md` taxonomy row + tier
     section + mkdocstrings block; a placing paragraph in
     `docs/concepts/constraints.md`; CHANGELOG below the anchor (union-merge

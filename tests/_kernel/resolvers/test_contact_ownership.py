@@ -15,6 +15,7 @@ from apeGmsh._kernel.records._partitions import PartitionRecord
 from apeGmsh._kernel.resolvers._contact_ownership import (
     ContactOwnership,
     master_backing_element_ids,
+    master_node_rank_span,
     resolve_contact_ownership,
 )
 
@@ -277,8 +278,11 @@ class TestMasterBackingElementIds:
     A master facet lies on the body's boundary, so exactly one solid
     element contains all of its nodes — that element is the facet's
     backing solid, and its rank is the ownership property ``-kn auto``
-    actually needs. Anything ambiguous returns ``None`` (fall back to the
-    node tally), never a guess.
+    actually needs. An ambiguous facet yields a per-facet ``None``
+    (2026-08-13 review F2 — the old all-or-nothing ``None`` let one
+    ambiguous facet disengage the INV-4 backstop for the whole surface);
+    a record-level ``None`` survives only for records with no usable
+    facet connectivity. Never a guess either way.
     """
 
     def test_boundary_facets_resolve_to_their_unique_solid(self) -> None:
@@ -307,18 +311,19 @@ class TestMasterBackingElementIds:
 
         assert master_backing_element_ids(rec, groups) == (7, 8)
 
-    def test_uncovered_facet_node_returns_none(self) -> None:
-        # Node 99 belongs to no element — the map is unresolvable and the
-        # caller must fall back to the node tally, not guess.
+    def test_uncovered_facet_node_yields_per_facet_none(self) -> None:
+        # Node 99 belongs to no element — THAT facet is unresolvable
+        # (per-facet None, review F2); the caller decides what to do
+        # with the partial map, never guesses.
         rec = _nts([[5, 6, 99]], slave_nodes=[50])
         groups = [(
             np.asarray([7], dtype=np.int64),
             np.asarray([[5, 6, 10, 20]], dtype=np.int64),
         )]
 
-        assert master_backing_element_ids(rec, groups) is None
+        assert master_backing_element_ids(rec, groups) == (None,)
 
-    def test_interior_face_with_two_candidates_returns_none(self) -> None:
+    def test_interior_face_with_two_candidates_yields_none_entry(self) -> None:
         # Both tets contain the whole facet (an interior face) — ambiguous.
         rec = _nts([[5, 6, 10]], slave_nodes=[50])
         groups = [(
@@ -329,7 +334,24 @@ class TestMasterBackingElementIds:
             ], dtype=np.int64),
         )]
 
-        assert master_backing_element_ids(rec, groups) is None
+        assert master_backing_element_ids(rec, groups) == (None,)
+
+    def test_one_ambiguous_facet_keeps_the_resolved_neighbours(self) -> None:
+        # Review F2's exact shape: the old contract returned None for the
+        # WHOLE surface when one facet was ambiguous, silently skipping
+        # the INV-4 cut-master check on the resolved rest. Now the
+        # resolved facets keep their ids and only the ambiguous one is
+        # None.
+        rec = _nts([[5, 6, 10], [6, 9, 10], [5, 6, 99]], slave_nodes=[50])
+        groups = [(
+            np.asarray([7, 8], dtype=np.int64),
+            np.asarray([
+                [5, 6, 10, 20],     # tet 7 backs facet [5,6,10]
+                [6, 9, 10, 21],     # tet 8 backs facet [6,9,10]
+            ], dtype=np.int64),
+        )]
+
+        assert master_backing_element_ids(rec, groups) == (7, 8, None)
 
     def test_no_master_faces_returns_none(self) -> None:
         rec = ContactRecord(kind="contact", formulation="nts",
@@ -410,3 +432,74 @@ class TestElementExactOwnerPick:
         )
 
         assert result.owner_rank == 0   # node majority (3 vs 1)
+
+
+class TestPlaneUndecidableTieMessage:
+    """Review F4: the undecidable-tie refusal must be accurate per lane.
+
+    A ContactPlaneRecord has no master surface and the resolver never
+    consults element ownership for it (``master_element_ranks`` is
+    ignored), so the old message — "disambiguate with element ownership"
+    — was advice the code cannot take. The plane lane names the slave
+    tally and suggests not cutting the slave surface instead.
+    """
+
+    def _tied_plane_parts(self):
+        rec = _plane([1, 2, 3, 4])
+        parts = [
+            _partition(1, [1, 2, 3, 4, 20]),
+            _partition(2, [1, 2, 3, 4, 30]),
+        ]
+        return rec, parts
+
+    def test_plane_tie_names_the_slave_tally(self) -> None:
+        rec, parts = self._tied_plane_parts()
+
+        with pytest.raises(ValueError) as excinfo:
+            resolve_contact_ownership(rec, parts)
+        msg = str(excinfo.value)
+        assert "cannot choose an owner rank" in msg
+        assert "SLAVE surface" in msg
+        assert "no master surface" in msg
+        assert "cutting the slave surface" in msg
+        # The master-lane advice must NOT leak into the plane lane:
+        # ownership is never consulted for a plane.
+        assert "Disambiguate with element ownership" not in msg
+        assert "backing solid elements" not in msg
+
+    def test_master_lane_message_unchanged(self) -> None:
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30, 31])
+        parts = [
+            _partition(1, [10, 11, 12, 13, 20, 21]),
+            _partition(2, [10, 11, 12, 13, 30, 31]),
+        ]
+
+        with pytest.raises(ValueError, match="element ownership"):
+            resolve_contact_ownership(rec, parts)
+
+
+class TestMasterNodeRankSpan:
+    """Node-view rank span of the master surface (review F2/F3 helper)."""
+
+    def test_single_rank_master(self) -> None:
+        rec = _nts([[1, 2, 3, 4]], slave_nodes=[9])
+        parts = [
+            _partition(1, [1, 2, 3, 4]),
+            _partition(2, [9]),
+        ]
+
+        assert master_node_rank_span(rec, parts) == (0,)
+
+    def test_replicated_boundary_nodes_span_both_ranks(self) -> None:
+        rec = _nts([[1, 2, 3, 4]], slave_nodes=[9])
+        parts = [
+            _partition(1, [1, 2, 9]),
+            _partition(2, [2, 3, 4]),   # node 2 replicated
+        ]
+
+        assert master_node_rank_span(rec, parts) == (0, 1)
+
+    def test_nodes_in_no_partition_yield_empty_span(self) -> None:
+        rec = _nts([[1, 2, 3, 4]], slave_nodes=[9])
+
+        assert master_node_rank_span(rec, []) == ()

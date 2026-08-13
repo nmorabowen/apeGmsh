@@ -6,7 +6,9 @@ SOFT-family knobs (``soft`` / ``edge_soft``) whose emitted tokens
 k_soft = SOFSCL*4*m_eff/dt^2 needs the assembled mass of BOTH surfaces
 and the ghosted side contributes none on the owner rank (fork ADR-78 D4).
 "Active" mirrors ``contact_args`` exactly: any value other than
-``None``/``False`` emits the token. No Gmsh, no OpenSees, no emit.
+``None``/``False`` emits the token — including the builder's
+``edge_edge`` gate (edge knobs are dropped wholesale when ``edge_edge``
+is falsy; 2026-08-13 review F5). No Gmsh, no OpenSees, no emit.
 """
 from __future__ import annotations
 
@@ -59,6 +61,22 @@ class TestContactRecord:
         rec = _contact(formulation="mortar", eps_n="auto",
                        edge_edge=True, edge_soft=True)
         assert soft_family_knobs(rec) == ("edge_soft",)
+
+    def test_edge_soft_without_edge_edge_is_dormant(self) -> None:
+        # Review F5: contact_args drops ALL edge knobs when edge_edge is
+        # False — no `-edgeSoft` token is ever emitted, so a dormant
+        # edge_soft must not count as active (it was refused under
+        # partitioning despite the serial deck carrying no token).
+        rec = _contact(formulation="mortar", eps_n="auto",
+                       edge_edge=False, edge_soft=0.1)
+        assert soft_family_knobs(rec) == ()
+
+    def test_soft_still_counts_when_edge_soft_is_dormant(self) -> None:
+        # The edge_edge gate silences edge_soft ONLY — a live `soft=`
+        # on the same record still refuses.
+        rec = _contact(formulation="mortar", eps_n="auto",
+                       soft=0.1, edge_edge=False, edge_soft=0.1)
+        assert soft_family_knobs(rec) == ("soft",)
 
     def test_soft_plus_edge_soft_names_both(self) -> None:
         rec = _contact(formulation="mortar", eps_n="auto",
