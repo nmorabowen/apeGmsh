@@ -130,24 +130,24 @@ If results look wrong / PG selectors come back empty, suspect a stale
 FEMData bound to a fresh results file — the deleted `BindError` would
 have caught it; now it's on you.
 
-### 3b. After-solve check — inspect (not Qt)
+### 3b. After-solve check — assess (not Qt)
 
 Agents do **not** open `results.viewer()` / `show_web()` to decide
 whether a run is sane. Those windows are for humans who asked to look.
 After `get_fem_data` / `Results.from_*`:
 
 ```python
-print(fem.inspect.summary())            # mesh, PGs, labels, element types
-print(results.inspect.summary())        # bound FEM, stages, step counts
-results.inspect.components()            # {level: [component, ...]}
-print(results.inspect.diagnose("displacement_z"))  # why a slab is empty
-print(results.lineage.warnings)         # () = clean; never raises
+report = results.assess(figures=True)   # verdict + stills; figures=False is default
+print(report.text)
+for path in report.figures:             # () under SKIP_VIEWER / no GL
+    pass                                # read_file each PNG
+# act on finding.severity == "error"; do not proceed to a human memo
 ```
 
-`diagnose(component)` is the routing report when a query comes back
-empty. `fem.inspect.find_coincident_node_pairs(...)` is the topology
-check (empty ref list = unbridged pair). Open a Qt / web viewer only
-when the human asked.
+Catalog, skip ≠ pass, and code → next action: **`assess.md`**.
+`inspect` / `diagnose` stay inventory (tables, one empty query).
+`results.lineage.warnings` still never raises; assess surfaces them as
+`RES.LINEAGE`. Open a Qt / web viewer only when the human asked.
 
 ## 4. Querying — stages, nodes, elements, modes
 
@@ -278,7 +278,7 @@ deformed / history / vector_glyph / reactions / loads / line_force`.
 ### Interactive desktop viewer — `blocking=None` auto-detect
 
 Qt viewers are for **humans who asked to look**. After a solve, an
-agent's check is `results.inspect` / `results.lineage` (§3b), not a
+agent's check is `results.assess()` (§3b / `assess.md`), not a
 window.
 
 ```python
@@ -469,11 +469,10 @@ results.nodes.get(component="speed") ; results.nodes.available_components()  # f
 results.save_definitions()          # -> <results>.defs.json (auto-loaded on reopen)
 # NO and/or/if-else (use where + & |); NO min/max (use minimum/maximum)
 
-# After-solve check (agents: these, not Qt)
-print(results.inspect.summary())
-results.inspect.components()
-print(results.inspect.diagnose("displacement_z"))
-print(results.lineage.warnings)
+# After-solve check (agents: assess, not Qt — assess.md)
+report = results.assess(figures=True)
+print(report.text)                       # lineage is RES.LINEAGE in findings
+# inspect/diagnose stay inventory when you need a table or one empty query
 
 # Render (humans who asked to look; default blocking=None auto-detects)
 results.plot.contour("displacement_z", step=-1)    # [plot] extra

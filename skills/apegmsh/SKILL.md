@@ -91,12 +91,17 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   **remote SLURM runs** (`ops.run_remote` / `apeGmsh.hpc`, ADR 0060), and
   **which OpenSees runs** (`OpenSeesTarget` / `ops.capabilities()`). Read this
   for any OpenSees generation task.
+- **`references/assess.md`** — after `generate()` / `get_fem_data` /
+  `Results.from_*`: `assess()` (verdict) then stills; closed finding
+  catalog and code → next action. Not Qt. Read this for any
+  post-mesh / post-solve check.
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, the **after-solve inspect check**
-  (`fem.inspect`, `results.inspect.summary()` / `components()` /
-  `diagnose()`, not Qt), **user-defined scalar expressions**
+  `results.lineage`, the **after-solve assess check**
+  (`fem.assess()` / `results.assess()`, then `read_file` on
+  `report.figures`; inspect stays inventory — see `assess.md`),
+  **user-defined scalar expressions**
   (`results.nodes.define` / `results.elements.gauss.define`, `mag(...)`,
   ADR 0076 — custom fields like `"von_mises_stress/250"` that show in the
   viewer picker), the **web viewers** (`show_web` / `serve_web`,
@@ -291,17 +296,19 @@ matching reference — don't improvise.
    *requires* `model=` (`from_mpco` requires `model_h5=`). See
    `references/results.md`.
 7. **Don't open Qt to check a solve.** After `get_fem_data` /
-   `Results.from_*`, print `fem.inspect.summary()`,
-   `results.inspect.summary()` / `components()` / `diagnose(...)`, and
-   `results.lineage.warnings`. Qt / web viewers are for humans who
-   asked to look. `results.viewer()` default is `blocking=None` (auto:
-   scripts block, a Jupyter kernel spawns a subprocess or falls back
-   to `show_web()` for in-memory Results). An explicit `blocking=True`
-   still kills a Jupyter kernel. See `references/results.md`.
+   `Results.from_*`, `report = fem.assess()` / `results.assess(figures=True)`;
+   print `report.text`; `read_file` each PNG in `report.figures`; act
+   on `severity="error"`. Inspect is inventory, not the verdict. Qt /
+   web viewers are for humans who asked to look. `results.viewer()`
+   default is `blocking=None` (auto: scripts block, a Jupyter kernel
+   spawns a subprocess or falls back to `show_web()` for in-memory
+   Results). An explicit `blocking=True` still kills a Jupyter kernel.
+   See `references/assess.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
-`fem-broker.md`; `LineageError` / viewer crash → `results.md`;
+`fem-broker.md`; finding codes / after-solve check → `assess.md`;
+`LineageError` / viewer crash → `results.md`;
 `MeshRecipeError` / selection → `api-cheatsheet.md`; `GeometryValidationError`
 → `gotchas.md`; `SectionMeshError` / `CompositeSectionError` /
 `SectionAnalysisError` → `section-properties.md`.

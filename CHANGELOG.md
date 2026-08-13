@@ -12,6 +12,17 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0094 Accepted: skill teaches `assess()`, Q1–Q3 closed
+
+After-solve check is `fem.assess()` / `results.assess(figures=True)` then
+`read_file` on `report.figures` — not `inspect` as the verdict, not Qt.
+New `skills/apegmsh/references/assess.md` (and the helper copy) owns the
+v1 catalog and code → next action. Happy path / gotcha 7 / `results.md`
+§3b / `workflows.md` §6 point there. Open questions closed: coarse BRep
+tessellation (Q1), ladder 1+3 only — no hidden-window fallback (Q2),
+`stills.py` stays a poster script (Q3). No new finding codes, no
+`g.assess`, no `OpenSeesModel.assess()`.
+
 ### ADDED — `python -m apeGmsh.viewers render` (ADR 0094 S5)
 
 Off-kernel stills CLI next to the existing interactive
