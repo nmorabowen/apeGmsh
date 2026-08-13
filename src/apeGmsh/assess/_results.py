@@ -1,13 +1,14 @@
 """Results catalog: RES.* (+ bound-FEM mesh checks)."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
-from ._fem import _refuse_figures, collect_fem
-from ._report import render_text
+from ._fem import collect_fem, resolve_out_dir
+from ._report import NO_STILLS, render_text
 from ._types import AssessmentReport, Finding
 
 if TYPE_CHECKING:
@@ -29,10 +30,13 @@ _LEVEL_GETTERS = (
 )
 
 
-def assess_results(results: Results, *, figures: bool = False) -> AssessmentReport:
-    """Run the v1 Results catalog. ``figures=True`` is S3."""
-    _refuse_figures(figures)
-
+def assess_results(
+    results: Results,
+    *,
+    figures: bool = False,
+    out_dir: str | Path | None = None,
+) -> AssessmentReport:
+    """Run the v1 Results catalog. ``figures=True`` calls ``render_pack``."""
     findings: list[Finding] = []
     skipped: list[tuple[str, str]] = []
 
@@ -73,12 +77,32 @@ def assess_results(results: Results, *, figures: bool = False) -> AssessmentRepo
         _check_energy(results, stages, findings, skipped)
 
     packed = tuple(findings)
+    fig_paths, fig_note = _results_figures(results, figures, out_dir)
     return AssessmentReport(
         findings=packed,
-        text=render_text(packed, tuple(skipped), source="Results"),
-        figures=(),
+        text=render_text(
+            packed, tuple(skipped), source="Results",
+            figures=fig_paths, figure_note=fig_note,
+        ),
+        figures=fig_paths,
         lineage=lineage,
     )
+
+
+def _results_figures(
+    results: Results,
+    figures: bool,
+    out_dir: str | Path | None,
+) -> tuple[tuple[Path, ...], str | None]:
+    if not figures:
+        return (), None
+    if results.fem is None:
+        return (), NO_STILLS
+    # Broker method — lazy-imports viewers.render (INV-1).
+    written = results.render_pack(resolve_out_dir(out_dir))
+    if not written:
+        return (), NO_STILLS
+    return written, None
 
 
 def _finding(code: str, message: str, detail: dict[str, object] | None = None) -> Finding:

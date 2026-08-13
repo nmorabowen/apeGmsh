@@ -31,7 +31,7 @@ class AssessmentReport:
     """Result of ``fem.assess()`` / ``results.assess()``.
 
     ``text`` is what the agent prints. ``findings`` is what it branches
-    on. ``figures`` is empty in S2 (``figures=True`` is S3).
+    on. ``figures`` is empty unless ``figures=True`` wrote stills.
     ``lineage`` is the Results object on the results path; ``None`` on
     ``fem.assess()``.
     """

@@ -155,6 +155,7 @@ def test_module_helpers_match_public_tokens() -> None:
     assert render_mod._require_deform(2.0) == ("displacement", 2.0)
     assert render_mod._require_deform(("velocity", 0.5)) == ("velocity", 0.5)
     assert render_mod._require_deform(None) is None
+    assert render_mod._HISTORY_LABEL == "[matplotlib]"
 
 
 def test_read_nodal_vector_field_matches_scatter(demo_results: Results) -> None:
@@ -242,3 +243,93 @@ def test_deformed_without_displacement_raises(
     ) as r:
         with pytest.raises(ValueError, match="deformed"):
             r.render(tmp_path / "d.png", view="deformed")
+
+
+def test_skip_viewer_render_pack_returns_empty(
+    demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    dest = tmp_path / "pack"
+    assert demo_results.render_pack(dest) == ()
+    assert not dest.exists()
+    assert "[skip viewer] APEGMSH_SKIP_VIEWER set" in capsys.readouterr().out
+
+
+def test_no_fem_render_pack(demo_results: Results) -> None:
+    assert not hasattr(demo_results.fem, "render_pack")
+
+
+def test_pack_omits_reactions_on_demo(demo_results: Results) -> None:
+    assert render_mod._has_static_reactions(demo_results) is False
+
+
+def test_has_static_reactions_true_when_recorded() -> None:
+    class _Stage:
+        kind = "static"
+        id = "g"
+
+    class _Inspect:
+        def components(self, stage=None):
+            return {"nodes": ["displacement_x", "reaction_force_x"]}
+
+    class _Fake:
+        stages = [_Stage()]
+        inspect = _Inspect()
+
+    assert render_mod._has_static_reactions(_Fake()) is True
+
+
+def test_has_static_reactions_false_on_transient() -> None:
+    class _Stage:
+        kind = "transient"
+        id = "g"
+
+    class _Inspect:
+        def components(self, stage=None):
+            return {"nodes": ["reaction_force_x"]}
+
+    class _Fake:
+        stages = [_Stage()]
+        inspect = _Inspect()
+
+    assert render_mod._has_static_reactions(_Fake()) is False
+
+
+def test_pack_primary_is_s1_heuristic(demo_results: Results) -> None:
+    # demo records displacement_z (zeros) so the S1 order picks uz.
+    assert render_mod._pack_primary_component(demo_results) == "displacement_z"
+
+
+def test_history_is_labeled_matplotlib(
+    demo_results: Results, tmp_path: Path,
+) -> None:
+    out = tmp_path / "history.png"
+    written = render_mod._try_history(
+        demo_results, out, "displacement_x",
+    )
+    if written is None:
+        pytest.skip("matplotlib missing or series too short")
+    assert written == out
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_render_pack_without_skip_is_tuple(
+    demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    dest = tmp_path / "pack"
+    result = demo_results.render_pack(dest, window_size=(320, 240))
+    assert isinstance(result, tuple)
+    for path in result:
+        assert path.exists()
+        assert path.stat().st_size > 0
+        assert path.name in {
+            "mesh.png", "contour.png", "deformed.png",
+            "reactions.png", "history.png",
+        }
+    assert "reactions.png" not in {p.name for p in result}
+    history = dest / "history.png"
+    if history in result:
+        assert render_mod._HISTORY_LABEL == "[matplotlib]"

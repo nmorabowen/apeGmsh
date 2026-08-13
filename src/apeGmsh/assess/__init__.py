@@ -9,8 +9,11 @@ holds::
 
     report = fem.assess()
     report = results.assess()
+    report = results.assess(figures=True)  # + render_pack
 
-``figures=True`` ships in S3; this slice implements findings only.
+``figures=True`` (default ``False``) calls ``results.render_pack`` /
+``fem.render`` on the already-imported broker. This package does not
+import ``apeGmsh.viewers`` or ``gmsh``.
 """
 
 from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP

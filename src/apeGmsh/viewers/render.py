@@ -6,6 +6,7 @@ hold a broker and want a Path::
 
     fem.render("mesh.png")
     results.render("uz.png", view="contour", component="displacement_z")
+    results.render_pack("out_dir/")
 
 Stills come from ``pv.Plotter(off_screen=True)`` (VTK offscreen, not
 Qt ``QT_QPA_PLATFORM=offscreen``) plus ``build_fem_scene`` /
@@ -20,8 +21,9 @@ accepted. Ladder step 2 (hidden ``ResultsViewer.show(run_loop=False)``)
 is gated on ADR 0094 open question 2 and is not implemented: if VTK
 offscreen cannot get a GL context, figures skip.
 
-``APEGMSH_SKIP_VIEWER=1`` or no GL returns ``None``, prints the
-``[skip viewer]`` notice, and writes no file.
+``APEGMSH_SKIP_VIEWER=1`` or no GL returns ``None`` / ``()``, prints
+the existing ``[skip viewer]`` notice, and writes no file.
+``render_pack`` is the canned report set, not a poster.
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ _GL_EXC = (RuntimeError, OSError)
 # stills.py default: largest |u| becomes this fraction of the model diagonal.
 _DEFORM_FRACTION = 0.12
 _DEFAULT_WINDOW = (1280, 720)
+_HISTORY_LABEL = "[matplotlib]"
 
 
 def render_fem(
@@ -160,6 +163,86 @@ def render_results(
                 plotter.close()
             except Exception:
                 pass
+
+
+def render_pack(
+    results: Any,
+    out_dir: "str | Path",
+    *,
+    camera: str = "iso",
+    window_size: tuple[int, int] = _DEFAULT_WINDOW,
+) -> tuple[Path, ...]:
+    """Write the canned report pack. Returns written paths, or ``()``.
+
+    1. ``mesh.png`` — undeformed mesh
+    2. ``contour.png`` — last-step primary field (S1
+       ``default_contour_component``)
+    3. ``deformed.png`` — same, auto-scale 0.12 via
+       ``director.geometries``
+    4. ``reactions.png`` — static stages only, if reactions recorded
+    5. ``history.png`` — optional matplotlib history at the extrema node
+
+    Skip / no GL returns ``()`` and prints the existing
+    ``[skip viewer]`` notice. There is no ``fem.render_pack``.
+    """
+    camera = _require_camera(camera)
+    if _env_skips():
+        print(_SKIP_ENV)
+        return ()
+    if results.fem is None:
+        raise RuntimeError(
+            "results.render_pack requires a bound FEMData "
+            "(construct with model= / model_h5= or call results.bind)."
+        )
+
+    dest = Path(out_dir)
+    written: list[Path] = []
+
+    mesh = render_results(
+        results, dest / "mesh.png",
+        view="mesh", camera=camera, window_size=window_size,
+    )
+    if mesh is None:
+        return ()
+    written.append(mesh)
+
+    try:
+        component = _pack_primary_component(results)
+    except Exception:
+        component = None
+    if component is not None:
+        contour = render_results(
+            results, dest / "contour.png",
+            view="contour", component=component, step=-1,
+            camera=camera, window_size=window_size,
+        )
+        if contour is not None:
+            written.append(contour)
+        try:
+            deformed = render_results(
+                results, dest / "deformed.png",
+                view="deformed", component=component, step=-1, deform=None,
+                camera=camera, window_size=window_size,
+            )
+        except ValueError:
+            # B5: no recorded displacement — omit, do not fail the pack.
+            deformed = None
+        if deformed is not None:
+            written.append(deformed)
+
+    if _has_static_reactions(results):
+        reactions = render_results(
+            results, dest / "reactions.png",
+            view="reactions", component="reactions", step=-1,
+            camera=camera, window_size=window_size,
+        )
+        if reactions is not None:
+            written.append(reactions)
+
+    history = _try_history(results, dest / "history.png", component)
+    if history is not None:
+        written.append(history)
+    return tuple(written)
 
 
 # ------------------------------------------------------------------
@@ -430,3 +513,99 @@ def _read_deform_field(
     except Exception:
         return None
     return read_nodal_vector_field(scoped, scene, field, step)
+
+
+# ------------------------------------------------------------------
+# Pack helpers
+# ------------------------------------------------------------------
+
+
+def _pack_primary_component(results: Any) -> Optional[str]:
+    """S1 ``default_contour_component`` (uz, ux, uy, first nodal)."""
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    from apeGmsh.viewers.diagrams._starter import default_contour_component
+
+    director = ResultsDirector(results)
+    _ensure_stage(director)
+    return default_contour_component(director)
+
+
+def _has_static_reactions(results: Any) -> bool:
+    """True when a ``kind='static'`` stage recorded a reaction_* field."""
+    static = [
+        s for s in results.stages if getattr(s, "kind", None) == "static"
+    ]
+    if not static:
+        return False
+    for stage in static:
+        try:
+            names = results.inspect.components(stage=stage.id).get("nodes", [])
+        except Exception:
+            continue
+        for name in names:
+            if name == "reactions" or str(name).startswith("reaction_"):
+                return True
+    return False
+
+
+def _extrema_node(results: Any, component: str) -> Optional[int]:
+    """Node id of max |component| at ``time=-1``. INV-9: last step only."""
+    import numpy as np
+
+    try:
+        slab = results.nodes.get(component=component, time=-1)
+    except Exception:
+        return None
+    values = np.asarray(slab.values)
+    ids = np.asarray(slab.node_ids)
+    if values.size == 0 or ids.size == 0:
+        return None
+    row = values[-1] if values.ndim >= 2 else values
+    row = np.asarray(row, dtype=np.float64).reshape(-1)
+    if row.size != ids.size:
+        return None
+    finite = np.isfinite(row)
+    if not finite.any():
+        return None
+    masked = np.where(finite, np.abs(row), -1.0)
+    return int(ids[int(np.argmax(masked))])
+
+
+def _try_history(
+    results: Any, path: "str | Path", component: Optional[str],
+) -> Optional[Path]:
+    """Matplotlib history at the extrema node. Labeled (INV-7)."""
+    if component is None:
+        return None
+    node = _extrema_node(results, component)
+    if node is None:
+        return None
+    try:
+        import matplotlib
+        try:
+            matplotlib.use("Agg")
+        except Exception:
+            pass
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+    out = Path(path)
+    try:
+        ax = results.plot.history(node=node, component=component)
+        series_len = 0
+        if ax.lines:
+            series_len = len(ax.lines[0].get_xdata())
+        if series_len < 2:
+            plt.close(ax.figure)
+            return None
+        ax.set_title(
+            f"{_HISTORY_LABEL} history at node {node} ({component})"
+        )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        ax.figure.savefig(out)
+        plt.close(ax.figure)
+    except Exception:
+        return None
+    if not out.exists() or out.stat().st_size == 0:
+        return None
+    return out
