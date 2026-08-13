@@ -3787,6 +3787,27 @@ the fork.</p>
 <p>One historical note, since older material mentions it: <code>g.constraints.mortar()</code>
 still exists but is a deprecated alias that delegates to
 <code>contact(formulation="mortar", tie=True)</code> and warns. Call <code>contact()</code> directly.</p>
+<p>Between a bond and full contact sits a third thing, and the model that paid for
+it is a tunnel liner in squeezing rock. <code>g.constraints.interface(...)</code> puts one
+spring per coincident node pair across a 2D continuum boundary — unilateral in
+the normal direction, capped at a bond strength in the tangential one. It needs
+no contact search and no exclusive handler, because the pairing is plain
+co-location, the same matching <code>equal_dof</code> does. What separates it from
+<code>equal_dof</code>, <code>tie</code> and <code>embedded</code> is that it is not a bond at all: the normal
+law carries compression and nothing else, and the tangential law stops carrying
+shear once <code>τ_b × A_trib</code> is reached.</p>
+<p>That distinction is mechanical, not cosmetic. With a bilateral bond the model
+cannot reproduce demand saturation — the ground converges, the tie transmits
+whatever force that convergence implies, and the liner's demand grows without
+bound, while the field record shows metre-class convergence coexisting with
+damaged-but-standing arches. Capping the bond puts a ceiling on what the ground
+can hand the structure, and letting the interface open means it carries nothing
+where the two sides have parted. The surface, including the sign convention you
+should check once per model, is in
+<a href="../../api/constraints/#tier-6-interface-springs">the constraints API</a>; the two
+things to get right at declaration are the out-of-plane <code>thickness</code> (required,
+never guessed) and <code>slave_ndf=</code> when the coincident wire will be meshed as a
+beam.</p>
 <h2 id="reading-back-what-you-declared">Reading back what you declared<a class="headerlink" href="#reading-back-what-you-declared" title="Permanent link">&para;</a></h2>
 <p>After resolution the snapshot can tell you what actually happened —
 <code>fem.inspect.constraint_summary()</code> prints the record counts by kind, and

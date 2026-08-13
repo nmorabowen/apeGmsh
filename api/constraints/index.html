@@ -4855,6 +4855,51 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tier-6-interface-springs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 6 — Interface springs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tier 6 — Interface springs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.InterfaceDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        InterfaceDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="InterfaceDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.InterfaceDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7791,6 +7836,51 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tier-6-interface-springs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 6 — Interface springs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tier 6 — Interface springs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.InterfaceDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        InterfaceDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="InterfaceDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.InterfaceDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8670,7 +8760,7 @@ the FEM broker:</p>
 </tbody>
 </table>
 <h2 id="constraint-taxonomy">Constraint taxonomy<a class="headerlink" href="#constraint-taxonomy" title="Permanent link">&para;</a></h2>
-<p>Six tiers, ordered by topology:</p>
+<p>Seven tiers, ordered by topology:</p>
 <table>
 <thead>
 <tr>
@@ -8710,13 +8800,21 @@ the FEM broker:</p>
 <td><code>contact</code>, <code>mortar</code> (deprecated alias for <code>contact(formulation="mortar", tie=True)</code>)</td>
 <td><code>ContactRecord</code></td>
 </tr>
+<tr>
+<td>6 — Interface</td>
+<td><a href="#tier-6-interface-springs"><code>interface</code></a></td>
+<td><code>InterfaceRecord</code></td>
+</tr>
 </tbody>
 </table>
-<p>All constraints ultimately express the linear MPC equation
-<code>u_slave = C · u_master</code>. Tiers differ in <strong>how</strong> <code>C</code> is built:
+<p>Tiers 1 to 4 ultimately express the linear MPC equation
+<code>u_slave = C · u_master</code>, and differ in <strong>how</strong> <code>C</code> is built:
 node co-location (Tier 1), kinematic transformation around a master
 point (Tier 2), shape-function interpolation (Tier 3), or numerical
-integration on the interface (Tier 4).</p>
+integration on the interface (Tier 4). Tiers 5 and 6 are not
+equations at all — they resolve onto their own additive side-lists
+(<code>fem.elements.contacts</code>, <code>fem.elements.interfaces</code>) and emit
+<em>elements</em>, which is how they can carry a force that drops to zero.</p>
 <h2 id="target-identification">Target identification<a class="headerlink" href="#target-identification" title="Permanent link">&para;</a></h2>
 <p>Most methods identify their master and slave sides by <strong>part label</strong>
 (a key of <code>g.parts._instances</code>). <code>_add_def</code> validates both labels
@@ -15389,6 +15487,189 @@ cannot satisfy.</p>
 slave_entities : list of (dim, tag)
 dofs : list[int] or None
 tolerance : float</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="tier-6-interface-springs">Tier 6 — Interface springs<a class="headerlink" href="#tier-6-interface-springs" title="Permanent link">&para;</a></h2>
+<p>Every tier above is a bond: the slave follows the master in tension
+as in compression, for as long as the analysis runs.
+<code>g.constraints.interface(master, slave, ...)</code> is the one that can let
+go. It emits one <code>zeroLength</code> per coincident node pair between a 2D
+continuum boundary and a node-for-node coincident wire, with a
+<strong>unilateral</strong> normal law (compression only, separation free) and a
+<strong>strength-capped</strong> tangential law (elastic until the bond shear
+<code>tau_b</code> is reached, then slip). That is the soil- or rock-to-structure
+bond. A tunnel liner in converging ground takes load until the bond
+slips and no more; with a bilateral tie the ground keeps converging
+and the liner's demand grows with it, without a ceiling.</p>
+<p>The two laws are <em>declared</em>, not built. <code>NormalLaw</code> and
+<code>TangentialLaw</code> are flat-scalar dataclasses carrying stiffness <strong>per
+unit area</strong> — apeGmsh translates each into a typed uniaxial material
+at emit, scaled by that pair's own tributary area. The Cerro Lindo
+shape, a steel arch against a tunnel face, is an <code>ent</code> normal (no
+tension whatsoever) with an <code>epp</code> tangential capped at the bond
+strength:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">NormalLaw</span><span class="p">,</span> <span class="n">TangentialLaw</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">interface</span><span class="p">(</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">&quot;face&quot;</span><span class="p">,</span> <span class="s2">&quot;wire&quot;</span><span class="p">,</span>                                    <span class="c1"># rock rim, liner rim</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">normal</span><span class="o">=</span><span class="n">NormalLaw</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;ent&quot;</span><span class="p">,</span> <span class="n">k_per_area</span><span class="o">=</span><span class="mf">1.0e9</span><span class="p">),</span>    <span class="c1"># [F/L³]</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">tangential</span><span class="o">=</span><span class="n">TangentialLaw</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;epp&quot;</span><span class="p">,</span> <span class="n">k_per_area</span><span class="o">=</span><span class="mf">1.0e8</span><span class="p">,</span> <span class="n">tau_b</span><span class="o">=</span><span class="mf">2.5e5</span><span class="p">),</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">thickness</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>                                     <span class="c1"># out-of-plane, required</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;RockLinerInterface&quot;</span><span class="p">,</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>You never compute the tributary areas that scaling needs. The
+resolver accumulates <code>0.5 × edge_length</code> along the master polyline,
+multiplies by <code>thickness</code>, and asserts the total closes on the master
+face's length × thickness before a line is emitted; a pair with a zero
+share is an error, not a quiet no-op. <code>thickness</code> itself is required
+and has no default, because a guessed out-of-plane dimension would
+scale every force in the interface and say nothing.</p>
+<p>Local-x of each pair is the <strong>outward normal of the master face</strong>,
+derived per pair from the master's own boundary edges, so a curved
+master's frame swings with the arc instead of collapsing onto one
+average direction. ZeroLength deformation is <code>x̂·(u_j − u_i)</code> with the
+master always as <code>i</code>, so separation reads as positive elongation and
+an <code>ent</code> normal carries exactly zero force there, while closure is
+compression. That is observable and worth observing once on a new
+model: pull the slave off the master and the pair's <code>spring_force_0</code>
+must be zero. The mirror-image convention converges just as happily
+into a tension-only interface that is wrong everywhere, which is why
+the signs are applied by the emit-time translation and are never
+yours to pass.</p>
+<p>The slave's <code>ndf</code> is a declaration, not an inference. Left at <code>None</code>
+(or <code>2</code>) the slave is taken to match the 2D continuum and the spring
+joins the two real nodes. Pass <code>slave_ndf=3</code> when the wire will become
+a beam: the engine refuses a <code>zeroLength</code> whose endpoints disagree on
+<code>ndf</code>, so each pair instead gets a 2-DOF phantom at the slave's
+coordinates, an <code>equalDOF(retained=beam node, constrained=phantom,
+dofs=[1, 2])</code>, and a spring running master → phantom — leaving the
+beam's rotation free, which is the hinge behaviour you want at a
+liner-to-ground contact. It has to be explicit because element classes
+are assigned at <code>ops.element</code> time, <em>after</em> resolution: when the
+resolver runs there is genuinely nothing in the model that says
+whether your wire becomes a truss or a beam. Declare it wrong and the
+bridge refuses at emit, naming the ndf it actually found.</p>
+<p>Two-dimensional line masters only, for now. A 3D model raises
+<code>NotImplementedError</code> at the call, and an interior edge — material on
+both sides, so no outward direction exists — raises at resolve; both
+are loud, neither degrades into a guess. Partitioned (MPI) emit is
+supported: each pair's whole unit lands on the one rank owning the
+master node's backing continuum element, because the pair's nodes are
+co-located and node-tally ownership cannot decide between the ranks.
+And an interface given a <code>name=</code> can be claimed into a stage with
+<code>s.interface(name="RockLinerInterface")</code>, which installs it on ground
+the earlier stages already equilibrated — the liner-install pattern,
+and the reason the springs are born strain-free instead of
+pre-loaded by the convergence that happened before they existed.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh._kernel.defs.constraints.InterfaceDef" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">apeGmsh._kernel.defs.constraints.InterfaceDef</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh._kernel.defs.constraints.InterfaceDef" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">InterfaceDef</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">master_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">slave_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">master_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">slave_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">normal</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tangential</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">thickness</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-06</span><span class="p">,</span> <span class="n">slave_ndf</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="apeGmsh._kernel.defs.constraints.ConstraintDef
+
+
+  
+      dataclass
+  " href="#apeGmsh._kernel.defs.constraints.ConstraintDef">ConstraintDef</a></code></p>
+
+
+
+        <p>Oriented coincident-pair zeroLength interface (ADR 0093).</p>
+<p>The geometry-side def captured by <code>g.constraints.interface(...)</code>:
+one <code>zeroLength</code> per coincident (master, slave) node pair, with
+per-pair local axes taken from the <strong>master face geometry</strong> and
+per-pair tributary-scaled normal / tangential laws. The master is a
+2D line boundary of a meshed continuum; the slave is a
+node-for-node coincident wire (3D surface masters raise —
+ADR 0093 D2).</p>
+<h5 id="apeGmsh._kernel.defs.constraints.InterfaceDef--parameters">Parameters<a class="headerlink" href="#apeGmsh._kernel.defs.constraints.InterfaceDef--parameters" title="Permanent link">&para;</a></h5>
+<p>master_label, slave_label
+    The master curve PG / part label (a free boundary of the
+    continuum) and the coincident slave label. The two node sets
+    must be disjoint and node-for-node coincident.
+normal, tangential
+    The declarative per-area laws
+    (:class:<code>~apeGmsh._kernel.records._constraints.NormalLaw</code> /
+    :class:<code>~apeGmsh._kernel.records._constraints.TangentialLaw</code>,
+    ADR 0093 D1). Stored on each record and translated to typed
+    uniaxial materials, scaled by that pair's <code>A_trib</code>, only at
+    emit — the verb carries no OpenSees types (INV-4).
+thickness
+    Out-of-plane thickness, <code>&gt; 0</code> and <strong>required</strong>: <code>A_trib =
+    ell_trib * thickness</code> (D3). The verb refuses to guess it
+    (sign-off question 2, settled explicit-only).
+tolerance
+    Coincidence radius for the node pairing.
+slave_ndf
+    Which ndf the slave wire will be declared with — an
+    <strong>explicit</strong> decision, never inferred. At resolve time apeGmsh
+    cannot know whether the slave wire becomes an OpenSees truss
+    (ndf 2) or a beam (ndf 3): element classes are assigned at
+    <code>ops.element</code> declaration, i.e. <em>after</em> resolution. So:</p>
+<div class="language-text highlight"><pre><span></span><code>* ``None`` (default) / ``2`` — the slave matches the 2D
+  continuum&#39;s ndf, and the zeroLength connects the two real
+  nodes directly. No phantom.
+* ``3`` — a beam slave. ``ZeroLength::setDomain`` refuses
+  ``dofNd1 != dofNd2``, so each pair gets a phantom bridge
+  (ADR 0093 D4): a 2-dof phantom at the slave&#39;s coordinates,
+  ``equalDOF(retained=beam node, constrained=phantom,
+  dofs=[1,2])``, and the zeroLength running master continuum -&gt;
+  phantom. The beam&#39;s rotation DOF is never touched (the hinge
+  semantics the campaign asks for).
+
+Any other value raises. Validating this against the ndf
+actually inferred from the emitted elements is ADR 0093 S5&#39;s
+job (emit time is the first moment that ndf exists).
+</code></pre></div>
+<p>master_entities, slave_entities
+    Restrict each side to specific Gmsh entities (default = the
+    whole label).
+name
+    Friendly name — carried onto every record, and the handle a
+    future <code>s.interface(name=...)</code> stage claim will use (INV-6).</p>
 
 
 

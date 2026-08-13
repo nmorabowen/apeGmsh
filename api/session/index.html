@@ -5318,6 +5318,62 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#apeGmsh.NormalLaw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NormalLaw
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NormalLaw">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.NormalLaw--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.TangentialLaw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TangentialLaw
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TangentialLaw">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.TangentialLaw--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh.FEMData" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10071,6 +10127,62 @@
     <span class="md-ellipsis">
       
         summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.NormalLaw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NormalLaw
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NormalLaw">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.NormalLaw--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.TangentialLaw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TangentialLaw
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TangentialLaw">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.TangentialLaw--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
       
     </span>
   </a>
@@ -23247,6 +23359,151 @@ short stringified view of the kind-specific fields (<code>dofs</code>,
     </div>
 
 </div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh.NormalLaw" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">NormalLaw</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh.NormalLaw" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">NormalLaw</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k_per_area</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">tau_b_n</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">gap</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Declarative per-area normal-direction law (ADR 0093 D1).</p>
+<p>A flat-scalar description of the interface's normal constitutive
+response — stored on :class:<code>InterfaceRecord</code> (h5-serializable),
+translated to a typed uniaxial material only at emit time in
+<code>build.py</code>, scaled per pair by <code>A_trib</code>. Kernel data — imports
+nothing from <code>apeGmsh.opensees</code> (INV-4). The sign convention is
+owned by the emit-time translation, never the caller (INV-1): the
+fields here are positive-magnitude physical quantities.</p>
+<h5 id="apeGmsh.NormalLaw--attributes">Attributes<a class="headerlink" href="#apeGmsh.NormalLaw--attributes" title="Permanent link">&para;</a></h5>
+<p>kind
+    <code>"ent"</code> — unilateral, compression-only
+    (<code>ENT(E = k_per_area * A_trib)</code>).
+    <code>"epp_gap"</code> — elastic-perfectly-plastic with a gap
+    (<code>ElasticPPGap(E = k_per_area * A_trib,
+    Fy = -tau_b_n * A_trib, gap)</code>); requires <code>tau_b_n</code> and <code>gap</code>.
+    <code>"elastic"</code> — bilateral elastic (<code>Elastic(E = k_per_area *
+    A_trib)</code>); the acceptance battery's bonded-limit law (ADR 0093
+    "Alternatives rejected").
+k_per_area
+    Stiffness per unit tributary area (<code>[F/L**3]</code>); required for
+    every kind.
+tau_b_n
+    Normal bond strength, a positive magnitude (<code>epp_gap</code> only);
+    <code>None</code> for <code>ent</code> / <code>elastic</code>.
+gap
+    Initial gap, <code>&lt;= 0</code> (<code>epp_gap</code> only); <code>None</code> for <code>ent</code> /
+    <code>elastic</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh.TangentialLaw" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">TangentialLaw</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh.TangentialLaw" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">TangentialLaw</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k_per_area</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">tau_b</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Declarative per-area tangential-direction law (ADR 0093 D1).</p>
+<p>The tangential sibling of :class:<code>NormalLaw</code> — see its docstring for
+the storage/translation/layering contract.</p>
+<h5 id="apeGmsh.TangentialLaw--attributes">Attributes<a class="headerlink" href="#apeGmsh.TangentialLaw--attributes" title="Permanent link">&para;</a></h5>
+<p>kind
+    <code>"epp"</code> — elastic-perfectly-plastic slip cap
+    (<code>ElasticPP(E = k_per_area * A_trib, epsyP = tau_b /
+    k_per_area)</code>); requires <code>tau_b</code>. <code>A_trib</code> cancels in the
+    strain — the physical yield force <code>tau_b * A_trib</code> is the
+    emergent product <code>E * epsyP</code>.
+    <code>"elastic"</code> — bilateral elastic (<code>Elastic(E = k_per_area *
+    A_trib)</code>); the acceptance battery's bonded-limit law.
+k_per_area
+    Stiffness per unit tributary area (<code>[F/L**3]</code>); required for
+    every kind.
+tau_b
+    Tangential bond strength, a positive magnitude (<code>epp</code> only);
+    <code>None</code> for <code>elastic</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
 
 
 
