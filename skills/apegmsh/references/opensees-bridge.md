@@ -407,6 +407,33 @@ plus `contact_plane(...)` rigid planes) auto-emits a
 the Ladruno fork**. Signatures + persistence schemas are in
 `api-cheatsheet.md` (constraints) and `ladruno.md`.
 
+**Interface springs are the third auto-emit lane (ADR 0093) — and stock
+OpenSees.** `g.constraints.interface(...)` resolves onto the
+`fem.elements.interfaces` side-list; the bridge's `emit_interfaces` pass
+writes each pair's atomic unit in a fixed order: the mixed-ndf phantom
+`node(..., ndf=<phantom_ndf>)` (NOT the shared phantom helper's hardcoded
+6) → the nested `equalDOF(retained=beam, constrained=phantom, 1 2)` → the
+two tributary-scaled uniaxials → `element zeroLength ... -mat mN mT -dir
+1 2 -orient <6-tuple>`, with `iNode` always the real continuum master
+(INV-1). Unlike contact it needs **no exclusive handler**, so interfaces
+coexist with `enforce="equation"` ties and every MP constraint — though a
+mixed-ndf model does add an ordinary identity `equalDOF`, so it wants a
+real handler like any MP model. `infer_node_ndf` deliberately skips the
+zeroLength family, so both real endpoints must get their ndf from the
+structural elements they belong to; if the declared `slave_ndf=`
+disagrees with the ndf the deck actually carries, emit refuses
+(`BridgeError`) naming both — that gate is the reason a mixed-ndf
+interface cannot silently emit a `zeroLength` the engine would reject.
+Partitioned emit puts each pair's whole unit on the single rank owning
+the master node's **backing continuum element** (co-located pairs make
+node-tally ownership undecidable); a foreign slave ghosts as `node` +
+replayed SP with its home ndf explicit, and a **pattern-borne `sp`** or an
+ADR 0052 `s.support` HOLD on a node the plan would ghost is refused at
+plan time (neither is mirrored onto a ghost — use `uncuttable_elements=`,
+`ops.fix`/`s.fix`, or serial emit). Read back per pair through MPCO:
+`results.elements.springs`, `spring_force_0`/`spring_deformation_0` =
+normal, `_1` = tangential (the native `.out` springs path is a stub).
+
 ## Per-node ndf — inferred from elements + `ops.ndf` (ADR 0048/0049)
 
 Per-node `ndf` is **inferred** from the declared element classes — you do
@@ -505,7 +532,10 @@ The three semantics are distinct (don't confuse them):
   `s.equal_dof(name=)`, `s.rigid_link(name=)`,
   `s.rigid_diaphragm(name=)`, `s.kinematic_coupling(name=)`,
   `s.node_to_surface(name=)`, `s.node_to_surface_spring(name=)`,
-  `s.tied_contact(name=)`. A
+  `s.tied_contact(name=)`, and — the only side-list with a claim path —
+  `s.interface(name=)` (ADR 0093, the liner-install pattern: the whole
+  per-pair unit emits inside the stage block, so the springs are born
+  strain-free on the ground the earlier stages equilibrated). A
   typo / missing `name=` → `ValueError`; double-claim across stages
   → `ValueError`.
 

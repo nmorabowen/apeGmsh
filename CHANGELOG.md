@@ -12,6 +12,91 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `g.constraints.interface()`: a coincident-pair interface that can let go (ADR 0093)
+
+The constraints roster gains its first non-bond. `g.constraints.interface(
+master, slave, *, normal=, tangential=, thickness=, tolerance=1e-6,
+slave_ndf=None, master_entities=None, slave_entities=None, name=None)` emits
+one `zeroLength` per coincident node pair between a 2D continuum boundary and
+a node-for-node coincident wire: **unilateral** in the normal direction
+(compression only, separation free) and **strength-capped** in the tangential
+one. That is the soil/rock-to-structure bond the Cerro Lindo SSI campaign
+needs — with a bilateral tie the ground converges and the liner's demand grows
+without a ceiling, which the field record (metre-class convergence, arches
+damaged but standing) falsifies. Everything below ships together; the
+`ElasticPP` / `ElasticPPGap` primitives (S2) and the partitioned emit (S8)
+already have their own entries above.
+
+- **Laws are declarative, translated only at emit.** `NormalLaw(kind="ent" |
+  "epp_gap" | "elastic", k_per_area, tau_b_n=, gap=)` and
+  `TangentialLaw(kind="epp" | "elastic", k_per_area, tau_b=)` are flat-scalar
+  kernel dataclasses carrying stiffness **per unit area**; `build.py`'s
+  translation table turns each into a typed uniaxial scaled by that pair's
+  `A_trib` (`ent → ENT(E=k·A)`, `epp → ElasticPP(E=k·A, epsyP=tau_b/k)` — the
+  yield force `tau_b·A` is the emergent `E × epsyP` — `epp_gap →
+  ElasticPPGap(E=k·A, Fy=−tau_b_n·A, gap≤0)`). The first `g.*` verb carrying
+  material data, and `core`/`_kernel` still import nothing from
+  `apeGmsh.opensees`.
+- **The signs are the library's, and they are the point.** Local-x is the
+  master face's **outward normal**, derived per pair from the master's own
+  boundary edges — a curved master's frame follows the arc instead of
+  collapsing to one average direction, and the sign is fixed against the
+  adjacent domain element's centroid, never the mesh's edge winding. With
+  `iNode` always the real continuum node, `x̂·(u_j − u_i)` makes separation a
+  positive elongation, so an `ent` normal carries zero force open and
+  compression closed; `epp_gap` gets `Fy < 0` **and** `gap ≤ 0` forced by
+  `-abs(...)` at emit. Flipping either half yields a tension-only interface
+  that converges beautifully and is wrong everywhere — the whole silent-error
+  class this verb exists to kill, gated on a curved master for both normal
+  law kinds.
+- **Tributary bookkeeping is not the user's.** `A_trib = ell_trib ×
+  thickness` from a `0.5 × edge_length` accumulation along the master
+  polyline, with closure on `face length × thickness` asserted at resolve
+  time and a zero share raised, not skipped. `thickness` is required with no
+  default (the verb refuses to guess an out-of-plane dimension).
+- **Mixed ndf via an explicit `slave_ndf=`.** `ZeroLength::setDomain` refuses
+  `dofNd1 != dofNd2`, so `slave_ndf=3` (a beam wire) mints a 2-dof phantom at
+  the slave's coordinates plus `equalDOF(retained=beam, constrained=phantom,
+  1 2)` and runs the spring master → phantom, leaving the beam's rotation
+  free. Explicit because element classes are assigned at `ops.element` time,
+  *after* resolution — apeGmsh cannot know whether a wire becomes a truss or
+  a beam. A mismatch between the declaration and the ndf the deck actually
+  carries is refused at emit, naming both.
+- **Scope is loud.** 3D models and surface masters raise
+  `NotImplementedError` at the call and again at resolve (ADR 0093 D2); an
+  interior master edge (material both sides, no outward direction), a
+  reentrant corner, overlapping master/slave node sets, an unmatched slave
+  and an out-of-plane master edge each raise by name.
+- **The full record lifecycle**, not a half one: `InterfaceRecord` on
+  `fem.elements.interfaces`, h5 persistence (neutral schema 2.29.0) with
+  orient rotation and phantom transform under `g.compose` (INV-2, rotation
+  case gated), stage claim via `s.interface(name=)` so the unit installs on
+  ground the earlier stages equilibrated (measured born strain-free:
+  install-stage `deformation` exactly 0.0 against a raw relative
+  displacement of 2.3e−4), and partitioned + staged together — the
+  campaign's actual scenario — at worst relative delta **3.6e−15** serial vs
+  2-rank OpenSeesMP.
+- **Acceptance battery**, split deck-level / engine-level across
+  `tests/opensees/integration/test_interface_acceptance_battery.py` and
+  `tests/opensees/subprocess/test_interface_acceptance_engine.py`:
+  the bonded limit converges 1/k on
+  `equal_dof` (max nodal error 1.79e−07 at `k_per_area=1e14`, 1.79e−09 at
+  1e16 — ratio 99.9999 over the 100× step, against a bound that includes the
+  spring bed's rotational compliance; an axial-only bound predicts 8e−8 and
+  would have passed a wrong implementation), zero-tension with free
+  separation on the curved master in both signs and both normal kinds, slip
+  saturation at `tau_b × L × t`, INV-3 closure read back off the *emitted
+  material lines*, h5 round-trip → emit byte-identity, compose invariance,
+  and per-pair MPCO `springs` channels (`spring_force_0` / `_1`,
+  `spring_deformation_0` / `_1`) read back against the engine. The ADR's
+  bonded-limit reference was amended from `tie` to `equal_dof` during S10:
+  `tie` takes only dim-2 surfaces / dim-3 volumes while `interface()` is
+  2D-line-masters-only, so no mesh exists that both verbs accept — and
+  `equal_dof` is the stronger reference anyway, being exact where `tie`'s
+  default enforcement is itself a penalty.
+- Docs: `docs/api/constraints.md` gains a Tier 6 section,
+  `docs/concepts/constraints.md` places interface springs against tie /
+  contact / embedded, and `skills/apegmsh/` carries the verb.
 ### FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
 
 The 2026-08-13 adversarial review of the landed partitioned-contact emit
