@@ -35,6 +35,9 @@ _VIEWS: frozenset[str] = frozenset({"mesh", "contour", "deformed", "reactions"})
 _CAMERAS: frozenset[str] = frozenset({"iso", "xy", "xz", "yz"})
 _SKIP_ENV = "[skip viewer] APEGMSH_SKIP_VIEWER set"
 _SKIP_GL = "[skip viewer] no GL context"
+# VTK/pyvista raise these when the offscreen window cannot start.
+# TypeError / ValueError / AttributeError are bugs and must propagate.
+_GL_EXC = (RuntimeError, OSError)
 # stills.py default: largest |u| becomes this fraction of the model diagonal.
 _DEFORM_FRACTION = 0.12
 _DEFAULT_WINDOW = (1280, 720)
@@ -106,6 +109,8 @@ def render_results(
     wants_deform = view == "deformed" or (
         view != "mesh" and deform_spec is not None
     )
+    if wants_deform:
+        _require_deform_field(director, scene, deform_spec, step_i)
     # Full-mesh contour occupies the substrate — a second fill z-fights.
     add_substrate = view in ("mesh", "reactions")
 
@@ -215,7 +220,7 @@ def _open_plotter(window_size: tuple[int, int]) -> Any:
     try:
         import pyvista as pv
         return pv.Plotter(off_screen=True, window_size=list(window_size))
-    except Exception:
+    except _GL_EXC:
         print(_SKIP_GL)
         return None
 
@@ -265,24 +270,34 @@ def _apply_camera(plotter: Any, camera: str) -> None:
 def _screenshot(plotter: Any, path: "str | Path") -> Optional[Path]:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # PyVista only writes known image suffixes; keep .png on the temp.
+    tmp = out.with_name(out.stem + ".partial" + out.suffix)
     try:
-        plotter.screenshot(str(out))
+        plotter.screenshot(str(tmp))
+    except _GL_EXC:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        print(_SKIP_GL)
+        return None
     except Exception:
-        if out.exists():
+        if tmp.exists():
             try:
-                out.unlink()
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
+    if not tmp.exists() or tmp.stat().st_size == 0:
+        if tmp.exists():
+            try:
+                tmp.unlink()
             except OSError:
                 pass
         print(_SKIP_GL)
         return None
-    if not out.exists() or out.stat().st_size == 0:
-        if out.exists():
-            try:
-                out.unlink()
-            except OSError:
-                pass
-        print(_SKIP_GL)
-        return None
+    tmp.replace(out)
     return out
 
 
@@ -329,10 +344,33 @@ def _ensure_stage(director: Any) -> None:
 def _resolve_step(director: Any, step: int) -> int:
     n = int(director.n_steps)
     if n <= 0:
-        return 0
-    if step < 0:
-        return max(0, n + int(step))
-    return min(int(step), n - 1)
+        raise ValueError("results.render has no steps to index.")
+    idx = int(step)
+    if idx < 0:
+        idx = n + idx
+    if idx < 0 or idx >= n:
+        raise ValueError(
+            f"step={step!r} is out of range for {n} step(s) "
+            f"(valid 0..{n - 1}, or Python negatives)."
+        )
+    return idx
+
+
+def _require_deform_field(
+    director: Any,
+    scene: Any,
+    deform_spec: Optional[tuple[str, Optional[float]]],
+    step: int,
+) -> Any:
+    """Return the warp field or raise (do not write an undeformed still)."""
+    field = "displacement" if deform_spec is None else deform_spec[0]
+    vals = _read_deform_field(director, scene, field, step)
+    if vals is None:
+        raise ValueError(
+            f"view='deformed' needs a recorded {field}_* field; "
+            "none is present."
+        )
+    return vals
 
 
 def _apply_deform(
@@ -348,9 +386,7 @@ def _apply_deform(
         field, scale = "displacement", None
     else:
         field, scale = deform_spec
-    vals = _read_deform_field(director, scene, field, step)
-    if vals is None:
-        return
+    vals = _require_deform_field(director, scene, deform_spec, step)
     if scale is None:
         max_d = float(abs(vals).max())
         diag = float(scene.model_diagonal)
@@ -385,7 +421,7 @@ def _apply_deform(
 def _read_deform_field(
     director: Any, scene: Any, field: str, step: int,
 ) -> Any:
-    import numpy as np
+    from apeGmsh.viewers._pump_set import read_nodal_vector_field
 
     try:
         scoped = director.results
@@ -393,25 +429,4 @@ def _read_deform_field(
             scoped = director.results.stage(director.stage_id)
     except Exception:
         return None
-    n = int(scene.node_ids.size)
-    out = np.zeros((n, 3), dtype=np.float64)
-    id_to_idx = scene.node_id_to_idx
-    any_axis = False
-    for axis, suf in enumerate(("x", "y", "z")):
-        try:
-            slab = scoped.nodes.get(
-                ids=scene.node_ids,
-                component=f"{field}_{suf}",
-                time=[int(step)],
-            )
-        except Exception:
-            continue
-        if slab.values.size == 0:
-            continue
-        vals = np.asarray(slab.values[0], dtype=np.float64)
-        for nid, v in zip(np.asarray(slab.node_ids), vals):
-            idx = id_to_idx.get(int(nid))
-            if idx is not None:
-                out[idx, axis] = float(v)
-                any_axis = True
-    return out if any_axis else None
+    return read_nodal_vector_field(scoped, scene, field, step)
