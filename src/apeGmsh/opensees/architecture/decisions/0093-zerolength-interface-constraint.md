@@ -415,6 +415,48 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
    claimed into a stage under MPI; extends `_emit_stages_partitioned`
    (`apesees.py:2771`); ghost SP replay across the stage boundary. *(top /
    mid)*
+
+   *Landed 2026-08-12 (probe pending).* Shape: the S9 refusal is
+   retired; the base per-rank plan takes the UNCLAIMED subset and
+   `_plan_stage_interfaces_partitioned` builds one INV-5 owner/ghost
+   plan per stage (same single-owner + master-native assertions, same
+   pattern-sp-on-ghost refusal, plus a named refusal for claiming
+   into a stage EARLIER than the one owning an endpoint's topology —
+   under MP that deck would run with the interface pushing on a
+   floating ghost). Claimed rows join the S8 tag pre-pass in the
+   sequence the serial-staged deck consumes the allocator (unclaimed
+   flat order, then per-stage claim order), so serial-staged and
+   partitioned-staged decks are tag-comparable under the same S8
+   conditional. The unit emits inside the owner rank's stage bracket
+   after the stage MP constraints (the flat `emit_stage_interfaces`
+   position), reusing `_emit_interfaces_partitioned` with the
+   stage-inclusive ghost SP stream and the rank's live ghost registry
+   — ghosts replay stage-bound `s.fix` across the stage boundary and
+   later stages mirror their SP deltas onto held ghosts (ADR 0027
+   INV-2, both directions). Measured (the interface numeric twin,
+   `tests/opensees/subprocess/test_interface_partitioned_numeric_twin.py`,
+   serial vs 2-rank OpenSeesMP): worst relative delta 3.6e-15 across
+   the S8 base push+shear / pull cases and the staged liner install +
+   service increment (the service increment is the case that actually
+   loads the staged interface; tangential slip saturation is S10
+   acceptance territory); the staged `zeroLength` is born STRAIN-FREE
+   on the equilibrated ground (install-stage `eleResponse …
+   deformation` exactly 0.0 against a raw relative displacement of
+   2.3e-4; post-install increments carry the compression ordering in
+   increment space) — the INV-6 install-on-equilibrated-ground
+   semantics, now measured.
+
+   *Probe fix (S9 refuter).* An ADR 0052 `s.support` HOLD on a
+   ghosted interface slave was neither refused nor mirrored — the
+   HOLD's `sp … [nodeDisp …] -const` lines fan out on native ranks
+   only, the owner rank's ghost stays free, and the 2-rank deck runs
+   CLEAN to a plausible wrong answer (measured: 26.4% base-reaction /
+   12.5% master-displacement error, while `s.fix` in the same slot
+   agrees with serial to 1e-16). The ghost-sp refusal now sweeps
+   every stage's `support_records` for both the unclaimed (S8) and
+   claimed (S9) plans. Folding the HOLD into the ghost replay would
+   need the runtime `[nodeDisp …]` capture replayed on the owner
+   rank — a named follow-up, not S9.
 10. **S10 — acceptance battery** (the requester's own checks): bonded limit
     (stiff bilateral laws) reproduces `tie` on the same mesh; unilateral
     zero-tension with free separation, both signs, curved master, for both

@@ -20,8 +20,11 @@ What is pinned here:
   ``MP_Constraint`` and the handler line is emitted up front in the
   analysis chain, before the stage that owns the equalDOF runs;
 * the claim registry's fail-loud edges (unknown name, double claim, no
-  interfaces at all) and the two refusals this slice owns —
-  partitioned + staged (S9) and the staged H5 archive (S7 follow-up).
+  interfaces at all) and the staged H5 archive refusal (S7 follow-up).
+  The partitioned + staged refusal this slice originally owned was
+  RETIRED by ADR 0093 S9 — the combo now emits (smoke-tested here on
+  the stub; the deep gates live in
+  ``tests/opensees/integration/test_interface_partitioned_staged_emit.py``).
 """
 from __future__ import annotations
 
@@ -452,18 +455,50 @@ def test_unclaimed_interface_still_emits_in_the_base_pass(tmp_path):
 # ======================================================================
 # Refusals owned by this slice
 # ======================================================================
-def test_partitioned_plus_staged_refuses_naming_s9(tmp_path):
+def test_partitioned_plus_staged_emits_the_unit_in_the_owner_stage_block(
+    tmp_path,
+):
+    """ADR 0093 S9: the refusal this test used to pin is RETIRED — the
+    stage-claimed unit now emits inside the OWNER rank's bracket of the
+    claiming stage's block, exactly once, with the foreign slave
+    ghost-declared first and the SAME tags the serial-staged deck
+    carries (the claimed rows join the S8 tag pre-pass)."""
     recs = [_iface(3, 5, name="RockLiner")]
     fem = _fem(recs)
+    # Rank 0 owns the Rock quad (element 1 — the stamped backing
+    # element) and nodes 1-4; rank 1 owns the Liner side, so slave
+    # node 5 is FOREIGN to the owner.
     fem.set_partitions([(0, [1, 2, 3, 4], [1]), (1, [3, 4, 5, 6], [2])])
-    ops = _staged(fem)
-    with pytest.raises(BridgeError) as exc:
-        ops.tcl(str(tmp_path / "deck.tcl"))
-    msg = str(exc.value)
-    # The staged case gets the message naming ITS slice, not the broader
-    # S8 side-list refusal it is checked ahead of.
-    assert "ADR 0093 S9" in msg
-    assert "s.interface(name=...) in stage(s) 'install'" in msg
+    lines = _deck(_staged(fem), tmp_path)
+
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == 1                     # exactly once, deck-wide
+    block = _stage_block(lines, "install")
+    i_open = block.index("if {[getPID] == 0} {")
+    i_unit = block.index("# RockLiner")
+    i_zl = block.index(zl[0])
+    i_close = next(
+        i for i, ln in enumerate(block) if i > i_open and ln == "}"
+    )
+    # The whole unit sits inside the owner (rank 0) bracket, with the
+    # foreign slave's ghost decl preceding it.
+    assert i_open < i_unit < i_zl < i_close
+    assert "node 5 2.0 1.0 0.0" in block[i_open:i_unit]
+    # Nothing interface-shaped in the base pass or the ground stage.
+    base = lines[:lines.index("# === Stage: ground ===")]
+    assert not [ln for ln in base if ln.startswith("uniaxialMaterial ENT ")]
+    # Serial-staged tag identity: the flat staged deck of the same model
+    # carries the byte-identical unit (ADR 0093 S9 tag pre-pass).
+    flat_lines = _deck(_staged(_fem([_iface(3, 5, name="RockLiner")])),
+                       tmp_path, "flat.tcl")
+    unit = [
+        "# RockLiner",
+        "uniaxialMaterial ENT 1 250000.0",
+        "uniaxialMaterial ElasticPP 2 25000.0 0.0025",
+        zl[0],
+    ]
+    i_flat = flat_lines.index("# RockLiner")
+    assert flat_lines[i_flat:i_flat + 4] == unit
 
 
 def test_unclaimed_interface_on_stage_bound_node_refuses(tmp_path):
