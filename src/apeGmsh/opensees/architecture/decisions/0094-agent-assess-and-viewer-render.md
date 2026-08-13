@@ -1,7 +1,6 @@
 # ADR 0094 — Agent assess/report + offscreen viewer render
 
-**Status:** Proposed (2026-08-12; reviewed same day — factual
-corrections and catalog/slice scope fixes folded in)
+**Status:** Accepted (2026-08-13 — S0–S5 shipped; Q1–Q3 closed below)
 
 **Evidence:** a scoping pass on the three Qt viewers plus a five-seat
 workshop (architect / agent-UX / results-domain / simplicity skeptic /
@@ -391,14 +390,22 @@ PR):
    threshold is an ADR amendment after we have numbers.
 5. **`CAD.SLIVER_*`** — not v1. Live kernel + `ImportHealth`; S4.
 
-Still open (question 2 gates the S1 fallback ladder — until it is
-answered S1 ships ladder steps 1 + 3 only; questions 1 and 3 need a
-user call before S4/S5, not before S0–S2):
+Closed (2026-08-13 workshop — architecture / viewer / agent-UX /
+skeptic / API):
 
-1. Should S4 BRep stills require a mesh (today `build_brep_scene`
-   tessellates from the live kernel) or accept a coarse on-the-fly
-   tessellation with a documented size?
-2. Is a hidden-window fallback (ladder step 2) worth the Windows
-   flash, or do we skip figures when VTK offscreen fails?
-3. Do docs showcase stills switch to `viewers.render` in S1 or wait
-   for pixel-parity tests against the current `stills.py`?
+1. **S4 BRep tessellation** — keep the existing coarse on-the-fly
+   tessellation (`build_brep_scene`, same as ModelViewer, including a
+   throwaway 2-D mesh when none exists). Need fine triangles:
+   `generate()` then `g.mesh.render`. No public size knob. Requiring a
+   mesh would make `g.model.render` useless in the geometry-phase
+   notebook.
+2. **Hidden-window fallback (ladder step 2)** — **never.** VTK
+   offscreen or skip. `ResultsViewer.show(run_loop=False)` flashes,
+   pulls the full shell (ADR 0084), and Windows
+   `QT_QPA_PLATFORM=offscreen` still crashes `ViewerWindow`.
+   `export_animation` already owns that cost for movies. S1/S5 stay
+   ladder 1+3.
+3. **`stills.py`** — stays a **poster** script (titles, tubes, zoom,
+   hand-rolled warp). `viewers.render` is the product still. No
+   pixel-parity harness. Do not grow `title=` / `line_tubes=` /
+   `setup=` onto the closed `view=` set (INV-10).
