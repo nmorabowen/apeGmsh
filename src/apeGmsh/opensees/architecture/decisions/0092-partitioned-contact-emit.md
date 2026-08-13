@@ -450,6 +450,69 @@ by a single rank with the whole interface visible to it.
    Windows because orphaned ranks inherit the pipe handles).
 6. **S6 — `Results` ownership contract** (INV-6).
 
+   *Landed 2026-08-13* —
+   `tests/opensees/subprocess/test_contact_partitioned_results_stitch.py`,
+   the S5 model recorded and read back. INV-6 predicted "work reduces to
+   a regression test"; writing it found the contract rests on **three**
+   things, only one of which was pinned anywhere.
+
+   - **The filename grammar is a CROSS-LIBRARY contract nothing had
+     executed.** apeGmsh emits the recorder line ONCE, globally, with the
+     name verbatim (there is no `part-` anywhere in `src/`); the
+     `<stem>.part-<K>.ladruno` suffix that `discover_partition_files`
+     matches is written by the FORK (`SRC/recorder/LadrunoRecorder.cpp`,
+     which detects partitioning via `send_self_count` or an MPI
+     launcher's `PMI_*` / `OMPI_*` / `SLURM_NTASKS` pair, then rewrites
+     the stem). Each side tested its own half. A drift in the fork's
+     spelling would make every partitioned read silently return ONE
+     rank's slice — a wrong answer shaped like a small model. Now
+     asserted against real 2-rank output.
+   - **The node stitch dedupes first-write-wins** (`_merge_node_slabs`,
+     `_merge_partition_fems`), and the contact ghost IS that duplicate.
+     Measured: rank 0 recorded **12** nodes for the 8 it owns — the 4
+     extra are exactly the slave-face ghosts {10, 12, 14, 16} — while
+     rank 1 recorded its 8. The merge keeps whichever copy it meets
+     first and drops the rest **without comparing them**, so the stitch
+     is correct only because ghost == native. That equality is a fork
+     property (ADR-78 P0 / S5, bit-identical at the solver level); S6
+     asserts it survives to the recorder, which is what the reader
+     actually consumes, and pins the stitched result against the serial
+     twin (16 unique node ids, no NaN, max rel Δ **1.997e−14**, gate
+     1e−10; the ghost copy is the one that wins, and it agrees).
+   - **The element stitch does NOT dedupe** (`_concat_element_slabs`
+     concatenates, assuming rank-disjoint elements), so an INV-7
+     violation — a ghost carrying elements — would double-count in
+     every partitioned read with no error. Pinned on real output:
+     rank 0 {2}, rank 1 {3}, empty intersection, union == the serial
+     element set.
+
+   Plus the INV-6 statement proper, now on real contact output rather
+   than a synthesized manifest: strip `ON_ELEMENTS` from one rank and
+   the stitch still answers; strip it from both and the read is loud.
+
+   Two notes for whoever extends this. `_per_partition` (the
+   tolerate-a-missing-rank wrapper) covers `read_elements` /
+   `read_line_stations` / `read_gauss` / `read_fibers` but NOT
+   `read_layers` / `read_springs` — harmless today only because both
+   are always-empty stubs on the `.ladruno` reader that never raise
+   `MissingElementResults`; if either ever becomes real, INV-6 breaks
+   there. And `opensees_model()` reads **partition 0 only**, so when the
+   contact owner is not rank 0 the minimal broker comes from a rank that
+   knows nothing about the interaction.
+
+   The suite deliberately does NOT declare a constraint handler: it
+   rides the auto-emit, so it is also a live consumer of the S5
+   open-item fix (a regressed hoist runs PlainHandler and the numbers
+   stop matching). "Contact families" resolves to **ordinary node /
+   element results on a model that has contact** — the fork exposes no
+   recordable contact response at all (`LadrunoContactHandler` is a
+   `ConstraintHandler`, `LadrunoContactFE` an analysis-layer
+   `FE_Element`, `LadrunoContactDomain` not even a `TaggedObject`; no
+   `setResponse`/`getResponse` anywhere, and `element/contact.py`
+   defines no `Element` class, so no tag exists for a recorder to
+   target). What contact changes is not *what* is recorded but *who*
+   records it — which is the ownership contract itself.
+
 ## Consequences
 
 - Contact models stop being capped by one node's RAM. That is the whole
