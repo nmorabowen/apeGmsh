@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 (Proposed): apeGmsh.studio agent + script + viewer habitat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-meshinverted-hex8-sign-2dskipenergy-assess-gaps-adr-0094-s2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7221,6 +7232,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 (Proposed): apeGmsh.studio agent + script + viewer habitat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-meshinverted-hex8-sign-2dskipenergy-assess-gaps-adr-0094-s2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11065,6 +11087,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat">ADDED — ADR 0095 (Proposed): <code>apeGmsh.studio</code> agent + script + viewer habitat<a class="headerlink" href="#added-adr-0095-proposed-apegmshstudio-agent-script-viewer-habitat" title="Permanent link">&para;</a></h3>
+<p>Sidecar <code>apeGmsh.studio</code> (same administrative shape as <code>hpc</code> / <code>assess</code>:
+not a session composite, not re-exported from <code>apeGmsh/__init__.py</code>).
+Cursor stays the IDE; a Python daemon owns refresh / last-good
+tessellation / assess / render / a names-first <code>SelectionEnvelope</code>; the
+existing Qt <code>ViewerWindow</code> is the v1 host. JSON-on-disk is the v0
+transport; MCP is a later wrap (the consumer ADR 0094 deferred). Electron
+is a skin, not the architecture. This PR is the ADR + index only (S0);
+no library yet.</p>
+<p>Amends ADR 0094 only in the disposition of “Later: optional MCP wrapping
+S5”. Assess, stills, and “agents do not drive Qt for diagnosis” stay in
+force.</p>
 <h3 id="fixed-meshinverted-hex8-sign-2dskipenergy-assess-gaps-adr-0094-s2">FIXED — <code>MESH.INVERTED</code> hex8 sign + 2D/skip/energy assess gaps (ADR 0094 S2)<a class="headerlink" href="#fixed-meshinverted-hex8-sign-2dskipenergy-assess-gaps-adr-0094-s2" title="Permanent link">&para;</a></h3>
 <p>The signed hex8 6-tet split copied MassResolver's connectivity, including
 one negatively oriented tet. MassResolver takes <code>abs()</code> so it never
