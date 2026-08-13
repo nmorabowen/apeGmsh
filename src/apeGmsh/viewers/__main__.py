@@ -85,8 +85,10 @@ def _is_model_only(path: Path) -> bool:
 
 
 def _open_fem(path: Path):
-    from apeGmsh.mesh.FEMData import FEMData
-    return FEMData.from_h5(str(path))
+    # ADR 0014: viewers/ may not import apeGmsh.mesh. OpenSeesModel.from_h5
+    # is already allowed on this CLI (Phase 8) and yields .fem.
+    from apeGmsh.opensees import OpenSeesModel
+    return OpenSeesModel.from_h5(path).fem
 
 
 def _parse_deform_flag(text: str):
