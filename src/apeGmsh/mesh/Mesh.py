@@ -27,6 +27,7 @@ focused sub-composite:
 Plus a flat top-level entry point that opens an interactive window:
 
 * ``g.mesh.viewer(**kw)``
+* ``g.mesh.render(path)`` — offscreen undeformed mesh still (ADR 0094 S4)
 
 Example
 -------
@@ -65,6 +66,8 @@ from ._mesh_sizing import _Sizing
 from ._mesh_structured import _Structured
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 from apeGmsh._types import DimTag, TagsLike
@@ -153,6 +156,33 @@ class Mesh(_HasLogging):
         from ..viewers.mesh_viewer import MeshViewer
         mv = MeshViewer(self._parent, **kwargs)
         return mv.show()
+
+    def render(
+        self,
+        path: "str | Path",
+        *,
+        camera: str = "iso",
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> "Path | None":
+        """Write one offscreen undeformed mesh still (ADR 0094 S4).
+
+        Live session only. Uses ``build_mesh_scene`` (the same live
+        Gmsh scene as :meth:`viewer`), not ``get_fem_data`` +
+        ``build_fem_scene``. VTK offscreen — no Qt window, no event
+        loop.
+
+        Returns the written :class:`~pathlib.Path`, or ``None`` (and
+        prints the ``[skip viewer]`` notice) under
+        ``APEGMSH_SKIP_VIEWER=1`` or with no GL. Raises
+        ``RuntimeError`` on a ``from_h5`` / closed session, or when
+        no mesh has been generated. Snapshot stills stay on
+        ``fem.render``.
+        """
+        from apeGmsh.viewers.render import render_mesh
+
+        return render_mesh(
+            self._parent, path, camera=camera, window_size=window_size,
+        )
 
     def preview(
         self,
