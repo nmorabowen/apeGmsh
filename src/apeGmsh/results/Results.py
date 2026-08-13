@@ -86,6 +86,7 @@ from ._inspect import ResultsInspect
 from .readers._protocol import EigenMode, ResultsReader, StageInfo
 
 if TYPE_CHECKING:
+    from apeGmsh.assess import AssessmentReport
     from ..mesh.FEMData import FEMData
     from ..opensees._internal.lineage import Lineage
     from ..opensees.opensees_model import OpenSeesModel
@@ -1159,6 +1160,19 @@ class Results:
             from .plot import ResultsPlot
             self._plot = ResultsPlot(self)
         return self._plot
+
+    # ------------------------------------------------------------------
+    # Assess (ADR 0094 S2)
+    # ------------------------------------------------------------------
+
+    def assess(self, *, figures: bool = False) -> "AssessmentReport":
+        """Compile a v1 :class:`~apeGmsh.assess.AssessmentReport`.
+
+        Findings only. ``figures=True`` ships in S3 and raises
+        :class:`NotImplementedError` here.
+        """
+        from apeGmsh.assess import assess_results
+        return assess_results(self, figures=figures)
 
     # ------------------------------------------------------------------
     # Viewer
