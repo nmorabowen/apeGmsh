@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — split="parts" silently dropped g.constraints.interface() (ADR 0093)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-analysis-chain-auto-emits-now-precede-a-user-declared-analysis-directive-adr-0092-s5-open-item" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7317,6 +7328,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — split="parts" silently dropped g.constraints.interface() (ADR 0093)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-analysis-chain-auto-emits-now-precede-a-user-declared-analysis-directive-adr-0092-s5-open-item" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11227,6 +11249,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093">FIXED — <code>split="parts"</code> silently dropped <code>g.constraints.interface()</code> (ADR 0093)<a class="headerlink" href="#fixed-splitparts-silently-dropped-gconstraintsinterface-adr-0093" title="Permanent link">&para;</a></h3>
+<p><code>BuiltModel._emit_split</code> ran every other additive side-list pass
+(<code>emit_mp_constraints</code>, <code>emit_reinforce_ties</code>, <code>emit_embed_ties</code>,
+<code>emit_contacts</code>, <code>emit_contact_planes</code>, <code>emit_rebar_elements</code>) but never
+<code>emit_interfaces</code>, so a model carrying <code>g.constraints.interface()</code>
+exported with <code>split="parts"</code> lost the ENTIRE interface — no
+<code>zeroLength</code>, no tributary-scaled uniaxials, no mixed-ndf phantom — and
+the deck still loaded and ran, as a fully bonded model where the user
+asked for a unilateral one. Found by the ADR 0093 S8 adversarial review
+(refuter A, finding 5). The pass now runs at the flat path's position
+(after <code>emit_contact_planes</code>, before <code>emit_rebar_elements</code>), driver-side
+with the MP constraints: an interface is cross-module by construction, so
+its unit must land after every fragment has declared its nodes. The
+constraint-handler auto-emit already saw mixed-ndf interfaces through
+<code>_fem_has_interface_equal_dofs</code>, so the split deck's handler was never
+wrong — only its interface was missing. Regression:
+<code>tests/opensees/unit/test_split_emit.py</code> (the driver carries the block
+and the fragments do not; the split driver's interface lines equal the
+single-file deck's, same order, same tags).</p>
 <h3 id="fixed-analysis-chain-auto-emits-now-precede-a-user-declared-analysis-directive-adr-0092-s5-open-item">FIXED — analysis-chain auto-emits now precede a user-declared <code>analysis</code> directive (ADR 0092 S5 open item)<a class="headerlink" href="#fixed-analysis-chain-auto-emits-now-precede-a-user-declared-analysis-directive-adr-0092-s5-open-item" title="Permanent link">&para;</a></h3>
 <p>The bridge's auto-emitted chain components — <code>constraints LadrunoContact</code>
 (contact) / <code>Transformation</code> (MP constraints), and under partitioning the
