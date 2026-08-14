@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-s4e-emit_report-html-and-canvas-skins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0095-s4d-adversarial-closeout" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7614,6 +7625,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-s4e-emit_report-html-and-canvas-skins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0095-s4d-adversarial-closeout" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11821,6 +11843,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-s4e-emit_report-html-and-canvas-skins">ADDED — ADR 0095 S4e: emit_report HTML and canvas skins<a class="headerlink" href="#added-adr-0095-s4e-emit_report-html-and-canvas-skins" title="Permanent link">&para;</a></h3>
+<p>Same ReportBundle, no new MCP verb. <code>format=html</code> writes
+<code>docs/studio-report.html</code> (print/share). <code>format=canvas</code> writes a
+Cursor <code>.canvas.tsx</code> to the IDE <code>canvases/</code> directory (<code>output=</code> /
+<code>CURSOR_CANVAS_DIR</code> / <code>~/.cursor/projects/&lt;slug&gt;/canvases/</code>) — not
+git-portable, not the archive. Both skins still write the markdown
+chapter under <code>docs/</code>. Labels are HTML-escaped. Canvas does not embed
+visor PNGs. <code>kind=formation</code> stays later.</p>
 <h3 id="fixed-adr-0095-s4d-adversarial-closeout">FIXED — ADR 0095 S4d adversarial closeout<a class="headerlink" href="#fixed-adr-0095-s4d-adversarial-closeout" title="Permanent link">&para;</a></h3>
 <p><code>promote_selection</code> snippets match
 <code>g.model.select(None, dim=).in_box(lo, hi).to_label()</code> /
