@@ -12,6 +12,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0094 Amendment 1: catalog honesty
+
+Assess closeout contract after adversarial review: 2-D cells judged
+for degeneracy only (winding is a convention), `RES.NAN` union-merge
+fill is skip not FAIL, `RES.ENERGY_ERR` is info in `%`, new
+`RES.ENERGY_NONFINITE` warning, `AssessmentReport.skipped` is
+branchable. Code in the follow-up PR. Does not reopen S0–S5.
+
 ### FIXED — Graphics colors G-HEX + model-viewer G-RENDER ratchet
 
 Okabe–Ito preset and swatch contrast no longer carry hex string
