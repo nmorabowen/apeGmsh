@@ -241,6 +241,9 @@ without studio owning the source.
 | **S0** | This ADR + skill paragraph: after solve, assess + render (0094); before a spatial edit, there is not yet a pick file — say so. No library. | ADR 0094 S0–S2 |
 | **S1** | `SelectionEnvelope` projector from `SelectionState` (pure, unit-tested). Host writes `.apegmsh/selection.json` on pick. Skill: read it. | ADR 0045 |
 | **S2** | `apeGmsh.studio` daemon: `run_until` = subprocess replay of the current file, last-good tessellation via `build_brep_scene` / `viewers.render`, geometry-hash skip remesh. `python -m apeGmsh.studio` opens the Qt host (phase tabs on `ViewerWindow`). | S1, ADR 0088, 0094 S1 |
+| **S2b** | Truthful `run_until(phase)`: `model` raises `StopAtPhase` at `generate()`, `mesh` at `apeSees`/`Results`; dump `.apegmsh/names.json` (labels / PGs / counts / bboxes) at the stop. Skip-remesh keys on `(hash, phase)`. | S2 |
+| **S2c** | Append-only `.apegmsh/runs.jsonl`: timestamp, hash, phase, stopped_at, labels / PGs / counts. Skip does not append. Failed exec appends `ok: false`. | S2b |
+| **S2d** | `--status` / `collect_status`: read names + last ledger line + pick without replay. PoC fixture `tests/studio/fixtures/box.py`. | S2c |
 | **S3** | Qt protocol: `highlight(names)` mutator; phase resource. Same payload as the JSON. | S2, ADR 0056 |
 | **S4** | MCP wrapping S1–S3 (`get_selection`, `highlight`, `run_until`, `assess`, `render`, `promote_selection`). Cursor MCP config. | S3; this is 0094’s “MCP wrapping S5” consumer |
 | **Later** | Statement-step BRep (geometry only). Host projections (read-only script view + PG→apeSees binding graph, INV-9). Live refresh loop (file-watch / Refresh, worker replay, camera-preserving scene swap). Electron/trame chrome after ADR 0047 R-D, only if non-3D studio UI outgrows Qt. In-app agent habitat (the Electron-as-shell fork) — requires an explicit habitat amendment, not a drive-by. | S4 |
@@ -254,6 +257,14 @@ refresh). S4 is the Cursor-native door.
 - A `SelectionEnvelope` round-trip test: `SelectionState` with a
   labeled face projects to JSON whose identity fields are the label /
   PG / phase, not only dimtags.
+- A `run_until(phase="model")` test: a script that would mesh and
+  construct `apeSees` does not call `generate()`; `.apegmsh/names.json`
+  identity fields are the label / PG, and element counts at dim 3 are 0.
+- A second session can reconstruct phase / counts / names from the last
+  line of `.apegmsh/runs.jsonl` plus `names.json`, without the chat.
+  Skip-remesh does not append a duplicate line.
+- `--status` on a workspace that has those files prints phase / names /
+  counts without calling `run_until`; an empty `.apegmsh/` exits 2.
 - Failed replay leaves the previous tessellation on the host (INV-4);
   a unit test on the runner, not a GUI click test.
 - `apeGmsh.studio` AST-guard: not imported from `apeGmsh/__init__.py`;

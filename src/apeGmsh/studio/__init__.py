@@ -7,12 +7,15 @@ from ``apeGmsh.__init__``.
 Public door::
 
     python -m apeGmsh.studio script.py
+    python -m apeGmsh.studio script.py --phase mesh
+    python -m apeGmsh.studio --status
 
-Opens MeshViewer if the script generated a mesh, otherwise
-ModelViewer. Picks in the Qt host write a names-first
-:class:`SelectionEnvelope`
-to ``.apegmsh/selection.json`` (cwd). Types live here so a test or
-skill can project / read the envelope without opening Qt.
+``run_until(phase=)`` is a real gate: ``model`` stops before
+``generate()``, ``mesh`` before ``apeSees`` / ``Results``. A successful
+stop writes ``.apegmsh/names.json`` and appends ``.apegmsh/runs.jsonl``.
+Picks write a names-first :class:`SelectionEnvelope` to
+``.apegmsh/selection.json`` (cwd). Types live here so a test or skill
+can project / read the envelope without opening Qt.
 """
 
 from ._envelope import (
@@ -27,22 +30,41 @@ from ._envelope import (
     read_envelope,
     write_envelope,
 )
-from ._paths import DEFAULT_ENVELOPE_REL, envelope_path
-from ._replay import ReplayResult, ReplayRunner
+from ._ledger import last_run, read_runs
+from ._paths import (
+    DEFAULT_ENVELOPE_REL,
+    DEFAULT_LEDGER_REL,
+    DEFAULT_NAMES_REL,
+    envelope_path,
+    ledger_path,
+    names_path,
+)
+from ._replay import PHASES, ReplayResult, ReplayRunner, StopAtPhase
+from ._status import collect_status, format_status
 
 __all__ = [
     "DEFAULT_ENVELOPE_REL",
+    "DEFAULT_LEDGER_REL",
+    "DEFAULT_NAMES_REL",
     "ENVELOPE_SCHEMA",
+    "PHASES",
     "NameRecord",
     "PickEvidence",
     "ReplayResult",
     "ReplayRunner",
     "SelectionEnvelope",
+    "StopAtPhase",
+    "collect_status",
     "dumps",
     "envelope_path",
+    "format_status",
+    "last_run",
+    "ledger_path",
     "loads",
+    "names_path",
     "project",
     "project_state",
     "read_envelope",
+    "read_runs",
     "write_envelope",
 ]

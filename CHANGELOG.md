@@ -12,6 +12,32 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — studio `--status` inspects `.apegmsh/` without replay
+
+`python -m apeGmsh.studio --status` prints the last ledger line, names,
+counts, and pick from cwd `.apegmsh/` — no exec, no Qt. `--json` dumps
+the same payload. Empty state exits 2. PoC script:
+`tests/studio/fixtures/box.py`.
+
+### ADDED — studio run ledger (`.apegmsh/runs.jsonl`)
+
+Each `run_until` stop appends one JSONL line (timestamp, script hash,
+phase, stopped_at, labels / PGs / counts). Skip-remesh does not write a
+line. A failed exec writes `ok: false` and the traceback. `names.json`
+stays the current snapshot; the ledger is the history. `assess` and
+`visors` are reserved empty keys until those artifacts exist.
+
+### ADDED — studio `run_until(phase)` is a real gate + `names.json`
+
+`python -m apeGmsh.studio script.py` defaults to `--phase model` and
+**stops before** `g.mesh.generation.generate()` (a `StopAtPhase`
+sentinel, not a failed exec). `--phase mesh` allows the mesh and stops
+before `apeSees` / `Results`. A successful stop writes
+`.apegmsh/names.json` (labels / physical groups / entity bboxes /
+element counts) — what exists, not what was clicked. Skip-remesh keys
+on `(source hash, phase)` so a model preview is not reused as a mesh
+preview. Geometry preview of a solving script no longer runs the solve.
+
 ### FIXED — Graphics colors G-HEX + model-viewer G-RENDER ratchet
 
 Okabe–Ito preset and swatch contrast no longer carry hex string

@@ -252,11 +252,17 @@ This is the **happy path**. For anything more involved (multi-part assembly,
 coupled shell + frame, pushover, staged SSI, reading results back), read the
 matching reference — don't improvise.
 
-**Studio (ADR 0095).** `python -m apeGmsh.studio script.py` replays the
-script with the session held open and opens MeshViewer if the script
-generated a mesh, otherwise ModelViewer. Picks write
-`.apegmsh/selection.json` (cwd). Before a spatial edit, read that
-file — identity is `labels` / `physical_groups` / `phase`, not dimtags.
+**Studio (ADR 0095).** `python -m apeGmsh.studio script.py` replays
+up to `--phase` (default `model`: **stops before** `generate()`;
+`--phase mesh` stops before `apeSees` / `Results`). The session stays
+open. MeshViewer if the replay produced elements, otherwise
+ModelViewer. Picks write `.apegmsh/selection.json` (cwd). A successful
+stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
+what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
+(timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
+reads those files without replaying. Before a spatial edit, read the
+envelope, `names.json`, and `--status` — identity is
+`labels` / `physical_groups` / `phase`, not dimtags.
 An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.
 After solve, still `assess()` + `render()`, not `viewer()`.
 When the agent must look, write visors under `.apegmsh/visors/`
@@ -326,8 +332,9 @@ signatures) lives in the references, which the file tells you to re-verify.
   `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
   `ops.run_remote`), `from apeGmsh.sensitivity import Sensitivity` (FD
   gradient/calibration), `from apeGmsh.studio import SelectionEnvelope`
-  (`python -m apeGmsh.studio script.py` — live pick envelope at
-  `.apegmsh/selection.json`, ADR 0095). Details in `api-cheatsheet.md`.
+  (`python -m apeGmsh.studio script.py --phase model` — stops before
+  `generate()`; `.apegmsh/selection.json` + `names.json` + `runs.jsonl`;
+  `--status` inspects them, ADR 0095). Details in `api-cheatsheet.md`.
 - **Schema constants** live in `fem-broker.md` (neutral + bridge zones, ADR
   0023) and the viewer session schema in `results.md` — they drift, so read the
   number from there, not from memory.
