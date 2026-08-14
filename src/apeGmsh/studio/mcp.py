@@ -1,8 +1,9 @@
-"""``python -m apeGmsh.studio.mcp`` — Cursor stdio adapter (ADR 0095 S4a–S4d).
+"""``python -m apeGmsh.studio.mcp`` — Cursor stdio adapter (ADR 0095 S4a–S4e).
 
 Tools: ``status``, ``get_selection``, ``run_until``, ``assess``,
 ``render``, ``animate(kind=history|yield)``, ``results_pin``,
-``emit_report(format=markdown)``, ``highlight``, ``promote_selection``.
+``emit_report(format=markdown|html|canvas)``, ``highlight``,
+``promote_selection``.
 Requires the optional extra ``pip install mcp`` (or ``apeGmsh[mcp]``).
 
 Cursor ``mcp.json`` (workspace cwd is the model root)::
@@ -49,13 +50,14 @@ def build_server() -> Any:
     mcp = FastMCP(
         "apeGmsh.studio",
         instructions=(
-            "apeGmsh.studio habitat (ADR 0095 S4a–S4d). "
+            "apeGmsh.studio habitat (ADR 0095 S4a–S4e). "
             "Identity is labels / physical groups / phase, not tags. "
             "Do not wrap g.model.* or apeSees primitives. "
             "animate kind=history|yield; no setup=. formation is later. "
             "kind=yield is a von Mises contour on auto-scaled deform, "
             "not an iso-clip. "
-            "emit_report format=markdown; html/canvas are later skins. "
+            "emit_report format=markdown|html|canvas; markdown is the archive; "
+            "html is docs/ print; canvas is IDE canvases/ (not git-portable). "
             "highlight writes .apegmsh/highlight.json only (file poll, "
             "not a Qt highlight(names) mutator); "
             "promote_selection suggests g.model.select(None, dim=)"
@@ -146,7 +148,7 @@ def build_server() -> Any:
         output: str | None = None,
         pin_id: str | None = None,
     ) -> dict[str, Any]:
-        """Write docs/ Markdown from the ReportBundle. html/canvas not shipped."""
+        """Write a ReportBundle skin. format=markdown|html|canvas; markdown is the archive."""
         return _emit_report(format=format, output=output, pin_id=pin_id)
 
     @mcp.tool()

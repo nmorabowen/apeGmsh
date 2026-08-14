@@ -8,7 +8,8 @@ cwd. A successful stop writes ``.apegmsh/names.json`` and appends
 
 ``python -m apeGmsh.studio --status`` reads those files without replay.
 ``--assess PATH`` / ``--animate PATH`` are S4b/S4d workers.
-``--pin`` / ``--emit-report`` are S4c (ledger pin + docs/ Markdown).
+``--pin`` / ``--emit-report`` are S4c/Amendment 2 (ledger pin + docs/
+Markdown archive; ``--format html|canvas`` are skins of the same bundle).
 Stills go through ``python -m apeGmsh.viewers render``.
 """
 
@@ -31,7 +32,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ".apegmsh/names.json and appends .apegmsh/runs.jsonl. "
             "--status prints that state without replaying. "
             "--assess / --animate are headless S4b/S4d workers. "
-            "--pin / --emit-report are S4c (docs/ chapter, not .apegmsh/)."
+            "--pin / --emit-report are S4c (docs/ markdown archive; "
+            "html/canvas are skins of the same bundle)."
         ),
     )
     parser.add_argument(
@@ -148,14 +150,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--emit-report",
         dest="emit_report",
         action="store_true",
-        help="Write docs/ Markdown from the ReportBundle (INV-12).",
+        help="Write a ReportBundle skin (markdown archive; html/canvas skins).",
     )
     parser.add_argument(
         "--format",
         dest="report_format",
         choices=("markdown", "html", "canvas"),
         default="markdown",
-        help="emit_report format (S4c ships markdown only).",
+        help=(
+            "emit_report format (markdown archive; html print skin; "
+            "canvas live Cursor projection)."
+        ),
     )
     parser.add_argument(
         "--pin-id",
