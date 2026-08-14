@@ -3392,6 +3392,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-adr-0095-s4d-adversarial-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ADR 0095 S4d adversarial closeout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-1-s4as4d-studio-mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 1 + S4a–S4d studio MCP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-studio-status-inspects-apegmsh-without-replay" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7592,6 +7614,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-adr-0095-s4d-adversarial-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ADR 0095 S4d adversarial closeout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-1-s4as4d-studio-mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 1 + S4a–S4d studio MCP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-studio-status-inspects-apegmsh-without-replay" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11777,6 +11821,32 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-adr-0095-s4d-adversarial-closeout">FIXED — ADR 0095 S4d adversarial closeout<a class="headerlink" href="#fixed-adr-0095-s4d-adversarial-closeout" title="Permanent link">&para;</a></h3>
+<p><code>promote_selection</code> snippets match
+<code>g.model.select(None, dim=).in_box(lo, hi).to_label()</code> /
+<code>.to_physical()</code>; unnamed picks without a bbox do not author tags.
+<code>kind=yield</code> is a von Mises contour on stills-style auto-scaled deform
+(0.12 of the model diagonal), not scale 1.0 and not an iso-clip.
+<code>highlight</code> writes <code>highlight.json</code> only; the host ignores a leftover
+file at open and applies names via live resolve + <code>select_batch</code>
+(INV-3 / INV-7). File poll is the INV-5 S3 adapter, not a Qt
+<code>viewer.highlight(names)</code> mutator.</p>
+<h3 id="added-adr-0095-amendment-1-s4as4d-studio-mcp">ADDED — ADR 0095 Amendment 1 + S4a–S4d studio MCP<a class="headerlink" href="#added-adr-0095-amendment-1-s4as4d-studio-mcp" title="Permanent link">&para;</a></h3>
+<p>S4 restated: MCP wraps habitat verbs, not the apeGmsh public API. One
+ReportBundle (schema 1); Markdown is the canonical record; HTML and
+Canvas are later skins. <code>animate(kind=)</code> is a closed catalog.
+Read-only MCP (S4a) does not wait on <code>highlight</code> (S3).</p>
+<p><code>python -m apeGmsh.studio.mcp</code> is the Cursor stdio adapter. S4a:
+<code>status</code>, <code>get_selection</code>, <code>run_until</code>. S4b: <code>assess</code>, <code>render</code>,
+<code>animate(kind=history)</code>. S4c: <code>results_pin</code>, <code>emit_report(format=markdown)</code>
+writes <code>docs/</code> (INV-12). S4d: <code>animate(kind=yield)</code> is a mesh iso of
+<code>von_mises_stress</code> (not a π-plane); <code>highlight</code> writes
+<code>.apegmsh/highlight.json</code>; <code>promote_selection</code> suggests <code>.to_label()</code> /
+<code>.to_physical()</code> and does not write the <code>.py</code>. Tool bodies read
+<code>.apegmsh/</code> JSON or shell to <code>--no-viewer</code> / <code>--assess</code> / <code>--animate</code> /
+<code>python -m apeGmsh.viewers render</code> (INV-5). Visors under
+<code>.apegmsh/visors/</code>. Optional extra <code>apeGmsh[mcp]</code>. No <code>g.model.*</code>
+tools, no <code>setup=</code> on <code>animate</code>.</p>
 <h3 id="added-studio-status-inspects-apegmsh-without-replay">ADDED — studio <code>--status</code> inspects <code>.apegmsh/</code> without replay<a class="headerlink" href="#added-studio-status-inspects-apegmsh-without-replay" title="Permanent link">&para;</a></h3>
 <p><code>python -m apeGmsh.studio --status</code> prints the last ledger line, names,
 counts, and pick from cwd <code>.apegmsh/</code> — no exec, no Qt. <code>--json</code> dumps
