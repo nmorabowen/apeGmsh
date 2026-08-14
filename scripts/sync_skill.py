@@ -14,8 +14,9 @@ Usage
 -----
     python scripts/sync_skill.py            # write the derived copy + API index
     python scripts/sync_skill.py --check    # exit 1 if the derived copy is stale
-                                            # or the committed API index drifts
-                                            # from a live harvest (ADR 0096 S2)
+                                            # Skill mirror is stdlib (CI lock-tests
+                                            # pre-install). Live index drift runs
+                                            # when apeGmsh/gmsh import (ADR 0096 S2).
 
 The published ``anthropic-skills:apegmsh-helper`` plugin lives in a *separate*
 marketplace repo and is NOT touched here — syncing it is a downstream release
@@ -92,6 +93,34 @@ def planned_files() -> dict[Path, str]:
     return out
 
 
+def _check_index() -> int:
+    """Live harvest vs committed JSON. Skip if apeGmsh/gmsh cannot import.
+
+    lock-tests runs ``--check`` before pip install (stdlib skill mirror).
+    Index freshness is gated after install via this same function and
+    ``tests/studio/test_lookup.py``.
+    """
+    os.environ.setdefault("APEGMSH_QUIET", "1")
+    src = REPO / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    try:
+        from apeGmsh.studio._index_build import committed_index_drift
+    except ImportError:
+        print("skip index drift (apeGmsh/gmsh not importable)")
+        return 0
+    idx = committed_index_drift()
+    if idx:
+        print(
+            "API INDEX STALE — run `python -m apeGmsh.studio.lookup --build`:",
+            file=sys.stderr,
+        )
+        for line in idx:
+            print(f"  - {line}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="verify in-sync; non-zero exit if stale")
@@ -114,23 +143,8 @@ def main() -> int:
             for p in drift:
                 print(f"  - {p.relative_to(REPO)}", file=sys.stderr)
             return 1
-        os.environ.setdefault("APEGMSH_QUIET", "1")
-        src = REPO / "src"
-        if str(src) not in sys.path:
-            sys.path.insert(0, str(src))
-        from apeGmsh.studio._index_build import committed_index_drift
-
-        idx = committed_index_drift()
-        if idx:
-            print(
-                "API INDEX STALE — run `python -m apeGmsh.studio.lookup --build`:",
-                file=sys.stderr,
-            )
-            for line in idx:
-                print(f"  - {line}", file=sys.stderr)
-            return 1
         print("apegmsh-helper is in sync with the canonical skill.")
-        return 0
+        return _check_index()
 
     for path, content in plan.items():
         path.parent.mkdir(parents=True, exist_ok=True)

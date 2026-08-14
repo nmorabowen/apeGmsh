@@ -65,7 +65,8 @@ jobs:
             tests/test_resolution_contract.py \
             tests/test_constraint_emission.py \
             tests/test_constraint_mpc_math.py \
-            tests/test_skill_docs_drift.py
+            tests/test_skill_docs_drift.py \
+            tests/studio/test_lookup.py
 
   # Emit-cost regression tripwire for the ADR 0038 10k x 4 gate cell.
   #
