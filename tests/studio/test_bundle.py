@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from apeGmsh.studio.__main__ import main
@@ -230,10 +231,16 @@ def test_emit_canvas_refuses_wrong_suffix(tmp_path: Path) -> None:
 def test_cursor_project_slug_matches_cursor_convention() -> None:
     from apeGmsh.studio._skins import cursor_project_slug
 
-    slug = cursor_project_slug(Path(r"C:\Users\nmb\Documents\Github\apeGmsh"))
-    assert slug == "c-Users-nmb-Documents-Github-apeGmsh"
-    wt = cursor_project_slug(Path(r"C:\Users\nmb\.cursor\worktrees\apeGmsh\i0b4"))
-    assert wt == "c-Users-nmb-cursor-worktrees-apeGmsh-i0b4"
+    if sys.platform == "win32":
+        slug = cursor_project_slug(Path(r"C:\Users\nmb\Documents\Github\apeGmsh"))
+        assert slug == "c-Users-nmb-Documents-Github-apeGmsh"
+        wt = cursor_project_slug(Path(r"C:\Users\nmb\.cursor\worktrees\apeGmsh\i0b4"))
+        assert wt == "c-Users-nmb-cursor-worktrees-apeGmsh-i0b4"
+        return
+    slug = cursor_project_slug(Path("/home/nmb/Documents/Github/apeGmsh"))
+    assert slug == "home-nmb-Documents-Github-apeGmsh"
+    wt = cursor_project_slug(Path("/home/nmb/.cursor/worktrees/apeGmsh/i0b4"))
+    assert wt == "home-nmb-cursor-worktrees-apeGmsh-i0b4"
 
 
 def test_collect_bundle_schema(tmp_path: Path) -> None:
