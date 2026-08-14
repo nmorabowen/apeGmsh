@@ -3392,6 +3392,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-assess-closeout-adr-0094-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — assess closeout (ADR 0094 Amendment 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-adr-0094-amendment-1-catalog-honesty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0094 Amendment 1: catalog honesty
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-graphics-colors-g-hex-model-viewer-g-render-ratchet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7537,6 +7559,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-assess-closeout-adr-0094-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — assess closeout (ADR 0094 Amendment 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-adr-0094-amendment-1-catalog-honesty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0094 Amendment 1: catalog honesty
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-graphics-colors-g-hex-model-viewer-g-render-ratchet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11667,6 +11711,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-assess-closeout-adr-0094-amendment-1">FIXED — assess closeout (ADR 0094 Amendment 1)<a class="headerlink" href="#fixed-assess-closeout-adr-0094-amendment-1" title="Permanent link">&para;</a></h3>
+<p>Planar 2-D winding is degeneracy-only (clockwise slabs are not
+inverted). Native union-merge NaN fill is skip, not FAIL.
+<code>RES.ENERGY_ERR</code> is info in <code>%</code>; <code>RES.ENERGY_NONFINITE</code> is the
+warning. <code>AssessmentReport.skipped</code> is branchable; the Verdict names
+unevaluated FAIL-reserved checks and last-step scope. Unbound
+<code>results.render</code> / <code>render_pack</code> raise under <code>APEGMSH_SKIP_VIEWER</code>.</p>
+<h3 id="changed-adr-0094-amendment-1-catalog-honesty">CHANGED — ADR 0094 Amendment 1: catalog honesty<a class="headerlink" href="#changed-adr-0094-amendment-1-catalog-honesty" title="Permanent link">&para;</a></h3>
+<p>Assess closeout contract after adversarial review: 2-D cells judged
+for degeneracy only (winding is a convention), <code>RES.NAN</code> union-merge
+fill is skip not FAIL, <code>RES.ENERGY_ERR</code> is info in <code>%</code>, new
+<code>RES.ENERGY_NONFINITE</code> warning, <code>AssessmentReport.skipped</code> is
+branchable. Code in the follow-up PR. Does not reopen S0–S5.</p>
 <h3 id="fixed-graphics-colors-g-hex-model-viewer-g-render-ratchet">FIXED — Graphics colors G-HEX + model-viewer G-RENDER ratchet<a class="headerlink" href="#fixed-graphics-colors-g-hex-model-viewer-g-render-ratchet" title="Permanent link">&para;</a></h3>
 <p>Okabe–Ito preset and swatch contrast no longer carry hex string
 literals (ADR 0087). Model-viewer G-RENDER budget ratchets 9→8.</p>
