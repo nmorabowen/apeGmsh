@@ -238,9 +238,9 @@ def test_cursor_project_slug_matches_cursor_convention() -> None:
         assert wt == "c-Users-nmb-cursor-worktrees-apeGmsh-i0b4"
         return
     slug = cursor_project_slug(Path("/home/nmb/Documents/Github/apeGmsh"))
-    assert slug == "home-nmb-Documents-Github-apeGmsh"
+    assert slug == "-home-nmb-Documents-Github-apeGmsh"
     wt = cursor_project_slug(Path("/home/nmb/.cursor/worktrees/apeGmsh/i0b4"))
-    assert wt == "home-nmb-cursor-worktrees-apeGmsh-i0b4"
+    assert wt == "-home-nmb-cursor-worktrees-apeGmsh-i0b4"
 
 
 def test_collect_bundle_schema(tmp_path: Path) -> None:
