@@ -92,6 +92,7 @@ def open_host(
             parent=session,
             model=session.model,
             on_selection_changed=on_sel,
+            annotate=True,
         )
     viewer.show(title=title or "apeGmsh.studio")
 

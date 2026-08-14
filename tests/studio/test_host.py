@@ -65,6 +65,7 @@ def test_open_host_model_viewer_when_unmeshed(tmp_path: Path, monkeypatch) -> No
     class FakeModelViewer:
         def __init__(self, parent, model, **kwargs):
             assert kwargs.get("on_selection_changed") is not None
+            assert kwargs.get("annotate") is True
             seen.append("model")
 
         def show(self, *, title=None):

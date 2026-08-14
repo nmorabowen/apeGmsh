@@ -9,7 +9,31 @@ the BrowserTab in the model viewer.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
+
+
+def quotation_text(
+    name: str,
+    bbox: Sequence[float] | None,
+    *,
+    tol: float = 1e-9,
+) -> str:
+    """Name plus overall size (cotas) from a six-float bbox.
+
+    Near-zero axes are dropped so a face quotes as ``Δx × Δy`` rather
+    than ``Δx × Δy × 0``.
+    """
+    if bbox is None or len(bbox) < 6:
+        return name
+    extents = [
+        abs(float(bbox[3]) - float(bbox[0])),
+        abs(float(bbox[4]) - float(bbox[1])),
+        abs(float(bbox[5]) - float(bbox[2])),
+    ]
+    shown = [f"{v:.3g}" for v in extents if v > tol]
+    if not shown:
+        return name
+    return f"{name}\n{' × '.join(shown)} m"
 
 
 def _qt():
@@ -197,6 +221,14 @@ class ViewTab:
 
         layout.addWidget(probes_group)
         layout.addStretch(1)
+
+    def apply_quotations(self) -> None:
+        """Turn on names + part/entity labels (studio host default)."""
+        for w in (self._use_names, self._show_parts, self._show_entity_labels):
+            w.blockSignals(True)
+            w.setChecked(True)
+            w.blockSignals(False)
+        self._fire()
 
     def _fire_probes(self, *_args) -> None:
         if self._on_geometry_probes_changed is None:

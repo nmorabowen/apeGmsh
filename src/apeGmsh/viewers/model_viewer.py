@@ -96,6 +96,10 @@ class ModelViewer:
     on_selection_changed : callable, optional
         ``callback(SelectionState)`` fired on every pick change
         (ADR 0095 studio host). Dispatcher-legal owner mutator.
+    annotate : bool
+        If True, turn on part + entity name labels with overall
+        sizes (cotas) at open. Studio host sets this; the View tab
+        still toggles them.
     """
 
     def __init__(
@@ -112,6 +116,7 @@ class ModelViewer:
         origin_markers: list[tuple[float, float, float]] | None = None,
         origin_marker_show_coords: bool | None = None,
         on_selection_changed: Callable[["SelectionState"], None] | None = None,
+        annotate: bool = False,
     ) -> None:
         from .ui.preferences_manager import PREFERENCES
         p = PREFERENCES.current
@@ -151,6 +156,7 @@ class ModelViewer:
         # ADR 0095 S2: host publishes a SelectionEnvelope on pick.
         # Dispatcher-legal (owner mutator callback); not Outline puppeteering.
         self._on_selection_changed = on_selection_changed
+        self._annotate = annotate
 
         # Plan 04 step 4 — per-viewer ActiveObjects coordinator.
         # Constructed once a QApplication / window exists (in show()).
@@ -571,6 +577,7 @@ class ModelViewer:
             show_parts=False, show_entity_labels=False,
         ):
             from apeGmsh.core.Labels import is_label_pg, strip_prefix
+            from .ui._filter_view_tabs import quotation_text
 
             # Remove existing labels
             for a in _label_actors:
@@ -648,12 +655,13 @@ class ModelViewer:
                 for label, inst in parts_reg_local.instances.items():
                     # Use highest-dim entity centroid for placement
                     placed = False
+                    quoted = quotation_text(label, inst.bbox)
                     for d in (3, 2, 1, 0):
                         for t in inst.entities.get(d, []):
                             c = registry.centroid((d, t))
                             if c is not None:
                                 part_points.append(c)
-                                part_labels.append(label)
+                                part_labels.append(quoted)
                                 placed = True
                                 break
                         if placed:
@@ -665,7 +673,7 @@ class ModelViewer:
                             (bb[1] + bb[4]) * 0.5 - registry.origin_shift[1],
                             (bb[2] + bb[5]) * 0.5 - registry.origin_shift[2],
                         ])
-                        part_labels.append(label)
+                        part_labels.append(quoted)
 
                 if part_points:
                     try:
@@ -707,7 +715,11 @@ class ModelViewer:
                                 label_points.append(ctr.tolist())
                             except Exception:
                                 continue
-                        label_texts.append(display_name)
+                        try:
+                            bb = gmsh.model.getBoundingBox(pg_dim, int(tag))
+                        except Exception:
+                            bb = None
+                        label_texts.append(quotation_text(display_name, bb))
 
                 if label_points:
                     try:
@@ -1934,6 +1946,9 @@ class ModelViewer:
         # ── Pre-load group if specified ─────────────────────────────
         if self._physical_group is not None and sel.picks:
             _on_sel_changed()
+
+        if self._annotate:
+            view_tab.apply_quotations()
 
         # ── Run ─────────────────────────────────────────────────────
         win.exec()

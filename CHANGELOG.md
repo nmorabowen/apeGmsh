@@ -84,6 +84,12 @@ spend. Observe open / mutate closed: skill errors and working
 ImageMage steps promote by reviewed PR or script comments, not by
 session residue writing `SKILL.md` or new CAD MCP verbs. 0095 INV-10
 stands. S0 is the ADR only (S1–S5 named, not shipped).
+### ADDED — studio CAD quotations (name + overall size)
+
+Studio ModelViewer opens with part and entity labels on, each showing
+the AABB size in metres (cotas). Toggle still lives on the View tab.
+`--phase model` and `--phase mesh` remain separate processes so the
+CAD window can stay up while the mesh generates.
 
 ### ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
 
