@@ -298,3 +298,180 @@ Still open (do not block S0–S2):
    S3.
 3. Geometry-hash grain for skip-remesh: AST of the `with` body vs
    serialized OCC vs `model.h5` hash. Decide at S2.
+
+## Amendment 1 (2026-08-14) — MCP growth law, ReportBundle, emit, animate
+
+Append-only. Parts 1–6, INV-1–INV-9, S0–S3, and S2b–S2d stay. This
+amendment restates **S4** so the Cursor adapter can land without
+freezing a moving library, and without waiting on `highlight`
+(S3). It does not reopen sidecar / script-owns-geometry / names-first
+/ last-good-frame / no shared kernel / 0094 stands / Cursor-as-IDE.
+
+Evidence: owner workshop on ImageMage Studio (self-documentation,
+reporting, results pin, stills, animations) plus the shipped S1–S2d
+payload (`SelectionEnvelope`, truthful `run_until(phase)`,
+`names.json`, `runs.jsonl`, `--status`). Constrained by ADR 0094
+INV-10 (closed `view=` set) and ADR 0076 (derived scalars).
+
+### Growth law (INV-10)
+
+Skills write Python against apeGmsh. MCP wraps **habitat verbs**
+only. New geometry, materials, constraints, and solvers never become
+MCP tools.
+
+MCP may wrap:
+
+| Family | Tools | Payload already in tree |
+|---|---|---|
+| **See** | `status` / `inspect`, `get_selection` | `--status --json`, `names.json`, `selection.json` |
+| **Judge** | `assess` | `fem.assess()` / `results.assess()` (ADR 0094) |
+| **Show** | `render`, `animate(kind=)` | `viewers.render`, `results.export_animation` |
+| **Pin** | `results_get`, `results_pin` | `Results.from_*` + `model.h5`; ledger keys reserved |
+| **Emit** | `emit_report(format=)` | ReportBundle → markdown / html / canvas |
+| **Point** | `highlight`, `promote_selection` | S3; not required for read-only MCP |
+
+MCP must not wrap: `g.model.*` / `g.mesh.*` / `g.constraints.*` /
+`g.rebar.*`; `apeSees` primitives; tags or node ids as identity;
+`viewer()` / `show_web` / Outline clicks; `setup=` on `animate`;
+character-by-character exec; a second editor or prompt.
+
+v1 transport is **CLI / JSON wrappers**. Tools shell to
+`python -m apeGmsh.studio` or read `.apegmsh/*.json`. The MCP process
+does not import a live Gmsh session (INV-5). A long-lived studio
+daemon is not required for S4a. A new ADR is owed only if that
+process model later changes.
+
+### ReportBundle and emit skins
+
+Self-documentation is not MCP inventing prose. Studio assembles one
+frozen **ReportBundle** from pieces the library already produces:
+
+| Field | Source |
+|---|---|
+| names / counts / bboxes | `names.json` |
+| pick | `selection.json` |
+| findings + markdown text | `AssessmentReport` |
+| stills (PNG paths) | `render` / `render_pack` |
+| clips (mp4/gif paths) | `export_animation` / `animate` |
+| lineage / results handle | `Results` + `model.h5` |
+| run id + hashes | `runs.jsonl` |
+
+**Markdown** is the canonical record (git-tracked chapter in the
+model workspace `docs/`). **HTML** is a shareable/print skin of the
+same bundle. **Canvas** (Cursor `.canvas.tsx`) is a live review
+projection beside chat — not git-portable, not the archive. The
+agent may emit a canvas; it must still write the Markdown chapter.
+Chat is not the archive.
+
+`emit_report(format=)` is one tool. New narrative is not a new MCP
+verb.
+
+### Authored vs generated (INV-12)
+
+`.apegmsh/` stays generated (already gitignored): selection, names,
+ledger, working visors. Authored docs, captioned figures, and pinned
+runs that must survive review do **not** live there. A visor is a
+working still or clip; a **figure** is a visor that earned a caption
+and a home in the chapter.
+
+### Animate kinds (INV-11)
+
+One tool, `animate(kind=)`. New motion is a new kind token — same
+discipline as ADR 0094 INV-10 for stills. `setup=` stays a
+human/script escape hatch on `export_animation`; it is not on the
+MCP.
+
+| kind | What it shows | Engine | When |
+|---|---|---|---|
+| `history` | Deformation / contour over recorded steps | `results.export_animation` (mp4/gif) | S4b — proves the tool |
+| `yield` | Von Mises contour on an auto-scaled deforming mesh (stills 0.12 of diagonal). Not an iso-clip of \(f(\sigma)=f_y\); π-plane later | Same encoder; derived scalars (ADR 0076); named kind | S4d — proves the catalog |
+| `formation` | How the mesh / elements come into being | Not in the library yet | Later |
+
+Two implementations (`history`, then `yield`) are enough to prove
+the tool. `formation` does not block S4.
+
+### S4 restated
+
+The original S4 row (“MCP wrapping S1–S3”, depends on S3) is
+replaced for implementation order only. S3 v1 is the INV-5 file
+adapter (`highlight.json` + host poll + `select_batch`). A Qt
+`viewer.highlight(names)` mutator is later. Read-only MCP does
+**not** wait on it.
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S4a** | Read-only MCP: `status`, `get_selection`, `run_until`. Cursor MCP config. Shells to the existing CLI / JSON. | S2d |
+| **S4b** | Studio verbs + MCP for `assess`, `render`, `animate(kind=history)` | S4a, ADR 0094 S1–S2 |
+| **S4c** | `results_pin` + `emit_report(format=markdown)`. HTML / canvas are later skins of the same bundle | S4b |
+| **S4d** | `animate(kind=yield)`; `highlight` / `promote_selection` (S3) | S4b, S3 |
+| **Later** | `kind=formation`; HTML / canvas emit skins; statement-step; daemon-as-middle-tier; Electron | S4c / S4d |
+
+S4a can merge alone. Claiming “the MCP exists” requires S4a (an
+agent reads a pick and names without opening Qt). Claiming
+self-documentation requires S4c.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **MCP tools for `g.model.*` / `apeSees` primitives** | Freezes a moving library. Skills already author Python. |
+| **Wait for S3 before any MCP** | Read-only verbs are already files. Empty ceremony, same class as “MCP before the payload.” |
+| **New ADR 0096 for the adapter** | S4 was always the Cursor door. A new ADR is owed only if v1 CLI/JSON is reversed. |
+| **`write_geometry_chapter` / `explain_aci` tools** | Invented prose. Emit from the bundle. |
+| **Canvas or HTML as the archive** | Not git-portable (canvas) / not the source of truth (HTML). Markdown chapter is. |
+| **Authored docs in `.apegmsh/`** | Gitignored live state. They would vanish from review. |
+| **`setup=` on the MCP `animate` tool** | Open hatch. New pictures are new `kind=` tokens, reviewed here. |
+| **Scaffold `memory/` + project ADRs + four INDEX files in this PR** | Premature. The bundle and the ledger are the day-3 archive. Revisit after S4a–S4c have been used. |
+
+### Acceptance (this amendment)
+
+- This file names INV-10 / INV-11 / INV-12 and the S4a–S4d table.
+- S4a ships here: `python -m apeGmsh.studio.mcp` with tools `status`,
+  `get_selection`, `run_until` (CLI/JSON wrappers; no live Gmsh in
+  the MCP process).
+- S4b ships here: `assess`, `render`, `animate(kind=history)`.
+  `render` shells to `python -m apeGmsh.viewers render`.
+- S4c ships here: `results_pin` + `emit_report(format=markdown)`.
+  ReportBundle schema is 1. HTML / canvas skins are later.
+- S4d ships here: `animate(kind=yield)` is a von Mises contour of a
+  derived fluency scalar (`von_mises_stress`, ADR 0076) on
+  stills-style auto-scaled deform (0.12 of the model diagonal) — not
+  an iso-clip of \(f(\sigma)=f_y\), not a π-plane.
+  `highlight(names)` writes `.apegmsh/highlight.json` only (does not
+  write `selection.json`); the Qt host applies names via live
+  resolve + `select_batch` (INV-7) after a mtime change, ignoring a
+  leftover file at host open. Dimtags in the JSON are evidence
+  (INV-3). `promote_selection` returns
+  `g.model.select(None, dim=).in_box(lo, hi).to_label()` /
+  `.to_physical()` and does not write the `.py` (INV-2 / INV-9).
+  File poll is the S3 adapter, not a Qt `viewer.highlight(names)`
+  mutator.
+- Skill Studio paragraph: S4a–S4d tools; do not wrap library
+  composites; visors stay under `.apegmsh/visors/`; authored docs
+  live in `docs/`.
+- Original S0–S2d acceptance still holds.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **v1 MCP = CLI / JSON wrappers** — yes.
+2. **Read-only S4a before S3** — yes.
+3. **Markdown canonical; HTML and canvas are skins** — yes.
+4. **One `animate(kind=)` tool** — yes. `history` then `yield`.
+
+Still open (do not block S4a–S4d):
+
+1. Canvas output path (IDE `canvases/` vs project `docs/`) — decide
+   at the canvas-skin slice.
+
+Resolved at S4c:
+
+1. **ReportBundle schema integer** — 1.
+
+Resolved at S4d:
+
+1. **`yield` first picture** — von Mises contour of a derived scalar
+   (`von_mises_stress` / fluency) on auto-scaled deform (0.12 of
+   diagonal). Not an iso-clip. π-plane is later.
+

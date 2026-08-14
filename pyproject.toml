@@ -81,6 +81,9 @@ viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"
           "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
           "ipywidgets>=8.0", "nest_asyncio2"]
 animation = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
+# ADR 0095 S4a: Cursor stdio adapter (`python -m apeGmsh.studio.mcp`).
+# Optional so the library does not grow a hard MCP dependency.
+mcp = ["mcp>=1.2"]
 # Weighted-partitioning backends (Flavor B of g.mesh.partitioning.partition).
 # pymetis: PyPI has Linux/macOS wheels. Windows must install via conda-forge
 #   (`conda install -c conda-forge pymetis`) — there is no PyPI Windows wheel.
