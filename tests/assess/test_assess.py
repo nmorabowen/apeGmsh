@@ -149,6 +149,10 @@ def test_bridged_coincident_pair_is_not_a_finding() -> None:
     )
     report = fem.assess()
     assert "MESH.COINCIDENT_UNBRIDGED" not in _codes(report)
+    assert any(
+        code == "MESH.INVERTED" and "line2" in reason
+        for code, reason in report.skipped
+    )
 
 
 def test_inverted_tet4_is_mesh_inverted() -> None:
@@ -189,6 +193,18 @@ def _hex8_info(*, count: int = 1):
 def _tri3_info(*, count: int = 1):
     return make_type_info(
         code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=count,
+    )
+
+
+def _quad4_info(*, count: int = 1):
+    return make_type_info(
+        code=3, gmsh_name="Quadrangle 4", dim=2, order=1, npe=4, count=count,
+    )
+
+
+def _prism6_info(*, count: int = 1):
+    return make_type_info(
+        code=6, gmsh_name="Prism 6", dim=3, order=1, npe=6, count=count,
     )
 
 
@@ -272,6 +288,69 @@ def test_tri3_in_nonplanar_mesh_is_skipped_not_judged() -> None:
     report = fem.assess()
     assert "MESH.INVERTED" not in _codes(report)
     assert "2D cells in non-planar 3D space" in report.text
+
+
+def test_clockwise_planar_quad4_is_not_inverted() -> None:
+    info = _quad4_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4],
+        coords=[
+            (0.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+            (1.0, 1.0, 0.0), (1.0, 0.0, 0.0),
+        ],
+        groups=[(info, [1], [[1, 2, 3, 4]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" not in _codes(report)
+
+
+def test_zero_area_tri3_is_mesh_inverted() -> None:
+    info = _tri3_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3],
+        coords=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
+        groups=[(info, [9], [[1, 2, 3]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" in _codes(report)
+    assert 9 in next(
+        f for f in report.findings if f.code == "MESH.INVERTED"
+    ).detail["ids"]
+
+
+def test_bowtie_quad4_is_mesh_inverted() -> None:
+    info = _quad4_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 1.0, 0.0),
+            (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+        ],
+        groups=[(info, [4], [[1, 2, 3, 4]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" in _codes(report)
+    assert 4 in next(
+        f for f in report.findings if f.code == "MESH.INVERTED"
+    ).detail["ids"]
+
+
+def test_prism6_is_skipped_and_named_on_verdict() -> None:
+    info = _prism6_info()
+    fem = _make_fem(
+        node_ids=list(range(1, 7)),
+        coords=[(float(i), 0.0, 0.0) for i in range(6)],
+        groups=[(info, [1], [list(range(1, 7))])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" not in _codes(report)
+    assert any(c == "MESH.INVERTED" for c, _ in report.skipped)
+    assert "last recorded step" in report.text
+    uneval = next(
+        line for line in report.text.splitlines()
+        if "Not evaluated (FAIL-reserved)" in line
+    )
+    assert "`MESH.INVERTED`" in uneval
 
 
 def test_quadratic_cells_are_skipped_not_judged() -> None:
@@ -402,6 +481,10 @@ def test_unbound_fem_and_no_stage(tmp_path: Path) -> None:
     assert "MESH.*" in report.text
     assert "no bound FEMData" in report.text
     assert "`RES.NAN` — no stages" in report.text
+    assert "last recorded step" in report.text
+    assert "Not evaluated (FAIL-reserved):" in report.text
+    assert "`MESH.INVERTED`" in report.text
+    assert report.skipped
     _assert_catalog_severities(report)
 
 
@@ -436,7 +519,8 @@ def test_nonfinite_energy_err_is_finding(
     monkeypatch.setattr(Results, "energy", _nan_energy)
     with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         report = r.assess()
-    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_NONFINITE")
+    assert finding.severity == "warning"
     assert "non-finite" in finding.message
     _assert_catalog_severities(report)
 
@@ -468,8 +552,56 @@ def test_energy_valueerror_on_first_stage_tries_later(
     with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         report = r.assess()
     finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.severity == "info"
     assert finding.detail["stage"] == "b"
     assert "0.05" in finding.message
+    assert "%" in finding.message
+
+
+def test_union_merge_fill_is_not_res_nan(tmp_path: Path) -> None:
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    path = _write_nodes(
+        tmp_path,
+        node_ids=node_ids,
+        components={
+            "displacement_x": np.array([[1.0, 2.0, 3.0]]),
+            "reaction_x": np.array([[np.nan, 0.5, np.nan]]),
+        },
+    )
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    assert "RES.NAN" not in _codes(report)
+    assert any(
+        code == "RES.NAN" and "union-merge fill" in reason and "reaction_x" in reason
+        for code, reason in report.skipped
+    )
+    uneval = next(
+        (line for line in report.text.splitlines()
+         if "Not evaluated (FAIL-reserved)" in line),
+        "",
+    )
+    assert "`RES.NAN`" not in uneval
+
+
+def test_all_components_nan_at_one_id_is_res_nan(tmp_path: Path) -> None:
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    path = _write_nodes(
+        tmp_path,
+        node_ids=node_ids,
+        components={
+            "displacement_x": np.array([[1.0, np.nan, 3.0]]),
+            "displacement_y": np.array([[0.0, np.nan, 0.0]]),
+        },
+    )
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    nans = [f for f in report.findings if f.code == "RES.NAN"]
+    assert nans
+    ids: set[int] = set()
+    for f in nans:
+        ids.update(f.detail["ids"])
+    assert 2 in ids
+    _assert_catalog_severities(report)
 
 
 def test_u_vs_diag_is_always_info(tmp_path: Path) -> None:

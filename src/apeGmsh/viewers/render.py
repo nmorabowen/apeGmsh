@@ -150,14 +150,14 @@ def render_results(
     view = _require_view(view)
     camera = _require_camera(camera)
     deform_spec = _require_deform(deform)
-    if _env_skips():
-        print(_SKIP_ENV)
-        return None
     if results.fem is None:
         raise RuntimeError(
             "results.render requires a bound FEMData "
             "(construct with model= / model_h5= or call results.bind)."
         )
+    if _env_skips():
+        print(_SKIP_ENV)
+        return None
 
     from apeGmsh.viewers.backends import PyVistaQtBackend
     from apeGmsh.viewers.diagrams import DiagramSpec, ResultsDirector
@@ -251,14 +251,14 @@ def render_pack(
     ``[skip viewer]`` notice. There is no ``fem.render_pack``.
     """
     camera = _require_camera(camera)
-    if _env_skips():
-        print(_SKIP_ENV)
-        return ()
     if results.fem is None:
         raise RuntimeError(
             "results.render_pack requires a bound FEMData "
             "(construct with model= / model_h5= or call results.bind)."
         )
+    if _env_skips():
+        print(_SKIP_ENV)
+        return ()
 
     dest = Path(out_dir)
     written: list[Path] = []
@@ -273,7 +273,7 @@ def render_pack(
 
     try:
         component = _pack_primary_component(results)
-    except Exception:
+    except (RuntimeError, ValueError):
         component = None
     if component is not None:
         contour = render_results(
@@ -631,7 +631,7 @@ def _has_static_reactions(results: Any) -> bool:
     for stage in static:
         try:
             names = results.inspect.components(stage=stage.id).get("nodes", [])
-        except Exception:
+        except (RuntimeError, ValueError):
             continue
         for name in names:
             if name == "reactions" or str(name).startswith("reaction_"):
