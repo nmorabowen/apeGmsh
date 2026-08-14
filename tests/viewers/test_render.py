@@ -333,3 +333,37 @@ def test_render_pack_without_skip_is_tuple(
     history = dest / "history.png"
     if history in result:
         assert render_mod._HISTORY_LABEL == "[matplotlib]"
+
+
+def test_unbound_render_raises_even_when_skip_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+
+    class _Unbound:
+        fem = None
+
+    with pytest.raises(RuntimeError, match="bound FEMData"):
+        render_mod.render_results(_Unbound(), tmp_path / "x.png", view="mesh")
+    with pytest.raises(RuntimeError, match="bound FEMData"):
+        render_mod.render_pack(_Unbound(), tmp_path / "pack")
+
+
+def test_pack_primary_bug_propagates(
+    demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+
+    def _fake_render(results: object, path: Path, **kwargs: object) -> Path:
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"png")
+        return out
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise TypeError("not a missing component")
+
+    monkeypatch.setattr(render_mod, "render_results", _fake_render)
+    monkeypatch.setattr(render_mod, "_pack_primary_component", _boom)
+    with pytest.raises(TypeError, match="not a missing component"):
+        render_mod.render_pack(demo_results, tmp_path / "pack")

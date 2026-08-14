@@ -409,3 +409,141 @@ skeptic / API):
    hand-rolled warp). `viewers.render` is the product still. No
    pixel-parity harness. Do not grow `title=` / `line_tubes=` /
    `setup=` onto the closed `view=` set (INV-10).
+
+## Amendment 1 (2026-08-14) — catalog honesty after adversarial review
+
+Append-only. The Accepted body (S0–S5, Q1–Q3, closed workshop
+items) stays. This amendment resolves residual false-FAIL and
+false-confidence defects found after ship: a red/blue pass plus an
+independent review against `origin/main`. It does not reopen the
+product shape (sidecar, three verbs, FAIL reserved, skip ≠ pass,
+render is the camera, skill is the agent contract).
+
+INV-6: `RES.ENERGY_NONFINITE` is the only new code. There is no
+`MESH.QUALITY_UNJUDGED` — `AssessmentReport.skipped` already carries
+that information.
+
+### Return type
+
+`AssessmentReport` gains a branchable skip list (empty default, so
+existing frozen construction stays valid):
+
+```python
+skipped: tuple[tuple[str, str], ...] = ()
+# (code, reason) — the same pairs the markdown already listed.
+```
+
+`findings` remains what the agent branches on for emitted verdicts.
+`skipped` is what it branches on for “this FAIL-reserved check never
+ran.” Text-only disclosure is not enough.
+
+### Verdict contract
+
+`report.text`’s Verdict block must state:
+
+1. Evaluation scope: last recorded step only (INV-9). A mid-history
+   blow-up that finishes finite is invisible; that is accepted.
+2. **Not evaluated (FAIL-reserved):** every catalog error code that
+   appears in `skipped` (today: `MESH.INVERTED` when no judged cell
+   type ran; `RES.NAN` when there are no stages). Agents must not
+   read `0 error(s)` as “the mesh was judged.”
+
+### `MESH.INVERTED`
+
+**Judged** (linear corner measure, not SICN, not Jacobian):
+
+| Type | Rule |
+|---|---|
+| `tet4`, `hex8` | Signed corner volume. Negative or zero is inverted. |
+| `tri3`, `quad4` | **Degeneracy only** (`abs(measure) == 0`): zero area or bowtie. `_signed_quad4` already returns `0.0` for both. |
+
+**Not judged** (listed in `skipped`, not scored OK):
+
+- `prism6`, `pyramid5` (no rehearsed signed-volume formula in-tree)
+- all quadratic / Bézier cells (ADR 0091 control values are not nodal coords)
+- all 1-D cells (`line2`, `line3`, …)
+- `tri3` / `quad4` when the mesh is not planar
+
+**Planarity is mesh-wide**, not per-group: one out-of-plane node
+disables 2-D judging for the whole model. Conservative (no false
+FAIL). 2-D inversion is therefore effectively never judged on a 3-D
+building model. Documented, not changed.
+
+**Winding is a convention.** A uniformly clockwise planar slab is
+legal (STEP face normals). Judging `measure <= 0` on planar `tri3` /
+`quad4` false-FAILs every cell. That is the same class of defect as
+the hex8 signed-volume blocker. Tradeoff: a genuinely reversed
+plane-stress mesh is a disclosed miss. A disclosed miss beats an
+undisclosed 100 %-of-elements false FAIL.
+
+v1 still does not invent prism6 / pyramid5 formulas. That stays in
+the Later row and needs its own sweep harness.
+
+### `RES.NAN` — operational fill rule
+
+ADR body § catalog: “NaN *sentinels* (unvisited / fill) must not be
+failed.” S2 shipped “judge `slab.values` as returned,” which
+false-FAILs apeGmsh’s own native writer. `capture/_domain.py:end_stage`
+union-merges node records (displacements on all nodes + reactions on
+supports) and fills unvisited slots with NaN — the documented
+`spec.nodes(components=…, pg=…)` API. MPCO partition merge and
+Ladruno quaternion / station-ξ pads are **not** this bug (the former
+keys the union of recorded ids; the latter are metadata, not
+`values`).
+
+**Rule (nodes level only):** at the last step of a stage, collect
+each node-level component’s finite mask. A NaN slot at a node where
+**any other** node-level component is finite is union-merge fill —
+not a finding; a `skipped` entry with component + count. A node
+where **every** recorded node-level component is non-finite is
+unexplained and stays `RES.NAN`. Other levels (gauss / fiber /
+layer / line-station / elements) are unchanged.
+
+This is decidable from data already loaded (no `time=None`, no
+`node_envelope`, INV-9 intact). A native-schema per-component id set
+is the real fix and belongs to the results-schema line, not here.
+
+Gauss / fiber / layer / line-station NaN evidence uses
+`element_index` when `node_ids` / `element_ids` are absent.
+
+### `RES.ENERGY_ERR` / `RES.ENERGY_NONFINITE`
+
+`Results.energy()` `ERR` is the **normalized energy-balance error %**
+(unit-free). `np.isclose(err, 0.0)` is `|err| ≤ ~1e-8` — one part in
+1e10 — so the warning fired on essentially every real Ladruno run.
+The “unit-scale sensitive (N·mm·tonne)” comment was wrong.
+
+| Code | Severity | When |
+|---|---|---|
+| `RES.ENERGY_ERR` | **info** (always, when a finite ERR exists) | Measurement, same discipline as `RES.U_VS_DIAG`. Phrase as `%` with `abs()`. No threshold in this amendment. |
+| `RES.ENERGY_NONFINITE` | warning | Last-step `ERR` is NaN or Inf. The one real energy signal. |
+
+`TypeError` on native/MPCO still skips (INV-3). FAIL reserved is
+unchanged — neither code is an error.
+
+### Render (implementation note, not a catalog change)
+
+`results.render` / `render_pack` validate bound FEM (and the closed
+`view=` / `camera` / `deform` sets) **before** `APEGMSH_SKIP_VIEWER`.
+An unbound Results must raise, not print `[skip viewer]`. Broad
+`except Exception` around pack helpers is illegal; the legitimate
+empty case is `RuntimeError` / `ValueError`.
+
+### Skill
+
+`assess.md` (canonical `skills/apegmsh/` **and** the synced
+`.claude/skills/apegmsh-helper/` copy) must name the judged /
+unjudged inversion set, last-step scope, the NaN fill rule,
+`report.skipped`, energy codes, coincident `tol=1e-6` as an absolute
+unit trap (misses, does not over-report), zero-length lines as
+bridges not findings, and that assess does not check supports or
+loads. A stale “open the viewer” line remains a bug.
+
+### Explicitly out of this amendment
+
+prism6 / pyramid5 inversion formulas; SICN from H5; a `U_VS_DIAG` or
+energy **threshold**; parsing coincident bridge strings; hidden-Qt
+fallback; `g.assess`; `OpenSeesModel.assess()`; per-group planarity;
+step-walking; native-schema per-component coverage; a new ADR.
+`MESH.QUALITY_UNJUDGED` was considered and rejected (duplicates
+`skipped`).

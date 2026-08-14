@@ -12,6 +12,23 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — assess closeout (ADR 0094 Amendment 1)
+
+Planar 2-D winding is degeneracy-only (clockwise slabs are not
+inverted). Native union-merge NaN fill is skip, not FAIL.
+`RES.ENERGY_ERR` is info in `%`; `RES.ENERGY_NONFINITE` is the
+warning. `AssessmentReport.skipped` is branchable; the Verdict names
+unevaluated FAIL-reserved checks and last-step scope. Unbound
+`results.render` / `render_pack` raise under `APEGMSH_SKIP_VIEWER`.
+
+### CHANGED — ADR 0094 Amendment 1: catalog honesty
+
+Assess closeout contract after adversarial review: 2-D cells judged
+for degeneracy only (winding is a convention), `RES.NAN` union-merge
+fill is skip not FAIL, `RES.ENERGY_ERR` is info in `%`, new
+`RES.ENERGY_NONFINITE` warning, `AssessmentReport.skipped` is
+branchable. Code in the follow-up PR. Does not reopen S0–S5.
+
 ### FIXED — Graphics colors G-HEX + model-viewer G-RENDER ratchet
 
 Okabe–Ito preset and swatch contrast no longer carry hex string

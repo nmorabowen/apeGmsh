@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
-from ._inverted import coords_are_planar, measure_linear_cell
+from ._inverted import (
+    _JUDGED_2D,
+    _JUDGED_LINEAR,
+    coords_are_planar,
+    measure_linear_cell,
+)
 from ._report import NO_STILLS, render_text
 from ._types import AssessmentReport, Finding
 
@@ -32,6 +37,7 @@ def assess_fem(
         ),
         figures=fig_paths,
         lineage=None,
+        skipped=skipped,
     )
 
 
@@ -109,13 +115,15 @@ def _check_inverted(
     for group in fem.elements:
         et = group.element_type
         name = et.name
-        if name in {"tri3", "quad4"} and et.order == 1 and not planar:
+        if name in _JUDGED_2D and et.order == 1 and not planar:
             skip_2d_nonplanar = True
             continue
-        if et.order != 1 or name not in {"tri3", "quad4", "tet4", "hex8"}:
-            if et.dim >= 2 and name not in seen_skip:
+        if et.order != 1 or name not in _JUDGED_LINEAR:
+            if name not in seen_skip:
                 seen_skip.add(name)
-                if et.order != 1:
+                if et.dim < 2:
+                    skipped_types.append(f"{name} (1D, not judged)")
+                elif et.order != 1:
                     skipped_types.append(f"{name} (order={et.order}, not judged)")
                 else:
                     skipped_types.append(
@@ -128,9 +136,13 @@ def _check_inverted(
                 continue
             pts = coords[np.asarray(corners, dtype=np.int64)]
             vol = measure_linear_cell(name, pts)
-            if vol is None or vol > 0.0:
+            if vol is None:
                 continue
-            inverted.append(int(eid))
+            if name in _JUDGED_2D:
+                if vol == 0.0:
+                    inverted.append(int(eid))
+            elif vol <= 0.0:
+                inverted.append(int(eid))
 
     if skip_2d_nonplanar:
         skipped.append((
@@ -146,7 +158,7 @@ def _check_inverted(
         sample = inverted[:EVIDENCE_CAP]
         findings.append(_finding(
             "MESH.INVERTED",
-            f"{len(inverted)} inverted / zero-volume linear cell(s)",
+            f"{len(inverted)} inverted / degenerate linear cell(s)",
             {
                 "ids": tuple(sample),
                 "n": len(inverted),

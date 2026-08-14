@@ -16,7 +16,7 @@ holds::
 import ``apeGmsh.viewers`` or ``gmsh``.
 """
 
-from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
+from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP, FAIL_RESERVED
 from ._fem import assess_fem
 from ._results import assess_results
 from ._types import AssessmentReport, Finding
@@ -25,6 +25,7 @@ __all__ = [
     "AssessmentReport",
     "CATALOG_SEVERITY",
     "EVIDENCE_CAP",
+    "FAIL_RESERVED",
     "Finding",
     "assess_fem",
     "assess_results",
