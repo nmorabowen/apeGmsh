@@ -9,6 +9,12 @@ Public door::
     python -m apeGmsh.studio script.py
     python -m apeGmsh.studio script.py --phase mesh
     python -m apeGmsh.studio --status
+    python -m apeGmsh.studio --assess model.h5 --json
+    python -m apeGmsh.studio --animate run.h5 --kind history
+    python -m apeGmsh.studio --animate run.h5 --kind yield
+    python -m apeGmsh.studio --pin --model-h5 model.h5 --results run.h5
+    python -m apeGmsh.studio --emit-report
+    python -m apeGmsh.studio.mcp
 
 ``run_until(phase=)`` is a real gate: ``model`` stops before
 ``generate()``, ``mesh`` before ``apeSees`` / ``Results``. A successful
@@ -35,9 +41,11 @@ from ._paths import (
     DEFAULT_ENVELOPE_REL,
     DEFAULT_LEDGER_REL,
     DEFAULT_NAMES_REL,
+    DEFAULT_VISORS_REL,
     envelope_path,
     ledger_path,
     names_path,
+    visors_path,
 )
 from ._replay import PHASES, ReplayResult, ReplayRunner, StopAtPhase
 from ._status import collect_status, format_status
@@ -46,6 +54,7 @@ __all__ = [
     "DEFAULT_ENVELOPE_REL",
     "DEFAULT_LEDGER_REL",
     "DEFAULT_NAMES_REL",
+    "DEFAULT_VISORS_REL",
     "ENVELOPE_SCHEMA",
     "PHASES",
     "NameRecord",
@@ -66,5 +75,6 @@ __all__ = [
     "project_state",
     "read_envelope",
     "read_runs",
+    "visors_path",
     "write_envelope",
 ]

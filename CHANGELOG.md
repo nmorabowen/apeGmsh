@@ -12,6 +12,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — ADR 0095 S4d adversarial closeout
+
+`promote_selection` snippets match
+`g.model.select(None, dim=).in_box(lo, hi).to_label()` /
+`.to_physical()`; unnamed picks without a bbox do not author tags.
+`kind=yield` is a von Mises contour on stills-style auto-scaled deform
+(0.12 of the model diagonal), not scale 1.0 and not an iso-clip.
+`highlight` writes `highlight.json` only; the host ignores a leftover
+file at open and applies names via live resolve + `select_batch`
+(INV-3 / INV-7). File poll is the INV-5 S3 adapter, not a Qt
+`viewer.highlight(names)` mutator.
+
+### ADDED — ADR 0095 Amendment 1 + S4a–S4d studio MCP
+
+S4 restated: MCP wraps habitat verbs, not the apeGmsh public API. One
+ReportBundle (schema 1); Markdown is the canonical record; HTML and
+Canvas are later skins. `animate(kind=)` is a closed catalog.
+Read-only MCP (S4a) does not wait on `highlight` (S3).
+
+`python -m apeGmsh.studio.mcp` is the Cursor stdio adapter. S4a:
+`status`, `get_selection`, `run_until`. S4b: `assess`, `render`,
+`animate(kind=history)`. S4c: `results_pin`, `emit_report(format=markdown)`
+writes `docs/` (INV-12). S4d: `animate(kind=yield)` is a mesh iso of
+`von_mises_stress` (not a π-plane); `highlight` writes
+`.apegmsh/highlight.json`; `promote_selection` suggests `.to_label()` /
+`.to_physical()` and does not write the `.py`. Tool bodies read
+`.apegmsh/` JSON or shell to `--no-viewer` / `--assess` / `--animate` /
+`python -m apeGmsh.viewers render` (INV-5). Visors under
+`.apegmsh/visors/`. Optional extra `apeGmsh[mcp]`. No `g.model.*`
+tools, no `setup=` on `animate`.
+
 ### ADDED — studio `--status` inspects `.apegmsh/` without replay
 
 `python -m apeGmsh.studio --status` prints the last ledger line, names,

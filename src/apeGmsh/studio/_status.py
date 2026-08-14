@@ -23,6 +23,8 @@ def collect_status(root: Path | None = None) -> dict[str, Any]:
     base = Path.cwd() if root is None else Path(root)
     names = _load_json(names_path(base))
     runs = read_runs(ledger_path(base))
+    pins = [row for row in runs if row.get("kind") == "pin"]
+    execs = [row for row in runs if row.get("kind") != "pin"]
     selection: dict[str, Any] | None = None
     selection_error: str | None = None
     env_file = envelope_path(base)
@@ -35,8 +37,10 @@ def collect_status(root: Path | None = None) -> dict[str, Any]:
         "schema": STATUS_SCHEMA,
         "root": str(base),
         "names": names,
-        "last_run": runs[-1] if runs else None,
-        "n_runs": len(runs),
+        "last_run": execs[-1] if execs else None,
+        "n_runs": len(execs),
+        "last_pin": pins[-1] if pins else None,
+        "n_pins": len(pins),
         "selection": selection,
         "selection_error": selection_error,
     }
