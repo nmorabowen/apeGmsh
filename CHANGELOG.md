@@ -12,6 +12,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — canvas slug test is platform-absolute
+
+`test_cursor_project_slug_matches_cursor_convention` was a Windows
+path resolved against the Linux CI cwd. Assert POSIX slugs on POSIX
+and the Cursor Windows mapping on nt.
+
+### FIXED — ``sync_skill.py --check`` stays stdlib before gmsh
+
+lock-tests runs the skill-mirror check before pip install. Live
+index drift still runs when apeGmsh/gmsh import, and in
+`tests/studio/test_lookup.py`.
+
 ### FIXED — ADR 0096 S5 red/blue closeout
 
 `--promote` counts MCP `lookup` `kind=miss` only (ambiguous is not
