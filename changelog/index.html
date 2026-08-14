@@ -3392,6 +3392,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-studio-status-inspects-apegmsh-without-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio --status inspects .apegmsh/ without replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-studio-run-ledger-apegmshrunsjsonl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio run ledger (.apegmsh/runs.jsonl)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-studio-run_untilphase-is-a-real-gate-namesjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio run_until(phase) is a real gate + names.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-assess-closeout-adr-0094-amendment-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7559,6 +7592,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-studio-status-inspects-apegmsh-without-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio --status inspects .apegmsh/ without replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-studio-run-ledger-apegmshrunsjsonl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio run ledger (.apegmsh/runs.jsonl)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-studio-run_untilphase-is-a-real-gate-namesjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio run_until(phase) is a real gate + names.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-assess-closeout-adr-0094-amendment-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11711,6 +11777,26 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-studio-status-inspects-apegmsh-without-replay">ADDED — studio <code>--status</code> inspects <code>.apegmsh/</code> without replay<a class="headerlink" href="#added-studio-status-inspects-apegmsh-without-replay" title="Permanent link">&para;</a></h3>
+<p><code>python -m apeGmsh.studio --status</code> prints the last ledger line, names,
+counts, and pick from cwd <code>.apegmsh/</code> — no exec, no Qt. <code>--json</code> dumps
+the same payload. Empty state exits 2. PoC script:
+<code>tests/studio/fixtures/box.py</code>.</p>
+<h3 id="added-studio-run-ledger-apegmshrunsjsonl">ADDED — studio run ledger (<code>.apegmsh/runs.jsonl</code>)<a class="headerlink" href="#added-studio-run-ledger-apegmshrunsjsonl" title="Permanent link">&para;</a></h3>
+<p>Each <code>run_until</code> stop appends one JSONL line (timestamp, script hash,
+phase, stopped_at, labels / PGs / counts). Skip-remesh does not write a
+line. A failed exec writes <code>ok: false</code> and the traceback. <code>names.json</code>
+stays the current snapshot; the ledger is the history. <code>assess</code> and
+<code>visors</code> are reserved empty keys until those artifacts exist.</p>
+<h3 id="added-studio-run_untilphase-is-a-real-gate-namesjson">ADDED — studio <code>run_until(phase)</code> is a real gate + <code>names.json</code><a class="headerlink" href="#added-studio-run_untilphase-is-a-real-gate-namesjson" title="Permanent link">&para;</a></h3>
+<p><code>python -m apeGmsh.studio script.py</code> defaults to <code>--phase model</code> and
+<strong>stops before</strong> <code>g.mesh.generation.generate()</code> (a <code>StopAtPhase</code>
+sentinel, not a failed exec). <code>--phase mesh</code> allows the mesh and stops
+before <code>apeSees</code> / <code>Results</code>. A successful stop writes
+<code>.apegmsh/names.json</code> (labels / physical groups / entity bboxes /
+element counts) — what exists, not what was clicked. Skip-remesh keys
+on <code>(source hash, phase)</code> so a model preview is not reused as a mesh
+preview. Geometry preview of a solving script no longer runs the solve.</p>
 <h3 id="fixed-assess-closeout-adr-0094-amendment-1">FIXED — assess closeout (ADR 0094 Amendment 1)<a class="headerlink" href="#fixed-assess-closeout-adr-0094-amendment-1" title="Permanent link">&para;</a></h3>
 <p>Planar 2-D winding is degeneracy-only (clockwise slabs are not
 inverted). Native union-merge NaN fill is skip, not FAIL.
