@@ -90,6 +90,14 @@ Studio ModelViewer opens with part and entity labels on, each showing
 the AABB size in metres (cotas). Toggle still lives on the View tab.
 `--phase model` and `--phase mesh` remain separate processes so the
 CAD window can stay up while the mesh generates.
+### ADDED — Cursor MCP config; quiet the Ladruno stdout banner
+
+S4a leftover: `.cursor/mcp.json` launches `scripts/studio-mcp.ps1` →
+`python -m apeGmsh.studio.mcp`. The office venv `.pth` prints the
+Ladruno splash to stdout at interpreter start, which corrupts
+stdio JSON-RPC; the launcher and config set
+`LADRUNO_OPENSEES_QUIET=1` (and `APEGMSH_QUIET=1`) before Python
+runs. Needs `apeGmsh[mcp]`.
 
 ### ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
 

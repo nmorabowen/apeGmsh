@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "apegmsh-studio": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/studio-mcp.ps1"
+      ],
+      "env": {
+        "LADRUNO_OPENSEES_QUIET": "1",
+        "APEGMSH_QUIET": "1"
+      }
+    }
+  }
+}
