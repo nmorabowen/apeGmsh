@@ -7,7 +7,8 @@ Severity = Literal["error", "warning", "info"]
 
 EVIDENCE_CAP = 8
 
-# FAIL is reserved for the error codes. RES.U_VS_DIAG is never error.
+# FAIL is reserved for the error codes. RES.U_VS_DIAG / RES.ENERGY_ERR
+# are never error (ADR 0094 Amendment 1).
 CATALOG_SEVERITY: dict[str, Severity] = {
     "MODEL.EMPTY": "error",
     "MESH.INVERTED": "error",
@@ -19,5 +20,15 @@ CATALOG_SEVERITY: dict[str, Severity] = {
     "RES.INF": "error",
     "RES.LINEAGE": "warning",
     "RES.U_VS_DIAG": "info",
-    "RES.ENERGY_ERR": "warning",
+    "RES.ENERGY_ERR": "info",
+    "RES.ENERGY_NONFINITE": "warning",
 }
+
+FAIL_RESERVED: frozenset[str] = frozenset({
+    "MODEL.EMPTY",
+    "MESH.INVERTED",
+    "RES.UNBOUND_FEM",
+    "RES.NO_STAGE",
+    "RES.NAN",
+    "RES.INF",
+})

@@ -31,12 +31,15 @@ class AssessmentReport:
     """Result of ``fem.assess()`` / ``results.assess()``.
 
     ``text`` is what the agent prints. ``findings`` is what it branches
-    on. ``figures`` is empty unless ``figures=True`` wrote stills.
-    ``lineage`` is the Results object on the results path; ``None`` on
-    ``fem.assess()``.
+    on for emitted verdicts. ``skipped`` is ``(code, reason)`` pairs
+    for checks that did not run (INV-3) — branch here to see that a
+    FAIL-reserved check was never evaluated. ``figures`` is empty
+    unless ``figures=True`` wrote stills. ``lineage`` is the Results
+    object on the results path; ``None`` on ``fem.assess()``.
     """
 
     findings: tuple[Finding, ...]
     text: str
     figures: tuple[Path, ...] = ()
     lineage: Lineage | None = None
+    skipped: tuple[tuple[str, str], ...] = ()

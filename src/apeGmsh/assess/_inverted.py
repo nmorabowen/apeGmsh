@@ -46,10 +46,9 @@ def _signed_tri3(pts: ndarray) -> float:
 
 
 def _signed_quad4(pts: ndarray) -> float:
-    # Two-triangle split. Opposite signs (bowtie) or a non-positive
-    # triangle count as inverted — the caller tests the returned value
-    # and this helper reports the worse of the two signed areas when
-    # they disagree, else the sum.
+    # Two-triangle split. Opposite signs (bowtie) or a zero-area
+    # triangle return 0.0 — the 2D caller flags abs(measure)==0 as
+    # degenerate. Signed sum is kept for 3D diagnostics / tests.
     a1 = _tri_signed_area(pts, 0, 1, 2)
     a2 = _tri_signed_area(pts, 0, 2, 3)
     if a1 == 0.0 or a2 == 0.0:
@@ -68,12 +67,16 @@ def _signed_hex8(pts: ndarray) -> float:
 
 
 # Linear types we will judge. Keyed by ElementTypeInfo.name.
+# 2D: degeneracy only (abs == 0). 3D: signed volume (negative is inverted).
 _LINEAR_MEASURE: dict[str, Callable[[ndarray], float]] = {
     "tri3": _signed_tri3,
     "quad4": _signed_quad4,
     "tet4": _signed_tet4,
     "hex8": _signed_hex8,
 }
+_JUDGED_2D: frozenset[str] = frozenset({"tri3", "quad4"})
+_JUDGED_3D: frozenset[str] = frozenset({"tet4", "hex8"})
+_JUDGED_LINEAR: frozenset[str] = _JUDGED_2D | _JUDGED_3D
 
 
 def measure_linear_cell(type_name: str, corner_xyz: ndarray) -> float | None:
