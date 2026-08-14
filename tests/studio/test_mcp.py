@@ -13,6 +13,7 @@ from apeGmsh.studio._mcp import (
     emit_report,
     get_selection,
     highlight,
+    lookup,
     promote_selection,
     render,
     results_pin,
@@ -25,6 +26,7 @@ MCP_DIR = Path(__file__).resolve().parents[2] / "src" / "apeGmsh" / "studio"
 _MCP_FILES = (
     MCP_DIR / "_mcp.py",
     MCP_DIR / "mcp.py",
+    MCP_DIR / "_mcp_log.py",
     MCP_DIR / "_bundle.py",
     MCP_DIR / "_skins.py",
     MCP_DIR / "_highlight.py",
@@ -425,3 +427,93 @@ def test_mcp_adapter_importable_without_sdk() -> None:
 
     assert callable(mcp_mod.build_server)
     assert callable(mcp_mod.main)
+
+
+def test_quiet_env_keeps_mcp_stdout_clean() -> None:
+    """The office venv .pth banner is stdout; MCP JSON-RPC needs it off."""
+    import os
+    import subprocess
+    import sys
+
+    env = os.environ.copy()
+    env["LADRUNO_OPENSEES_QUIET"] = "1"
+    env["APEGMSH_QUIET"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-c", "import apeGmsh.studio._mcp"],
+        capture_output=True,
+        env=env,
+        check=True,
+    )
+    assert proc.stdout == b"", proc.stdout[:200]
+
+
+_MCP_TOOLS = frozenset({
+    "status",
+    "get_selection",
+    "lookup",
+    "run_until",
+    "assess",
+    "render",
+    "animate",
+    "results_pin",
+    "emit_report",
+    "highlight",
+    "promote_selection",
+})
+_MCP_FORBIDDEN = frozenset({
+    "add_box",
+    "generate",
+    "fix_skill",
+    "remember_steps",
+    "agent_profile",
+})
+
+
+def _tool_names(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for dec in node.decorator_list:
+            func = dec.func if isinstance(dec, ast.Call) else dec
+            if isinstance(func, ast.Attribute) and func.attr == "tool":
+                names.add(node.name)
+    return names
+
+
+def test_mcp_tool_catalog_is_closed() -> None:
+    names = _tool_names(MCP_DIR / "mcp.py")
+    assert names == _MCP_TOOLS, sorted(names)
+    assert not (names & _MCP_FORBIDDEN)
+
+
+def test_mcp_lookup_add_box() -> None:
+    payload = lookup("add_box")
+    assert payload["ok"] is True
+    assert payload["code"] == 0
+    assert payload["kind"] == "hit"
+    text = payload["text"]
+    assert "g.model.geometry.add_box" in text
+    assert "add_box(" in text
+    assert text.count("\n") <= 20
+
+
+def test_mcp_lookup_miss_does_not_grep_src() -> None:
+    payload = lookup("definitely_not_an_apegmsh_symbol")
+    assert payload["ok"] is False
+    assert payload["code"] == 2
+    assert payload["kind"] == "miss"
+    assert "miss:" in payload["text"]
+    assert "grep src" not in payload["text"].lower()
+
+
+def test_mcp_lookup_select_is_ambiguous() -> None:
+    payload = lookup("select")
+    assert payload["ok"] is False
+    assert payload["code"] == 2
+    assert payload["kind"] == "ambiguous"
+    text = payload["text"]
+    assert "g.model.select" in text
+    assert "select(" in text
+    assert text.count("\n") <= 20

@@ -1,18 +1,29 @@
 """``python -m apeGmsh.studio.mcp`` — Cursor stdio adapter (ADR 0095 S4a–S4e).
 
-Tools: ``status``, ``get_selection``, ``run_until``, ``assess``,
+Tools: ``status``, ``get_selection``, ``lookup``, ``run_until``, ``assess``,
 ``render``, ``animate(kind=history|yield)``, ``results_pin``,
 ``emit_report(format=markdown|html|canvas)``, ``highlight``,
 ``promote_selection``.
 Requires the optional extra ``pip install mcp`` (or ``apeGmsh[mcp]``).
 
-Cursor ``mcp.json`` (workspace cwd is the model root)::
+Cursor ``mcp.json`` (workspace cwd is the model root). The office
+venv's ``ladruno_opensees.pth`` prints a banner to **stdout** at
+interpreter startup — set ``LADRUNO_OPENSEES_QUIET=1`` *before*
+Python starts or JSON-RPC is corrupted. ``scripts/studio-mcp.ps1``
+does that. ``APEGMSH_QUIET=1`` keeps the apeGmsh banner off stderr::
 
     {
       "mcpServers": {
         "apegmsh-studio": {
-          "command": "python",
-          "args": ["-m", "apeGmsh.studio.mcp"]
+          "command": "powershell.exe",
+          "args": [
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", "scripts/studio-mcp.ps1"
+          ],
+          "env": {
+            "LADRUNO_OPENSEES_QUIET": "1",
+            "APEGMSH_QUIET": "1"
+          }
         }
       }
     }
@@ -24,35 +35,46 @@ from typing import Any
 
 
 def _require_fastmcp() -> Any:
+    """``FastMCP`` (mcp 1.x) or ``MCPServer`` (mcp 2.x). Same ``tool`` / ``run``."""
     try:
         from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        FastMCP = None
+    if FastMCP is not None:
+        return FastMCP
+    try:
+        from mcp.server.mcpserver import MCPServer
     except ImportError as exc:
         raise SystemExit(
             "apeGmsh.studio.mcp requires the MCP SDK: pip install mcp"
         ) from exc
-    return FastMCP
+    return MCPServer
 
 
 def build_server() -> Any:
-    """Return a FastMCP server wired to the S4a–S4d tool bodies."""
-    FastMCP = _require_fastmcp()
+    """Return a FastMCP server wired to the S4a–S4e / 0096 S3 tool bodies."""
+    Server = _require_fastmcp()
     from apeGmsh.studio._mcp import animate as _animate
     from apeGmsh.studio._mcp import assess as _assess
     from apeGmsh.studio._mcp import emit_report as _emit_report
     from apeGmsh.studio._mcp import get_selection as _get_selection
     from apeGmsh.studio._mcp import highlight as _highlight
+    from apeGmsh.studio._mcp import lookup as _lookup
     from apeGmsh.studio._mcp import promote_selection as _promote_selection
     from apeGmsh.studio._mcp import render as _render
     from apeGmsh.studio._mcp import results_pin as _results_pin
     from apeGmsh.studio._mcp import run_until as _run_until
     from apeGmsh.studio._mcp import status as _status
+    from apeGmsh.studio._mcp_log import logged
 
-    mcp = FastMCP(
+    mcp = Server(
         "apeGmsh.studio",
         instructions=(
-            "apeGmsh.studio habitat (ADR 0095 S4a–S4e). "
+            "apeGmsh.studio habitat (ADR 0095 S4a–S4e, 0096 S3). "
             "Identity is labels / physical groups / phase, not tags. "
             "Do not wrap g.model.* or apeSees primitives. "
+            "lookup(symbol) is See-family inspect of the generated index "
+            "(~20 lines); it is not CAD and does not grep src/. "
             "animate kind=history|yield; no setup=. formation is later. "
             "kind=yield is a von Mises contour on auto-scaled deform, "
             "not an iso-clip. "
@@ -62,24 +84,31 @@ def build_server() -> Any:
             "not a Qt highlight(names) mutator); "
             "promote_selection suggests g.model.select(None, dim=)"
             ".in_box(lo, hi).to_label() and does not write the .py. "
-            "Authored chapters go in docs/, not .apegmsh/."
+            "Authored chapters go in docs/, not .apegmsh/. "
+            "Do not add a profiler MCP tool; python -m apeGmsh.studio.profile "
+            "is the sidecar; --promote prints eligibility and writes nothing."
         ),
     )
 
     @mcp.tool()
     def status() -> dict[str, Any]:
         """Last run, names, and pick from .apegmsh/ (no replay, no Qt)."""
-        return _status()
+        return logged("status", _status)
 
     @mcp.tool()
     def get_selection() -> dict[str, Any]:
         """Names-first pick envelope written by the Qt host."""
-        return _get_selection()
+        return logged("get_selection", _get_selection)
+
+    @mcp.tool()
+    def lookup(symbol: str) -> dict[str, Any]:
+        """Public composite signature from the generated index. ~20 lines. Not CAD."""
+        return logged("lookup", _lookup, symbol=symbol)
 
     @mcp.tool()
     def run_until(script: str, phase: str = "model") -> dict[str, Any]:
         """Replay script up to phase (model|mesh|results). No Qt window."""
-        return _run_until(script, phase=phase)
+        return logged("run_until", _run_until, script, phase=phase)
 
     @mcp.tool()
     def assess(
@@ -88,7 +117,7 @@ def build_server() -> Any:
         model_h5: str | None = None,
     ) -> dict[str, Any]:
         """Verdict + markdown from model.h5 or a results file. Not Qt."""
-        return _assess(path, figures=figures, model_h5=model_h5)
+        return logged("assess", _assess, path, figures=figures, model_h5=model_h5)
 
     @mcp.tool()
     def render(
@@ -103,7 +132,9 @@ def build_server() -> Any:
         model_h5: str | None = None,
     ) -> dict[str, Any]:
         """Write a still (or canned pack) under .apegmsh/visors/. Closed view=."""
-        return _render(
+        return logged(
+            "render",
+            _render,
             path,
             output,
             view=view,
@@ -125,7 +156,9 @@ def build_server() -> Any:
         step_stride: int = 1,
     ) -> dict[str, Any]:
         """kind=history|yield. yield = von Mises contour on auto-scaled deform. No setup=."""
-        return _animate(
+        return logged(
+            "animate",
+            _animate,
             path,
             output,
             kind=kind,
@@ -140,7 +173,7 @@ def build_server() -> Any:
         results: str | None = None,
     ) -> dict[str, Any]:
         """Stamp model.h5 / results path+hash into the ledger. No file copy."""
-        return _results_pin(model_h5, results)
+        return logged("results_pin", _results_pin, model_h5=model_h5, results=results)
 
     @mcp.tool()
     def emit_report(
@@ -149,17 +182,19 @@ def build_server() -> Any:
         pin_id: str | None = None,
     ) -> dict[str, Any]:
         """Write a ReportBundle skin. format=markdown|html|canvas; markdown is the archive."""
-        return _emit_report(format=format, output=output, pin_id=pin_id)
+        return logged(
+            "emit_report", _emit_report, format=format, output=output, pin_id=pin_id,
+        )
 
     @mcp.tool()
     def highlight(names: list[str]) -> dict[str, Any]:
         """Point at named faces/groups. Writes highlight.json only. No Gmsh."""
-        return _highlight(names)
+        return logged("highlight", _highlight, names)
 
     @mcp.tool()
     def promote_selection() -> dict[str, Any]:
         """Suggested select(None, dim=).in_box(lo, hi).to_label() edits. Does not write .py."""
-        return _promote_selection()
+        return logged("promote_selection", _promote_selection)
 
     return mcp
 

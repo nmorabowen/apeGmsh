@@ -17,6 +17,9 @@ Public door::
     python -m apeGmsh.studio --emit-report --format html
     python -m apeGmsh.studio --emit-report --format canvas
     python -m apeGmsh.studio.mcp
+    python -m apeGmsh.studio.lookup SYMBOL
+    python -m apeGmsh.studio.profile
+    python -m apeGmsh.studio.profile --promote
 
 ``run_until(phase=)`` is a real gate: ``model`` stops before
 ``generate()``, ``mesh`` before ``apeSees`` / ``Results``. A successful

@@ -1,5 +1,5 @@
 # `g.rebar` — reinforcement-cage authoring (ADR 0066/0067)
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `g.rebar` is a session composite (`RebarComposite`, registered at
 `src/apeGmsh/_core.py:53`) that authors **RC reinforcement cages** —

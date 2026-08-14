@@ -1,6 +1,6 @@
 # `apeGmsh.interop` — import analytical structural models (ADR 0009)
 
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `apeGmsh.interop` turns an **analytical** structural model (joints, frames,
 areas, restraints, loads — exported from apeETABS as a neutral `*.sm.json`)

@@ -12,9 +12,10 @@ carries a trigger-tuned description.
 
 Usage
 -----
-    python scripts/sync_skill.py            # write the derived copy
+    python scripts/sync_skill.py            # write the derived copy + API index
     python scripts/sync_skill.py --check    # exit 1 if the derived copy is stale
-                                            # (use in CI to catch un-synced edits)
+                                            # or the committed API index drifts
+                                            # from a live harvest (ADR 0096 S2)
 
 The published ``anthropic-skills:apegmsh-helper`` plugin lives in a *separate*
 marketplace repo and is NOT touched here — syncing it is a downstream release
@@ -28,6 +29,7 @@ after merging any skill PR. (It was a junction into this working tree until
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -112,6 +114,21 @@ def main() -> int:
             for p in drift:
                 print(f"  - {p.relative_to(REPO)}", file=sys.stderr)
             return 1
+        os.environ.setdefault("APEGMSH_QUIET", "1")
+        src = REPO / "src"
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))
+        from apeGmsh.studio._index_build import committed_index_drift
+
+        idx = committed_index_drift()
+        if idx:
+            print(
+                "API INDEX STALE — run `python -m apeGmsh.studio.lookup --build`:",
+                file=sys.stderr,
+            )
+            for line in idx:
+                print(f"  - {line}", file=sys.stderr)
+            return 1
         print("apegmsh-helper is in sync with the canonical skill.")
         return 0
 
@@ -123,6 +140,15 @@ def main() -> int:
         path.unlink()
         print(f"removed stale {path.relative_to(REPO)}")
     print(f"\nDerived {len(plan)} file(s) into {DERIVED.relative_to(REPO)}.")
+
+    os.environ.setdefault("APEGMSH_QUIET", "1")
+    src = REPO / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from apeGmsh.studio._index_build import write_index
+
+    dest = write_index()
+    print(f"wrote {dest.relative_to(REPO)}")
     return 0
 
 

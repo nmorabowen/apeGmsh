@@ -1,5 +1,5 @@
 # Model composition (compose v1, Phase 3)
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
 FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no

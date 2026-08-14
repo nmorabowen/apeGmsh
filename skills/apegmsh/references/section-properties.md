@@ -1,5 +1,5 @@
 # Section properties — `SectionProperties` analyzer + bridge handoff (ADR 0078)
-<!-- skill-freshness: verified against apeGmsh main@ad5ea52c (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@ad5ea52c (2026-07-18) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 In-process cross-section property analyzer (the full PyPI
 `sectionproperties` capability set, natively): geometric, Saint-Venant

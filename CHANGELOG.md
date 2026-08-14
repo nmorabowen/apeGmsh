@@ -12,6 +12,67 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — ADR 0096 S5 red/blue closeout
+
+`--promote` counts MCP `lookup` `kind=miss` only (ambiguous is not
+a miss). Closeout is MCP-lookup-miss eligibility, observe-only —
+not a closed Budget A loop. Agent-facing text: propose a PR; do
+not write `skills/` or run `sync_skill.py` in-session.
+
+### ADDED — ADR 0096 S5: promotion bar (observe only)
+
+`python -m apeGmsh.studio.profile --promote` lists lookup-miss
+classes that hit 3 repeats. Skill errors still owe a PR after one
+confirmation. Working ImageMage steps: script comments and/or a
+non-normative Recommendation in `workflows.md`. Writes nothing; no
+`fix_skill` / `remember_steps`.
+
+### ADDED — ADR 0096 S4: sidecar token profiler
+
+`python -m apeGmsh.studio.profile` reads `.apegmsh/mcp_calls.jsonl`
+(tool name + payload bytes, appended by the MCP adapter) and/or a
+transcript JSONL. Heuristic tokens = chars/4. Defect metric is
+`src_search_rate`. `--skill-budget` gates skill file size. Not an
+MCP tool.
+
+### ADDED — ADR 0096 S3: MCP `lookup(symbol)`
+
+See-family inspect of the generated API index. Same ~20-line payload
+as `python -m apeGmsh.studio.lookup`. Miss points at the skill
+reference; the adapter does not grep `src/` and does not wrap
+`g.model.*`. Profiler remains S4.
+
+### FIXED — ADR 0096 S2 red/blue closeout
+
+`--check` and a test now fail when the committed API index drifts
+from a live harvest. Lookup no longer emits a stub `symbol(...)`.
+Ambiguous hits print bounded signatures. Remaining skill-freshness
+stamps point at `python -m apeGmsh.studio.lookup`, not `src/` grep.
+
+### ADDED — ADR 0096 S2: generated API index + lookup CLI
+
+`python -m apeGmsh.studio.lookup SYMBOL` returns ~20 lines
+(signature, skill pointer, one-line doc) from
+`src/apeGmsh/studio/_api_index.json`. Rebuild with `--build` or
+`scripts/sync_skill.py`. `src/` grep stays an index miss. MCP
+`lookup` is S3, not this slice.
+
+### ADDED — ADR 0096 S1: skill router, no grep-`src/` lookup
+
+Canonical `skills/apegmsh/SKILL.md` now routes one task → one
+reference. Authoring a model script must not grep `src/apeGmsh/`;
+that path is an index miss for library maintenance only. Cheatsheet
+opening matches. Derive remains `scripts/sync_skill.py`.
+
+### ADDED — ADR 0096 (Proposed): agent token budget
+
+Lookup vs judgment. API spelling is a catalog (skill router + later
+generated index), not grep `src/`. Engineering criteria stay the
+spend. Observe open / mutate closed: skill errors and working
+ImageMage steps promote by reviewed PR or script comments, not by
+session residue writing `SKILL.md` or new CAD MCP verbs. 0095 INV-10
+stands. S0 is the ADR only (S1–S5 named, not shipped).
+
 ### ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
 
 Same ReportBundle, no new MCP verb. `format=html` writes
