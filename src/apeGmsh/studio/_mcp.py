@@ -355,7 +355,7 @@ def emit_report(
     pin_id: str | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Write the Markdown chapter from the ReportBundle. No invented prose."""
+    """Write a ReportBundle skin. Markdown is the archive. No invented prose."""
     from ._bundle import emit_report as _emit
 
     base = _root(root)

@@ -26,6 +26,7 @@ _MCP_FILES = (
     MCP_DIR / "_mcp.py",
     MCP_DIR / "mcp.py",
     MCP_DIR / "_bundle.py",
+    MCP_DIR / "_skins.py",
     MCP_DIR / "_highlight.py",
 )
 
@@ -277,6 +278,12 @@ def test_results_pin_and_emit_report(tmp_path: Path) -> None:
     assert Path(out["path"]).is_file()
     text = Path(out["path"]).read_text(encoding="utf-8")
     assert pin["id"] in text
+
+    html = emit_report(format="html", root=tmp_path)
+    assert html["ok"] is True
+    assert html["format"] == "html"
+    assert Path(html["path"]).suffix == ".html"
+    assert Path(html["archive"]).name == "studio-report.md"
 
 
 def test_highlight_and_promote(tmp_path: Path) -> None:

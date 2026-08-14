@@ -14,6 +14,8 @@ Public door::
     python -m apeGmsh.studio --animate run.h5 --kind yield
     python -m apeGmsh.studio --pin --model-h5 model.h5 --results run.h5
     python -m apeGmsh.studio --emit-report
+    python -m apeGmsh.studio --emit-report --format html
+    python -m apeGmsh.studio --emit-report --format canvas
     python -m apeGmsh.studio.mcp
 
 ``run_until(phase=)`` is a real gate: ``model`` stops before

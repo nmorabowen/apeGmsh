@@ -294,15 +294,18 @@ capture the OS desktop or the human Qt window.
 Read-only MCP (ADR 0095 S4a–S4d): `python -m apeGmsh.studio.mcp` (needs
 `pip install mcp`). Tools: `status`, `get_selection`, `run_until`,
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
-`emit_report(format=markdown)`, `highlight`, `promote_selection` —
-names first, no Qt, no `setup=`. `kind=yield` is a von Mises
-contour of `von_mises_stress` on auto-scaled deform (0.12 of
-diagonal; not an iso-clip; π-plane later). `highlight` writes
-`.apegmsh/highlight.json` only (host file-poll + `select_batch`;
+`emit_report(format=markdown|html|canvas)`, `highlight`,
+`promote_selection` — names first, no Qt, no `setup=`. `kind=yield`
+is a von Mises contour of `von_mises_stress` on auto-scaled deform
+(0.12 of diagonal; not an iso-clip; π-plane later). `highlight`
+writes `.apegmsh/highlight.json` only (host file-poll + `select_batch`;
 does not write `selection.json`). `promote_selection` suggests
 `g.model.select(None, dim=).in_box(lo, hi).to_label()` /
-`.to_physical()` and does not write the `.py`. HTML/canvas emit skins
-and `kind=formation` are later. Do not invent MCP tools for
+`.to_physical()` and does not write the `.py`. `emit_report`:
+markdown is the archive (`docs/`); html is a print skin there;
+canvas is a live Cursor projection (IDE `canvases/`, not
+git-portable) and still writes the markdown chapter.
+`kind=formation` is later. Do not invent MCP tools for
 `g.model.*` / `apeSees` primitives. Authored chapters go in `docs/`;
 visors stay under `.apegmsh/visors/`. Cursor `mcp.json`::
 

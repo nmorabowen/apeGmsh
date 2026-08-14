@@ -1,9 +1,10 @@
-"""ReportBundle + pin + markdown emit (ADR 0095 S4c).
+"""ReportBundle + pin + emit skins (ADR 0095 S4c / Amendment 2).
 
 Schema 1. Assembles names / pick / last run / visors / pinned paths.
-Markdown is the canonical skin (git-tracked ``docs/``). HTML and canvas
-are later skins of the same bundle. Authored output must not land in
-``.apegmsh/`` (INV-12).
+Markdown is the canonical archive (git-tracked ``docs/``). HTML is a
+shareable/print skin of the same bundle. Canvas is a live Cursor
+projection (IDE ``canvases/``, not git-portable). Authored output must
+not land in ``.apegmsh/`` (INV-12).
 
 Pure: no ``gmsh``, no Qt, no viewers.
 """
@@ -19,13 +20,15 @@ from typing import Any
 
 from ._ledger import append_run, read_runs
 from ._paths import ledger_path, visors_path
+from ._skins import default_canvas_path, render_canvas, render_html
 from ._status import collect_status
 
 BUNDLE_SCHEMA = 1
 EMIT_FORMATS = ("markdown", "html", "canvas")
-EMIT_SHIPPED = frozenset({"markdown"})
+EMIT_SHIPPED = frozenset({"markdown", "html", "canvas"})
 _VISOR_SUFFIX = frozenset({".png", ".gif", ".mp4", ".jpg", ".jpeg", ".webp"})
 _DEFAULT_CHAPTER = Path("docs") / "studio-report.md"
+_DEFAULT_HTML = Path("docs") / "studio-report.html"
 
 
 def collect_bundle(
@@ -96,40 +99,80 @@ def emit_report(
     pin_id: str | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Write the canonical Markdown chapter under ``docs/`` (INV-12)."""
+    """Write a ReportBundle skin. Markdown is always the archive (INV-12)."""
     if format not in EMIT_FORMATS:
         raise ValueError(
             f"format must be one of {EMIT_FORMATS}; got {format!r}"
         )
     if format not in EMIT_SHIPPED:
         raise ValueError(
-            f"emit_report format={format!r} is not shipped "
-            "(S4c is markdown only; html/canvas are later skins)"
+            f"emit_report format={format!r} is not shipped"
         )
     base = Path.cwd() if root is None else Path(root)
     pin = _pin_by_id(base, pin_id) if pin_id else _last_pin(base)
     bundle = collect_bundle(root=base, pin=pin)
-    dest = Path(output) if output is not None else base / _DEFAULT_CHAPTER
-    if not dest.is_absolute():
-        dest = (base / dest).resolve()
-    else:
-        dest = dest.resolve()
+    dest = _resolve_emit_dest(format, output, base)
+    if format == "canvas" and not dest.name.endswith(".canvas.tsx"):
+        raise ValueError("canvas output must end in .canvas.tsx")
     _refuse_generated(dest, base)
-    fig_rel: list[tuple[str, str]] = []
     slug = (pin or {}).get("id") or "studio"
     copied = _promote_visors(bundle.get("visors") or [], base, slug)
-    for src, dest_fig in copied:
-        fig_rel.append((src, Path(os.path.relpath(dest_fig, dest.parent)).as_posix()))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(_render_markdown(bundle, figures=fig_rel), encoding="utf-8")
+    archive = dest if format == "markdown" else (base / _DEFAULT_CHAPTER).resolve()
+    _refuse_generated(archive, base)
+    md_figures = [(src, _relpath(fig, archive.parent)) for src, fig in copied]
+    skin_figures = [(src, _relpath(fig, dest.parent)) for src, fig in copied]
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_text(
+        _render_markdown(bundle, figures=md_figures), encoding="utf-8",
+    )
+    if format == "html":
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(
+            render_html(bundle, figures=skin_figures, archive=str(archive)),
+            encoding="utf-8",
+        )
+    elif format == "canvas":
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(
+            render_canvas(bundle, figures=skin_figures, archive=str(archive)),
+            encoding="utf-8",
+        )
+    note = (
+        "Markdown is the archive. HTML is a shareable skin. "
+        "Canvas is a live Cursor projection, not git-portable."
+    )
     return {
         "ok": True,
         "format": format,
         "path": str(dest),
+        "archive": str(archive),
         "pin_id": (pin or {}).get("id"),
         "figures": [str(p) for _, p in copied],
         "bundle_schema": BUNDLE_SCHEMA,
+        "note": note,
     }
+
+
+def _resolve_emit_dest(
+    format: str,
+    output: str | Path | None,
+    base: Path,
+) -> Path:
+    if output is not None:
+        dest = Path(output)
+        return dest.resolve() if dest.is_absolute() else (base / dest).resolve()
+    if format == "markdown":
+        return (base / _DEFAULT_CHAPTER).resolve()
+    if format == "html":
+        return (base / _DEFAULT_HTML).resolve()
+    dest = default_canvas_path(base)
+    if dest is None:
+        raise ValueError(
+            "emit_report format=canvas needs output= ending in .canvas.tsx "
+            "(no Cursor canvases/ directory for this root; "
+            "markdown remains the archive under docs/)"
+        )
+    return dest.resolve()
 
 
 def list_visors(root: Path) -> list[str]:
@@ -177,6 +220,13 @@ def _file_stamp(path: Path | None) -> dict[str, Any] | None:
         "sha256": digest,
         "size": path.stat().st_size,
     }
+
+
+def _relpath(path: Path, start: Path) -> str:
+    try:
+        return Path(os.path.relpath(path, start)).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
 
 
 def _refuse_generated(dest: Path, root: Path) -> None:

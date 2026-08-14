@@ -404,7 +404,8 @@ adapter (`highlight.json` + host poll + `select_batch`). A Qt
 | **S4b** | Studio verbs + MCP for `assess`, `render`, `animate(kind=history)` | S4a, ADR 0094 S1–S2 |
 | **S4c** | `results_pin` + `emit_report(format=markdown)`. HTML / canvas are later skins of the same bundle | S4b |
 | **S4d** | `animate(kind=yield)`; `highlight` / `promote_selection` (S3) | S4b, S3 |
-| **Later** | `kind=formation`; HTML / canvas emit skins; statement-step; daemon-as-middle-tier; Electron | S4c / S4d |
+| **S4e** | `emit_report(format=html\|canvas)` skins of the same bundle. Markdown is still written as the archive. | S4c |
+| **Later** | `kind=formation`; statement-step; daemon-as-middle-tier; Electron | S4c / S4d / S4e |
 
 S4a can merge alone. Claiming “the MCP exists” requires S4a (an
 agent reads a pick and names without opening Qt). Claiming
@@ -463,7 +464,8 @@ Resolved here:
 Still open (do not block S4a–S4d):
 
 1. Canvas output path (IDE `canvases/` vs project `docs/`) — decide
-   at the canvas-skin slice.
+   at the canvas-skin slice. **Resolved in Amendment 2** (IDE
+   `canvases/`).
 
 Resolved at S4c:
 
@@ -474,4 +476,62 @@ Resolved at S4d:
 1. **`yield` first picture** — von Mises contour of a derived scalar
    (`von_mises_stress` / fluency) on auto-scaled deform (0.12 of
    diagonal). Not an iso-clip. π-plane is later.
+
+## Amendment 2 (2026-08-14) — HTML and canvas emit skins
+
+Append-only. Parts 1–6, INV-1–INV-12, S0–S4d, and Amendment 1 stay.
+This amendment ships the skins S4c deferred. It does not add MCP verbs,
+does not make canvas or HTML the archive, and does not reopen
+formation / statement-step / daemon / Electron.
+
+### Path law
+
+| format | Default path | Role |
+|---|---|---|
+| `markdown` | `docs/studio-report.md` | Archive (git-portable) |
+| `html` | `docs/studio-report.html` | Shareable / print skin of the same bundle |
+| `canvas` | IDE `canvases/studio-report.canvas.tsx` | Live Cursor projection. Not git-portable. |
+
+Canvas resolution, in order: `output=` (must be a `.canvas.tsx` path);
+`CURSOR_CANVAS_DIR`; `~/.cursor/projects/<slug>/canvases/` when that
+folder exists. If none of those exist, raise — do not write a
+non-live `.canvas.tsx` under `docs/`. `format=html` and
+`format=canvas` still write the markdown chapter (ADR: the agent may
+emit a canvas; it must still write the Markdown chapter).
+
+`<slug>` is Cursor's project folder name: absolute path, strip `:`,
+`/`, `\`, and `.`, lowercase the drive letter.
+
+### Slice
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S4e** | `emit_report(format=html\|canvas)`. Same ReportBundle schema 1. No new MCP tool. | S4c |
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Canvas under `docs/` as the default** | Looks archivable. Cursor will not live-load it. The open question was this fork. |
+| **HTML as the archive** | Print skin. Markdown stays the source of truth. |
+| **New MCP verbs `emit_html` / `emit_canvas`** | INV-10: new narrative is not a new verb. `format=` on the existing tool. |
+| **Embed visor PNGs as data URIs in the canvas** | Bloats the projection; pictures belong in the markdown/HTML chapter. |
+
+### Acceptance (this amendment)
+
+- `emit_report(format="html")` writes `docs/studio-report.html` and
+  `docs/studio-report.md`. Labels are HTML-escaped.
+- `emit_report(format="canvas", output=…)` writes a `.canvas.tsx` that
+  imports only from `cursor/canvas` and a markdown archive. Without
+  `output=` / `CURSOR_CANVAS_DIR` / an existing IDE `canvases/` dir,
+  it raises.
+- No authored file lands in `.apegmsh/` (INV-12).
+- Skill Studio paragraph names `format=markdown|html|canvas`.
+- `kind=formation` stays later.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Canvas output path** — IDE `canvases/`, not project `docs/`.
 

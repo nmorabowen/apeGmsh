@@ -12,6 +12,16 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 S4e: emit_report HTML and canvas skins
+
+Same ReportBundle, no new MCP verb. `format=html` writes
+`docs/studio-report.html` (print/share). `format=canvas` writes a
+Cursor `.canvas.tsx` to the IDE `canvases/` directory (`output=` /
+`CURSOR_CANVAS_DIR` / `~/.cursor/projects/<slug>/canvases/`) — not
+git-portable, not the archive. Both skins still write the markdown
+chapter under `docs/`. Labels are HTML-escaped. Canvas does not embed
+visor PNGs. `kind=formation` stays later.
+
 ### FIXED — ADR 0095 S4d adversarial closeout
 
 `promote_selection` snippets match
