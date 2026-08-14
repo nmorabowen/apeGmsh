@@ -16,6 +16,7 @@ DEFAULT_NAMES_REL = Path(".apegmsh") / "names.json"
 DEFAULT_LEDGER_REL = Path(".apegmsh") / "runs.jsonl"
 DEFAULT_VISORS_REL = Path(".apegmsh") / "visors"
 DEFAULT_HIGHLIGHT_REL = Path(".apegmsh") / "highlight.json"
+DEFAULT_MCP_CALLS_REL = Path(".apegmsh") / "mcp_calls.jsonl"
 
 
 def envelope_path(root: Path | None = None) -> Path:
@@ -46,3 +47,9 @@ def highlight_path(root: Path | None = None) -> Path:
     """Return ``<root>/.apegmsh/highlight.json`` (``root`` defaults to cwd)."""
     base = Path.cwd() if root is None else Path(root)
     return base / DEFAULT_HIGHLIGHT_REL
+
+
+def mcp_calls_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/mcp_calls.jsonl`` (``root`` defaults to cwd)."""
+    base = Path.cwd() if root is None else Path(root)
+    return base / DEFAULT_MCP_CALLS_REL

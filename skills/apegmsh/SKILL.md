@@ -27,7 +27,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
@@ -43,134 +43,50 @@ apeGmsh, prefer the apeGmsh API over raw `gmsh.*` calls. Raw `gmsh` calls
 still work (you're holding the same session), but the whole point of the
 wrapper is that you don't have to write them.
 
-## Using this skill with any model (Claude or local)
+## Lookup (ADR 0096)
 
-This skill works whether or not you can inspect the source:
+Pick **one** row, read that file (or that heading), then write code.
+Do not slurp this whole skill. Do not grep `src/apeGmsh/` to author a
+model script. Prefer labels / physical-group names over tags.
 
-- **If you can run shell/grep** (Claude Code, capable agents): use the
-  references as a map, but **verify exact signatures in `src/apeGmsh/`**
-  before relying on them — apeGmsh moves fast. Each reference's
-  `skill-freshness` stamp says which commit it was last checked against.
-- **If you can't** (limited tools/context): trust the freshness-stamped
-  snapshot, but **prefer labels / physical-group names over exact tags or
-  numeric IDs** (names are stable; tags drift), and treat an exact signature
-  as "try it; if a keyword errors, the arg names moved." Read one reference
-  at a time — each is self-contained.
+`src/` read/grep is an **index miss**: allowed only when the reference
+has no hit **and** you are changing apeGmsh itself.
 
-## Before writing code: read the right reference
+| Task | Read only |
+|---|---|
+| First script / session skeleton | `references/workflows.md` |
+| Public composite signature | MCP `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL` |
+| Public API map (headings) | `references/api-cheatsheet.md` (matching heading) |
+| FEMData / `model.h5` | `references/fem-broker.md` |
+| `apeSees` / stages / emit | `references/opensees-bridge.md` |
+| After mesh or solve check | `references/assess.md` |
+| Results / plot / stills | `references/results.md` |
+| `compose` / `from_h5` / Assembly | `references/compose.md` |
+| Rebar cages | `references/rebar.md` |
+| ETABS / analytical import | `references/interop.md` |
+| Section properties / fiber section | `references/section-properties.md` |
+| Ladruno fork-only | `references/ladruno.md` |
+| Build failed / anti-pattern | `references/gotchas.md` |
+| Studio / MCP / picks | this file, **Studio** paragraph |
+| Promote a miss / skill lie | `python -m apeGmsh.studio.profile --promote` (MCP `kind=miss` only; writes nothing) |
 
-The library is big. Don't try to remember every composite — read the
-reference file that matches the task, *then* write the code. The
-references are tight; reading them is cheap. **New to apeGmsh? Read
-`api-cheatsheet.md` then `workflows.md` first.**
+What each file contains (do not read them all):
 
-- **`references/api-cheatsheet.md`** — one-page map of every session
-  composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
-  `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
-  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes
-  + `interface()` unilateral coincident-pair springs,
-  `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
-  `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
-  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`
-  / `apeGmsh.studio`,
-  and the methods on each. **Read this first** for any non-trivial apeGmsh task
-  — it saves you from guessing signatures.
-- **`references/fem-broker.md`** — deep dive on `FEMData`, the broker
-  returned by `g.mesh.queries.get_fem_data(dim=...)`, **plus native
-  persistence** (`FEMData.to_h5` / `from_h5`, `save_to=` / `g.save()`,
-  schema constants, integrity checks). Read when the task touches nodes,
-  elements, iteration, solver hand-off, or saving/reloading a model.
-- **`references/opensees-bridge.md`** — the `apeSees(fem)` bridge:
-  typed-primitive materials/sections/elements, explicit `ops.fix`/`ops.mass`/
-  `ops.pattern`, **automatic MP-constraint emission** (incl. `enforce=` tie
-  routes + fork contact/embed, ADR 0068/0073), **damping**
-  (`ops.damping`), the **moment-tensor seismic source** (`p.moment_tensor` /
-  `ops.fault.from_shakermaker` + `MomentStep`/`Yoffe` S(t) helpers, ADR 0062),
-  **staged analysis** (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
-  `ops.tcl/py/h5/run` (incl. `per_rank=` partitioned decks, ADR 0061, and
-  `stream=` constant-memory write-through emit, ADR 0065),
-  **remote SLURM runs** (`ops.run_remote` / `apeGmsh.hpc`, ADR 0060), and
-  **which OpenSees runs** (`OpenSeesTarget` / `ops.capabilities()`). Read this
-  for any OpenSees generation task.
-- **`references/assess.md`** — after `generate()` / `get_fem_data` /
-  `Results.from_*`: `assess()` (verdict) then stills; closed finding
-  catalog and code → next action. Not Qt. Read this for any
-  post-mesh / post-solve check.
-- **`references/results.md`** — `Results` post-processing of OpenSees output
-  (`from_native` / `from_mpco` / `from_recorders`, all of which now
-  **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, the **after-solve assess check**
-  (`fem.assess()` / `results.assess()`, then `read_file` on
-  `report.figures`; inspect stays inventory — see `assess.md`),
-  **user-defined scalar expressions**
-  (`results.nodes.define` / `results.elements.gauss.define`, `mag(...)`,
-  ADR 0076 — custom fields like `"von_mises_stress/250"` that show in the
-  viewer picker), the **web viewers** (`show_web` / `serve_web`,
-  kernel-safe; humans who asked to look), **headless video/GIF export**
-  (`results.export_animation`), and the desktop-viewer **concurrent
-  geometries** API (`director.geometries`, ADR 0058 — multiple deform
-  states / offsets / stage pins side-by-side). Read for anything reading
-  back solver results or plotting.
-- **`references/compose.md`** — model composition: `g.compose(...)`,
-  `apeGmsh.from_h5(...)` chain-phase sessions, anchors vs translate, nested
-  compose, and the string-keyed `'Module'` viewer color modes. Read when
-  assembling several saved `model.h5` modules into one model.
-- **`references/rebar.md`** — `g.rebar` RC reinforcement-cage authoring (ADR
-  0066/0067): `column` / `beam` / `circular_column` / `wall` generators, ACI-318
-  detailing standards, hand-authored bars/stirrups/bundles, and `place(...)`
-  (conformal vs embedded coupling to the host continuum). Read when the user
-  detail's reinforcement / asks for rebar cages.
-- **`references/interop.md`** — `apeGmsh.interop`: import an analytical model
-  (apeETABS `*.sm.json`) into a conformal beam+shell mesh and an `apeSees` deck
-  (`import_structural_model` / `apply_subgrade_springs` / `build_opensees` /
-  `solve_and_extract`, ADR 0009). Read when the user brings an ETABS / analytical
-  model into apeGmsh. (ADR 0072's `emit_elements(skip=)` decomposition is
-  *Proposed*, not shipped — the ref flags it.)
-- **`references/section-properties.md`** — the `SectionProperties`
-  cross-section analyzer (ADR 0078): geometric / warping / plastic / stress on
-  any meshed 2-D face, the **rigidity-form naming law** (`EIxx_c` always valid;
-  `Ixx_c` raises on composites → `transformed(e_ref=)`), composite authoring
-  (PGs must **partition** the face — cut-then-fragment, shared-line law),
-  `disconnected="raise"|"sum"`, the flat-face builders (`W_face`, …), the
-  OpenSees handoff (`ops.section.ComputedSection(analysis=)` /
-  `to_elastic_section` — one lowering owns `Ixx_c→Iz` / `As_y/A→alphaY`,
-  `ndm=` form selection, composite reference-moduli rules), and the Qt
-  inspector (`sec.viewer(blocking=False)` in notebooks). §10 covers ADR
-  0080 — `SectionDocument` (versioned JSON, continuum + fiber lanes, RC
-  templates, the `add_embed` composite primitive, the `bars=` overlay),
-  the `launch_builder()` Qt editor and its parity law, `moment_curvature`
-  (fiber lane, wipes the OpenSees domain, never on a worker), and
-  `handoff_snippet` / `export_script`. Read for any section-property,
-  torsion-constant, shear-area, RC-section, moment–curvature, or
-  "compute / author my custom section" task.
-- **`references/workflows.md`** — end-to-end patterns: single-session,
-  multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
-  the user asks for a complete example or a workflow they haven't built.
-- **`references/gotchas.md`** — the ❌→✅ anti-patterns list plus the subtle
-  pitfalls that aren't obvious from the API (unit-dependent `remove_duplicates`
-  tolerance, half-open `in_box`, Selection-v2 ADR-0017 gaps, and the **silent
-  analysis-chain substitutions** — a static integrator under
-  `analysis Transient` is discarded for `Newmark`, ADR 0082). Read when a build
-  "should work" but doesn't, when a run converges to a *plausible but wrong*
-  answer, or before writing constraint/selection/Results code from memory.
-- **`references/ladruno.md`** — targeting the **Ladruno fork** of OpenSees
-  (`nmorabowen/OpenSees@ladruno`): `OpenSeesTarget` (pin which build runs)
-  vs `ops.capabilities()` (what it can do), the live backend resolver (now
-  fork-preferring), fork-only Bézier elements, ExplicitBathe + SMS integrators,
-  the Ladruno material / beam-column / analysis clusters, contact/embed handlers,
-  EnergyBalance + `.ladruno` recorder, the `≥33000` class-tag band. Read **only**
-  when wiring fork-specific emit/read or pinning a build; stock `openseespy`
-  stays first-class.
+- `api-cheatsheet.md` — public `g.*` / `apeSees` map (matching heading; signatures via MCP `lookup` / lookup CLI)
+- `fem-broker.md` — `FEMData`, `model.h5`
+- `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
+- `assess.md` — verdict + stills after mesh/solve (not Qt)
+- `results.md` — `Results.from_*`, plot, render, lineage
+- `compose.md` — `g.compose`, `from_h5`, Assembly
+- `rebar.md` — `g.rebar` cages
+- `interop.md` — ETABS / analytical import
+- `section-properties.md` — `SectionProperties`, fiber handoff
+- `workflows.md` — end-to-end patterns (not a forced pipeline)
+- `gotchas.md` — anti-patterns
+- `ladruno.md` — fork-only emit/read
 
-The published docs site is <https://nmorabowen.github.io/apeGmsh/> (built
-from `docs/` — ADR 0079): concept pages at `concepts/<page>/` (session,
-geometry-and-cad, meshing, gmsh-under-the-hood, selection,
-parts-and-assembly, sections, constraints, loads-and-masses, fem-broker,
-opensees-bridge, results) and internals at `design/<page>/` (architecture,
-principles, broker, parts-assembly, results). `internal_docs/` is
-unpublished working notes — don't cite it as user-facing docs. When in
-doubt, the `CHANGELOG.md` v2.0.0 section + Unreleased block is the source
-of truth.
+Published docs: <https://nmorabowen.github.io/apeGmsh/> (`docs/`, ADR 0079).
+`internal_docs/` is unpublished. Changelog Unreleased is the moving truth.
 
 ## Mental model
 
@@ -291,11 +207,13 @@ After solve, still `assess()` + `render()`, not `viewer()`.
 When the agent must look, write visors under `.apegmsh/visors/`
 (`results.render` / labeled matplotlib) and read those PNGs — never
 capture the OS desktop or the human Qt window.
-Read-only MCP (ADR 0095 S4a–S4d): `python -m apeGmsh.studio.mcp` (needs
-`pip install mcp`). Tools: `status`, `get_selection`, `run_until`,
+Read-only MCP (ADR 0095 S4a–S4d / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
+`pip install mcp`). Tools: `status`, `get_selection`, `lookup`, `run_until`,
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
 `emit_report(format=markdown|html|canvas)`, `highlight`,
-`promote_selection` — names first, no Qt, no `setup=`. `kind=yield`
+`promote_selection` — names first, no Qt, no `setup=`. `lookup(symbol)`
+is See-family inspect of the generated index (~20 lines); not CAD;
+does not grep `src/`. `kind=yield`
 is a von Mises contour of `von_mises_stress` on auto-scaled deform
 (0.12 of diagonal; not an iso-clip; π-plane later). `highlight`
 writes `.apegmsh/highlight.json` only (host file-poll + `select_batch`;
@@ -306,14 +224,29 @@ markdown is the archive (`docs/`); html is a print skin there;
 canvas is a live Cursor projection (IDE `canvases/`, not
 git-portable) and still writes the markdown chapter.
 `kind=formation` is later. Do not invent MCP tools for
-`g.model.*` / `apeSees` primitives. Authored chapters go in `docs/`;
-visors stay under `.apegmsh/visors/`. Cursor `mcp.json`::
+`g.model.*` / `apeSees` primitives. Token-budget profiler is
+`python -m apeGmsh.studio.profile` (sidecar; not an MCP tool).
+Studio generation order (CAD then
+mesh, quotations on, parallel processes) is a **recommendation** for
+a given script, not a required path (ADR 0096 INV-14). Authored
+chapters go in `docs/`;
+visors stay under `.apegmsh/visors/`. Cursor config is
+`.cursor/mcp.json` → `scripts/studio-mcp.ps1`. Set
+`LADRUNO_OPENSEES_QUIET=1` before Python starts (the office venv
+`.pth` banner goes to stdout and would break JSON-RPC)::
 
     {
       "mcpServers": {
         "apegmsh-studio": {
-          "command": "python",
-          "args": ["-m", "apeGmsh.studio.mcp"]
+          "command": "powershell.exe",
+          "args": [
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", "scripts/studio-mcp.ps1"
+          ],
+          "env": {
+            "LADRUNO_OPENSEES_QUIET": "1",
+            "APEGMSH_QUIET": "1"
+          }
         }
       }
     }
@@ -364,7 +297,7 @@ Which reference covers a given failure: `BridgeError` / staged / ndf →
 
 These are the anti-hallucination guardrails — the removed/renamed surfaces an
 agent most often gets wrong. Everything quantitative (schema integers, full
-signatures) lives in the references, which the file tells you to re-verify.
+signatures) lives in the references.
 
 - **Version is v2.0.0** (`pyproject.toml`). A stale editable install may print
   `v1.6.0` in the banner — trust the source, not the banner. Anything claiming
@@ -388,5 +321,19 @@ signatures) lives in the references, which the file tells you to re-verify.
   0023) and the viewer session schema in `results.md` — they drift, so read the
   number from there, not from memory.
 
-Before claiming a method or signature exists, confirm it in `src/apeGmsh/`;
-`references/api-cheatsheet.md` indexes the public surface.
+Before claiming a method or signature exists, call MCP `lookup(symbol)`
+or run `python -m apeGmsh.studio.lookup SYMBOL` (ADR 0096). If that
+misses, read `references/api-cheatsheet.md` (the matching heading).
+Do not `Read` `src/apeGmsh/studio/_api_index.json`.
+`src/apeGmsh/` is for maintaining the library, not for writing a
+model script.
+
+Promotion (ADR 0096 S5): a MCP `lookup` **miss** (`kind=miss`, not
+ambiguous) that repeats ≥3 times in the **model-cwd**
+`.apegmsh/mcp_calls.jsonl` is eligible for a reviewed index/router
+PR. `--promote` prints that list and writes nothing. A skill error
+(skill vs index) owes a PR after one confirmation. Working ImageMage
+steps stay comments in *that* `.py` and/or a Recommendation in
+`workflows.md` — never a required pipeline. Propose a PR; do not
+write `skills/apegmsh/` or run `sync_skill.py` in-session; do not
+edit `.claude/skills/apegmsh-helper/`.

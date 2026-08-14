@@ -1,5 +1,5 @@
 # apeGmsh workflows — end-to-end patterns
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Concrete recipes for the workflows that come up most often. Each one is a
 working skeleton — fill in the geometry and it runs against the **v2.0.0**
@@ -590,3 +590,26 @@ Reading the diagnostic:
   `assess.md`. `results.viewer()` default is auto (`blocking=None`); an
   explicit `blocking=True` still crashes a Jupyter kernel. Open a viewer
   only when the human asked.
+
+---
+
+## Recommendation — studio / ImageMage generation (non-normative)
+
+This is **one way that worked**, not the required path (ADR 0096
+INV-14). The skill and MCP must not fail you for skipping it. If
+*this* model needs a chosen order, prefer a short header in that
+`.py`.
+
+A consideration that worked for a CAD + mesh review:
+
+1. Stop CAD at `--phase model` with quotations on (studio ModelViewer
+   `annotate=True`).
+2. Mesh in a second process (`--phase mesh`) so the CAD window can
+   stay up.
+3. After mesh or solve: `assess()` then `render()`, not `viewer()`.
+4. Loads show in MeshViewer (Display → Force arrows), not ModelViewer.
+
+Do not copy this into `SKILL.md` as a mandatory pipeline. Do not add
+MCP CAD tools to freeze the steps. Promotion of working steps is a
+script comment and/or this Recommendation — never `fix_skill` /
+`remember_steps`.

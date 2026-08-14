@@ -1,5 +1,5 @@
 # Assess + render — agent check after mesh / solve
-<!-- skill-freshness: verified against apeGmsh grok/adr94-closeout (2026-08-14) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh grok/adr94-closeout (2026-08-14) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 After `get_fem_data` / `Results.from_*` the check is `assess()`, then
 `read_file` each PNG in `report.figures`. Not `viewer()` / `show_web()`.

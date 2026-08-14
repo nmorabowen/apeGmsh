@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@f90bfef9 (2026-07-15) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@f90bfef9 (2026-07-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`

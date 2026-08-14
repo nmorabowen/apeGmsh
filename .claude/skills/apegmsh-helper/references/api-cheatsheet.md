@@ -1,12 +1,16 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
 `g.begin()` or inside a `with` block). Signatures reflect **v2.0.0**
 (`pyproject.toml` + the latest tagged `CHANGELOG.md` section agree; a
-stale editable install may still print `v1.6.0` in the banner). When in
-doubt, grep `src/apeGmsh/`.
+stale editable install may still print `v1.6.0` in the banner). Read
+the matching heading. Do not grep `src/apeGmsh/` to author a model;
+`src/` is for maintaining the library (ADR 0096). Signatures: MCP
+`lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL`
+(~20 lines; never a module dump). Do not `Read`
+`src/apeGmsh/studio/_api_index.json`.
 
 Idiomatic apeGmsh is **verbose-by-name**: target geometry by label /
 physical-group name / part label, never by raw tags or `[1]`-style edge

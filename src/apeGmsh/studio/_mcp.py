@@ -1,11 +1,15 @@
-"""MCP tool bodies (ADR 0095 S4a–S4d / Amendment 1).
+"""MCP tool bodies (ADR 0095 S4a–S4e / 0096 S3).
 
-``status``, ``get_selection``, ``results_pin``, ``emit_report``,
-``highlight``, and ``promote_selection`` read/write habitat files
-in-process. ``run_until`` / ``assess`` / ``animate`` shell to
-``python -m apeGmsh.studio``. ``render`` shells to
+``status``, ``get_selection``, ``lookup``, ``results_pin``, ``emit_report``,
+``highlight``, and ``promote_selection`` read habitat files or the
+generated API index in-process. ``run_until`` / ``assess`` / ``animate``
+shell to ``python -m apeGmsh.studio``. ``render`` shells to
 ``python -m apeGmsh.viewers render`` (ADR 0094 S5). Subprocess so this
 process never holds the Gmsh kernel or a Qt/VTK context (INV-5).
+
+``lookup`` is See-family inspect (ADR 0096): the same ~20-line payload
+as ``python -m apeGmsh.studio.lookup``. It does not grep ``src/`` and
+does not wrap ``g.model.*``.
 
 No ``gmsh``, no Qt, no viewers.
 """
@@ -96,6 +100,27 @@ def get_selection(*, root: Path | str | None = None) -> dict[str, Any]:
         "phase": env.phase,
         "unnamed": data.get("unnamed") or [],
         "envelope": data,
+    }
+
+
+def lookup(symbol: str) -> dict[str, Any]:
+    """Generated-index signature. Same payload as the lookup CLI. Not CAD."""
+    from ._lookup import lookup as resolve
+
+    text, code = resolve(symbol)
+    if code == 0:
+        kind = "hit"
+    elif text.startswith("miss:"):
+        kind = "miss"
+    elif text.startswith("ambiguous:"):
+        kind = "ambiguous"
+    else:
+        kind = "error"
+    return {
+        "ok": code == 0,
+        "code": code,
+        "kind": kind,
+        "text": text,
     }
 
 
