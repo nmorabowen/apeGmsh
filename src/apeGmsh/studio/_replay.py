@@ -5,6 +5,13 @@
 script cannot nest a Qt window. A failed exec keeps the previous
 successful result — the host must not blank the viewport.
 
+``phase`` is a real gate: ``model`` stops before ``generate()``,
+``mesh`` stops before ``apeSees`` / ``Results``, ``results`` runs to
+completion. The stop is ``StopAtPhase`` (a ``BaseException`` so a
+script ``except Exception`` cannot swallow it). At every successful
+stop the runner writes ``.apegmsh/names.json`` and appends one
+line to ``.apegmsh/runs.jsonl``.
+
 v0 is one-shot in the studio process (the agent's own runs do not
 attach to this kernel — INV-5). Refresh is re-running the CLI.
 """
@@ -13,10 +20,22 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+PHASES = ("model", "mesh", "results")
+
+
+class StopAtPhase(BaseException):
+    """Replay reached the requested phase gate. Success, not an error."""
+
+    def __init__(self, phase: str, gate: str) -> None:
+        super().__init__(phase, gate)
+        self.phase = phase
+        self.gate = gate
 
 
 @dataclass(frozen=True)
@@ -29,6 +48,7 @@ class ReplayResult:
     error: str | None
     session: Any = None
     skipped: bool = False
+    stopped_at: str | None = None
 
 
 ExecFn = Callable[[Path, str], ReplayResult]
@@ -38,19 +58,108 @@ def _source_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _stopper(phase: str, gate: str):
+    def _raise(*args, **kwargs):
+        raise StopAtPhase(phase, gate)
+
+    return _raise
+
+
+def _cls_stopper(phase: str, gate: str):
+    def _raise(cls, *args, **kwargs):
+        raise StopAtPhase(phase, gate)
+
+    return classmethod(_raise)
+
+
+def _install(patches: list[tuple[Any, str, Any]], obj: Any, name: str, replacement: Any) -> None:
+    patches.append((obj, name, getattr(obj, name)))
+    setattr(obj, name, replacement)
+
+
+def _restore(patches: list[tuple[Any, str, Any]]) -> None:
+    for obj, name, original in reversed(patches):
+        setattr(obj, name, original)
+
+
+def _install_phase_gates(patches: list[tuple[Any, str, Any]], phase: str) -> None:
+    if phase == "model":
+        from apeGmsh.mesh._mesh_generation import _Generation
+
+        _install(
+            patches,
+            _Generation,
+            "generate",
+            _stopper(phase, "g.mesh.generation.generate"),
+        )
+    if phase in ("model", "mesh"):
+        from apeGmsh.opensees.apesees import apeSees
+        from apeGmsh.results.Results import Results
+
+        _install(patches, apeSees, "__init__", _stopper(phase, "apeSees"))
+        for meth in ("from_native", "from_mpco", "from_recorders"):
+            _install(
+                patches,
+                Results,
+                meth,
+                _cls_stopper(phase, f"Results.{meth}"),
+            )
+
+
+def _dump_names(phase: str) -> dict[str, Any]:
+    from ._names import collect_manifest, write_names
+    from ._paths import names_path
+
+    manifest = collect_manifest(phase=phase)
+    write_names(names_path(), manifest)
+    return manifest
+
+
+def _record_run(
+    script: Path,
+    *,
+    phase: str,
+    ok: bool,
+    stopped_at: str | None,
+    session: Any,
+    geometry_hash: str | None,
+    manifest: dict[str, Any] | None,
+    error: str | None,
+) -> None:
+    from ._ledger import append_run, make_record
+    from ._paths import ledger_path
+
+    name = getattr(session, "name", None) if session is not None else None
+    if name is not None:
+        name = str(name)
+    append_run(
+        ledger_path(),
+        make_record(
+            script=script,
+            phase=phase,
+            ok=ok,
+            hash=geometry_hash,
+            stopped_at=stopped_at,
+            session=name,
+            manifest=manifest,
+            error=error,
+        ),
+    )
+
+
 def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
     """Exec *script* with sessions held open. Raises on failure."""
+    if phase not in PHASES:
+        raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
+
     from apeGmsh._session import _SessionBase
     from apeGmsh.core.Model import Model
     from apeGmsh.mesh.Mesh import Mesh
 
     script = Path(script).resolve()
     opened: list[Any] = []
+    patches: list[tuple[Any, str, Any]] = []
     original_begin = _SessionBase.begin
-    original_end = _SessionBase.end
-    original_exit = _SessionBase.__exit__
-    original_model_viewer = Model.viewer
-    original_mesh_viewer = Mesh.viewer
 
     def begin(self):
         result = original_begin(self)
@@ -79,39 +188,84 @@ def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
     def _noop_viewer(self, **kwargs):
         return None
 
-    _SessionBase.begin = begin  # type: ignore[method-assign]
-    _SessionBase.end = end  # type: ignore[method-assign]
-    _SessionBase.__exit__ = exit_  # type: ignore[method-assign]
-    Model.viewer = _noop_viewer  # type: ignore[method-assign]
-    Mesh.viewer = _noop_viewer  # type: ignore[method-assign]
+    _install(patches, _SessionBase, "begin", begin)
+    _install(patches, _SessionBase, "end", end)
+    _install(patches, _SessionBase, "__exit__", exit_)
+    _install(patches, Model, "viewer", _noop_viewer)
+    _install(patches, Mesh, "viewer", _noop_viewer)
+    _install_phase_gates(patches, phase)
 
     ns: dict[str, Any] = {
-        "__name__": "__studio_replay__",
+        "__name__": "__main__",
         "__file__": str(script),
         "__package__": None,
     }
-    source = script.read_text(encoding="utf-8")
-    code = compile(source, str(script), "exec")
     old_cwd = os.getcwd()
+    script_dir = str(script.parent)
+    path_inserted = script_dir not in sys.path
+    stopped_at: str | None = None
+    error_text: str | None = None
+    caught: BaseException | None = None
     try:
         os.chdir(script.parent)
-        exec(code, ns, ns)  # noqa: S102 — replay of the caller's file
+        if path_inserted:
+            sys.path.insert(0, script_dir)
+        source = script.read_text(encoding="utf-8")
+        code = compile(source, str(script), "exec")
+        try:
+            exec(code, ns, ns)  # noqa: S102 — replay of the caller's file
+        except StopAtPhase as stop:
+            stopped_at = stop.gate
+        except Exception as exc:
+            error_text = traceback.format_exc()
+            caught = exc
+    except Exception as exc:
+        if caught is None:
+            error_text = traceback.format_exc()
+            caught = exc
     finally:
+        if path_inserted:
+            try:
+                sys.path.remove(script_dir)
+            except ValueError:
+                pass
         os.chdir(old_cwd)
-        _SessionBase.begin = original_begin  # type: ignore[method-assign]
-        _SessionBase.end = original_end  # type: ignore[method-assign]
-        _SessionBase.__exit__ = original_exit  # type: ignore[method-assign]
-        Model.viewer = original_model_viewer  # type: ignore[method-assign]
-        Mesh.viewer = original_mesh_viewer  # type: ignore[method-assign]
+        _restore(patches)
+
+    digest = _source_hash(script)
+    if caught is not None:
+        _record_run(
+            script,
+            phase=phase,
+            ok=False,
+            stopped_at=None,
+            session=None,
+            geometry_hash=digest,
+            manifest=None,
+            error=error_text,
+        )
+        raise caught
 
     mains = [s for s in opened if type(s).__name__ == "apeGmsh"]
     session = mains[-1] if mains else (opened[-1] if opened else None)
+    manifest = _dump_names(phase) if session is not None else None
+    _record_run(
+        script,
+        phase=phase,
+        ok=True,
+        stopped_at=stopped_at,
+        session=session,
+        geometry_hash=digest,
+        manifest=manifest,
+        error=None,
+    )
     return ReplayResult(
         ok=True,
         phase=phase,
-        geometry_hash=_source_hash(script),
+        geometry_hash=digest,
         error=None,
         session=session,
+        stopped_at=stopped_at,
     )
 
 
@@ -127,6 +281,8 @@ class ReplayRunner:
         return self._last_good
 
     def run_until(self, script: Path, *, phase: str = "model") -> ReplayResult:
+        if phase not in PHASES:
+            raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
         script = Path(script)
         digest = _source_hash(script) if script.is_file() else None
         if (
@@ -134,6 +290,7 @@ class ReplayRunner:
             and self._last_good.ok
             and digest is not None
             and digest == self._last_good.geometry_hash
+            and phase == self._last_good.phase
         ):
             return ReplayResult(
                 ok=True,
@@ -142,6 +299,7 @@ class ReplayRunner:
                 error=None,
                 session=self._last_good.session,
                 skipped=True,
+                stopped_at=self._last_good.stopped_at,
             )
         try:
             result = self._exec(script, phase)
@@ -154,6 +312,7 @@ class ReplayRunner:
                     geometry_hash=self._last_good.geometry_hash,
                     error=err,
                     session=self._last_good.session,
+                    stopped_at=self._last_good.stopped_at,
                 )
             return ReplayResult(
                 ok=False,
@@ -169,6 +328,7 @@ class ReplayRunner:
                 geometry_hash=digest,
                 error=None,
                 session=result.session,
+                stopped_at=result.stopped_at,
             )
             self._last_good = stamped
             return stamped

@@ -858,11 +858,14 @@ ops    = build_opensees(fem, model, result, *, ndm=3, ndf=6, shell_element="ASDS
 solve_and_extract(model, *, case=None, global_size=1.0, ...) -> SolveResult  # all-in-one static
 
 # apeGmsh.studio — agent + script + viewer habitat (ADR 0095 S1–S2).
-# Not a composite. python -m apeGmsh.studio script.py opens MeshViewer
-# if the script generated a mesh, otherwise ModelViewer.
-from apeGmsh.studio import read_envelope, envelope_path
-# Before a spatial edit, read cwd/.apegmsh/selection.json (names first).
-env = read_envelope(envelope_path())
+# Not a composite. python -m apeGmsh.studio script.py --phase model
+# stops BEFORE generate(); --phase mesh stops before apeSees/Results.
+from apeGmsh.studio import read_envelope, envelope_path, names_path, ledger_path, last_run, collect_status
+# Before a spatial edit, read both (names first, not dimtags):
+env = read_envelope(envelope_path())          # what was clicked
+# cwd/.apegmsh/names.json — what exists (labels / PGs / counts / bboxes)
+# cwd/.apegmsh/runs.jsonl — append-only run_until history; last_run() is where we left it
+# python -m apeGmsh.studio --status  — same facts, no replay
 env.labels / env.physical_groups / env.phase / env.unnamed
 ```
 `# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
