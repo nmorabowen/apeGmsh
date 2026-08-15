@@ -77,6 +77,55 @@ def test_get_fem_data_skill_pointer() -> None:
     assert "references/fem-broker.md" in text
 
 
+def test_from_native_hit() -> None:
+    text, code = lookup("from_native")
+    assert code == 0, text
+    assert "Results.from_native" in text
+    assert "from_native(" in text
+    assert "references/results.md" in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+def test_part_ctor_hit() -> None:
+    text, code = lookup("Part")
+    assert code == 0, text
+    assert text.startswith("Part\n")
+    assert "Part(" in text
+    assert "references/compose.md" in text
+    assert "Initialize self" not in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+def test_cluster_load_hit() -> None:
+    text, code = lookup("Cluster.load")
+    assert code == 0, text
+    assert text.startswith("Cluster.load\n")
+    assert "load(" in text
+    assert "references/api-cheatsheet.md" in text
+
+
+def test_in_box_fluent_hit() -> None:
+    text, code = lookup("in_box")
+    assert code == 0, text
+    assert "g.model.select.in_box" in text
+    assert "in_box(" in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+def test_to_label_fluent_hit() -> None:
+    text, code = lookup("to_label")
+    assert code == 0, text
+    assert "g.model.select.to_label" in text
+    assert "to_label(" in text
+
+
+def test_assembly_materialize_hit() -> None:
+    text, code = lookup("materialize")
+    assert code == 0, text
+    assert "Assembly.materialize" in text
+    assert "references/compose.md" in text
+
+
 def test_four_node_tet_skill_pointer() -> None:
     text, code = lookup("FourNodeTetrahedron")
     assert code == 0, text

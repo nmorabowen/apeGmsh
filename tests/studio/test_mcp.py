@@ -499,6 +499,14 @@ def test_mcp_lookup_add_box() -> None:
     assert text.count("\n") <= 20
 
 
+def test_mcp_lookup_from_native() -> None:
+    payload = lookup("from_native")
+    assert payload["ok"] is True
+    assert payload["kind"] == "hit"
+    assert "Results.from_native" in payload["text"]
+    assert payload["text"].count("\n") <= 20
+
+
 def test_mcp_lookup_miss_does_not_grep_src() -> None:
     payload = lookup("definitely_not_an_apegmsh_symbol")
     assert payload["ok"] is False
