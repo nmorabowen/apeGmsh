@@ -269,6 +269,26 @@ after merge. ImageMage generation is a non-normative Recommendation
 in `workflows.md` (INV-14). No `fix_skill` / `remember_steps` MCP
 verbs. This is not a closed Budget A / INV-13 learning loop.
 
+**Index sidecars (2026-08-14):** the S2 harvester also indexes `Part`
+/ `Results` / `Cluster` / `Job` / `Assembly` (constructor + public
+methods; nested Part composites are not walked) and fluent
+`g.model.select` (`in_box` / `to_label` / `to_physical`). Not a new
+slice and not a new MCP verb — those symbols no longer force `src/`
+grep.
+
+**Measured column-base session (2026-08-14):** transcript profiler
+on the footing + plate + W12×65 chat: 293 events,
+`src_search_rate` 0.0648. Habitat MCP 3 (`status`×2, `assess`×1).
+Index lookup went through CLI Shell — the live Cursor MCP process
+still had no `lookup`. 65 `src_read` + 19 `src_search` were almost
+all `viewers/**` (isolate the footing). The defect metric
+understates: Shell `rg` of `src/` classifies as `other`.
+`.apegmsh/mcp_calls.jsonl` was never written (adapter cwd `$HOME`),
+so `--promote` had nothing to score. Last-step `results.assess()`:
+0 error, `RES.U_VS_DIAG` ‖u‖=21.3 m / diag=3.70 m (info) — J2
+mechanism under LoadControl, not a footing issue. Pin
+`pin-20260815T001254Z`.
+
 ## Alternatives considered
 
 | Rejected | Why |

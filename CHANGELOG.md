@@ -12,6 +12,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select
+
+MCP `lookup` missed sidecar constructors and `g.model.select.in_box`
+/ `.to_label` because the S2 harvester only walked session composites
+and `apeSees`. Those symbols now land in `_api_index.json` (no new
+MCP verb; Part nested composites are not walked so `add_box` stays
+unique). Closes the named S5 `src/`-grep gap.
+
 ### FIXED — canvas slug test is platform-absolute
 
 `test_cursor_project_slug_matches_cursor_convention` was a Windows

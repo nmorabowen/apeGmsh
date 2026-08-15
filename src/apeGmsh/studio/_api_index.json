@@ -1,7 +1,271 @@
 {
   "schema": 1,
-  "generated": "2026-08-14T22:05:14Z",
+  "generated": "2026-08-14T23:32:46Z",
   "entries": {
+    "Assembly": {
+      "symbol": "Assembly",
+      "signature": "Assembly(name: 'str') -> 'None'",
+      "skill": "references/compose.md",
+      "doc": "A declarative spatial assembly of composed parts + interface couples."
+    },
+    "Assembly.add": {
+      "symbol": "Assembly.add",
+      "signature": "add(label: 'str', source: 'str', *, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[float, float, float, float] | None'\" = None, anchor: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "doc": "Register a part (a saved ``model.h5``). Returns ``self`` (chainable)."
+    },
+    "Assembly.couple": {
+      "symbol": "Assembly.couple",
+      "signature": "couple(part_a: 'str', part_b: 'str', *, kind: 'str', ports: 'Sequence[str]', dofs: \"'Sequence[int] | None'\" = None, tolerance: \"'float | None'\" = None, name: \"'str | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "doc": "Declare an interface constraint between two parts. Chainable."
+    },
+    "Assembly.materialize": {
+      "symbol": "Assembly.materialize",
+      "signature": "materialize() -> \"'apeGmsh'\"",
+      "skill": "references/compose.md",
+      "doc": "Run the graph: compose every part + apply every couple."
+    },
+    "Cluster": {
+      "symbol": "Cluster",
+      "signature": "Cluster(config: 'ClusterConfig') -> None",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "One remote SLURM cluster. ``Cluster.load(\"esmeralda\")`` to construct."
+    },
+    "Cluster.load": {
+      "symbol": "Cluster.load",
+      "signature": "load(name: 'str', path: 'str | Path | None' = None) -> 'Cluster'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "Cluster.ping": {
+      "symbol": "Cluster.ping",
+      "signature": "ping() -> 'bool'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "True if the host answers a trivial command over BatchMode ssh."
+    },
+    "Cluster.render_batch_script": {
+      "symbol": "Cluster.render_batch_script",
+      "signature": "render_batch_script(*, name: 'str', np: 'int', deck: 'str', binary: 'str | None' = None, walltime: 'str | None' = None) -> 'str'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "The sbatch script for one job, as a string (LF newlines)."
+    },
+    "Cluster.submit": {
+      "symbol": "Cluster.submit",
+      "signature": "submit(job_dir: 'str | Path', *, np: 'int | None' = None, name: 'str | None' = None, deck: 'str' = 'main.tcl', binary: 'str | None' = None, walltime: 'str | None' = None, overwrite: 'bool' = False) -> 'Job'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Push ``job_dir`` to the cluster and sbatch it. Returns immediately."
+    },
+    "Job": {
+      "symbol": "Job",
+      "signature": "Job(cluster: 'Cluster', name: 'str', slurm_id: 'int', remote_dir: 'str', local_dir: 'Path', deck: 'str') -> None",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Handle to one submitted job. Construct via ``Cluster.submit`` or ``Job.load``."
+    },
+    "Job.cancel": {
+      "symbol": "Job.cancel",
+      "signature": "cancel() -> 'None'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "scancel the job."
+    },
+    "Job.fetch": {
+      "symbol": "Job.fetch",
+      "signature": "fetch(dest: 'str | Path | None' = None) -> 'Path'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Pull the whole remote job directory back. Defaults into ``local_dir``."
+    },
+    "Job.load": {
+      "symbol": "Job.load",
+      "signature": "load(local_dir: 'str | Path') -> 'Job'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Rehydrate a job handle from the sidecar written at submit time."
+    },
+    "Job.save": {
+      "symbol": "Job.save",
+      "signature": "save() -> 'Path'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Write the JSON sidecar into the local job directory."
+    },
+    "Job.status": {
+      "symbol": "Job.status",
+      "signature": "status() -> 'JobStatus'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Current job state: squeue while queued/running, exit sentinel after."
+    },
+    "Job.tail": {
+      "symbol": "Job.tail",
+      "signature": "tail(n: 'int' = 50, *, stream: 'str' = 'out') -> 'str'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Last ``n`` lines of the remote stdout (``stream=\"out\"``) or stderr."
+    },
+    "Job.wait": {
+      "symbol": "Job.wait",
+      "signature": "wait(*, poll: 'float' = 15.0, timeout: 'float | None' = None) -> 'JobStatus'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Block until the job reaches a terminal state; return it."
+    },
+    "Part": {
+      "symbol": "Part",
+      "signature": "Part(name: 'str', *, auto_persist: 'bool' = True) -> 'None'",
+      "skill": "references/compose.md",
+      "doc": "An isolated geometry unit — no meshing, no solver state."
+    },
+    "Part.begin": {
+      "symbol": "Part.begin",
+      "signature": "begin(*, verbose: 'bool | None' = None) -> \"'Part'\"",
+      "skill": "references/compose.md",
+      "doc": "Open the Part's Gmsh session."
+    },
+    "Part.cleanup": {
+      "symbol": "Part.cleanup",
+      "signature": "cleanup() -> 'None'",
+      "skill": "references/compose.md",
+      "doc": "Delete any auto-persisted tempfile now, without waiting"
+    },
+    "Part.end": {
+      "symbol": "Part.end",
+      "signature": "end() -> 'None'",
+      "skill": "references/compose.md",
+      "doc": "Close the Part's Gmsh session."
+    },
+    "Part.save": {
+      "symbol": "Part.save",
+      "signature": "save(file_path: 'str | Path | None' = None, *, fmt: 'str | None' = None, write_anchors: 'bool' = True, _internal_autopersist: 'bool' = False) -> 'Path'",
+      "skill": "references/compose.md",
+      "doc": "Export the Part geometry to a CAD file."
+    },
+    "Results": {
+      "symbol": "Results",
+      "signature": "Results(reader: 'ResultsReader', *, fem: \"'Optional[FEMData]'\" = None, stage_id: 'Optional[str]' = None, path: 'Optional[Path]' = None, model: \"'OpenSeesModel'\", model_path: 'Optional[Path]' = None) -> 'None'",
+      "skill": "references/results.md",
+      "doc": "Top-level results object. Returned by ``Results.from_*`` constructors."
+    },
+    "Results.assess": {
+      "symbol": "Results.assess",
+      "signature": "assess(*, figures: 'bool' = False, out_dir: \"'str | Path | None'\" = None) -> \"'AssessmentReport'\"",
+      "skill": "references/results.md",
+      "doc": "Compile a v1 :class:`~apeGmsh.assess.AssessmentReport`."
+    },
+    "Results.bind": {
+      "symbol": "Results.bind",
+      "signature": "bind(fem: \"'FEMData'\") -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Re-bind to ``fem``."
+    },
+    "Results.close": {
+      "symbol": "Results.close",
+      "signature": "close() -> 'None'",
+      "skill": "references/results.md",
+      "doc": "Close the underlying reader (releases the HDF5 file handle)."
+    },
+    "Results.demo": {
+      "symbol": "Results.demo",
+      "signature": "demo(**kwargs) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Return a ready-to-view demo :class:`Results` (cantilever pushover)."
+    },
+    "Results.energy": {
+      "symbol": "Results.energy",
+      "signature": "energy(*, region: \"'Optional[int]'\" = None, stage: 'Optional[str]' = None) -> \"'Any'\"",
+      "skill": "references/results.md",
+      "doc": "Energy-balance time history — **Ladruno-recorder feature**."
+    },
+    "Results.energy_regions": {
+      "symbol": "Results.energy_regions",
+      "signature": "energy_regions(*, stage: 'Optional[str]' = None) -> \"'list[int]'\"",
+      "skill": "references/results.md",
+      "doc": "OpenSees region tags with a recorded per-region energy balance."
+    },
+    "Results.export_animation": {
+      "symbol": "Results.export_animation",
+      "signature": "export_animation(path: \"'str | Any'\", *, fps: 'int' = 30, step_stride: 'int' = 1, stage: \"'Optional[str]'\" = None, deform: \"'Optional[Any]'\" = None, camera: \"'Optional[Any]'\" = None, window_size: \"'Optional[tuple[int, int]]'\" = (1280, 720), setup: \"'Optional[Any]'\" = None)",
+      "skill": "references/results.md",
+      "doc": "Render the time history to a video / GIF without a GUI session."
+    },
+    "Results.from_fem": {
+      "symbol": "Results.from_fem",
+      "signature": "from_fem(fem: \"'FEMData'\", path: \"'str | Path | list[str | Path]'\", *, kind: 'str' = 'auto', merge_partitions: 'bool' = True, cache_root: \"'str | Path | None'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Open a results file against a bare :class:`FEMData` snapshot."
+    },
+    "Results.from_ladruno": {
+      "symbol": "Results.from_ladruno",
+      "signature": "from_ladruno(path: \"'str | Path | list[str | Path]'\", *, fem: \"'Optional[FEMData]'\" = None, merge_partitions: 'bool' = True, model_h5: \"'Optional[str | Path]'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Open a Ladruno ``.ladruno`` HDF5 results file."
+    },
+    "Results.from_mpco": {
+      "symbol": "Results.from_mpco",
+      "signature": "from_mpco(path: \"'str | Path | list[str | Path]'\", *, fem: \"'Optional[FEMData]'\" = None, merge_partitions: 'bool' = True, model_h5: \"'Optional[str | Path]'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Open a STKO ``.mpco`` HDF5 results file."
+    },
+    "Results.from_native": {
+      "symbol": "Results.from_native",
+      "signature": "from_native(path: 'str | Path', *, fem: \"'Optional[FEMData]'\" = None, model: \"'Optional[OpenSeesModel]'\" = None, model_path: \"'Optional[str | Path]'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Open an apeGmsh native HDF5 results file."
+    },
+    "Results.from_recorders": {
+      "symbol": "Results.from_recorders",
+      "signature": "from_recorders(spec, output_dir: 'str | Path', *, fem: \"'FEMData'\", cache_root: 'str | Path | None' = None, stage_name: 'str' = 'analysis', stage_kind: 'str' = 'transient', file_format: 'str' = 'out', stage_id: 'str | None' = None, model: \"'Optional[OpenSeesModel]'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Open the result of an OpenSees run driven by Tcl/Py recorders."
+    },
+    "Results.load_definitions": {
+      "symbol": "Results.load_definitions",
+      "signature": "load_definitions(path: \"'Optional[str | Path]'\" = None) -> 'int'",
+      "skill": "references/results.md",
+      "doc": "Load and register custom scalar definitions from a JSON sidecar"
+    },
+    "Results.node_envelope": {
+      "symbol": "Results.node_envelope",
+      "signature": "node_envelope(component: 'str', *, stage: 'Optional[str]' = None) -> \"'Any'\"",
+      "skill": "references/results.md",
+      "doc": "Per-node time-reduced extremes — **Ladruno ``-envelope`` feature**."
+    },
+    "Results.render": {
+      "symbol": "Results.render",
+      "signature": "render(path: \"'str | Path'\", *, view: 'str' = 'contour', component: 'Optional[str]' = None, step: 'int' = -1, deform: \"'Optional[Any]'\" = None, camera: 'str' = 'iso', window_size: 'tuple[int, int]' = (1280, 720)) -> \"'Optional[Path]'\"",
+      "skill": "references/results.md",
+      "doc": "Write one offscreen still (ADR 0094 S1)."
+    },
+    "Results.render_pack": {
+      "symbol": "Results.render_pack",
+      "signature": "render_pack(out_dir: \"'str | Path'\", *, camera: 'str' = 'iso', window_size: 'tuple[int, int]' = (1280, 720)) -> 'tuple[Path, ...]'",
+      "skill": "references/results.md",
+      "doc": "Write the canned report pack (ADR 0094 S3)."
+    },
+    "Results.save_definitions": {
+      "symbol": "Results.save_definitions",
+      "signature": "save_definitions(path: \"'Optional[str | Path]'\" = None) -> 'Path'",
+      "skill": "references/results.md",
+      "doc": "Persist this Results' custom scalar definitions to a JSON"
+    },
+    "Results.serve_web": {
+      "symbol": "Results.serve_web",
+      "signature": "serve_web(*, stage: \"'Optional[str]'\" = None, render_mode: 'str' = 'client', port: \"'Optional[int]'\" = None, open_browser: 'bool' = True, title: 'str' = 'apeGmsh', **start_kwargs)",
+      "skill": "references/results.md",
+      "doc": "Serve the results as a standalone trame web app (ADR 0042 R-C)."
+    },
+    "Results.show_web": {
+      "symbol": "Results.show_web",
+      "signature": "show_web(*, stage: \"'Optional[str]'\" = None, show: 'bool' = True, controls: 'bool' = True, render_mode: 'str' = 'client')",
+      "skill": "references/results.md",
+      "doc": "Open the view-only web / Jupyter results viewer (ADR 0042 R-C)."
+    },
+    "Results.stage": {
+      "symbol": "Results.stage",
+      "signature": "stage(name_or_id: 'str') -> \"'Results'\"",
+      "skill": "references/results.md",
+      "doc": "Return a Results scoped to a stage (matched by id or name)."
+    },
+    "Results.viewer": {
+      "symbol": "Results.viewer",
+      "signature": "viewer(*, blocking: \"'Optional[bool]'\" = None, title: 'Optional[str]' = None, restore_session: \"'bool | str'\" = 'prompt', save_session: 'bool' = True, cuts: \"'Optional[Any]'\" = None)",
+      "skill": "references/results.md",
+      "doc": "Open the post-solve results viewer."
+    },
     "g.begin": {
       "symbol": "g.begin",
       "signature": "begin(*, verbose: 'bool | None' = None) -> \"'_SessionBase'\"",
@@ -1549,6 +1813,102 @@
       "signature": "select(target=None, *, dim: 'int | None' = None)",
       "skill": "references/api-cheatsheet.md",
       "doc": "Select geometry entities (faces, curves, volumes, points)"
+    },
+    "g.model.select.boundary": {
+      "symbol": "g.model.select.boundary",
+      "signature": "boundary(*, combined: 'bool' = True, recursive: 'bool' = False) -> \"'EntitySelection'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Refine to the **boundary** of the current entities (one dim down)."
+    },
+    "g.model.select.crossing_plane": {
+      "symbol": "g.model.select.crossing_plane",
+      "signature": "crossing_plane(spec, *, tol: 'float' = 1e-06, mode: 'str' = 'crossing') -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Refine by a geometric *straddle* predicate (entity family only)."
+    },
+    "g.model.select.difference": {
+      "symbol": "g.model.select.difference",
+      "signature": "difference(other: \"'SelectionChain'\") -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.in_box": {
+      "symbol": "g.model.select.in_box",
+      "signature": "in_box(lo, hi, **kw) -> \"'EntitySelection'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Refine to entities whose BRep bounding box lies in ``[lo, hi]``."
+    },
+    "g.model.select.in_sphere": {
+      "symbol": "g.model.select.in_sphere",
+      "signature": "in_sphere(center, radius: 'float') -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.intersect": {
+      "symbol": "g.model.select.intersect",
+      "signature": "intersect(other: \"'SelectionChain'\") -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.nearest_to": {
+      "symbol": "g.model.select.nearest_to",
+      "signature": "nearest_to(point, *, count: 'int' = 1) -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.on_plane": {
+      "symbol": "g.model.select.on_plane",
+      "signature": "on_plane(point, normal, *, tol: 'float') -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.result": {
+      "symbol": "g.model.select.result",
+      "signature": "result() -> \"'Selection'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Materialise the domain-specific terminal value."
+    },
+    "g.model.select.symmetric_difference": {
+      "symbol": "g.model.select.symmetric_difference",
+      "signature": "symmetric_difference(other: \"'SelectionChain'\") -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.tags": {
+      "symbol": "g.model.select.tags",
+      "signature": "tags() -> 'list[int]'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Return the bare integer tags of the selection (drops dim)."
+    },
+    "g.model.select.to_dataframe": {
+      "symbol": "g.model.select.to_dataframe",
+      "signature": "to_dataframe()",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Return a DataFrame ``dim, tag, kind, label, x, y, z, mass``."
+    },
+    "g.model.select.to_label": {
+      "symbol": "g.model.select.to_label",
+      "signature": "to_label(name: 'str') -> \"'EntitySelection'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Register every entity as a **Tier-1 label** (``_label:``)."
+    },
+    "g.model.select.to_physical": {
+      "symbol": "g.model.select.to_physical",
+      "signature": "to_physical(name: 'str') -> \"'EntitySelection'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Register every entity as a **Tier-2 physical group** (raw)."
+    },
+    "g.model.select.union": {
+      "symbol": "g.model.select.union",
+      "signature": "union(other: \"'SelectionChain'\") -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": ""
+    },
+    "g.model.select.where": {
+      "symbol": "g.model.select.where",
+      "signature": "where(predicate) -> \"'TSelf'\"",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Keep atoms whose coordinate row satisfies ``predicate``."
     },
     "g.model.sync": {
       "symbol": "g.model.sync",

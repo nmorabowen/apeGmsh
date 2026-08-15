@@ -1,8 +1,12 @@
 """Harvest public composite signatures into ``_api_index.json`` (ADR 0096 S2).
 
-Walks session composites and ``apeSees`` namespaces via ``inspect`` +
-``__init__`` AST. Does not grep ``src/`` at lookup time. Never dumps a
-module: the index is a symbol → signature map.
+Walks session composites, ``apeSees`` namespaces, and the sidecar
+classes the S2 session walk misses (``Part`` / ``Results`` /
+``Cluster`` / ``Job`` / ``Assembly``) plus fluent
+``g.model.select`` (``in_box`` / ``to_label``). Nested Part
+composites are not walked — they would duplicate ``g.model.*`` and
+make ``add_box`` ambiguous. Does not grep ``src/`` at lookup time.
+Never dumps a module: the index is a symbol → signature map.
 """
 from __future__ import annotations
 
@@ -27,6 +31,12 @@ _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("g.compose", "references/compose.md"),
     ("g.mesh.queries.get_fem_data", "references/fem-broker.md"),
     ("g.sections", "references/section-properties.md"),
+    ("g.model.select", "references/api-cheatsheet.md"),
+    ("Results", "references/results.md"),
+    ("Part", "references/compose.md"),
+    ("Assembly", "references/compose.md"),
+    ("Cluster", "references/api-cheatsheet.md"),
+    ("Job", "references/api-cheatsheet.md"),
 )
 
 
@@ -49,6 +59,7 @@ def build_index() -> dict[str, Any]:
     entries: dict[str, dict[str, str]] = {}
     _walk_session(entries)
     _walk_apesees(entries)
+    _walk_sidecars(entries)
     return {
         "schema": INDEX_SCHEMA,
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -120,6 +131,48 @@ def _walk_apesees(entries: dict[str, dict[str, str]]) -> None:
     from apeGmsh.opensees.apesees import apeSees
 
     _harvest_class(apeSees, "ops", entries, depth=0)
+
+
+def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
+    """Index doors that are not session composites (ADR 0096 consequence).
+
+    ``skip_init_nested`` is required: ``Part`` reuses ``Model``, and
+    walking it would duplicate ``g.model.geometry.add_box``.
+    """
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.core._selection import EntitySelection
+    from apeGmsh.core.Part import Part
+    from apeGmsh.hpc._cluster import Cluster
+    from apeGmsh.hpc._job import Job
+    from apeGmsh.results.Results import Results
+
+    for cls, prefix in (
+        (Part, "Part"),
+        (Results, "Results"),
+        (Cluster, "Cluster"),
+        (Job, "Job"),
+        (Assembly, "Assembly"),
+    ):
+        _harvest_ctor(cls, prefix, entries)
+        _harvest_class(cls, prefix, entries, depth=0, skip_init_nested=True)
+    _harvest_class(
+        EntitySelection, "g.model.select", entries, depth=0, skip_init_nested=True,
+    )
+
+
+def _harvest_ctor(cls: type, symbol: str, entries: dict[str, dict[str, str]]) -> None:
+    """Index the class name itself (``Part``, ``Results.from_*`` stay methods)."""
+    init = getattr(cls, "__init__", None)
+    if init is None or init is object.__init__:
+        return
+    entry = _entry(symbol, inspect.unwrap(init))
+    class_doc = inspect.getdoc(cls) or ""
+    first = class_doc.strip().split("\n")[0].strip() if class_doc.strip() else ""
+    if first and (
+        not entry["doc"] or entry["doc"].startswith("Initialize self")
+    ):
+        entry["doc"] = first[:200]
+    entries[symbol] = entry
 
 
 def _load_class(mod: str, cls_name: str) -> type | None:
