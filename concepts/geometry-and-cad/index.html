@@ -1626,6 +1626,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#holes-and-voids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Holes and voids
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#importing-cad-geometry-not-a-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3508,6 +3519,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#holes-and-voids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Holes and voids
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#importing-cad-geometry-not-a-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3651,11 +3673,39 @@ have no labels yet. <code>sweep</code> and <code>thru_sections</code> take a <co
 highest-dimension result; for <code>extrude</code> and <code>revolve</code> you index into the
 returned list and name what you need. Either way, the naming discipline is the
 same as everywhere else — bake a name in before you move on.</p>
+<h2 id="holes-and-voids">Holes and voids<a class="headerlink" href="#holes-and-voids" title="Permanent link">&para;</a></h2>
+<p>An opening is an ordinary OCC volume (or a dim-2 face) used as the <em>tool</em> of
+<code>g.model.boolean.cut</code> — A minus B. That is a different operation from
+<code>g.model.geometry.cut_by_surface</code> / <code>cut_by_plane</code>, which <em>split</em> a body and
+keep both pieces. There is no Void solid type: mark a tool with <code>as_void=True</code>
+(or author it with <code>add_void_sweep</code> / <code>add_void_loft</code>) and subtract it before
+you mesh. Leftover void tools fail loud at <code>generate()</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;wall&quot;</span><span class="p">)</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_cylinder</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">3.2</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>                              <span class="n">as_void</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;duct&quot;</span><span class="p">)</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">apply_voids</span><span class="p">(</span><span class="s2">&quot;wall&quot;</span><span class="p">)</span>   <span class="c1"># or cut(&quot;wall&quot;, &quot;duct&quot;)</span>
+</span></code></pre></div>
+<p>For a path that turns, build the trajectory (and optionally the profile) with
+<code>add_polyline</code> and round selected vertices so OCC's pipe does not kink:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">path</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_polyline</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)],</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">fillet</span><span class="o">=</span><span class="p">{</span><span class="mi">1</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">},</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">profile</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_polyline</span><span class="p">(</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">1.1</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">1.1</span><span class="p">,</span> <span class="mf">1.1</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.1</span><span class="p">)],</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">closed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_void_sweep</span><span class="p">(</span><span class="n">profile</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;elbow&quot;</span><span class="p">)</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">apply_voids</span><span class="p">(</span><span class="s2">&quot;wall&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Two section polylines loft a tapered void (<code>add_void_loft</code>); give both sections
+the same vertex fillet map so their sub-curve counts stay equal. Apply before
+<code>generate()</code> — the pre-mesh check will name any tool you forgot to subtract.</p>
 <h2 id="importing-cad-geometry-not-a-model">Importing CAD: geometry, not a model<a class="headerlink" href="#importing-cad-geometry-not-a-model" title="Permanent link">&para;</a></h2>
 <p>STEP and IGES are the exchange formats the CAD world speaks, and apeGmsh
 imports both through the OCC kernel with a single call:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">imported</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;bracket.step&quot;</span><span class="p">)</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">bodies</span> <span class="o">=</span> <span class="n">imported</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>      <span class="c1"># all imported volume tags</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">imported</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;bracket.step&quot;</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">bodies</span> <span class="o">=</span> <span class="n">imported</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>      <span class="c1"># all imported volume tags</span>
 </span></code></pre></div>
 <p><code>load_iges</code> has the same signature and return shape. By default only the
 top-dimensional entities come back (<code>highest_dim_only=True</code>) — a solid model
@@ -3683,13 +3733,13 @@ the meshing tolerance, and shells that should have been solids. Left alone,
 these surface later as cryptic meshing failures. apeGmsh's stance is <em>look
 before you leap</em>: <code>diagnose()</code> inspects the imported geometry without touching
 it, and healing is an explicit, opt-in step.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;messy.step&quot;</span><span class="p">)</span>          <span class="c1"># raw — advisory may fire</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">report</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">diagnose</span><span class="p">()</span>               <span class="c1"># -&gt; ImportHealth (non-mutating)</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">if</span> <span class="n">report</span><span class="o">.</span><span class="n">is_suspect</span><span class="p">:</span>                        <span class="c1"># True iff slivers present</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="c1"># re-import with the suggested scale-aware healing</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">imported</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;messy.step&quot;</span><span class="p">,</span> <span class="n">heal</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="n">dedupe</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;messy.step&quot;</span><span class="p">)</span>          <span class="c1"># raw — advisory may fire</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">report</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">diagnose</span><span class="p">()</span>               <span class="c1"># -&gt; ImportHealth (non-mutating)</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">if</span> <span class="n">report</span><span class="o">.</span><span class="n">is_suspect</span><span class="p">:</span>                        <span class="c1"># True iff slivers present</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="c1"># re-import with the suggested scale-aware healing</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">imported</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">load_step</span><span class="p">(</span><span class="s2">&quot;messy.step&quot;</span><span class="p">,</span> <span class="n">heal</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="n">dedupe</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>ImportHealth</code> reports what's in the model (entity counts per dimension, the
 bounding-box diagonal) and what's suspicious (edges and faces far below the
@@ -3715,12 +3765,12 @@ healing anything with a tolerance you chose yourself.</p>
 how does an imported model join the name-driven workflow? By <em>query</em>: you
 describe entities geometrically and bake the result into a name. The
 bounding-box query is the workhorse from the import source material:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">bodies</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Steel&quot;</span><span class="p">)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">base_faces</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span> <span class="ow">in</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">entities_in_bounding_box</span><span class="p">(</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="o">-</span><span class="mf">1e3</span><span class="p">,</span> <span class="o">-</span><span class="mf">1e3</span><span class="p">,</span> <span class="o">-</span><span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e3</span><span class="p">,</span> <span class="mf">1e3</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)]</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">base_faces</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Fixed_Support&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">bodies</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Steel&quot;</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">base_faces</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span> <span class="ow">in</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">entities_in_bounding_box</span><span class="p">(</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="o">-</span><span class="mf">1e3</span><span class="p">,</span> <span class="o">-</span><span class="mf">1e3</span><span class="p">,</span> <span class="o">-</span><span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e3</span><span class="p">,</span> <span class="mf">1e3</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)]</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">base_faces</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Fixed_Support&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The fluent <code>.select()</code> chain from the <a href="../mental-model/">mental model</a> does the
 same job with spatial verbs (<code>.on_plane</code>, <code>.in_box</code>, <code>.nearest_to</code>) and a
@@ -3739,9 +3789,9 @@ geometry only — no mesh, no physical groups.</p>
 rules: a <code>.msh</code> file already contains nodes, elements, and physical groups, so
 there is nothing left to name or mesh. apeGmsh treats it as a direct path to
 the <code>FEMData</code> snapshot:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">MshLoader</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">MshLoader</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;bridge.msh&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">MshLoader</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">MshLoader</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;bridge.msh&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </span></code></pre></div>
 <p>No session, no geometry stage — the returned snapshot is completely decoupled
 from Gmsh, ready for the solver bridge or for pickling into a pipeline. (When
