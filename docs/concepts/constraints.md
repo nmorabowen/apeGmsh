@@ -118,6 +118,9 @@ deformable, with `weighting="area"` for a traction-like spread. Reach for RBE2
 when the region must move rigidly (a loading platen); RBE3 when you want to
 *introduce a load* without stiffening anything. Both emit dedicated Ladruno
 fork elements: the deck is written on any build, but running it needs the fork.
+A labelled `g.decouple_node` (or its handle) is a valid reference for either —
+pass it as `master_label` so essential (`ops.fix`) or natural (`p.load`) BCs
+land on the `ndf=6` work point without a post-mesh retarget.
 
 ## Non-matching meshes: ties
 
