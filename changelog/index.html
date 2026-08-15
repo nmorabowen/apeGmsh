@@ -12168,7 +12168,9 @@
 <code>if code:</code> treated that as false, so decks showed bare
 <code>system Pardiso</code> even when the caller asked for unsymmetric storage.
 Same trap on typed <code>Mumps</code>. Both now always emit <code>-matrixType N</code>
-as an int (fork <code>OPS_GetIntInput</code>). Unit expectations updated.</p>
+as an int (fork <code>OPS_GetIntInput</code>). Unit expectations updated. Skill
+refs (<code>opensees-bridge</code> / <code>ladruno</code> / <code>gotchas</code>) document the explicit
+flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-declare).</p>
 <!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
      Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
      Do NOT edit any existing line — in particular the single-line
