@@ -98,7 +98,10 @@ class Model(_HasLogging):
         from ._helpers import as_dimtags
         return as_dimtags(tags, default_dim)
 
-    def _register(self, dim: int, tag: Tag, label: str | None, kind: str) -> Tag:
+    def _register(
+        self, dim: int, tag: Tag, label: str | None, kind: str,
+        *, role: str | None = None,
+    ) -> Tag:
         # Phase 3B.2d / ADR 0038 — fail-loud on geometry mutation after
         # the broker has been extracted.  Every geometry primitive
         # (add_*, boolean ops, transforms, model.io.load_*) funnels
@@ -107,7 +110,13 @@ class Model(_HasLogging):
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, f"g.model.<geometry>({kind})")
         # Metadata only — labels live exclusively in g.labels (Gmsh PGs).
-        self._metadata[(dim, tag)] = {'kind': kind}
+        # ``role="void"`` (ADR 0097) marks a boolean tool that must be
+        # consumed before generate(); omitted when unset so existing
+        # ``kind``-only readers stay valid.
+        meta: dict = {'kind': kind}
+        if role is not None:
+            meta['role'] = role
+        self._metadata[(dim, tag)] = meta
 
         # When the owning session has ``_auto_pg_from_label`` set
         # (both Part and apeGmsh sessions), automatically create a
