@@ -394,8 +394,8 @@ class TestNumbererNamespace:
         (ProfileSPD, "ProfileSPD"),
         (SProfileSPD, "SProfileSPD"),
         (UmfPack, "UmfPack"),
-        (Pardiso, "Pardiso"),
-        (Mumps, "Mumps"),
+        # Pardiso / Mumps always emit -matrixType (incl. 0); see
+        # test_pardiso_option_emission / test_mumps_option_emission.
         (SparseGeneral, "SparseGeneral"),
         (SparseSYM, "SparseSYM"),
         (FullGeneral, "FullGeneral"),
@@ -429,16 +429,16 @@ def test_system_dependencies_empty(cls: type) -> None:
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
-        ({}, ("Pardiso",)),
-        ({"matrix_type": "unsymmetric"}, ("Pardiso",)),
+        ({}, ("Pardiso", "-matrixType", 0)),
+        ({"matrix_type": "unsymmetric"}, ("Pardiso", "-matrixType", 0)),
         ({"matrix_type": "spd"}, ("Pardiso", "-matrixType", 1)),
         ({"matrix_type": "symmetric"}, ("Pardiso", "-matrixType", 2)),
-        ({"stats": True}, ("Pardiso", "-stats")),
+        ({"stats": True}, ("Pardiso", "-matrixType", 0, "-stats")),
         (
             {"matrix_type": "symmetric", "stats": True},
             ("Pardiso", "-matrixType", 2, "-stats"),
         ),
-        ({"krylov": 6}, ("Pardiso", "-krylov", 6)),
+        ({"krylov": 6}, ("Pardiso", "-matrixType", 0, "-krylov", 6)),
         (
             {"matrix_type": "spd", "krylov": 6, "stats": True},
             ("Pardiso", "-matrixType", 1, "-krylov", 6, "-stats"),
@@ -492,25 +492,30 @@ def test_pardiso_rejects_bad_krylov(
 def test_pardiso_krylov_is_emitted_as_int() -> None:
     e = RecordingEmitter()
     Pardiso(krylov=6)._emit(e, tag=1)
-    value = e.calls[0][1][2]
+    args = e.calls[0][1]
+    value = args[args.index("-krylov") + 1]
+    assert value == 6
     assert isinstance(value, int) and not isinstance(value, bool)
 
 
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
-        ({}, ("Mumps",)),
-        ({"icntl14": 200}, ("Mumps", "-ICNTL14", 200)),
-        ({"icntl7": 5}, ("Mumps", "-ICNTL7", 5)),
+        ({}, ("Mumps", "-matrixType", 0)),
+        ({"icntl14": 200}, ("Mumps", "-ICNTL14", 200, "-matrixType", 0)),
+        ({"icntl7": 5}, ("Mumps", "-ICNTL7", 5, "-matrixType", 0)),
         ({"matrix_type": "spd"}, ("Mumps", "-matrixType", 1)),
         ({"matrix_type": "symmetric"}, ("Mumps", "-matrixType", 2)),
-        ({"matrix_type": "unsymmetric"}, ("Mumps",)),
-        ({"blr": 1e-9}, ("Mumps", "-BLR", 1e-9)),
-        ({"icntl35": 1}, ("Mumps", "-ICNTL35", 1)),
-        ({"cntl7": 1e-9}, ("Mumps", "-CNTL7", 1e-9)),
-        ({"comm_split": 0}, ("Mumps", "-commSplit", 0)),
-        ({"stats": True}, ("Mumps", "-stats")),
-        ({"blr": 1e-4, "stats": True}, ("Mumps", "-BLR", 1e-4, "-stats")),
+        ({"matrix_type": "unsymmetric"}, ("Mumps", "-matrixType", 0)),
+        ({"blr": 1e-9}, ("Mumps", "-matrixType", 0, "-BLR", 1e-9)),
+        ({"icntl35": 1}, ("Mumps", "-matrixType", 0, "-ICNTL35", 1)),
+        ({"cntl7": 1e-9}, ("Mumps", "-matrixType", 0, "-CNTL7", 1e-9)),
+        ({"comm_split": 0}, ("Mumps", "-matrixType", 0, "-commSplit", 0)),
+        ({"stats": True}, ("Mumps", "-matrixType", 0, "-stats")),
+        (
+            {"blr": 1e-4, "stats": True},
+            ("Mumps", "-matrixType", 0, "-BLR", 1e-4, "-stats"),
+        ),
         (
             # Full house — asserts the fork's parser order too.
             {

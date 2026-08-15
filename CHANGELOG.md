@@ -8,7 +8,9 @@
 ``if code:`` treated that as false, so decks showed bare
 ``system Pardiso`` even when the caller asked for unsymmetric storage.
 Same trap on typed ``Mumps``. Both now always emit ``-matrixType N``
-as an int (fork ``OPS_GetIntInput``). Unit expectations updated.
+as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
+refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
+flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
 
 <!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
      Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.

@@ -7,12 +7,14 @@ description: >
   import apeGmsh`` / ``Part`` / ``FEMData`` / ``Results``) or touches the
   apeGmsh project at ``C:\Users\nmora\Github\apeGmsh``. Trigger for:
   building an ``apeGmsh`` session, composing geometry via
-  ``g.model.geometry/boolean/transforms/io/queries``, meshing via
-  ``g.mesh.generation/sizing/field/structured/editing/queries/
+  ``g.model.geometry/boolean/transforms/io/queries`` (including
+  ``as_void`` / ``add_polyline`` / ``add_void_sweep`` / ``apply_voids``),
+  meshing via ``g.mesh.generation/sizing/field/structured/editing/queries/
   partitioning``, labels, physical groups, FEMData broker
   (``g.mesh.queries.get_fem_data``), multi-part assemblies (``Part`` +
   ``g.parts``), loads / masses / constraints (``g.loads``, ``g.masses``,
-  ``g.constraints``), per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
+  ``g.constraints`` — labelled ``g.decouple_node`` as RBE2/RBE3 master),
+  per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
   OpenSees bridge with typed primitives, post-processing OpenSees output
   via ``Results`` (``from_native`` / ``from_mpco`` / ``from_recorders``)
   and the web/Qt viewers, native ``model.h5`` persistence
@@ -27,7 +29,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:

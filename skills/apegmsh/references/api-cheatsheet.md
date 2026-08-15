@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -61,7 +61,7 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.rebar`          | `RebarComposite`       | RC reinforcement-cage authoring (ADR 0066/0067 — see `rebar.md`) |
 | `g.loads`          | `LoadsComposite`       | Load patterns & defs |
 | `g.masses`         | `MassesComposite`      | Mass defs (NOTE: `g.masses`, not `g.mass`) |
-| `g.decouple_node`  | `DecoupledNodesComposite` | Element-less analysis nodes (spring ground / master); ndf via `ops.ndf` (ADR 0048/0049) |
+| `g.decouple_node`  | `DecoupledNodesComposite` | Element-less analysis nodes (spring ground / RBE2·RBE3 work-point master); ndf via `ops.ndf` (ADR 0048/0049) |
 | `g.mesh`           | `Mesh`                 | Meshing (7 sub-composites) |
 | `g.loader`         | `MshLoader`            | Load `.msh` files |
 | `g.physical`       | `PhysicalGroups`       | Solver-facing named groups |
@@ -97,10 +97,21 @@ Each `add_*` accepts `label=` for auto-PG (especially inside a `Part`):
 add_point(x, y, z, *, lc=0.0, label=None)      add_line(p1, p2, *, label=None)
 add_arc(p1, p_center, p2, *, label=None)        add_circle(xc, yc, zc, r, *, label=None)
 add_ellipse(xc, yc, zc, r1, r2, *, label=None)  add_spline / add_bspline / add_bezier(points, *, label=None)
+add_polyline(points, *, closed=False, fillet=None, chamfer=None, label=None)  # → list[curve Tag]; ADR 0097
 add_wire(curves, *, label=None)                 add_curve_loop(curves, *, label=None)
-add_plane_surface(loop, *, holes=None, label=None)   add_rectangle(x, y, z, dx, dy, *, label=None)
-add_box(x, y, z, dx, dy, dz, *, label=None)     add_sphere / add_cylinder / add_cone / add_torus / add_wedge(...)
+add_plane_surface(loop, *, holes=None, label=None, as_void=False)
+add_rectangle(x, y, z, dx, dy, *, label=None, as_void=False)
+add_box(x, y, z, dx, dy, dz, *, label=None, as_void=False)
+add_sphere / add_cylinder / add_cone / add_torus / add_wedge(..., *, as_void=False)
+add_void_sweep(profile, path, *, label=None)    # pipe → role=void solid (ADR 0097)
+add_void_loft(sections, *, make_solid=True, make_ruled=False, label=None)
 ```
+`as_void=True` stamps `role="void"` on an ordinary OCC volume/face — there is
+no Void solid type. Subtract before mesh via `boolean.cut` or
+`boolean.apply_voids`; leftover void tools fail loud at `generate()`.
+Open polylines whose untreated corners turn >30° emit
+`WarnGeomSharpPolylineCorner` (OCC pipe kink); closed profiles do not warn.
+`# src/apeGmsh/core/_model_geometry.py:1147 (add_polyline), :3197 (add_void_sweep), :3286 (add_void_loft)`
 
 Cutting / slicing (auto-sweep dangling orphans internally — see sweep below):
 
@@ -128,27 +139,31 @@ g.model.geometry.validate_pre_mesh(*, strict=False) -> None  # raises GeometryVa
 `# verified: tests/test_geometry_topology.py::TestFindOrphansDryRun::test_sweep_dangling_dry_run_does_not_modify`
 
 `validate_pre_mesh()` default `strict=False` is **closed-world**
-(stale-metadata only) and is **auto-invoked by `g.mesh.generation.generate()`**.
+(stale-metadata only) **plus** an unapplied-void check (ADR 0097), and
+is **auto-invoked by `g.mesh.generation.generate()`**.
 `strict=True` is **open-world** (`find_orphans`) — opt-in only; never
 auto-wired (it broke 63 raw-gmsh tests). Slivers in raw `gmsh.model.*`
 geometry are legitimate, so open-world checks would false-positive.
 Typed warnings/errors:
-`from apeGmsh.core._geometry_errors import GeometryValidationError, WarnGeomCoincidentFace, WarnGeomOneSidedCut`
-(both warnings subclass `UserWarning`; silence with `warnings.simplefilter('ignore', ...)`).
+`from apeGmsh.core._geometry_errors import GeometryValidationError, WarnGeomCoincidentFace, WarnGeomOneSidedCut, WarnGeomSharpPolylineCorner`
+(warnings subclass `UserWarning`; silence with `warnings.simplefilter('ignore', ...)`).
 `# verified: tests/test_geometry_topology.py::TestValidatePreMesh::test_validate_pre_mesh_default_passes_on_clean_model`
 `# verified: tests/test_geometry_topology.py::TestFindStaleMetadata::test_clean_model_has_no_stale_metadata`
+`# verified: tests/test_void_cut.py`
 
 ### `g.model.boolean` — boolean ops (`_Boolean`)
 
 ```
 fuse(objects, tools=None, *, remove_objects=True, remove_tools=True)
 cut(objects, tools, *, remove_objects=True, remove_tools=True)
+apply_voids(host, *, remove_object=True, remove_tool=True, sync=True, label=None, tolerance=None)
+#   subtract every unapplied role=void tool at the host's dim (ADR 0097)
 intersect(objects, tools, *, remove_objects=True, remove_tools=True)
 fragment(objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True, tolerance=None)
 conformal(*, dims=None, tolerance=None, sync=True)
 ```
 `fragment`'s `cleanup_free=True` runs the topology sweep when volumes
-exist (skipped in 2D-only models). `# src/apeGmsh/core/_model_boolean.py:323`
+exist (skipped in 2D-only models). `# src/apeGmsh/core/_model_boolean.py:264 (cut), :296 (apply_voids)`
 `conformal` is a convenience alias delegating to
 `g.model.queries.make_conformal` — fragments *all* entities against each
 other (whole-model weld) rather than one object/tool pair.
@@ -547,9 +562,12 @@ kinematic_coupling(master_label, slave_label, *, master_point=(0,0,0), dofs=None
 distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE3 → LadrunoDistributingCoupling (tag 33011)
     weighting="uniform"|"area", k=None|"auto", k_alpha=None, host=None, kr=None,
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
+#   master_label / slave_label may be a labelled g.decouple_node (string label=
+#   or the handle) — resolve binds the singleton tag; no post-mesh retarget.
+#   Other constraint kinds refuse a decoupled role at declare (ADR 0049 OQ2).
 list_defs() / list_records() / clear()
 ```
-`# src/apeGmsh/core/ConstraintsComposite.py:1192 (kinematic_coupling), :1413 (distributing_coupling)`
+`# src/apeGmsh/core/ConstraintsComposite.py:1595 (kinematic_coupling), :1878 (distributing_coupling)`
 
 **RBE2 vs RBE3.** `kinematic_coupling` (RBE2) rigidly drives the slave set from
 the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`).
@@ -563,7 +581,10 @@ is the **FEM element id** (the bridge translates to the ops tag at emit);
 with `bipenalty_dtcr`). Both elements are **Ladruno-fork-only** — stock OpenSees
 fails loud at the element line. Under partitioned/MPI emit, RBE2 routes to a
 single canonical rank owning all slaves (raises if no rank owns the full set);
-RBE3 can distribute across ranks.
+RBE3 can distribute across ranks. Work-point BCs: `h = g.decouple_node(...,
+label="work_pt")` → `kinematic_coupling(h, "end_face", ...)` (or
+`master_label="work_pt"`) → `ops.ndf(h, ndf=6)` → `ops.fix` / loads on
+`h.tag` after `get_fem_data`.
 
 **Tied-interface `enforce=` routes (ADR 0068).** `tie` / `tied_contact` pick
 how the interface is enforced:

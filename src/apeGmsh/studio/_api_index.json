@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-14T23:32:46Z",
+  "generated": "2026-08-15T06:39:01Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -1412,6 +1412,12 @@
       "skill": "references/api-cheatsheet.md",
       "doc": "Create a new set = A ∪ B."
     },
+    "g.model.boolean.apply_voids": {
+      "symbol": "g.model.boolean.apply_voids",
+      "signature": "apply_voids(host: 'EntityRefs', *, remove_object: 'bool' = True, remove_tool: 'bool' = True, sync: 'bool' = True, label: 'str | None' = None, tolerance: 'float | None' = None) -> 'list[Tag]'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Subtract every unapplied ``as_void`` tool from *host*."
+    },
     "g.model.boolean.conformal": {
       "symbol": "g.model.boolean.conformal",
       "signature": "conformal(*, dims: 'list[int] | None' = None, tolerance: 'float | None' = None, sync: 'bool' = True)",
@@ -1468,7 +1474,7 @@
     },
     "g.model.geometry.add_box": {
       "symbol": "g.model.geometry.add_box",
-      "signature": "add_box(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', *, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_box(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', *, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add an axis-aligned box."
     },
@@ -1486,7 +1492,7 @@
     },
     "g.model.geometry.add_cone": {
       "symbol": "g.model.geometry.add_cone",
-      "signature": "add_cone(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', r1: 'float', r2: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_cone(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', r1: 'float', r2: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a cone / truncated cone."
     },
@@ -1504,7 +1510,7 @@
     },
     "g.model.geometry.add_cylinder": {
       "symbol": "g.model.geometry.add_cylinder",
-      "signature": "add_cylinder(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', radius: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_cylinder(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', radius: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a cylinder."
     },
@@ -1528,7 +1534,7 @@
     },
     "g.model.geometry.add_plane_surface": {
       "symbol": "g.model.geometry.add_plane_surface",
-      "signature": "add_plane_surface(wire_tags: 'EntityRef | list[EntityRef]', *, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_plane_surface(wire_tags: 'EntityRef | list[EntityRef]', *, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Create a planar surface bounded by one or more curve loops."
     },
@@ -1538,15 +1544,21 @@
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a single point."
     },
+    "g.model.geometry.add_polyline": {
+      "symbol": "g.model.geometry.add_polyline",
+      "signature": "add_polyline(points, *, closed: 'bool' = False, fillet: 'dict[int, float] | None' = None, chamfer: 'dict[int, float] | None' = None, label: 'str | None' = None, sync: 'bool' = True) -> 'list[Tag]'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Add a polyline through 3-D control points, optionally closed,"
+    },
     "g.model.geometry.add_rectangle": {
       "symbol": "g.model.geometry.add_rectangle",
-      "signature": "add_rectangle(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', *, plane: \"Literal['xy', 'yz', 'xz']\" = 'xy', angles_deg: 'tuple[float, float, float] | None' = None, angles_rad: 'tuple[float, float, float] | None' = None, pivot: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rounded_radius: 'float' = 0.0, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_rectangle(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', *, plane: \"Literal['xy', 'yz', 'xz']\" = 'xy', angles_deg: 'tuple[float, float, float] | None' = None, angles_rad: 'tuple[float, float, float] | None' = None, pivot: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rounded_radius: 'float' = 0.0, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a rectangular planar surface on one of the canonical planes."
     },
     "g.model.geometry.add_sphere": {
       "symbol": "g.model.geometry.add_sphere",
-      "signature": "add_sphere(cx: 'float', cy: 'float', cz: 'float', radius: 'float', *, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_sphere(cx: 'float', cy: 'float', cz: 'float', radius: 'float', *, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a sphere centred at (cx, cy, cz) with the given radius."
     },
@@ -1564,13 +1576,25 @@
     },
     "g.model.geometry.add_torus": {
       "symbol": "g.model.geometry.add_torus",
-      "signature": "add_torus(cx: 'float', cy: 'float', cz: 'float', r1: 'float', r2: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_torus(cx: 'float', cy: 'float', cz: 'float', r1: 'float', r2: 'float', *, angle: 'float' = 6.283185307179586, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a torus."
     },
+    "g.model.geometry.add_void_loft": {
+      "symbol": "g.model.geometry.add_void_loft",
+      "signature": "add_void_loft(sections: 'list', *, make_solid: 'bool' = True, make_ruled: 'bool' = False, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Loft through two or more section polylines and mark the solid"
+    },
+    "g.model.geometry.add_void_sweep": {
+      "symbol": "g.model.geometry.add_void_sweep",
+      "signature": "add_void_sweep(profile, path, *, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Sweep a profile along a path and mark the solid as a void tool."
+    },
     "g.model.geometry.add_wedge": {
       "symbol": "g.model.geometry.add_wedge",
-      "signature": "add_wedge(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', ltx: 'float', *, label: 'str | None' = None, sync: 'bool' = True) -> 'Tag'",
+      "signature": "add_wedge(x: 'float', y: 'float', z: 'float', dx: 'float', dy: 'float', dz: 'float', ltx: 'float', *, label: 'str | None' = None, sync: 'bool' = True, as_void: 'bool' = False) -> 'Tag'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Add a right-angle wedge."
     },
