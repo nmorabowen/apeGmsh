@@ -107,6 +107,173 @@ def test_ladruno_brick20_solves_on_fork(formulation: str) -> None:
     assert max(uz) < 0.0, "compressed column did not shorten"
 
 
+def test_ladruno_brick20_domain_capture_gauss_std(tmp_path) -> None:
+    """DomainCapture gauss path for LadrunoBrick20(std) — the catalog fix.
+
+    Asserts: no skipped elements, 27 GPs, non-empty σ_zz under compression,
+    and live integrationPoints match the catalog Hex_GL_3 walk (order, not
+    just size — the BezierTri6 trap).
+    """
+    from pathlib import Path
+
+    from apeGmsh.opensees._response_catalog import IntRule, lookup
+    from apeGmsh.results import Results
+    from apeGmsh.results.capture._domain import DomainCapture
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
+    )
+    from tests.conftest import _open_model_from_h5
+
+    with apeGmsh(model_name="h20_cap", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.mesh.generation.set_order(2, bubble=False)
+        g.physical.add(3, [box], name="Body")
+        fem = g.mesh.queries.get_fem_data(dim=3)
+
+    assert list(fem.elements)[0].element_type.npe == 20
+
+    base = _nodes_on_plane(fem, 2, 0.0)
+    top = _nodes_on_plane(fem, 2, 1.0)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
+    ops.element.LadrunoBrick20(pg="Body", material=mat, formulation="std")
+    ops.fix(nodes=base, dofs=(1, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        for nid in top:
+            p.load(node=nid, forces=(0.0, 0.0, -1.0e3))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    assert emitter.analyze(steps=1) == 0
+
+    live = emitter.ops
+    eids = live.getEleTags()
+    if isinstance(eids, int):
+        eids = [eids]
+    eid = int(eids[0])
+    assert live.eleType(eid) == "LadrunoBrick20"
+
+    layout = lookup("LadrunoBrick20", IntRule.Hex_GL_3, "stress")
+    flat = np.asarray(live.eleResponse(eid, "stresses"), dtype=np.float64)
+    assert flat.size == 162
+
+    # GP order (not just size): live integrationPoints ≡ catalog coords.
+    xi = np.asarray(live.eleResponse(eid, "integrationPoints"), dtype=np.float64)
+    assert xi.size == 81
+    np.testing.assert_allclose(
+        xi.reshape(27, 3), layout.natural_coords, atol=1e-12,
+    )
+
+    spec = ResolvedDomainCaptureSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedDomainCaptureRecord(
+            category="gauss", name="body",
+            components=tuple(layout.component_layout),
+            dt=None, n_steps=None,
+            element_ids=np.array([eid]),
+        ),),
+        ndm=3, ndf=3,
+    )
+    capture_path = Path(tmp_path) / "cap.h5"
+    with DomainCapture(spec, capture_path, fem, ops=live) as cap:
+        cap.begin_stage("static", kind="static")
+        cap.step(t=float(live.getTime()))
+        # The catalog fix: std must not land in skipped_elements.
+        assert cap._gauss_capturers
+        assert cap._gauss_capturers[0].skipped_elements == []
+        cap.end_stage()
+
+    with Results.from_native(
+        capture_path, fem=fem, model=_open_model_from_h5(capture_path),
+    ) as r:
+        s = r.stage(r.stages[0].id)
+        szz = s.elements.gauss.get(component="stress_zz")
+        assert szz.values.shape[1] == 27
+        assert np.all(szz.values[0] < 0.0)
+
+
+def test_ladruno_brick20_domain_capture_uri_refuses_loud(tmp_path) -> None:
+    """uri returns Vector(48); catalog expects 162 → clear ValueError."""
+    from pathlib import Path
+
+    from apeGmsh.opensees._response_catalog import IntRule, lookup
+    from apeGmsh.results.capture._domain import DomainCapture
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
+    )
+
+    with apeGmsh(model_name="h20_uri", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.mesh.generation.set_order(2, bubble=False)
+        g.physical.add(3, [box], name="Body")
+        fem = g.mesh.queries.get_fem_data(dim=3)
+
+    base = _nodes_on_plane(fem, 2, 0.0)
+    top = _nodes_on_plane(fem, 2, 1.0)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
+    ops.element.LadrunoBrick20(pg="Body", material=mat, formulation="uri")
+    ops.fix(nodes=base, dofs=(1, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        for nid in top:
+            p.load(node=nid, forces=(0.0, 0.0, -1.0e3))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    assert emitter.analyze(steps=1) == 0
+
+    live = emitter.ops
+    eids = live.getEleTags()
+    if isinstance(eids, int):
+        eids = [eids]
+    eid = int(eids[0])
+    assert len(live.eleResponse(eid, "stresses")) == 48
+
+    layout = lookup("LadrunoBrick20", IntRule.Hex_GL_3, "stress")
+    spec = ResolvedDomainCaptureSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedDomainCaptureRecord(
+            category="gauss", name="body",
+            components=tuple(layout.component_layout),
+            dt=None, n_steps=None,
+            element_ids=np.array([eid]),
+        ),),
+        ndm=3, ndf=3,
+    )
+    with DomainCapture(spec, Path(tmp_path) / "uri.h5", fem, ops=live) as cap:
+        cap.begin_stage("static", kind="static")
+        with pytest.raises(ValueError, match=r"formulation uri|uri"):
+            cap.step(t=float(live.getTime()))
+
+
 def test_ladruno_brick20_reproduces_the_self_weight_solution() -> None:
     """Magnitude, not just sign — a self-weight patch test.
 

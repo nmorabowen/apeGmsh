@@ -22,6 +22,21 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — DomainCapture gauss catalog covers ``LadrunoBrick20`` (std)
+
+``LadrunoBrick20`` (fork H20, tag 33018) was emit/run-ready but missing
+from ``RESPONSE_CATALOG``, so DomainCapture skipped hex20 continuum
+stress/strain with an empty dataset. Catalog now registers the std
+27-GP ``Hex_GL_3`` layout (same brcshl walk as ``Twenty_Node_Brick`` /
+``LadrunoHex20Shape.h`` ``GP27[]``, live-probed identical).
+``formulation="uri"`` returns a genuine ``Vector(48)`` (no slot-0
+mirror, unlike ``LadrunoBrick``) — a second non-Custom rule would make
+``_class_int_rule`` return ``None`` and drop *all* LadrunoBrick20
+elements, so uri stays out of the catalog and DomainCapture fails loud
+with a message that names ``-formulation uri`` (use the ``.ladruno``
+recorder for uri gauss). MPCO still writes rule ``0`` for Ladruno-band
+tags (pre-existing; same as ``LadrunoBrick``) — not fixed here.
+
 ### ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select
 
 MCP `lookup` missed sidecar constructors and `g.model.select.in_box`

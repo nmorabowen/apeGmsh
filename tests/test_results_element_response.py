@@ -34,6 +34,7 @@ from apeGmsh.opensees._response_catalog import (
     ELE_TAG_Truss,
     ELE_TAG_Truss2,
     ELE_TAG_Twenty_Node_Brick,
+    ELE_TAG_LadrunoBrick20,
     CatalogLookupError,
     IntRule,
     MPCOElementKey,
@@ -310,6 +311,19 @@ class TestHigherOrderSolids:
         assert layout.flat_size_per_element == 162
         assert layout.coord_system == "isoparametric"
         assert layout.class_tag == ELE_TAG_Twenty_Node_Brick
+
+    def test_ladruno_brick20_uses_hex_gl_3(self) -> None:
+        layout = lookup("LadrunoBrick20", IntRule.Hex_GL_3, "stress")
+        assert layout.n_gauss_points == 27
+        assert layout.n_components_per_gp == 6
+        assert layout.flat_size_per_element == 162
+        assert layout.coord_system == "isoparametric"
+        assert layout.class_tag == ELE_TAG_LadrunoBrick20
+        # Same GP walk as Twenty_Node_Brick / brcshl (live-probed identical).
+        sibling = lookup("Twenty_Node_Brick", IntRule.Hex_GL_3, "stress")
+        np.testing.assert_array_equal(
+            layout.natural_coords, sibling.natural_coords,
+        )
 
     def test_twenty_node_brick_corner_edge_face_centroid(self) -> None:
         """27-GP order: 8 corners, 12 edges, 6 faces, 1 centroid.
@@ -609,6 +623,11 @@ def test_catalog_coverage_v1() -> None:
         ("SSPbrick", IntRule.Hex_GL_1, "strain"),
         ("Twenty_Node_Brick", IntRule.Hex_GL_3, "stress"),
         ("Twenty_Node_Brick", IntRule.Hex_GL_3, "strain"),
+        # LadrunoBrick20 (Ladruno fork) — H20 std = Hex_GL_3 / 27 GP.
+        # uri (8 GP) is intentionally NOT catalogued (would break
+        # _class_int_rule); DomainCapture refuses loud on size mismatch.
+        ("LadrunoBrick20", IntRule.Hex_GL_3, "stress"),
+        ("LadrunoBrick20", IntRule.Hex_GL_3, "strain"),
         # 2D solids
         ("FourNodeQuad", IntRule.Quad_GL_2, "stress"),
         ("FourNodeQuad", IntRule.Quad_GL_2, "strain"),

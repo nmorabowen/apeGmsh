@@ -177,6 +177,16 @@ class TestLayoutSniff:
         )
         assert cls == "BbarBrick"
 
+    def test_onesixtytwo_with_class_hint_picks_ladruno_brick20(self) -> None:
+        """Twenty_Node_Brick and LadrunoBrick20 share flat size 162."""
+        layout, cls, rule = _identify_layout(
+            "stress", flat_size=162, class_hint="LadrunoBrick20",
+        )
+        assert cls == "LadrunoBrick20"
+        assert rule == IntRule.Hex_GL_3
+        assert layout.class_tag == 33018
+        assert layout.n_gauss_points == 27
+
     def test_no_match_raises(self) -> None:
         with pytest.raises(ValueError, match="No catalog entry"):
             _identify_layout("stress", flat_size=99)

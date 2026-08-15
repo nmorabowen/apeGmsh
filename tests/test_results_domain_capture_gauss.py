@@ -312,3 +312,27 @@ class TestErrorPaths:
             cap.begin_stage("g", kind="static")
             with pytest.raises(ValueError, match="returned 5 values"):
                 cap.step(t=0.0)
+
+    def test_ladruno_brick20_uri_size_mismatch_names_formulation(
+        self, tmp_path: Path,
+    ) -> None:
+        """uri returns 48; catalog expects 162 — message names -formulation uri."""
+        fem = _MockFem([1])
+        spec = _make_spec(
+            ResolvedDomainCaptureRecord(
+                category="gauss", name="r",
+                components=("stress_xx",),
+                dt=None, n_steps=None,
+                element_ids=np.array([1]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+        ops = _FakeOpsElements()
+        ops.ele_class[1] = "LadrunoBrick20"
+        ops.ele_response[(1, "stresses")] = np.zeros(48)
+
+        path = tmp_path / "cap.h5"
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
+            cap.begin_stage("g", kind="static")
+            with pytest.raises(ValueError, match=r"formulation uri"):
+                cap.step(t=0.0)
