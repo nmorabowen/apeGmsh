@@ -3392,6 +3392,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-canvas-slug-test-is-platform-absolute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7757,6 +7768,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-canvas-slug-test-is-platform-absolute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12107,6 +12129,12 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0096-index-harvest-part-results-cluster-fluent-select">ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select<a class="headerlink" href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" title="Permanent link">&para;</a></h3>
+<p>MCP <code>lookup</code> missed sidecar constructors and <code>g.model.select.in_box</code>
+/ <code>.to_label</code> because the S2 harvester only walked session composites
+and <code>apeSees</code>. Those symbols now land in <code>_api_index.json</code> (no new
+MCP verb; Part nested composites are not walked so <code>add_box</code> stays
+unique). Closes the named S5 <code>src/</code>-grep gap.</p>
 <h3 id="fixed-canvas-slug-test-is-platform-absolute">FIXED — canvas slug test is platform-absolute<a class="headerlink" href="#fixed-canvas-slug-test-is-platform-absolute" title="Permanent link">&para;</a></h3>
 <p><code>test_cursor_project_slug_matches_cursor_convention</code> was a Windows
 path resolved against the Linux CI cwd. Assert POSIX slugs on POSIX
