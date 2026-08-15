@@ -24,10 +24,10 @@ to the bridge too.
 > the node ndf (`Node.cpp:940`/`1272`), `fix` / `support` masks must not exceed
 > it, `sp` DOF index must fit. Persistence reuses the existing
 > `/opensees/nodes_ndf` store (schema 2.14.0; current `SCHEMA_VERSION` 2.15.0,
-> no bump). **Deferred:** OQ1(b) endpoint propagation, OQ2 `label=`/`pg=`
-> grammar (decoupled labels are not yet registered into the FEM, and decoupled
-> nodes have no PG-membership path), OQ4 MP master eligibility, OQ6 viewer
-> glyphs. A direct `ops.element.zeroLength(node_i, ground, …)` node-pair form
+> no bump). **Deferred:** OQ1(b) endpoint propagation, OQ2 remainder
+> (`ops.ndf(label=/pg=)` + broad FEM label registration — RBE2/RBE3
+> *constraint roles* closed 2026-08-15, see next note), OQ4 MP master
+> eligibility, OQ6 viewer glyphs. A direct `ops.element.zeroLength(node_i, ground, …)` node-pair form
 > (so a spring can reference a decoupled ground without a meshed line) is the
 > natural next step but out of PR-5 scope. Builds on the broker-chain invariants of
 [ADR 0021](0021-lineage-chain-replaces-snapshot-id.md) /
@@ -36,6 +36,17 @@ to the bridge too.
 phantom-node mechanism of [ADR 0022](0022-mp-constraint-emission-fanout.md),
 and reuses the `∩ ndf_ok` gate of
 [ADR 0046](0046-shell-on-solid-node-sharing-guard.md).
+
+> **Implementation note (RBE2/RBE3 decoupled masters, 2026-08-15).** OQ2 is
+> **closed for constraint roles on `kinematic_coupling` /
+> `distributing_coupling` only.** A labelled `g.decouple_node` (or its
+> handle, normalized to `label=`) is accepted as `master_label` /
+> `slave_label` at declare (`ConstraintsComposite._add_def`) and resolves
+> to the singleton `{tag}` in `_resolve_nodes` — no post-`get_fem_data`
+> retarget. Other constraint kinds refuse a decoupled role at declare.
+> Still open under OQ2: `ops.ndf(label=/pg=)` and registering decoupled
+> labels into `fem.nodes.labels`. OQ4 (cross-partition MP master
+> eligibility) remains deferred.
 
 > **Implementation note (node-pair springs, 2026-06-07).** The
 > `ops.element.zeroLength(node_i, ground, …)` node-pair form named above as the
@@ -472,7 +483,10 @@ previously got from folding `_ndf` into `fem_hash`.
 2. **`ops.ndf` target grammar.** Handle-only, or also `label=` / `pg=` for a
    whole decoupled-node set? Lean: accept a handle, a label, or a PG of
    decoupled nodes — all resolving through the standard contract — but **only**
-   decoupled-node targets (a mesh-node target fails loud).
+   decoupled-node targets (a mesh-node target fails loud). **Partial close
+   (2026-08-15):** RBE2/RBE3 *constraint* roles accept a labelled
+   `g.decouple_node` / handle (see implementation note above); `ops.ndf`
+   itself and broad FEM label registration remain open.
 3. **Composite / directive naming — DECIDED (2026-05-31).** Session verb is
    **`g.decouple_node(...)`** (the verb names the action); bridge directive is
    **`ops.ndf(...)`** (shortest unambiguous verb). Because the 0048 clean break

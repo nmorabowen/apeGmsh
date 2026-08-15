@@ -45,7 +45,9 @@ Tiers 1 to 4 ultimately express the linear MPC equation
 `u_slave = C · u_master`, and differ in **how** `C` is built:
 node co-location (Tier 1), kinematic transformation around a master
 point (Tier 2), shape-function interpolation (Tier 3), or numerical
-integration on the interface (Tier 4). Tiers 5 and 6 are not
+integration on the interface (Tier 4). A labelled `g.decouple_node` (or
+its handle) is a valid RBE2/RBE3 `master_label` so BCs land on an
+`ndf=6` work point. Tiers 5 and 6 are not
 equations at all — they resolve onto their own additive side-lists
 (`fem.elements.contacts`, `fem.elements.interfaces`) and emit
 *elements*, which is how they can carry a force that drops to zero.

@@ -95,6 +95,31 @@ _RESOLVER_METHOD: dict[type, str] = {
 
 _FACE_TYPES = (TieDef, TiedContactDef)
 
+# ADR 0049 OQ2 slice — only RBE2 / RBE3 accept a g.decouple_node label as a
+# constraint role. Other kinds (equal_dof, rigid_link, rigid_diaphragm, …)
+# need their own semantics and refuse the role at declare.
+_DECOUPLED_ROLE_TYPES = (KinematicCouplingDef, DistributingCouplingDef)
+
+
+def _as_role_label(ref, role: str) -> str:
+    """Normalize a ``g.decouple_node`` handle to its label string.
+
+    Constraint defs store roles as label strings (not session handles).
+    A handle without ``label=`` fails loud — there is nothing to look up.
+    """
+    from apeGmsh._kernel.defs.decoupled import DecoupledNodeDef
+
+    if isinstance(ref, DecoupledNodeDef):
+        if not ref.label:
+            raise ValueError(
+                f"{role}: this g.decouple_node handle has no label= — a "
+                f"constraint role is stored on the def as a label string. "
+                f"Declare it as g.decouple_node(coords=..., label='work_pt')."
+            )
+        return ref.label
+    return ref
+
+
 # Surface-facet full node count → corner-node count. The fork contact
 # subsystem (contactSurface -master/-slave-segments) only understands
 # 3-node (tri) / 4-node (quad) facets; a higher-order surface mesh is
@@ -893,6 +918,18 @@ class ConstraintsComposite:
                 f"before use."
             )
         if not isinstance(defn, (NodeToSurfaceDef, EmbeddedDef)):
+            # Decoupled labels (ADR 0049 OQ2) are known to the session
+            # composite, not to Parts / PGs / FEMDataSource — pre-approve
+            # them for RBE2/RBE3 before either phase gate runs.  Live
+            # sessions often have ``g._fem`` set after the first
+            # ``get_fem_data``, so both branches must see the same set.
+            decoupled_ok: set[str] = set()
+            for lbl in (defn.master_label, defn.slave_label):
+                if not isinstance(lbl, str) or not lbl:
+                    continue
+                if self._decoupled_def_for(lbl) is not None:
+                    decoupled_ok.add(lbl)
+
             in_chain_phase = getattr(self._parent, "_fem", None) is not None
             if in_chain_phase:
                 # Chain phase: validate via the FEMData broker.
@@ -900,7 +937,24 @@ class ConstraintsComposite:
 
                 src = FEMDataSource(self._parent._fem)
                 for lbl in (defn.master_label, defn.slave_label):
-                    if not src.has_target(lbl):
+                    is_decoupled = lbl in decoupled_ok
+                    ok = src.has_target(lbl) if isinstance(lbl, str) else False
+                    if is_decoupled and ok:
+                        raise ValueError(
+                            f"Constraint label {lbl!r} names both a "
+                            f"decoupled node and a label / physical group "
+                            f"in the FEMData chain head — rename one so "
+                            f"the constraint role is unambiguous."
+                        )
+                    if is_decoupled and type(defn) not in _DECOUPLED_ROLE_TYPES:
+                        raise ValueError(
+                            f"Constraint label {lbl!r} is a decoupled node, "
+                            f"but {type(defn).__name__} does not accept "
+                            f"decoupled roles. Use kinematic_coupling "
+                            f"(RBE2) or distributing_coupling (RBE3), or "
+                            f"pass master_entities=/slave_entities=."
+                        )
+                    if not is_decoupled and not ok:
                         raise KeyError(
                             f"Constraint label {lbl!r} resolves to "
                             f"neither a label nor a physical group in "
@@ -913,7 +967,25 @@ class ConstraintsComposite:
                 if parts is not None and hasattr(parts, "_instances"):
                     part_names = parts._instances
                     for lbl in (defn.master_label, defn.slave_label):
-                        if not self._label_resolvable(lbl, part_names):
+                        is_decoupled = lbl in decoupled_ok
+                        ok = self._label_resolvable(lbl, part_names)
+                        if is_decoupled and ok:
+                            raise ValueError(
+                                f"Constraint label {lbl!r} names both a "
+                                f"decoupled node and a part / physical "
+                                f"group / label — rename one so the "
+                                f"constraint role is unambiguous."
+                            )
+                        if is_decoupled and type(defn) not in _DECOUPLED_ROLE_TYPES:
+                            raise ValueError(
+                                f"Constraint label {lbl!r} is a decoupled "
+                                f"node, but {type(defn).__name__} does not "
+                                f"accept decoupled roles. Use "
+                                f"kinematic_coupling (RBE2) or "
+                                f"distributing_coupling (RBE3), or pass "
+                                f"master_entities=/slave_entities=."
+                            )
+                        if not is_decoupled and not ok:
                             raise KeyError(
                                 f"Constraint label {lbl!r} is not a part, "
                                 f"physical group, or label.  Build it as a "
@@ -962,6 +1034,31 @@ class ConstraintsComposite:
         except KeyError:
             return False
         return True
+
+    def _decoupled_def_for(self, label):
+        """The :class:`DecoupledNodeDef` named ``label``, or ``None``.
+
+        Raises ``ValueError`` when two defs share the label — an ambiguous
+        constraint reference must not silently pick one.  Uniqueness is
+        enforced only at *reference* time so ``g.decouple_node`` itself
+        stays unchanged.
+        """
+        if not isinstance(label, str) or not label:
+            return None
+        comp = getattr(self._parent, "decoupled_nodes", None)
+        defs = getattr(comp, "node_defs", None) if comp is not None else None
+        if not defs:
+            return None
+        matches = [d for d in defs if getattr(d, "label", None) == label]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise ValueError(
+                f"decoupled label {label!r} matches {len(matches)} "
+                f"g.decouple_node declarations — rename so the constraint "
+                f"role is unambiguous."
+            )
+        return matches[0]
 
     # ── Tier 0 — Single-point (fix to ground) ────────────────────────
     def bc(self, target=None, *, pg=None, label=None, tag=None,
@@ -1522,16 +1619,21 @@ class ConstraintsComposite:
 
         Parameters
         ----------
-        master_label : str
+        master_label : str | DecoupledNodeDef
             Part, physical-group, or label name that owns the reference
-            (master) node. The reference
-            node must carry the rotational DOFs (ndf 6 in 3D / 3 in 2D);
-            the fork refuses a too-small reference at ``setDomain``.
-        slave_label : str
+            (master) node — **or** a ``g.decouple_node`` handle / its
+            ``label=`` (ADR 0049 OQ2). The reference node must carry the
+            rotational DOFs (ndf 6 in 3D / 3 in 2D); the fork refuses a
+            too-small reference at ``setDomain``.
+        slave_label : str | DecoupledNodeDef
             Part, physical-group, or label name whose nodes are slaved
-            (may mix 3- and 6-DOF nodes).
+            (may mix 3- and 6-DOF nodes). A ``g.decouple_node`` handle
+            is accepted the same way as ``master_label``.
         master_point : (x, y, z), default (0, 0, 0)
-            Coordinates of the reference node.
+            Coordinates of the reference node when the master role
+            resolves to a multi-node set (nearest-in-set). **Ignored**
+            when the role is a single decoupled node — that node's own
+            coordinates are used.
         dofs : list[int], optional
             1-based dependent components tied on each slave (``-dof``).
             ``None`` (default) ties *every DOF the slave has* — the right
@@ -1583,14 +1685,20 @@ class ConstraintsComposite:
         Raises
         ------
         KeyError
-            If either label is not in ``g.parts``.
+            If either label is not in ``g.parts`` / PGs / labels and is not
+            a labelled ``g.decouple_node``.
         ValueError
             On an invalid knob (``enforce`` not in {penalty, al};
             non-positive ``k``/``kr``/``bipenalty_dtcr``/``bipenalty_wcap``;
             ``al`` + a bipenalty knob; ``k="auto"`` or ``bipenalty_wcap``
             without ``host``; ``k_alpha`` without ``k="auto"``; a dangling
-            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``).
+            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``);
+            a ``g.decouple_node`` handle without ``label=``; a label that
+            names both a decoupled node and a Part/PG; an ambiguous
+            duplicate decoupled label.
         """
+        master_label = _as_role_label(master_label, "master_label")
+        slave_label = _as_role_label(slave_label, "slave_label")
         return self._add_def(KinematicCouplingDef(
             master_label=master_label, slave_label=slave_label,
             master_point=master_point, dofs=dofs,
@@ -1799,19 +1907,22 @@ class ConstraintsComposite:
 
         Parameters
         ----------
-        master_label : str
+        master_label : str | DecoupledNodeDef
             Part, physical-group, or label name owning the reference
-            (dependent) node R. R must
-            carry the rotational DOFs (ndf 6 in 3D / 3 in 2D) to transmit
-            a moment; the fork refuses a too-small reference at
-            ``setDomain``.
-        slave_label : str
+            (dependent) node R — **or** a ``g.decouple_node`` handle / its
+            ``label=`` (ADR 0049 OQ2). R must carry the rotational DOFs
+            (ndf 6 in 3D / 3 in 2D) to transmit a moment; the fork refuses
+            a too-small reference at ``setDomain``.
+        slave_label : str | DecoupledNodeDef
             Part, physical-group, or label name whose nodes form the
-            **independent** set
-            (translations-only is fine — no rotational stiffness is
-            injected).
+            **independent** set (translations-only is fine — no rotational
+            stiffness is injected). A ``g.decouple_node`` handle is
+            accepted the same way as ``master_label``.
         master_point : (x, y, z), default (0, 0, 0)
-            Coordinates of the reference node R.
+            Coordinates of the reference node R when the master role
+            resolves to a multi-node set (nearest-in-set). **Ignored**
+            when the role is a single decoupled node — that node's own
+            coordinates are used.
         weighting : ``"uniform"`` | ``"area"``, default ``"uniform"``
             ``"uniform"`` ⇒ equal weights (``-w`` omitted, the fork
             element's default). ``"area"`` ⇒ apeGmsh computes each
@@ -1873,7 +1984,10 @@ class ConstraintsComposite:
             ``al`` + a bipenalty knob; ``k="auto"`` or ``bipenalty_wcap``
             without ``host``; ``k_alpha`` without ``k="auto"``; a dangling
             ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``;
-            ``weighting`` not in {uniform, area}).
+            ``weighting`` not in {uniform, area}); a ``g.decouple_node``
+            handle without ``label=``; a label that names both a
+            decoupled node and a Part/PG; an ambiguous duplicate
+            decoupled label.
         """
         if weighting not in ("uniform", "area"):
             raise ValueError(
@@ -1881,6 +1995,8 @@ class ConstraintsComposite:
                 "weights) or 'area' (tributary-area -w weights computed over "
                 f"the slave surface), got {weighting!r}."
             )
+        master_label = _as_role_label(master_label, "master_label")
+        slave_label = _as_role_label(slave_label, "slave_label")
         return self._add_def(DistributingCouplingDef(
             master_label=master_label, slave_label=slave_label,
             master_point=master_point, weighting=weighting,
@@ -2401,7 +2517,10 @@ class ConstraintsComposite:
     def _resolve_nodes(self, label, role, defn, node_map, all_nodes):
         """Resolve a constraint role to its mesh-node set — fail loud.
 
-        Explicit ``{role}_entities`` win.  Otherwise the part ``label``'s
+        Explicit ``{role}_entities`` win.  A labelled ``g.decouple_node``
+        (ADR 0049 OQ2) resolves to the singleton ``{tag}`` *before* the
+        Part ``node_map`` lookup so a Part bbox that swallows the knot
+        cannot shadow the explicit name.  Otherwise the part ``label``'s
         node set is taken from ``node_map``; a *known* Part with an empty
         entry raises (a meshing error).  A label that is not a Part falls
         back to the shared label→PG resolver so physical-group models can
@@ -2413,6 +2532,25 @@ class ConstraintsComposite:
         if selected:
             return self._nodes_from_dimtags(
                 selected, kind, role, source=f"{role}_entities={selected!r}")
+        dn = self._decoupled_def_for(label)
+        if dn is not None:
+            if dn.tag is None:
+                raise ValueError(
+                    f"{kind} {role}: decoupled node {label!r} has no "
+                    f"resolved tag — internal ordering bug (factory must "
+                    f"assign tags before constraint resolve)."
+                )
+            tag = int(dn.tag)
+            # ``all_nodes`` may be a set, list, or ndarray of tags.
+            pool = {int(t) for t in all_nodes}
+            if tag not in pool:
+                raise ValueError(
+                    f"{kind} {role}: decoupled node {label!r} resolved "
+                    f"to tag {tag}, which is absent from the extracted "
+                    f"node pool — was get_fem_data called after "
+                    f"g.decouple_node?"
+                )
+            return {tag}
         nodes = node_map.get(label)
         if nodes:
             return nodes

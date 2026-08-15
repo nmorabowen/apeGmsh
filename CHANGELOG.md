@@ -396,6 +396,14 @@ by hand.
   — both already existed on `results.elements.gauss.get`. A contour that
   overrides the recovery bypasses the shared visual store (its float16 cache
   and global colour range hold default-recovery values) and re-reads per step.
+### ADDED — labelled `g.decouple_node` as RBE2/RBE3 master (ADR 0049 OQ2 slice)
+
+`g.constraints.kinematic_coupling` and `g.constraints.distributing_coupling`
+accept a labelled `g.decouple_node` (string `label=` or the handle) as
+`master_label` / `slave_label`. Resolve binds the singleton decoupled tag —
+no post-`get_fem_data` retarget. Other constraint kinds refuse a decoupled
+role at declare. `ops.ndf(label=/pg=)` and broad FEM label registration
+remain open; OQ4 (partitioned MP master) stays deferred.
 
 ### ADDED — `g.constraints.interface()`: a coincident-pair interface that can let go (ADR 0093)
 
