@@ -119,6 +119,8 @@ ELE_TAG_BezierTri6 = 33000
 ELE_TAG_BezierTet10 = 33001
 # Ladruno-fork unified 8-node hex (live from ladruno:SRC/classTags.h).
 ELE_TAG_LadrunoBrick = 33002
+# Ladruno-fork 20-node serendipity quadratic hex (live from ladruno:SRC/classTags.h).
+ELE_TAG_LadrunoBrick20 = 33018
 # Ladruno-fork unified 4-node plane continuum (live from ladruno:SRC/classTags.h).
 ELE_TAG_LadrunoQuad = 33007
 # Ladruno-fork 3-node constant-strain triangle (live from ladruno:SRC/classTags.h).
@@ -1035,6 +1037,36 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="isoparametric",
         component_names=STRAIN,
         class_tag=ELE_TAG_Twenty_Node_Brick,
+    ),
+
+    # ── LadrunoBrick20 (20-node, 27 GPs Hex_GL_3) ─────────────────────
+    # Ladruno-fork H20 (tag 33018, ADR 72). ``formulation="std"`` reduces
+    # to the Twenty_Node_Brick kernel and packs stresses/strains as
+    # Vector(nGP()*6) with nGP()=27 — GP order is the brcshl
+    # corner-edge-face-centroid walk in LadrunoHex20Shape.h GP27[],
+    # bit-identical to ``_HEX_GL_3_COORDS`` (live-probed: max |Δ|=0).
+    # Unlike LadrunoBrick, ``formulation="uri"`` does NOT mirror onto 27
+    # slots: it returns a genuine Vector(48) = 8×6 Hex_GL_2. DomainCapture
+    # keys only on eleType, so a second non-Custom Hex_GL_2 row would make
+    # ``_class_int_rule`` return None and drop *all* LadrunoBrick20
+    # elements (std included). Catalog std only; uri fails loud at
+    # ``_GaussCapturer.step`` (48 vs 162) — use the .ladruno recorder
+    # (which re-routes per-element via basisInfo) for uri gauss. MPCO
+    # writes bracket rule 0 (NoIntegrationRule) for every Ladruno-band
+    # tag including 33018 — same unreachable gap as LadrunoBrick today;
+    # no Custom/NoIntegrationRule mirror here (would also break
+    # ``_class_int_rule``).
+    ("LadrunoBrick20", IntRule.Hex_GL_3, "stress"): _continuum_layout(
+        n_gp=27, natural_coords=_HEX_GL_3_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS,
+        class_tag=ELE_TAG_LadrunoBrick20,
+    ),
+    ("LadrunoBrick20", IntRule.Hex_GL_3, "strain"): _continuum_layout(
+        n_gp=27, natural_coords=_HEX_GL_3_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_LadrunoBrick20,
     ),
 
     # ── EightNodeQuad (8-node, 9 GPs Quad_GL_3) ──────────────────────

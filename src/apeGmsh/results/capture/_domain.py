@@ -97,6 +97,7 @@ from numpy import ndarray
 
 from ...opensees._response_catalog import (
     CUSTOM_RULE_CATALOG,
+    ELE_TAG_LadrunoBrick20,
     FIBER_CATALOG,
     INFERRED_SECTION_CODES_TABLE,
     LAYER_CATALOG,
@@ -304,6 +305,46 @@ def _gauss_record_tokens(record: "ResolvedDomainCaptureRecord") -> tuple[str, st
     if catalog_token is None:
         return None
     return (catalog_token, keyword)
+
+
+def _gauss_size_mismatch_hint(
+    *,
+    class_tag: int | None,
+    returned: int,
+    expected: int,
+    n_components_per_gp: int,
+    n_gauss_points: int,
+) -> str:
+    """Extra guidance appended to a gauss ``eleResponse`` size mismatch.
+
+    Keeps the raise site readable; each arm is a known failure mode.
+    """
+    # LadrunoBrick20(uri) returns a genuine 8×6 Vector(48); the catalog
+    # only registers the std Hex_GL_3 layout (162). See RESPONSE_CATALOG.
+    if (
+        class_tag == ELE_TAG_LadrunoBrick20
+        and returned == 48
+        and expected == 162
+    ):
+        return (
+            "  LadrunoBrick20 with -formulation uri returns 8 Gauss "
+            "points (C3D20R); DomainCapture catalogs only the std "
+            "27-point layout. Use formulation='std', or record uri "
+            "gauss through the .ladruno recorder (per-element basisInfo "
+            "re-route) instead."
+        )
+    if returned == n_components_per_gp and n_gauss_points > 1:
+        return (
+            "  One Gauss point's worth came back for a "
+            "multi-GP element — the classic symptom of an "
+            "engine whose element-level response Vector was "
+            "sized for one point (TenNodeTetrahedron did "
+            "exactly this until the Ladruno fix of 2026-08, "
+            "commit 732ab316d). Upgrade the engine, or "
+            "record this element class through MPCO / the "
+            "Ladruno recorder instead."
+        )
+    return ""
 
 
 def _class_int_rule(class_name: str) -> int | None:
@@ -1169,18 +1210,12 @@ class _GaussCapturer:
                         f"returned {arr.size} values but the catalog "
                         f"layout for {grp.layout.class_tag} expects "
                         f"{grp.layout.flat_size_per_element}."
-                        + (
-                            "  One Gauss point's worth came back for a "
-                            "multi-GP element — the classic symptom of an "
-                            "engine whose element-level response Vector was "
-                            "sized for one point (TenNodeTetrahedron did "
-                            "exactly this until the Ladruno fix of 2026-08, "
-                            "commit 732ab316d). Upgrade the engine, or "
-                            "record this element class through MPCO / the "
-                            "Ladruno recorder instead."
-                            if arr.size == grp.layout.n_components_per_gp
-                            and grp.layout.n_gauss_points > 1
-                            else ""
+                        + _gauss_size_mismatch_hint(
+                            class_tag=grp.layout.class_tag,
+                            returned=arr.size,
+                            expected=grp.layout.flat_size_per_element,
+                            n_components_per_gp=grp.layout.n_components_per_gp,
+                            n_gauss_points=grp.layout.n_gauss_points,
                         )
                     )
                 buf.append(arr)
