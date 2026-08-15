@@ -2721,8 +2721,8 @@ class _StubTypeInfo:
 #: guide §2 allow-list): general (unsymmetric-storage) solvers only.
 #: Serial: UmfPack / SparseGeneral (SuperLU) / FullGeneral / BandGeneral /
 #: Pardiso (MKL matrix type 11 — real and unsymmetric, same storage as
-#: UmfPack); MPI: Mumps (apeGmsh's typed Mumps emits the bare command,
-#: whose matrixType default is SYM=0 — general).  Everything else either
+#: UmfPack); MPI: Mumps (apeGmsh's typed Mumps emits ``-matrixType 0``,
+#: SYM=0 — general).  Everything else either
 #: stores only one triangle (BandSPD / ProfileSPD / SProfileSPD /
 #: ParallelProfileSPD / SparseSYM — one Q coupling block is silently
 #: dropped at assembly) or solves only the diagonal (Diagonal /

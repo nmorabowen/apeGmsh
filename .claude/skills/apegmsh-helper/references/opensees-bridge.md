@@ -401,11 +401,24 @@ explicit one — and fails loud under `Transformation`/`Auto`). An
 persists its enforce route + projection weights, and the H5 deck emitter no
 longer raises `H5EquationConstraintDeviationWarning` (ADR 0068 item 4, #753).
 The fork contact generator `g.constraints.contact(...)` (NTS/mortar,
-plus `contact_plane(...)` rigid planes) auto-emits a
-`LadrunoContact` handler; `g.embed(host, nodes, ...)` emits a
+plus `contact_plane(...)` rigid planes) **auto-emits**
+`constraints LadrunoContact` whenever contacts are present — keep that
+force; do **not** also call `ops.constraints.LadrunoContact()` on a flat
+deck or you get a duplicate handler line. (Staged contact is different:
+each stage must declare its own effective `LadrunoContact` — see ADR
+0092.) `g.embed(host, nodes, ...)` emits a
 `LadrunoEmbeddedNode` tie. All of these **emit on any build but run only on
 the Ladruno fork**. Signatures + persistence schemas are in
 `api-cheatsheet.md` (constraints) and `ladruno.md`.
+
+**`ops.system.Pardiso` / `Mumps` always emit `-matrixType`.** Including
+`0` for `matrix_type="unsymmetric"` (the default). A prior `if code:`
+trap dropped that flag because Python treats `0` as false — decks looked
+like bare `system Pardiso` even when you asked for unsymmetric. Contact /
+friction / `-geomtan` / `LadrunoUP` need unsymmetric storage; prefer
+`Pardiso(matrix_type="unsymmetric")` (now explicit in the Tcl) or
+`UmfPack`. Do **not** use `"symmetric"` / `"spd"` on those tangents —
+half-storage silently solves a different system.
 
 **Interface springs are the third auto-emit lane (ADR 0093) — and stock
 OpenSees.** `g.constraints.interface(...)` resolves onto the

@@ -286,11 +286,12 @@ class Pardiso(LinearSystem):
         _ = tag
         args: "list[int | float | str]" = []
         code = _MATRIX_TYPES[self.matrix_type]
-        if code:
-            # Emit an INT, never a str: the fork parses -matrixType with
-            # OPS_GetIntInput, and a string value fails that parse and
-            # degrades the solver (fork PR #630).
-            args += ["-matrixType", code]
+        # Always emit -matrixType, including 0 (unsymmetric). A bare
+        # ``if code:`` treats 0 as false and silently drops the flag, so
+        # ``Pardiso(matrix_type="unsymmetric")`` looked like an unset
+        # default in the deck. Emit an INT, never a str: the fork parses
+        # with OPS_GetIntInput (fork PR #630).
+        args += ["-matrixType", code]
         if self.krylov is not None:
             args += ["-krylov", int(self.krylov)]
         if self.stats:
@@ -310,9 +311,9 @@ class Mumps(LinearSystem):
     """``system Mumps <options>`` — MUMPS multifrontal sparse solver.
 
     The cluster/MPI counterpart of :class:`Pardiso`, and the system to
-    use under ``OpenSeesMP``. Every parameter is optional and emitted
-    only when set, so the default still renders the bare ``system
-    Mumps``.
+    use under ``OpenSeesMP``. Optional knobs are emitted only when set;
+    ``matrix_type`` is always emitted (including ``0`` for the default
+    unsymmetric mode) so the deck does not hide the storage choice.
 
     Parameters
     ----------
@@ -421,10 +422,10 @@ class Mumps(LinearSystem):
         if self.icntl7 is not None:
             args += ["-ICNTL7", int(self.icntl7)]
         code = _MATRIX_TYPES[self.matrix_type]
-        if code:
-            # An INT, never a str — the fork parses this with
-            # OPS_GetIntInput and a failed parse drops the whole SOE.
-            args += ["-matrixType", code]
+        # Always emit -matrixType, including 0 (unsymmetric). Same
+        # falsy-0 trap as Pardiso — ``if code:`` would omit the flag.
+        # An INT, never a str — the fork parses with OPS_GetIntInput.
+        args += ["-matrixType", code]
         if self.blr is not None:
             args += ["-BLR", float(self.blr)]
         if self.icntl35 is not None:

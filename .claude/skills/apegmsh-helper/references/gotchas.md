@@ -8,6 +8,16 @@ that aren't obvious from the API surface.
 
 ## Anti-patterns (❌ → ✅)
 
+### ❌ `ops.constraints.LadrunoContact()` on a flat contact deck → ✅ let auto-emit do it
+`g.constraints.contact(...)` already forces `constraints LadrunoContact`.
+Calling the typed handler yourself on a non-staged deck doubles the line.
+(Staged contact is the exception — each stage must declare it.)
+
+### ❌ Assume bare `system Pardiso` hid your `matrix_type=` → ✅ read `-matrixType N`
+`Pardiso` / `Mumps` always emit `-matrixType` now, including `0` for
+unsymmetric. Contact needs that mode; `"symmetric"` / `"spd"` on a
+contact tangent silently solve the wrong system.
+
 ### ❌ `equal_dof` for non-matching meshes → ✅ use `tie`
 `equal_dof` needs co-located nodes. `tie` uses shape-function
 interpolation for non-matching interfaces.

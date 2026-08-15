@@ -27,7 +27,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:

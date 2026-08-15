@@ -129,11 +129,25 @@ as_element=True, mass=None, omega=(wx,wy,wz))` — `-omega` initial spin, ADR
 and two constraint **handlers**: `LadrunoProjection`
 (`ops.constraints.LadrunoProjection(verbose=, project_ics=, ic_tol=)` —
 momentum-conserving projection, auto-picked for explicit `enforce="equation"`
-ties) and `LadrunoContact` (`ops.constraints.LadrunoContact()` — activates the
-fork `g.constraints.contact` solve: NTS/mortar, the mortar-only edge-edge
-fallback, the `-cell` broad-phase knob, and `contact_plane` rigid analytical
-planes, ADR 0073). See `api-cheatsheet.md` constraints + `opensees-bridge.md`
-for the `enforce=` routes.
+ties) and `LadrunoContact` (auto-emitted by the bridge whenever
+`g.constraints.contact` / `contact_plane` records are present — activates the
+fork contact solve: NTS/mortar, the mortar-only edge-edge fallback, the
+`-cell` broad-phase knob, and `contact_plane` rigid analytical planes, ADR
+0073). On a **flat** deck do **not** also call
+`ops.constraints.LadrunoContact()` — that duplicates the auto-emitted line.
+Staged contact still requires each stage to declare the handler (ADR 0092).
+See `api-cheatsheet.md` constraints + `opensees-bridge.md` for the
+`enforce=` routes.
+
+**PARDISO / MUMPS (`ops.system.Pardiso` / `Mumps`, fork ADR-75).** Typed
+emit always writes `-matrixType 0|1|2` as an int (including `0` for
+`"unsymmetric"`). Contact, friction, non-associated flow, `LadrunoUP`, and
+finite-strain F-bar need unsymmetric — use the default or
+`matrix_type="unsymmetric"` (deck shows `system Pardiso -matrixType 0`).
+`"symmetric"` / `"spd"` are half-storage and wrong on those tangents.
+Thread count is env-only (`MKL_NUM_THREADS` / `OMP_NUM_THREADS` before
+process start). Optional `krylov=L` (CGS reuse, not with `"symmetric"`)
+and `stats=True`.
 
 ## LadrunoBrick (unified 8-node hex)
 
