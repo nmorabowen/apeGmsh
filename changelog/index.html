@@ -3788,6 +3788,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-labelled-gdecouple_node-as-rbe2rbe3-master-adr-0049-oq2-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — labelled g.decouple_node as RBE2/RBE3 master (ADR 0049 OQ2 slice)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintsinterface-a-coincident-pair-interface-that-can-let-go-adr-0093" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8164,6 +8175,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-labelled-gdecouple_node-as-rbe2rbe3-master-adr-0049-oq2-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — labelled g.decouple_node as RBE2/RBE3 master (ADR 0049 OQ2 slice)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintsinterface-a-coincident-pair-interface-that-can-let-go-adr-0093" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12442,6 +12464,13 @@ by hand.</p>
   overrides the recovery bypasses the shared visual store (its float16 cache
   and global colour range hold default-recovery values) and re-reads per step.</li>
 </ul>
+<h3 id="added-labelled-gdecouple_node-as-rbe2rbe3-master-adr-0049-oq2-slice">ADDED — labelled <code>g.decouple_node</code> as RBE2/RBE3 master (ADR 0049 OQ2 slice)<a class="headerlink" href="#added-labelled-gdecouple_node-as-rbe2rbe3-master-adr-0049-oq2-slice" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.kinematic_coupling</code> and <code>g.constraints.distributing_coupling</code>
+accept a labelled <code>g.decouple_node</code> (string <code>label=</code> or the handle) as
+<code>master_label</code> / <code>slave_label</code>. Resolve binds the singleton decoupled tag —
+no post-<code>get_fem_data</code> retarget. Other constraint kinds refuse a decoupled
+role at declare. <code>ops.ndf(label=/pg=)</code> and broad FEM label registration
+remain open; OQ4 (partitioned MP master) stays deferred.</p>
 <h3 id="added-gconstraintsinterface-a-coincident-pair-interface-that-can-let-go-adr-0093">ADDED — <code>g.constraints.interface()</code>: a coincident-pair interface that can let go (ADR 0093)<a class="headerlink" href="#added-gconstraintsinterface-a-coincident-pair-interface-that-can-let-go-adr-0093" title="Permanent link">&para;</a></h3>
 <p>The constraints roster gains its first non-bond. <code>g.constraints.interface(
 master, slave, *, normal=, tangential=, thickness=, tolerance=1e-6,

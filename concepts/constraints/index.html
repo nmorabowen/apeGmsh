@@ -3693,7 +3693,10 @@ over a node set as a statically equivalent pattern while the set stays
 deformable, with <code>weighting="area"</code> for a traction-like spread. Reach for RBE2
 when the region must move rigidly (a loading platen); RBE3 when you want to
 <em>introduce a load</em> without stiffening anything. Both emit dedicated Ladruno
-fork elements: the deck is written on any build, but running it needs the fork.</p>
+fork elements: the deck is written on any build, but running it needs the fork.
+A labelled <code>g.decouple_node</code> (or its handle) is a valid reference for either —
+pass it as <code>master_label</code> so essential (<code>ops.fix</code>) or natural (<code>p.load</code>) BCs
+land on the <code>ndf=6</code> work point without a post-mesh retarget.</p>
 <h2 id="non-matching-meshes-ties">Non-matching meshes: ties<a class="headerlink" href="#non-matching-meshes-ties" title="Permanent link">&para;</a></h2>
 <p>Fragmenting everything conformal is not always possible or desirable — a shell
 floor on a solid column, two independently meshed blocks, a refined region
