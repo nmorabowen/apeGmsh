@@ -513,6 +513,28 @@ limits, and the viewer `'Module'` color mode in `compose.md`.
 
 ## Patterns worth knowing (not full workflows)
 
+### Holes / voids (ADR 0097)
+
+Author empty tools, then subtract before mesh. `as_void=True` is a role,
+not a solid type; `cut_by_*` is the wrong family (split, keep pieces).
+
+```python
+g.model.geometry.add_box(0, 0, 0, 4, 2, 3, label="wall")
+g.model.geometry.add_cylinder(2, 1, -0.1, 0, 0, 3.2, 0.25,
+                              as_void=True, label="duct")
+g.model.boolean.apply_voids("wall")   # or cut("wall", "duct")
+
+path = g.model.geometry.add_polyline(
+    [(0, 1, 1), (2, 1, 1), (2, 3, 1)], fillet={1: 0.2},
+)
+profile = g.model.geometry.add_polyline(
+    [(0, 0.9, 0.9), (0, 1.1, 0.9), (0, 1.1, 1.1), (0, 0.9, 1.1)],
+    closed=True,
+)
+g.model.geometry.add_void_sweep(profile, path, label="elbow")
+g.model.boolean.apply_voids("wall")
+```
+
 ### Label → physical group promotion
 
 Labels (Tier 1) don't commit to a dimension. To make a label visible to a

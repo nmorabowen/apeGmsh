@@ -7,12 +7,14 @@ description: >
   import apeGmsh`` / ``Part`` / ``FEMData`` / ``Results``) or touches the
   apeGmsh project at ``C:\Users\nmora\Github\apeGmsh``. Trigger for:
   building an ``apeGmsh`` session, composing geometry via
-  ``g.model.geometry/boolean/transforms/io/queries``, meshing via
-  ``g.mesh.generation/sizing/field/structured/editing/queries/
+  ``g.model.geometry/boolean/transforms/io/queries`` (including
+  ``as_void`` / ``add_polyline`` / ``add_void_sweep`` / ``apply_voids``),
+  meshing via ``g.mesh.generation/sizing/field/structured/editing/queries/
   partitioning``, labels, physical groups, FEMData broker
   (``g.mesh.queries.get_fem_data``), multi-part assemblies (``Part`` +
   ``g.parts``), loads / masses / constraints (``g.loads``, ``g.masses``,
-  ``g.constraints``), per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
+  ``g.constraints`` — labelled ``g.decouple_node`` as RBE2/RBE3 master),
+  per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
   OpenSees bridge with typed primitives, post-processing OpenSees output
   via ``Results`` (``from_native`` / ``from_mpco`` / ``from_recorders``)
   and the web/Qt viewers, native ``model.h5`` persistence

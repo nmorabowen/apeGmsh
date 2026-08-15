@@ -139,15 +139,17 @@ g.model.geometry.validate_pre_mesh(*, strict=False) -> None  # raises GeometryVa
 `# verified: tests/test_geometry_topology.py::TestFindOrphansDryRun::test_sweep_dangling_dry_run_does_not_modify`
 
 `validate_pre_mesh()` default `strict=False` is **closed-world**
-(stale-metadata only) and is **auto-invoked by `g.mesh.generation.generate()`**.
+(stale-metadata only) **plus** an unapplied-void check (ADR 0097), and
+is **auto-invoked by `g.mesh.generation.generate()`**.
 `strict=True` is **open-world** (`find_orphans`) — opt-in only; never
 auto-wired (it broke 63 raw-gmsh tests). Slivers in raw `gmsh.model.*`
 geometry are legitimate, so open-world checks would false-positive.
 Typed warnings/errors:
-`from apeGmsh.core._geometry_errors import GeometryValidationError, WarnGeomCoincidentFace, WarnGeomOneSidedCut`
-(both warnings subclass `UserWarning`; silence with `warnings.simplefilter('ignore', ...)`).
+`from apeGmsh.core._geometry_errors import GeometryValidationError, WarnGeomCoincidentFace, WarnGeomOneSidedCut, WarnGeomSharpPolylineCorner`
+(warnings subclass `UserWarning`; silence with `warnings.simplefilter('ignore', ...)`).
 `# verified: tests/test_geometry_topology.py::TestValidatePreMesh::test_validate_pre_mesh_default_passes_on_clean_model`
 `# verified: tests/test_geometry_topology.py::TestFindStaleMetadata::test_clean_model_has_no_stale_metadata`
+`# verified: tests/test_void_cut.py`
 
 ### `g.model.boolean` — boolean ops (`_Boolean`)
 

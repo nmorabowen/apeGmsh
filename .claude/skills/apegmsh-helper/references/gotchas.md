@@ -30,7 +30,13 @@ masters post-mesh. Other constraint kinds refuse a decoupled role at declare;
 body as a boolean tool — it is not a separate solid type. Unapplied
 `role="void"` tools fail loud at `generate()` (they would otherwise mesh as
 solids). Subtract with `g.model.boolean.apply_voids(host)` or
-`g.model.boolean.cut(host, tool)`.
+`g.model.boolean.cut(host, tool)`. Do **not** use `cut_by_surface` /
+`cut_by_plane` for openings — those *split* and keep pieces.
+
+### ❌ Sharp open polyline path without fillet → ✅ `fillet={i: R}`
+Open `add_polyline` vertices turning >30° with no fillet/chamfer emit
+`WarnGeomSharpPolylineCorner` — OCC `addPipe` kinks. Closed profiles do
+not warn. Same-vertex fillet+chamfer, or setback longer than a leg, raise.
 
 ### ❌ `equal_dof` for non-matching meshes → ✅ use `tie`
 `equal_dof` needs co-located nodes. `tie` uses shape-function
