@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -17,6 +17,20 @@ Calling the typed handler yourself on a non-staged deck doubles the line.
 `Pardiso` / `Mumps` always emit `-matrixType` now, including `0` for
 unsymmetric. Contact needs that mode; `"symmetric"` / `"spd"` on a
 contact tangent silently solve the wrong system.
+
+### ❌ Retargeting RBE masters after `get_fem_data` → ✅ declare the decoupled label
+A labelled `g.decouple_node` (string `label=` or the handle) is a valid
+`kinematic_coupling` / `distributing_coupling` `master_label` at declare —
+resolve binds the singleton tag. Do not declare against a face then rewrite
+masters post-mesh. Other constraint kinds refuse a decoupled role at declare;
+`ops.ndf` still sizes the work point (`ndf=6` for 3-D RBE masters).
+
+### ❌ Leaving `as_void` tools unapplied → ✅ `boolean.apply_voids` / `cut` before mesh
+`as_void=True` (or `add_void_sweep` / `add_void_loft`) marks an ordinary OCC
+body as a boolean tool — it is not a separate solid type. Unapplied
+`role="void"` tools fail loud at `generate()` (they would otherwise mesh as
+solids). Subtract with `g.model.boolean.apply_voids(host)` or
+`g.model.boolean.cut(host, tool)`.
 
 ### ❌ `equal_dof` for non-matching meshes → ✅ use `tie`
 `equal_dof` needs co-located nodes. `tie` uses shape-function

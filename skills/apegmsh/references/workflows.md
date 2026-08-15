@@ -1,5 +1,5 @@
 # apeGmsh workflows — end-to-end patterns
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Concrete recipes for the workflows that come up most often. Each one is a
 working skeleton — fill in the geometry and it runs against the **v2.0.0**
@@ -185,6 +185,22 @@ an *interpolation* between non-matching meshes — a master surface drives a
 slave entity even when their nodes don't line up (a surface/interpolation
 record on `fem.elements.constraints`). Reach for `tie` across non-conformal
 interfaces; `equal_dof` only when nodes coincide.
+
+**Work-point RBE master (ADR 0049 OQ2).** A labelled `g.decouple_node` is a
+valid `kinematic_coupling` / `distributing_coupling` reference — declare it
+pre-mesh; resolve binds the singleton tag (no post-`get_fem_data` retarget):
+
+```python
+h = g.decouple_node(coords=work_pt, label="work_pt")
+g.constraints.kinematic_coupling(h, "end_face", ...)  # or master_label="work_pt"
+fem = g.mesh.queries.get_fem_data(dim=3)
+ops = apeSees(fem)
+ops.ndf(h, ndf=6)
+ops.fix(nodes=[h.tag], dofs=(1, 1, 1, 1, 1, 1))
+```
+
+Other constraint kinds refuse a decoupled role at declare. `ops.ndf(label=/pg=)`
+and partitioned MP master eligibility (OQ4) remain open.
 
 ### 3.2  Stage 2 — resolution at `get_fem_data`
 

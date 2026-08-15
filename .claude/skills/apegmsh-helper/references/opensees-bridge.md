@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -470,14 +470,18 @@ never a shared node (see the shell-on-solid idiom / ADR 0046).
 **`ops.ndf` — the one explicit channel (element-less decoupled nodes only).**
 A node inference cannot reach — an SSI spring/dashpot **ground**, a control
 node, a mass anchor created via `g.decouple_node(...)` that no element touches —
-has its `ndf` stated on the bridge:
+has its `ndf` stated on the bridge. The same labelled handle is a valid
+`kinematic_coupling` / `distributing_coupling` `master_label` (ADR 0049 OQ2);
+state `ndf=6` before essential/natural BCs on that work point:
 
 ```python
-gnd = g.decouple_node(coords=(x, y, z), label="pile_ground")  # session: identity
+h = g.decouple_node(coords=(x, y, z), label="work_pt")  # session: identity
+g.constraints.kinematic_coupling(h, "end_face", ...)    # or master_label="work_pt"
 ...
-ops.ndf(gnd, ndf=3)          # bridge: DOF count (handle or int tag)
+ops.ndf(h, ndf=6)          # bridge: DOF count (handle or int tag)
+ops.fix(nodes=[h.tag], dofs=(1, 1, 1, 1, 1, 1))  # after get_fem_data
 ```
-<!-- verified: tests/opensees/unit/test_ops_ndf.py::test_ops_ndf_emits_stated_ndf_on_decoupled_node -->
+<!-- verified: tests/test_decoupled_constraint_master.py -->
 
 `ops.ndf` targets a `g.decouple_node` handle or its int tag (a `label=`/`pg=`
 grammar is deferred). It **fails loud** on a mesh node or any element-touched
