@@ -3403,6 +3403,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-domaincapture-gauss-catalog-covers-ladrunobrick20-std" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DomainCapture gauss catalog covers LadrunoBrick20 (std)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7801,6 +7812,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-domaincapture-gauss-catalog-covers-ladrunobrick20-std" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DomainCapture gauss catalog covers LadrunoBrick20 (std)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12181,6 +12203,19 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-domaincapture-gauss-catalog-covers-ladrunobrick20-std">ADDED — DomainCapture gauss catalog covers <code>LadrunoBrick20</code> (std)<a class="headerlink" href="#added-domaincapture-gauss-catalog-covers-ladrunobrick20-std" title="Permanent link">&para;</a></h3>
+<p><code>LadrunoBrick20</code> (fork H20, tag 33018) was emit/run-ready but missing
+from <code>RESPONSE_CATALOG</code>, so DomainCapture skipped hex20 continuum
+stress/strain with an empty dataset. Catalog now registers the std
+27-GP <code>Hex_GL_3</code> layout (same brcshl walk as <code>Twenty_Node_Brick</code> /
+<code>LadrunoHex20Shape.h</code> <code>GP27[]</code>, live-probed identical).
+<code>formulation="uri"</code> returns a genuine <code>Vector(48)</code> (no slot-0
+mirror, unlike <code>LadrunoBrick</code>) — a second non-Custom rule would make
+<code>_class_int_rule</code> return <code>None</code> and drop <em>all</em> LadrunoBrick20
+elements, so uri stays out of the catalog and DomainCapture fails loud
+with a message that names <code>-formulation uri</code> (use the <code>.ladruno</code>
+recorder for uri gauss). MPCO still writes rule <code>0</code> for Ladruno-band
+tags (pre-existing; same as <code>LadrunoBrick</code>) — not fixed here.</p>
 <h3 id="added-adr-0096-index-harvest-part-results-cluster-fluent-select">ADDED — ADR 0096 index harvest: Part / Results / Cluster / fluent select<a class="headerlink" href="#added-adr-0096-index-harvest-part-results-cluster-fluent-select" title="Permanent link">&para;</a></h3>
 <p>MCP <code>lookup</code> missed sidecar constructors and <code>g.model.select.in_box</code>
 / <code>.to_label</code> because the S2 harvester only walked session composites
