@@ -61,6 +61,21 @@ class WarnGeomImportHealth(UserWarning):
     """
 
 
+class WarnGeomSharpPolylineCorner(UserWarning):
+    """Advisory: a polyline vertex turns more than 30° with no fillet
+    or chamfer (ADR 0097).
+
+    OCC ``addPipe`` (``g.model.transforms.sweep`` /
+    ``g.model.geometry.sweep``) kinks or fails at sharp path corners.
+    The warning names the vertex index and turning angle so the author
+    can pass ``fillet=`` / ``chamfer=`` on :meth:`_Geometry.add_polyline`.
+    Emitted for open polylines only (closed profiles are not pipe paths).
+
+    Subclass of :class:`UserWarning` so it can be silenced with
+    ``warnings.simplefilter('ignore', WarnGeomSharpPolylineCorner)``.
+    """
+
+
 class WarnGeomOneSidedCut(UserWarning):
     """Advisory: a plane-cut produced fragments on only one side of
     the plane.

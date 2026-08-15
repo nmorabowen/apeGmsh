@@ -99,6 +99,42 @@ highest-dimension result; for `extrude` and `revolve` you index into the
 returned list and name what you need. Either way, the naming discipline is the
 same as everywhere else — bake a name in before you move on.
 
+## Holes and voids
+
+An opening is an ordinary OCC volume (or a dim-2 face) used as the *tool* of
+`g.model.boolean.cut` — A minus B. That is a different operation from
+`g.model.geometry.cut_by_surface` / `cut_by_plane`, which *split* a body and
+keep both pieces. There is no Void solid type: mark a tool with `as_void=True`
+(or author it with `add_void_sweep` / `add_void_loft`) and subtract it before
+you mesh. Leftover void tools fail loud at `generate()`.
+
+```python
+g.model.geometry.add_box(0, 0, 0, 4, 2, 3, label="wall")
+g.model.geometry.add_cylinder(2, 1, -0.1, 0, 0, 3.2, 0.25,
+                              as_void=True, label="duct")
+g.model.boolean.apply_voids("wall")   # or cut("wall", "duct")
+```
+
+For a path that turns, build the trajectory (and optionally the profile) with
+`add_polyline` and round selected vertices so OCC's pipe does not kink:
+
+```python
+path = g.model.geometry.add_polyline(
+    [(0, 1, 1), (2, 1, 1), (2, 3, 1)],
+    fillet={1: 0.2},
+)
+profile = g.model.geometry.add_polyline(
+    [(0, 0.9, 0.9), (0, 1.1, 0.9), (0, 1.1, 1.1), (0, 0.9, 1.1)],
+    closed=True,
+)
+g.model.geometry.add_void_sweep(profile, path, label="elbow")
+g.model.boolean.apply_voids("wall")
+```
+
+Two section polylines loft a tapered void (`add_void_loft`); give both sections
+the same vertex fillet map so their sub-curve counts stay equal. Apply before
+`generate()` — the pre-mesh check will name any tool you forgot to subtract.
+
 ## Importing CAD: geometry, not a model
 
 STEP and IGES are the exchange formats the CAD world speaks, and apeGmsh

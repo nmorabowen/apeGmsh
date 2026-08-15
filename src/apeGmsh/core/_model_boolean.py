@@ -293,6 +293,76 @@ class _Boolean:
             tolerance=tolerance,
         )
 
+    def apply_voids(
+        self,
+        host: EntityRefs,
+        *,
+        remove_object : bool = True,
+        remove_tool   : bool = True,
+        sync          : bool = True,
+        label         : str | None = None,
+        tolerance     : float | None = None,
+    ) -> list[Tag]:
+        """
+        Subtract every unapplied ``as_void`` tool from *host*.
+
+        Collects live ``model._metadata`` entries with ``role="void"``
+        at the host's dimension and delegates to :meth:`cut` (ADR 0097).
+        Tools at a different dimension than the host are ignored (a
+        dim-2 opening does not cut a volume, and vice versa).
+
+        Parameters
+        ----------
+        host : entity ref(s)
+            The body (or face) to cut.  All host entities must share
+            one dimension.
+        remove_object, remove_tool, sync, label, tolerance
+            Forwarded to :meth:`cut`.  ``remove_tool=True`` (default)
+            consumes the void bodies so they cannot be meshed as
+            solids.
+
+        Returns
+        -------
+        list[Tag]
+            Surviving host tags after the cut.
+
+        Raises
+        ------
+        ValueError
+            Host is empty, mixed-dimension, or there are no void tools
+            at the host dimension.
+        """
+        parent = self._model._parent
+        host_dt = resolve_to_dimtags(
+            host, default_dim=3, session=parent,
+        )
+        if not host_dt:
+            raise ValueError("apply_voids: host resolved to nothing.")
+        dims = {int(d) for d, _ in host_dt}
+        if len(dims) != 1:
+            raise ValueError(
+                f"apply_voids: host must be a single dimension, "
+                f"got {sorted(dims)}."
+            )
+        dim = dims.pop()
+        host_set = {(int(d), int(t)) for d, t in host_dt}
+        tools = [
+            (int(d), int(t))
+            for (d, t), meta in self._model._metadata.items()
+            if meta.get("role") == "void"
+            and int(d) == dim
+            and (int(d), int(t)) not in host_set
+        ]
+        if not tools:
+            raise ValueError(
+                f"apply_voids: no unapplied void tools at dim={dim}."
+            )
+        return self.cut(
+            host_dt, tools, dim=dim,
+            remove_object=remove_object, remove_tool=remove_tool,
+            sync=sync, label=label, tolerance=tolerance,
+        )
+
     def intersect(
         self,
         objects : EntityRefs,

@@ -1141,6 +1141,158 @@ class _Geometry:
         return self._model._register(1, tag, label, 'bezier')
 
     # ------------------------------------------------------------------
+    # Polyline  (dim = 1)
+    # ------------------------------------------------------------------
+
+    def add_polyline(
+        self,
+        points,
+        *,
+        closed : bool = False,
+        fillet : dict[int, float] | None = None,
+        chamfer: dict[int, float] | None = None,
+        label  : str | None = None,
+        sync   : bool = True,
+    ) -> list[Tag]:
+        """
+        Add a polyline through 3-D control points, optionally closed,
+        with per-vertex fillet or chamfer.
+
+        This is the missing builder named by :meth:`add_arch`'s error
+        text (ADR 0097).  Returns **persistent curve tags** — lines plus
+        any inserted fillet arcs / chamfer segments — suitable as a
+        sweep path (:meth:`add_wire` + :meth:`sweep`) or a closed
+        profile (:meth:`add_curve_loop` + :meth:`add_plane_surface`).
+        The OCC wire itself stays a transient construction object and
+        is *not* returned or labelled.
+
+        Parameters
+        ----------
+        points : sequence of (x, y, z)
+            Control vertices in order.  A repeated closing vertex on a
+            closed polyline is dropped.
+        closed : bool
+            If True, connect the last vertex back to the first.
+        fillet : dict[int, float], optional
+            Vertex index → fillet radius.  Trims both adjacent legs and
+            inserts a circular arc.  Open-polyline endpoints cannot be
+            filleted.  The same vertex cannot also appear in *chamfer*.
+        chamfer : dict[int, float], optional
+            Vertex index → setback distance.  Trims both adjacent legs
+            and inserts a straight chamfer.  Same endpoint / collision
+            rules as *fillet*.
+        label : str, optional
+            Label applied to **all** resulting curves as a group, so
+            ``g.labels.entities(label)`` covers the whole polyline.
+        sync : bool
+            Synchronise the OCC kernel after creation (default True).
+
+        Returns
+        -------
+        list[Tag]
+            Ordered curve tags (lines and arcs) along the polyline.
+
+        Raises
+        ------
+        ValueError
+            Degenerate input, fillet+chamfer on the same vertex, setback
+            larger than an adjacent segment, or a collinear / U-turn
+            corner asked to take a fillet.
+
+        Notes
+        -----
+        Interior vertices of an *open* polyline whose turning angle
+        exceeds 30° with no fillet or chamfer emit
+        :class:`WarnGeomSharpPolylineCorner` — OCC ``addPipe`` kinks at
+        sharp path corners.  Closed profiles do not warn (they are not
+        pipe paths).
+        """
+        from ._compose_errors import chain_phase_guard
+        from ._geometry_errors import WarnGeomSharpPolylineCorner
+        from ._polyline import (
+            expand_polyline,
+            normalize_polyline_points,
+            sharp_untreated_vertices,
+        )
+        import warnings as _warn
+
+        chain_phase_guard(self._model._parent, "g.model.geometry.add_polyline")
+        pts = normalize_polyline_points(points, closed=closed)
+        treated = set(fillet or {}) | set(chamfer or {})
+        # Sharp-corner warning is for sweep *paths* (open polylines).
+        # A closed profile's 90° corners become longitudinal edges of
+        # the solid; they do not kink OCC addPipe.
+        if not closed:
+            for idx, deg in sharp_untreated_vertices(
+                pts, closed=closed, treated=treated,
+            ):
+                _warn.warn(
+                    f"add_polyline: vertex {idx} turns {deg:.1f}° with no "
+                    f"fillet/chamfer — OCC sweep (addPipe) may kink. Pass "
+                    f"fillet={{{idx}: R}} or chamfer={{{idx}: D}}.",
+                    WarnGeomSharpPolylineCorner,
+                    stacklevel=2,
+                )
+        segments = expand_polyline(
+            pts, closed=closed, fillet=fillet, chamfer=chamfer,
+        )
+
+        def _pt_tag(xyz: np.ndarray) -> int:
+            key = tuple(round(float(c), 12) for c in xyz)
+            tag = point_tags.get(key)
+            if tag is None:
+                tag = gmsh.model.occ.addPoint(key[0], key[1], key[2])
+                point_tags[key] = tag
+            return tag
+
+        point_tags: dict[tuple[float, float, float], int] = {}
+        curve_tags: list[Tag] = []
+        centre_tags: list[int] = []
+        for seg in segments:
+            s = _pt_tag(seg.start)
+            e = _pt_tag(seg.end)
+            if seg.kind == "arc":
+                c = _pt_tag(seg.center)
+                centre_tags.append(c)
+                tag = gmsh.model.occ.addCircleArc(s, c, e, center=True)
+            else:
+                tag = gmsh.model.occ.addLine(s, e)
+            curve_tags.append(tag)
+
+        for c in centre_tags:
+            try:
+                gmsh.model.occ.remove([(0, int(c))], recursive=False)
+            except Exception:
+                pass
+            key = next((k for k, t in point_tags.items() if t == c), None)
+            if key is not None:
+                point_tags.pop(key, None)
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        for t in curve_tags:
+            self._model._register(1, t, None, "polyline")
+        if label and getattr(self._model._parent, "_auto_pg_from_label", False):
+            labels_comp = getattr(self._model._parent, "labels", None)
+            if labels_comp is not None:
+                try:
+                    labels_comp.add(1, list(curve_tags), name=label)
+                except Exception as exc:
+                    import warnings as _warn2
+                    _warn2.warn(
+                        f"Label {label!r} (dim=1, tags={curve_tags}) could "
+                        f"not be created: {exc}",
+                        stacklevel=2,
+                    )
+        self._model._log(
+            f"add_polyline(n={len(pts)}, closed={closed}, "
+            f"fillet={fillet or {}}, chamfer={chamfer or {}}) "
+            f"-> {curve_tags}"
+        )
+        return list(curve_tags)
+
+    # ------------------------------------------------------------------
     # Wire / surface builders  (dim = 1 -> 2)
     # ------------------------------------------------------------------
 
@@ -1287,6 +1439,7 @@ class _Geometry:
         *,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Create a planar surface bounded by one or more curve loops.
@@ -1297,6 +1450,8 @@ class _Geometry:
                     raw tag, label, PG, part, or ``(dim, tag)``; each
                     must resolve to one curve loop.  The first loop is
                     the outer boundary; any additional loops define holes.
+        as_void : bool
+            If True, mark the surface as a 2-D boolean tool (ADR 0097).
 
         Example
         -------
@@ -1316,7 +1471,9 @@ class _Geometry:
         if sync:
             gmsh.model.occ.synchronize()
         self._model._log(f"add_plane_surface(wires={wire_tags}) -> tag {tag}")
-        return self._model._register(2, tag, label, 'plane_surface')
+        return self._model._register(
+            2, tag, label, 'plane_surface', role="void" if as_void else None,
+        )
 
     def add_surface_filling(
         self,
@@ -1355,6 +1512,7 @@ class _Geometry:
         rounded_radius: float = 0.0,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add a rectangular planar surface on one of the canonical planes.
@@ -1510,7 +1668,9 @@ class _Geometry:
             f"{f', r={rounded_radius}' if rounded_radius else ''}"
             f"{rot_msg}) -> tag {tag}"
         )
-        return self._model._register(2, tag, label, 'rectangle')
+        return self._model._register(
+            2, tag, label, 'rectangle', role="void" if as_void else None,
+        )
 
     def add_cutting_plane(
         self,
@@ -2787,6 +2947,29 @@ class _Geometry:
                 f"(which also reaps stale metadata), or file an issue "
                 f"naming the operation that produced the leak."
             )
+        voids = [
+            dt for dt, meta in self._model._metadata.items()
+            if meta.get("role") == "void"
+        ]
+        if voids:
+            labels_comp = getattr(self._model._parent, "labels", None)
+            names: list[str] = []
+            for d, t in voids:
+                labs: list[str] = []
+                if labels_comp is not None:
+                    try:
+                        labs = labels_comp.labels_for_entity(int(d), int(t))
+                    except Exception:
+                        labs = []
+                if labs:
+                    names.append(repr(labs[0]))
+                else:
+                    names.append(f"(dim={int(d)}, tag={int(t)})")
+            raise GeometryValidationError(
+                f"unapplied void tools would mesh as solids: "
+                f"{', '.join(names)}. Call g.model.boolean.cut(host, "
+                f"tool) or g.model.boolean.apply_voids(host) first."
+            )
 
     # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
@@ -2794,13 +2977,45 @@ class _Geometry:
 
     def _add_solid(
         self, tag: int, kind: str, desc: str,
-        *, label: str | None, sync: bool,
+        *, label: str | None, sync: bool, as_void: bool = False,
     ) -> Tag:
         """Common tail for every solid primitive: sync, log, register."""
         if sync:
             gmsh.model.occ.synchronize()
         self._model._log(f"{desc} -> tag {tag}")
-        return self._model._register(3, tag, label, kind)
+        return self._model._register(
+            3, tag, label, kind, role="void" if as_void else None,
+        )
+
+    def _mark_as_void(self, dim: int, tag: int) -> None:
+        """Stamp ``role='void'`` on a registered (or just-created) entity."""
+        key = (int(dim), int(tag))
+        if key not in self._model._metadata:
+            self._model._register(int(dim), int(tag), None, "void_tool")
+        self._model._metadata[key]["role"] = "void"
+
+    @staticmethod
+    def _is_curve_sequence(ref) -> bool:
+        """True when *ref* is a list/tuple of curve tags, not a dimtag.
+
+        A 2-tuple whose first element is in ``{0,1,2,3}`` is treated as
+        a ``(dim, tag)`` pair — pass two curve tags as a *list*.
+        """
+        if not isinstance(ref, (list, tuple)) or not ref:
+            return False
+        if (
+            isinstance(ref, tuple)
+            and len(ref) == 2
+            and isinstance(ref[0], int)
+            and not isinstance(ref[0], bool)
+            and ref[0] in (0, 1, 2, 3)
+            and isinstance(ref[1], int)
+            and not isinstance(ref[1], bool)
+        ):
+            return False
+        return all(
+            isinstance(x, int) and not isinstance(x, bool) for x in ref
+        )
 
     def add_box(
         self,
@@ -2809,6 +3024,7 @@ class _Geometry:
         *,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add an axis-aligned box.
@@ -2817,11 +3033,15 @@ class _Geometry:
         ----------
         x, y, z       : origin corner
         dx, dy, dz    : extents along X, Y, Z
+        as_void : bool
+            If True, mark the box as a boolean tool (ADR 0097).  It
+            must be subtracted via :meth:`_Boolean.cut` /
+            :meth:`_Boolean.apply_voids` before ``generate()``.
         """
         tag = gmsh.model.occ.addBox(x, y, z, dx, dy, dz)
         return self._add_solid(
             tag, 'box', f"add_box(origin=({x},{y},{z}), size=({dx},{dy},{dz}))",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
 
     def add_sphere(
@@ -2831,12 +3051,16 @@ class _Geometry:
         *,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
-        """Add a sphere centred at (cx, cy, cz) with the given radius."""
+        """Add a sphere centred at (cx, cy, cz) with the given radius.
+
+        ``as_void=True`` marks the sphere as a boolean tool (ADR 0097).
+        """
         tag = gmsh.model.occ.addSphere(cx, cy, cz, radius)
         return self._add_solid(
             tag, 'sphere', f"add_sphere(centre=({cx},{cy},{cz}), r={radius})",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
 
     def add_cylinder(
@@ -2848,6 +3072,7 @@ class _Geometry:
         angle: float      = 2 * math.pi,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add a cylinder.
@@ -2858,12 +3083,14 @@ class _Geometry:
         dx, dy, dz : axis direction vector (length = height of cylinder)
         radius     : base radius
         angle      : sweep angle in radians (default 2π = full cylinder)
+        as_void : bool
+            If True, mark the cylinder as a boolean tool (ADR 0097).
         """
         tag = gmsh.model.occ.addCylinder(x, y, z, dx, dy, dz, radius, angle=angle)
         return self._add_solid(
             tag, 'cylinder',
             f"add_cylinder(base=({x},{y},{z}), axis=({dx},{dy},{dz}), r={radius})",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
 
     def add_cone(
@@ -2875,6 +3102,7 @@ class _Geometry:
         angle: float      = 2 * math.pi,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add a cone / truncated cone.
@@ -2886,11 +3114,13 @@ class _Geometry:
         r1         : base radius
         r2         : top radius (0 = sharp cone)
         angle      : sweep angle in radians
+        as_void : bool
+            If True, mark the cone as a boolean tool (ADR 0097).
         """
         tag = gmsh.model.occ.addCone(x, y, z, dx, dy, dz, r1, r2, angle=angle)
         return self._add_solid(
             tag, 'cone', f"add_cone(base=({x},{y},{z}), r1={r1}, r2={r2})",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
 
     def add_torus(
@@ -2901,6 +3131,7 @@ class _Geometry:
         angle: float      = 2 * math.pi,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add a torus.
@@ -2911,11 +3142,13 @@ class _Geometry:
         r1         : major radius (axis to tube centre)
         r2         : minor radius (tube cross-section)
         angle      : sweep angle in radians
+        as_void : bool
+            If True, mark the torus as a boolean tool (ADR 0097).
         """
         tag = gmsh.model.occ.addTorus(cx, cy, cz, r1, r2, angle=angle)
         return self._add_solid(
             tag, 'torus', f"add_torus(centre=({cx},{cy},{cz}), R={r1}, r={r2})",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
 
     def add_wedge(
@@ -2926,6 +3159,7 @@ class _Geometry:
         *,
         label: str | None = None,
         sync : bool       = True,
+        as_void: bool     = False,
     ) -> Tag:
         """
         Add a right-angle wedge.
@@ -2935,10 +3169,202 @@ class _Geometry:
         x, y, z    : origin corner
         dx, dy, dz : extents
         ltx        : top X extent (0 = sharp wedge)
+        as_void : bool
+            If True, mark the wedge as a boolean tool (ADR 0097).
         """
         tag = gmsh.model.occ.addWedge(x, y, z, dx, dy, dz, ltx=ltx)
         return self._add_solid(
             tag, 'wedge',
             f"add_wedge(origin=({x},{y},{z}), size=({dx},{dy},{dz}), ltx={ltx})",
-            label=label, sync=sync,
+            label=label, sync=sync, as_void=as_void,
         )
+
+    def _resolve_profile_face(self, profile, *, sync: bool) -> Tag:
+        """Face tag from an existing surface ref or a closed curve list.
+
+        Curve lists are built with raw OCC (no ``_metadata`` entry) so
+        :meth:`sweep` cleanup can delete the construction face without
+        leaving a stale registry key.
+        """
+        if self._is_curve_sequence(profile):
+            loop = gmsh.model.occ.addCurveLoop([int(t) for t in profile])
+            tag = gmsh.model.occ.addPlaneSurface([loop])
+            if sync:
+                gmsh.model.occ.synchronize()
+            return tag
+        return self._resolve_entity_tag(profile, dim=2, what="profile face")
+
+    def add_void_sweep(
+        self,
+        profile,
+        path,
+        *,
+        label: str | None = None,
+        sync : bool       = True,
+    ) -> Tag:
+        """
+        Sweep a profile along a path and mark the solid as a void tool.
+
+        Orchestration over the shipped pipe (ADR 0097) — does not add a
+        third sweep.  A list of path curve tags delegates to
+        :meth:`sweep` (interior path cleanup).  A wire tag delegates to
+        :meth:`_Transforms.sweep`.
+
+        Parameters
+        ----------
+        profile : surface ref or list of curve tags
+            Existing dim-2 face, or a closed curve-tag list (typically
+            from :meth:`add_polyline` with ``closed=True``) that is
+            promoted to a plane surface.
+        path : list of curve tags, or a wire tag
+            Sweep trajectory.  Pass a *list* of curve tags from
+            :meth:`add_polyline`; a 2-tuple is a dimtag, not two curves.
+        label : str, optional
+            Label on the resulting volume.
+        sync : bool
+            Synchronise the OCC kernel after the sweep (default True).
+
+        Returns
+        -------
+        Tag
+            Volume tag of the void tool.  Subtract it with
+            :meth:`_Boolean.cut` or :meth:`_Boolean.apply_voids`.
+        """
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._model._parent, "g.model.geometry.add_void_sweep",
+        )
+        face = self._resolve_profile_face(profile, sync=False)
+        if self._is_curve_sequence(path):
+            path_curves = [int(t) for t in path]
+            out = self.sweep(
+                face, path_curves, label=label, cleanup=True, sync=sync,
+            )
+            volume = out.get("volume")
+            if volume is None:
+                raise RuntimeError(
+                    "add_void_sweep: sweep produced no volume. Check that "
+                    "the profile is a closed face roughly perpendicular "
+                    "to the start of the path."
+                )
+            vol_tag = int(volume)
+            # sweep(cleanup=True) deletes the path curves; drop their
+            # registry keys so validate_pre_mesh does not see them as stale.
+            for t in path_curves:
+                self._model._metadata.pop((1, t), None)
+            if self._is_curve_sequence(profile):
+                for t in profile:
+                    self._model._metadata.pop((1, int(t)), None)
+        else:
+            path_tag = self._resolve_entity_tag(path, dim=1, what="sweep path")
+            result = self._model.transforms.sweep(
+                face, path_tag, dim=2, label=label, sync=sync,
+            )
+            if not result:
+                raise RuntimeError(
+                    "add_void_sweep: transforms.sweep returned no entities."
+                )
+            max_dim = max(d for d, _ in result)
+            vols = [int(t) for d, t in result if int(d) == max_dim]
+            if len(vols) != 1:
+                raise RuntimeError(
+                    f"add_void_sweep: expected one dim-{max_dim} survivor, "
+                    f"got {vols}."
+                )
+            vol_tag = vols[0]
+        dim = 3
+        try:
+            gmsh.model.getBoundingBox(3, vol_tag)
+        except Exception:
+            dim = 2
+        self._mark_as_void(dim, vol_tag)
+        self._model._log(
+            f"add_void_sweep(profile={profile!r}, path={path!r}) -> {vol_tag}"
+        )
+        return vol_tag
+
+    def add_void_loft(
+        self,
+        sections: list,
+        *,
+        make_solid: bool = True,
+        make_ruled: bool = False,
+        label: str | None = None,
+        sync : bool = True,
+    ) -> Tag:
+        """
+        Loft through two or more section polylines and mark the solid
+        as a void tool.
+
+        Delegates to :meth:`_Transforms.thru_sections` (ADR 0097).
+        When every section is a curve-tag list, sub-curve counts must
+        match (fillet the same vertices on every section).
+
+        Parameters
+        ----------
+        sections : list of curve-tag lists or wire tags
+            At least two.  Curve-tag lists typically come from
+            :meth:`add_polyline` with ``closed=True``.
+        make_solid, make_ruled
+            Forwarded to :meth:`_Transforms.thru_sections`.
+        label : str, optional
+            Label on the highest-dimension survivor.
+        sync : bool
+            Synchronise the OCC kernel after the loft (default True).
+
+        Returns
+        -------
+        Tag
+            Volume (or surface, if ``make_solid=False``) tag of the
+            void tool.
+        """
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._model._parent, "g.model.geometry.add_void_loft",
+        )
+        if not isinstance(sections, (list, tuple)) or len(sections) < 2:
+            raise ValueError(
+                "add_void_loft requires at least two sections "
+                f"(got {0 if not sections else len(sections)})."
+            )
+        wires: list[int] = []
+        counts: list[int] = []
+        for sec in sections:
+            if self._is_curve_sequence(sec):
+                counts.append(len(sec))
+                wires.append(
+                    self.add_wire(list(sec), check_closed=True, sync=False)
+                )
+            else:
+                wires.append(
+                    self._resolve_entity_tag(sec, dim=1, what="section wire")
+                )
+        if len(counts) >= 2 and len(set(counts)) > 1:
+            raise ValueError(
+                f"add_void_loft: section curve counts must match after "
+                f"fillet (got {counts}). Apply the same vertex "
+                f"fillet/chamfer map to every section."
+            )
+        result = self._model.transforms.thru_sections(
+            wires,
+            make_solid=make_solid,
+            make_ruled=make_ruled,
+            label=label,
+            sync=sync,
+        )
+        if not result:
+            raise RuntimeError(
+                "add_void_loft: thru_sections returned no entities."
+            )
+        max_dim = max(int(d) for d, _ in result)
+        tags = [int(t) for d, t in result if int(d) == max_dim]
+        if len(tags) != 1:
+            raise RuntimeError(
+                f"add_void_loft: expected one dim-{max_dim} survivor, "
+                f"got {tags}."
+            )
+        self._mark_as_void(max_dim, tags[0])
+        self._model._log(
+            f"add_void_loft(n_sections={len(sections)}) -> {tags[0]}"
+        )
+        return tags[0]
