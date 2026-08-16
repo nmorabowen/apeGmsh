@@ -50,6 +50,10 @@ def test_open_host_mesh_viewer_when_meshed(tmp_path: Path, monkeypatch) -> None:
     open_host(_StubSession(), envelope_path=tmp_path / "sel.json", title="t")
     assert seen[0] == "mesh"
     assert seen[1] == "t"
+    from apeGmsh.studio._host_state import read_host
+
+    # Fake show() returns immediately → finally cleared the claim.
+    assert read_host(tmp_path)["running"] is False
 
 
 def test_open_host_model_viewer_when_unmeshed(tmp_path: Path, monkeypatch) -> None:

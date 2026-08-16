@@ -22,6 +22,21 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 S5h: habitat BUSY lock
+
+``run_until`` / replay acquires ``.apegmsh/busy.json`` (``O_EXCL``);
+a concurrent claim returns ``error.code == "BUSY"`` (CLI exit 3).
+Stale locks (dead PID) are stolen. ``status.busy`` reports lock
+state; ``contract_version`` is ``1.2.0``.
+
+### ADDED — ADR 0095 S5g: status.host + project.json
+
+Qt host claims ``.apegmsh/host.json`` for the duration of ``show()``;
+``status.host`` reports ``{running, pid, phase, stale}`` and treats a
+dead PID as stale. Successful replay writes ``.apegmsh/project.json``;
+``run_until`` may omit ``script=`` and use that entry. Habitat
+``contract_version`` is ``1.1.0``.
+
 ### FIXED — ADR 0095 S5f follow-up (Opus review)
 
 ``logged`` test accepts forwarded ``root=``. Ledger reads decode UTF-8

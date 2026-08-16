@@ -236,7 +236,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     runner = ReplayRunner(root=root)
     result = runner.run_until(script, phase=args.phase)
     if not result.ok:
-        print(result.error or "replay failed", file=sys.stderr)
+        err = result.error or "replay failed"
+        print(err, file=sys.stderr)
+        if str(err).startswith("BUSY:"):
+            return 3
         return 1
     if result.session is None:
         print(
@@ -262,6 +265,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             result.session,
             envelope_path=dest,
             title=f"apeGmsh.studio — {script.name}",
+            root=root,
         )
     finally:
         if result.session is not None and getattr(result.session, "is_active", False):

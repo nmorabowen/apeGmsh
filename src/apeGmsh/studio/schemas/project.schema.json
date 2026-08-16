@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/project.schema.json",
+  "title": "StudioProject",
+  "type": "object",
+  "required": ["schema", "script"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "script": { "type": "string" },
+    "ts": { "type": "string" }
+  },
+  "additionalProperties": true
+}

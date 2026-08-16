@@ -22,6 +22,9 @@ DEFAULT_LEDGER_REL = Path(".apegmsh") / "runs.jsonl"
 DEFAULT_VISORS_REL = Path(".apegmsh") / "visors"
 DEFAULT_HIGHLIGHT_REL = Path(".apegmsh") / "highlight.json"
 DEFAULT_MCP_CALLS_REL = Path(".apegmsh") / "mcp_calls.jsonl"
+DEFAULT_HOST_REL = Path(".apegmsh") / "host.json"
+DEFAULT_PROJECT_REL = Path(".apegmsh") / "project.json"
+DEFAULT_BUSY_REL = Path(".apegmsh") / "busy.json"
 
 ROOT_ENV = "APEGMSH_ROOT"
 
@@ -148,3 +151,21 @@ def mcp_calls_path(root: Path | None = None) -> Path:
     """Return ``<root>/.apegmsh/mcp_calls.jsonl`` (``root`` via :func:`resolve_root`)."""
     base = resolve_root(root)
     return base / DEFAULT_MCP_CALLS_REL
+
+
+def host_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/host.json`` (``root`` via :func:`resolve_root`)."""
+    base = resolve_root(root)
+    return base / DEFAULT_HOST_REL
+
+
+def project_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/project.json`` (``root`` via :func:`resolve_root`)."""
+    base = resolve_root(root)
+    return base / DEFAULT_PROJECT_REL
+
+
+def busy_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/busy.json`` (``root`` via :func:`resolve_root`)."""
+    base = resolve_root(root)
+    return base / DEFAULT_BUSY_REL

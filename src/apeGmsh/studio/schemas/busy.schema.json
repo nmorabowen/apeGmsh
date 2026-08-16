@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/busy.schema.json",
+  "title": "StudioBusy",
+  "type": "object",
+  "required": ["schema", "busy"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "busy": { "type": "boolean" },
+    "pid": { "type": ["integer", "null"] },
+    "op": { "type": ["string", "null"] },
+    "phase": { "type": ["string", "null"] },
+    "script": { "type": ["string", "null"] },
+    "ts": { "type": "string" }
+  },
+  "additionalProperties": true
+}
