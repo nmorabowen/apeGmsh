@@ -2,7 +2,8 @@
 
 Sidecar profiler. Not an MCP tool. Reads ``.apegmsh/mcp_calls.jsonl``
 and/or a transcript JSONL. Prints counts, heuristic tokens (chars/4),
-and ``src_search_rate``. ``--skill-budget`` gates skill file size.
+``src_search_rate``, and an ``other_gloss`` breakdown (schema 2) when
+``other`` is non-zero. ``--skill-budget`` gates skill file size.
 ``--promote`` prints S5 eligibility and writes nothing.
 """
 from __future__ import annotations

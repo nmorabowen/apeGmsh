@@ -9,7 +9,10 @@ from apeGmsh.studio._mcp_log import append_mcp_call, logged, make_call_record
 from apeGmsh.studio._paths import mcp_calls_path
 from apeGmsh.studio._profile import (
     MISS_PROMOTE_REPEATS,
+    REPORT_SCHEMA,
     build_report,
+    classify_other_bucket,
+    classify_shell_family,
     classify_tool,
     format_report,
     promote_report,
@@ -71,6 +74,30 @@ def test_classify_tool_kinds() -> None:
     assert classify_tool("Read", {"path": "docs/guide.md"}) == "other"
 
 
+def test_other_gloss_buckets_and_shell_families() -> None:
+    assert classify_other_bucket("Shell") == "shell_run"
+    assert classify_other_bucket("StrReplace") == "edit"
+    assert classify_other_bucket("Grep") == "search_non_src"
+    assert classify_other_bucket("Read") == "read_ambient"
+    assert classify_other_bucket("GetMcpTools") == "mcp_meta"
+    assert classify_other_bucket("CallMcpTool") == "mcp_meta"
+    assert classify_other_bucket("TodoWrite") == "agent_ops"
+    assert classify_other_bucket("WeirdTool") == "other_misc"
+
+    assert classify_shell_family(
+        "python -m apeGmsh.studio.lookup add_box"
+    ) == "python_studio"
+    assert classify_shell_family(
+        "python launch_viewer_diagrams.py tet10"
+    ) == "viewer"
+    assert classify_shell_family("pip install mcp") == "pip_env"
+    assert classify_shell_family("git status") == "git"
+    assert classify_shell_family(
+        "python run_cantilever.py tet"
+    ) == "python_model"
+    assert classify_shell_family("echo hi") == "other_shell"
+
+
 def test_src_search_rate() -> None:
     assert src_search_rate({"src_search": 1, "index_lookup": 1}) == 0.5
     assert src_search_rate({}) == 0.0
@@ -84,6 +111,8 @@ def test_append_mcp_call_and_report(tmp_path: Path) -> None:
     assert report["counts"]["index_lookup"] == 1
     assert report["counts"]["habitat_mcp"] == 1
     assert report["events"] == 2
+    assert report["schema"] == REPORT_SCHEMA
+    assert "other_gloss" in report
     rec = make_call_record("lookup", {"symbol": "a"}, {"ok": False})
     assert rec["ok"] is False
     assert rec["symbol"] == "a"
@@ -173,6 +202,75 @@ def test_transcript_classification(tmp_path: Path) -> None:
     text = format_report(report)
     assert "src_search_rate:" in text
 
+
+def test_transcript_other_gloss(tmp_path: Path) -> None:
+    events = [
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Shell",
+                        "input": {
+                            "command": "python -m apeGmsh.studio.profile --help",
+                            "description": "profile help",
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "Shell",
+                        "input": {
+                            "command": "python launch_viewer_diagrams.py tet10",
+                            "description": "viewer",
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "StrReplace",
+                        "input": {
+                            "path": "a.py",
+                            "old_string": "a",
+                            "new_string": "b",
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "Grep",
+                        "input": {"path": "docs", "pattern": "stress"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "GetMcpTools",
+                        "input": {"pattern": "studio"},
+                    },
+                ]
+            },
+        },
+    ]
+    path = tmp_path / "gloss.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8",
+    )
+    report = build_report(transcript_path=path)
+    assert report["schema"] == REPORT_SCHEMA
+    assert report["counts"]["other"] == 5
+    gloss = report["other_gloss"]
+    assert gloss["by_bucket"]["shell_run"]["n"] == 2
+    assert gloss["by_bucket"]["edit"]["n"] == 1
+    assert gloss["by_bucket"]["search_non_src"]["n"] == 1
+    assert gloss["by_bucket"]["mcp_meta"]["n"] == 1
+    assert gloss["shell_families"]["python_studio"]["n"] == 1
+    assert gloss["shell_families"]["viewer"]["n"] == 1
+    tools = {row["tool"]: row["n"] for row in gloss["by_tool"]}
+    assert tools["Shell"] == 2
+    assert tools["StrReplace"] == 1
+    text = format_report(report)
+    assert "other gloss:" in text
+    assert "shell_run=2" in text
+    assert "Shell 2" in text
+    assert "python_studio=1" in text
+    assert "viewer=1" in text
 
 def test_profile_cli_json(tmp_path: Path, capsys) -> None:
     append_mcp_call("lookup", {"symbol": "add_box"}, {"ok": True}, root=tmp_path)
