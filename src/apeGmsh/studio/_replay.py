@@ -106,12 +106,12 @@ def _install_phase_gates(patches: list[tuple[Any, str, Any]], phase: str) -> Non
             )
 
 
-def _dump_names(phase: str) -> dict[str, Any]:
+def _dump_names(phase: str, *, root: Path) -> dict[str, Any]:
     from ._names import collect_manifest, write_names
     from ._paths import names_path
 
     manifest = collect_manifest(phase=phase)
-    write_names(names_path(), manifest)
+    write_names(names_path(root), manifest)
     return manifest
 
 
@@ -125,6 +125,8 @@ def _record_run(
     geometry_hash: str | None,
     manifest: dict[str, Any] | None,
     error: str | None,
+    root: Path,
+    cwd: Path | None,
 ) -> None:
     from ._ledger import append_run, make_record
     from ._paths import ledger_path
@@ -133,7 +135,7 @@ def _record_run(
     if name is not None:
         name = str(name)
     append_run(
-        ledger_path(),
+        ledger_path(root),
         make_record(
             script=script,
             phase=phase,
@@ -143,11 +145,18 @@ def _record_run(
             session=name,
             manifest=manifest,
             error=error,
+            root=root,
+            cwd=cwd,
         ),
     )
 
 
-def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
+def _exec_hold_open(
+    script: Path,
+    phase: str,
+    *,
+    root: Path | str | None = None,
+) -> ReplayResult:
     """Exec *script* with sessions held open. Raises on failure."""
     if phase not in PHASES:
         raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
@@ -156,7 +165,11 @@ def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
     from apeGmsh.core.Model import Model
     from apeGmsh.mesh.Mesh import Mesh
 
+    from ._paths import resolve_root
+
     script = Path(script).resolve()
+    habitat = resolve_root(root)
+    exec_cwd = script.parent
     opened: list[Any] = []
     patches: list[tuple[Any, str, Any]] = []
     original_begin = _SessionBase.begin
@@ -243,12 +256,14 @@ def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
             geometry_hash=digest,
             manifest=None,
             error=error_text,
+            root=habitat,
+            cwd=exec_cwd,
         )
         raise caught
 
     mains = [s for s in opened if type(s).__name__ == "apeGmsh"]
     session = mains[-1] if mains else (opened[-1] if opened else None)
-    manifest = _dump_names(phase) if session is not None else None
+    manifest = _dump_names(phase, root=habitat) if session is not None else None
     _record_run(
         script,
         phase=phase,
@@ -258,6 +273,8 @@ def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
         geometry_hash=digest,
         manifest=manifest,
         error=None,
+        root=habitat,
+        cwd=exec_cwd,
     )
     return ReplayResult(
         ok=True,
@@ -272,18 +289,33 @@ def _exec_hold_open(script: Path, phase: str) -> ReplayResult:
 class ReplayRunner:
     """Replay a script; keep the last successful result on failure (INV-4)."""
 
-    def __init__(self, *, exec_fn: ExecFn | None = None) -> None:
-        self._exec = exec_fn if exec_fn is not None else _exec_hold_open
+    def __init__(
+        self,
+        *,
+        exec_fn: ExecFn | None = None,
+        root: Path | str | None = None,
+    ) -> None:
+        self._exec = exec_fn
+        self._root = root
         self._last_good: ReplayResult | None = None
 
     @property
     def last_good(self) -> ReplayResult | None:
         return self._last_good
 
-    def run_until(self, script: Path, *, phase: str = "model") -> ReplayResult:
+    def run_until(
+        self,
+        script: Path,
+        *,
+        phase: str = "model",
+        root: Path | str | None = None,
+    ) -> ReplayResult:
         if phase not in PHASES:
             raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
+        from ._paths import resolve_root
+
         script = Path(script)
+        habitat = resolve_root(root if root is not None else self._root)
         digest = _source_hash(script) if script.is_file() else None
         if (
             self._last_good is not None
@@ -302,7 +334,10 @@ class ReplayRunner:
                 stopped_at=self._last_good.stopped_at,
             )
         try:
-            result = self._exec(script, phase)
+            if self._exec is None:
+                result = _exec_hold_open(script, phase, root=habitat)
+            else:
+                result = self._exec(script, phase)
         except Exception:
             err = traceback.format_exc()
             if self._last_good is not None:

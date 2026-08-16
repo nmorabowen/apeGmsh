@@ -535,3 +535,128 @@ Resolved here:
 
 1. **Canvas output path** — IDE `canvases/`, not project `docs/`.
 
+## Amendment 3 (2026-08-16) — explicit root and the out-of-process contract freeze
+
+Append-only. Parts 1–6, INV-1–INV-12, S0–S4e, and Amendments 1–2 stay.
+This amendment hardens the habitat for **any** out-of-process consumer
+(Cursor MCP, a test harness, a future product shell). It does not reverse
+CLI/JSON transport, does not require a long-lived daemon, and does not
+add MCP verbs for host lifecycle (INV-6).
+
+**Motivation (non-normative):** a separate product shell that consumes
+Studio’s contract motivated this freeze. The contract is deliberately
+consumer-agnostic; Studio does not depend on that product.
+
+### New invariants
+
+- **INV-15 (explicit root).** The habitat root is resolved by one rule:
+  explicit `root=` / `--root` → `APEGMSH_ROOT` → nearest ancestor of the
+  start path that contains a `.apegmsh/` directory → process cwd.
+  A `.apegmsh/` under the user home is ignored unless the start path
+  *is* home (stale `~/` habitat must not capture unrelated projects).
+  Cwd is the last fallback, never the definition. One MCP process MAY
+  serve multiple projects by passing different `root=` values. Habitat
+  writers (`names.json`, `runs.jsonl`, `mcp_calls.jsonl`, …) use that
+  root even when script exec temporarily `chdir`s to `script.parent`.
+  Ledger records MAY carry additive `root` and `cwd` fields.
+- **INV-16 (atomic single-writer).** Snapshot habitat JSON
+  (`selection.json`, `names.json`, `highlight.json`) is written
+  atomically by a single owner; readers tolerate torn / unparseable
+  payloads without raising out of `status`. JSONL files
+  (`runs.jsonl`, `mcp_calls.jsonl`) are append-best-effort and MAY have
+  more than one appender; `status` skips bad ledger lines and reports
+  `ledger_error`. *(S5b + S5f.)*
+- **INV-17 (versioned published contract).** The out-of-process contract
+  is versioned and published as schemas + golden fixtures; unknown major
+  is refused. *(Shipped in S5d.)*
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S5a** | `resolve_root`; `root=` on every MCP tool + CLI `--root`; replay / mcp_calls write under that root; `scripts/studio-mcp.ps1` no longer `Set-Location`s the library repo | S4e |
+| **S5b** | Atomic writes (`os.replace`) for envelope / names / highlight; `status` degrades on torn `names.json` | S5a |
+| **S5c** | Uniform `{ok, error:{code,message}}` MCP envelope; subprocess timeout; `--json` for render/animate workers | S5a |
+| **S5d** | JSON Schema package data + golden fixtures + `contract_version` on `status` | S5a |
+| **S5e** | One docs page: spawn, file ownership, poll contract, cold-start, local trust boundary | S5a |
+| **S5f** | Red/blue harden: ledger torn-line degrade (`ledger_error`); docs honesty on JSONL vs atomic JSON; empty `root=` / `APEGMSH_ROOT` treated as unset | S5b, S5e |
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **New ADR for the freeze** | Amendment 1’s bar (“new ADR only if CLI/JSON is reversed”) is not met |
+| **Product-shell invariants in this ADR** | Pre-commits a product that is not this repo; keep normative text consumer-agnostic |
+| **MCP verbs for host open/close** | INV-6; surface host presence later via `status` fields + spawn docs (S5e), not puppeteering |
+| **Freeze schemas before root** | Path semantics change with INV-15; freeze after S5a |
+| **Keep `Set-Location` to the library repo in `studio-mcp.ps1`** | Silently pins one project and fights explicit `root=` |
+
+### Acceptance (S5a)
+
+- `resolve_root` honors explicit → `APEGMSH_ROOT` → nearest `.apegmsh/` → cwd.
+- Every MCP tool accepts optional `root=`; `run_until` passes `--root` to the CLI subprocess.
+- Two `run_until` calls with different `root=` from one process write two `.apegmsh/` trees; `status(root=A)` never sees B’s ledger.
+- Replay dumps `names.json` / `runs.jsonl` under the habitat root even when exec cwd is `script.parent`.
+- `mcp_calls.jsonl` lands under the same resolved root as other habitat files.
+- `scripts/studio-mcp.ps1` does not `Set-Location` the apeGmsh checkout.
+
+### Acceptance (S5b)
+
+- `write_envelope` / `write_names` / `write_highlight` use temp + `os.replace`
+  (no truncate-in-place).
+- `collect_status` never raises on torn / unparseable `names.json`; it
+  returns `names=null` and `names_error` (parity with `selection_error`).
+- A concurrent rewrite + `status` poll test completes with zero exceptions
+  and never returns a partial names object.
+
+### Acceptance (S5c)
+
+- Validation failures (`phase`, `view`, `kind`, empty highlight, …) return
+  `ok: false` with `error: {code, message}` — no raise into the MCP adapter.
+- `_shell` honors `APEGMSH_STUDIO_TIMEOUT` (default 600s); timeout →
+  `error.code == "TIMEOUT"`.
+- `viewers render --json` and `studio --animate --json` emit a
+  `{"ok", "written"}` object; MCP prefers that over path-line scrape.
+
+### Acceptance (S5d)
+
+- `apeGmsh/studio/schemas/*.schema.json` + `fixtures/*.json` ship as
+  package data (INV-17).
+- `status` includes `contract_version` (semver, currently `1.0.0`).
+- Golden fixtures validate; unknown contract major / wrong file-schema
+  int is refused; additive unknown keys are ignored.
+
+### Acceptance (S5e)
+
+- Published how-to `docs/how-to/studio-habitat.md` covers spawn (MCP +
+  host), root rule, file ownership, poll mtimes, cold start, and the
+  local trust boundary for `run_until`.
+- Linked from the How-to index and `mkdocs.yml` nav.
+
+### Acceptance (S5f)
+
+- `read_runs` / `collect_status` never raise on torn `runs.jsonl` lines;
+  good objects are kept and `ledger_error` names the skip (including a
+  UTF-8 tear mid-line — decode with replace, skip the bad line).
+- Habitat how-to states atomic replace for snapshot JSON only; JSONL is
+  append-best-effort with multi-appender `runs.jsonl`.
+- Empty / whitespace `root=` and `APEGMSH_ROOT` are treated as unset
+  (INV-15 chain continues); CLI `--root` is a string so `""` does not
+  become `Path(".")`.
+- `promote_selection` returns `{ok:false, error.code=UNREADABLE}` on torn
+  `selection.json` (parity with `get_selection`).
+- Subprocess MCP verbs return `BAD_ROOT` when the resolved root is not a
+  directory (no raise into the adapter).
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Root resolution order** — INV-15 as above.
+2. **Amendment vs new ADR** — amend 0095.
+
+Still open (do not block S5a):
+
+1. Whether `status` grows a `host: {running, pid, phase}` block (S5e / later).
+2. Whether `.apegmsh/project.json` names the entry script (later; not S5a).
+

@@ -115,7 +115,10 @@ def collect_manifest(*, phase: str) -> dict[str, Any]:
 
 
 def write_names(path: Path, manifest: dict[str, Any]) -> Path:
+    from ._paths import atomic_write_text
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return path
+    return atomic_write_text(
+        path, json.dumps(manifest, indent=2) + "\n",
+    )

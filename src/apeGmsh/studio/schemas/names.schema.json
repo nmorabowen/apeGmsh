@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/names.schema.json",
+  "title": "NamesManifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "phase",
+    "labels",
+    "physical_groups",
+    "counts",
+    "entities"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "phase": { "type": "string", "enum": ["model", "mesh", "results"] },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "physical_groups": { "type": "array", "items": { "type": "string" } },
+    "counts": {
+      "type": "object",
+      "required": ["entities", "elements"],
+      "properties": {
+        "entities": { "type": "object" },
+        "elements": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dim", "tag"],
+        "properties": {
+          "dim": { "type": "integer" },
+          "tag": { "type": "integer" },
+          "labels": { "type": "array", "items": { "type": "string" } },
+          "physical_groups": { "type": "array", "items": { "type": "string" } },
+          "bbox": { "type": ["array", "null"] }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

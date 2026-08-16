@@ -16,7 +16,9 @@ def test_empty_status(tmp_path: Path, monkeypatch) -> None:
     payload = collect_status(tmp_path)
     assert has_studio_state(payload) is False
     assert "no .apegmsh state" in format_status(payload)
-    assert main(["--status"]) == 2
+    # Pass --root: Temp/pytest-of-nmb may hold a leftover .apegmsh from
+    # other sessions; INV-15 walk must not inherit it for this assert.
+    assert main(["--status", "--root", str(tmp_path)]) == 2
 
 
 def test_status_from_names_and_ledger(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -98,3 +100,24 @@ def test_status_json_flag(tmp_path: Path, monkeypatch, capsys) -> None:
 def test_main_without_script_or_status(capsys) -> None:
     assert main([]) == 2
     assert "--status" in capsys.readouterr().err
+
+
+def test_status_degrades_on_torn_ledger(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".apegmsh").mkdir()
+    good = make_record(
+        script=tmp_path / "box.py",
+        phase="model",
+        ok=True,
+        ts="2026-08-14T06:00:00Z",
+    )
+    (tmp_path / ".apegmsh" / "runs.jsonl").write_text(
+        json.dumps(good) + "\n{torn\n",
+        encoding="utf-8",
+    )
+    payload = collect_status(tmp_path)
+    assert payload["n_runs"] == 1
+    assert payload["last_run"]["phase"] == "model"
+    assert payload["ledger_error"]
+    assert "skipped" in payload["ledger_error"]
+    assert "degraded" in format_status(payload)

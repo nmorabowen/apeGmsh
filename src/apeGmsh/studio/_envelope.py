@@ -242,10 +242,11 @@ def loads(text: str) -> SelectionEnvelope:
 
 
 def write_envelope(path: Path, envelope: SelectionEnvelope) -> Path:
+    from ._paths import atomic_write_text
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dumps(envelope), encoding="utf-8")
-    return path
+    return atomic_write_text(path, dumps(envelope))
 
 
 def read_envelope(path: Path) -> SelectionEnvelope:

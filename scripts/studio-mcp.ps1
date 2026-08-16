@@ -1,4 +1,4 @@
-# ADR 0095 S4a — stdio MCP door for Cursor.
+# ADR 0095 S4a / S5a — stdio MCP door for Cursor.
 # The office venv's ladruno_opensees.pth prints a banner to STDOUT at
 # interpreter startup. That corrupts JSON-RPC unless the quiet env is
 # set *before* Python starts.
@@ -6,25 +6,31 @@ $ErrorActionPreference = "Stop"
 $env:LADRUNO_OPENSEES_QUIET = "1"
 $env:APEGMSH_QUIET = "1"
 
-# Habitat files live at <repo>/.apegmsh/. Cursor's MCP cwd is not
-# reliable (user-level config often starts in $HOME). Pin cwd to the
-# repo that contains this script.
+# Library checkout that owns this script (for PYTHONPATH only).
+# INV-15: do not Set-Location here. Habitat files live under the *model*
+# project root. Pass root= on each MCP tool, or set APEGMSH_ROOT to that
+# project before starting this script.
 $repo = Split-Path $PSScriptRoot -Parent
-Set-Location $repo
 
 # Prefer an explicit APEGMSH_PYTHON, then the office Ladruno/OpenSees
 # venv (folder name is opensees_env on this machine; keep the older
 # opensees_venv spelling as a fallback), then PATH python.
-$office_env = Join-Path $env:USERPROFILE "venv\opensees_env\Scripts\python.exe"
-$office_venv = Join-Path $env:USERPROFILE "venv\opensees_venv\Scripts\python.exe"
+$officeCandidates = @(
+    (Join-Path $env:USERPROFILE "venv\opensees_env\Scripts\python.exe"),
+    (Join-Path $env:USERPROFILE "venv\opensees_venv\Scripts\python.exe")
+)
+$office = $officeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
 if ($env:APEGMSH_PYTHON) {
     $py = $env:APEGMSH_PYTHON
-} elseif (Test-Path $office_env) {
-    $py = $office_env
-} elseif (Test-Path $office_venv) {
-    $py = $office_venv
+} elseif ($office) {
+    $py = $office
 } else {
     $py = "python"
+    [Console]::Error.WriteLine(
+        "studio-mcp.ps1: no office venv found; using PATH python. " +
+        "Set APEGMSH_PYTHON to pin the interpreter."
+    )
 }
 # Prefer this checkout's src over any other editable install on the venv.
 $env:PYTHONPATH = (Join-Path $repo "src")

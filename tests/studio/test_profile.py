@@ -128,7 +128,8 @@ def test_append_mcp_call_and_report(tmp_path: Path) -> None:
 
 
 def test_logged_swallows_and_returns(tmp_path: Path) -> None:
-    def fn(*, x: int) -> dict:
+    def fn(*, root, x: int) -> dict:
+        assert Path(root) == tmp_path
         return {"ok": True, "x": x}
 
     out = logged("status", fn, root=tmp_path, x=1)

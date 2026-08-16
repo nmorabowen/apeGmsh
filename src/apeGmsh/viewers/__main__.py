@@ -19,6 +19,7 @@ identifies the sibling ``model.h5`` and is required for that case.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -281,6 +282,12 @@ def _main_render(argv: Sequence[str]) -> int:
             "interactive command)."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Print {\"ok\": true, \"written\": [...]} instead of path lines.",
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -306,27 +313,36 @@ def _main_render(argv: Sequence[str]) -> int:
             return _render_fem(path, args)
         return _render_results(_open_results(path, args.model_h5), args)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if getattr(args, "as_json", False):
+            print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 2
     except RuntimeError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if getattr(args, "as_json", False):
+            print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 2
 
 
 def _render_fem(path: Path, args: argparse.Namespace) -> int:
     if args.pack is not None:
-        print(
+        msg = (
             "error: --pack requires a results file; "
-            "there is no fem.render_pack.",
-            file=sys.stderr,
+            "there is no fem.render_pack."
         )
+        if getattr(args, "as_json", False):
+            print(json.dumps({"ok": False, "written": [], "error": msg}))
+        else:
+            print(msg, file=sys.stderr)
         return 2
     written = _open_fem(path).render(
         Path(args.output),
         camera=args.camera,
         window_size=args.window,
     )
-    return _exit_written(written)
+    return _exit_written(written, as_json=getattr(args, "as_json", False))
 
 
 def _render_results(results, args: argparse.Namespace) -> int:
@@ -336,7 +352,7 @@ def _render_results(results, args: argparse.Namespace) -> int:
             camera=args.camera,
             window_size=args.window,
         )
-        return _exit_written(written)
+        return _exit_written(written, as_json=getattr(args, "as_json", False))
     written = results.render(
         Path(args.output),
         view=args.view,
@@ -346,18 +362,23 @@ def _render_results(results, args: argparse.Namespace) -> int:
         camera=args.camera,
         window_size=args.window,
     )
-    return _exit_written(written)
+    return _exit_written(written, as_json=getattr(args, "as_json", False))
 
 
-def _exit_written(written) -> int:
-    """Skip (None / ()) is exit 0. Print each written Path."""
+def _exit_written(written, *, as_json: bool = False) -> int:
+    """Skip (None / ()) is exit 0. Print each written Path (or JSON)."""
+    paths: list[str] = []
     if written is None or written == ():
-        return 0
-    if isinstance(written, tuple):
-        for item in written:
+        paths = []
+    elif isinstance(written, tuple):
+        paths = [str(item) for item in written]
+    else:
+        paths = [str(written)]
+    if as_json:
+        print(json.dumps({"ok": True, "written": paths}))
+    else:
+        for item in paths:
             print(item)
-        return 0
-    print(written)
     return 0
 
 
