@@ -582,6 +582,7 @@ consumer-agnostic; Studio does not depend on that product.
 | **S5f** | Red/blue harden: ledger torn-line degrade (`ledger_error`); docs honesty on JSONL vs atomic JSON; empty `root=` / `APEGMSH_ROOT` treated as unset | S5b, S5e |
 | **S5g** | `status.host` via `host.json` (claim/clear + PID liveness); `.apegmsh/project.json` entry script; `run_until` may omit `script=` | S5f |
 | **S5h** | Habitat `busy.json` lock; concurrent `run_until` → `BUSY`; stale PID steal; `status.busy` | S5g |
+| **S5i** | Root-relative `script` / `cwd` / MCP path fields under the habitat root; `root` stays absolute | S5h |
 
 ### Alternatives rejected (this amendment)
 
@@ -672,6 +673,14 @@ consumer-agnostic; Studio does not depend on that product.
 - MCP `run_until` returns `error.code == "BUSY"` (CLI exit 3) when the
   habitat is locked; `contract_version` is `1.2.0`.
 
+### Acceptance (S5i)
+
+- Ledger `script` / `cwd` and MCP tool path fields that fall under the
+  habitat root are stored as root-relative posix paths; the `root`
+  field remains absolute.
+- Paths outside the habitat root stay absolute. `contract_version` is
+  `1.3.0`.
+
 ### Open questions (this amendment)
 
 Resolved here:
@@ -681,9 +690,9 @@ Resolved here:
 3. **`status.host`** — S5g (`host.json` + PID check).
 4. **`.apegmsh/project.json`** — S5g (entry script).
 5. **Habitat concurrency lock / `BUSY`** — S5h.
+6. **Root-relative paths in status payloads** — S5i.
 
-Still open (do not block S5a–S5h):
+Still open (do not block S5a–S5i):
 
 1. Event stream (mtime poll remains the contract until proven insufficient).
-2. Root-relative paths in all status payloads (absolute OS paths today).
 

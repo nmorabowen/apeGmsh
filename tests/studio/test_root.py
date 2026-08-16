@@ -8,10 +8,12 @@ from apeGmsh.studio._mcp import run_until, status
 from apeGmsh.studio._mcp_log import append_mcp_call
 from apeGmsh.studio._paths import (
     ROOT_ENV,
+    display_path,
     ledger_path,
     mcp_calls_path,
     names_path,
     resolve_root,
+    resolve_under,
 )
 from apeGmsh.studio._replay import ReplayRunner
 
@@ -144,7 +146,9 @@ def test_two_roots_isolated(tmp_path: Path, monkeypatch) -> None:
         rec_a = sa["last_run"]
         assert rec_a is not None
         assert Path(rec_a["root"]).resolve() == a.resolve()
-        assert Path(rec_a["cwd"]).resolve() == a.resolve()
+        assert resolve_under(a, rec_a["cwd"]) == a.resolve()
+        assert rec_a["script"] == "box.py"
+        assert rec_a["cwd"] in (".", "")
     finally:
         for r in (ra, rb):
             if r.session is not None and r.session.is_active:
@@ -177,7 +181,10 @@ def test_replay_habitat_not_exec_cwd(tmp_path: Path, monkeypatch) -> None:
             ledger_path(root).read_text(encoding="utf-8").strip().splitlines()[-1]
         )
         assert Path(rec["root"]).resolve() == root.resolve()
-        assert Path(rec["cwd"]).resolve() == scripts.resolve()
+        assert resolve_under(root, rec["cwd"]) == scripts.resolve()
+        # Script lives outside habitat root → stays absolute.
+        assert Path(rec["script"]).resolve() == script.resolve()
+        assert display_path(script, root) == str(script.resolve())
     finally:
         if result.session is not None and result.session.is_active:
             result.session.end()

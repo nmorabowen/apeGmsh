@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._paths import display_path
+
 LEDGER_SCHEMA = 1
 _ERROR_CAP = 8000
 
@@ -36,9 +38,9 @@ def make_record(
 ) -> dict[str, Any]:
     """One JSONL object. ``assess`` / ``visors`` reserved, not invented.
 
-    ``root`` is the habitat project root (INV-15). ``cwd`` is the
-    directory the script exec ran under (usually ``script.parent``).
-    Both are additive optional fields — readers ignore unknowns.
+    ``root`` is the habitat project root (INV-15), stored absolute.
+    ``script`` / ``cwd`` are root-relative posix paths when they fall
+    under that root (S5i); absolute otherwise.
     """
     labels: list[str] = []
     pgs: list[str] = []
@@ -51,12 +53,13 @@ def make_record(
     err = error
     if err is not None and len(err) > _ERROR_CAP:
         err = err[:_ERROR_CAP]
+    base = Path(root).expanduser().resolve() if root is not None else None
     rec: dict[str, Any] = {
         "schema": LEDGER_SCHEMA,
         "ts": ts if ts is not None else datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
-        "script": str(Path(script)),
+        "script": display_path(script, base),
         "hash": hash,
         "phase": phase,
         "stopped_at": stopped_at,
@@ -69,10 +72,10 @@ def make_record(
         "visors": [],
         "error": err,
     }
-    if root is not None:
-        rec["root"] = str(Path(root))
+    if base is not None:
+        rec["root"] = str(base)
     if cwd is not None:
-        rec["cwd"] = str(Path(cwd))
+        rec["cwd"] = display_path(cwd, base)
     return rec
 
 

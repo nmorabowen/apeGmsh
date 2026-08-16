@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ._envelope import read_envelope
-from ._paths import envelope_path, resolve_root, visors_path
+from ._paths import envelope_path, resolve_root, visors_path, display_path
 from ._replay import PHASES
 from ._status import collect_status, has_studio_state
 
@@ -264,7 +264,7 @@ def run_until(
             f"script not found: {script_path}",
             returncode=2,
             phase=phase,
-            script=str(script_path),
+            script=display_path(script_path, base),
             stdout="",
             stderr=f"error: script not found: {script_path}",
             status=status(root=base),
@@ -278,7 +278,7 @@ def run_until(
             f"habitat locked by pid={held.get('pid')} op={held.get('op')}",
             returncode=3,
             phase=phase,
-            script=str(script_path),
+            script=display_path(script_path, base),
             root=str(base),
             busy=held,
             status=status(root=base),
@@ -303,7 +303,7 @@ def run_until(
             f"run_until exceeded {_timeout_s()}s",
             returncode=-1,
             phase=phase,
-            script=str(script_path),
+            script=display_path(script_path, base),
             root=str(base),
             stdout=proc.stdout,
             stderr=proc.stderr,
@@ -315,7 +315,7 @@ def run_until(
             (proc.stderr or proc.stdout or "habitat busy").strip() or "habitat busy",
             returncode=3,
             phase=phase,
-            script=str(script_path),
+            script=display_path(script_path, base),
             root=str(base),
             stdout=proc.stdout,
             stderr=proc.stderr,
@@ -331,7 +331,7 @@ def run_until(
         },
         "returncode": proc.returncode,
         "phase": phase,
-        "script": str(script_path),
+        "script": display_path(script_path, base),
         "root": str(base),
         "stdout": proc.stdout,
         "stderr": proc.stderr,

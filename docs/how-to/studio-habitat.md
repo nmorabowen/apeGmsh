@@ -116,10 +116,12 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.2.0` today). Published
+`status.contract_version` is the habitat semver (`1.3.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
-the FEM stack.
+the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,
+and most MCP path fields) are root-relative posix; the `root` field
+itself stays absolute as the resolve anchor.
 
 ## Trust boundary
 
