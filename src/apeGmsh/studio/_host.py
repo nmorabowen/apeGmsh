@@ -53,6 +53,7 @@ def open_host(
     *,
     envelope_path: Path,
     title: str | None = None,
+    root: Path | str | None = None,
 ) -> None:
     """Open the geometry or mesh viewer and write the envelope on pick.
 
@@ -62,13 +63,27 @@ def open_host(
     applies a sibling ``highlight.json`` through ``select_batch``.
     A leftover file from a previous session is ignored until its mtime
     changes.
+
+    Claims ``.apegmsh/host.json`` for the duration of ``show()`` (S5g).
     """
     from ._envelope import project_state, write_envelope
+    from ._host_state import claim_host, clear_host
     from ._names import lookup_from_gmsh
+    from ._paths import resolve_root
 
     phase: Phase = "mesh" if session_has_mesh() else "model"
     watch_started = False
     request_path = Path(envelope_path).with_name("highlight.json")
+    if root is not None:
+        habitat = resolve_root(root)
+    else:
+        env_path = Path(envelope_path).resolve()
+        # Production: <root>/.apegmsh/selection.json → parent.parent is root.
+        # Tests / odd layouts may pass a bare file next to the project.
+        if env_path.parent.name == ".apegmsh":
+            habitat = env_path.parent.parent
+        else:
+            habitat = env_path.parent
 
     def on_sel(sel: Any) -> None:
         nonlocal watch_started
@@ -94,7 +109,11 @@ def open_host(
             on_selection_changed=on_sel,
             annotate=True,
         )
-    viewer.show(title=title or "apeGmsh.studio")
+    claim_host(habitat, phase=phase)
+    try:
+        viewer.show(title=title or "apeGmsh.studio")
+    finally:
+        clear_host(habitat)
 
 
 def _watch_highlight(sel: Any, path: Path) -> None:

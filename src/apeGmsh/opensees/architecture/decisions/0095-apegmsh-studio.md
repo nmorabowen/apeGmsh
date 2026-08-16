@@ -580,6 +580,8 @@ consumer-agnostic; Studio does not depend on that product.
 | **S5d** | JSON Schema package data + golden fixtures + `contract_version` on `status` | S5a |
 | **S5e** | One docs page: spawn, file ownership, poll contract, cold-start, local trust boundary | S5a |
 | **S5f** | Red/blue harden: ledger torn-line degrade (`ledger_error`); docs honesty on JSONL vs atomic JSON; empty `root=` / `APEGMSH_ROOT` treated as unset | S5b, S5e |
+| **S5g** | `status.host` via `host.json` (claim/clear + PID liveness); `.apegmsh/project.json` entry script; `run_until` may omit `script=` | S5f |
+| **S5h** | Habitat `busy.json` lock; concurrent `run_until` → `BUSY`; stale PID steal; `status.busy` | S5g |
 
 ### Alternatives rejected (this amendment)
 
@@ -648,15 +650,40 @@ consumer-agnostic; Studio does not depend on that product.
 - Subprocess MCP verbs return `BAD_ROOT` when the resolved root is not a
   directory (no raise into the adapter).
 
+### Acceptance (S5g)
+
+- Qt `open_host` claims `.apegmsh/host.json` for the duration of `show()`
+  and clears it afterward; `status.host` reports `{running, pid, phase,
+  stale}` and treats a dead PID as `running=false` / `stale=true`.
+- Successful replay writes `.apegmsh/project.json` with the entry
+  `script` (root-relative when possible).
+- MCP / CLI `run_until` may omit `script=` and use `project.json`;
+  missing both → `NO_SCRIPT`.
+- Published schemas/fixtures cover `host` and `project`;
+  `contract_version` is `1.1.0`.
+
+### Acceptance (S5h)
+
+- `ReplayRunner.run_until` acquires `.apegmsh/busy.json` via
+  `O_CREAT|O_EXCL` for the duration of an exec (skip-hash path does not
+  lock); a second concurrent claim fails.
+- Stale busy claims (dead PID) are stolen; `status.busy` reports
+  `{busy, pid, op, phase, stale}`.
+- MCP `run_until` returns `error.code == "BUSY"` (CLI exit 3) when the
+  habitat is locked; `contract_version` is `1.2.0`.
+
 ### Open questions (this amendment)
 
 Resolved here:
 
 1. **Root resolution order** — INV-15 as above.
 2. **Amendment vs new ADR** — amend 0095.
+3. **`status.host`** — S5g (`host.json` + PID check).
+4. **`.apegmsh/project.json`** — S5g (entry script).
+5. **Habitat concurrency lock / `BUSY`** — S5h.
 
-Still open (do not block S5a):
+Still open (do not block S5a–S5h):
 
-1. Whether `status` grows a `host: {running, pid, phase}` block (S5e / later).
-2. Whether `.apegmsh/project.json` names the entry script (later; not S5a).
+1. Event stream (mtime poll remains the contract until proven insufficient).
+2. Root-relative paths in all status payloads (absolute OS paths today).
 

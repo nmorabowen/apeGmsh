@@ -116,12 +116,12 @@ def build_server() -> Any:
 
     @mcp.tool()
     def run_until(
-        script: str,
+        script: str | None = None,
         phase: str = "model",
         root: str | None = None,
     ) -> dict[str, Any]:
-        """Replay script up to phase (model|mesh|results). No Qt window."""
-        return logged("run_until", _run_until, script, phase=phase, root=root)
+        """Replay script up to phase (model|mesh|results). Omitting script uses project.json."""
+        return logged("run_until", _run_until, script=script, phase=phase, root=root)
 
     @mcp.tool()
     def assess(

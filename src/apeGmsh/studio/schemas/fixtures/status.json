@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "contract_version": "1.0.0",
+  "contract_version": "1.2.0",
   "root": "/project",
   "names": null,
   "names_error": null,
@@ -11,6 +11,21 @@
   "selection": null,
   "selection_error": null,
   "ledger_error": null,
+  "host": {
+    "running": false,
+    "pid": null,
+    "phase": null,
+    "stale": false
+  },
+  "project": null,
+  "busy": {
+    "busy": false,
+    "pid": null,
+    "op": null,
+    "phase": null,
+    "script": null,
+    "stale": false
+  },
   "empty": true,
   "ok": true,
   "error": null

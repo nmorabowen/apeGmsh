@@ -22,7 +22,9 @@ from apeGmsh.studio._highlight import write_highlight
 from apeGmsh.studio._ledger import make_record
 from apeGmsh.studio._names import write_names
 
-_KINDS = ("selection", "names", "ledger", "highlight", "status")
+_KINDS = (
+    "selection", "names", "ledger", "highlight", "status", "host", "project", "busy",
+)
 
 
 @pytest.mark.parametrize("kind", _KINDS)

@@ -17,6 +17,9 @@
     "selection": { "type": ["object", "null"] },
     "selection_error": { "type": ["string", "null"] },
     "ledger_error": { "type": ["string", "null"] },
+    "host": { "type": "object" },
+    "project": { "type": ["object", "null"] },
+    "busy": { "type": "object" },
     "empty": { "type": "boolean" },
     "ok": { "type": "boolean" },
     "error": { "type": ["object", "null"] }

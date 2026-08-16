@@ -149,6 +149,13 @@ def _record_run(
             cwd=cwd,
         ),
     )
+    if ok:
+        from ._project import write_project
+
+        try:
+            write_project(root, script=script)
+        except OSError:
+            pass
 
 
 def _exec_hold_open(
@@ -333,6 +340,20 @@ class ReplayRunner:
                 skipped=True,
                 stopped_at=self._last_good.stopped_at,
             )
+        from ._busy import read_busy, release_busy, try_acquire_busy
+
+        if not try_acquire_busy(
+            habitat, op="run_until", phase=phase, script=script,
+        ):
+            info = read_busy(habitat)
+            return ReplayResult(
+                ok=False,
+                phase=phase,
+                geometry_hash=digest,
+                error=f"BUSY: habitat locked by pid={info.get('pid')} "
+                f"op={info.get('op')}",
+                session=None,
+            )
         try:
             if self._exec is None:
                 result = _exec_hold_open(script, phase, root=habitat)
@@ -356,6 +377,8 @@ class ReplayRunner:
                 error=err,
                 session=None,
             )
+        finally:
+            release_busy(habitat)
         if result.ok:
             stamped = ReplayResult(
                 ok=True,

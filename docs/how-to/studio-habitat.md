@@ -65,14 +65,17 @@ Same gate as MCP `run_until`.
 | `names.json` | `run_until` / replay | MCP `status`, highlight resolve | atomic replace |
 | `runs.jsonl` | `run_until`, `results_pin` | MCP `status` | append (best-effort) |
 | `highlight.json` | MCP `highlight` | Qt host (file poll) | atomic replace |
+| `host.json` | Qt host (claim / clear) | MCP `status` | atomic replace |
+| `project.json` | successful `run_until` / replay | MCP `status`, `run_until` default | atomic replace |
+| `busy.json` | `run_until` / replay (exclusive) | MCP `status` | O_EXCL create / unlink |
 | `mcp_calls.jsonl` | MCP adapter (side effect) | `studio.profile` | append (best-effort) |
 | `visors/` | `render` / `animate` / assess figures | agents / reports | ordinary writes |
 
-Snapshot JSON (`selection` / `names` / `highlight`) is single-writer with
-atomic replace (INV-16). JSONL ledgers are append-best-effort: more than
-one tool may append (`run_until` and `results_pin` both write
-`runs.jsonl`). Authored chapters go in `docs/`, never under `.apegmsh/`
-(INV-12).
+Snapshot JSON (`selection` / `names` / `highlight` / `host` / `project`)
+is single-writer with atomic replace (INV-16). JSONL ledgers are
+append-best-effort: more than one tool may append (`run_until` and
+`results_pin` both write `runs.jsonl`). Authored chapters go in
+`docs/`, never under `.apegmsh/` (INV-12).
 
 ## Poll contract
 
@@ -80,28 +83,40 @@ There is no event stream yet. Consumers should watch mtimes (or re-read
 after each tool call):
 
 - After a spatial pick: `selection.json`
-- After `run_until`: `names.json` and the last line of `runs.jsonl`
+- After `run_until`: `names.json`, `project.json`, and the last line of
+  `runs.jsonl`
+- After opening / closing the Qt host: `host.json` (also reflected in
+  `status.host`; a dead PID is reported as `running=false`, `stale=true`)
 - After `highlight`: `highlight.json` (host applies; does not rewrite
   the envelope)
 - After `render` / `animate`: paths under `visors/` (prefer `--json`
   `written` lists)
 
-`status` is the cheap aggregate: no replay, no Qt. Torn snapshot JSON
-degrades to `names_error` / `selection_error`; torn or partial
-`runs.jsonl` lines degrade to `ledger_error` (good lines are kept) —
-it does not raise. Tool-level `ok: true` means the verb ran; check those
-`*_error` fields for habitat health.
+`status` is the cheap aggregate: no replay, no Qt. It includes
+`host: {running, pid, phase, stale}`, `project` (entry script), and
+`busy: {busy, pid, op, phase, stale}`. Concurrent `run_until` calls on
+the same root return `error.code == "BUSY"` while another replay holds
+`.apegmsh/busy.json` (S5h). Torn snapshot JSON degrades to
+`names_error` / `selection_error`; torn or partial `runs.jsonl` lines
+degrade to `ledger_error` (good lines are kept) — it does not raise.
+Tool-level `ok: true` means the verb ran; check those `*_error` fields
+for habitat health.
 
 Empty / whitespace `root=` or `APEGMSH_ROOT` is treated as unset (falls
 through the INV-15 chain) — do not pass `""` hoping it means cwd.
+
+`run_until` may omit `script=` when `project.json` already names the
+entry script.
 
 ## Cold start
 
 `.apegmsh/` is generated and typically gitignored. A fresh clone returns
 `status.empty == true`. Call `run_until(script, phase="model", root=…)`
 (or the CLI equivalent) before expecting names, picks, or reports.
+That also writes `project.json` so later `run_until(phase=…)` calls can
+omit the script path.
 
-`status.contract_version` is the habitat semver (`1.0.0` today). Published
+`status.contract_version` is the habitat semver (`1.2.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack.

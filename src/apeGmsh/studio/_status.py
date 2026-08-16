@@ -15,10 +15,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ._busy import read_busy
 from ._envelope import read_envelope
 from ._contract import CONTRACT_VERSION
+from ._host_state import read_host
 from ._ledger import read_runs_safe
 from ._paths import envelope_path, ledger_path, names_path, resolve_root
+from ._project import read_project
 
 STATUS_SCHEMA = 1
 
@@ -51,6 +54,9 @@ def collect_status(root: Path | str | None = None) -> dict[str, Any]:
         "selection": selection,
         "selection_error": selection_error,
         "ledger_error": ledger_error,
+        "host": read_host(base),
+        "project": read_project(base),
+        "busy": read_busy(base),
     }
 
 
@@ -86,6 +92,28 @@ def format_status(payload: dict[str, Any]) -> str:
         f"  elements: {_fmt_counts(counts.get('elements'))}",
         f"  pick: {_fmt_pick(payload)}",
     ]
+    host = payload.get("host") or {}
+    if host.get("running"):
+        lines.append(
+            f"  host: running pid={host.get('pid')} phase={host.get('phase')}"
+        )
+    elif host.get("stale"):
+        lines.append(
+            f"  host: stale (dead pid={host.get('pid')})"
+        )
+    else:
+        lines.append("  host: (not running)")
+    busy = payload.get("busy") or {}
+    if busy.get("busy"):
+        lines.append(
+            f"  busy: pid={busy.get('pid')} op={busy.get('op')} "
+            f"phase={busy.get('phase')}"
+        )
+    elif busy.get("stale"):
+        lines.append(f"  busy: stale (dead pid={busy.get('pid')})")
+    proj = payload.get("project") or {}
+    if proj.get("script"):
+        lines.append(f"  project.script: {proj.get('script')}")
     names_err = payload.get("names_error")
     if names_err:
         lines.append(f"  names: (unreadable: {names_err})")

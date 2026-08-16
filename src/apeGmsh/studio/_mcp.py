@@ -217,30 +217,47 @@ def lookup(
 
 
 def run_until(
-    script: str | Path,
+    script: str | Path | None = None,
     *,
     phase: str = "model",
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Replay *script* up to *phase* in a subprocess (INV-5)."""
+    """Replay *script* up to *phase* in a subprocess (INV-5).
+
+    When *script* is omitted / blank, uses ``.apegmsh/project.json``
+    (S5g). Returns ``NO_SCRIPT`` if neither is available.
+    """
+    from ._project import resolve_entry_script
+
     if phase not in PHASES:
         return _fail(
             "INVALID_PHASE",
             f"phase must be one of {PHASES}; got {phase!r}",
             phase=phase,
-            script=str(script),
+            script=str(script) if script is not None else None,
         )
     base = _require_root_dir(root)
     if isinstance(base, dict):
         return {
             **base,
             "phase": phase,
-            "script": str(script),
+            "script": str(script) if script is not None else None,
             "returncode": 2,
             "stdout": "",
             "stderr": base["error"]["message"],
         }
-    script_path = _resolve(script, base)
+    script_path = resolve_entry_script(script, root=base)
+    if script_path is None:
+        return _fail(
+            "NO_SCRIPT",
+            "no script= and no .apegmsh/project.json entry",
+            returncode=2,
+            phase=phase,
+            script=None,
+            stdout="",
+            stderr="error: no script= and no .apegmsh/project.json entry",
+            status=status(root=base),
+        )
     if not script_path.is_file():
         return _fail(
             "NOT_FOUND",
@@ -250,6 +267,20 @@ def run_until(
             script=str(script_path),
             stdout="",
             stderr=f"error: script not found: {script_path}",
+            status=status(root=base),
+        )
+    from ._busy import read_busy
+
+    held = read_busy(base)
+    if held.get("busy"):
+        return _fail(
+            "BUSY",
+            f"habitat locked by pid={held.get('pid')} op={held.get('op')}",
+            returncode=3,
+            phase=phase,
+            script=str(script_path),
+            root=str(base),
+            busy=held,
             status=status(root=base),
         )
     proc = _shell(
@@ -276,6 +307,19 @@ def run_until(
             root=str(base),
             stdout=proc.stdout,
             stderr=proc.stderr,
+            status=status(root=base),
+        )
+    if proc.returncode == 3 or (proc.stderr or "").lstrip().startswith("BUSY:"):
+        return _fail(
+            "BUSY",
+            (proc.stderr or proc.stdout or "habitat busy").strip() or "habitat busy",
+            returncode=3,
+            phase=phase,
+            script=str(script_path),
+            root=str(base),
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            busy=read_busy(base),
             status=status(root=base),
         )
     return {
