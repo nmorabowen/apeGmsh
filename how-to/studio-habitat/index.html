@@ -3846,10 +3846,12 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.2.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.3.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
-the FEM stack.</p>
+the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
+and most MCP path fields) are root-relative posix; the <code>root</code> field
+itself stays absolute as the resolve anchor.</p>
 <h2 id="trust-boundary">Trust boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
 <p><code>run_until</code> executes the caller’s Python file on purpose. Treat it as a
 <strong>local trust boundary</strong> — not a service to expose on a network port.</p>
