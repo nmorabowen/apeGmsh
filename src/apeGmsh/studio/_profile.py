@@ -5,6 +5,11 @@ Sidecar, not an MCP tool. Two inputs: the owned
 JSONL transcript. Heuristic tokens = chars/4. The defect metric is
 ``src_search`` rate.
 
+Primary ``KINDS`` stay fixed for the defect metric. Events that land
+in ``other`` also feed an ``other_gloss`` layer (schema ≥2): top tool
+names, optimization buckets, and shell-command families — so a large
+``other`` is actionable without diluting ``src_search_rate``.
+
 Optional ``--skill-budget`` is a skill-hygiene gate (character caps),
 not a live-session meter. ``--promote`` (S5) lists lookup-miss
 eligibility and writes nothing.
@@ -12,6 +17,7 @@ eligibility and writes nothing.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -23,6 +29,26 @@ KINDS = (
     "src_search",
     "src_read",
     "other",
+)
+
+# Gloss buckets for kind=="other" only. Order is report order.
+OTHER_BUCKETS = (
+    "shell_run",
+    "edit",
+    "search_non_src",
+    "read_ambient",
+    "mcp_meta",
+    "agent_ops",
+    "other_misc",
+)
+
+SHELL_FAMILIES = (
+    "python_studio",
+    "python_model",
+    "viewer",
+    "pip_env",
+    "git",
+    "other_shell",
 )
 
 HABITAT_TOOLS = frozenset({
@@ -38,9 +64,23 @@ HABITAT_TOOLS = frozenset({
     "promote_selection",
 })
 
+_EDIT_TOOLS = frozenset({
+    "write", "strreplace", "editnotebook", "delete", "applypatch",
+})
+_SEARCH_TOOLS = frozenset({"grep", "glob", "rg", "search"})
+_SHELL_TOOLS = frozenset({"shell", "bash", "awaitshell"})
+_MCP_META_TOOLS = frozenset({
+    "getmcptools", "mcp_auth", "list_mcp_resources", "fetch_mcp_resource",
+})
+_AGENT_OPS_TOOLS = frozenset({
+    "todowrite", "todoread", "task", "switchmode", "askquestion",
+})
+
 SKILL_MD_MAX_CHARS = 24_000
 REFERENCE_MAX_CHARS = 200_000
 MISS_PROMOTE_REPEATS = 3
+REPORT_SCHEMA = 2
+OTHER_GLOSS_TOP_TOOLS = 12
 
 
 def heuristic_tokens(chars: int) -> int:
@@ -106,12 +146,160 @@ def classify_tool(name: str, payload: Any) -> str:
     return "other"
 
 
+def classify_other_bucket(name: str, payload: Any = None) -> str:
+    """Optimization bucket for a kind==``other`` event."""
+    nlow = (name or "").strip().lower()
+    if nlow in _SHELL_TOOLS:
+        return "shell_run"
+    if nlow in _EDIT_TOOLS:
+        return "edit"
+    if nlow in _SEARCH_TOOLS:
+        return "search_non_src"
+    if nlow == "read":
+        return "read_ambient"
+    if nlow in _MCP_META_TOOLS or nlow in {"callmcptool", "call_mcp_tool"}:
+        return "mcp_meta"
+    if nlow in _AGENT_OPS_TOOLS:
+        return "agent_ops"
+    return "other_misc"
+
+
+def classify_shell_family(command: str) -> str:
+    """Coarse family for a Shell tool ``command=`` string."""
+    c = (command or "").lower()
+    if not c.strip():
+        return "other_shell"
+    if re.search(
+        r"launch_viewer|results\.viewer|apegmsh\.viewers|resultsviewer",
+        c,
+    ):
+        return "viewer"
+    if re.search(
+        r"apegmsh\.studio(\.| |$)|-m\s+apegmsh\.studio|studio\.lookup|"
+        r"studio\.profile|studio\.mcp|studio-mcp",
+        c,
+    ):
+        return "python_studio"
+    if re.search(r"\bpip\b|\buv\s+pip\b|opensees_env|venv\\|\.venv\\", c):
+        return "pip_env"
+    if re.search(r"\bgit\b", c):
+        return "git"
+    if re.search(
+        r"\bpython\b|apegmsh|run_cantilever|opensees|from apeGmsh",
+        c,
+        re.I,
+    ):
+        return "python_model"
+    return "other_shell"
+
+
 def _empty_counts() -> dict[str, int]:
     return {kind: 0 for kind in KINDS}
 
 
 def _empty_chars() -> dict[str, int]:
     return {kind: 0 for kind in KINDS}
+
+
+def _empty_stat_map(keys: tuple[str, ...]) -> dict[str, dict[str, int]]:
+    return {k: {"n": 0, "chars": 0} for k in keys}
+
+
+def _empty_gloss() -> dict[str, Any]:
+    return {
+        "by_tool": {},
+        "by_bucket": _empty_stat_map(OTHER_BUCKETS),
+        "shell_families": _empty_stat_map(SHELL_FAMILIES),
+    }
+
+
+def _bump_stat(slot: dict[str, int], nbytes: int) -> None:
+    slot["n"] = int(slot.get("n") or 0) + 1
+    slot["chars"] = int(slot.get("chars") or 0) + max(nbytes, 0)
+
+
+def _gloss_add(
+    gloss: dict[str, Any],
+    name: str,
+    payload: Any,
+    nbytes: int,
+) -> None:
+    """Accumulate one kind==other event into ``gloss``."""
+    tool = (name or "").strip() or "<unnamed>"
+    by_tool: dict[str, dict[str, int]] = gloss["by_tool"]
+    if tool not in by_tool:
+        by_tool[tool] = {"n": 0, "chars": 0}
+    _bump_stat(by_tool[tool], nbytes)
+
+    bucket = classify_other_bucket(tool, payload)
+    _bump_stat(gloss["by_bucket"][bucket], nbytes)
+
+    nlow = tool.lower()
+    if nlow in _SHELL_TOOLS:
+        cmd = ""
+        if isinstance(payload, dict):
+            cmd = str(payload.get("command") or "")
+        family = classify_shell_family(cmd)
+        _bump_stat(gloss["shell_families"][family], nbytes)
+
+
+def _merge_gloss(*parts: dict[str, Any]) -> dict[str, Any]:
+    out = _empty_gloss()
+    for gloss in parts:
+        if not gloss:
+            continue
+        for tool, stats in (gloss.get("by_tool") or {}).items():
+            slot = out["by_tool"].setdefault(tool, {"n": 0, "chars": 0})
+            slot["n"] += int(stats.get("n") or 0)
+            slot["chars"] += int(stats.get("chars") or 0)
+        for bucket in OTHER_BUCKETS:
+            src = (gloss.get("by_bucket") or {}).get(bucket) or {}
+            dst = out["by_bucket"][bucket]
+            dst["n"] += int(src.get("n") or 0)
+            dst["chars"] += int(src.get("chars") or 0)
+        for fam in SHELL_FAMILIES:
+            src = (gloss.get("shell_families") or {}).get(fam) or {}
+            dst = out["shell_families"][fam]
+            dst["n"] += int(src.get("n") or 0)
+            dst["chars"] += int(src.get("chars") or 0)
+    return out
+
+
+def _finalize_gloss(gloss: dict[str, Any]) -> dict[str, Any]:
+    """Attach token estimates and top-tool ranking for the report."""
+    by_tool = gloss.get("by_tool") or {}
+    ranked = sorted(
+        by_tool.items(),
+        key=lambda item: (-int(item[1].get("n") or 0), item[0].lower()),
+    )
+    top = []
+    for name, stats in ranked[:OTHER_GLOSS_TOP_TOOLS]:
+        chars = int(stats.get("chars") or 0)
+        top.append({
+            "tool": name,
+            "n": int(stats.get("n") or 0),
+            "chars": chars,
+            "tokens": heuristic_tokens(chars),
+        })
+
+    def _with_tokens(mapping: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+        out: dict[str, dict[str, int]] = {}
+        for key, stats in mapping.items():
+            chars = int(stats.get("chars") or 0)
+            out[key] = {
+                "n": int(stats.get("n") or 0),
+                "chars": chars,
+                "tokens": heuristic_tokens(chars),
+            }
+        return out
+
+    return {
+        "by_tool": top,
+        "by_bucket": _with_tokens(gloss.get("by_bucket") or _empty_stat_map(OTHER_BUCKETS)),
+        "shell_families": _with_tokens(
+            gloss.get("shell_families") or _empty_stat_map(SHELL_FAMILIES)
+        ),
+    }
 
 
 def _add_event(
@@ -140,15 +328,20 @@ def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 yield obj
 
 
-def summarize_mcp_calls(path: Path) -> tuple[dict[str, int], dict[str, int]]:
+def summarize_mcp_calls(
+    path: Path,
+) -> tuple[dict[str, int], dict[str, int], dict[str, Any]]:
     counts = _empty_counts()
     chars = _empty_chars()
+    gloss = _empty_gloss()
     for rec in iter_jsonl(path):
         tool = str(rec.get("tool") or "")
         kind = classify_tool(tool, rec)
         nbytes = int(rec.get("bytes_in") or 0) + int(rec.get("bytes_out") or 0)
         _add_event(counts, chars, kind, nbytes)
-    return counts, chars
+        if kind == "other":
+            _gloss_add(gloss, tool, rec, nbytes)
+    return counts, chars, gloss
 
 
 def _tool_events_from_record(rec: dict[str, Any]) -> list[tuple[str, Any]]:
@@ -176,9 +369,12 @@ def _tool_events_from_record(rec: dict[str, Any]) -> list[tuple[str, Any]]:
     return out
 
 
-def summarize_transcript(path: Path) -> tuple[dict[str, int], dict[str, int]]:
+def summarize_transcript(
+    path: Path,
+) -> tuple[dict[str, int], dict[str, int], dict[str, Any]]:
     counts = _empty_counts()
     chars = _empty_chars()
+    gloss = _empty_gloss()
     for rec in iter_jsonl(path):
         for name, payload in _tool_events_from_record(rec):
             kind = classify_tool(name, payload)
@@ -187,7 +383,9 @@ def summarize_transcript(path: Path) -> tuple[dict[str, int], dict[str, int]]:
             except (TypeError, ValueError):
                 nbytes = len(str(payload))
             _add_event(counts, chars, kind, nbytes)
-    return counts, chars
+            if kind == "other":
+                _gloss_add(gloss, name, payload, nbytes)
+    return counts, chars, gloss
 
 
 def merge_stats(
@@ -214,24 +412,32 @@ def build_report(
     mcp_path: Path | None = None,
     transcript_path: Path | None = None,
 ) -> dict[str, Any]:
-    parts: list[tuple[dict[str, int], dict[str, int]]] = []
+    count_parts: list[tuple[dict[str, int], dict[str, int]]] = []
+    gloss_parts: list[dict[str, Any]] = []
     if mcp_path is not None:
-        parts.append(summarize_mcp_calls(mcp_path))
+        c, ch, g = summarize_mcp_calls(mcp_path)
+        count_parts.append((c, ch))
+        gloss_parts.append(g)
     if transcript_path is not None:
-        parts.append(summarize_transcript(transcript_path))
-    if not parts:
+        c, ch, g = summarize_transcript(transcript_path)
+        count_parts.append((c, ch))
+        gloss_parts.append(g)
+    if not count_parts:
         counts, chars = _empty_counts(), _empty_chars()
+        gloss = _empty_gloss()
     else:
-        counts, chars = merge_stats(*parts)
+        counts, chars = merge_stats(*count_parts)
+        gloss = _merge_gloss(*gloss_parts)
     tokens = {k: heuristic_tokens(chars[k]) for k in KINDS}
     total = sum(counts.values())
     return {
-        "schema": 1,
+        "schema": REPORT_SCHEMA,
         "events": total,
         "counts": counts,
         "chars": chars,
         "tokens": tokens,
         "src_search_rate": round(src_search_rate(counts), 4),
+        "other_gloss": _finalize_gloss(gloss),
     }
 
 
@@ -246,6 +452,34 @@ def format_report(report: dict[str, Any]) -> str:
         n = int(counts.get(kind) or 0)
         tok = int(tokens.get(kind) or 0)
         lines.append(f"{kind}: {n}  (~{tok} tok)")
+
+    gloss = report.get("other_gloss") or {}
+    if int(counts.get("other") or 0) > 0 and gloss:
+        lines.append("other gloss:")
+        buckets = gloss.get("by_bucket") or {}
+        bucket_bits = []
+        for key in OTHER_BUCKETS:
+            stats = buckets.get(key) or {}
+            n = int(stats.get("n") or 0)
+            if n:
+                bucket_bits.append(f"{key}={n}")
+        if bucket_bits:
+            lines.append("  buckets: " + "  ".join(bucket_bits))
+        top = gloss.get("by_tool") or []
+        if top:
+            lines.append(
+                "  top tools: "
+                + ", ".join(f"{row['tool']} {row['n']}" for row in top[:8])
+            )
+        families = gloss.get("shell_families") or {}
+        fam_bits = []
+        for key in SHELL_FAMILIES:
+            stats = families.get(key) or {}
+            n = int(stats.get("n") or 0)
+            if n:
+                fam_bits.append(f"{key}={n}")
+        if fam_bits:
+            lines.append("  shell: " + "  ".join(fam_bits))
     return "\n".join(lines) + "\n"
 
 
