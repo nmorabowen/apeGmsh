@@ -3827,15 +3827,22 @@ after each tool call):</p>
 <li>After <code>render</code> / <code>animate</code>: paths under <code>visors/</code> (prefer <code>--json</code>
   <code>written</code> lists)</li>
 </ul>
-<p><code>status</code> is the cheap aggregate: no replay, no Qt. It includes
-<code>host: {running, pid, phase, stale}</code>, <code>project</code> (entry script), and
-<code>busy: {busy, pid, op, phase, stale}</code>. Concurrent <code>run_until</code> calls on
-the same root return <code>error.code == "BUSY"</code> while another replay holds
-<code>.apegmsh/busy.json</code> (S5h). Torn snapshot JSON degrades to
-<code>names_error</code> / <code>selection_error</code>; torn or partial <code>runs.jsonl</code> lines
-degrade to <code>ledger_error</code> (good lines are kept) — it does not raise.
-Tool-level <code>ok: true</code> means the verb ran; check those <code>*_error</code> fields
-for habitat health.</p>
+<p><code>status</code> is the cheap aggregate: no replay, no Qt. MCP
+<code>status(mode="brief")</code> is the <strong>default</strong> agent shape (root, last-run
+intent, label/PG lists, counts summary, pick summary, plus CLI-shaped
+<code>text</code>) — keep start rituals on brief so a real model does not burn
+~55 KB of <code>names.entities</code> every turn. Use <code>status(mode="full")</code> only
+when debugging or when a Qt-adjacent workflow needs the complete
+<code>collect_status</code> dict. <strong>Root check → brief; entity hunting →
+<code>lookup</code> / <code>names.json</code>, not a full status dump.</strong></p>
+<p><code>status</code> includes <code>host: {running, pid, phase, stale}</code>, <code>project</code>
+(entry script), and <code>busy: {busy, pid, op, phase, stale}</code>. Concurrent
+<code>run_until</code> calls on the same root return <code>error.code == "BUSY"</code> while
+another replay holds <code>.apegmsh/busy.json</code> (S5h). Torn snapshot JSON
+degrades to <code>names_error</code> / <code>selection_error</code>; torn or partial
+<code>runs.jsonl</code> lines degrade to <code>ledger_error</code> (good lines are kept) —
+it does not raise. Tool-level <code>ok: true</code> means the verb ran; check
+those <code>*_error</code> fields for habitat health.</p>
 <p>Empty / whitespace <code>root=</code> or <code>APEGMSH_ROOT</code> is treated as unset (falls
 through the INV-15 chain) — do not pass <code>""</code> hoping it means cwd.</p>
 <p><code>run_until</code> may omit <code>script=</code> when <code>project.json</code> already names the
@@ -3846,12 +3853,14 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.3.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.4.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
-and most MCP path fields) are root-relative posix; the <code>root</code> field
-itself stays absolute as the resolve anchor.</p>
+and MCP <code>path</code> / <code>output</code> / <code>written</code> / <code>run_until.script</code>) are
+root-relative posix; the <code>root</code> field itself stays absolute as the
+resolve anchor. A <code>project.json</code> entry outside the habitat root is
+refused (<code>OUTSIDE_ROOT</code>) when used as the <code>run_until</code> default.</p>
 <h2 id="trust-boundary">Trust boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
 <p><code>run_until</code> executes the caller’s Python file on purpose. Treat it as a
 <strong>local trust boundary</strong> — not a service to expose on a network port.</p>
