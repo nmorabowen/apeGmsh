@@ -64,6 +64,98 @@ def has_studio_state(payload: dict[str, Any]) -> bool:
     return payload.get("names") is not None or payload.get("last_run") is not None
 
 
+def brief_status(
+    payload: dict[str, Any] | None = None,
+    *,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Slim agent-facing status (token budget; MCP ``mode="brief"``).
+
+    Keeps root / last-run intent / label+PG lists / counts summary / pick
+    summary. Omits ``names.entities`` and the full selection evidence
+    dump. ``text`` mirrors CLI ``format_status``.
+    """
+    full = collect_status(root) if payload is None else payload
+    last = full.get("last_run") or {}
+    names = full.get("names") or {}
+    labels = list(last.get("labels") or names.get("labels") or [])
+    pgs = list(last.get("physical_groups") or names.get("physical_groups") or [])
+    raw_counts = last.get("counts") or names.get("counts") or {}
+    counts: dict[str, Any] = {}
+    if isinstance(raw_counts, dict):
+        for key in ("entities", "elements"):
+            block = raw_counts.get(key)
+            if isinstance(block, dict):
+                counts[key] = block
+
+    pick: dict[str, Any] | None = None
+    sel = full.get("selection")
+    if isinstance(sel, dict):
+        unnamed = sel.get("unnamed") or []
+        pick = {
+            "labels": list(sel.get("labels") or []),
+            "physical_groups": list(sel.get("physical_groups") or []),
+            "n_unnamed": len(unnamed) if isinstance(unnamed, (list, tuple)) else 0,
+            "phase": sel.get("phase"),
+        }
+
+    proj = full.get("project")
+    project = None
+    if isinstance(proj, dict) and proj.get("script"):
+        project = {"script": proj.get("script")}
+
+    host = full.get("host") if isinstance(full.get("host"), dict) else {}
+    busy = full.get("busy") if isinstance(full.get("busy"), dict) else {}
+
+    last_brief = None
+    if last:
+        last_brief = {
+            "ok": last.get("ok"),
+            "phase": last.get("phase"),
+            "script": last.get("script"),
+            "stopped_at": last.get("stopped_at"),
+            "session": last.get("session"),
+            "ts": last.get("ts"),
+        }
+        err = last.get("error")
+        if err:
+            last_brief["error"] = str(err).strip().splitlines()[-1]
+
+    return {
+        "schema": STATUS_SCHEMA,
+        "contract_version": full.get("contract_version") or CONTRACT_VERSION,
+        "mode": "brief",
+        "root": full.get("root"),
+        "empty": not has_studio_state(full),
+        "phase": (last_brief or {}).get("phase") or names.get("phase"),
+        "last": last_brief,
+        "n_runs": full.get("n_runs") or 0,
+        "n_pins": full.get("n_pins") or 0,
+        "labels": labels,
+        "physical_groups": pgs,
+        "counts": counts,
+        "pick": pick,
+        "host": {
+            "running": bool(host.get("running")),
+            "pid": host.get("pid"),
+            "phase": host.get("phase"),
+            "stale": bool(host.get("stale")),
+        },
+        "busy": {
+            "busy": bool(busy.get("busy")),
+            "pid": busy.get("pid"),
+            "op": busy.get("op"),
+            "phase": busy.get("phase"),
+            "stale": bool(busy.get("stale")),
+        },
+        "project": project,
+        "names_error": full.get("names_error"),
+        "selection_error": full.get("selection_error"),
+        "ledger_error": full.get("ledger_error"),
+        "text": format_status(full),
+    }
+
+
 def format_status(payload: dict[str, Any]) -> str:
     """Short agent-readable dump. Not a substitute for the JSON files."""
     if (
@@ -79,6 +171,7 @@ def format_status(payload: dict[str, Any]) -> str:
     counts = last.get("counts") or names.get("counts") or {}
     lines = [
         "studio status",
+        f"  root: {payload.get('root') or '(none)'}",
         f"  last: {last.get('ts') or '(no ledger)'}  "
         f"ok={_fmt(last.get('ok'))}  "
         f"phase={last.get('phase') or names.get('phase') or '(unknown)'}  "

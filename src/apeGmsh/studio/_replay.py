@@ -149,7 +149,7 @@ def _record_run(
             cwd=cwd,
         ),
     )
-    if ok:
+    if ok and session is not None:
         from ._project import write_project
 
         try:

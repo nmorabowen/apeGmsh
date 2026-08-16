@@ -53,6 +53,21 @@ def display_path(path: Path | str, root: Path | str | None = None) -> str:
         return str(p)
 
 
+def is_under_root(path: Path | str, root: Path | str | None = None) -> bool:
+    """True when *path* resolves under the habitat *root*."""
+    p = Path(path).expanduser()
+    try:
+        p = p.resolve()
+    except OSError:
+        p = Path(os.path.abspath(str(p)))
+    base = resolve_root(root)
+    try:
+        p.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_under(root: Path | str, path: Path | str) -> Path:
     """Resolve *path* against *root* when relative; absolute paths as-is."""
     base = Path(root).expanduser().resolve()

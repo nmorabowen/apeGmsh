@@ -219,12 +219,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     script = args.script
     if script is None:
-        print(
-            "error: script path required (or pass --status / --assess / "
-            "--animate / --pin / --emit-report)",
-            file=sys.stderr,
-        )
-        return 2
+        from apeGmsh.studio._project import OutsideRootError, resolve_entry_script
+
+        try:
+            script = resolve_entry_script(None, root=root)
+        except OutsideRootError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if script is None:
+            print(
+                "error: no script= and no .apegmsh/project.json entry "
+                "(or pass --status / --assess / --animate / --pin / "
+                "--emit-report)",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        from apeGmsh.studio._paths import resolve_under
+
+        script = resolve_under(root, script)
     if not script.is_file():
         print(f"error: script not found: {script}", file=sys.stderr)
         return 2

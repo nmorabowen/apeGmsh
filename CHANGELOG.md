@@ -22,6 +22,22 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 F-status-1: MCP status brief mode
+
+MCP ``status(mode="brief"|"full")`` defaults to ``brief`` (root, last-run
+intent, labels/PGs, counts summary, pick summary, CLI-shaped ``text``) so
+session-start root checks stay under ~2 KB. ``mode="full"`` keeps the
+previous ``collect_status`` dump. ``contract_version`` is ``1.4.0``.
+
+### FIXED — ADR 0095 S5j: Opus harden (S5g–S5i)
+
+Torn ``busy.json`` grace before steal; Windows ``pid_alive`` treats
+ACCESS_DENIED as alive; CLI ``project.json`` fallback + root-relative
+script args; ``write_project`` only with a live session; own-PID
+``clear_host`` / ``release_busy``; ``OUTSIDE_ROOT`` for out-of-root
+project defaults; MCP ``assess`` / ``render`` / ``animate`` path fields
+via ``display_path``. ``contract_version`` is ``1.3.1``.
+
 ### ADDED — ADR 0095 S5i: root-relative habitat paths
 
 Ledger ``script`` / ``cwd`` and MCP path fields under the project root

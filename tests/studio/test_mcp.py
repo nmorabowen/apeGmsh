@@ -20,8 +20,6 @@ from apeGmsh.studio._mcp import (
     run_until,
     status,
 )
-from apeGmsh.studio._status import has_studio_state
-
 MCP_DIR = Path(__file__).resolve().parents[2] / "src" / "apeGmsh" / "studio"
 _MCP_FILES = (
     MCP_DIR / "_mcp.py",
@@ -64,8 +62,73 @@ def test_mcp_modules_do_not_import_gmsh_or_viewers() -> None:
 
 def test_status_empty(tmp_path: Path) -> None:
     payload = status(root=tmp_path)
+    assert payload["mode"] == "brief"
     assert payload["empty"] is True
-    assert has_studio_state(payload) is False
+    assert payload["ok"] is True
+    assert "names" not in payload
+
+
+def test_status_brief_omits_entities(tmp_path: Path) -> None:
+    entities = [
+        {"dim": 3, "tag": i, "labels": [f"L{i}"], "bbox": [0, 0, 0, 1, 1, 1]}
+        for i in range(400)
+    ]
+    names = {
+        "schema": 1,
+        "phase": "mesh",
+        "labels": ["body", "plate"],
+        "physical_groups": ["Body", "Plate"],
+        "counts": {"entities": {"3": 400}, "elements": {"3": 12000}},
+        "entities": entities,
+    }
+    (tmp_path / ".apegmsh").mkdir()
+    (tmp_path / ".apegmsh" / "names.json").write_text(
+        json.dumps(names) + "\n", encoding="utf-8"
+    )
+    (tmp_path / ".apegmsh" / "runs.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "kind": "run",
+                "ts": "2026-08-16T06:00:00Z",
+                "ok": True,
+                "phase": "mesh",
+                "script": "box.py",
+                "stopped_at": "g.mesh.generation.generate",
+                "session": "box",
+                "labels": ["body", "plate"],
+                "physical_groups": ["Body", "Plate"],
+                "counts": names["counts"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    brief = status(root=tmp_path)
+    assert brief["mode"] == "brief"
+    assert brief["root"] == str(tmp_path.resolve())
+    assert brief["phase"] == "mesh"
+    assert brief["last"]["ok"] is True
+    assert brief["last"]["script"] == "box.py"
+    assert brief["labels"] == ["body", "plate"]
+    assert brief["physical_groups"] == ["Body", "Plate"]
+    assert brief["counts"]["entities"]["3"] == 400
+    assert "names" not in brief
+    assert "entities" not in brief
+    raw = json.dumps(brief, ensure_ascii=False)
+    assert len(raw.encode("utf-8")) <= 2048
+    assert "studio status" in brief["text"]
+
+    full = status(mode="full", root=tmp_path)
+    assert full["mode"] == "full"
+    assert full["names"]["entities"] == entities
+    assert len(json.dumps(full, ensure_ascii=False).encode("utf-8")) > 2048
+
+
+def test_status_invalid_mode(tmp_path: Path) -> None:
+    payload = status(mode="verbose", root=tmp_path)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "INVALID_MODE"
 
 
 def test_status_and_get_selection(tmp_path: Path) -> None:
@@ -102,9 +165,11 @@ def test_status_and_get_selection(tmp_path: Path) -> None:
             ),
         ),
     )
-    payload = status(root=tmp_path)
+    payload = status(mode="full", root=tmp_path)
     assert payload["empty"] is False
     assert payload["names"]["labels"] == ["body"]
+    brief = status(root=tmp_path)
+    assert brief["pick"]["labels"] == ["body"]
     pick = get_selection(root=tmp_path)
     assert pick["present"] is True
     assert pick["labels"] == ["body"]

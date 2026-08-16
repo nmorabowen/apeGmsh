@@ -12,9 +12,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._paths import atomic_write_text, project_path, resolve_root
+from ._paths import (
+    atomic_write_text,
+    is_under_root,
+    project_path,
+    resolve_root,
+)
 
 PROJECT_SCHEMA = 1
+
+
+class OutsideRootError(ValueError):
+    """``project.json`` entry script lies outside the habitat root."""
 
 
 def read_project(root: Path | str | None = None) -> dict[str, Any] | None:
@@ -60,7 +69,10 @@ def resolve_entry_script(
 ) -> Path | None:
     """Resolve an explicit script, or fall back to ``project.json``.
 
-    Returns ``None`` when neither is available.
+    Returns ``None`` when neither is available. Raises
+    :class:`OutsideRootError` when the *project.json* default resolves
+    outside the habitat root (S5j) — explicit ``script=`` may still
+    point outside.
     """
     base = resolve_root(root)
     if script is not None and str(script).strip():
@@ -76,5 +88,11 @@ def resolve_entry_script(
         return None
     p = Path(str(raw).strip())
     if not p.is_absolute():
-        return (base / p).resolve()
-    return p.expanduser().resolve()
+        resolved = (base / p).resolve()
+    else:
+        resolved = p.expanduser().resolve()
+    if not is_under_root(resolved, base):
+        raise OutsideRootError(
+            f"project.json script lies outside habitat root: {resolved}"
+        )
+    return resolved
