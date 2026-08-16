@@ -3,8 +3,9 @@
 Replays the script with the Gmsh session held open up to ``--phase``,
 then opens the Qt host: MeshViewer if the script generated a mesh,
 otherwise ModelViewer. Picks write ``.apegmsh/selection.json`` under
-cwd. A successful stop writes ``.apegmsh/names.json`` and appends
-``.apegmsh/runs.jsonl``.
+the resolved project root (``--root`` / ``APEGMSH_ROOT`` / nearest
+``.apegmsh/`` / cwd — INV-15). A successful stop writes
+``.apegmsh/names.json`` and appends ``.apegmsh/runs.jsonl``.
 
 ``python -m apeGmsh.studio --status`` reads those files without replay.
 ``--assess PATH`` / ``--animate PATH`` are S4b/S4d workers.
@@ -29,7 +30,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "Replay an apeGmsh script (session held open) up to --phase "
             "and open the Qt host (MeshViewer if meshed, else ModelViewer). "
             "Picks write .apegmsh/selection.json; a successful stop writes "
-            ".apegmsh/names.json and appends .apegmsh/runs.jsonl. "
+            ".apegmsh/names.json and appends .apegmsh/runs.jsonl under the "
+            "resolved project root (--root / APEGMSH_ROOT / nearest "
+            ".apegmsh/ / cwd). "
             "--status prints that state without replaying. "
             "--assess / --animate are headless S4b/S4d workers. "
             "--pin / --emit-report are S4c (docs/ markdown archive; "
@@ -44,11 +47,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Path to the apeGmsh Python script to replay.",
     )
     parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help=(
+            "Project root for .apegmsh/ habitat files (INV-15). "
+            "Empty / whitespace is treated as unset. "
+            "Default: APEGMSH_ROOT, else nearest ancestor with .apegmsh/, "
+            "else cwd."
+        ),
+    )
+    parser.add_argument(
         "--envelope",
         type=Path,
         default=None,
         help=(
-            "Envelope JSON path (default: .apegmsh/selection.json under cwd)."
+            "Envelope JSON path (default: .apegmsh/selection.json under "
+            "the resolved project root)."
         ),
     )
     parser.add_argument(
@@ -132,7 +147,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--json",
         action="store_true",
         dest="as_json",
-        help="With --status, --assess, --pin, or --emit-report, print JSON.",
+        help="With --status, --assess, --pin, --emit-report, or --animate, print JSON.",
     )
     parser.add_argument(
         "--pin",
@@ -170,6 +185,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from apeGmsh.studio._paths import resolve_root
+
+    root = resolve_root(args.root)
+
     n_modes = sum(
         (
             bool(args.status),
@@ -188,15 +207,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     if args.status:
-        return _print_status(as_json=args.as_json)
+        return _print_status(as_json=args.as_json, root=root)
     if args.assess is not None:
-        return _run_assess(args)
+        return _run_assess(args, root=root)
     if args.animate is not None:
-        return _run_animate(args)
+        return _run_animate(args, root=root)
     if args.pin:
-        return _run_pin(args)
+        return _run_pin(args, root=root)
     if args.emit_report:
-        return _run_emit(args)
+        return _run_emit(args, root=root)
 
     script = args.script
     if script is None:
@@ -213,8 +232,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from apeGmsh.studio._paths import envelope_path
     from apeGmsh.studio._replay import ReplayRunner
 
-    dest = Path(args.envelope) if args.envelope is not None else envelope_path()
-    runner = ReplayRunner()
+    dest = Path(args.envelope) if args.envelope is not None else envelope_path(root)
+    runner = ReplayRunner(root=root)
     result = runner.run_until(script, phase=args.phase)
     if not result.ok:
         print(result.error or "replay failed", file=sys.stderr)
@@ -250,10 +269,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-def _print_status(*, as_json: bool) -> int:
+def _print_status(*, as_json: bool, root: Path) -> int:
     from apeGmsh.studio._status import collect_status, format_status, has_studio_state
 
-    payload = collect_status()
+    payload = collect_status(root)
     if as_json:
         print(json.dumps(payload, indent=2))
     else:
@@ -261,7 +280,7 @@ def _print_status(*, as_json: bool) -> int:
     return 0 if has_studio_state(payload) else 2
 
 
-def _run_assess(args: argparse.Namespace) -> int:
+def _run_assess(args: argparse.Namespace, *, root: Path) -> int:
     import contextlib
 
     from apeGmsh.studio._paths import visors_path
@@ -273,7 +292,7 @@ def _run_assess(args: argparse.Namespace) -> int:
                 args.assess,
                 figures=args.figures,
                 model_h5=args.model_h5,
-                out_dir=visors_path(),
+                out_dir=visors_path(root),
             )
     except (OSError, ValueError, TypeError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -287,13 +306,15 @@ def _run_assess(args: argparse.Namespace) -> int:
     return int(payload.get("returncode") or (0 if payload.get("ok") else 1))
 
 
-def _run_animate(args: argparse.Namespace) -> int:
+def _run_animate(args: argparse.Namespace, *, root: Path) -> int:
     import contextlib
 
     from apeGmsh.studio._paths import visors_path
     from apeGmsh.studio._verbs import animate_artifact
 
-    dest = args.output if args.output is not None else visors_path() / f"{args.kind}.gif"
+    dest = (
+        args.output if args.output is not None else visors_path(root) / f"{args.kind}.gif"
+    )
     try:
         with contextlib.redirect_stdout(sys.stderr):
             payload = animate_artifact(
@@ -305,25 +326,42 @@ def _run_animate(args: argparse.Namespace) -> int:
                 step_stride=args.step_stride,
             )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 2
     except (OSError, TypeError, RuntimeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 1
     if not payload.get("ok"):
-        print(payload.get("error") or "animate failed", file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({
+                "ok": False,
+                "written": [],
+                "error": payload.get("error") or "animate failed",
+            }))
+        else:
+            print(payload.get("error") or "animate failed", file=sys.stderr)
         return int(payload.get("returncode") or 1)
-    if payload.get("output"):
-        print(payload["output"])
+    out = payload.get("output")
+    if args.as_json:
+        written = [str(out)] if out else []
+        print(json.dumps({"ok": True, "written": written}))
+    elif out:
+        print(out)
     return 0
 
 
-def _run_pin(args: argparse.Namespace) -> int:
+def _run_pin(args: argparse.Namespace, *, root: Path) -> int:
     from apeGmsh.studio._bundle import results_pin
 
     try:
         payload = results_pin(
-            args.model_h5, args.results_path, root=Path.cwd(),
+            args.model_h5, args.results_path, root=root,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -335,7 +373,7 @@ def _run_pin(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok") else 1
 
 
-def _run_emit(args: argparse.Namespace) -> int:
+def _run_emit(args: argparse.Namespace, *, root: Path) -> int:
     from apeGmsh.studio._bundle import emit_report
 
     try:
@@ -343,7 +381,7 @@ def _run_emit(args: argparse.Namespace) -> int:
             format=args.report_format,
             output=args.output,
             pin_id=args.pin_id,
-            root=Path.cwd(),
+            root=root,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

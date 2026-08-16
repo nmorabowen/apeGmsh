@@ -60,6 +60,64 @@ def test_missing_ledger_is_empty(tmp_path: Path) -> None:
     assert last_run(path) is None
 
 
+def test_read_runs_skips_torn_lines(tmp_path: Path) -> None:
+    from apeGmsh.studio._ledger import read_runs_safe
+
+    path = tmp_path / "runs.jsonl"
+    good = make_record(
+        script=tmp_path / "a.py",
+        phase="model",
+        ok=True,
+        ts="2026-08-14T06:00:00Z",
+    )
+    path.write_text(
+        json.dumps(good, ensure_ascii=False) + "\n"
+        + "{not json\n"
+        + '"just a string"\n'
+        + json.dumps({**good, "phase": "mesh", "ts": "2026-08-14T06:01:00Z"})
+        + "\n",
+        encoding="utf-8",
+    )
+    rows, err = read_runs_safe(path)
+    assert err is not None
+    assert "skipped 2" in err
+    assert len(rows) == 2
+    assert rows[0]["phase"] == "model"
+    assert rows[1]["phase"] == "mesh"
+    assert read_runs(path) == rows
+    assert last_run(path)["phase"] == "mesh"
+
+
+def test_read_runs_keeps_rows_after_utf8_tear(tmp_path: Path) -> None:
+    """A torn multibyte append must not discard earlier good lines (S5f)."""
+    from apeGmsh.studio._ledger import read_runs_safe
+
+    path = tmp_path / "runs.jsonl"
+    good = make_record(
+        script=tmp_path / "a.py",
+        phase="model",
+        ok=True,
+        ts="2026-08-14T06:00:00Z",
+        manifest={
+            "labels": ["columna"],
+            "physical_groups": ["Columna"],
+            "counts": None,
+        },
+    )
+    # Partial UTF-8 for 'ñ' (0xc3 0xb1) — only the lead byte, as a crash mid-append.
+    body = (
+        json.dumps(good, ensure_ascii=False) + "\n"
+        + '{"schema":1,"phase":"mesh","labels":["se'
+    ).encode("utf-8") + b"\xc3"
+    path.write_bytes(body)
+    rows, err = read_runs_safe(path)
+    assert err is not None
+    assert "skipped" in err
+    assert len(rows) == 1
+    assert rows[0]["phase"] == "model"
+    assert rows[0]["labels"] == ["columna"]
+
+
 def test_error_is_capped(tmp_path: Path) -> None:
     rec = make_record(
         script=tmp_path / "a.py",

@@ -18,16 +18,14 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ._envelope import PickEvidence, read_envelope
-from ._paths import envelope_path, highlight_path, names_path
+from ._paths import envelope_path, highlight_path, names_path, resolve_root
 
 HIGHLIGHT_SCHEMA = 1
 _DIM_WORD = {0: "point", 1: "curve", 2: "face", 3: "solid"}
 
 
 def _root(root: Path | str | None) -> Path:
-    if root is None:
-        return Path.cwd()
-    return Path(root)
+    return resolve_root(root)
 
 
 def _unique_names(names: Sequence[str]) -> list[str]:
@@ -113,12 +111,13 @@ def write_highlight(
     names: Sequence[str],
     dimtags: Sequence[tuple[int, int]],
 ) -> Path:
+    from ._paths import atomic_write_text
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        dumps_highlight(names=names, dimtags=dimtags), encoding="utf-8",
+    return atomic_write_text(
+        path, dumps_highlight(names=names, dimtags=dimtags),
     )
-    return path
 
 
 def read_highlight(path: Path) -> dict[str, Any]:
@@ -241,7 +240,19 @@ def promote_selection(*, root: Path | str | None = None) -> dict[str, Any]:
                 "promote_selection. The host does not write the .py."
             ),
         }
-    env = read_envelope(path)
+    try:
+        env = read_envelope(path)
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        return {
+            "ok": False,
+            "error": {"code": "UNREADABLE", "message": str(exc)},
+            "present": False,
+            "path": str(path),
+            "unnamed": [],
+            "suggestions": [],
+            "applied": False,
+            "note": "selection.json is present but unreadable.",
+        }
     suggestions = [_suggestion(item) for item in env.unnamed]
     return {
         "ok": True,

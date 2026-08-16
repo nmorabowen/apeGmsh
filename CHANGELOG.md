@@ -22,6 +22,60 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — ADR 0095 S5f follow-up (Opus review)
+
+``logged`` test accepts forwarded ``root=``. Ledger reads decode UTF-8
+with ``errors='replace'`` so a multibyte tear keeps earlier rows.
+CLI ``--root`` is ``str`` so blank does not become ``Path('.')``.
+``promote_selection`` returns ``UNREADABLE`` on torn picks;
+subprocess verbs return ``BAD_ROOT`` when the root is not a directory.
+``studio-mcp.ps1`` probes ``opensees_env`` then ``opensees_venv`` and
+warns when falling back to PATH ``python``.
+
+### ADDED — ADR 0095 S5f: ledger degrade + empty-root safety
+
+``read_runs`` / ``status`` skip torn ``runs.jsonl`` lines and surface
+``ledger_error`` (parity with ``names_error``). Empty / whitespace
+``root=`` and ``APEGMSH_ROOT`` are treated as unset. Habitat how-to
+clarifies atomic replace for snapshot JSON vs append-best-effort JSONL.
+
+### ADDED — ADR 0095 S5e: studio habitat how-to (spawn / poll)
+
+``docs/how-to/studio-habitat.md`` documents MCP + Qt spawn, INV-15 root,
+file ownership, poll contract, cold start, and the local
+``run_until`` trust boundary for out-of-process consumers.
+
+### ADDED — ADR 0095 S5d: published schemas + contract_version (INV-17)
+
+``apeGmsh.studio.schemas`` ships JSON Schema + golden fixtures for
+selection / names / ledger / highlight / status. ``status`` includes
+``contract_version`` (``1.0.0``). ``validate_contract`` refuses unknown
+majors; additive fields stay compatible.
+
+### ADDED — ADR 0095 S5c: MCP error envelope + subprocess timeout
+
+Habitat verbs return ``{"ok": false, "error": {"code", "message"}}`` for
+validation failures (no raise into the adapter). ``_shell`` times out via
+``APEGMSH_STUDIO_TIMEOUT`` (default 600s) → ``TIMEOUT``.
+``viewers render --json`` and ``studio --animate --json`` emit
+``{"ok", "written"}``; MCP prefers that over path-line scrape.
+
+### ADDED — ADR 0095 S5b: atomic habitat writes + torn-read status (INV-16)
+
+``atomic_write_text`` (temp + ``os.replace``) for ``selection.json``,
+``names.json``, and ``highlight.json``. ``collect_status`` degrades on
+unparseable ``names.json`` via ``names_error`` (parity with
+``selection_error``) and never raises for a torn poll.
+
+### ADDED — ADR 0095 Amendment 3 / S5a: explicit studio project root (INV-15)
+
+``apeGmsh.studio.resolve_root``: ``root=`` / ``--root`` → ``APEGMSH_ROOT``
+→ nearest ancestor with ``.apegmsh/`` → cwd. Every MCP tool accepts
+optional ``root=``; ``run_until`` passes ``--root`` to the CLI so habitat
+files land under the project root even when script exec ``chdir``s to
+``script.parent``. Ledger records may carry additive ``root`` / ``cwd``.
+``scripts/studio-mcp.ps1`` no longer ``Set-Location``s the library repo.
+
 ### ADDED — DomainCapture gauss catalog covers ``LadrunoBrick20`` (std)
 
 ``LadrunoBrick20`` (fork H20, tag 33018) was emit/run-ready but missing

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "ts": "2026-08-16T05:00:00Z",
+  "script": "box.py",
+  "hash": "abc",
+  "phase": "model",
+  "stopped_at": "g.mesh.generation.generate",
+  "ok": true,
+  "session": "studio_box",
+  "labels": ["body"],
+  "physical_groups": ["Body"],
+  "counts": {
+    "entities": { "3": 1 },
+    "elements": { "3": 0 }
+  },
+  "assess": null,
+  "visors": [],
+  "error": null,
+  "root": "/project",
+  "cwd": "/project"
+}

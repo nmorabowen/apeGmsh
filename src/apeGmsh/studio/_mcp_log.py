@@ -98,7 +98,7 @@ def append_mcp_call(
     root: Path | str | None = None,
 ) -> Path | None:
     """Append one compact JSON line under ``.apegmsh/mcp_calls.jsonl``."""
-    path = mcp_calls_path(None if root is None else Path(root))
+    path = mcp_calls_path(root)
     record = make_call_record(tool, payload_in, payload_out)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,11 +115,14 @@ def logged(
     fn: Callable[..., Any],
     /,
     *args: Any,
-    root: Path | str | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Run *fn* then append a ledger line. Never raises from the log."""
+    """Run *fn* then append a ledger line. Never raises from the log.
+
+    When *kwargs* include ``root``, it is passed through to *fn* and used
+    as the mcp_calls habitat root (INV-15).
+    """
     result = fn(*args, **kwargs)
     payload = kwargs if not args else {"args": list(args), **kwargs}
-    append_mcp_call(tool, payload, result, root=root)
+    append_mcp_call(tool, payload, result, root=kwargs.get("root"))
     return result

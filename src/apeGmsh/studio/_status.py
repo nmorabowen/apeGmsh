@@ -1,8 +1,12 @@
-"""Read studio artifacts without replaying (ADR 0095 S2d).
+"""Read studio artifacts without replaying (ADR 0095 S2d / S5b).
 
 ``run_until`` writes the files. ``--status`` is how a later session
 extracts the basic information — last phase, names, counts, pick —
 without exec. Pure: no ``gmsh``, no Qt.
+
+Torn / unparseable snapshot JSON degrades to ``names_error`` /
+``selection_error``; torn ``runs.jsonl`` lines degrade to
+``ledger_error`` (INV-16 / S5f). Never raises out of ``collect_status``.
 """
 
 from __future__ import annotations
@@ -12,17 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from ._envelope import read_envelope
-from ._ledger import read_runs
-from ._paths import envelope_path, ledger_path, names_path
+from ._contract import CONTRACT_VERSION
+from ._ledger import read_runs_safe
+from ._paths import envelope_path, ledger_path, names_path, resolve_root
 
 STATUS_SCHEMA = 1
 
 
-def collect_status(root: Path | None = None) -> dict[str, Any]:
-    """Snapshot of ``.apegmsh/`` under *root* (cwd by default)."""
-    base = Path.cwd() if root is None else Path(root)
-    names = _load_json(names_path(base))
-    runs = read_runs(ledger_path(base))
+def collect_status(root: Path | str | None = None) -> dict[str, Any]:
+    """Snapshot of ``.apegmsh/`` under the resolved project root (INV-15)."""
+    base = resolve_root(root)
+    names, names_error = _load_json_safe(names_path(base))
+    runs, ledger_error = read_runs_safe(ledger_path(base))
     pins = [row for row in runs if row.get("kind") == "pin"]
     execs = [row for row in runs if row.get("kind") != "pin"]
     selection: dict[str, Any] | None = None
@@ -35,14 +40,17 @@ def collect_status(root: Path | None = None) -> dict[str, Any]:
             selection_error = str(exc)
     return {
         "schema": STATUS_SCHEMA,
+        "contract_version": CONTRACT_VERSION,
         "root": str(base),
         "names": names,
+        "names_error": names_error,
         "last_run": execs[-1] if execs else None,
         "n_runs": len(execs),
         "last_pin": pins[-1] if pins else None,
         "n_pins": len(pins),
         "selection": selection,
         "selection_error": selection_error,
+        "ledger_error": ledger_error,
     }
 
 
@@ -52,7 +60,11 @@ def has_studio_state(payload: dict[str, Any]) -> bool:
 
 def format_status(payload: dict[str, Any]) -> str:
     """Short agent-readable dump. Not a substitute for the JSON files."""
-    if not has_studio_state(payload):
+    if (
+        not has_studio_state(payload)
+        and not payload.get("names_error")
+        and not payload.get("ledger_error")
+    ):
         return "studio status: no .apegmsh state (run a script first)"
     last = payload.get("last_run") or {}
     names = payload.get("names") or {}
@@ -74,6 +86,12 @@ def format_status(payload: dict[str, Any]) -> str:
         f"  elements: {_fmt_counts(counts.get('elements'))}",
         f"  pick: {_fmt_pick(payload)}",
     ]
+    names_err = payload.get("names_error")
+    if names_err:
+        lines.append(f"  names: (unreadable: {names_err})")
+    ledger_err = payload.get("ledger_error")
+    if ledger_err:
+        lines.append(f"  ledger: (degraded: {ledger_err})")
     err = last.get("error")
     if err:
         first = str(err).strip().splitlines()[-1]
@@ -81,11 +99,16 @@ def format_status(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _load_json(path: Path) -> dict[str, Any] | None:
+def _load_json_safe(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not path.is_file():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else None
+        return None, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return None, str(exc)
+    if isinstance(data, dict):
+        return data, None
+    return None, "names JSON must be an object"
 
 
 def _join(items: Any) -> str:

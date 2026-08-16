@@ -1,11 +1,12 @@
-"""Append-only run ledger (ADR 0095 S2c).
+"""Append-only run ledger (ADR 0095 S2c / S5f).
 
 ``names.json`` is the current snapshot. ``.apegmsh/runs.jsonl`` is the
 history of ``run_until`` stops — enough for a later session to reconstruct
 phase, counts, and names without the chat. Assess findings and visor
 paths are reserved keys; they stay empty until those artifacts exist.
 
-Pure: no ``gmsh``, no Qt. Imported only by the host.
+Append is best-effort (not atomic replace). Readers skip torn lines and
+never raise (INV-16). Pure: no ``gmsh``, no Qt.
 """
 
 from __future__ import annotations
@@ -30,8 +31,15 @@ def make_record(
     manifest: dict[str, Any] | None = None,
     error: str | None = None,
     ts: str | None = None,
+    root: Path | str | None = None,
+    cwd: Path | str | None = None,
 ) -> dict[str, Any]:
-    """One JSONL object. ``assess`` / ``visors`` reserved, not invented."""
+    """One JSONL object. ``assess`` / ``visors`` reserved, not invented.
+
+    ``root`` is the habitat project root (INV-15). ``cwd`` is the
+    directory the script exec ran under (usually ``script.parent``).
+    Both are additive optional fields — readers ignore unknowns.
+    """
     labels: list[str] = []
     pgs: list[str] = []
     counts: dict[str, Any] | None = None
@@ -43,7 +51,7 @@ def make_record(
     err = error
     if err is not None and len(err) > _ERROR_CAP:
         err = err[:_ERROR_CAP]
-    return {
+    rec: dict[str, Any] = {
         "schema": LEDGER_SCHEMA,
         "ts": ts if ts is not None else datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
@@ -61,6 +69,11 @@ def make_record(
         "visors": [],
         "error": err,
     }
+    if root is not None:
+        rec["root"] = str(Path(root))
+    if cwd is not None:
+        rec["cwd"] = str(Path(cwd))
+    return rec
 
 
 def append_run(path: Path, record: dict[str, Any]) -> Path | None:
@@ -76,17 +89,45 @@ def append_run(path: Path, record: dict[str, Any]) -> Path | None:
     return path
 
 
-def read_runs(path: Path) -> list[dict[str, Any]]:
-    """Load every JSONL record. Missing file → empty list."""
+def read_runs_safe(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    """Load JSONL records, skipping bad lines (INV-16 / S5f).
+
+    Missing file → ``([], None)``. Any skipped line (bad JSON, non-object,
+    or a UTF-8 tear mid-line) → ``(good_rows, error_message)``. Never
+    raises. Bytes are decoded with ``errors="replace"`` so a partial
+    multibyte append does not discard earlier good rows.
+    """
     path = Path(path)
     if not path.is_file():
-        return []
+        return [], None
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        return [], str(exc)
+    text = raw_bytes.decode("utf-8", errors="replace")
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        text = line.strip()
-        if not text:
+    skipped = 0
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw:
             continue
-        rows.append(json.loads(text))
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        if not isinstance(obj, dict):
+            skipped += 1
+            continue
+        rows.append(obj)
+    if skipped:
+        return rows, f"skipped {skipped} unparseable ledger line(s)"
+    return rows, None
+
+
+def read_runs(path: Path) -> list[dict[str, Any]]:
+    """Load every parseable JSONL record. Missing / torn → best-effort list."""
+    rows, _err = read_runs_safe(path)
     return rows
 
 

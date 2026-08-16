@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/ledger.schema.json",
+  "title": "RunLedgerRecord",
+  "type": "object",
+  "required": ["schema", "ts", "script", "phase", "ok"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "ts": { "type": "string" },
+    "script": { "type": "string" },
+    "hash": { "type": ["string", "null"] },
+    "phase": { "type": "string", "enum": ["model", "mesh", "results"] },
+    "stopped_at": { "type": ["string", "null"] },
+    "ok": { "type": "boolean" },
+    "session": { "type": ["string", "null"] },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "physical_groups": { "type": "array", "items": { "type": "string" } },
+    "counts": { "type": ["object", "null"] },
+    "assess": { "type": ["object", "null"] },
+    "visors": { "type": "array" },
+    "error": { "type": ["string", "null"] },
+    "root": { "type": "string" },
+    "cwd": { "type": "string" },
+    "kind": { "type": "string" }
+  },
+  "additionalProperties": true
+}

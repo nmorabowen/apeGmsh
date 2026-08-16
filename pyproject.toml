@@ -117,6 +117,7 @@ include = ["apeGmsh*"]
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
 "apeGmsh.studio" = ["_api_index.json"]
+"apeGmsh.studio.schemas" = ["*.schema.json", "fixtures/*.json"]
 
 [tool.pytest.ini_options]
 # The real suite lives under tests/. Restrict collection there so a bare

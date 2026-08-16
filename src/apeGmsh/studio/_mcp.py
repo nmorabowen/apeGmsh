@@ -1,4 +1,4 @@
-"""MCP tool bodies (ADR 0095 S4a–S4e / 0096 S3).
+"""MCP tool bodies (ADR 0095 S4a–S4e / S5a–S5c / 0096 S3).
 
 ``status``, ``get_selection``, ``lookup``, ``results_pin``, ``emit_report``,
 ``highlight``, and ``promote_selection`` read habitat files or the
@@ -6,6 +6,10 @@ generated API index in-process. ``run_until`` / ``assess`` / ``animate``
 shell to ``python -m apeGmsh.studio``. ``render`` shells to
 ``python -m apeGmsh.viewers render`` (ADR 0094 S5). Subprocess so this
 process never holds the Gmsh kernel or a Qt/VTK context (INV-5).
+
+Validation failures and timeouts return
+``{"ok": false, "error": {"code": str, "message": str}}`` (S5c) —
+they do not raise into the MCP adapter.
 
 ``lookup`` is See-family inspect (ADR 0096): the same ~20-line payload
 as ``python -m apeGmsh.studio.lookup``. It does not grep ``src/`` and
@@ -17,13 +21,15 @@ No ``gmsh``, no Qt, no viewers.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ._envelope import read_envelope
-from ._paths import envelope_path, visors_path
+from ._paths import envelope_path, resolve_root, visors_path
 from ._replay import PHASES
 from ._status import collect_status, has_studio_state
 
@@ -31,12 +37,33 @@ _VIEWS = frozenset({"mesh", "contour", "deformed", "reactions"})
 _CAMERAS = frozenset({"iso", "xy", "xz", "yz"})
 _ANIMATE_KINDS = ("history", "yield", "formation")
 _ANIMATE_SHIPPED = frozenset({"history", "yield"})
+_TIMEOUT_ENV = "APEGMSH_STUDIO_TIMEOUT"
+_DEFAULT_TIMEOUT_S = 600.0
+
+
+@dataclass
+class _ShellResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool = False
 
 
 def _root(root: Path | str | None) -> Path:
-    if root is None:
-        return Path.cwd()
-    return Path(root)
+    """Resolved project root (INV-15)."""
+    return resolve_root(root)
+
+
+def _require_root_dir(root: Path | str | None) -> Path | dict[str, Any]:
+    """Resolved root that exists as a directory, else a BAD_ROOT failure."""
+    base = _root(root)
+    if not base.is_dir():
+        return _fail(
+            "BAD_ROOT",
+            f"project root is not a directory: {base}",
+            root=str(base),
+        )
+    return base
 
 
 def _resolve(path: str | Path, base: Path) -> Path:
@@ -46,13 +73,61 @@ def _resolve(path: str | Path, base: Path) -> Path:
     return p.resolve()
 
 
-def _shell(argv: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 — argv list, same interpreter
-        argv,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
+def _fail(code: str, message: str, **extra: Any) -> dict[str, Any]:
+    """Uniform MCP failure envelope (S5c)."""
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error": {"code": code, "message": message},
+    }
+    payload.update(extra)
+    return payload
+
+
+def _timeout_s() -> float:
+    raw = os.environ.get(_TIMEOUT_ENV)
+    if raw is None or not str(raw).strip():
+        return _DEFAULT_TIMEOUT_S
+    try:
+        return float(raw)
+    except ValueError:
+        return _DEFAULT_TIMEOUT_S
+
+
+def _shell(argv: list[str], *, cwd: Path, timeout: float | None = None) -> _ShellResult:
+    limit = _timeout_s() if timeout is None else timeout
+    try:
+        proc = subprocess.run(  # noqa: S603 — argv list, same interpreter
+            argv,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=limit,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout if isinstance(exc.stdout, str) else (
+            exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
+        )
+        err = exc.stderr if isinstance(exc.stderr, str) else (
+            exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+        )
+        return _ShellResult(
+            returncode=-1,
+            stdout=out or "",
+            stderr=err or f"timeout after {limit}s",
+            timed_out=True,
+        )
+    except OSError as exc:
+        return _ShellResult(
+            returncode=-1,
+            stdout="",
+            stderr=str(exc),
+            timed_out=False,
+        )
+    return _ShellResult(
+        returncode=proc.returncode,
+        stdout=proc.stdout or "",
+        stderr=proc.stderr or "",
     )
 
 
@@ -61,6 +136,8 @@ def status(*, root: Path | str | None = None) -> dict[str, Any]:
     base = _root(root)
     payload = collect_status(base)
     payload["empty"] = not has_studio_state(payload)
+    payload["ok"] = True
+    payload["error"] = None
     return payload
 
 
@@ -70,6 +147,8 @@ def get_selection(*, root: Path | str | None = None) -> dict[str, Any]:
     path = envelope_path(base)
     if not path.is_file():
         return {
+            "ok": True,
+            "error": None,
             "present": False,
             "path": str(path),
             "labels": [],
@@ -81,18 +160,21 @@ def get_selection(*, root: Path | str | None = None) -> dict[str, Any]:
     try:
         env = read_envelope(path)
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
-        return {
-            "present": False,
-            "path": str(path),
-            "error": str(exc),
-            "labels": [],
-            "physical_groups": [],
-            "phase": None,
-            "unnamed": [],
-            "envelope": None,
-        }
+        return _fail(
+            "UNREADABLE",
+            str(exc),
+            present=False,
+            path=str(path),
+            labels=[],
+            physical_groups=[],
+            phase=None,
+            unnamed=[],
+            envelope=None,
+        )
     data = env.to_dict()
     return {
+        "ok": True,
+        "error": None,
         "present": True,
         "path": str(path),
         "labels": list(env.labels),
@@ -103,8 +185,17 @@ def get_selection(*, root: Path | str | None = None) -> dict[str, Any]:
     }
 
 
-def lookup(symbol: str) -> dict[str, Any]:
-    """Generated-index signature. Same payload as the lookup CLI. Not CAD."""
+def lookup(
+    symbol: str,
+    *,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Generated-index signature. Same payload as the lookup CLI. Not CAD.
+
+    ``root`` is accepted for habitat logging (mcp_calls) only — the index
+    is package-global.
+    """
+    del root  # INV-15 adapter surface; lookup itself is not root-scoped
     from ._lookup import lookup as resolve
 
     text, code = resolve(symbol)
@@ -118,6 +209,7 @@ def lookup(symbol: str) -> dict[str, Any]:
         kind = "error"
     return {
         "ok": code == 0,
+        "error": None if code == 0 else {"code": kind.upper(), "message": text},
         "code": code,
         "kind": kind,
         "text": text,
@@ -132,19 +224,34 @@ def run_until(
 ) -> dict[str, Any]:
     """Replay *script* up to *phase* in a subprocess (INV-5)."""
     if phase not in PHASES:
-        raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
-    base = _root(root)
+        return _fail(
+            "INVALID_PHASE",
+            f"phase must be one of {PHASES}; got {phase!r}",
+            phase=phase,
+            script=str(script),
+        )
+    base = _require_root_dir(root)
+    if isinstance(base, dict):
+        return {
+            **base,
+            "phase": phase,
+            "script": str(script),
+            "returncode": 2,
+            "stdout": "",
+            "stderr": base["error"]["message"],
+        }
     script_path = _resolve(script, base)
     if not script_path.is_file():
-        return {
-            "ok": False,
-            "returncode": 2,
-            "phase": phase,
-            "script": str(script_path),
-            "stdout": "",
-            "stderr": f"error: script not found: {script_path}",
-            "status": status(root=base),
-        }
+        return _fail(
+            "NOT_FOUND",
+            f"script not found: {script_path}",
+            returncode=2,
+            phase=phase,
+            script=str(script_path),
+            stdout="",
+            stderr=f"error: script not found: {script_path}",
+            status=status(root=base),
+        )
     proc = _shell(
         [
             sys.executable,
@@ -154,14 +261,34 @@ def run_until(
             "--phase",
             phase,
             "--no-viewer",
+            "--root",
+            str(base),
         ],
         cwd=base,
     )
+    if proc.timed_out:
+        return _fail(
+            "TIMEOUT",
+            f"run_until exceeded {_timeout_s()}s",
+            returncode=-1,
+            phase=phase,
+            script=str(script_path),
+            root=str(base),
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            status=status(root=base),
+        )
     return {
         "ok": proc.returncode == 0,
+        "error": None if proc.returncode == 0 else {
+            "code": "REPLAY_FAILED",
+            "message": (proc.stderr or proc.stdout or "replay failed").strip()
+            or "replay failed",
+        },
         "returncode": proc.returncode,
         "phase": phase,
         "script": str(script_path),
+        "root": str(base),
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "status": status(root=base),
@@ -176,17 +303,19 @@ def assess(
     root: Path | str | None = None,
 ) -> dict[str, Any]:
     """``fem.assess()`` / ``results.assess()`` via studio CLI (INV-5)."""
-    base = _root(root)
+    base = _require_root_dir(root)
+    if isinstance(base, dict):
+        return {**base, "path": str(path), "returncode": 2, "stdout": "", "stderr": base["error"]["message"]}
     src = _resolve(path, base)
     if not src.is_file():
-        return {
-            "ok": False,
-            "returncode": 2,
-            "error": f"file not found: {src}",
-            "path": str(src),
-            "stdout": "",
-            "stderr": f"error: file not found: {src}",
-        }
+        return _fail(
+            "NOT_FOUND",
+            f"file not found: {src}",
+            returncode=2,
+            path=str(src),
+            stdout="",
+            stderr=f"error: file not found: {src}",
+        )
     argv = [
         sys.executable,
         "-m",
@@ -200,8 +329,18 @@ def assess(
     if model_h5 is not None:
         argv.extend(["--model-h5", str(_resolve(model_h5, base))])
     proc = _shell(argv, cwd=base)
+    if proc.timed_out:
+        return _fail(
+            "TIMEOUT",
+            f"assess exceeded {_timeout_s()}s",
+            returncode=-1,
+            path=str(src),
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
     payload: dict[str, Any] = {
         "ok": proc.returncode == 0,
+        "error": None,
         "returncode": proc.returncode,
         "path": str(src),
         "stdout": proc.stdout,
@@ -214,6 +353,13 @@ def assess(
             payload["ok"] = False
     payload["ok"] = bool(payload.get("ok")) and proc.returncode == 0
     payload["returncode"] = proc.returncode
+    if not payload["ok"] and payload.get("error") is None:
+        payload["error"] = {
+            "code": "ASSESS_FAILED",
+            "message": (proc.stderr or "assess failed").strip() or "assess failed",
+        }
+    elif payload["ok"]:
+        payload["error"] = None
     return payload
 
 
@@ -232,25 +378,39 @@ def render(
 ) -> dict[str, Any]:
     """One still or ``render_pack`` via ``python -m apeGmsh.viewers render``."""
     if view not in _VIEWS:
-        raise ValueError(f"view must be one of {sorted(_VIEWS)}; got {view!r}")
+        return _fail(
+            "INVALID_VIEW",
+            f"view must be one of {sorted(_VIEWS)}; got {view!r}",
+            view=view,
+            written=[],
+        )
     if camera not in _CAMERAS:
-        raise ValueError(
-            f"camera must be one of {sorted(_CAMERAS)}; got {camera!r}"
+        return _fail(
+            "INVALID_CAMERA",
+            f"camera must be one of {sorted(_CAMERAS)}; got {camera!r}",
+            camera=camera,
+            written=[],
         )
     if pack and output is not None:
-        raise ValueError("pass output= or pack=True, not both")
-    base = _root(root)
+        return _fail(
+            "INVALID_ARGS",
+            "pass output= or pack=True, not both",
+            written=[],
+        )
+    base = _require_root_dir(root)
+    if isinstance(base, dict):
+        return {**base, "written": [], "path": str(path), "returncode": 2}
     src = _resolve(path, base)
     if not src.is_file():
-        return {
-            "ok": False,
-            "returncode": 2,
-            "error": f"file not found: {src}",
-            "path": str(src),
-            "stdout": "",
-            "stderr": f"error: file not found: {src}",
-            "written": [],
-        }
+        return _fail(
+            "NOT_FOUND",
+            f"file not found: {src}",
+            returncode=2,
+            path=str(src),
+            stdout="",
+            stderr=f"error: file not found: {src}",
+            written=[],
+        )
     visors = visors_path(base)
     visors.mkdir(parents=True, exist_ok=True)
     argv = [sys.executable, "-m", "apeGmsh.viewers", "render", str(src)]
@@ -269,14 +429,28 @@ def render(
             argv.extend(["--deform", deform])
     if model_h5 is not None:
         argv.extend(["--model-h5", str(_resolve(model_h5, base))])
+    argv.append("--json")
     proc = _shell(argv, cwd=base)
-    written = [
-        ln.strip()
-        for ln in proc.stdout.splitlines()
-        if ln.strip() and not ln.startswith("[")
-    ]
+    if proc.timed_out:
+        return _fail(
+            "TIMEOUT",
+            f"render exceeded {_timeout_s()}s",
+            returncode=-1,
+            path=str(src),
+            view=view,
+            pack=pack,
+            written=[],
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
+    written = _parse_written(proc.stdout)
+    ok = proc.returncode == 0
     return {
-        "ok": proc.returncode == 0,
+        "ok": ok,
+        "error": None if ok else {
+            "code": "RENDER_FAILED",
+            "message": (proc.stderr or "render failed").strip() or "render failed",
+        },
         "returncode": proc.returncode,
         "path": str(src),
         "view": view,
@@ -299,26 +473,39 @@ def animate(
 ) -> dict[str, Any]:
     """``animate(kind=history|yield)`` via studio CLI. No ``setup=`` (INV-11)."""
     if kind not in _ANIMATE_KINDS:
-        raise ValueError(
-            f"kind must be one of {_ANIMATE_KINDS}; got {kind!r}"
+        return _fail(
+            "INVALID_KIND",
+            f"kind must be one of {_ANIMATE_KINDS}; got {kind!r}",
+            kind=kind,
         )
     if kind not in _ANIMATE_SHIPPED:
-        raise ValueError(
+        return _fail(
+            "NOT_SHIPPED",
             f"animate kind={kind!r} is not shipped "
-            "(formation is later; S4d ships history and yield)"
+            "(formation is later; S4d ships history and yield)",
+            kind=kind,
         )
-    base = _root(root)
+    base = _require_root_dir(root)
+    if isinstance(base, dict):
+        return {
+            **base,
+            "kind": kind,
+            "path": str(path),
+            "returncode": 2,
+            "stdout": "",
+            "stderr": base["error"]["message"],
+        }
     src = _resolve(path, base)
     if not src.is_file():
-        return {
-            "ok": False,
-            "returncode": 2,
-            "kind": kind,
-            "error": f"file not found: {src}",
-            "path": str(src),
-            "stdout": "",
-            "stderr": f"error: file not found: {src}",
-        }
+        return _fail(
+            "NOT_FOUND",
+            f"file not found: {src}",
+            returncode=2,
+            kind=kind,
+            path=str(src),
+            stdout="",
+            stderr=f"error: file not found: {src}",
+        )
     dest = (
         _resolve(output, base)
         if output is not None
@@ -339,17 +526,29 @@ def animate(
         str(fps),
         "--step-stride",
         str(step_stride),
+        "--json",
     ]
     if model_h5 is not None:
         argv.extend(["--model-h5", str(_resolve(model_h5, base))])
     proc = _shell(argv, cwd=base)
-    written = [
-        ln.strip()
-        for ln in proc.stdout.splitlines()
-        if ln.strip() and not ln.startswith("[")
-    ]
+    if proc.timed_out:
+        return _fail(
+            "TIMEOUT",
+            f"animate exceeded {_timeout_s()}s",
+            returncode=-1,
+            kind=kind,
+            path=str(src),
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
+    written = _parse_written(proc.stdout)
+    ok = proc.returncode == 0
     return {
-        "ok": proc.returncode == 0,
+        "ok": ok,
+        "error": None if ok else {
+            "code": "ANIMATE_FAILED",
+            "message": (proc.stderr or "animate failed").strip() or "animate failed",
+        },
         "returncode": proc.returncode,
         "kind": kind,
         "path": str(src),
@@ -370,7 +569,19 @@ def results_pin(
     from ._bundle import results_pin as _pin
 
     base = _root(root)
-    return _pin(model_h5, results, root=base)
+    try:
+        payload = _pin(model_h5, results, root=base)
+    except ValueError as exc:
+        return _fail("INVALID_ARGS", str(exc))
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {
+            **payload,
+            "error": None if payload.get("ok") else {
+                "code": "PIN_FAILED",
+                "message": "results_pin failed",
+            },
+        }
+    return payload
 
 
 def emit_report(
@@ -384,7 +595,19 @@ def emit_report(
     from ._bundle import emit_report as _emit
 
     base = _root(root)
-    return _emit(format=format, output=output, pin_id=pin_id, root=base)
+    try:
+        payload = _emit(format=format, output=output, pin_id=pin_id, root=base)
+    except ValueError as exc:
+        return _fail("INVALID_ARGS", str(exc), format=format)
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {
+            **payload,
+            "error": None if payload.get("ok") else {
+                "code": "EMIT_FAILED",
+                "message": "emit_report failed",
+            },
+        }
+    return payload
 
 
 def highlight(
@@ -399,11 +622,58 @@ def highlight(
         wanted = [names]
     else:
         wanted = list(names)
-    return _highlight(wanted, root=_root(root))
+    try:
+        payload = _highlight(wanted, root=_root(root))
+    except ValueError as exc:
+        return _fail("INVALID_ARGS", str(exc))
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {
+            **payload,
+            "ok": payload.get("ok", True),
+            "error": None if payload.get("ok", True) else {
+                "code": "HIGHLIGHT_FAILED",
+                "message": "highlight failed",
+            },
+        }
+    return payload
 
 
 def promote_selection(*, root: Path | str | None = None) -> dict[str, Any]:
     """Suggested ``.to_label()`` / ``.to_physical()`` edits. Does not write .py."""
     from ._highlight import promote_selection as _promote
 
-    return _promote(root=_root(root))
+    payload = _promote(root=_root(root))
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        if "error" not in payload or not isinstance(payload.get("error"), dict):
+            msg = str(payload.get("error") or "promote_selection failed")
+            payload = {**payload, "error": {"code": "UNREADABLE", "message": msg}}
+        return payload
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {**payload, "ok": payload.get("ok", True), "error": None}
+    return payload
+
+
+def _parse_written(stdout: str) -> list[str]:
+    """Prefer a JSON ``written`` list; fall back to path-per-line scrape."""
+    text = (stdout or "").strip()
+    if not text:
+        return []
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and "written" in data:
+                raw = data["written"]
+                if isinstance(raw, list):
+                    return [str(x) for x in raw]
+                if raw is None:
+                    return []
+                return [str(raw)]
+    return [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.startswith("[") and not ln.startswith("{")
+    ]

@@ -184,6 +184,7 @@ nav:
           - Read displacement & reactions: how-to/read-results.md
           - Get results via MPCO: how-to/results-mpco.md
           - Choose a results strategy: how-to/choose-results-strategy.md
+          - Drive Studio / MCP habitat: how-to/studio-habitat.md
 
   - Concepts:
       - Overview: concepts/index.md

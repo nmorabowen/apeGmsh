@@ -197,7 +197,9 @@ matching reference — don't improvise.
 up to `--phase` (default `model`: **stops before** `generate()`;
 `--phase mesh` stops before `apeSees` / `Results`). The session stays
 open. MeshViewer if the replay produced elements, otherwise
-ModelViewer. Picks write `.apegmsh/selection.json` (cwd). A successful
+ModelViewer. Picks write `.apegmsh/selection.json` under the resolved project root
+(`root=` / `--root` / `APEGMSH_ROOT` / nearest `.apegmsh/` / cwd —
+ADR 0095 INV-15). A successful
 stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
 what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
 (timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
@@ -209,11 +211,12 @@ After solve, still `assess()` + `render()`, not `viewer()`.
 When the agent must look, write visors under `.apegmsh/visors/`
 (`results.render` / labeled matplotlib) and read those PNGs — never
 capture the OS desktop or the human Qt window.
-Read-only MCP (ADR 0095 S4a–S4d / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
+Read-only MCP (ADR 0095 S4a–S4e / S5a / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
 `pip install mcp`). Tools: `status`, `get_selection`, `lookup`, `run_until`,
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
 `emit_report(format=markdown|html|canvas)`, `highlight`,
-`promote_selection` — names first, no Qt, no `setup=`. `lookup(symbol)`
+`promote_selection` — names first, no Qt, no `setup=`. Every tool
+accepts optional `root=` (INV-15). `lookup(symbol)`
 is See-family inspect of the generated index (~20 lines); not CAD;
 does not grep `src/`. `kind=yield`
 is a von Mises contour of `von_mises_stress` on auto-scaled deform
@@ -233,7 +236,8 @@ mesh, quotations on, parallel processes) is a **recommendation** for
 a given script, not a required path (ADR 0096 INV-14). Authored
 chapters go in `docs/`;
 visors stay under `.apegmsh/visors/`. Cursor config is
-`.cursor/mcp.json` → `scripts/studio-mcp.ps1`. Set
+`.cursor/mcp.json` → `scripts/studio-mcp.ps1` (quiet env only; do not
+pin cwd to the library repo — pass `root=` or set `APEGMSH_ROOT`). Set
 `LADRUNO_OPENSEES_QUIET=1` before Python starts (the office venv
 `.pth` banner goes to stdout and would break JSON-RPC)::
 

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/selection.schema.json",
+  "title": "SelectionEnvelope",
+  "type": "object",
+  "required": [
+    "schema",
+    "phase",
+    "substrate",
+    "labels",
+    "physical_groups",
+    "unnamed",
+    "evidence"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "phase": { "type": "string", "enum": ["model", "mesh", "results"] },
+    "substrate": { "type": "string" },
+    "labels": { "type": "array", "items": { "type": "string" } },
+    "physical_groups": { "type": "array", "items": { "type": "string" } },
+    "unnamed": { "type": "array", "items": { "type": "object" } },
+    "evidence": { "type": "array", "items": { "type": "object" } },
+    "bbox": {
+      "type": ["array", "null"],
+      "items": { "type": "number" },
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "active_group": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

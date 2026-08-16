@@ -126,12 +126,48 @@ def test_run_until_missing_script(tmp_path: Path) -> None:
 
 
 def test_run_until_bad_phase(tmp_path: Path) -> None:
-    try:
-        run_until("x.py", phase="cad", root=tmp_path)
-    except ValueError as exc:
-        assert "phase" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+    result = run_until("x.py", phase="cad", root=tmp_path)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "INVALID_PHASE"
+
+
+def test_run_until_bad_root(tmp_path: Path) -> None:
+    missing = tmp_path / "no_such_project"
+    result = run_until("x.py", phase="model", root=missing)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "BAD_ROOT"
+    assert "not a directory" in result["error"]["message"]
+
+
+def test_promote_selection_torn_envelope(tmp_path: Path) -> None:
+    habitat = tmp_path / ".apegmsh"
+    habitat.mkdir()
+    (habitat / "selection.json").write_text("{torn\n", encoding="utf-8")
+    promo = promote_selection(root=tmp_path)
+    assert promo["ok"] is False
+    assert promo["error"]["code"] == "UNREADABLE"
+    assert promo["present"] is False
+    assert promo["suggestions"] == []
+
+
+def test_run_until_timeout(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    script = tmp_path / "box.py"
+    script.write_text("pass\n", encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0] if args else "x",
+            timeout=kwargs.get("timeout") or 1,
+            output="",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr("apeGmsh.studio._mcp.subprocess.run", boom)
+    result = run_until(script, phase="model", root=tmp_path)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "TIMEOUT"
 
 
 def test_run_until_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
@@ -153,6 +189,8 @@ def test_run_until_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
     assert str(script.resolve()) in argv
     assert "--phase" in argv and "mesh" in argv
     assert "--no-viewer" in argv
+    assert "--root" in argv
+    assert str(tmp_path.resolve()) in argv
     assert result["status"]["empty"] is True
 
 
@@ -202,6 +240,7 @@ def test_render_subprocesses_viewers_cli(tmp_path: Path, monkeypatch) -> None:
     argv = recorded["argv"]
     assert argv[1:4] == ["-m", "apeGmsh.viewers", "render"]
     assert "--view" in argv and "contour" in argv
+    assert "--json" in argv
     assert "--no-viewer" not in argv
     assert result["written"]
 
@@ -209,12 +248,9 @@ def test_render_subprocesses_viewers_cli(tmp_path: Path, monkeypatch) -> None:
 def test_render_rejects_open_view(tmp_path: Path) -> None:
     src = tmp_path / "run.h5"
     src.write_bytes(b"x")
-    try:
-        render(src, view="poster", root=tmp_path)
-    except ValueError as exc:
-        assert "view" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+    result = render(src, view="poster", root=tmp_path)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "INVALID_VIEW"
 
 
 def test_animate_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
@@ -225,7 +261,11 @@ def test_animate_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
     def fake_run(argv, **kwargs):
         recorded["argv"] = list(argv)
         out = tmp_path / ".apegmsh" / "visors" / "history.gif"
-        return SimpleNamespace(returncode=0, stdout=f"{out}\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"ok": True, "written": [str(out)]}) + "\n",
+            stderr="",
+        )
 
     monkeypatch.setattr("apeGmsh.studio._mcp.subprocess.run", fake_run)
     result = animate(src, kind="history", root=tmp_path)
@@ -234,6 +274,7 @@ def test_animate_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
     assert argv[1:3] == ["-m", "apeGmsh.studio"]
     assert "--animate" in argv and "--kind" in argv and "history" in argv
     assert "--output" in argv
+    assert "--json" in argv
 
 
 def test_animate_yield_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
@@ -244,7 +285,11 @@ def test_animate_yield_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
     def fake_run(argv, **kwargs):
         recorded["argv"] = list(argv)
         out = tmp_path / ".apegmsh" / "visors" / "yield.gif"
-        return SimpleNamespace(returncode=0, stdout=f"{out}\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"ok": True, "written": [str(out)]}) + "\n",
+            stderr="",
+        )
 
     monkeypatch.setattr("apeGmsh.studio._mcp.subprocess.run", fake_run)
     result = animate(src, kind="yield", root=tmp_path)
@@ -258,12 +303,9 @@ def test_animate_yield_subprocesses_cli(tmp_path: Path, monkeypatch) -> None:
 def test_animate_formation_not_shipped(tmp_path: Path) -> None:
     src = tmp_path / "run.h5"
     src.write_bytes(b"x")
-    try:
-        animate(src, kind="formation", root=tmp_path)
-    except ValueError as exc:
-        assert "not shipped" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+    result = animate(src, kind="formation", root=tmp_path)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "NOT_SHIPPED"
 
 
 def test_results_pin_and_emit_report(tmp_path: Path) -> None:
