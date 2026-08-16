@@ -82,6 +82,10 @@ def build_server() -> Any:
             "Optional root= on every tool (INV-15): project directory for "
             ".apegmsh/; else APEGmSH_ROOT; else nearest .apegmsh/ ancestor; "
             "else cwd. One server may serve multiple projects via root=. "
+            "status(mode=brief|full) defaults to brief (root / last-run / "
+            "labels / PGs / counts summary / pick); use mode=full only for "
+            "debugging. Root check → brief; entity hunting → lookup or "
+            "names.json, not a full status dump. "
             "lookup(symbol) is See-family inspect of the generated index "
             "(~20 lines); it is not CAD and does not grep src/. "
             "animate kind=history|yield; no setup=. formation is later. "
@@ -100,9 +104,12 @@ def build_server() -> Any:
     )
 
     @mcp.tool()
-    def status(root: str | None = None) -> dict[str, Any]:
-        """Last run, names, and pick from .apegmsh/ (no replay, no Qt)."""
-        return logged("status", _status, root=root)
+    def status(
+        root: str | None = None,
+        mode: str = "brief",
+    ) -> dict[str, Any]:
+        """Habitat snapshot. Default mode=brief (token budget). mode=full for names.entities."""
+        return logged("status", _status, root=root, mode=mode)
 
     @mcp.tool()
     def get_selection(root: str | None = None) -> dict[str, Any]:

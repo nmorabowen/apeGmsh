@@ -56,7 +56,7 @@ from ._paths import (
 )
 from ._contract import CONTRACT_VERSION, ContractError, validate as validate_contract
 from ._replay import PHASES, ReplayResult, ReplayRunner, StopAtPhase
-from ._status import collect_status, format_status
+from ._status import brief_status, collect_status, format_status
 
 __all__ = [
     "CONTRACT_VERSION",
@@ -73,6 +73,7 @@ __all__ = [
     "ReplayRunner",
     "SelectionEnvelope",
     "StopAtPhase",
+    "brief_status",
     "collect_status",
     "dumps",
     "envelope_path",

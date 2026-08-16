@@ -92,15 +92,23 @@ after each tool call):
 - After `render` / `animate`: paths under `visors/` (prefer `--json`
   `written` lists)
 
-`status` is the cheap aggregate: no replay, no Qt. It includes
-`host: {running, pid, phase, stale}`, `project` (entry script), and
-`busy: {busy, pid, op, phase, stale}`. Concurrent `run_until` calls on
-the same root return `error.code == "BUSY"` while another replay holds
-`.apegmsh/busy.json` (S5h). Torn snapshot JSON degrades to
-`names_error` / `selection_error`; torn or partial `runs.jsonl` lines
-degrade to `ledger_error` (good lines are kept) — it does not raise.
-Tool-level `ok: true` means the verb ran; check those `*_error` fields
-for habitat health.
+`status` is the cheap aggregate: no replay, no Qt. MCP
+`status(mode="brief")` is the **default** agent shape (root, last-run
+intent, label/PG lists, counts summary, pick summary, plus CLI-shaped
+`text`) — keep start rituals on brief so a real model does not burn
+~55 KB of `names.entities` every turn. Use `status(mode="full")` only
+when debugging or when a Qt-adjacent workflow needs the complete
+`collect_status` dict. **Root check → brief; entity hunting →
+`lookup` / `names.json`, not a full status dump.**
+
+`status` includes `host: {running, pid, phase, stale}`, `project`
+(entry script), and `busy: {busy, pid, op, phase, stale}`. Concurrent
+`run_until` calls on the same root return `error.code == "BUSY"` while
+another replay holds `.apegmsh/busy.json` (S5h). Torn snapshot JSON
+degrades to `names_error` / `selection_error`; torn or partial
+`runs.jsonl` lines degrade to `ledger_error` (good lines are kept) —
+it does not raise. Tool-level `ok: true` means the verb ran; check
+those `*_error` fields for habitat health.
 
 Empty / whitespace `root=` or `APEGMSH_ROOT` is treated as unset (falls
 through the INV-15 chain) — do not pass `""` hoping it means cwd.
@@ -116,12 +124,14 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.3.0` today). Published
+`status.contract_version` is the habitat semver (`1.4.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,
-and most MCP path fields) are root-relative posix; the `root` field
-itself stays absolute as the resolve anchor.
+and MCP `path` / `output` / `written` / `run_until.script`) are
+root-relative posix; the `root` field itself stays absolute as the
+resolve anchor. A `project.json` entry outside the habitat root is
+refused (`OUTSIDE_ROOT`) when used as the `run_until` default.
 
 ## Trust boundary
 

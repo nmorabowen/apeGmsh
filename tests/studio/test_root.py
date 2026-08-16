@@ -134,8 +134,8 @@ def test_two_roots_isolated(tmp_path: Path, monkeypatch) -> None:
         assert names_path(a).is_file()
         assert names_path(b).is_file()
         assert not names_path(tmp_path).is_file()
-        sa = status(root=a)
-        sb = status(root=b)
+        sa = status(mode="full", root=a)
+        sb = status(mode="full", root=b)
         assert sa["empty"] is False
         assert sb["empty"] is False
         assert Path(sa["root"]).resolve() == a.resolve()
@@ -149,6 +149,10 @@ def test_two_roots_isolated(tmp_path: Path, monkeypatch) -> None:
         assert resolve_under(a, rec_a["cwd"]) == a.resolve()
         assert rec_a["script"] == "box.py"
         assert rec_a["cwd"] in (".", "")
+        brief = status(root=a)
+        assert brief["mode"] == "brief"
+        assert brief["last"]["script"] == "box.py"
+        assert "names" not in brief
     finally:
         for r in (ra, rb):
             if r.session is not None and r.session.is_active:

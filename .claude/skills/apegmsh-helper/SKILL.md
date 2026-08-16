@@ -191,7 +191,11 @@ Read-only MCP (ADR 0095 S4a–S4e / S5a / 0096 S3): `python -m apeGmsh.studio.mc
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
 `emit_report(format=markdown|html|canvas)`, `highlight`,
 `promote_selection` — names first, no Qt, no `setup=`. Every tool
-accepts optional `root=` (INV-15). `lookup(symbol)`
+accepts optional `root=` (INV-15). `status(mode=brief|full)` defaults
+to **brief** (root / last-run / labels / PGs / counts / pick + `text`);
+use `mode=full` only for debugging. **Root check → brief; entity
+hunting → `lookup` / `names.json`, not a full status dump.**
+`lookup(symbol)`
 is See-family inspect of the generated index (~20 lines); not CAD;
 does not grep `src/`. `kind=yield`
 is a von Mises contour of `von_mises_stress` on auto-scaled deform

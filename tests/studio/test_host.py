@@ -161,3 +161,33 @@ def test_consume_highlight_applies_after_rewrite(tmp_path: Path) -> None:
     assert request is not None
     assert request["names"] == ["front"]
     assert mtime != seeded
+
+
+def test_open_host_claims_during_show(tmp_path: Path, monkeypatch) -> None:
+    running_during_show: list[bool] = []
+
+    class FakeModelViewer:
+        def __init__(self, parent, model, **kwargs):
+            pass
+
+        def show(self, *, title=None):
+            from apeGmsh.studio._host_state import read_host
+
+            running_during_show.append(read_host(tmp_path)["running"] is True)
+
+    monkeypatch.setattr("apeGmsh.studio._host.session_has_mesh", lambda: False)
+    monkeypatch.setattr(
+        "apeGmsh.viewers.model_viewer.ModelViewer", FakeModelViewer,
+    )
+    monkeypatch.setattr(
+        "apeGmsh.viewers.mesh_viewer.MeshViewer", FakeModelViewer,
+    )
+    open_host(
+        _StubSession(),
+        envelope_path=tmp_path / ".apegmsh" / "selection.json",
+        root=tmp_path,
+    )
+    assert running_during_show == [True]
+    from apeGmsh.studio._host_state import read_host
+
+    assert read_host(tmp_path)["running"] is False

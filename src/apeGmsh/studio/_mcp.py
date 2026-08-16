@@ -31,7 +31,7 @@ from typing import Any
 from ._envelope import read_envelope
 from ._paths import envelope_path, resolve_root, visors_path, display_path
 from ._replay import PHASES
-from ._status import collect_status, has_studio_state
+from ._status import brief_status, collect_status, has_studio_state
 
 _VIEWS = frozenset({"mesh", "contour", "deformed", "reactions"})
 _CAMERAS = frozenset({"iso", "xy", "xz", "yz"})
@@ -131,11 +131,35 @@ def _shell(argv: list[str], *, cwd: Path, timeout: float | None = None) -> _Shel
     )
 
 
-def status(*, root: Path | str | None = None) -> dict[str, Any]:
-    """Last run, names, and pick. No replay, no Qt."""
+def status(
+    *,
+    mode: str = "brief",
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Last run, names summary, and pick. No replay, no Qt.
+
+    ``mode="brief"`` (default) is the agent token-budget shape — root,
+    last-run intent, label/PG lists, counts summary, pick summary, plus
+    ``text`` matching CLI ``format_status``. ``mode="full"`` returns the
+    complete ``collect_status`` dict (including ``names.entities``).
+    """
+    wanted = str(mode or "brief").strip().lower()
+    if wanted not in ("brief", "full"):
+        return _fail(
+            "INVALID_MODE",
+            f"mode must be 'brief' or 'full'; got {mode!r}",
+            mode=mode,
+        )
     base = _root(root)
-    payload = collect_status(base)
-    payload["empty"] = not has_studio_state(payload)
+    full = collect_status(base)
+    if wanted == "full":
+        payload = dict(full)
+        payload["mode"] = "full"
+        payload["empty"] = not has_studio_state(full)
+        payload["ok"] = True
+        payload["error"] = None
+        return payload
+    payload = brief_status(full)
     payload["ok"] = True
     payload["error"] = None
     return payload
@@ -225,9 +249,11 @@ def run_until(
     """Replay *script* up to *phase* in a subprocess (INV-5).
 
     When *script* is omitted / blank, uses ``.apegmsh/project.json``
-    (S5g). Returns ``NO_SCRIPT`` if neither is available.
+    (S5g). Returns ``NO_SCRIPT`` if neither is available. A
+    ``project.json`` entry outside the habitat root returns
+    ``OUTSIDE_ROOT`` (S5j).
     """
-    from ._project import resolve_entry_script
+    from ._project import OutsideRootError, resolve_entry_script
 
     if phase not in PHASES:
         return _fail(
@@ -246,7 +272,19 @@ def run_until(
             "stdout": "",
             "stderr": base["error"]["message"],
         }
-    script_path = resolve_entry_script(script, root=base)
+    try:
+        script_path = resolve_entry_script(script, root=base)
+    except OutsideRootError as exc:
+        return _fail(
+            "OUTSIDE_ROOT",
+            str(exc),
+            returncode=2,
+            phase=phase,
+            script=None,
+            stdout="",
+            stderr=f"error: {exc}",
+            status=status(root=base),
+        )
     if script_path is None:
         return _fail(
             "NO_SCRIPT",
@@ -356,7 +394,7 @@ def assess(
             "NOT_FOUND",
             f"file not found: {src}",
             returncode=2,
-            path=str(src),
+            path=display_path(src, base),
             stdout="",
             stderr=f"error: file not found: {src}",
         )
@@ -378,7 +416,7 @@ def assess(
             "TIMEOUT",
             f"assess exceeded {_timeout_s()}s",
             returncode=-1,
-            path=str(src),
+            path=display_path(src, base),
             stdout=proc.stdout,
             stderr=proc.stderr,
         )
@@ -386,7 +424,7 @@ def assess(
         "ok": proc.returncode == 0,
         "error": None,
         "returncode": proc.returncode,
-        "path": str(src),
+        "path": display_path(src, base),
         "stdout": proc.stdout,
         "stderr": proc.stderr,
     }
@@ -450,7 +488,7 @@ def render(
             "NOT_FOUND",
             f"file not found: {src}",
             returncode=2,
-            path=str(src),
+            path=display_path(src, base),
             stdout="",
             stderr=f"error: file not found: {src}",
             written=[],
@@ -480,14 +518,14 @@ def render(
             "TIMEOUT",
             f"render exceeded {_timeout_s()}s",
             returncode=-1,
-            path=str(src),
+            path=display_path(src, base),
             view=view,
             pack=pack,
             written=[],
             stdout=proc.stdout,
             stderr=proc.stderr,
         )
-    written = _parse_written(proc.stdout)
+    written = [display_path(w, base) for w in _parse_written(proc.stdout)]
     ok = proc.returncode == 0
     return {
         "ok": ok,
@@ -496,7 +534,7 @@ def render(
             "message": (proc.stderr or "render failed").strip() or "render failed",
         },
         "returncode": proc.returncode,
-        "path": str(src),
+        "path": display_path(src, base),
         "view": view,
         "pack": pack,
         "written": written,
@@ -546,7 +584,7 @@ def animate(
             f"file not found: {src}",
             returncode=2,
             kind=kind,
-            path=str(src),
+            path=display_path(src, base),
             stdout="",
             stderr=f"error: file not found: {src}",
         )
@@ -581,11 +619,12 @@ def animate(
             f"animate exceeded {_timeout_s()}s",
             returncode=-1,
             kind=kind,
-            path=str(src),
+            path=display_path(src, base),
             stdout=proc.stdout,
             stderr=proc.stderr,
         )
-    written = _parse_written(proc.stdout)
+    written_raw = _parse_written(proc.stdout)
+    written = [display_path(w, base) for w in written_raw]
     ok = proc.returncode == 0
     return {
         "ok": ok,
@@ -595,8 +634,8 @@ def animate(
         },
         "returncode": proc.returncode,
         "kind": kind,
-        "path": str(src),
-        "output": written[-1] if written else str(dest),
+        "path": display_path(src, base),
+        "output": written[-1] if written else display_path(dest, base),
         "written": written,
         "stdout": proc.stdout,
         "stderr": proc.stderr,

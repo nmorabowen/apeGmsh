@@ -583,6 +583,8 @@ consumer-agnostic; Studio does not depend on that product.
 | **S5g** | `status.host` via `host.json` (claim/clear + PID liveness); `.apegmsh/project.json` entry script; `run_until` may omit `script=` | S5f |
 | **S5h** | Habitat `busy.json` lock; concurrent `run_until` → `BUSY`; stale PID steal; `status.busy` | S5g |
 | **S5i** | Root-relative `script` / `cwd` / MCP path fields under the habitat root; `root` stays absolute | S5h |
+| **S5j** | Opus harden: torn `busy.json` grace; Windows `pid_alive` ACCESS_DENIED; CLI `project.json`; ownership on clear/release; `OUTSIDE_ROOT`; MCP `display_path` widen | S5i |
+| **F-status-1** | MCP `status(mode=brief\|full)` — brief default for agent token budget; full keeps `collect_status` | S5j |
 
 ### Alternatives rejected (this amendment)
 
@@ -681,6 +683,28 @@ consumer-agnostic; Studio does not depend on that product.
 - Paths outside the habitat root stay absolute. `contract_version` is
   `1.3.0`.
 
+### Acceptance (S5j)
+
+- Empty / unparseable mid-write `busy.json` is not stolen until a short
+  grace window elapses; live busy claims are never stolen by peers.
+- Windows `pid_alive` treats `OpenProcess` ACCESS_DENIED as alive.
+- CLI `run_until` may omit the script path and use `project.json`
+  (parity with MCP); relative script args resolve under `--root`.
+- `write_project` runs only on successful replay with a live session;
+  `clear_host` / `release_busy` only clear this process's claim.
+- `project.json` default outside the habitat root → `OUTSIDE_ROOT`
+  (MCP) / CLI exit 2. `contract_version` is `1.3.1`.
+
+### Acceptance (F-status-1)
+
+- MCP `status` defaults to `mode="brief"`: root, last phase/ok/script,
+  label + physical-group lists, run/pin counts, pick summary, and
+  `text` matching CLI `format_status` — no `names.entities`.
+- Brief payload on a names dump with hundreds of entities stays
+  ≤ ~2 KB; `mode="full"` still returns `collect_status`.
+- Habitat how-to / skill: root check → brief; entity hunting →
+  `lookup` / `names.json`. `contract_version` is `1.4.0`.
+
 ### Open questions (this amendment)
 
 Resolved here:
@@ -691,8 +715,10 @@ Resolved here:
 4. **`.apegmsh/project.json`** — S5g (entry script).
 5. **Habitat concurrency lock / `BUSY`** — S5h.
 6. **Root-relative paths in status payloads** — S5i.
+7. **S5g–S5i harden** — S5j.
+8. **MCP status brief mode** — F-status-1.
 
-Still open (do not block S5a–S5i):
+Still open (do not block S5a–S5j / F-status-1):
 
 1. Event stream (mtime poll remains the contract until proven insufficient).
 

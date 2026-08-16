@@ -891,6 +891,7 @@ env = read_envelope(envelope_path())          # what was clicked
 # cwd/.apegmsh/names.json — what exists (labels / PGs / counts / bboxes)
 # cwd/.apegmsh/runs.jsonl — append-only run_until history; last_run() is where we left it
 # python -m apeGmsh.studio --status  — same facts, no replay
+# MCP status(mode="brief") default — root check; mode="full" for names.entities
 env.labels / env.physical_groups / env.phase / env.unnamed
 ```
 `# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
