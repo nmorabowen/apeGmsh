@@ -3777,6 +3777,24 @@ held-open session — agents do not share that Gmsh kernel (INV-5).</p>
 <td>atomic replace</td>
 </tr>
 <tr>
+<td><code>host.json</code></td>
+<td>Qt host (claim / clear)</td>
+<td>MCP <code>status</code></td>
+<td>atomic replace</td>
+</tr>
+<tr>
+<td><code>project.json</code></td>
+<td>successful <code>run_until</code> / replay</td>
+<td>MCP <code>status</code>, <code>run_until</code> default</td>
+<td>atomic replace</td>
+</tr>
+<tr>
+<td><code>busy.json</code></td>
+<td><code>run_until</code> / replay (exclusive)</td>
+<td>MCP <code>status</code></td>
+<td>O_EXCL create / unlink</td>
+</tr>
+<tr>
 <td><code>mcp_calls.jsonl</code></td>
 <td>MCP adapter (side effect)</td>
 <td><code>studio.profile</code></td>
@@ -3790,34 +3808,45 @@ held-open session — agents do not share that Gmsh kernel (INV-5).</p>
 </tr>
 </tbody>
 </table>
-<p>Snapshot JSON (<code>selection</code> / <code>names</code> / <code>highlight</code>) is single-writer with
-atomic replace (INV-16). JSONL ledgers are append-best-effort: more than
-one tool may append (<code>run_until</code> and <code>results_pin</code> both write
-<code>runs.jsonl</code>). Authored chapters go in <code>docs/</code>, never under <code>.apegmsh/</code>
-(INV-12).</p>
+<p>Snapshot JSON (<code>selection</code> / <code>names</code> / <code>highlight</code> / <code>host</code> / <code>project</code>)
+is single-writer with atomic replace (INV-16). JSONL ledgers are
+append-best-effort: more than one tool may append (<code>run_until</code> and
+<code>results_pin</code> both write <code>runs.jsonl</code>). Authored chapters go in
+<code>docs/</code>, never under <code>.apegmsh/</code> (INV-12).</p>
 <h2 id="poll-contract">Poll contract<a class="headerlink" href="#poll-contract" title="Permanent link">&para;</a></h2>
 <p>There is no event stream yet. Consumers should watch mtimes (or re-read
 after each tool call):</p>
 <ul>
 <li>After a spatial pick: <code>selection.json</code></li>
-<li>After <code>run_until</code>: <code>names.json</code> and the last line of <code>runs.jsonl</code></li>
+<li>After <code>run_until</code>: <code>names.json</code>, <code>project.json</code>, and the last line of
+  <code>runs.jsonl</code></li>
+<li>After opening / closing the Qt host: <code>host.json</code> (also reflected in
+  <code>status.host</code>; a dead PID is reported as <code>running=false</code>, <code>stale=true</code>)</li>
 <li>After <code>highlight</code>: <code>highlight.json</code> (host applies; does not rewrite
   the envelope)</li>
 <li>After <code>render</code> / <code>animate</code>: paths under <code>visors/</code> (prefer <code>--json</code>
   <code>written</code> lists)</li>
 </ul>
-<p><code>status</code> is the cheap aggregate: no replay, no Qt. Torn snapshot JSON
-degrades to <code>names_error</code> / <code>selection_error</code>; torn or partial
-<code>runs.jsonl</code> lines degrade to <code>ledger_error</code> (good lines are kept) —
-it does not raise. Tool-level <code>ok: true</code> means the verb ran; check those
-<code>*_error</code> fields for habitat health.</p>
+<p><code>status</code> is the cheap aggregate: no replay, no Qt. It includes
+<code>host: {running, pid, phase, stale}</code>, <code>project</code> (entry script), and
+<code>busy: {busy, pid, op, phase, stale}</code>. Concurrent <code>run_until</code> calls on
+the same root return <code>error.code == "BUSY"</code> while another replay holds
+<code>.apegmsh/busy.json</code> (S5h). Torn snapshot JSON degrades to
+<code>names_error</code> / <code>selection_error</code>; torn or partial <code>runs.jsonl</code> lines
+degrade to <code>ledger_error</code> (good lines are kept) — it does not raise.
+Tool-level <code>ok: true</code> means the verb ran; check those <code>*_error</code> fields
+for habitat health.</p>
 <p>Empty / whitespace <code>root=</code> or <code>APEGMSH_ROOT</code> is treated as unset (falls
 through the INV-15 chain) — do not pass <code>""</code> hoping it means cwd.</p>
+<p><code>run_until</code> may omit <code>script=</code> when <code>project.json</code> already names the
+entry script.</p>
 <h2 id="cold-start">Cold start<a class="headerlink" href="#cold-start" title="Permanent link">&para;</a></h2>
 <p><code>.apegmsh/</code> is generated and typically gitignored. A fresh clone returns
 <code>status.empty == true</code>. Call <code>run_until(script, phase="model", root=…)</code>
-(or the CLI equivalent) before expecting names, picks, or reports.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.0.0</code> today). Published
+(or the CLI equivalent) before expecting names, picks, or reports.
+That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
+omit the script path.</p>
+<p><code>status.contract_version</code> is the habitat semver (<code>1.2.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack.</p>

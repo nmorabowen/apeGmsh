@@ -3433,6 +3433,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-s5h-habitat-busy-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S5h: habitat BUSY lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0095-s5g-statushost-projectjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S5g: status.host + project.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0095-s5f-follow-up-opus-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7919,6 +7941,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-s5h-habitat-busy-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S5h: habitat BUSY lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0095-s5g-statushost-projectjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 S5g: status.host + project.json
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0095-s5f-follow-up-opus-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12387,6 +12431,17 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-s5h-habitat-busy-lock">ADDED — ADR 0095 S5h: habitat BUSY lock<a class="headerlink" href="#added-adr-0095-s5h-habitat-busy-lock" title="Permanent link">&para;</a></h3>
+<p><code>run_until</code> / replay acquires <code>.apegmsh/busy.json</code> (<code>O_EXCL</code>);
+a concurrent claim returns <code>error.code == "BUSY"</code> (CLI exit 3).
+Stale locks (dead PID) are stolen. <code>status.busy</code> reports lock
+state; <code>contract_version</code> is <code>1.2.0</code>.</p>
+<h3 id="added-adr-0095-s5g-statushost-projectjson">ADDED — ADR 0095 S5g: status.host + project.json<a class="headerlink" href="#added-adr-0095-s5g-statushost-projectjson" title="Permanent link">&para;</a></h3>
+<p>Qt host claims <code>.apegmsh/host.json</code> for the duration of <code>show()</code>;
+<code>status.host</code> reports <code>{running, pid, phase, stale}</code> and treats a
+dead PID as stale. Successful replay writes <code>.apegmsh/project.json</code>;
+<code>run_until</code> may omit <code>script=</code> and use that entry. Habitat
+<code>contract_version</code> is <code>1.1.0</code>.</p>
 <h3 id="fixed-adr-0095-s5f-follow-up-opus-review">FIXED — ADR 0095 S5f follow-up (Opus review)<a class="headerlink" href="#fixed-adr-0095-s5f-follow-up-opus-review" title="Permanent link">&para;</a></h3>
 <p><code>logged</code> test accepts forwarded <code>root=</code>. Ledger reads decode UTF-8
 with <code>errors='replace'</code> so a multibyte tear keeps earlier rows.
