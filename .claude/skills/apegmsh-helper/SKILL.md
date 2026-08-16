@@ -172,9 +172,9 @@ matching reference — don't improvise.
 up to `--phase` (default `model`: **stops before** `generate()`;
 `--phase mesh` stops before `apeSees` / `Results`). The session stays
 open. MeshViewer if the replay produced elements, otherwise
-ModelViewer. Picks write `.apegmsh/selection.json` under the resolved
-project root (`root=` / `--root` / `APEGMSH_ROOT` / nearest `.apegmsh/` /
-cwd — ADR 0095 INV-15). A successful
+ModelViewer. Picks write `.apegmsh/selection.json` under the resolved project root
+(`root=` / `--root` / `APEGMSH_ROOT` / nearest `.apegmsh/` / cwd —
+ADR 0095 INV-15). A successful
 stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
 what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
 (timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
