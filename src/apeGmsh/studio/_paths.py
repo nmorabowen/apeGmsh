@@ -29,6 +29,39 @@ DEFAULT_BUSY_REL = Path(".apegmsh") / "busy.json"
 ROOT_ENV = "APEGMSH_ROOT"
 
 
+def display_path(path: Path | str, root: Path | str | None = None) -> str:
+    """Return a root-relative posix path when *path* is under *root*.
+
+    Absolute OS paths otherwise. The habitat ``root`` field itself stays
+    absolute so consumers have an anchor (ADR 0095 S5i).
+    """
+    p = Path(path).expanduser()
+    try:
+        p = p.resolve()
+    except OSError:
+        p = Path(os.path.abspath(str(p)))
+    if root is None:
+        return str(p)
+    base = Path(root).expanduser()
+    try:
+        base = base.resolve()
+    except OSError:
+        base = Path(os.path.abspath(str(base)))
+    try:
+        return p.relative_to(base).as_posix()
+    except ValueError:
+        return str(p)
+
+
+def resolve_under(root: Path | str, path: Path | str) -> Path:
+    """Resolve *path* against *root* when relative; absolute paths as-is."""
+    base = Path(root).expanduser().resolve()
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    return (base / p).resolve()
+
+
 def atomic_write_text(
     path: Path | str,
     text: str,

@@ -22,6 +22,12 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 S5i: root-relative habitat paths
+
+Ledger ``script`` / ``cwd`` and MCP path fields under the project root
+are stored as root-relative posix paths; ``root`` stays absolute.
+``contract_version`` is ``1.3.0``.
+
 ### ADDED — ADR 0095 S5h: habitat BUSY lock
 
 ``run_until`` / replay acquires ``.apegmsh/busy.json`` (``O_EXCL``);

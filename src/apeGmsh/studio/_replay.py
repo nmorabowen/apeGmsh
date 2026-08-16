@@ -319,7 +319,7 @@ class ReplayRunner:
     ) -> ReplayResult:
         if phase not in PHASES:
             raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
-        from ._paths import resolve_root
+        from ._paths import display_path, resolve_root
 
         script = Path(script)
         habitat = resolve_root(root if root is not None else self._root)
@@ -343,7 +343,10 @@ class ReplayRunner:
         from ._busy import read_busy, release_busy, try_acquire_busy
 
         if not try_acquire_busy(
-            habitat, op="run_until", phase=phase, script=script,
+            habitat,
+            op="run_until",
+            phase=phase,
+            script=display_path(script, habitat),
         ):
             info = read_busy(habitat)
             return ReplayResult(
