@@ -1160,7 +1160,8 @@ class ModelViewer:
         # View per ADR 0087 Appendix B (one-item menus are banned).
         win.add_view_menu_action("Model info…", _open_model_info)
 
-        # ── View → Camera / Theme submenus (ADR 0087 Appendix B) ────
+        # ── View → Navigation / Camera / Theme submenus (ADR 0087) ──
+        win.install_navigation_menu()
         win.install_camera_menu()
         win.install_theme_menu()
 

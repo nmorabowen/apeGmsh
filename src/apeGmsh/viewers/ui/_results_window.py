@@ -622,6 +622,8 @@ class ResultsWindow:
         menu.addSeparator()
         if self._act_focus_mode is not None:
             menu.addAction(self._act_focus_mode)
+        navigation = menu.addMenu("Navigation")
+        self._vw.populate_navigation_menu(navigation)
         camera = menu.addMenu("Camera")
         self._vw.populate_camera_menu(camera)
         # Marker separator: viewer-added submenus (Orbit axis) insert

@@ -766,7 +766,8 @@ class MeshViewer:
         else:
             _mb.addMenu(_file_menu)
 
-        # ── View → Camera / Theme submenus (ADR 0087 Appendix B) ────
+        # ── View → Navigation / Camera / Theme submenus (ADR 0087) ──
+        win.install_navigation_menu()
         win.install_camera_menu()
         win.install_theme_menu()
 
