@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-17T02:54:03Z",
+  "generated": "2026-08-17T04:00:25Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -226,13 +226,13 @@
     },
     "Results.render": {
       "symbol": "Results.render",
-      "signature": "render(path: \"'str | Path'\", *, view: 'str' = 'contour', component: 'Optional[str]' = None, step: 'int' = -1, deform: \"'Optional[Any]'\" = None, camera: 'str' = 'iso', window_size: 'tuple[int, int]' = (1280, 720)) -> \"'Optional[Path]'\"",
+      "signature": "render(path: \"'str | Path'\", *, view: 'str' = 'contour', component: 'Optional[str]' = None, step: 'int' = -1, deform: \"'Optional[Any]'\" = None, camera: \"'Optional[str]'\" = None, window_size: 'tuple[int, int]' = (1280, 720)) -> \"'Optional[Path]'\"",
       "skill": "references/results.md",
       "doc": "Write one offscreen still (ADR 0094 S1)."
     },
     "Results.render_pack": {
       "symbol": "Results.render_pack",
-      "signature": "render_pack(out_dir: \"'str | Path'\", *, camera: 'str' = 'iso', window_size: 'tuple[int, int]' = (1280, 720)) -> 'tuple[Path, ...]'",
+      "signature": "render_pack(out_dir: \"'str | Path'\", *, camera: \"'Optional[str]'\" = None, window_size: 'tuple[int, int]' = (1280, 720)) -> 'tuple[Path, ...]'",
       "skill": "references/results.md",
       "doc": "Write the canned report pack (ADR 0094 S3)."
     },

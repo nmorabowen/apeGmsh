@@ -57,11 +57,15 @@ def render_fem(
     fem: Any,
     path: "str | Path",
     *,
-    camera: str = "iso",
+    camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> Optional[Path]:
-    """Write one undeformed mesh still of ``fem``. Returns the Path or None."""
-    camera = _require_camera(camera)
+    """Write one undeformed mesh still of ``fem``. Returns the Path or None.
+
+    ``camera=`` defaults to ``xy`` for a planar model, ``iso`` otherwise
+    (ADR 0094 Amendment 3); pass it explicitly to override.
+    """
+    camera = _resolve_camera(camera, fem.nodes.coords)
     if _env_skips():
         print(_SKIP_ENV)
         return None
@@ -143,18 +147,22 @@ def render_results(
     component: Optional[str] = None,
     step: int = -1,
     deform: DeformArg = None,
-    camera: str = "iso",
+    camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> Optional[Path]:
-    """Write one still of ``results``. Returns the Path or None."""
+    """Write one still of ``results``. Returns the Path or None.
+
+    ``camera=`` defaults to ``xy`` for a planar model, ``iso`` otherwise
+    (ADR 0094 Amendment 3); pass it explicitly to override.
+    """
     view = _require_view(view)
-    camera = _require_camera(camera)
     deform_spec = _require_deform(deform)
     if results.fem is None:
         raise RuntimeError(
             "results.render requires a bound FEMData "
             "(construct with model= / model_h5= or call results.bind)."
         )
+    camera = _resolve_camera(camera, results.fem.nodes.coords)
     if _env_skips():
         print(_SKIP_ENV)
         return None
@@ -234,7 +242,7 @@ def render_pack(
     results: Any,
     out_dir: "str | Path",
     *,
-    camera: str = "iso",
+    camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> tuple[Path, ...]:
     """Write the canned report pack. Returns written paths, or ``()``.
@@ -247,15 +255,18 @@ def render_pack(
     4. ``reactions.png`` — static stages only, if reactions recorded
     5. ``history.png`` — optional matplotlib history at the extrema node
 
+    ``camera=`` defaults to ``xy`` for a planar model, ``iso`` otherwise
+    (ADR 0094 Amendment 3); pass it explicitly to override.
+
     Skip / no GL returns ``()`` and prints the existing
     ``[skip viewer]`` notice. There is no ``fem.render_pack``.
     """
-    camera = _require_camera(camera)
     if results.fem is None:
         raise RuntimeError(
             "results.render_pack requires a bound FEMData "
             "(construct with model= / model_h5= or call results.bind)."
         )
+    camera = _resolve_camera(camera, results.fem.nodes.coords)
     if _env_skips():
         print(_SKIP_ENV)
         return ()
@@ -358,6 +369,19 @@ def _require_camera(camera: str) -> str:
             f"camera must be one of {sorted(_CAMERAS)}; got {camera!r}."
         )
     return token
+
+
+def _resolve_camera(camera: Optional[str], coords: Any) -> str:
+    """ADR 0094 Amendment 3: default camera for a planar model is
+    ``xy`` (an isometric shot of a flat model is skewed for no
+    reason); ``iso`` otherwise. Only used when ``camera=`` is omitted
+    — an explicit value (including ``"iso"``) is honored unchanged.
+    """
+    if camera is None:
+        from apeGmsh.results._geometry import is_planar
+
+        camera = "xy" if is_planar(coords) else "iso"
+    return _require_camera(camera)
 
 
 def _require_deform(

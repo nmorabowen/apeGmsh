@@ -1,8 +1,9 @@
 """OpenSeesModel catalog: OSM.* solver-zone checks (+ RES.ZERO_U).
 
-ADR 0094 Amendment 2. ``osm`` is duck-typed — this module must not
-import ``apeGmsh.opensees`` (INV-1 extended), so the broker is typed
-as ``Any`` rather than the real ``OpenSeesModel`` class.
+ADR 0094 Amendment 2 (catalog) / Amendment 3 (run evidence from
+``results=``). ``osm`` is duck-typed — this module must not import
+``apeGmsh.opensees`` (INV-1 extended), so the broker is typed as
+``Any`` rather than the real ``OpenSeesModel`` class.
 """
 from __future__ import annotations
 
@@ -54,13 +55,19 @@ def assess_opensees(
 
     analyze_call = osm.analyze_call()
     patterns = tuple(osm.patterns())
+    has_run, evidence_stage = _run_evidence(analyze_call, results)
 
     if analyze_call is None:
-        findings.append(_finding(
-            "OSM.NO_ANALYZE",
+        message = (
             "No ops.analyze archived. eigen calls are not archived, "
-            "so an eigen-only / modal deck legitimately trips this.",
-        ))
+            "so an eigen-only / modal deck legitimately trips this."
+        )
+        if evidence_stage is not None:
+            message += (
+                f" results= shows a run happened (stage={evidence_stage!r}) "
+                "— the deck was driven by a custom analyze loop."
+            )
+        findings.append(_finding("OSM.NO_ANALYZE", message))
         skipped.append((
             "OSM.NO_PATTERN",
             "OSM.NO_ANALYZE fired — free-vibration transients are legal",
@@ -74,10 +81,48 @@ def assess_opensees(
         ))
 
     _check_support(osm, findings)
-    _check_loads_unimported(osm, patterns, analyze_call, findings, skipped)
-    _check_zero_u(results, analyze_call, patterns, findings, skipped)
+    _check_loads_unimported(osm, patterns, has_run, findings, skipped)
+    _check_zero_u(results, patterns, findings, skipped)
 
     return _report(findings, skipped)
+
+
+def _run_evidence(
+    analyze_call: "tuple[int, float | None] | None",
+    results: "Results | None",
+) -> tuple[bool, object | None]:
+    """ADR 0094 Amendment 3: a deck *has run* when either an archived
+    ``ops.analyze`` call exists, or ``results=`` carries >=1 non-mode
+    stage whose last step is readable — a custom analyze loop leaves
+    no ``analyze_call()`` trace, so the results themselves are the
+    evidence. Modal-only results are deliberately not evidence.
+
+    Returns ``(has_run, results_stage_id)``. ``results_stage_id`` is
+    the non-mode stage that supplied results-based evidence, or
+    ``None`` (no such stage — including when ``analyze_call`` alone
+    already makes ``has_run`` true), so callers can tell whether the
+    evidence was results-based.
+    """
+    stage_id = _results_evidence_stage(results)
+    return analyze_call is not None or stage_id is not None, stage_id
+
+
+def _results_evidence_stage(results: "Results | None") -> object | None:
+    """First non-mode stage with a readable last step, or ``None``.
+
+    Reuses the same ``results.stages`` / ``inspect.components(stage=)``
+    access ``_check_zero_u`` uses (INV-9: no step walking) — this just
+    asks "does a run archive exist here", not "what is in it".
+    """
+    if results is None:
+        return None
+    for stage in results.stages:
+        if getattr(stage, "kind", None) == "mode":
+            continue
+        comps = results.inspect.components(stage=stage.id)
+        if any(comps.values()):
+            return stage.id
+    return None
 
 
 def _report(
@@ -120,7 +165,7 @@ def _check_support(osm: Any, findings: list[Finding]) -> None:
 def _check_loads_unimported(
     osm: Any,
     patterns: tuple[Any, ...],
-    analyze_call: "tuple[int, float | None] | None",
+    has_run: bool,
     findings: list[Finding],
     skipped: list[tuple[str, str]],
 ) -> None:
@@ -129,13 +174,14 @@ def _check_loads_unimported(
     prescribed_sp = tuple(osm.fem.nodes.sp.prescribed())
     if not node_loads and not elem_loads and not prescribed_sp:
         return
-    if not patterns and analyze_call is None:
-        # Eigen-only / no-run deck with declared loads: a legal
-        # multi-deck workflow (the loads may target a later static
-        # deck) — not judged.
+    if not patterns and not has_run:
+        # No run evidence (no archived analyze, no results=) and a
+        # zero-pattern deck with declared loads: a legal multi-deck
+        # workflow (the loads may target a later static deck) — not
+        # judged.
         skipped.append((
             "OSM.LOADS_UNIMPORTED",
-            "no archived analyze — declared loads may target a later deck",
+            "no run evidence — declared loads may target a later deck",
         ))
         return
 
@@ -164,19 +210,12 @@ def _check_loads_unimported(
 
 def _check_zero_u(
     results: "Results | None",
-    analyze_call: "tuple[int, float | None] | None",
     patterns: tuple[Any, ...],
     findings: list[Finding],
     skipped: list[tuple[str, str]],
 ) -> None:
     if results is None:
         skipped.append(("RES.ZERO_U", "results= not passed"))
-        return
-    if analyze_call is None or not patterns:
-        skipped.append((
-            "RES.ZERO_U",
-            "no archived analyze / pattern to judge against",
-        ))
         return
 
     stages = [s for s in results.stages if getattr(s, "kind", None) != "mode"]
@@ -209,9 +248,14 @@ def _check_zero_u(
     if not all_zero:
         return
 
+    message = f"Last-step displacement is exactly all-zero (stage={last_stage_id!r})."
+    if not patterns:
+        message += (
+            " No pattern imports the declared loads — see "
+            "OSM.LOADS_UNIMPORTED."
+        )
     findings.append(_finding(
         "RES.ZERO_U",
-        f"Last-step displacement is exactly all-zero (stage={last_stage_id!r}) "
-        "while an analyze call and >=1 pattern are archived.",
-        {"stage": last_stage_id},
+        message,
+        {"stage": last_stage_id, "n_patterns": len(patterns)},
     ))
