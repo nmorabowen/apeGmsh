@@ -246,6 +246,31 @@ class ResultsSession:
             self, pane, path, camera=camera, window_size=window_size,
         )
 
+    def show(
+        self, *, blocking: bool = True, title: "Optional[str]" = None,
+    ):
+        """Open the Qt client on this session (ADR 0098 §1, S2).
+
+        The window is a projection: the outline lists the panes, the
+        inspector edits the selected one through the §9 Add / change /
+        clear loop, and the viewport reconciles the selected mesh view
+        — every gesture writes THIS session, same as a script would.
+        N tiled panes arrive with S3's pane host; until then one mesh
+        view shows at a time.
+
+        ``blocking=False`` presents the window on an already-running
+        Qt loop and returns immediately. ``APEGMSH_SKIP_VIEWER=1``
+        prints the standard skip notice and returns ``None``. Returns
+        the ``SessionWindow`` handle otherwise.
+
+        The Qt client lives in ``apeGmsh.viewers.session`` (imported
+        lazily here) — the session package itself stays free of the
+        Qt/VTK machinery per the S0 purity guard.
+        """
+        from apeGmsh.viewers.session import show_session
+
+        return show_session(self, blocking=blocking, title=title)
+
     # -- observer surface ----------------------------------------------
 
     def subscribe(self, callback: Callable[[], None]) -> None:

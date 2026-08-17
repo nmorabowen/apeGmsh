@@ -252,6 +252,18 @@ def _realize_mesh(
         diagram.attach(backend, view_data, scene)
         if step != 0:
             diagram.update_to_step(step)
+        if view.deform is not None:
+            # Decision-5 addendum (S2 acceptance defect): warp-before-
+            # extract only poses kinds that extract from scene.grid.
+            # Kinds that OWN their glyph geometry (gauss markers,
+            # vector/principal anchors) place it from the REFERENCE
+            # view data at attach — the old viewer moves them with the
+            # DEFORM pump's sync primitive, which the session path
+            # must run too (one-shot, same step→deform order as the
+            # dispatcher matrix; the already-posed grid points are the
+            # pump's ready-made deformed_pts).
+            diagram.sync_substrate_points(scene.grid.points, scene)
+        _ensure_true_lut(kind_id, diagram, backend)
         for suffix, handle in _emitted_handles(diagram):
             key = f"{view.id}:{category}"
             layers.append(RealizedLayer(
@@ -273,6 +285,79 @@ def _realize_mesh(
         diagrams=tuple(diagrams),
         legend_controller=legend_controller,
     )
+
+
+#: Colour-mapped kinds whose auto-fit lookup-table range is seeded at
+#: ATTACH (step 0) — or left at a hard placeholder — and re-ranged
+#: later by the old window's Qt LUT machinery, which the session
+#: path's null legend controller deliberately silences. Realized at
+#: any later instant they clamp the whole picture to the stale range
+#: (S2 acceptance defect: "stresses all one colour"). ``contour`` is
+#: deliberately absent: it computes the real whole-history clim
+#: itself through the visual store (S1-A probe P10).
+_DEFAULT_LUT_KINDS = frozenset(
+    {"gauss_marker", "vector_glyph", "principal_glyph", "sand"}
+)
+
+
+def _ensure_true_lut(kind_id: str, diagram: Any, backend: Any) -> None:
+    """Auto-fit the lookup-table range to the DISPLAYED values.
+
+    Only for :data:`_DEFAULT_LUT_KINDS`, and only under their styles'
+    ``clim=None`` auto-fit contract — an explicit ``style.clim`` wins
+    untouched. These kinds auto-fit at attach, which the session path
+    always runs at step 0 before stepping to the realized instant, so
+    the picture shows one step through another step's scale; with no
+    colour-map editor on this path, the displayed data IS the only
+    truthful range. ``principal_glyph`` re-ranges SYMMETRICALLY so its
+    diverging colormap stays centred on zero (signed principal law);
+    the cmap is style, not range, and survives. Updates the emitted
+    layer record too, so ``_realize_legends`` puts the same truthful
+    range on the scalar bar.
+    """
+    from dataclasses import replace
+
+    from ..scene_ir import GlyphLayer
+
+    if kind_id not in _DEFAULT_LUT_KINDS:
+        return
+    if getattr(diagram.spec.style, "clim", None) is not None:
+        return
+    layer = getattr(diagram, "_layer", None)
+    handle = getattr(diagram, "_handle", None)
+    color = getattr(layer, "color", None)
+    lut = getattr(color, "lut", None)
+    if layer is None or handle is None or lut is None:
+        return
+    if color.mode != "by_array":
+        return
+    if isinstance(layer, GlyphLayer):
+        values = layer.color_scalar
+    else:
+        values = next(
+            (
+                f.values for f in getattr(layer, "fields", ())
+                if f.name == color.array_name
+            ),
+            None,
+        )
+    if values is None or np.asarray(values).size == 0:
+        return
+    if kind_id == "principal_glyph":
+        span = float(np.max(np.abs(values))) or 1e-6
+        vmin, vmax = -span, span
+    else:
+        vmin = float(np.min(values))
+        vmax = float(np.max(values))
+        if vmin == vmax:
+            # A uniform field still deserves a colour: widen so the
+            # lookup table has a nonzero span.
+            vmax = vmin + (abs(vmin) or 1.0) * 1e-6
+    if (float(lut.vmin), float(lut.vmax)) == (vmin, vmax):
+        return
+    new_color = replace(color, lut=replace(lut, vmin=vmin, vmax=vmax))
+    diagram._layer = replace(layer, color=new_color)  # noqa: SLF001
+    backend.set_layer_color(handle, new_color)
 
 
 def _emitted_handles(diagram: Any) -> "list[tuple[str, Any]]":
