@@ -22,6 +22,41 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `doctor` no longer ships one developer's venv path
+
+`python -m apeGmsh doctor` printed a hardcoded home directory on every
+machine in the world that ran it: D1 compared `sys.prefix` against a
+literal office venv and named it even when absent, and D6 probed that
+same path to compare `baseUnits` — a package apeGmsh does not depend on.
+A site convention does not belong in a published wheel.
+
+Both are now opt-in environment configuration, with no literal path
+anywhere in the module:
+
+* `APEGMSH_REFERENCE_VENV` — a venv root D1 compares against. Unset,
+  D1 is a plain identity report (`Python 3.12.10 at <exe> (virtualenv)`);
+  set and mismatched it warns as before; set and missing it says so.
+  Resolves `Scripts/python.exe` or `bin/python`, so it works off Windows.
+* `APEGMSH_SHARED_PACKAGES` — comma-separated distributions whose
+  versions must agree across this interpreter and the reference venv
+  (`_check_baseunits` → `_check_shared_packages`,
+  `_baseunits_counterparts` → `_counterpart_interpreters`). Empty by
+  default; nothing apeGmsh depends on is installed non-editably into
+  several interpreters, so there is no honest default to ship. The
+  Windows-launcher counterpart is now `py -3` rather than a pinned 3.12.
+
+To keep the previous behaviour, set both in the shell:
+`APEGMSH_REFERENCE_VENV=<venv root>` and
+`APEGMSH_SHARED_PACKAGES=baseUnits`.
+
+Two guards in `tests/test_doctor.py`: the module source may not contain
+an absolute user path (verified by reintroducing the old literal — the
+lane fails), and with nothing configured no D1/D6 message may quote a
+home directory (D2 is exempt; it echoes where apeGmsh actually resides,
+discovered at runtime). The three D6 lanes were rewritten around
+`apeGmsh` itself instead of `baseUnits` — they previously skipped
+everywhere the office package was absent, which is to say on CI.
+
 ### ADDED — docs: the Ladruno backend capability map
 
 `docs/concepts/backend-capabilities.md` publishes the tier boundary an

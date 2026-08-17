@@ -2,6 +2,7 @@
 import ast
 import importlib.metadata
 import json
+import re
 import os
 import subprocess
 import sys
@@ -173,67 +174,88 @@ def test_ordinary_checkout_is_not_mistaken_for_a_worktree(monkeypatch, tmp_path)
 def _fake_counterpart(payload: str) -> list[str]:
     """argv for a probe that reports ``payload`` instead of its real state.
 
-    ``_check_baseunits`` appends ``-c <src>`` to the argv it is handed;
-    python binds the FIRST ``-c`` as the program and pushes the rest into
-    ``sys.argv``, so this command wins and the real probe body is inert.
+    ``_check_shared_packages`` appends ``-c <src>`` to the argv it is
+    handed; python binds the FIRST ``-c`` as the program and pushes the
+    rest into ``sys.argv``, so this command wins and the real probe body
+    is inert.
     """
     return [sys.executable, "-c", f"print({payload!r})"]
 
 
-@pytest.mark.slow
-def test_baseunits_disagreement_is_an_error(monkeypatch):
-    try:
-        current = importlib.metadata.version("baseUnits")
-    except importlib.metadata.PackageNotFoundError:
-        pytest.skip("baseUnits not installed in this interpreter")
+#: D6 is opt-in, and its old hardcoded subject (``baseUnits``) is not
+#: installed outside one office machine — so these lanes used to skip
+#: everywhere including CI. Point the check at apeGmsh itself, which is
+#: necessarily installed wherever the suite runs.
+_SHARED = "apeGmsh"
 
-    bogus = json.dumps({"exe": r"C:\fake\other\python.exe",
-                        "version": current + ".999"})
+
+def _configure_shared(monkeypatch, counterpart_payload: str | None):
+    monkeypatch.setenv(doctor_mod._SHARED_PACKAGES_ENV, _SHARED)
+    if counterpart_payload is None:
+        monkeypatch.setattr(doctor_mod, "_counterpart_interpreters", list)
+        return
     monkeypatch.setattr(
-        doctor_mod, "_baseunits_counterparts",
-        lambda: [("fake counterpart", _fake_counterpart(bogus))],
+        doctor_mod, "_counterpart_interpreters",
+        lambda: [("fake counterpart", _fake_counterpart(counterpart_payload))],
     )
-    findings = doctor_mod._check_baseunits()
+
+
+def _my_version() -> str:
+    return importlib.metadata.version(_SHARED)
+
+
+def test_d6_is_skipped_when_no_shared_packages_configured(monkeypatch):
+    """Default install: opt-in check, one neutral line, nothing personal."""
+    monkeypatch.delenv(doctor_mod._SHARED_PACKAGES_ENV, raising=False)
+    findings = doctor_mod._check_shared_packages()
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.code == "D6"
+    assert f.severity == "info"
+    assert "No shared packages configured" in f.message
+    assert doctor_mod._SHARED_PACKAGES_ENV in f.message
+
+
+@pytest.mark.slow
+def test_shared_package_disagreement_is_an_error(monkeypatch):
+    bogus = json.dumps({
+        "exe": "C:/fake/other/python.exe",
+        "versions": {_SHARED: _my_version() + ".999"},
+    })
+    _configure_shared(monkeypatch, bogus)
+    findings = doctor_mod._check_shared_packages()
     assert len(findings) == 1
     f = findings[0]
     assert f.code == "D6"
     assert f.severity == "error"
     assert "disagreement" in f.message
     assert "force-reinstall" in f.message  # the actionable remedy
+    assert _SHARED in f.message
 
 
 @pytest.mark.slow
-def test_baseunits_agreement_is_ok(monkeypatch):
-    try:
-        current = importlib.metadata.version("baseUnits")
-    except importlib.metadata.PackageNotFoundError:
-        pytest.skip("baseUnits not installed in this interpreter")
-
-    agreeing = json.dumps({"exe": r"C:\fake\other\python.exe",
-                           "version": current})
-    monkeypatch.setattr(
-        doctor_mod, "_baseunits_counterparts",
-        lambda: [("fake counterpart", _fake_counterpart(agreeing))],
-    )
-    f = doctor_mod._check_baseunits()[0]
+def test_shared_package_agreement_is_ok(monkeypatch):
+    agreeing = json.dumps({
+        "exe": "C:/fake/other/python.exe",
+        "versions": {_SHARED: _my_version()},
+    })
+    _configure_shared(monkeypatch, agreeing)
+    f = doctor_mod._check_shared_packages()[0]
     assert f.severity == "info"
-    assert f.detail["counterparts"] == {"fake counterpart": current}
+    assert f.detail["counterparts"] == {
+        "fake counterpart": {_SHARED: _my_version()}
+    }
 
 
 @pytest.mark.slow
-def test_baseunits_ignores_self_resolving_counterpart(monkeypatch):
+def test_shared_package_ignores_self_resolving_counterpart(monkeypatch):
     """A launcher resolving back to us is not an independent counterpart."""
-    try:
-        current = importlib.metadata.version("baseUnits")
-    except importlib.metadata.PackageNotFoundError:
-        pytest.skip("baseUnits not installed in this interpreter")
-
-    itself = json.dumps({"exe": sys.executable, "version": current})
-    monkeypatch.setattr(
-        doctor_mod, "_baseunits_counterparts",
-        lambda: [("myself", _fake_counterpart(itself))],
-    )
-    f = doctor_mod._check_baseunits()[0]
+    itself = json.dumps({
+        "exe": sys.executable,
+        "versions": {_SHARED: _my_version()},
+    })
+    _configure_shared(monkeypatch, itself)
+    f = doctor_mod._check_shared_packages()[0]
     assert f.severity == "info"
     assert f.detail["counterparts"] == {}
     assert "no counterpart interpreter found" in f.message
@@ -316,3 +338,41 @@ def test_cli_smoke():
 def test_cli_rejects_unknown_command():
     assert _cli("nope").returncode == 2  # argparse usage error
 
+
+
+# --------------------------------------------------------------------------
+# Leak regression — a published wheel must not carry anyone's home directory.
+# --------------------------------------------------------------------------
+def test_doctor_source_hardcodes_no_user_path():
+    r"""``doctor.py`` shipped one developer's venv path as a literal.
+
+    Every install in the world printed that ``C:\Users\...`` from D1, and
+    D6 probed it. Site conventions belong in the environment
+    (``APEGMSH_REFERENCE_VENV`` / ``APEGMSH_SHARED_PACKAGES``), not in a
+    wheel on PyPI.
+    """
+    src = Path(doctor_mod.__file__).read_text(encoding="utf-8")
+    offenders = re.findall(
+        r"""["'][A-Za-z]:[\\/]+Users[\\/]+[^"'\n]+["']|["']/home/[^"'\n]+["']""",
+        src,
+    )
+    assert not offenders, (
+        f"doctor.py hardcodes user path(s): {offenders}. Drive it from an "
+        "environment variable instead."
+    )
+
+
+def test_default_report_names_no_user_home(monkeypatch):
+    """With nothing configured, no finding may quote a home directory.
+
+    D2 legitimately echoes wherever apeGmsh actually resides, so it is
+    exempt — that path is discovered at runtime, not shipped.
+    """
+    monkeypatch.delenv(doctor_mod._REFERENCE_VENV_ENV, raising=False)
+    monkeypatch.delenv(doctor_mod._SHARED_PACKAGES_ENV, raising=False)
+    for f in (*doctor_mod._check_interpreter(),
+              *doctor_mod._check_shared_packages()):
+        assert not re.search(r"[A-Za-z]:[\\/]+Users[\\/]+|/home/", f.message), (
+            f"{f.code} quotes a home directory with nothing configured: "
+            f"{f.message}"
+        )
