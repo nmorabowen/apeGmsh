@@ -177,8 +177,24 @@ class MeshPane(QtWidgets.QWidget):
         self._reconciler.schedule_forced()
 
     def dispose(self) -> None:
-        """Detach from the session (idempotent)."""
+        """Detach from the session AND close the pane's GL context.
+
+        Idempotent. Closing the interactor is not optional bookkeeping:
+        before Amendment 1 the shell owned the one context and
+        ``ViewerWindow._MainWindow.closeEvent`` closed it. With the
+        shell building none (A1.1), a pane that does not close its own
+        leaves a live render window behind every time a pane is closed
+        or a window shuts — caution 1's orphaned context, moved from
+        the shell to the panes. Windows tolerates the leak; Mesa
+        segfaults on the NEXT interactor in the process, which is what
+        the xvfb lane caught.
+        """
         self._reconciler.dispose()
+        if self._surface is not None:
+            try:
+                self._surface.close()
+            except Exception:
+                pass
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 — Qt API
         self.dispose()

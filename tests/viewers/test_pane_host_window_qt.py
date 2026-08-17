@@ -214,7 +214,14 @@ def test_c18_live_pane_survives_the_4_to_5_reparent(live_window):
 def test_c18_teardown_leaves_no_live_interactor(qt_results, tmp_path,
                                                 monkeypatch):
     """Closing the window closes every pane's interactor — with no
-    shell interactor there is no orphan left over either (caution 1)."""
+    shell interactor there is no orphan left over either (caution 1).
+
+    The test must NOT close the plotters itself. An earlier version did,
+    and that is exactly why this passed while the rest of the file
+    segfaulted on Mesa: nothing in the product closed a pane's GL
+    context, so a second window in the same process died on the leaked
+    ones. Windows tolerated it; the xvfb lane did not.
+    """
     pytest.importorskip("pytestqt", reason="needs pytest-qt")
     pytest.importorskip("pyvistaqt")
     QtWidgets = pytest.importorskip("qtpy.QtWidgets")
@@ -239,11 +246,29 @@ def test_c18_teardown_leaves_no_live_interactor(qt_results, tmp_path,
 
     window.close()
     app.processEvents()
+
+    # Closed BY THE PRODUCT, on the window's own close path.
     for plotter in plotters:
-        plotter.close()
-    app.processEvents()
+        assert getattr(plotter, "_closed", False) is True, (
+            "a pane's GL context outlived its window — the next "
+            "interactor in this process is what pays for it"
+        )
     # The shell never built one, so there is nothing else to leak.
     assert window.shell.plotter is None
+
+
+def test_c18_a_closed_pane_closes_its_context(live_window):
+    """The same rule mid-session: the header's close glyph must take
+    the pane's GL context with it, not just its widget."""
+    app, window, session = live_window
+    victim = session.panes[3].id
+    plotter = window.host.frame(victim).plotter
+
+    window.host.frame(victim).close_button.click()
+    app.processEvents()
+
+    assert victim not in [p.id for p in session.panes]
+    assert getattr(plotter, "_closed", False) is True
 
 
 # =====================================================================

@@ -351,5 +351,8 @@ def test_mesh_pane_default_factory_real_interactor(qapp, session_results):
         # The live plotter holds exactly the realized actors.
         assert pane.backend.plotter is pane.surface
     finally:
+        # ``dispose`` closes the pane's own GL context — the test does
+        # not have to, and must not have to (a leaked context segfaults
+        # the next interactor in the process under Mesa).
         pane.dispose()
-        pane.surface.close()
+        assert pane.surface._closed is True  # noqa: SLF001
