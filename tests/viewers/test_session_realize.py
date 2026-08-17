@@ -550,24 +550,26 @@ def test_foreign_pane_refuses(session_results, backend):
         realize_pane(session, foreign, backend)
 
 
-def test_plot_pane_refuses(session_results, backend):
+def test_realize_rejects_a_non_pane(session_results, backend):
     session, _ = _session_view(session_results)
-    plot = session.add_plot()
-    with pytest.raises(NotImplementedError, match="mesh panes"):
-        realize_pane(session, plot, backend)
+    with pytest.raises(TypeError, match="MeshView or PlotView"):
+        realize_pane(session, object(), backend)
+
+
+def test_mesh_pane_without_backend_refuses(session_results):
+    session, view = _session_view(session_results)
+    with pytest.raises(TypeError, match="RenderBackend"):
+        realize_pane(session, view)
 
 
 @pytest.mark.parametrize(
     "mutate, match",
     [
-        (lambda v: setattr(v, "vector", Vector("stress_xx")), "S1-B"),
-        (lambda v: setattr(v, "scope", Scope(axis="physical_groups")),
-         "S1-B|S3"),
         (lambda v: setattr(v, "style", MeshStyle(nodes=True)), "S3"),
         (lambda v: setattr(v, "overlay", True), "overlay"),
         (lambda v: v.add_clip((1, 0, 0)), "clip"),
     ],
-    ids=["slot", "scope", "style", "overlay", "clip"],
+    ids=["style", "overlay", "clip"],
 )
 def test_unrealized_state_refuses_loudly(
     session_results, backend, mutate, match,

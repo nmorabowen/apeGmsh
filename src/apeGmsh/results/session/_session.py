@@ -203,12 +203,17 @@ class ResultsSession:
 
     # -- realize clients (S1) ------------------------------------------
 
-    def realize(self, backend: Any, pane: "Pane | str | None" = None):
-        """Realize one pane into an ADR 0042 ``RenderBackend`` (S1).
+    def realize(
+        self, backend: Any = None, pane: "Pane | str | None" = None,
+    ):
+        """Realize one pane (S1).
 
-        One-shot: emits the pane's complete layer set into ``backend``
-        and returns a ``RealizedPane`` whose layers carry stable keys
-        (the S2 reconciler's diff surface). With one pane no id is
+        A **mesh** pane is one-shot: it emits its complete layer set
+        into ``backend`` (an ADR 0042 ``RenderBackend``) and returns a
+        ``RealizedPane`` whose layers carry stable keys — the S2
+        reconciler's diff surface. A **plot** pane resolves its series
+        to arrays and returns a ``RealizedPlot``; it needs no backend
+        (§6: its client draws the numbers). With one pane no id is
         needed; otherwise address by pane id.
 
         The projection lives in ``apeGmsh.viewers.session`` (imported
