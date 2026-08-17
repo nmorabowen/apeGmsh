@@ -125,6 +125,31 @@ the human has accepted the checkpoint that led to that code.
 
 ---
 
+## Asking for a draft or ink
+
+Visual-talk is a first move at a checkpoint, not a fallback for when prose
+fails. Before writing more paragraphs, the agent may **ask**:
+
+- what it needs — a massing draft, a member layout, a mark-up over a render
+- the frame — units, axes, origin; state them, never assume the human's
+- where to save — the session's role folder, or `models/<id>/` when the
+  artifact belongs to that model's lineage rather than the conversation
+
+**Human draws.** `tools/apeCAD/open_interface.py` for a spatial draft;
+`tools/apeSketch/open_interface.py` for freehand ink. Human ink archives
+under `tools/apeSketch/human_sketches/`; agent-produced references (a
+scheme, an annotated render) under `agentic_sketches/`. Sketching over an
+image — a rendered Studio still loaded as reference, inked on top — is
+part of this same convention; treat it as convention, not a promised
+apeSketch feature.
+
+**Agent consumes.** `Document.to_json()` / `to_frame()` from apeCAD; the
+session export from apeSketch. Read by **name**, not pixel, whenever
+labels exist — the same names-first discipline as a Studio `get_selection`
+pick.
+
+---
+
 ## Phrases that must trigger a pause
 
 - Vague nouns: “the beam”, “the soil”, “fixed”, “nonlinear”, “seismic”, “contact”
