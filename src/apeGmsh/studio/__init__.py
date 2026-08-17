@@ -55,7 +55,7 @@ from ._paths import (
     visors_path,
 )
 from ._contract import CONTRACT_VERSION, ContractError, validate as validate_contract
-from ._replay import PHASES, ReplayResult, ReplayRunner, StopAtPhase
+from ._replay import PHASES, ReplayResult, ReplayRunner, StopAtPhase, allowed_phases
 from ._status import brief_status, collect_status, format_status
 
 __all__ = [
@@ -73,6 +73,7 @@ __all__ = [
     "ReplayRunner",
     "SelectionEnvelope",
     "StopAtPhase",
+    "allowed_phases",
     "brief_status",
     "collect_status",
     "dumps",

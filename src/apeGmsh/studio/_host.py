@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +16,33 @@ _WATCH_TIMERS: list[Any] = []
 # Poll period for the file-watch loop (ADR 0095 S6b — behavior pinned,
 # not the millisecond value).
 _WATCH_POLL_MS = 1000
+
+# Phase-selector toolbar glyphs / tooltip labels (ADR 0095 S6c).
+_PHASE_LABELS = {"model": "Model", "mesh": "Mesh", "results": "Results"}
+_PHASE_GLYPHS = {"model": "◻", "mesh": "▦", "results": "◉"}
+
+
+@dataclass
+class _PhaseState:
+    """Mutable current-phase holder shared by refresh (S6a), the watch
+    loop (S6b), and the phase selector (S6c).
+
+    ``phase`` used to be a plain local captured once in
+    :func:`open_host` and closed over by each installer. The selector
+    needs to *write* it, so all three now read/write ``current`` on
+    one shared instance instead of each holding its own snapshot.
+
+    ``allowed`` is the INV-8 gate (see
+    :func:`~apeGmsh.studio._replay.allowed_phases`), recomputed after
+    every refresh/watch/selector outcome. ``sync`` is set once the
+    phase-selector buttons exist so gate/phase changes from *any* of
+    the three triggers can re-paint them; ``None`` before the selector
+    installs (or in tests that only exercise refresh/watch).
+    """
+
+    current: Phase
+    allowed: tuple[str, ...] = ("model",)
+    sync: Callable[[], None] | None = None
 
 
 def session_has_mesh() -> bool:
@@ -97,7 +125,7 @@ def open_host(
     from ._names import lookup_from_gmsh
     from ._paths import resolve_root
 
-    phase: Phase = "mesh" if session_has_mesh() else "model"
+    phase_state = _PhaseState("mesh" if session_has_mesh() else "model")
     watch_started = False
     refresh_installed = False
     request_path = Path(envelope_path).with_name("highlight.json")
@@ -114,7 +142,7 @@ def open_host(
 
     def on_sel(sel: Any) -> None:
         nonlocal watch_started, refresh_installed
-        env = project_state(sel, phase=phase, names=lookup_from_gmsh)
+        env = project_state(sel, phase=phase_state.current, names=lookup_from_gmsh)
         write_envelope(envelope_path, env)
         if not watch_started:
             watch_started = True
@@ -128,7 +156,7 @@ def open_host(
                     win=win,
                     habitat=habitat,
                     script=script,
-                    phase=phase,
+                    phase_state=phase_state,
                     runner=runner,
                 )
                 _install_watch_loop(
@@ -136,12 +164,20 @@ def open_host(
                     win=win,
                     habitat=habitat,
                     script=script,
-                    phase=phase,
+                    phase_state=phase_state,
                     runner=active_runner,
                     watch=watch,
                 )
+                _install_phase_selector(
+                    viewer,
+                    win=win,
+                    habitat=habitat,
+                    script=script,
+                    phase_state=phase_state,
+                    runner=active_runner,
+                )
 
-    if phase == "mesh":
+    if phase_state.current == "mesh":
         from apeGmsh.viewers.mesh_viewer import MeshViewer
 
         viewer: Any = MeshViewer(
@@ -157,7 +193,7 @@ def open_host(
             on_selection_changed=on_sel,
             annotate=True,
         )
-    claim_host(habitat, phase=phase)
+    claim_host(habitat, phase=phase_state.current)
     try:
         viewer.show(title=title or "apeGmsh.studio")
     finally:
@@ -170,7 +206,7 @@ def _install_refresh_action(
     win: Any,
     habitat: Path,
     script: Path | str | None,
-    phase: str,
+    phase_state: _PhaseState,
     runner: Any,
 ) -> Any:
     """Wire the Refresh toolbar action + F5 shortcut (ADR 0095 S6a).
@@ -181,6 +217,13 @@ def _install_refresh_action(
     reflects the outcome in the status bar. Returns the runner used
     (building one when *runner* is ``None``) so the watch loop (S6b)
     installed alongside it shares the same skip-hash cache.
+
+    Replays at *phase_state.current* — the S6c phase selector is the
+    only thing that writes it, so a plain F5 re-runs whatever phase is
+    currently selected. Every outcome (not just phase-selector clicks)
+    re-evaluates the INV-8 gates via :func:`_apply_phase_outcome`,
+    since editing the script and hitting F5 can also grow or shrink
+    what phases are reachable.
     """
     if runner is None:
         from ._replay import ReplayRunner
@@ -200,7 +243,8 @@ def _install_refresh_action(
             win.set_status("Refresh: no entry script")
             return
         rebuild = getattr(viewer, "_rebuild_scene", None)
-        outcome = refresh_host(runner, entry, phase=phase, on_success=rebuild)
+        outcome = refresh_host(runner, entry, phase=phase_state.current, on_success=rebuild)
+        _apply_phase_outcome(outcome, phase_state=phase_state, habitat=habitat)
         win.set_status(outcome["message"])
 
     win.add_toolbar_action("Refresh (F5)", "⟲", _do_refresh)
@@ -214,7 +258,7 @@ def _install_watch_loop(
     win: Any,
     habitat: Path,
     script: Path | str | None,
-    phase: str,
+    phase_state: _PhaseState,
     runner: Any,
     watch: bool,
 ) -> Any:
@@ -232,6 +276,10 @@ def _install_watch_loop(
 
     The toggle starts checked to match *watch* (the CLI's
     ``--no-watch`` state) and pauses/resumes the timer live.
+
+    Watches replay at *phase_state.current* (S6c) and, like manual
+    refresh, re-evaluate the INV-8 gates through
+    :func:`_apply_phase_outcome` after every settled tick.
     """
     from qtpy.QtCore import QTimer
 
@@ -266,7 +314,8 @@ def _install_watch_loop(
             return
         rebuild = getattr(viewer, "_rebuild_scene", None)
         outcome = refresh_host(
-            runner, entry, phase=phase, on_success=rebuild, trigger="watch",
+            runner, entry, phase=phase_state.current, on_success=rebuild,
+            trigger="watch",
         )
         if outcome["status"] == "busy":
             # INV-18: nothing stolen — but the save must not be
@@ -274,6 +323,7 @@ def _install_watch_loop(
             # the same mtime, so the next tick retries until the
             # habitat frees up.
             state = prev
+        _apply_phase_outcome(outcome, phase_state=phase_state, habitat=habitat)
         win.set_status(outcome["message"])
 
     timer = QTimer()
@@ -292,6 +342,167 @@ def _install_watch_loop(
     )
     action.setChecked(watch)
     return action
+
+
+def _install_phase_selector(
+    viewer: Any,
+    *,
+    win: Any,
+    habitat: Path,
+    script: Path | str | None,
+    phase_state: _PhaseState,
+    runner: Any,
+) -> dict[str, Any]:
+    """Wire the Model / Mesh / Results phase selector (ADR 0095 S6c).
+
+    Three checkable toolbar actions, one per :data:`~apeGmsh.studio._replay.PHASES`
+    entry, kept mutually exclusive by hand in :func:`_sync_phase_buttons`
+    rather than a ``QActionGroup`` — the sync helper drives
+    ``setChecked``/``setEnabled`` directly from *phase_state*, and a
+    Qt-managed group would fight that. INV-8 gates which buttons are
+    enabled (:func:`~apeGmsh.studio._replay.allowed_phases`, fed by the
+    runner's last good replay and a fresh :func:`session_has_mesh`
+    read).
+
+    Selecting a phase replays it through the same S6a/S6b decision
+    core (:func:`refresh_host`, ``trigger="refresh"``) so it shares
+    the runner's skip-hash cache and busy/INV-18 handling. A busy or
+    failed replay leaves *phase_state* untouched; :func:`_sync_phase_buttons`
+    snaps the buttons back to the true current phase — nothing is
+    stolen (INV-18) and no fake state is shown.
+
+    The host window is fixed as ModelViewer or MeshViewer at open
+    (INV-7 — no viewer-class rewrite here). Only ModelViewer exposes a
+    ``_rebuild_scene`` hook, and it only re-tessellates BRep (Part 4:
+    mesh/results are swaps, not streams, within *one* viewer), so a
+    switch to mesh/results on a ModelViewer — or any switch on a
+    MeshViewer, which has no rebuild hook at all (the existing S6a
+    limitation) — still replays and updates the gate/phase/``host.json``;
+    it just discloses "Reopen host to view <phase>" in the status bar
+    instead of leaving the old scene up under a new phase label.
+    """
+    from ._project import OutsideRootError, resolve_entry_script
+    from ._replay import PHASES, allowed_phases
+
+    def _resolve_entry() -> Path | None:
+        try:
+            entry = resolve_entry_script(None, root=habitat)
+        except OutsideRootError:
+            entry = None
+        if entry is None and script is not None:
+            entry = Path(script)
+        return entry
+
+    buttons: dict[str, Any] = {}
+
+    def _select(target_phase: str) -> None:
+        entry = _resolve_entry()
+        if entry is None:
+            win.set_status(f"{_PHASE_LABELS[target_phase]}: no entry script")
+            _sync_phase_buttons(buttons, phase_state.current, phase_state.allowed)
+            return
+        rebuild = getattr(viewer, "_rebuild_scene", None)
+        can_display = rebuild is not None and target_phase == "model"
+        outcome = refresh_host(
+            runner, entry, phase=target_phase,
+            on_success=rebuild if can_display else None,
+            trigger="refresh",
+        )
+        message = outcome["message"]
+        if outcome["status"] == "refreshed" and not can_display:
+            message = f"Refreshed (reopen host to view {target_phase})"
+        _apply_phase_outcome(
+            outcome, phase_state=phase_state, habitat=habitat, requested=target_phase,
+        )
+        win.set_status(message)
+
+    def _make_handler(target_phase: str) -> Callable[[bool], None]:
+        def _on_click(checked: bool) -> None:
+            if checked:
+                _select(target_phase)
+            else:
+                # A checkable QAction is a two-state toggle, not a
+                # radio button; clicking the already-active phase
+                # unchecks it with no group to re-check it. Snap the
+                # buttons back to the true current phase.
+                _sync_phase_buttons(buttons, phase_state.current, phase_state.allowed)
+        return _on_click
+
+    for name in PHASES:
+        buttons[name] = win.add_toolbar_action(
+            f"{_PHASE_LABELS[name]} phase",
+            _PHASE_GLYPHS[name],
+            _make_handler(name),
+            checkable=True,
+        )
+
+    phase_state.allowed = allowed_phases(runner.last_good, session_has_mesh())
+    if phase_state.current not in phase_state.allowed:
+        phase_state.current = phase_state.allowed[-1]
+    phase_state.sync = lambda: _sync_phase_buttons(
+        buttons, phase_state.current, phase_state.allowed,
+    )
+    phase_state.sync()
+    return buttons
+
+
+def _sync_phase_buttons(
+    buttons: dict[str, Any], current: str, allowed: tuple[str, ...],
+) -> None:
+    """Reflect *current* / *allowed* onto the phase-selector actions.
+
+    Plain ``setEnabled``/``setChecked`` state mutation — never
+    ``.trigger()`` — so this never re-enters the click handlers wired
+    in :func:`_install_phase_selector`.
+    """
+    for name, action in buttons.items():
+        action.setEnabled(name in allowed)
+        action.setChecked(name == current)
+
+
+def _apply_phase_outcome(
+    outcome: dict[str, Any],
+    *,
+    phase_state: _PhaseState,
+    habitat: Path,
+    requested: str | None = None,
+) -> None:
+    """Re-evaluate the INV-8 gates after a refresh/watch/selector outcome.
+
+    Busy or failed outcomes change nothing (INV-4 / INV-18): the
+    allowed set, *phase_state.current*, and ``host.json.phase`` all
+    stay exactly as they were — only the phase-selector buttons (if
+    installed) are re-synced, so a reverted click snaps back to the
+    true current phase instead of showing the requested one.
+
+    A successful or up-to-date outcome first adopts *requested* as the
+    new current phase, when given — the S6c selector passes the phase
+    it just replayed, since that replay targeted a *different* phase
+    than *phase_state.current*; S6a/S6b always replay at
+    *phase_state.current* already and omit it, so there is nothing to
+    adopt, only retreat. Either way the allowed set is then recomputed
+    from the outcome's ``ReplayResult`` and a fresh live-kernel mesh
+    read; when the (possibly just-adopted) current phase turns out not
+    to be allowed it retreats to the highest phase still available
+    (INV-8, "must retreat").
+    """
+    if outcome["status"] in ("refreshed", "up_to_date"):
+        from ._host_state import claim_host
+        from ._replay import allowed_phases
+
+        if requested is not None:
+            phase_state.current = requested
+        allowed = allowed_phases(outcome["result"], session_has_mesh())
+        phase_state.allowed = allowed
+        if phase_state.current not in allowed:
+            phase_state.current = allowed[-1]
+        # host.json is only ever written by this host process (single
+        # owner, INV-16); claim_host is safe to call again with the
+        # same pid — it just rewrites the phase field in place, same
+        # schema (ADR 0095 Amendment 4 S6c: value change, no bump).
+        claim_host(habitat, phase=phase_state.current)
+    if phase_state.sync is not None:
+        phase_state.sync()
 
 
 def refresh_host(
