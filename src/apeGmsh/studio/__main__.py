@@ -16,6 +16,10 @@ Stills go through ``python -m apeGmsh.viewers render``.
 ``python -m apeGmsh.studio init --name <habitat> --model <model_id>
 [--root DIR]`` stamps a fresh habitat from the packaged template (ADR
 0095 Amendment 6, S7a) — see ``apeGmsh.studio._init_habitat``.
+
+``python -m apeGmsh.studio example list [--tag T] | show <name> |
+copy <name> [--dest DIR]`` — the oracle-bearing example library (ADR
+0095 Amendment 7, S8a) — see ``apeGmsh.studio._examples``.
 """
 
 from __future__ import annotations
@@ -28,16 +32,20 @@ from typing import Optional, Sequence
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    # `init` is special-cased on the raw argv, ahead of the `script`
-    # positional's Path resolution below: it takes its own --name/--model
-    # flags, not a script path, so it cannot share that parser. A script
-    # literally named `init` (unusual — no `.py`) needs a path prefix,
-    # e.g. `./init` or `init.py`.
+    # `init` / `example` are special-cased on the raw argv, ahead of the
+    # `script` positional's Path resolution below: each takes its own
+    # subcommand/flags, not a script path, so neither can share that
+    # parser. A script literally named `init` or `example` (unusual —
+    # no `.py`) needs a path prefix, e.g. `./init` or `init.py`.
     raw = list(sys.argv[1:]) if argv is None else list(argv)
     if raw and raw[0] == "init":
         from apeGmsh.studio._init_habitat import main as init_main
 
         return init_main(raw[1:])
+    if raw and raw[0] == "example":
+        from apeGmsh.studio._examples import main as example_main
+
+        return example_main(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="python -m apeGmsh.studio",

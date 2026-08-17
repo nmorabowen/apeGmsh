@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "name": "step-load-transient",
+  "title": "Step-load transient — generic cantilever, Newmark dynamics",
+  "tags": ["transient", "dynamics", "ladruno", "energy", "newmark", "tcl"],
+  "teaches": "Density on the material (nDMaterial rho) plus a Constant-series step load excites a real dynamic response; Newmark(0.5, 0.25) + Transient integration; the Ladruno recorder's -G energy channel (KE/IE/DW/ULW/RES/ERR) as the solution-quality diagnostic for explicit/implicit transient runs. A static twin built off the same mesh gives the dynamic amplification factor.",
+  "requires": ["ladruno"],
+  "provenance": "pattern ported from a private out-of-repo transient case's deck/chain/recorder driver (density + Constant-series step load + Newmark + Ladruno -G energy); geometry is generic (a small solid cantilever box) — the specimen geometry does not ship, per ADR 0095 Amendment 7.",
+  "metrics": [
+    {
+      "name": "daf",
+      "expected": 1.974,
+      "tol_rel": 0.05,
+      "units": "-",
+      "note": "peak |tip Uz| (transient) / tip Uz (static, full load) — measured 2026-08-17; theoretical undamped step-load DAF is 2.0."
+    },
+    {
+      "name": "last_err_pct",
+      "expected": 0.0,
+      "tol_abs": 1.0,
+      "units": "%",
+      "note": "Results.energy()['ERR'] at the last committed step — must stay under 1% (amendment oracle). Measured 0.806%."
+    },
+    {
+      "name": "energy_ratio",
+      "expected": 1.0,
+      "tol_rel": 0.08,
+      "units": "-",
+      "note": "(KE+IE)/ULW at the last committed step — measured 0.9546 (closure within ~4.5%)."
+    }
+  ]
+}

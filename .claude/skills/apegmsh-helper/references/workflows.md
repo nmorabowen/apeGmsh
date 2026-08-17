@@ -6,6 +6,13 @@ working skeleton — fill in the geometry and it runs against the **v2.0.0**
 API. The `examples/` folder in the project is the authoritative gallery;
 these are the patterns worth memorizing.
 
+Before improvising one of these from scratch, check the packaged,
+oracle-bearing example library (ADR 0095 Amendment 7) — it travels
+with an installed apeGmsh, not just a repo checkout:
+`python -m apeGmsh.studio example list [--tag <domain>]`, then
+`show <name>` / `copy <name>`. See `studio-habitat.md`'s "Use the
+example library".
+
 Deep references (read on demand): the broker/selection chain is in
 `fem-broker.md`; the typed OpenSees bridge (`apeSees`) is in
 `opensees-bridge.md`; one-line API signatures are in `api-cheatsheet.md`.

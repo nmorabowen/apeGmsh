@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "name": "partitioned-frame",
+  "title": "Partitioned 3-D space frame — OpenSeesMP-ready Tcl emit",
+  "tags": ["partitioning", "metis", "diaphragm", "openseesmp", "emit-only", "mesh-only"],
+  "teaches": "A 2-storey x 2x2-bay rigid-jointed space frame partitioned into 4 ranks via Gmsh-native METIS, one rigid-floor diaphragm per storey (cross-partition replication, ADR 0027 INV-1/INV-2), and an OpenSeesMP-ready Tcl deck emitted via apeSees(fem).tcl(...) — no solver required to verify.",
+  "requires": ["mesh-only"],
+  "provenance": "adapted from examples/partition_frame.py",
+  "metrics": [
+    {
+      "name": "n_nodes",
+      "expected": 119,
+      "tol_abs": 0,
+      "units": "count",
+      "note": "Measured 2026-08-17 (Gmsh-native METIS partition + orphan-free renumber)."
+    },
+    {
+      "name": "n_elements",
+      "expected": 132,
+      "tol_abs": 0,
+      "units": "count",
+      "note": "Measured 2026-08-17."
+    },
+    {
+      "name": "n_partitions",
+      "expected": 4,
+      "tol_abs": 0,
+      "units": "count"
+    }
+  ]
+}
