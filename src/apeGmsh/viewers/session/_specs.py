@@ -6,8 +6,8 @@ One entry per §4 category:
 
 | Slot | Kind | Token becomes |
 |---|---|---|
-| `contour` | `contour` | component + `ContourStyle.topology/averaging` |
-| `vector` | `vector_glyph` \| `principal_glyph` | routed by where the quantity is recorded |
+| `contour` | `contour` | component + `ContourStyle.topology/averaging` (a quantity recorded at BOTH levels resolves to `nodes`) |
+| `vector` | `vector_glyph` or `principal_glyph` | routed by the component suffix |
 | `gauss` | `gauss_marker` | component (gauss composite) |
 | `line` | `line_force` | component → `COMPONENT_TO_LOCAL_AXIS` inside the kind |
 | `sand` | `sand` | component (nodal composite) |
@@ -27,7 +27,7 @@ the attribute each one actually reads.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..diagrams._base import DiagramSpec
 from ..diagrams._kinds import kind_def
@@ -40,8 +40,13 @@ if TYPE_CHECKING:
     from ._scope import ScopedSet
 
 #: Which resolved kind reads which id family from its selector.
+#:
+#: ``contour`` is deliberately ABSENT: it reads node ids or element ids
+#: depending on the topology resolved per instance, so a lookup here
+#: must fail loudly rather than quietly answer "no restriction" — that
+#: answer would drop a view's scope and paint the contour over the
+#: whole mesh while every other layer stayed scoped.
 ID_FAMILY: dict[str, str] = {
-    "contour": "",              # resolved per topology (nodes | gauss)
     "vector_glyph": "nodes",    # _vector_glyph.py:109 _resolved_node_ids
     "principal_glyph": "elements",  # _principal_glyph.py:103
     "gauss_marker": "elements",     # _gauss_marker.py:109
@@ -55,6 +60,13 @@ ID_FAMILY: dict[str, str] = {
 #: substrate, so the substrate must not be drawn under them
 #: (INV-MESH-2, generalized from ``Diagram.occludes_substrate``).
 OCCLUDING_KINDS: frozenset = frozenset({"contour", "sand"})
+
+#: Component suffixes that name a tensor vs a vector axis. These decide
+#: the `vector` slot's kind (see :func:`resolve_vector_kind`).
+_TENSOR_SUFFIXES = frozenset(
+    {"xx", "yy", "zz", "xy", "yz", "xz", "yx", "zy", "zx"}
+)
+_AXIS_SUFFIXES = frozenset({"x", "y", "z"})
 
 
 def resolve_contour_topology(
@@ -85,17 +97,28 @@ def resolve_vector_kind(
     """``"vector_glyph"`` or ``"principal_glyph"`` for one §4 `vector`
     token (the ADR collapses both kinds into the one slot).
 
-    Routed by where the quantity is actually recorded, never by the
-    token's shape alone: feeding a tensor token to ``vector_glyph``
-    would silently synthesise ``stress_xx_x/_y/_z`` and read nothing,
-    which is the failure mode this probe exists to prevent. Bare
-    prefixes (``"displacement"``, ``"stress"``) are accepted — both
-    kinds legitimately take one.
+    A **component suffix decides the kind**, and the recorded sets
+    only disambiguate bare prefixes and validate: a tensor suffix is a
+    tensor whether or not someone also recorded it nodally, and an
+    axis suffix is a vector component either way. Deciding by "which
+    composite records it" instead would make a doubly-recorded token
+    route one way here and the other way in
+    :func:`resolve_contour_topology` (which resolves nodes-first), and
+    would hand ``vector_glyph`` a tensor token — it then synthesises
+    ``stress_xx_x/_y/_z``, reads nothing, and draws an empty picture
+    with no error. Bare prefixes (``"displacement"``, ``"stress"``)
+    are legal for both kinds and are resolved against the data.
     """
     nodal, gauss = _recorded(results, stage_id)
-    if quantity in gauss or f"{quantity}_xx" in gauss:
+    suffix = quantity.rsplit("_", 1)[-1] if "_" in quantity else ""
+    if suffix in _TENSOR_SUFFIXES:
         return "principal_glyph"
-    if quantity in nodal or f"{quantity}_x" in nodal:
+    if suffix in _AXIS_SUFFIXES:
+        return "vector_glyph"
+    # A bare prefix: whichever family records it under that prefix.
+    if f"{quantity}_xx" in gauss or quantity in gauss:
+        return "principal_glyph"
+    if f"{quantity}_x" in nodal or quantity in nodal:
         return "vector_glyph"
     raise ValueError(
         f"Vector quantity {quantity!r} is not recorded in stage "
@@ -163,11 +186,16 @@ def slot_spec(
     )
 
 
-def _scope_ids(scoped: "ScopedSet", family: str) -> "Optional[tuple[int, ...]]":
-    if scoped.is_unscoped or family in ("none", ""):
+def _scope_ids(scoped: "ScopedSet", family: str) -> Any:
+    """The scoped ids of ``family``, or ``None`` when unrestricted.
+
+    The array is handed over as-is: ``normalize_selector`` already
+    converts to an int tuple, and pre-converting here would run that
+    O(N) Python-level pass twice on every realize of a scoped view.
+    """
+    if scoped.is_unscoped or family == "none":
         return None
-    ids = scoped.node_ids if family == "nodes" else scoped.element_ids
-    return tuple(int(i) for i in ids)
+    return scoped.node_ids if family == "nodes" else scoped.element_ids
 
 
 def _resolve_load_pattern(

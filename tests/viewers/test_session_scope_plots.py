@@ -256,6 +256,49 @@ def test_node_history_values_are_the_recorded_record(two_body_results):
     assert series.time.shape == (T,)
 
 
+def test_node_series_refuses_a_multi_column_read(
+    two_body_results, monkeypatch,
+):
+    """Review finding: the resolver keeps the guard its oracle has.
+    ``results.plot.history`` raises rather than index column 0 of a
+    multi-column read, because that column is a different node than
+    the one asked for."""
+    node_id = int(two_body_results.fem.nodes.ids[0])
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.node(node_id), "displacement_z"),
+    ])
+
+    class _TwoColumnSlab:
+        values = np.zeros((T, 2))
+        time = np.arange(T, dtype=float)
+
+    class _Scoped:
+        class nodes:  # noqa: N801 - mimics the Results surface
+            @staticmethod
+            def get(**_kwargs):
+                return _TwoColumnSlab()
+
+    monkeypatch.setattr(
+        type(two_body_results), "stage", lambda self, _sid: _Scoped(),
+    )
+    with pytest.raises(ValueError, match="columns"):
+        realize_pane(session, plot)
+
+
+def test_scoped_selector_ids_are_not_pre_converted(two_body_results):
+    """Review finding (efficiency): the scoped id array is handed to
+    the selector as-is — pre-building a Python tuple here would run
+    the same O(N) conversion twice per realize."""
+    from apeGmsh.viewers.session._scope import resolve_scope as _rs
+    from apeGmsh.viewers.session._specs import _scope_ids
+
+    view_data = ViewerData.from_fem(two_body_results.fem)
+    scoped = _rs(Scope("physical_groups", ("BodyA",)), view_data)
+    assert isinstance(_scope_ids(scoped, "nodes"), np.ndarray)
+    assert _scope_ids(scoped, "none") is None
+
+
 def test_gauss_history_resolves(two_body_results):
     element_id = int(
         np.concatenate([

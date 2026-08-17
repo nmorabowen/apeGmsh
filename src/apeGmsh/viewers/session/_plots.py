@@ -110,6 +110,16 @@ def _node_series(
             f"No data for component {series.quantity!r} at node "
             f"{node_id} in stage {stage_id!r}."
         )
+    if values.shape[1] != 1:
+        # The same guard results.plot.history keeps before indexing
+        # column 0 (_plot.py:465-468): more than one column back for a
+        # single requested id means the read did not mean this node,
+        # and drawing column 0 would silently plot a different one.
+        raise ValueError(
+            f"Expected one node's record for {series.quantity!r} at "
+            f"node {node_id}; the read returned {values.shape[1]} "
+            f"columns."
+        )
     return RealizedSeries(
         label=f"node {node_id} — {series.quantity}",
         quantity=series.quantity,

@@ -195,6 +195,76 @@ def test_vector_slot_routes_by_recorded_family(
     assert diagram.kind == expected_kind
 
 
+def test_tensor_suffix_routes_by_shape_not_by_composite(slot_results):
+    """Review finding: the suffix decides the kind, so a token also
+    recorded nodally still reads as a tensor. Routing by "which
+    composite records it" would hand vector_glyph a tensor token — it
+    then synthesises ``stress_xx_x/_y/_z``, reads nothing, and draws an
+    empty picture with no error."""
+    from apeGmsh.viewers.session._specs import resolve_vector_kind
+
+    class _BothLevels:
+        """A stage that records stress_xx at BOTH levels."""
+
+        class inspect:  # noqa: N801 - mimics the Results surface
+            @staticmethod
+            def components(stage=None):
+                return {
+                    "nodes": ["stress_xx", "displacement_x"],
+                    "gauss": ["stress_xx"],
+                }
+
+    assert resolve_vector_kind(
+        "stress_xx", _BothLevels(), STAGE,
+    ) == "principal_glyph"
+    assert resolve_vector_kind(
+        "displacement_x", _BothLevels(), STAGE,
+    ) == "vector_glyph"
+
+
+def test_contour_prefers_nodes_when_recorded_at_both_levels(slot_results):
+    """The documented contour tie-break, pinned so the two resolvers
+    cannot drift apart again."""
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    class _BothLevels:
+        class inspect:  # noqa: N801
+            @staticmethod
+            def components(stage=None):
+                return {"nodes": ["stress_xx"], "gauss": ["stress_xx"]}
+
+    assert resolve_contour_topology(
+        "stress_xx", _BothLevels(), STAGE,
+    ) == "nodes"
+
+
+def test_id_family_has_no_contour_entry(slot_results):
+    """Review finding: a lookup for contour must fail loudly, never
+    quietly answer "unrestricted" — that answer would drop the scope
+    and paint the contour over the whole mesh."""
+    from apeGmsh.viewers.session._specs import ID_FAMILY
+
+    assert "contour" not in ID_FAMILY
+    with pytest.raises(KeyError):
+        ID_FAMILY["contour"]
+
+
+def test_legend_skipped_when_its_slot_drew_nothing(slot_results, monkeypatch):
+    """Review finding: several colour-mapped kinds return from attach
+    without emitting a layer. The legend law follows the PAINTED field,
+    so no layer means no scale — and never an AttributeError."""
+    from apeGmsh.viewers.diagrams._base import Diagram
+    from apeGmsh.viewers.diagrams._sand import SandDiagram
+
+    monkeypatch.setattr(SandDiagram, "attach", Diagram.attach)
+    backend, realized = _realize(
+        slot_results, lambda v: setattr(v, "sand", Sand("displacement_z")),
+    )
+    assert realized.scalar_bars == ()
+    assert backend.scalar_bars == {}
+    assert not any(k.endswith(":sand") for k in _keys(realized))
+
+
 def test_vector_unrecorded_quantity_is_loud(slot_results):
     with pytest.raises(ValueError, match="not recorded"):
         _realize(

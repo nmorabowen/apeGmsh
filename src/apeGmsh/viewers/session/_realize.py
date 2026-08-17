@@ -521,6 +521,15 @@ def _realize_legends(
     for legend in legends:
         diagram = slot_diagrams[legend.categories[0]]
         handle = diagram._handle  # noqa: SLF001
+        if handle is None:
+            # The slot is occupied but its kind drew nothing (several
+            # return from attach without emitting: no elements in the
+            # scope carry Gauss rows, no node survives the selector,
+            # …). A scale for a picture that is not on screen would be
+            # a legend about nothing — INV-LEGEND-1 ties the scale to
+            # the *painted* field. The empty layer list is what tells a
+            # client the slot came up empty.
+            continue
         style = diagram.spec.style
         key = ("", legend.field)
         controller.register(
