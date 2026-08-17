@@ -151,20 +151,39 @@ pulls only `gmsh`, `h5py`, `numpy` and `pandas`.
 | `dxf` | DXF import / export |
 | `animation` | Video export from the results viewer |
 | `mcp` | The Studio MCP server (`python -m apeGmsh.studio.mcp`) |
-| `partition-pymetis` | Weighted mesh partitioning |
-| `all` | Everything above **except `mcp`** |
+| `partition-pymetis` | Weighted mesh partitioning (no Windows wheel) |
+| `all` | `opensees` + `viewer` + `plot` + `dxf` + `mcp` |
 
-!!! note "`all` does not include `mcp`"
+`all` covers everything that installs cleanly everywhere, Studio
+included:
 
-    `pip install "apeGmsh[all]"` installs the Studio package but not the
-    MCP SDK it needs to start. For the Studio habitat ask for it
-    explicitly:
+```bash
+pip install "apeGmsh[all]"
+```
+
+`scripts/make-venv.bat` builds a venv this way under `C:\venv\<name>`.
+
+!!! note "What `all` leaves out, and why"
+
+    `animation` (ffmpeg is a large binary payload) and the two
+    `partition-*` extras. `pymetis` has no PyPI Windows wheel — it comes
+    from conda-forge — so folding it into `all` would break
+    `pip install "apeGmsh[all]"` on Windows; `partition-networkx` is
+    inert without `nxmetis`, which installs only from git. Ask for those
+    by name when you need them.
+
+    Going the other way, `all` is broad: the Qt and VTK render stack, and
+    through `mcp` a small server stack (`uvicorn`, `starlette`,
+    `pydantic`, `opentelemetry-api`). Narrow it when you do not need all
+    of that:
 
     ```bash
-    pip install "apeGmsh[all]" "mcp>=1.2"
+    pip install "apeGmsh[viewer,opensees]"
     ```
 
-    `scripts/make-venv.bat` does this for you.
+    Before 2026-08 `all` also omitted `mcp`, installing the Studio package
+    without the SDK to start it. On an older release, add `"mcp>=1.2"`
+    by hand.
 
 ## Related
 

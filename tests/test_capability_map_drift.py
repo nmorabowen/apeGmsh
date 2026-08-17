@@ -108,3 +108,62 @@ def test_sections_are_non_trivial() -> None:
             f"the '{section}' block parsed to zero tokens; the page must "
             "list them as `backticked` names for the lane to see them."
         )
+
+
+# --------------------------------------------------------------------------
+# `all` completeness — the extra that silently lost `mcp`.
+# --------------------------------------------------------------------------
+#: Extras deliberately NOT folded into ``all``, with the reason. Keyed so
+#: the test fails loudly when a new extra appears and nobody decided which
+#: side it belongs on — the exact way ``mcp`` slipped through for months.
+_ALL_EXCLUSIONS = {
+    "all": "the aggregate itself",
+    "docs": "build-only, never a user runtime dep",
+    "section-oracle": "dev-only oracle for the section analyzer (ADR 0078)",
+    "vtk": "empty marker extra",
+    "animation": "imageio-ffmpeg is a large binary payload",
+    "partition-pymetis": "no PyPI Windows wheel; conda-forge only",
+    "partition-networkx": "inert without nxmetis, which is git-install only",
+}
+
+
+def _extras() -> dict[str, list[str]]:
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    return data["project"]["optional-dependencies"]
+
+
+def test_all_extra_covers_every_included_extra() -> None:
+    """Every extra not explicitly excluded must be a subset of ``all``."""
+    extras = _extras()
+    allset = set(extras["all"])
+    for name, deps in sorted(extras.items()):
+        if name in _ALL_EXCLUSIONS:
+            continue
+        missing = set(deps) - allset
+        assert not missing, (
+            f"extra '{name}' is not covered by [all]: {sorted(missing)} "
+            "missing. `pip install apeGmsh[all]` is the line the README "
+            "and every tutorial hand out, so a gap here fails at feature "
+            "use rather than at install. Either add the requirements to "
+            "'all' or register the extra in _ALL_EXCLUSIONS with a reason."
+        )
+
+
+def test_all_exclusions_registry_is_current() -> None:
+    """The exclusion registry cannot rot in either direction."""
+    extras = _extras()
+    stale = set(_ALL_EXCLUSIONS) - set(extras)
+    assert not stale, (
+        f"_ALL_EXCLUSIONS names extras that no longer exist: {sorted(stale)}."
+    )
+    unclassified = set(extras) - set(_ALL_EXCLUSIONS)
+    covered = {
+        n for n in unclassified if not (set(extras[n]) - set(extras["all"]))
+    }
+    assert unclassified == covered, (
+        f"new extra(s) {sorted(unclassified - covered)} are neither covered "
+        "by [all] nor registered in _ALL_EXCLUSIONS — decide which."
+    )
