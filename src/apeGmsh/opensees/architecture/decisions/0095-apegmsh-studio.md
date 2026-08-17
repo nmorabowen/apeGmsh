@@ -1334,3 +1334,75 @@ Resolved here:
    rides work branches (owner).
 2. **Deck honesty** — disclosure README is contract-legal (owner).
 3. **Whitelist scope** — recursive but png-only; gifs deferred.
+
+## Amendment 10 (2026-08-17) — the case runner (F4)
+
+Append-only. Parts 1–6, INV-1–INV-27, S0–S10a, and Amendments 1–9
+stay. Backlog item F4 met its own actionability bar: two dogfood
+sessions hand-assembled `run.json` (checkpoint-dogfood, limit-point),
+and the second added the path-wiring symptom — the packaged examples
+read results from cwd while the case contract stores them under
+`results/`, so the blind resume-from-tag check failed once on wiring
+alone. This amendment ships the wedge: one template script that runs a
+case and writes its record.
+
+### Decision
+
+- **Template script `scripts/run_case.py`** (habitat-self-contained,
+  the Amendment 6 stance — habitats survive apeGmsh version drift):
+
+  ```text
+  python scripts/run_case.py --model <id> --case <case>
+      --script models/<id>/src/.../driver.py [--verify .../verify.py]
+  ```
+
+  Creates `models/<id>/cases/<case>/{results,logs,deck}`, runs the
+  model script with **cwd = `results/`** — outputs land in place and
+  the optional verify runs from the same cwd, which retires the
+  path-wiring friction class — captures stdout+stderr to
+  `logs/run.log` / `logs/verify.log`, auto-writes the deck disclosure
+  README when `deck/` stays empty (Amendment 9 F3), and writes
+  `run.json`: script path (root-relative posix; absolute when outside
+  the root, the S5i stance), `ran_at` / `duration_s`, exit codes,
+  `results` / `logs` listings, a verify summary (exit, PASS/FAIL
+  counts, raw lines), and `git_provenance()` captured **at launch**
+  (commit-then-run honesty).
+- **A failed run is a recorded run.** `run.json` is written whether
+  the script succeeds or not (`run_exit` says which); the runner's
+  exit code is the script's (or verify's). A case that already has
+  `run.json` is **refused, not overwritten** — run records are
+  immutable; a new question gets a new case id.
+- **No machinery beyond the script.** Read-only with respect to git
+  (INV-24 unchanged); not an MCP tool (INV-10); no schema integer —
+  `run.json` stays the prose contract and richer oracle blocks (named
+  metrics with tolerances) are added by hand after the run.
+- `scripts/run_case.py` joins REQUIRED_FILES; models/README.md makes
+  the runner the SHOULD path while the manual `git_provenance()`
+  snippet stays legal for hand-rolled cases.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S11a** | `template/scripts/run_case.py` + REQUIRED_FILES entry + models/README.md + scripts/README.md rows + tests: happy path (layout, provenance, verify summary, deck disclosure, root-relative script), rerun refused, failed run recorded with nonzero exit, `--no-git` habitat omits provenance | S10a |
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **A studio CLI verb** (`python -m apeGmsh.studio case run`) | Habitat lifecycle stays in template scripts (Amendment 6); coupling every case run to the installed library version is the drift the template exists to avoid. |
+| **Examples' `verify.py` writes `run.json`** | Leaves every non-example case manual, and verify shouldn't own case layout — checking metrics and recording a run are different jobs. |
+| **Parsing verify metrics into typed fields** | Framework-before-ten-examples smell (Amendment 7). Raw PASS/FAIL lines are honest and greppable; typed oracles are hand-authored. |
+| **Overwrite / `--force` on an existing case** | A run record that can be silently replaced is not a record. New case id costs nothing. |
+
+### Acceptance (this amendment)
+
+- In a fresh habitat, one runner invocation with a toy script +
+  verify produces the full contract layout, a `run.json` carrying
+  40-hex `model_sha` + `git_dirty` + verify PASS counts, and the auto
+  deck disclosure; the script path is root-relative posix.
+- Rerunning the same case is refused with run.json unchanged; a
+  failing script still writes `run.json` and the runner exits with
+  the script's code; a `--no-git` habitat records no provenance
+  fields and still exits 0.
+- Habitat suites and the INV-20 / INV-24 grep gates stay green.

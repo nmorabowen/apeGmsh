@@ -21,9 +21,24 @@ one-line README naming why none exists (an in-process openseespy run emits
 nothing — disclosure beats fabrication). Promote lasting curves/stills into
 `reports/` — `.apegmsh/` (Studio-generated) is not the archive.
 
+Cases **SHOULD** be run through the habitat's runner, which owns the
+layout, the logs, the deck disclosure, and the `run.json` record:
+
+```text
+python scripts/run_case.py --model <id> --case <case> \
+    --script models/<id>/src/.../driver.py [--verify .../verify.py]
+```
+
+The model script runs with cwd = `results/` (outputs land in place; the
+optional verify reads the same cwd). A failed run is a recorded run; an
+existing `run.json` is refused, never overwritten — new question, new
+case id. Richer oracle blocks (named metrics with tolerances) are added
+to `run.json` by hand after the run.
+
 `run.json` **SHOULD** carry the source provenance fields from
 `scripts/_habitat.py::git_provenance()` — `model_sha` (HEAD when the case
-ran) and `git_dirty` (uncommitted edits at run time):
+ran) and `git_dirty` (uncommitted edits at run time). The runner records
+them at launch; a hand-rolled case adds them itself:
 
 ```python
 import sys

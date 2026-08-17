@@ -4,6 +4,7 @@
 |--------|------|
 | `start.ps1` / `start_session.py` | Template check · mcp.json root · Studio status probe · session marker |
 | `finish.ps1` / `finish_session.py` | Bridge port check · Studio token profiler · postmortem scaffold · optimization revisions |
+| `run_case.py` | Run one model case: layout + logs + deck disclosure + `run.json` with git provenance |
 | `check_template.py` | Soft-contract folder/file audit |
 | `template_drift.py` | Habitat `APE/`+`scripts/` vs installed template — Lane B candidates |
 
