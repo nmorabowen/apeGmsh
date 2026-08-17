@@ -671,3 +671,87 @@ Resolved here:
 Named follow-ups (not this amendment): archive `from_model_cases` on
 the pattern zone (schema bump) → per-case `OSM.CASE_UNUSED`;
 stage-aware solver judging.
+
+## Amendment 3 (2026-08-17) — run evidence from results; planar camera
+
+Append-only. The Accepted body and Amendments 1–2 stay. This
+amendment closes the **custom-driver gap** found on the first dogfood
+run and adds one render default. It does not add codes (INV-6: the
+catalog names are unchanged), does not touch severities, and does not
+reopen FAIL-reserved.
+
+Evidence: dogfood pass #1 (`examples/shoebuckle_arch.py`, PR #990).
+The deck had 124 broker load records, **zero patterns**, and a
+hand-written `analyze(1)` driver — so nothing was archived by
+`ops.analyze`, and the run "converged" 200 steps to exactly zero
+displacement everywhere. `OSM.LOADS_UNIMPORTED` and `RES.ZERO_U` —
+the two codes built for precisely this failure — were both **skipped**
+by the Amendment 2 gates (`analyze_call()` as the only run evidence).
+Custom analyze loops are how limit-point and staged-restart runs are
+driven; the most safety-critical decks were the least judged.
+
+### Run evidence
+
+A deck is judged as *having run* when either:
+
+1. `analyze_call()` is archived (Amendment 2's gate), **or**
+2. `results=` was passed and carries at least one **non-mode** stage
+   whose last step is readable (`time=-1`, INV-9 — no step walking).
+
+Modal-only results are deliberately **not** run evidence: an
+eigen-only session stays exactly as legal as Amendment 2 left it, and
+a deck whose declared loads target a later static deck (multi-deck
+workflow) is still skipped, not judged, when the only results at hand
+are mode shapes.
+
+### Gate changes (same codes, same severities)
+
+| Code | Amendment 2 gate | This amendment |
+|---|---|---|
+| `OSM.LOADS_UNIMPORTED` | zero-pattern decks judged only when `analyze_call()` archived | judged when **run evidence** exists; the no-evidence skip reason still says declared loads may target a later deck |
+| `RES.ZERO_U` | `results=` and `analyze_call()` and ≥ 1 pattern | `results=` with ≥ 1 non-mode stage (the results are themselves the evidence). The ≥ 1-pattern requirement is dropped; when the deck has zero patterns the message cross-references `OSM.LOADS_UNIMPORTED` so the two findings read as one story. Severity stays **info** — one dogfood datapoint does not promote a threshold (Q4 discipline). |
+| `OSM.NO_ANALYZE` | message: eigen is not archived | when `results=` is present, the message adds that the results show a run happened — the deck was driven by a custom loop. Still info. |
+
+`OSM.NO_SUPPORT` / `OSM.NO_PATTERN` and the staged blanket skip are
+unchanged.
+
+### Render default (implementation note, not a catalog change)
+
+`render` / `render_pack` / assess figures: when the model is planar
+(2-D `ndm`, or a bbox whose z-extent is negligible against the
+diagonal), the default camera becomes `xy` instead of `iso` — a
+planar frame rendered isometrically is skewed for no reason (dogfood
+friction #4). An explicitly passed `camera=` from the closed set is
+honored unchanged; INV-10's set does not grow.
+
+### Acceptance (this amendment)
+
+- A broken-shoebuckle-shaped fixture (broker loads, zero patterns, no
+  archived analyze, `results=` all-zero non-mode stage) yields **both**
+  `OSM.LOADS_UNIMPORTED` (warning) and `RES.ZERO_U` (info); the
+  `RES.ZERO_U` message names the zero-pattern cross-reference.
+- The same deck with modal-only `results=` keeps both codes in
+  `skipped` (multi-deck reading preserved).
+- `results=` with a non-mode stage and nonzero last step: no
+  `RES.ZERO_U`; `OSM.LOADS_UNIMPORTED` still fires when broker loads
+  exist and nothing imports them.
+- No `results=` and no archived analyze: identical behavior to
+  Amendment 2 (skips, with reasons).
+- A planar `fem.render()` / `results.render()` with no `camera=`
+  writes an `xy` view; `camera="iso"` still forces iso; a 3-D model
+  defaults to iso as before.
+- Skill `assess.md` (canonical + mirror) states the run-evidence rule
+  and that custom-driver decks are judged when results are passed.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Results as run evidence** — yes, non-mode stages only.
+2. **Drop ZERO_U's pattern requirement** — yes; cross-reference
+   instead.
+3. **Planar camera auto-default** — yes; explicit `camera=` wins.
+
+Named follow-ups (unchanged): `from_model_cases` provenance (schema
+bump) → per-case `OSM.CASE_UNUSED`; stage-aware judging; threshold
+promotions after more dogfood datapoints.
