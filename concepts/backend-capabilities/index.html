@@ -3941,22 +3941,36 @@ pulls only <code>gmsh</code>, <code>h5py</code>, <code>numpy</code> and <code>pa
 </tr>
 <tr>
 <td><code>partition-pymetis</code></td>
-<td>Weighted mesh partitioning</td>
+<td>Weighted mesh partitioning (no Windows wheel)</td>
 </tr>
 <tr>
 <td><code>all</code></td>
-<td>Everything above <strong>except <code>mcp</code></strong></td>
+<td><code>opensees</code> + <code>viewer</code> + <code>plot</code> + <code>dxf</code> + <code>mcp</code></td>
 </tr>
 </tbody>
 </table>
-<div class="admonition note">
-<p class="admonition-title"><code>all</code> does not include <code>mcp</code></p>
-<p><code>pip install "apeGmsh[all]"</code> installs the Studio package but not the
-MCP SDK it needs to start. For the Studio habitat ask for it
-explicitly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span><span class="w"> </span><span class="s2">"mcp&gt;=1.2"</span>
+<p><code>all</code> covers everything that installs cleanly everywhere, Studio
+included:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span>
 </span></code></pre></div>
-<p><code>scripts/make-venv.bat</code> does this for you.</p>
+<p><code>scripts/make-venv.bat</code> builds a venv this way under <code>C:\venv\&lt;name&gt;</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">What <code>all</code> leaves out, and why</p>
+<p><code>animation</code> (ffmpeg is a large binary payload) and the two
+<code>partition-*</code> extras. <code>pymetis</code> has no PyPI Windows wheel — it comes
+from conda-forge — so folding it into <code>all</code> would break
+<code>pip install "apeGmsh[all]"</code> on Windows; <code>partition-networkx</code> is
+inert without <code>nxmetis</code>, which installs only from git. Ask for those
+by name when you need them.</p>
+<p>Going the other way, <code>all</code> is broad: the Qt and VTK render stack, and
+through <code>mcp</code> a small server stack (<code>uvicorn</code>, <code>starlette</code>,
+<code>pydantic</code>, <code>opentelemetry-api</code>). Narrow it when you do not need all
+of that:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[viewer,opensees]"</span>
+</span></code></pre></div>
+<p>Before 2026-08 <code>all</code> also omitted <code>mcp</code>, installing the Studio package
+without the SDK to start it. On an older release, add <code>"mcp&gt;=1.2"</code>
+by hand.</p>
 </div>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>

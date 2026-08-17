@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-all-now-includes-the-mcp-extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — [all] now includes the mcp extra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-docs-the-ladruno-backend-capability-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8081,6 +8092,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-all-now-includes-the-mcp-extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — [all] now includes the mcp extra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-docs-the-ladruno-backend-capability-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12681,6 +12703,24 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-all-now-includes-the-mcp-extra">FIXED — <code>[all]</code> now includes the <code>mcp</code> extra<a class="headerlink" href="#fixed-all-now-includes-the-mcp-extra" title="Permanent link">&para;</a></h3>
+<p><code>pip install "apeGmsh[all]"</code> installed the <code>apeGmsh.studio</code> package
+without the MCP SDK it needs, so the Studio door failed at launch and
+nowhere earlier — the install line the README, the docs and every
+tutorial hand out quietly did not cover the habitat. <code>mcp&gt;=1.2</code> joins
+<code>all</code>; verified by resolving the extra (107 packages, <code>mcp</code> present).
+It brings a server stack (<code>uvicorn</code> / <code>starlette</code> / <code>sse-starlette</code>)
+plus <code>pydantic</code>, <code>opentelemetry-api</code> and <code>pyjwt</code> with it — use the
+narrower extras (<code>apeGmsh[viewer,opensees]</code>) to avoid that.</p>
+<p><code>tests/test_capability_map_drift.py</code> gains an <code>[all]</code>-completeness lane
+so the next extra cannot slip through the same way: every extra must
+either be a subset of <code>all</code> or be registered in <code>_ALL_EXCLUSIONS</code> with a
+reason, and the registry is checked in both directions. Writing it
+surfaced three more gaps, all deliberate and now documented in
+<code>pyproject.toml</code> rather than merely absent — <code>partition-pymetis</code> (no
+PyPI Windows wheel, so folding it in would break <code>[all]</code> on Windows),
+<code>partition-networkx</code> (inert without git-only <code>nxmetis</code>) and <code>animation</code>
+(ffmpeg binary payload).</p>
 <h3 id="added-docs-the-ladruno-backend-capability-map">ADDED — docs: the Ladruno backend capability map<a class="headerlink" href="#added-docs-the-ladruno-backend-capability-map" title="Permanent link">&para;</a></h3>
 <p><code>docs/concepts/backend-capabilities.md</code> publishes the tier boundary an
 outside user previously had to discover by running into it: tier 0 (no
