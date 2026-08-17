@@ -22,6 +22,27 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 Amendment 6: template improvement-workflow v2
+
+`APE/instructions/continuous-improvement.md` gains a "Promotion lanes"
+section naming Lane A (habitat memory, immediate), Lane B (template —
+edit the habitat's `APE/` copy, prove it, then PR into
+`src/apeGmsh/studio/template/**`), Lane C (upstream ADR/issue cadence),
+and a deferred cross-habitat rollup; the existing "promote patterns"
+bullet now points at Lane B. `APE/instructions/session-postmortem.md`'s
+procedure gains a step verifying the *previous* session's
+promoted/closed backlog items against their declared next-postmortem
+proof — an unverified proof reopens the item in `backlog/open.md`
+(skip ≠ pass). New `scripts/template_drift.py` (package data, stdlib +
+`_habitat.py` only) diffs a habitat's `APE/`+`scripts/` trees against
+the installed template via `importlib.resources`, reporting MODIFIED
+(Lane B candidates) / HABITAT-ONLY / TEMPLATE-ONLY, with memory files
+called out as expected drift rather than candidates; exits 2 with a
+clear message if apeGmsh isn't importable. `scripts/start_session.py`
+now prints a `backlog: N open P0/P1 — …` burn-down line parsed
+tolerantly from `postmortem/backlog/open.md`, never failing session
+start over a missing or malformed file.
+
 ### ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio
 
 `apeGmsh.studio.template` now ships the APE Studio habitat tree as

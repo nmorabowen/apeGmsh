@@ -5,6 +5,7 @@
 | `start.ps1` / `start_session.py` | Template check · mcp.json root · Studio status probe · session marker |
 | `finish.ps1` / `finish_session.py` | Bridge port check · Studio token profiler · postmortem scaffold · optimization revisions |
 | `check_template.py` | Soft-contract folder/file audit |
+| `template_drift.py` | Habitat `APE/`+`scripts/` vs installed template — Lane B candidates |
 
 ## Usage (from habitat root)
 
