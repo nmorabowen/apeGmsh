@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 6: template improvement-workflow v2
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8007,6 +8018,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 6: template improvement-workflow v2
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12563,6 +12585,25 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-amendment-6-template-improvement-workflow-v2">ADDED — ADR 0095 Amendment 6: template improvement-workflow v2<a class="headerlink" href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" title="Permanent link">&para;</a></h3>
+<p><code>APE/instructions/continuous-improvement.md</code> gains a "Promotion lanes"
+section naming Lane A (habitat memory, immediate), Lane B (template —
+edit the habitat's <code>APE/</code> copy, prove it, then PR into
+<code>src/apeGmsh/studio/template/**</code>), Lane C (upstream ADR/issue cadence),
+and a deferred cross-habitat rollup; the existing "promote patterns"
+bullet now points at Lane B. <code>APE/instructions/session-postmortem.md</code>'s
+procedure gains a step verifying the <em>previous</em> session's
+promoted/closed backlog items against their declared next-postmortem
+proof — an unverified proof reopens the item in <code>backlog/open.md</code>
+(skip ≠ pass). New <code>scripts/template_drift.py</code> (package data, stdlib +
+<code>_habitat.py</code> only) diffs a habitat's <code>APE/</code>+<code>scripts/</code> trees against
+the installed template via <code>importlib.resources</code>, reporting MODIFIED
+(Lane B candidates) / HABITAT-ONLY / TEMPLATE-ONLY, with memory files
+called out as expected drift rather than candidates; exits 2 with a
+clear message if apeGmsh isn't importable. <code>scripts/start_session.py</code>
+now prints a <code>backlog: N open P0/P1 — …</code> burn-down line parsed
+tolerantly from <code>postmortem/backlog/open.md</code>, never failing session
+start over a missing or malformed file.</p>
 <h3 id="added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio">ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio<a class="headerlink" href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" title="Permanent link">&para;</a></h3>
 <p><code>apeGmsh.studio.template</code> now ships the APE Studio habitat tree as
 package data (playbook, memory stubs, skill/library doors + harvest
