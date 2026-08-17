@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/assess.schema.json",
+  "title": "AssessSnapshot",
+  "type": "object",
+  "required": ["schema", "ts", "targets", "findings", "skipped", "figures", "text"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "ts": { "type": "string" },
+    "targets": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "model_h5": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+          "message": { "type": "string" },
+          "detail": { "type": ["object", "null"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "reason"],
+        "properties": {
+          "code": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "figures": { "type": "array", "items": { "type": "string" } },
+    "text": { "type": "string" }
+  },
+  "additionalProperties": true
+}

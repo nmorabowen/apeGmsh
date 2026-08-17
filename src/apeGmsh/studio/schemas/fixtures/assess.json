@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "ts": "2026-08-17T00:00:00Z",
+  "targets": {
+    "path": "model.h5",
+    "model_h5": null
+  },
+  "findings": [
+    {
+      "code": "RES.U_VS_DIAG",
+      "severity": "info",
+      "message": "ratio noted",
+      "detail": { "ratio": 0.01 }
+    }
+  ],
+  "skipped": [
+    { "code": "RES.ENERGY_ERR", "reason": "no energy channel" }
+  ],
+  "figures": [],
+  "text": "# Assessment (fem)\n\n**Verdict:** 0 error(s), 0 warning(s), 1 info\n"
+}

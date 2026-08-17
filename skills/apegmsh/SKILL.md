@@ -240,6 +240,11 @@ does not write `selection.json`). `promote_selection` suggests
 markdown is the archive (`docs/`); html is a print skin there;
 canvas is a live Cursor projection (IDE `canvases/`, not
 git-portable) and still writes the markdown chapter.
+Run `assess` any time before `emit_report` — it writes
+`.apegmsh/assess.json` and the chapter's Assess section picks up that
+snapshot's verdict, findings, and skipped list automatically (`--pin`
+copies it, ADR 0095 Amendment 5); do not paste `assess` output into
+the chapter by hand.
 `kind=formation` is later. Do not invent MCP tools for
 `g.model.*` / `apeSees` primitives. Token-budget profiler is
 `python -m apeGmsh.studio.profile` (sidecar; not an MCP tool).
