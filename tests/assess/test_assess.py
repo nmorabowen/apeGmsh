@@ -220,6 +220,56 @@ _VALID_SKEWED_HEX8 = [
 ]
 
 
+def test_partial_coverage_does_not_claim_unevaluated() -> None:
+    """Dogfood pass #2 (steel-connection): a mesh whose tet4 solids WERE
+    judged, with an unjudgeable side type (prism6 stands in for the
+    Ladruno coupling elements), must not put MESH.INVERTED in the
+    verdict's "Not evaluated" line — the skip entry is coverage
+    disclosure, not an unevaluated check (Amendment 1)."""
+    from apeGmsh.assess._report import fail_reserved_unevaluated
+
+    tet = _tet4_info()
+    prism = _prism6_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+            (2.0, 0.0, 0.0), (3.0, 0.0, 0.0), (2.0, 1.0, 0.0),
+            (2.0, 0.0, 1.0), (3.0, 0.0, 1.0), (2.0, 1.0, 1.0),
+        ],
+        groups=[
+            (tet, [1], [[1, 2, 3, 4]]),
+            (prism, [2], [[5, 6, 7, 8, 9, 10]]),
+        ],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" not in _codes(report)
+    reasons = [r for c, r in report.skipped if c == "MESH.INVERTED"]
+    assert reasons and all(r.startswith("partial coverage") for r in reasons)
+    assert "MESH.INVERTED" not in fail_reserved_unevaluated(report.skipped)
+    assert "Not evaluated" not in report.text
+
+
+def test_nothing_judged_still_claims_unevaluated() -> None:
+    """A mesh with ONLY unjudgeable types keeps the honest
+    "Not evaluated" header exactly as Amendment 1 requires."""
+    from apeGmsh.assess._report import fail_reserved_unevaluated
+
+    prism = _prism6_info()
+    fem = _make_fem(
+        node_ids=[1, 2, 3, 4, 5, 6],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0),
+        ],
+        groups=[(prism, [1], [[1, 2, 3, 4, 5, 6]])],
+    )
+    report = fem.assess()
+    assert "MESH.INVERTED" in fail_reserved_unevaluated(report.skipped)
+    assert "Not evaluated" in report.text
+
+
 def test_unit_cube_hex8_is_not_inverted() -> None:
     info = _hex8_info()
     fem = _make_fem(

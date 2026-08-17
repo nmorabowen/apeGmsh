@@ -28,7 +28,12 @@ def fail_reserved_unevaluated(
     """
     keys: set[str] = set()
     for code, reason in skipped:
-        if str(reason).startswith("union-merge fill"):
+        text = str(reason)
+        if text.startswith("union-merge fill"):
+            continue
+        if text.startswith("partial coverage"):
+            # Some cells WERE judged; the entry discloses reduced
+            # coverage, not an unevaluated check (Amendment 1).
             continue
         keys.add(code)
     family_mesh = "MESH.*" in keys

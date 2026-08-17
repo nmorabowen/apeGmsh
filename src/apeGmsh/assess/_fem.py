@@ -111,6 +111,7 @@ def _check_inverted(
     seen_skip: set[str] = set()
     planar = coords_are_planar(coords)
     skip_2d_nonplanar = False
+    judged_any = False
 
     for group in fem.elements:
         et = group.element_type
@@ -138,21 +139,30 @@ def _check_inverted(
             vol = measure_linear_cell(name, pts)
             if vol is None:
                 continue
+            judged_any = True
             if name in _JUDGED_2D:
                 if vol == 0.0:
                     inverted.append(int(eid))
             elif vol <= 0.0:
                 inverted.append(int(eid))
 
+    # Amendment 1: the verdict's "Not evaluated" line is only for
+    # "no judged cell type ran". When solids WERE judged and only
+    # side types (couplings, 1D, quadratic) were skipped, the skip
+    # entry is coverage disclosure — prefix it so
+    # fail_reserved_unevaluated does not read it as unevaluated
+    # (same mechanism as the union-merge fill carve-out).
+    prefix = "partial coverage — " if judged_any else ""
     if skip_2d_nonplanar:
         skipped.append((
             "MESH.INVERTED",
-            "2D cells in non-planar 3D space — orientation is not inversion",
+            prefix + "2D cells in non-planar 3D space — "
+            "orientation is not inversion",
         ))
     if skipped_types:
         skipped.append((
             "MESH.INVERTED",
-            "not judged: " + ", ".join(skipped_types),
+            prefix + "not judged: " + ", ".join(skipped_types),
         ))
     if inverted:
         sample = inverted[:EVIDENCE_CAP]
