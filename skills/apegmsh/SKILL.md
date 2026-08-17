@@ -221,7 +221,18 @@ When the agent must look, write visors under `.apegmsh/visors/`
 capture the OS desktop or the human Qt window.
 `python -m apeGmsh.studio init --name <habitat> --model <model_id>`
 stamps a fresh APE Studio habitat from the packaged template (ADR 0095
-Amendment 6) — playbook, lifecycle scripts, checker, model lineage.
+Amendment 6) — playbook, lifecycle scripts, checker, model lineage —
+and leaves it under local git: a repo on `main` with one initial
+commit; `--no-git` opts out, and a machine without git gets a WARN
+and a valid habitat (Amendment 8). Habitat git follows the
+**checkpoint contract** (`APE/instructions/checkpoints.md`): `main`
+holds checkpoints only, work happens on `work/<model>/<slug>`
+branches, a `--no-ff` merge + `checkpoint/<model>/<slug>` tag is
+acceptance, and each case's `run.json` carries `model_sha` /
+`git_dirty` via the habitat's own
+`scripts/_habitat.py::git_provenance()`. Results never enter git (the
+shipped `.gitignore`); lifecycle scripts print git state but never
+write it; forges are optional — a PR is only the review surface.
 Before building a covered shape from scratch, check
 `python -m apeGmsh.studio example list [--tag <domain>]` — the
 oracle-bearing example library (ADR 0095 Amendment 7): `show <name>`
