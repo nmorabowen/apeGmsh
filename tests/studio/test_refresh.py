@@ -129,6 +129,24 @@ def test_refresh_success_invokes_callback_and_records_trigger(
     assert rec["trigger"] == "refresh"
 
 
+def test_refresh_success_without_rebuild_hook_discloses(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A host with no scene-rebuild hook (MeshViewer) must not claim
+    the view updated — the message discloses the stale scene."""
+    monkeypatch.chdir(tmp_path)
+    script = tmp_path / "s.py"
+    script.write_text("pass\n", encoding="utf-8")
+    runner = ReplayRunner()
+    seed = runner.run_until(script, phase="model")
+    assert seed.ok, seed.error
+
+    script.write_text("x = 1\n", encoding="utf-8")
+    outcome = refresh_host(runner, script, phase="model", on_success=None)
+    assert outcome["status"] == "refreshed"
+    assert outcome["message"] == "Refreshed (reopen host to update view)"
+
+
 def test_ledger_record_without_trigger_still_parses(tmp_path: Path) -> None:
     path = ledger_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)

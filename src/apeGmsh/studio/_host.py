@@ -224,8 +224,15 @@ def refresh_host(
         }
     if result.skipped:
         return {"status": "up_to_date", "message": "Up to date", "result": result}
-    if on_success is not None:
-        on_success()
+    if on_success is None:
+        # No rebuild hook on this host (MeshViewer, S6a limitation):
+        # the replay ran, but the visible scene is stale — say so.
+        return {
+            "status": "refreshed",
+            "message": "Refreshed (reopen host to update view)",
+            "result": result,
+        }
+    on_success()
     return {"status": "refreshed", "message": "Refreshed", "result": result}
 
 
