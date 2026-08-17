@@ -56,6 +56,7 @@ REQUIRED_FILES = [
     "tools/README.md",
     "scripts/start_session.py",
     "scripts/finish_session.py",
+    "scripts/run_case.py",
 ]
 
 
