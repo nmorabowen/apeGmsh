@@ -55,6 +55,41 @@ class ReplayResult:
 ExecFn = Callable[[Path, str], ReplayResult]
 
 
+def allowed_phases(result: "ReplayResult | None", has_mesh: bool) -> tuple[str, ...]:
+    """INV-8 phase gate — which of :data:`PHASES` the host may show now.
+
+    Pure and Qt-free so the host's phase selector (ADR 0095 S6c) can
+    unit-test the gate decision separately from the Qt glue. Always a
+    prefix of ``PHASES``:
+
+    - ``model`` is always available.
+    - ``mesh`` requires live evidence (*has_mesh*, typically
+      ``session_has_mesh()`` against the just-refreshed kernel) — the
+      replay ran far enough to call ``generate()``, whatever phase was
+      actually requested.
+    - ``results`` requires *result* to have run a ``phase="results"``
+      replay to completion without stopping at an earlier gate
+      (``stopped_at is None`` — no gate is installed for ``results``,
+      so this is the only signal a :class:`ReplayResult` carries;
+      whether the script actually bound ``Results`` is not otherwise
+      observable here).
+
+    A failed *result* (``ok=False``) is a hard retreat to
+    ``("model",)`` regardless of *has_mesh* — a replay that raised
+    partway through leaves the live kernel in an untrustworthy state.
+    A ``None`` *result* (no replay recorded yet, e.g. at host open
+    before any refresh) is not treated as a failure: *has_mesh* alone
+    still gates ``mesh``.
+    """
+    if result is not None and not result.ok:
+        return ("model",)
+    if result is not None and result.phase == "results" and result.stopped_at is None:
+        return PHASES
+    if has_mesh:
+        return ("model", "mesh")
+    return ("model",)
+
+
 def _source_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
