@@ -442,7 +442,7 @@ def _realize_legends(
             key,
             handle.layer_id,
             handle,
-            lut=diagram._current_lutspec(),  # noqa: SLF001
+            lut=_layer_lutspec(diagram),
             fmt=getattr(style, "fmt", "%.3g") or "%.3g",
             vertical=_default_vertical(
                 getattr(style, "scalar_bar_vertical", None)
@@ -453,6 +453,23 @@ def _realize_legends(
         if not legend.hidden:
             bar_keys.append(key_str(key))
     return tuple(bar_keys), controller
+
+
+def _layer_lutspec(diagram: Any) -> Any:
+    """The scale range of the picture actually emitted.
+
+    The emitted layer's ``ColorSpec.lut`` carries the true clim/cmap
+    computed without Qt; the mixin's ``_current_lutspec()`` reads the
+    Qt LUT mirror, which silently degrades to a default 0–1 ``LutSpec``
+    whenever ``_init_lut`` could not build (probe P10) — a wrong scale
+    on a correct picture. Mirror kept as the fallback for any kind
+    that does not cache its emitted layer.
+    """
+    layer = getattr(diagram, "_layer", None)
+    lut = getattr(getattr(layer, "color", None), "lut", None)
+    if lut is not None:
+        return lut
+    return diagram._current_lutspec()  # noqa: SLF001
 
 
 __all__ = ["RealizedLayer", "RealizedPane", "realize_pane"]

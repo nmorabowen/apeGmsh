@@ -243,6 +243,26 @@ def test_contour_emits_exactly_one_bar(session_results, backend):
     assert spec.lut.vmax == pytest.approx(node_ids.max() + 3000.0)
 
 
+def test_bar_range_survives_lut_mirror_failure(
+    session_results, backend, monkeypatch,
+):
+    """Probe P10 regression: the legend range comes from the emitted
+    layer's ColorSpec, not the Qt LUT mirror — with ``_init_lut``
+    unable to build (Qt-less environment), the bar must still span the
+    painted field, never the default 0–1 scale."""
+    from apeGmsh.viewers.diagrams._contour import ContourDiagram
+
+    monkeypatch.setattr(ContourDiagram, "_init_lut", lambda self: None)
+    session, view = _session_view(session_results)
+    view.contour = Contour("displacement_z")
+    realize_pane(session, view, backend)
+
+    spec = backend.scalar_bars["displacement_z"]
+    node_ids = np.asarray(session_results.fem.nodes.ids, dtype=np.float64)
+    assert spec.lut.vmin == pytest.approx(node_ids.min())
+    assert spec.lut.vmax == pytest.approx(node_ids.max() + 3000.0)
+
+
 def test_hidden_legend_emits_no_bar_keeps_picture(session_results, backend):
     """INV-LEGEND-3 (hide is chrome) — and the decision-4 mutation
     test: if the null controller failed to suppress the diagram-side
