@@ -770,3 +770,17 @@ def controller_for(backend: Any) -> LegendController:
         controller = LegendController(backend)
         _CONTROLLERS[backend] = controller
     return controller
+
+
+def adopt_controller(backend: Any, controller: Any) -> None:
+    """Pre-bind ``controller`` as ``backend``'s legend owner.
+
+    ADR 0098 S1: the session realize layer binds a *null* controller to
+    its backend **before** any diagram attaches, so the per-diagram
+    ``ScalarBarSupport`` registrations become no-ops and the session IR
+    (``view.legends()``) stays the only author of colour scales
+    (INV-LEGEND-1). Un-adopted backends are unaffected —
+    :func:`controller_for` keeps building a real ``LegendController``
+    on first miss exactly as before.
+    """
+    _CONTROLLERS[backend] = controller

@@ -16,11 +16,15 @@ caller (state is already committed) — no silent pump (ADR 0084).
 from __future__ import annotations
 
 import itertools
-from typing import Callable, Optional, Sequence, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union
 
 from ._selection import SessionSelection
 from ._time import Instant
 from ._views import MeshView, PlotSeries, PlotSource, PlotView
+
+if TYPE_CHECKING:
+    from apeGmsh.results.Results import Results
 
 Pane = Union[MeshView, PlotView]
 
@@ -29,18 +33,28 @@ class ResultsSession:
     """The presentation library's root object.
 
     Constructing one gives you presentation with no window (§1);
-    ``show()`` / ``render()`` are the S1/S2 clients. A session of zero
-    panes is valid IR — the ``results.session()`` factory (S1) owns
-    the default-one-empty-mesh-view sugar.
+    ``render()`` / ``realize()`` (S1) and ``show()`` (S2) are clients.
+    A session of zero panes is valid IR — the ``results.session()``
+    factory owns the default-one-empty-mesh-view sugar (and the
+    ``results=`` binding the realize clients need).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, results: "Optional[Results]" = None) -> None:
+        self._results = results
         self._panes: list[Pane] = []
         self._ids = itertools.count(1)
         self._time: Optional[Instant] = None
         self._time_linked: bool = True
         self._subscribers: list[Callable[[], None]] = []
         self._selection = SessionSelection(on_changed=self._tick)
+
+    @property
+    def results(self) -> "Optional[Results]":
+        """The data broker this session presents (§1: ``Results``
+        answers "what did the solver write?"; the session answers what
+        is on screen). ``None`` for a bare IR-only session — realize
+        and render then refuse loudly."""
+        return self._results
 
     # -- panes ---------------------------------------------------------
 
@@ -186,6 +200,46 @@ class ResultsSession:
         The owner-facing surface of the one ``SelectionState`` (0045
         INV-5), never a second store."""
         return self._selection
+
+    # -- realize clients (S1) ------------------------------------------
+
+    def realize(self, backend: Any, pane: "Pane | str | None" = None):
+        """Realize one pane into an ADR 0042 ``RenderBackend`` (S1).
+
+        One-shot: emits the pane's complete layer set into ``backend``
+        and returns a ``RealizedPane`` whose layers carry stable keys
+        (the S2 reconciler's diff surface). With one pane no id is
+        needed; otherwise address by pane id.
+
+        The projection lives in ``apeGmsh.viewers.session`` (imported
+        lazily here) — the session package itself stays free of the
+        diagram/Qt/VTK machinery per the S0 purity guard.
+        """
+        from apeGmsh.viewers.session import realize_pane, resolve_pane
+
+        return realize_pane(self, resolve_pane(self, pane), backend)
+
+    def render(
+        self,
+        path: "str | Path",
+        pane: "Pane | str | None" = None,
+        *,
+        camera: Optional[str] = None,
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> Optional[Path]:
+        """Write one offscreen still of a pane (§1). Path or ``None``.
+
+        Same skip discipline as ``results.render`` (ADR 0094):
+        ``APEGMSH_SKIP_VIEWER=1`` or no GL context prints the
+        ``[skip viewer]`` notice, writes no file and returns ``None``.
+        ``camera=`` defaults to ``xy`` for a planar model, ``iso``
+        otherwise.
+        """
+        from apeGmsh.viewers.session import render_still
+
+        return render_still(
+            self, pane, path, camera=camera, window_size=window_size,
+        )
 
     # -- observer surface ----------------------------------------------
 

@@ -1182,6 +1182,22 @@ class Results:
     # Viewer
     # ------------------------------------------------------------------
 
+    def session(self):
+        """The presentation session for these results (ADR 0098 §1).
+
+        Presentation with no window: a ``ResultsSession`` (from
+        ``apeGmsh.results.session``) bound to this broker, booted with
+        the default picture — ONE empty mesh view (grey analysis mesh,
+        no slots, no legends). Configure it (slots, deform, time), then
+        ``s.render("a.png")`` for a still; the Qt client (``s.show()``)
+        arrives at S2 and ``viewer()`` flips onto it at S6.
+        """
+        from .session import ResultsSession
+
+        s = ResultsSession(results=self)
+        s.add_view()
+        return s
+
     def viewer(
         self,
         *,
