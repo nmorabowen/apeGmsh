@@ -279,6 +279,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             envelope_path=dest,
             title=f"apeGmsh.studio — {script.name}",
             root=root,
+            script=script,
+            runner=runner,
         )
     finally:
         if result.session is not None and getattr(result.session, "is_active", False):

@@ -35,12 +35,18 @@ def make_record(
     ts: str | None = None,
     root: Path | str | None = None,
     cwd: Path | str | None = None,
+    trigger: str = "open",
 ) -> dict[str, Any]:
     """One JSONL object. ``assess`` / ``visors`` reserved, not invented.
 
     ``root`` is the habitat project root (INV-15), stored absolute.
     ``script`` / ``cwd`` are root-relative posix paths when they fall
     under that root (S5i); absolute otherwise.
+
+    ``trigger`` (ADR 0095 Amendment 4 / S6a) records what caused this
+    run: ``"open"`` (host/CLI start), ``"refresh"`` (manual refresh),
+    or ``"watch"`` (S6b, not emitted yet). Additive — readers of older
+    records without the key must tolerate its absence (INV-17).
     """
     labels: list[str] = []
     pgs: list[str] = []
@@ -71,6 +77,7 @@ def make_record(
         "assess": None,
         "visors": [],
         "error": err,
+        "trigger": trigger,
     }
     if base is not None:
         rec["root"] = str(base)

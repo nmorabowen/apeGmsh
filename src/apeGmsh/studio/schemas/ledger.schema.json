@@ -21,7 +21,11 @@
     "error": { "type": ["string", "null"] },
     "root": { "type": "string" },
     "cwd": { "type": "string" },
-    "kind": { "type": "string" }
+    "kind": { "type": "string" },
+    "trigger": {
+      "type": ["string", "null"],
+      "enum": ["open", "refresh", "watch", null]
+    }
   },
   "additionalProperties": true
 }

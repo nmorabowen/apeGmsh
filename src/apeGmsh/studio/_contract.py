@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = "1.4.0"
+CONTRACT_VERSION = "1.5.0"
 CONTRACT_MAJOR = 1
 
 # kind → (schema file stem, expected per-file schema int)
