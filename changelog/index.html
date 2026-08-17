@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-doctor-no-longer-ships-one-developers-venv-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — doctor no longer ships one developer's venv path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8114,6 +8125,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-doctor-no-longer-ships-one-developers-venv-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — doctor no longer ships one developer's venv path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12747,6 +12769,37 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-doctor-no-longer-ships-one-developers-venv-path">FIXED — <code>doctor</code> no longer ships one developer's venv path<a class="headerlink" href="#fixed-doctor-no-longer-ships-one-developers-venv-path" title="Permanent link">&para;</a></h3>
+<p><code>python -m apeGmsh doctor</code> printed a hardcoded home directory on every
+machine in the world that ran it: D1 compared <code>sys.prefix</code> against a
+literal office venv and named it even when absent, and D6 probed that
+same path to compare <code>baseUnits</code> — a package apeGmsh does not depend on.
+A site convention does not belong in a published wheel.</p>
+<p>Both are now opt-in environment configuration, with no literal path
+anywhere in the module:</p>
+<ul>
+<li><code>APEGMSH_REFERENCE_VENV</code> — a venv root D1 compares against. Unset,
+  D1 is a plain identity report (<code>Python 3.12.10 at &lt;exe&gt; (virtualenv)</code>);
+  set and mismatched it warns as before; set and missing it says so.
+  Resolves <code>Scripts/python.exe</code> or <code>bin/python</code>, so it works off Windows.</li>
+<li><code>APEGMSH_SHARED_PACKAGES</code> — comma-separated distributions whose
+  versions must agree across this interpreter and the reference venv
+  (<code>_check_baseunits</code> → <code>_check_shared_packages</code>,
+  <code>_baseunits_counterparts</code> → <code>_counterpart_interpreters</code>). Empty by
+  default; nothing apeGmsh depends on is installed non-editably into
+  several interpreters, so there is no honest default to ship. The
+  Windows-launcher counterpart is now <code>py -3</code> rather than a pinned 3.12.</li>
+</ul>
+<p>To keep the previous behaviour, set both in the shell:
+<code>APEGMSH_REFERENCE_VENV=&lt;venv root&gt;</code> and
+<code>APEGMSH_SHARED_PACKAGES=baseUnits</code>.</p>
+<p>Two guards in <code>tests/test_doctor.py</code>: the module source may not contain
+an absolute user path (verified by reintroducing the old literal — the
+lane fails), and with nothing configured no D1/D6 message may quote a
+home directory (D2 is exempt; it echoes where apeGmsh actually resides,
+discovered at runtime). The three D6 lanes were rewritten around
+<code>apeGmsh</code> itself instead of <code>baseUnits</code> — they previously skipped
+everywhere the office package was absent, which is to say on CI.</p>
 <h3 id="fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a">FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)<a class="headerlink" href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" title="Permanent link">&para;</a></h3>
 <p>Every <code>studio init</code> on a machine that was not the template author's
 produced a broken habitat. Found by using the template from a real
