@@ -268,3 +268,42 @@ def test_init_restores_real_dotfile_names(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert (target / ".gitignore").is_file()
     assert (target / ".cursor" / "mcp.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Visual-talk convention (apeCAD / apeSketch) — ADR: template requisites
+# ---------------------------------------------------------------------------
+
+
+def test_socratic_geometry_documents_ask_protocol() -> None:
+    text = (TEMPLATE_DIR / "APE" / "instructions" / "socratic-geometry.md").read_text(
+        encoding="utf-8"
+    )
+    assert "tools/apeCAD/open_interface.py" in text
+    assert "tools/apeSketch/open_interface.py" in text
+    assert "tools/apeSketch/human_sketches/" in text
+    assert "agentic_sketches/" in text
+    assert "Document.to_json()" in text
+    assert "to_frame()" in text
+
+
+def test_ape_project_yaml_documents_requisites() -> None:
+    text = (TEMPLATE_DIR / "ape.project.yaml").read_text(encoding="utf-8")
+    assert "requires:" in text
+    assert "apeCAD.git" in text
+    assert "apeSketch.git" in text
+
+
+def test_init_preserves_requisites_and_still_passes_strict(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    proc = _init(target)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    manifest = (target / "ape.project.yaml").read_text(encoding="utf-8")
+    assert "requires:" in manifest
+    assert "apeCAD.git" in manifest
+    assert "apeSketch.git" in manifest
+
+    check = _run_check_template(target)
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert "TEMPLATE OK" in check.stdout

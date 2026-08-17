@@ -158,3 +158,52 @@ def test_backlog_summary_finds_planted_p0(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "backlog: 1 open P0/P1" in out
     assert "MCP root drifts on reload" in out
+
+
+# ---------------------------------------------------------------------------
+# start_session.py — visual-talk requisite check (apeCAD / apeSketch)
+# ---------------------------------------------------------------------------
+
+
+def test_visual_talk_requisite_warns_when_import_fails(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    mod = _import_start_session(target)
+
+    def _boom(name: str):
+        raise ModuleNotFoundError(f"No module named {name!r}")
+
+    line = mod._check_visual_talk_requisite("apeCAD", "apeCAD", import_func=_boom)
+    assert line.startswith("WARN:")
+    assert "apeCAD" in line
+    assert "pip install git+https://github.com/nmorabowen/apeCAD.git" in line
+
+
+def test_visual_talk_requisite_ok_when_import_succeeds(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    mod = _import_start_session(target)
+
+    def _present(name: str):
+        return object()
+
+    line = mod._check_visual_talk_requisite("apeSketch", "apeSketch", import_func=_present)
+    assert line == "OK: apeSketch import OK"
+
+
+def test_print_visual_talk_requisites_covers_both_packages(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    mod = _import_start_session(target)
+
+    capsys.readouterr()
+    mod._print_visual_talk_requisites()
+    out = capsys.readouterr().out
+    assert "apeCAD" in out
+    assert "apeSketch" in out
