@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,23 +65,43 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def ensure_pythonpath() -> Path:
-    """Prepend apeGmsh src from mcp.json launcher or default worktree."""
-    default_src = (
-        Path.home()
-        / ".cursor"
-        / "worktrees"
-        / "apeGmsh"
-        / "mcp-ledger"
-        / "src"
-    )
-    src = Path(os.environ.get("APEGMSH_SRC", default_src)).expanduser()
-    if src.is_dir():
-        s = str(src.resolve())
+def _apegmsh_src() -> Path | None:
+    """Where apeGmsh lives, for this process and for the subprocesses it
+    spawns. Probe order, first hit wins:
+
+    1. an already-importable apeGmsh — the honest answer, and it already
+       reflects any PYTHONPATH the launcher pinned;
+    2. ``APEGMSH_SRC`` — the explicit override for a checkout that is not
+       installed anywhere;
+    3. nothing. A habitat is cloned between machines, so there is no
+       default checkout path worth guessing.
+    """
+    try:
+        import apeGmsh
+
+        return Path(apeGmsh.__file__).resolve().parent.parent
+    except Exception:  # noqa: BLE001 - any import failure means "not here"
+        pass
+    override = os.environ.get("APEGMSH_SRC")
+    if override:
+        src = Path(override).expanduser()
+        if src.is_dir():
+            return src.resolve()
+    return None
+
+
+def ensure_pythonpath() -> Path | None:
+    """Put apeGmsh src on this process's ``sys.path`` and on the
+    ``PYTHONPATH`` its subprocesses inherit."""
+    src = _apegmsh_src()
+    if src is not None:
+        s = str(src)
         cur = os.environ.get("PYTHONPATH", "")
         parts = [p for p in cur.split(os.pathsep) if p]
         if s not in parts:
             os.environ["PYTHONPATH"] = os.pathsep.join([s, *parts])
+        if s not in sys.path:
+            sys.path.insert(0, s)
     os.environ["APEGMSH_STUDIO_ROOT"] = str(HABITAT)
     os.environ.setdefault("APEGMSH_QUIET", "1")
     os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")

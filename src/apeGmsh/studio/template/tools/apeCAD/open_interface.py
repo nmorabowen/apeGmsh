@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -25,6 +26,22 @@ TOOLS = TOOL_DIR.parent
 sys.path.insert(0, str(TOOLS))
 
 from _launch import HABITAT, ensure_src, role_root, sketch_dirs  # noqa: E402
+
+
+def port_in_use(host: str, port: int, timeout: float = 0.25) -> bool:
+    """True when something already answers on ``host:port``.
+
+    apeCAD's server is a ``ThreadingHTTPServer``, which sets
+    ``allow_reuse_address``. On Windows that lets a second process bind a
+    port an unrelated apeCAD is already serving — no bind error, no
+    warning, requests interleaved between the two documents. A launch
+    then shows another session's stale sketch instead of an empty one,
+    and the only tell is diffing ``/api/scene``. Connect first and refuse
+    loudly rather than trust the bind.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(timeout)
+        return probe.connect_ex((host, port)) == 0
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -39,6 +56,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args, passthrough = parser.parse_known_args(argv)
+
+    if port_in_use(args.host, args.port):
+        raise SystemExit(
+            f"port {args.host}:{args.port} already in use — another apeCAD "
+            "instance may be running. Stop it, or pass --port N. "
+            "(Binding anyway would silently serve that session's sketch.)"
+        )
 
     ensure_src("APECAD_SRC", "apeCAD")
     human, agentic = sketch_dirs(TOOL_DIR)
