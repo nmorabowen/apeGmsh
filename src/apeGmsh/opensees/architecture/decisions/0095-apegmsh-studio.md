@@ -1,7 +1,9 @@
 # ADR 0095 — `apeGmsh.studio`: agent + script + viewer habitat
 
-**Status:** Proposed (2026-08-12; owner workshop the same day;
-host-projection / INV-9 workshop 2026-08-13)
+**Status:** Accepted (2026-08-16 — S0–S4e, S5a–S5j, and F-status-1
+shipped; Amendments 1–3 closed; contract 1.4.0. Proposed 2026-08-12;
+owner workshop the same day; host-projection / INV-9 workshop
+2026-08-13)
 
 **Amends** [ADR 0094](0094-agent-assess-and-viewer-render.md) **only**
 in the disposition of “Later: optional MCP wrapping S5” and the
