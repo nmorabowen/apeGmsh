@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7985,6 +7996,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12519,6 +12541,20 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-amendment-5-assess-snapshot-reaches-the-report">ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report<a class="headerlink" href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" title="Permanent link">&para;</a></h3>
+<p><code>--assess</code> (CLI and MCP, which shells to the CLI) now writes
+<code>.apegmsh/assess.json</code> — schema, timestamp, target paths, findings,
+skipped checks, figures, and the agent-facing markdown — via the same
+temp + <code>os.replace</code> discipline as <code>names.json</code> (INV-16); a torn file
+degrades to <code>assess=None</code> + a reason in <code>ReportBundle</code> instead of
+raising. <code>emit_report</code>'s Assess section now quotes that snapshot's
+verdict, findings, skipped list, and target/timestamp instead of
+always printing "(none — run assess first)". <code>--pin</code> copies the live
+snapshot into <code>.apegmsh/pins/&lt;id&gt;/assess.json</code> so a later re-emit
+against that pin keeps the verdict current at pin time even after the
+live file changes or is deleted; the ledger's reserved <code>pin.assess</code>
+field stays untouched. Published <code>assess.schema.json</code> + golden
+fixture; <code>contract_version</code> is <code>1.6.0</code>.</p>
 <h3 id="added-adr-0095-amendment-4-s6a-manual-host-refresh">ADDED — ADR 0095 Amendment 4 S6a: manual host refresh<a class="headerlink" href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" title="Permanent link">&para;</a></h3>
 <p>Toolbar action + F5 re-run the entry script (<code>.apegmsh/project.json</code>,
 else the script the host opened with) at the current phase through

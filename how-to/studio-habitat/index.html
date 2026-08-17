@@ -3811,13 +3811,35 @@ no-op ("Up to date"); a failed replay keeps the previous frame
 <td>agents / reports</td>
 <td>ordinary writes</td>
 </tr>
+<tr>
+<td><code>assess.json</code></td>
+<td><code>--assess</code> / MCP <code>assess</code></td>
+<td><code>emit_report</code> (via <code>ReportBundle</code>)</td>
+<td>atomic replace</td>
+</tr>
+<tr>
+<td><code>pins/&lt;id&gt;/assess.json</code></td>
+<td><code>results_pin</code> (copies the live snapshot)</td>
+<td><code>emit_report</code> when that pin is referenced</td>
+<td>atomic replace</td>
+</tr>
 </tbody>
 </table>
-<p>Snapshot JSON (<code>selection</code> / <code>names</code> / <code>highlight</code> / <code>host</code> / <code>project</code>)
-is single-writer with atomic replace (INV-16). JSONL ledgers are
+<p>Snapshot JSON (<code>selection</code> / <code>names</code> / <code>highlight</code> / <code>host</code> / <code>project</code> /
+<code>assess</code>) is single-writer with atomic replace (INV-16). JSONL ledgers are
 append-best-effort: more than one tool may append (<code>run_until</code> and
 <code>results_pin</code> both write <code>runs.jsonl</code>). Authored chapters go in
 <code>docs/</code>, never under <code>.apegmsh/</code> (INV-12).</p>
+<p><code>--assess</code> / MCP <code>assess</code> writes <code>.apegmsh/assess.json</code> (target paths,
+findings, skipped checks, figures, and the same markdown text the verb
+prints) in addition to returning its payload (ADR 0095 Amendment 5).
+<code>emit_report</code> reads it — quoting the verdict, findings, skipped list,
+and target/timestamp in the Assess section — instead of always
+printing "(none — run assess first)". <code>results_pin</code> copies the live
+snapshot into <code>.apegmsh/pins/&lt;id&gt;/assess.json</code>; when a pin is
+referenced, <code>emit_report</code> prefers that pinned copy over the live file,
+so deleting or overwriting <code>assess.json</code> after pinning does not change
+an already-pinned chapter's verdict.</p>
 <h2 id="poll-contract">Poll contract<a class="headerlink" href="#poll-contract" title="Permanent link">&para;</a></h2>
 <p>There is no event stream yet. Consumers should watch mtimes (or re-read
 after each tool call):</p>
@@ -3858,7 +3880,7 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.5.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.6.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
