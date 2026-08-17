@@ -195,6 +195,40 @@ def test_visual_talk_requisite_ok_when_import_succeeds(tmp_path: Path) -> None:
     assert line == "OK: apeSketch import OK"
 
 
+# ---------------------------------------------------------------------------
+# start_session.py — `studio init` availability (ADR 0095 Amendment 6, S7a)
+# ---------------------------------------------------------------------------
+
+
+def test_studio_init_guard_warns_when_module_is_absent(tmp_path: Path) -> None:
+    """A checkout older than S7a has apeGmsh.studio but no _init_habitat.
+    Say so, instead of leaving `studio init` to fail later with a bare
+    ModuleNotFoundError that reads like a bug."""
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    mod = _import_start_session(target)
+
+    def _boom(name: str):
+        raise ModuleNotFoundError(f"No module named {name!r}")
+
+    line = mod._check_studio_init_available(import_func=_boom)
+    assert line.startswith("WARN:")
+    assert "studio init" in line
+    assert "S7a" in line
+
+
+def test_studio_init_guard_ok_on_a_current_checkout(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+
+    mod = _import_start_session(target)
+    # Real import against this worktree — _init_habitat is what ran `init`.
+    assert mod._check_studio_init_available() == "OK: studio init available"
+
+
 def test_print_visual_talk_requisites_covers_both_packages(tmp_path: Path, capsys) -> None:
     target = tmp_path / "habitat"
     init = _init(target)
