@@ -17,18 +17,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: full-suite
-            args: 'tests -m "not live and not subprocess and not bench and not qt"'
-          - name: prefix-only
-            args: 'tests --ignore=tests/viewers --ignore=tests/studio --ignore=tests/sensitivity --ignore-glob=tests/test_*.py -m "not live and not subprocess and not bench and not qt"'
-          - name: sections-alone
-            args: 'tests/sections -m "not live and not subprocess and not bench and not qt"'
+          - name: exact-a
+            ref: ''
+          - name: exact-b
+            ref: ''
+          - name: old-main-a8d90407
+            ref: a8d90407
     name: ${{ matrix.name }}
     env:
       APEGMSH_EXPECT_GL: "1"
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pin to the crash-state commit
+        if: matrix.name == 'old-main-a8d90407'
+        run: |
+          git checkout a8d90407
+          git log --oneline -1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -48,26 +55,20 @@ jobs:
           sudo mkdir -p /tmp/cores
           sudo chmod 1777 /tmp/cores
           sudo sysctl -w kernel.core_pattern='/tmp/cores/core.%e.%p'
-          cat /proc/sys/kernel/core_pattern
-      - name: Run
-        id: run
+      - name: Run curated suite (EXACT lane command)
         run: |
           set +e
           ulimit -c unlimited
-          ulimit -c
-          stdbuf -oL -eL python -X faulthandler -m pytest ${{ matrix.args }} \
-            -q -p no:cacheprovider 2>&1 | tee /tmp/pytest.log
-          code="${PIPESTATUS[0]}"
-          echo "exit code: ${code}"
-          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          pytest tests -q -p no:cacheprovider \
+            -m "not live and not subprocess and not bench and not qt" 2>&1 | tee /tmp/pytest.log
+          echo "exit code: ${PIPESTATUS[0]}"
           exit 0
-      - name: Last 120 lines
+      - name: Last 150 lines
         if: always()
-        run: tail -120 /tmp/pytest.log || true
+        run: tail -150 /tmp/pytest.log || true
       - name: Kernel segfault line (names the offending .so)
         if: always()
-        run: |
-          sudo dmesg | grep -iE "segfault|general protection|trap|core dump" | tail -30 || echo "no dmesg hits"
+        run: sudo dmesg | grep -iE "segfault|general protection|trap|core dump" | tail -30 || echo "no dmesg hits"
       - name: Native backtrace from core
         if: always()
         run: |
@@ -75,17 +76,8 @@ jobs:
           for c in /tmp/cores/core.*; do
             [ -e "$c" ] || continue
             echo "::group::gdb ${c}"
-            gdb -batch -q \
-              -ex "set pagination off" \
-              -ex "thread apply all bt 40" \
-              -ex "info sharedlibrary" \
+            gdb -batch -q -ex "set pagination off" \
+              -ex "thread apply all bt 40" -ex "info sharedlibrary" \
               "$(which python)" "$c" 2>&1 | head -400
             echo "::endgroup::"
           done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: diag-${{ matrix.name }}
-          path: |
-            /tmp/pytest.log
-          if-no-files-found: warn
