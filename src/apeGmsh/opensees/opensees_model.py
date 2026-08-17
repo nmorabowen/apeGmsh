@@ -94,8 +94,10 @@ from ._internal.typed_records import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
+    from apeGmsh.assess import AssessmentReport
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results.Results import Results
 
     from ._internal.build import InitialStressRecord
     from .emitter.base import Emitter
@@ -784,6 +786,29 @@ class OpenSeesModel:
         carry the positional arg tuples when present.
         """
         return self._analysis_attrs
+
+    def analyze_call(self) -> "tuple[int, float | None] | None":
+        """Return the archived ``ops.analyze(steps=..., dt=...)`` call.
+
+        ``None`` when no analyze was archived — including an
+        eigen-only deck: ``eigen`` / ``eigen_feast`` are runtime
+        one-shot retrievals and are never written to the archive
+        (ADR 0094 Amendment 2).
+        """
+        return self._analyze_call
+
+    def assess(
+        self, *, results: "Results | None" = None,
+    ) -> "AssessmentReport":
+        """Compile a v1 solver-zone :class:`~apeGmsh.assess.AssessmentReport`
+        (ADR 0094 Amendment 2).
+
+        ``results=`` adds the ``RES.ZERO_U`` cross-check; omitted, it
+        is listed in ``report.skipped``. No ``figures=`` — there is
+        no ``osm.render``.
+        """
+        from apeGmsh.assess import assess_opensees
+        return assess_opensees(self, results=results)
 
     def cuts(self) -> tuple["SectionCutDef", ...]:
         """Return the apeGmsh.cuts ``SectionCutDef`` records."""
