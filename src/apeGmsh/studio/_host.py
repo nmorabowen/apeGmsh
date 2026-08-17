@@ -10,6 +10,11 @@ from ._envelope import Phase
 
 # QTimer refs so the highlight watch is not garbage-collected.
 _HIGHLIGHT_WATCHERS: list[Any] = []
+# QTimer refs so the file-watch loop (S6b) is not garbage-collected.
+_WATCH_TIMERS: list[Any] = []
+# Poll period for the file-watch loop (ADR 0095 S6b — behavior pinned,
+# not the millisecond value).
+_WATCH_POLL_MS = 1000
 
 
 def session_has_mesh() -> bool:
@@ -57,24 +62,33 @@ def open_host(
     root: Path | str | None = None,
     script: Path | str | None = None,
     runner: Any = None,
+    watch: bool = True,
 ) -> None:
     """Open the geometry or mesh viewer and write the envelope on pick.
 
     MeshViewer when the replayed script already generated elements
     (INV-8: mesh mode once a mesh exists); otherwise ModelViewer.
     The first pick callback (fired at wire time) starts a QTimer that
-    applies a sibling ``highlight.json`` through ``select_batch``, and
+    applies a sibling ``highlight.json`` through ``select_batch``,
     installs the manual Refresh action (ADR 0095 S6a) — a toolbar
-    button and F5 shortcut on the viewer's window. A leftover
-    highlight file from a previous session is ignored until its mtime
-    changes.
+    button and F5 shortcut on the viewer's window — and installs the
+    auto-refresh file-watch loop (ADR 0095 S6b): a "Watch" toggle plus
+    a QTimer that polls the entry script's mtime and replays it once
+    the mtime settles. A leftover highlight file from a previous
+    session is ignored until its mtime changes.
 
     ``script`` is the entry script this host was opened with (used as
     the refresh fallback when ``.apegmsh/project.json`` has none yet).
     ``runner`` is the :class:`~apeGmsh.studio._replay.ReplayRunner`
     that performed the initial replay; reusing it lets a refresh with
     an unchanged file skip immediately (same skip-hash cache as the
-    open that got here). A fresh one is built when omitted.
+    open that got here). A fresh one is built when omitted, and shared
+    between the manual Refresh action and the watch loop so both hit
+    the same skip-hash cache.
+
+    ``watch`` is the file-watch loop's starting state — on by default;
+    ``--no-watch`` (CLI) passes ``False``. The host toolbar's "Watch"
+    toggle reflects this and can flip it live.
 
     Claims ``.apegmsh/host.json`` for the duration of ``show()`` (S5g).
     """
@@ -109,13 +123,22 @@ def open_host(
             refresh_installed = True
             win = getattr(viewer, "_win", None)
             if win is not None:
-                _install_refresh_action(
+                active_runner = _install_refresh_action(
                     viewer,
                     win=win,
                     habitat=habitat,
                     script=script,
                     phase=phase,
                     runner=runner,
+                )
+                _install_watch_loop(
+                    viewer,
+                    win=win,
+                    habitat=habitat,
+                    script=script,
+                    phase=phase,
+                    runner=active_runner,
+                    watch=watch,
                 )
 
     if phase == "mesh":
@@ -149,13 +172,15 @@ def _install_refresh_action(
     script: Path | str | None,
     phase: str,
     runner: Any,
-) -> None:
+) -> Any:
     """Wire the Refresh toolbar action + F5 shortcut (ADR 0095 S6a).
 
     Thin Qt glue: the decision logic lives in :func:`refresh_host`, so
     this closure only resolves the entry script, picks the
     scene-rebuild callback the open viewer exposes (if any), and
-    reflects the outcome in the status bar.
+    reflects the outcome in the status bar. Returns the runner used
+    (building one when *runner* is ``None``) so the watch loop (S6b)
+    installed alongside it shares the same skip-hash cache.
     """
     if runner is None:
         from ._replay import ReplayRunner
@@ -180,6 +205,86 @@ def _install_refresh_action(
 
     win.add_toolbar_action("Refresh (F5)", "⟲", _do_refresh)
     win.add_shortcut("F5", _do_refresh, application=True)
+    return runner
+
+
+def _install_watch_loop(
+    viewer: Any,
+    *,
+    win: Any,
+    habitat: Path,
+    script: Path | str | None,
+    phase: str,
+    runner: Any,
+    watch: bool,
+) -> Any:
+    """Wire the auto-refresh file watch + "Watch" toolbar toggle (ADR 0095 S6b).
+
+    Polls the entry script's mtime every :data:`_WATCH_POLL_MS`
+    through the same debounce core as everywhere else
+    (:func:`~apeGmsh.studio._watch.watch_tick`); a settled change
+    replays through :func:`refresh_host` with ``trigger="watch"`` —
+    INV-18 (busy surfaced, nothing stolen) and INV-4 (a failed replay
+    keeps the last-good scene) apply exactly as for manual refresh.
+    The status bar is touched only on an actual outcome (refreshed /
+    failed / busy / up-to-date), never on an idle tick — ticks fire
+    about once a second and most of them see no mtime change.
+
+    The toggle starts checked to match *watch* (the CLI's
+    ``--no-watch`` state) and pauses/resumes the timer live.
+    """
+    from qtpy.QtCore import QTimer
+
+    from ._project import OutsideRootError, resolve_entry_script
+    from ._watch import seed_watch_state, watch_tick
+
+    def _resolve_entry() -> Path | None:
+        try:
+            entry = resolve_entry_script(None, root=habitat)
+        except OutsideRootError:
+            entry = None
+        if entry is None and script is not None:
+            entry = Path(script)
+        return entry
+
+    def _mtime(path: Path | None) -> float | None:
+        if path is None:
+            return None
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return None
+
+    state = seed_watch_state(_mtime(_resolve_entry()))
+
+    def tick() -> None:
+        nonlocal state
+        entry = _resolve_entry()
+        state, settled = watch_tick(state, _mtime(entry))
+        if not settled or entry is None:
+            return
+        rebuild = getattr(viewer, "_rebuild_scene", None)
+        outcome = refresh_host(
+            runner, entry, phase=phase, on_success=rebuild, trigger="watch",
+        )
+        win.set_status(outcome["message"])
+
+    timer = QTimer()
+    timer.timeout.connect(tick)
+    timer.setInterval(_WATCH_POLL_MS)
+    if watch:
+        timer.start()
+    _WATCH_TIMERS.append(timer)
+
+    action = win.add_toolbar_action(
+        "Watch (auto-refresh on save)",
+        "⏱",
+        lambda checked: (timer.start() if checked else timer.stop()),
+        checkable=True,
+        triggered_signal="toggled",
+    )
+    action.setChecked(watch)
+    return action
 
 
 def refresh_host(
@@ -188,12 +293,15 @@ def refresh_host(
     *,
     phase: str,
     on_success: Callable[[], None] | None = None,
+    trigger: str = "refresh",
 ) -> dict[str, Any]:
-    """Manual-refresh decision core (ADR 0095 S6a) — no Qt.
+    """Refresh decision core (ADR 0095 S6a manual / S6b watch) — no Qt.
 
     Re-runs *script* at *phase* through ``runner.run_until`` with
-    ``trigger="refresh"`` and returns a small status dict for the host
-    status bar. Never raises.
+    *trigger* (``"refresh"`` for the manual action, ``"watch"`` for a
+    settled file-watch tick) and returns a small status dict for the
+    host status bar. Raises ``ValueError`` if *trigger* is not one of
+    the runner's ``TRIGGERS``; otherwise never raises.
 
     - Busy (INV-18): the runner's existing busy outcome is surfaced
       as-is; *on_success* is not called. No steal logic here — that
@@ -207,7 +315,11 @@ def refresh_host(
       ``names.json`` / ``runs.jsonl`` are already written by
       ``run_until`` itself.
     """
-    result = runner.run_until(script, phase=phase, trigger="refresh")
+    from ._replay import TRIGGERS
+
+    if trigger not in TRIGGERS:
+        raise ValueError(f"trigger must be one of {TRIGGERS}; got {trigger!r}")
+    result = runner.run_until(script, phase=phase, trigger=trigger)
     if not result.ok:
         error = result.error or ""
         if error.startswith("BUSY:"):
