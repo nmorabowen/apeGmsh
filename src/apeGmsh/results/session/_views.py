@@ -91,6 +91,13 @@ class MeshStyle:
     nodes: bool = False
     gauss: bool = False
 
+    def __post_init__(self) -> None:
+        # Coerce to real bools: the S2 reconciler diffs records by
+        # equality, and MeshStyle(mesh="yes") != MeshStyle(mesh=True)
+        # would read as a change that repaints nothing (probe H11).
+        for field_name in ("mesh", "outlines", "nodes", "gauss"):
+            object.__setattr__(self, field_name, bool(getattr(self, field_name)))
+
 
 _SCOPE_AXES = frozenset({"physical_groups", "materials", "element_types"})
 
@@ -158,6 +165,17 @@ class ViewClip:
     active: bool = True
     flipped: bool = False
     gizmo_visible: bool = True
+
+    def __post_init__(self) -> None:
+        # Coerce to an immutable float triple: a directly-constructed
+        # record (the S5 restore path) holding a caller's list would be
+        # mutable through the frozen shell and equality-fragile (probe
+        # H10). Normalisation to unit length stays in add_clip/set_clip.
+        x, y, z = self.normal
+        object.__setattr__(self, "normal", (float(x), float(y), float(z)))
+        object.__setattr__(self, "offset", float(self.offset))
+        for field_name in ("active", "flipped", "gizmo_visible"):
+            object.__setattr__(self, field_name, bool(getattr(self, field_name)))
 
 
 @dataclass(frozen=True)

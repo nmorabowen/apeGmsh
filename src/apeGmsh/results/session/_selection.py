@@ -78,11 +78,30 @@ class SessionSelection:
     @property
     def kind(self) -> Optional[str]:
         """``"nodes"`` | ``"gauss"`` | ``None`` (empty set). Derived
-        from the set — the writers keep it homogeneous by law."""
+        from the set — the writers keep it homogeneous by law.
+
+        A heterogeneous or foreign-substrate set means some writer
+        bypassed this surface (the raw store enforces no law); that is
+        a programming error and reads FAIL LOUD rather than return a
+        subset that silently misrepresents the store (probe H26)."""
         targets = self._state.targets
         if not targets:
             return None
-        return "gauss" if targets[0].sub is not None else "nodes"
+        bad = [t for t in targets if t.substrate is not Substrate.RESULTS_TOPO]
+        if bad:
+            raise ValueError(
+                f"Selection store holds {len(bad)} non-results "
+                f"target(s) (e.g. {bad[0]!r}) — a writer bypassed the "
+                f"SessionSelection surface (ADR 0098 §8)."
+            )
+        kinds = {t.sub is not None for t in targets}
+        if len(kinds) > 1:
+            raise ValueError(
+                "Selection store holds nodes AND gauss targets — the "
+                "set must be homogeneous (ADR 0098 §8 XOR law); a "
+                "writer bypassed the SessionSelection surface."
+            )
+        return "gauss" if kinds.pop() else "nodes"
 
     @property
     def nodes(self) -> tuple[int, ...]:

@@ -39,6 +39,19 @@ def test_pane_lookup_miss_is_a_key_error() -> None:
         session.pane("mesh-9")
 
 
+def test_removed_pane_stops_ticking_the_session() -> None:
+    # Probe H15: a removed pane a caller still holds must not keep
+    # notifying (phantom repaints in S2) — remove detaches the backref.
+    session = ResultsSession()
+    view = session.add_view()
+    session.remove_pane(view.id)
+    ticks: list[int] = []
+    session.subscribe(lambda: ticks.append(1))
+    view.contour = Contour("S")   # mutating the orphan still works...
+    assert view.contour == Contour("S")
+    assert ticks == []            # ...but the session no longer hears it
+
+
 def test_removed_pane_id_is_not_reused() -> None:
     session = ResultsSession()
     v1 = session.add_view()
@@ -233,6 +246,24 @@ def test_clip_lifecycle() -> None:
     assert view.clips == ()
     with pytest.raises(KeyError):
         view.remove_clip("clip-1")
+
+
+def test_view_clip_record_is_a_real_value() -> None:
+    # Probe H10: a directly-constructed record (the S5 restore path)
+    # must not keep a caller's mutable list behind the frozen shell.
+    from apeGmsh.results.session import ViewClip
+
+    clip = ViewClip(plane_id="c1", name="p", normal=[3, 0, 0])
+    assert clip.normal == (3.0, 0.0, 0.0)
+    assert isinstance(clip.normal, tuple)
+    with pytest.raises(ValueError):
+        ViewClip(plane_id="c1", name="p", normal=(1.0, 0.0))  # not 3-D
+
+
+def test_mesh_style_coerces_to_real_bools() -> None:
+    # Probe H11: the S2 reconciler diffs records by equality — truthy
+    # non-bools must not read as a change.
+    assert MeshStyle(mesh="yes", nodes=1) == MeshStyle(mesh=True, nodes=True)
 
 
 def test_clip_identity_is_not_settable() -> None:

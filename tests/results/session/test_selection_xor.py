@@ -121,6 +121,30 @@ def test_clear_empties_the_set(session) -> None:
 
 
 # ----------------------------------------------------------------------
+# A poisoned store reads loud, never lies (probe H26)
+# ----------------------------------------------------------------------
+
+def test_mixed_set_via_raw_store_reads_loud(session) -> None:
+    # The raw SelectionState enforces no law; a writer bypassing the
+    # session surface (S4 code must not) leaves a mixed set — readers
+    # must refuse rather than return a subset that misrepresents it.
+    sel = session.selection
+    sel.set_nodes([1])
+    sel.state.pick(gauss_target(2, 0))  # bypasses the law surface
+    with pytest.raises(ValueError, match="nodes AND gauss"):
+        sel.kind
+    with pytest.raises(ValueError):
+        sel.nodes
+
+
+def test_foreign_substrate_in_store_reads_loud(session) -> None:
+    sel = session.selection
+    sel.state.pick(SelectionTarget(Substrate.MODEL_BREP, dim=2, key=5))
+    with pytest.raises(ValueError, match="non-results"):
+        sel.kind
+
+
+# ----------------------------------------------------------------------
 # The per-view radio only AIMS clicks — it never touches the set
 # ----------------------------------------------------------------------
 

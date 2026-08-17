@@ -119,6 +119,10 @@ class ResultsSession:
     def remove_pane(self, pane_id: str) -> None:
         pane = self.pane(pane_id)
         self._panes.remove(pane)
+        # Detach the notify backref: a removed pane a caller still holds
+        # must neither tick this session (phantom repaints in S2) nor
+        # keep it alive.
+        pane._notify = None
         self._tick()
 
     # -- time (§7) -----------------------------------------------------

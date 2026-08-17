@@ -46,9 +46,16 @@ def _offending_imports(path: Path) -> list[tuple[int, str]]:
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             # Relative imports can climb to apeGmsh.viewers.* (level 3),
-            # so 'diagrams' is checked regardless of level.
+            # so 'diagrams' is checked regardless of level — and against
+            # the imported NAMES too, or `from apeGmsh.viewers import
+            # diagrams` slips through (probe H28).
             if "diagrams" in module:
                 offenders.append((node.lineno, module))
+            for alias in node.names:
+                if "diagrams" in alias.name:
+                    offenders.append(
+                        (node.lineno, f"{module}.{alias.name}")
+                    )
             if not node.level and module and _root(module) in FORBIDDEN_ROOTS:
                 offenders.append((node.lineno, module))
     return offenders
@@ -79,3 +86,38 @@ def test_session_imports_no_diagrams_qt_or_vtk() -> None:
             f"any Qt/VTK module (ADR 0098 S0 scope guard).\n"
             f"Found {len(leaks)} forbidden import(s):\n{msg}"
         )
+
+
+def test_guard_catches_each_forbidden_import_shape(tmp_path) -> None:
+    """Mutation test of the guard itself — a green guard proves nothing
+    until a forbidden import actually trips it. Every shape a retirement
+    sweep could realistically reintroduce must be caught."""
+    bad_sources = [
+        "import apeGmsh.viewers.diagrams\n",
+        "from apeGmsh.viewers import diagrams\n",              # probe H28
+        "from apeGmsh.viewers.diagrams import _styles\n",
+        "from apeGmsh.viewers.diagrams._kinds import KindDef\n",
+        "import apeGmsh.viewers.diagrams as dg\n",
+        "from ...viewers.diagrams import _styles\n",           # relative climb
+        "import vtk\n",
+        "import pyvista\n",
+        "from pyvistaqt import QtInteractor\n",
+        "from PyQt5 import QtWidgets\n",
+        "import PySide6.QtWidgets\n",
+        "from qtpy.QtCore import QObject\n",
+    ]
+    probe = tmp_path / "probe.py"
+    misses = []
+    for src in bad_sources:
+        probe.write_text(src, encoding="utf-8")
+        if not _offending_imports(probe):
+            misses.append(src.strip())
+    assert not misses, f"Guard misses forbidden import shapes: {misses}"
+
+    # And the recorded layering exception stays ALLOWED:
+    probe.write_text(
+        "from apeGmsh.viewers.core.selection import SelectionState\n"
+        "from apeGmsh.viewers.scene_ir import SelectionTarget\n",
+        encoding="utf-8",
+    )
+    assert _offending_imports(probe) == []
