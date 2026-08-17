@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-17T06:02:52Z",
+  "generated": "2026-08-17T06:57:39Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -247,6 +247,12 @@
       "signature": "serve_web(*, stage: \"'Optional[str]'\" = None, render_mode: 'str' = 'client', port: \"'Optional[int]'\" = None, open_browser: 'bool' = True, title: 'str' = 'apeGmsh', **start_kwargs)",
       "skill": "references/results.md",
       "doc": "Serve the results as a standalone trame web app (ADR 0042 R-C)."
+    },
+    "Results.session": {
+      "symbol": "Results.session",
+      "signature": "session()",
+      "skill": "references/results.md",
+      "doc": "The presentation session for these results (ADR 0098 §1)."
     },
     "Results.show_web": {
       "symbol": "Results.show_web",

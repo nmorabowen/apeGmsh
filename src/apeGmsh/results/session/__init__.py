@@ -28,8 +28,11 @@ indirection nothing needs. Nothing here may import
 ``tests/results/session/test_session_pure.py``); the old ontology is
 not reused.
 
-``realize()`` (scene IR) is S1; ``show()`` (Qt) is S2; the snapshot is
-S5. The old ``results.viewer()`` window is untouched until the S6 flip.
+``realize()`` / ``render()`` (S1) delegate to the viewers-side
+projection ``apeGmsh.viewers.session`` via call-time imports — the
+per-kind emit reuse lives THERE, so this package keeps the guarantee
+above. ``show()`` (Qt) is S2; the snapshot is S5. The old
+``results.viewer()`` window is untouched until the S6 flip.
 """
 from __future__ import annotations
 
