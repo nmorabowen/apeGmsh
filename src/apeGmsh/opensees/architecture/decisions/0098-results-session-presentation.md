@@ -816,7 +816,7 @@ not a persistence defect.
 | Split direction on Add | None — the grid re-tiles by `T(N+1)` | A1.2 |
 | Where a new pane lands | Next cell of `T(N+1)`, row-major in `session.panes` order; becomes active + outline-selected | §9, workshop loop |
 | Tabbed panes | **No.** A hidden pane is a pane not doing its job; tabs are a second navigation spine beside the outline (0088 D2's own rationale) | 0088 D2 |
-| Drag-reorder panes | Not in v1. Pane order is session order | keeps IR closed |
+| Drag-reorder panes | Not in v1 — a second author of pane order beside creation order, not an IR problem (see the rejected-alternatives note) | one spine |
 | Minimum pane size | `LAYOUT.pane_min_width` 240 × `pane_min_height` 200; `childrenCollapsible(False)` | 0090 D3/D4 footprint |
 | Add gate | Disabled with a reason when `T(N+1)` breaches a floor | 0087 INV-2 |
 | More panes than fit (Python / restore) | Tiled anyway; window minimum grows; never refused | IR is truth |
@@ -961,8 +961,8 @@ No dialog, no silent failure, no shrinking below the floor.
 | **Mosaic of meshes + a plot strip** | Privileges mesh panes over plot panes and re-creates `dock_results_right` under a new name — the dock this ADR retires (§6: "a plot is a pane, not a dock of a contour") |
 | **One render window with N VTK viewports** | The plan's substrate alternative. The spike removes its motivation; it costs viewport-rect maths, a legend-routing layer, per-pane screenshots and S4 pick routing, and buys nothing |
 | **Local "split this pane" instead of auto-tiling** | Two shapes to reason about (the live tree and the canonical one), a persistence format for arbitrary trees, and depth > 2 with slat-shaped panes. Deferred as a widening, not needed for the loop |
-| **Free-drag pane reordering** | Would make pane order window state that disagrees with `session.panes`, or reopen the IR to carry order. Neither for a v1 comfort |
-| **Maximize / zoom one pane** | A hidden-siblings mode is tabs by another name; the operator can close a pane and re-add one. Revisit if the quad view proves too tight |
+| **Free-drag pane reordering** | Not a state problem — `session.panes` is already the ordered list `T(N)` consumes, and open sub-question 4 concedes the widening needs no IR change. It is refused as v1 *scope*: a drag gesture that rewrites `session.panes` is a second way to author pane order beside creation order, and the loop is not yet proven enough to need one |
+| **Maximize / zoom one pane** | Refused as a second *layout* mode, not as a hidden-siblings mechanism — ADR 0088 D6's Ctrl+H focus mode already ships hide-with-restore for the docks, and this would be the same gesture applied to the tiling. What it costs is a live tree that disagrees with `T(N)`, which is the shape everything else here reads. The operator can close a pane and re-add one; revisit if the quad view proves too tight |
 | **Pane layout in the session snapshot** | Layout is chrome. Putting it in the IR would make a snapshot restore reproduce someone else's monitor, and would reopen S0's records for a UI question |
 
 ---
