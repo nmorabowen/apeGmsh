@@ -2068,6 +2068,8 @@
       
         
       
+        
+      
     
     
     
@@ -2153,6 +2155,34 @@
     
   
     The OpenSees bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/backend-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backend capabilities
   
 
     
@@ -3737,9 +3767,13 @@ see <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a>.)</p>
 <li><strong>Extract each part with <code>get_fem_data(dim=None)</code>, not <code>dim=3</code>.</strong> The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.</li>
-<li><strong><code>enforce="equation"</code> when you need it exact.</strong> Measured on a two-block
-  series column with an exact answer (N/mm units): <code>"equation"</code> is exact to
-  −0.01 % but needs the Lagrange handler and an unsymmetric system. The
+<li><strong><code>enforce="equation"</code> when you need it exact — on a fork build.</strong>
+  Measured on a two-block series column with an exact answer (N/mm units):
+  <code>"equation"</code> is exact to −0.01 % but needs the Lagrange handler, an
+  unsymmetric system, and — for the in-process run — the Ladruno fork
+  (<a href="../../concepts/backend-capabilities/">Backend capabilities</a>; the same
+  column reads 71 % soft on stock, which is why the live route is gated).
+  The
   default penalty route now sizes its stiffness from the host material
   (<code>stiffness="auto"</code>) and converges to the same answer within the mesh's
   own discretization error — the old fixed <code>1e18</code> default, which did not

@@ -2062,6 +2062,8 @@
       
         
       
+        
+      
     
     
     
@@ -2147,6 +2149,34 @@
     
   
     The OpenSees bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backend-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backend capabilities
   
 
     
@@ -3748,7 +3778,10 @@ from the host material at emit, so it lands a few orders above the element
 stiffness in whatever unit system you model in). <code>"equation"</code> emits exact
 multi-point equations (translations only) enforced by a constraint handler,
 and <code>"penalty_al"</code> uses the fork's augmented-Lagrange penalty element. Start
-with the default; switch to <code>"equation"</code> when you need the interface exact.</p>
+with the default; switch to <code>"equation"</code> when you need the interface exact
+<strong>and you are running on a Ladruno fork build</strong> — the live equation route is
+fork-gated, though deck emission is not
+(<a href="../backend-capabilities/">Backend capabilities</a>).</p>
 <p>How the tie's <em>weights</em> are computed is a third, orthogonal choice —
 <code>method=</code>. The default <code>"collocation"</code> is the projection described above:
 each slave node pinned to the master field at one point. That is the right

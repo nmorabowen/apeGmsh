@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2017,6 +2019,34 @@
     
   
     The OpenSees bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/backend-capabilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backend capabilities
   
 
     
@@ -3426,6 +3456,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-docs-the-ladruno-backend-capability-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: the Ladruno backend capability map
       
     </span>
   </a>
@@ -8040,6 +8081,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-docs-the-ladruno-backend-capability-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: the Ladruno backend capability map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12629,6 +12681,27 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-docs-the-ladruno-backend-capability-map">ADDED — docs: the Ladruno backend capability map<a class="headerlink" href="#added-docs-the-ladruno-backend-capability-map" title="Permanent link">&para;</a></h3>
+<p><code>docs/concepts/backend-capabilities.md</code> publishes the tier boundary an
+outside user previously had to discover by running into it: tier 0 (no
+backend — geometry, meshing, the broker, <strong>deck emission</strong>, results,
+viewers, Studio), tier 1 (stock <code>openseespy</code> — the in-process run), and
+tier 2 (the Ladruno fork). Enumerates the fork-only elements,
+integrators, constraint/coupling verbs, analysis + solver commands,
+materials and recorders, and separates the two failure classes: the
+verbs apeGmsh gates with a curated <code>RuntimeError</code> (the ones stock would
+otherwise accept and answer wrongly) from those the engine rejects with
+a bare <code>OpenSeesError</code>. Also documents that <code>[all]</code> omits the <code>mcp</code>
+extra, and that the fork ships no wheels or releases.</p>
+<p><code>tests/test_capability_map_drift.py</code> machine-checks the element and
+integrator lists against <code>_FORK_ONLY_ELEMENTS</code> / <code>_FORK_ONLY_INTEGRATORS</code>
+with a two-way ratchet (undocumented gate token fails; documented
+non-token fails), in the style of <code>test_skill_docs_drift.py</code>. The prose
+sections are out of scope — they name commands, not frozenset entries.</p>
+<p>Three pages that recommended <code>enforce="equation"</code> without mentioning the
+build requirement now say so and link the map (<code>concepts/constraints.md</code>,
+<code>how-to/tie-meshes.md</code>, <code>how-to/compose-modules.md</code>) — the live equation
+route became fork-gated when the silent 71 %-soft stock path was closed.</p>
 <h3 id="added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library">ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library<a class="headerlink" href="#added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library" title="Permanent link">&para;</a></h3>
 <p><code>src/apeGmsh/studio/examples/&lt;name&gt;/**</code> ships three curated, package-data
 examples — <code>arch-pushover</code> (adapted from <code>examples/shoebuckle_arch.py</code>,
