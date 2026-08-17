@@ -6,7 +6,7 @@ __pycache__/
 *.mpco
 *.gif
 *.png
-!reports/figures/*.png
+!reports/figures/**/*.png
 !tools/**/human_sketches/**
 !tools/**/agentic_sketches/**
 # Keep run.json visible for report links / oracle clones; ignore bulk case data

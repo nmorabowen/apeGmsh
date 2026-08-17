@@ -91,6 +91,9 @@ def test_checkpoints_md_teaches_the_contract() -> None:
     # local <-> PR mapping and the no-forge stance
     assert "PR is the review surface" in text
     assert "merging the PR *is* the checkpoint" in text
+    # Amendment 9 F2: the model-surface / process-file split
+    assert "Process files commit to `main`" in text
+    assert "model surface" in text
 
 
 def test_checkpoints_md_indexed_and_pointed_to() -> None:
@@ -109,6 +112,8 @@ def test_provenance_contract_documented() -> None:
     assert "git_provenance" in models
     assert "model_sha" in models
     assert "git_dirty" in models
+    # Amendment 9 F3: deck/ admits a disclosure README for in-process runs
+    assert "naming why none exists" in models
     reporting = (TEMPLATE_DIR / "APE" / "instructions" / "reporting.md").read_text(
         encoding="utf-8"
     )

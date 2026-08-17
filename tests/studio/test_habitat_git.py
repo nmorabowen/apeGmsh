@@ -111,10 +111,22 @@ def test_gitignore_bulk_hidden_run_json_visible(tmp_path: Path) -> None:
     (target / "models" / "demo" / "model.h5").write_bytes(b"\x00" * 16)
     (target / ".apegmsh").mkdir()
     (target / ".apegmsh" / "names.json").write_text("{}\n", encoding="utf-8")
+    # Amendment 9 F5: promoted figures are visible at any depth under
+    # reports/figures/ — the zero-depth (flat) case must keep working too,
+    # and png-scoping means a stray binary in a figure folder stays hidden.
+    fig_dir = target / "reports" / "figures" / "case-a"
+    fig_dir.mkdir(parents=True)
+    (fig_dir / "fig.png").write_bytes(b"\x89PNG")
+    (fig_dir / "stray.h5").write_bytes(b"\x00" * 16)
+    (target / "reports" / "figures" / "flat.png").write_bytes(b"\x89PNG")
 
     porcelain = _git(target, "status", "--porcelain", "-uall")
     lines = sorted(porcelain.stdout.strip().splitlines())
-    assert lines == ["?? models/demo/cases/c1/run.json"], porcelain.stdout
+    assert lines == [
+        "?? models/demo/cases/c1/run.json",
+        "?? reports/figures/case-a/fig.png",
+        "?? reports/figures/flat.png",
+    ], porcelain.stdout
 
 
 # ---------------------------------------------------------------------------

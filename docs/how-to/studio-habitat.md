@@ -49,7 +49,9 @@ stage-accepted bar plus a review pass, and gets an annotated
 `scripts/_habitat.py::git_provenance()`), so results on disk always
 point back at the source that produced them. Results themselves never
 enter git — the shipped `.gitignore` keeps bulk artifacts out and
-`run.json` visible; no LFS. Forges are optional and per habitat: a PR
+`run.json` visible; no LFS. Process files — postmortems, memory, the
+backlog — commit directly to `main`; the checkpoints-only rule governs
+the model surface (`models/`, `reports/`). Forges are optional and per habitat: a PR
 is the review surface for the merge and nothing more — the whole
 contract works in a local-only repo, and nothing in studio calls a
 forge.

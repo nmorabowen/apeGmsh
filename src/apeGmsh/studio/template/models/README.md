@@ -16,7 +16,9 @@ models/
 
 `src/` owns idealization → geometry → analysis; scripts, not notebooks, are
 the model language. `cases/<case>/` is one run: it **MUST** write `run.json`
-+ `deck/` + `results/` + `logs/`. Promote lasting curves/stills into
++ `deck/` + `results/` + `logs/`. `deck/` holds the emitted deck **or** a
+one-line README naming why none exists (an in-process openseespy run emits
+nothing — disclosure beats fabrication). Promote lasting curves/stills into
 `reports/` — `.apegmsh/` (Studio-generated) is not the archive.
 
 `run.json` **SHOULD** carry the source provenance fields from

@@ -3,7 +3,9 @@
 One rule carries this file: **`main` holds checkpoints only.** A
 checkpoint is a commit where the model source, its accepted cases
 (`run.json`), and the stage report agree. Anything on `main` is safe
-to resume from blind; everything in between lives on a branch.
+to resume from blind; everything in between lives on a branch. (The
+one exception is process files — see "Process files commit to `main`"
+below; they never touch the model surface.)
 
 Results never enter git — the habitat `.gitignore` already excludes
 them (no LFS, no force-adds; do not fight it). Git records *that a run
@@ -55,6 +57,18 @@ The anti-pattern is the long-lived variant branch — an "elastic
 branch" kept as a default while `main` goes nonlinear. The two
 diverge, every sync is a merge headache, and geometry fixes land on
 one side only. Keep live variants as drivers at tip.
+
+## Process files commit to `main`
+
+"Checkpoints only" governs the **model surface** — `models/**` and
+`reports/**` reach `main` through work branches and checkpoint merges.
+Everything that is habitat *process* — `postmortem/**`,
+`APE/memory/**`, the backlog, playbook edits, `scripts/` — commits
+**directly to `main`**: closing a session must not require a merge
+ceremony, and a postmortem is a record, not a reviewable model claim.
+A process commit that happens to ride an active work branch is
+harmless (it reaches `main` at the merge); salvage a dying branch's
+postmortem onto `main` before deleting the branch.
 
 ## With a forge (optional, per habitat)
 
