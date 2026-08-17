@@ -44,6 +44,10 @@ print("PASS  artifact_exists: out.bin" if ok else "FAIL  artifact_exists: out.bi
 sys.exit(0 if ok else 1)
 """
 
+TOY_DRIVER_NO_ARTIFACT = """\
+print("toy driver: wrote nothing")
+"""
+
 
 def _subprocess_env() -> dict:
     env = os.environ.copy()
@@ -178,6 +182,55 @@ def test_runner_records_failed_run(tmp_path: Path) -> None:
     # verify is skipped after a failed run — no verify block claimed
     assert "verify" not in manifest
     assert "about to fail" in (case / "logs" / "run.log").read_text(encoding="utf-8")
+
+
+@needs_git
+def test_runner_verify_failure_recorded_nonzero(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    assert _init(target).returncode == 0
+    _seed_toys(target, driver=TOY_DRIVER_NO_ARTIFACT)
+
+    run = _run_case(target, "--verify", "models/demo/src/verify.py")
+    assert run.returncode == 1, run.stdout + run.stderr
+
+    manifest = json.loads(
+        (target / "models" / "demo" / "cases" / "c1" / "run.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["run_exit"] == 0
+    assert manifest["verify"]["exit"] == 1
+    assert manifest["verify"]["failed"] == 1
+
+
+@needs_git
+def test_runner_rejects_path_shaped_ids(tmp_path: Path) -> None:
+    """Probe finding: a path-shaped case id escaped the cases tree and
+    landed a full case layout at the habitat root."""
+    target = tmp_path / "habitat"
+    assert _init(target).returncode == 0
+    _seed_toys(target)
+
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(target / "scripts" / "run_case.py"),
+            "--model",
+            "demo",
+            "--case",
+            "../../../evil-case",
+            "--script",
+            "models/demo/src/driver.py",
+        ],
+        cwd=str(target),
+        env=_subprocess_env(),
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 2
+    assert "plain folder name" in run.stderr
+    assert not (target / "evil-case").exists()
+    assert not list(target.parent.glob("evil-case"))
 
 
 @needs_git

@@ -38,6 +38,12 @@ def _root_rel(path: Path) -> str:
         return resolved.as_posix()
 
 
+def _valid_id(name: str) -> bool:
+    """Model / case ids are plain folder names — a path-shaped id would
+    land the case (and its run.json) outside the cases tree."""
+    return name not in ("", ".", "..") and "/" not in name and "\\" not in name
+
+
 def _resolve_input(path: Path, kind: str) -> Optional[Path]:
     resolved = (path if path.is_absolute() else HABITAT / path).resolve()
     if not resolved.is_file():
@@ -78,6 +84,14 @@ def main() -> int:
         help="oracle script run from results/ after a clean run",
     )
     args = parser.parse_args()
+
+    for kind, name in (("model", args.model), ("case", args.case_id)):
+        if not _valid_id(name):
+            print(
+                f"error: {kind} id must be a plain folder name, got {name!r}",
+                file=sys.stderr,
+            )
+            return 2
 
     script = _resolve_input(args.script, "script")
     if script is None:

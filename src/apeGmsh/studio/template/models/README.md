@@ -25,8 +25,7 @@ Cases **SHOULD** be run through the habitat's runner, which owns the
 layout, the logs, the deck disclosure, and the `run.json` record:
 
 ```text
-python scripts/run_case.py --model <id> --case <case> \
-    --script models/<id>/src/.../driver.py [--verify .../verify.py]
+python scripts/run_case.py --model <id> --case <case> --script models/<id>/src/.../driver.py [--verify .../verify.py]
 ```
 
 The model script runs with cwd = `results/` (outputs land in place; the
