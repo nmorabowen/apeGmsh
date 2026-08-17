@@ -1006,3 +1006,104 @@ Resolved here:
    guidance (INV-20).
 3. **Self-contained habitats** — yes; the template copies its own
    scripts.
+
+## Amendment 7 (2026-08-17) — the oracle-bearing example library
+
+Append-only. Parts 1–6, INV-1–INV-21, S0–S7b, and Amendments 1–6
+stay. This amendment serves the one improvement surface the template
+names but nothing ships for — `cases-oracles` ("golden cases; named
+metrics; copyable recipes") — with a curated example library that
+agents can discover, copy, and **verify against**, everywhere apeGmsh
+is installed. Owner decisions: studio package data + a CLI verb (not
+repo-only, not habitat-shipped), and oracle-bearing from v1.
+
+### Decision
+
+- **Package data.** `src/apeGmsh/studio/examples/<name>/**` — one
+  directory per example: the runnable script, a `manifest.json`
+  (schema int, name, title, tags, one-paragraph *teaches*, `requires`
+  — e.g. `mesh-only` / `openseespy` / `ladruno` — provenance line,
+  and the named oracle metrics with expected values and tolerances),
+  a short `README.md`, and a `verify.py` that loads the example's own
+  results and checks its metrics, printing one PASS/FAIL line per
+  metric. Oracle logic lives in each example's `verify.py` — no
+  expression language, no framework.
+- **One CLI verb.** `python -m apeGmsh.studio example list [--tag T]`
+  / `example show <name>` / `example copy <name> [--dest DIR]` —
+  same `importlib.resources` mechanics and `__main__` integration
+  pattern as `init` (Amendment 6). `copy` lands the example directory
+  in the destination; running the script and then `verify.py` is the
+  agent's job. CLI only — not an MCP tool (same stance as `init`).
+- **Discovery displaces src-grep.** The skill's Studio paragraph and
+  the model-authoring references teach: before building a shape the
+  library covers, `example list --tag <domain>` and read/copy — the
+  ADR 0096 lookup discipline extended from symbols to recipes.
+
+### New invariants
+
+- **INV-22 (oracle-bearing).** Every example declares named expected
+  metrics and ships a `verify.py` that checks them. A recipe without
+  an oracle does not merge; an oracle whose numbers were not produced
+  by an actual run does not merge.
+- **INV-23 (dogfood-sourced).** Examples are promoted from real runs
+  (dogfood passes, habitat cases, repo examples that earned a fix) —
+  never invented to fill a catalog. The manifest's provenance line
+  names the source.
+
+### v1 seeds (S8a) — all with dogfood provenance
+
+| Example | Teaches | Oracle (established by running it) |
+|---|---|---|
+| `arch-pushover` (from `examples/shoebuckle_arch.py`, PR #990) | g.loads → explicit `from_model` import; LoadControl pushover; MPCO read-back | λ = 1.0 reached in 200 steps; crown disp ≈ (+3.36, +0.90) mm; `U_VS_DIAG` ≈ 5.3e-4 |
+| `step-load-transient` (pattern from the steel-connection transient case, **generic minimal geometry** — the specimen does not ship) | density + Constant-series step load; Newmark transient; Ladruno `-G energy` | dynamic amplification ≈ 2.0 vs its own static twin; last-step \|ERR\| < 1 %; KE+IE tracks ULW |
+| `partitioned-frame` (from `examples/partition_frame.py`) | METIS partitioning; diaphragm replication; OpenSeesMP Tcl emit | 4 ranks emitted; element/node counts; emit-only oracle (no MPI run in verify) |
+
+### CI honesty
+
+Every packaged example joins the replay-to-mesh smoke lane (PR #993's
+pattern) — geometry + `generate()` on CI, no solver. Full-solve
+`verify.py` runs need openseespy / Ladruno and are **not** CI-run;
+the implementing PR must include the verify transcripts from a local
+run, and the manifest's `requires` field says what a consumer needs.
+Skip ≠ pass: the lane's coverage limit is stated in the test file.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S8a** | `studio/examples/**` (3 seeds) + `example list/show/copy` verb + package-data config + mesh-smoke coverage + local verify transcripts in the PR | S7a |
+| **S8b** | Docs (`studio-habitat.md` or a sibling how-to: the example door) + skill Studio paragraph + references mention | S8a |
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Repo `examples/` + skill index only** | Agents in habitats hold an installed apeGmsh, not the repo checkout. Owner decision. |
+| **Habitat template ships the library** | Bloats every habitat; updates don't propagate (drift is for process, not recipes). |
+| **Recipes without oracles** | Owner decision: INV-22 from v1 — a recipe that cannot be verified teaches copying, not correctness. |
+| **An oracle framework / metric expression language** | Three examples need three small `verify.py` files. A framework before ten examples is ceremony. |
+| **MCP `example` tool** | Same class as `init`: CLI only. Agents shell to it. |
+
+### Acceptance (this amendment)
+
+- `example list` shows the three seeds with tags; `show` prints
+  manifest + README; `copy` lands a runnable directory; unknown
+  name → clear error, nonzero exit.
+- Each seed's `verify.py`, run locally after its script, passes — the
+  PR body carries the three transcripts (INV-22).
+- Grep gate: no specimen names (INV-20's list) in the packaged
+  examples — the transient seed's geometry is generic.
+- The mesh-smoke lane covers all three (the `requires: ladruno` seed
+  still meshes without it).
+- Wheel-safety: examples reachable via `importlib.resources`;
+  completeness test in the S7a pattern.
+- Skill + how-to name the door (S8b).
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Package data + verb** — yes (owner).
+2. **Oracle-bearing v1** — yes (owner); no framework.
+3. **Full-solve verify on CI** — no; transcripts in the PR, honest
+   lane note.
