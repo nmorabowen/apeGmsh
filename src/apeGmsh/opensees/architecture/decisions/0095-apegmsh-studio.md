@@ -722,3 +722,109 @@ Still open (do not block S5a–S5j / F-status-1):
 
 1. Event stream (mtime poll remains the contract until proven insufficient).
 
+## Amendment 4 (2026-08-16) — live refresh (S6) and Later-shelf pruning
+
+Append-only. Parts 1–6, INV-1–INV-17, S0–S5j, F-status-1, and
+Amendments 1–3 stay. This amendment ships the Later row's "live
+refresh loop" as S6 and prunes two Later items that no longer earn
+their place. It does not reopen transport, the busy/host contract,
+statement-step-as-shipped, or Electron gating.
+
+Context: the shipped host opens once — `python -m apeGmsh.studio
+script.py --phase X` replays in-process, opens the Qt window
+(MeshViewer if meshed, else ModelViewer), and never updates again.
+The product promise (Part 4: "preview should show geometry as the
+script becomes runnable") is not real until the window follows the
+file. The highlight watcher already proves the pattern in-tree: a
+QTimer mtime poll applying changes through owner mutators (INV-7).
+
+### New invariants
+
+- **INV-18 (refresh never steals).** A host refresh honors
+  `busy.json` exactly as S5h left it: when a live claim exists (an
+  agent's `run_until` is executing), refresh reports busy in the
+  status bar and does nothing. Stale-claim stealing stays the
+  runner's; the refresh path adds no second steal heuristic.
+- **INV-19 (disk is the source).** Refresh replays the file as
+  saved on disk. Unsaved editor buffers are Cursor's; studio never
+  sees them. A corollary of INV-2, stated because file-watch makes
+  the temptation concrete.
+
+INV-4 (last good frame) now binds the host explicitly: a failed
+refresh keeps the previous scene and camera; the failure lands in
+`runs.jsonl` (`ok: false`) and the status bar — not a dialog.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S6a** | Manual Refresh (toolbar action / F5): re-run the entry script (`project.json`, else the script the host opened) at the current phase through `ReplayRunner.run_until` in the host process — busy claim per S5h (INV-18), skip-hash no-op ("Up to date"), success rebuilds the scene preserving camera (the `_rebuild_scene` pattern) and rewrites `names.json` / appends `runs.jsonl` through the existing writers. Ledger records gain an additive `trigger` field (`open` / `refresh` / `watch`); ledger schema + golden fixtures updated; `contract_version` 1.5.0. | S5j |
+| **S6b** | Auto-refresh: QTimer mtime poll on the entry script (~1 s, debounced until the mtime is stable for one tick), on by default, `--no-watch` opt-out plus a host toggle. Poll, not an event stream — the standing open question stays resolved as-is. The unchanged `(hash, phase)` skip makes idle saves free. | S6a |
+| **S6c** | Phase selector on the host (the phase tabs the original S2 named), gated by INV-8: a refresh may advance model → mesh → results as `FEMData` / `Results` appear and must retreat when they do not. `host.json.phase` updates on swap (value change, no schema change). | S6a |
+
+S6a can merge alone. Claiming "the studio is live" requires S6a +
+S6b (save in Cursor, watch the window follow).
+
+### Later-shelf pruning
+
+- **Qt `viewer.highlight(names)` direct mutator — retired.** The S3
+  file adapter (`highlight.json` + QTimer poll + `select_batch`) is
+  the contract and serves every cross-process consumer; a direct
+  mutator would serve only in-process callers that do not exist.
+  Struck from Later; reviving it requires an amendment with a named
+  consumer.
+- **Statement-step BRep — demoted.** S6b's save-triggered refresh
+  covers the intent at file grain. Statement-step is no longer a
+  standing commitment: it is re-evaluated only if dogfood shows
+  save-grain refresh is insufficient for geometry authoring, and
+  closed otherwise.
+
+Still parked, unchanged: Electron/trame (ADR 0047 R-D gate),
+`kind=formation`, daemon-as-middle-tier, event stream (mtime poll
+until proven insufficient), in-app agent habitat (explicit habitat
+amendment).
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Worker-process replay for refresh** | The host already owns the live session and kernel; a worker per refresh doubles kernel cost and re-opens the attach question S2 settled (spawn). Blocking the UI thread for the replay duration is v1-acceptable; the status bar says "Replaying…". A worker is owed an amendment only if that proves unacceptable. |
+| **File-system watcher (`QFileSystemWatcher` / watchdog)** | Event streams are the open question mtime poll already answers; the highlight watcher set the poll precedent. Revisit only with evidence that poll is insufficient. |
+| **Failure dialogs** | INV-4 is a quiet contract: last good frame + status bar + ledger. A dialog interrupts the human mid-edit. |
+| **Auto-refresh default off** | The default that makes the product real is on; `--no-watch` and the toggle cover recording / benchmark sessions. |
+| **Keeping the highlight mutator and statement-step on Later** | An unbounded Later shelf reads as commitments. Pruned explicitly; revival needs an amendment. |
+
+### Acceptance (this amendment)
+
+- **S6a:** runner-level tests, no GUI — refresh while a peer holds
+  `busy.json` returns busy and leaves the scene object untouched
+  (INV-18); an unchanged file + phase is a no-op that appends
+  nothing; a failed replay keeps the previous tessellation object
+  (INV-4) and appends `ok: false` with `trigger: "refresh"`. A
+  Qt-marked smoke covers the action. `contract_version` is 1.5.0;
+  the ledger schema and golden fixtures carry `trigger`; readers
+  ignore its absence (additive, INV-17).
+- **S6b:** debounce is a pure function with unit tests (mtime
+  flapping during a save produces one replay); `--no-watch` disables
+  the timer; a watch tick honors INV-18 the same as manual refresh;
+  watch-initiated runs append `trigger: "watch"`.
+- **S6c:** a refresh whose replay binds `Results` enables results
+  mode; a refresh whose replay stops at `model` disables mesh /
+  results modes again (INV-8); `host.json.phase` reflects the swap.
+- Skill Studio paragraph: refresh + watch exist; the agent still
+  uses `run_until` / `status` / the envelope, never the host window
+  (INV-6).
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Refresh runs in the host process** — yes (v1).
+2. **Auto-refresh default on** — yes, with opt-out.
+3. **Highlight mutator retired; statement-step demoted** — yes.
+
+Still open (does not block S6):
+
+1. Watch-poll period and debounce constants — fix at S6b with the
+   code in hand; acceptance pins behavior, not milliseconds.
+
