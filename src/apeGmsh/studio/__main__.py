@@ -14,8 +14,10 @@ Markdown archive; ``--format html|canvas`` are skins of the same bundle).
 Stills go through ``python -m apeGmsh.viewers render``.
 
 ``python -m apeGmsh.studio init --name <habitat> --model <model_id>
-[--root DIR]`` stamps a fresh habitat from the packaged template (ADR
-0095 Amendment 6, S7a) — see ``apeGmsh.studio._init_habitat``.
+[--root DIR] [--no-git]`` stamps a fresh habitat from the packaged
+template (ADR 0095 Amendment 6, S7a) and git-inits it with one initial
+commit unless ``--no-git`` (Amendment 8, S9a) — see
+``apeGmsh.studio._init_habitat``.
 
 ``python -m apeGmsh.studio example list [--tag T] | show <name> |
 copy <name> [--dest DIR]`` — the oracle-bearing example library (ADR
