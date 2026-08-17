@@ -1252,3 +1252,85 @@ Deferred:
 5. **Clone-to-new-machine re-alignment** (`.cursor/mcp.json` carries
    an absolute root) — the how-to notes the manual edit; a re-align
    verb only if dogfood demands it.
+
+## Amendment 9 (2026-08-17) — checkpoint contract clarifications (dogfood pass #1)
+
+Append-only. Parts 1–6, INV-1–INV-27, S0–S9c, and Amendments 1–8
+stay. The first checkpoint-contract dogfood (fresh `studio init`
+habitat, `arch-pushover` example through the full loop: work branch →
+commit-then-run → verify PASS 5/5 → provenance-bearing `run.json` →
+stage report → `--no-ff` merge + `checkpoint/*` tag) **completed
+end-to-end** and surfaced three contract gaps, logged in that
+habitat's postmortem as F2/F3/F5. This amendment closes them —
+clarifications only: no new machinery, no new invariants, no
+`contract_version` bump. (The pass's F1, an apparent `--assess` exit
+bug, was retracted — an observer-side pipe artifact; F4, a
+`run.json`-writing helper, stays in the backlog until a second case
+pays the manual cost.)
+
+### Decision
+
+- **F2 — process commits go to `main`** (checkpoints.md). The
+  "checkpoints only" rule governs the **model surface** — `models/**`
+  and `reports/**` reach `main` through work branches and checkpoint
+  merges. **Process files** — `postmortem/**`, `APE/memory/**`,
+  `postmortem/backlog/`, habitat-local playbook edits under
+  `APE/instructions/**`, `scripts/`, root config — commit **directly
+  to `main`**: a session close must not require a branch-and-merge
+  ceremony, and a postmortem is a record, not a reviewable model
+  claim. A process commit that happens to ride an active work branch
+  is harmless (it reaches `main` at the merge); a dying branch's
+  postmortem is salvaged onto `main` before the branch is deleted.
+- **F3 — `deck/` admits a disclosure** (models/README.md). The case
+  contract's `deck/` MUST becomes: `deck/` MUST exist and either
+  contain the emitted deck **or a one-line README naming why none
+  exists** (e.g. an in-process openseespy run — nothing is emitted).
+  A fabricated after-the-fact deck is worse than a disclosed absence;
+  same honesty stance as dirty-run disclosure (Amendment 8).
+- **F5 — figures whitelist goes recursive** (template `.gitignore`).
+  `!reports/figures/*.png` → `!reports/figures/**/*.png`: the
+  single-level pattern silently hides a figure filed under
+  `reports/figures/<case>/`, and an invisible promoted figure is a
+  broken archive. Stays **png-scoped** — a blanket
+  `!reports/figures/**` would let stray result binaries slip into git
+  through the figures door (INV-26).
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S10a** | Template: checkpoints.md process-commit paragraph + models/README.md deck disclosure + `dot.gitignore` recursive figures whitelist; how-to's checkpoint summary gains the process-file sentence; tests: prose gates for both clarifications + gitignore contract test extended (subfoldered `reports/figures/<x>/y.png` visible, bulk artifacts still hidden) | S9c |
+
+One slice: three one-line-scale edits plus their gates do not stage.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **A process branch** (`work/process/<slug>` for postmortems) | Ceremony without a reviewer; postmortems are append-only records. Worse: a dead process branch takes its postmortem with it. |
+| **Emitting a deck for in-process runs** | Dishonest double work — the deck would not be what ran. Disclosure beats fabrication. |
+| **`!reports/figures/**` (everything under figures)** | Opens a door for stray result binaries into git (INV-26). Whitelist stays png-scoped. |
+| **Widening the whitelist to `*.gif` now** | No dogfood evidence — no report has promoted an animation yet. Revisit when one does. |
+| **Shipping F4's `run.json` writer here** | One case has paid the manual cost once. A helper before the second case is the framework-before-ten-examples smell (Amendment 7). |
+
+### Acceptance (this amendment)
+
+- checkpoints.md states the model-surface / process-file split and
+  where each commits; the prose gate covers it as a test.
+- models/README.md `deck/` contract admits the disclosure README; the
+  dogfood pass's `deck/README.md` shape is now contract-legal
+  verbatim.
+- In a fresh initialized habitat, `reports/figures/<sub>/fig.png`
+  appears in `git status --porcelain -uall` while `*.h5`, `.apegmsh/`,
+  and bulk case data stay invisible — as a test.
+- Habitat suites (S7a/S9a/S9b) stay green; INV-20/INV-24 grep gates
+  untouched.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Process-commit home** — directly on `main`; model surface only
+   rides work branches (owner).
+2. **Deck honesty** — disclosure README is contract-legal (owner).
+3. **Whitelist scope** — recursive but png-only; gifs deferred.
