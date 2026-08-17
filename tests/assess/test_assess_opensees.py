@@ -308,6 +308,25 @@ def test_res_zero_u_all_zero_last_step_is_info(tmp_path: Path) -> None:
     _assert_catalog_severities(report)
 
 
+def test_res_zero_u_no_loads_no_pattern_has_no_cross_reference(
+    tmp_path: Path,
+) -> None:
+    """A free-vibration-style deck (zero patterns, no broker loads)
+    with all-zero results fires RES.ZERO_U but must NOT point at an
+    OSM.LOADS_UNIMPORTED finding that does not exist."""
+    model = _build_osm(tmp_path)  # broker carries no load records
+    variant = dataclasses.replace(model, _analyze_call=(10, 0.1), _patterns=())
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    ux = np.zeros((1, node_ids.size))
+    path = _write_ux(tmp_path, "zero_u_free.h5", node_ids=node_ids, ux=ux)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = variant.assess(results=r)
+    assert "OSM.LOADS_UNIMPORTED" not in _codes(report)
+    finding = next(f for f in report.findings if f.code == "RES.ZERO_U")
+    assert "OSM.LOADS_UNIMPORTED" not in finding.message
+
+
 def test_res_zero_u_omitted_results_is_skipped(tmp_path: Path) -> None:
     model = _build_osm(tmp_path)
     ready = dataclasses.replace(model, _analyze_call=(10, 0.1))

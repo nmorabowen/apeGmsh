@@ -82,7 +82,10 @@ def assess_opensees(
 
     _check_support(osm, findings)
     _check_loads_unimported(osm, patterns, has_run, findings, skipped)
-    _check_zero_u(results, patterns, findings, skipped)
+    loads_unimported = any(
+        f.code == "OSM.LOADS_UNIMPORTED" for f in findings
+    )
+    _check_zero_u(results, patterns, loads_unimported, findings, skipped)
 
     return _report(findings, skipped)
 
@@ -211,6 +214,7 @@ def _check_loads_unimported(
 def _check_zero_u(
     results: "Results | None",
     patterns: tuple[Any, ...],
+    loads_unimported: bool,
     findings: list[Finding],
     skipped: list[tuple[str, str]],
 ) -> None:
@@ -249,7 +253,10 @@ def _check_zero_u(
         return
 
     message = f"Last-step displacement is exactly all-zero (stage={last_stage_id!r})."
-    if not patterns:
+    if loads_unimported:
+        # Only cross-reference a finding that actually fired — a
+        # no-loads free-vibration deck must not be pointed at an
+        # OSM.LOADS_UNIMPORTED that does not exist.
         message += (
             " No pattern imports the declared loads — see "
             "OSM.LOADS_UNIMPORTED."
