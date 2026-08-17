@@ -31,6 +31,15 @@ Laws realized here:
   while no *occluding* slot is occupied (contour, sand — generalized
   from ``Diagram.occludes_substrate``); the occupant IS the surface,
   never a second grey mesh under it.
+* **INV-MESH-3/4, the four style buttons** (S3): ``mesh`` is the
+  interior grid ON the one surface — ``show_edges`` of whichever layer
+  IS that surface, never a second wire mesh; ``outlines`` are the
+  feature edges OF the same cell set, so hiding a cell takes its
+  outline with it; ``nodes`` and ``gauss`` are glyph clouds at the
+  cell set's nodes and integration points. Gauss-as-button draws
+  LOCATIONS and stands down when the `gauss` slot is occupied — the
+  slot already draws that cloud, with values, and two clouds is the
+  law's named failure.
 * **INV-LEGEND-1..5** (S1 decision 4): a null legend-controller is
   adopted for the backend before any diagram attaches, so
   ``ScalarBarSupport`` registrations no-op and the ONLY colour scales
@@ -40,10 +49,10 @@ Laws realized here:
 
 Session state with no realization yet refuses loudly
 (``NotImplementedError`` naming the owning slice) rather than emitting
-a picture that silently drops it: the style buttons, view clips and
-the undeformed overlay (S3), and a scoped view carrying the `loads`
-slot (the kind draws every node of its pattern regardless of scope,
-so honouring INV-MESH-1 needs a change inside that kind).
+a picture that silently drops it: the undeformed overlay, and a scoped
+view carrying the `loads` slot (the kind draws every node of its
+pattern regardless of scope, so honouring INV-MESH-1 needs a change
+inside that kind).
 """
 from __future__ import annotations
 
@@ -212,6 +221,12 @@ def _realize_mesh(
     # Decision 5: pose first — every extraction below copies posed points.
     _apply_pose(view, results, scene, stage_id, step)
 
+    # ADR 0083 machinery, view-owned (§3): the active planes of THIS
+    # view, pushed before any layer is added so the backend stamps them
+    # onto everything it creates. Always pushed — an empty set is how a
+    # view with no clips clears a previous flush's cut.
+    _apply_clips(backend, view)
+
     # Decision 4: no diagram may author a colour scale on this backend.
     adopt_controller(backend, _NullLegendController())
 
@@ -229,12 +244,22 @@ def _realize_mesh(
         ))
         for category, record in view.slots.items()
     ]
+    # INV-MESH-4 "Mesh": the interior grid belongs to whichever layer IS
+    # the one surface. Unoccluded that is the substrate (handled below);
+    # occluded it is the occupant, so the button rides its style rather
+    # than adding a second wire mesh over it (INV-MESH-2).
+    resolved = [
+        (category, kind_id, _with_surface_edges(spec, kind_id, view.style))
+        for category, kind_id, spec in resolved
+    ]
 
     # INV-MESH-2, one surface: the grey substrate is drawn only while
     # nothing opaque and coincident occupies a slot — generalized from
     # ``Diagram.occludes_substrate`` (contour and sand both do).
-    if not any(kind_id in OCCLUDING_KINDS for _c, kind_id, _s in resolved):
-        substrate = _substrate_layer(view.id, scene, scoped)
+    occluded = any(kind_id in OCCLUDING_KINDS for _c, kind_id, _s in resolved)
+    grid = _scoped_grid(scene, scoped)
+    if not occluded:
+        substrate = _substrate_layer(view.id, grid, view.style.mesh)
         handle = backend.add_layer(substrate)
         layers.append(RealizedLayer(
             key=f"{view.id}:substrate",
@@ -273,6 +298,18 @@ def _realize_mesh(
             ))
         diagrams.append(diagram)
         slot_diagrams[category] = diagram
+
+    # INV-MESH-3/4 — outlines / nodes / gauss as layers of the SAME cell
+    # set, emitted after the slots so they read above the surface.
+    for role, layer in _style_layers(
+        view, scene, grid, scoped, view_data, results, stage_id,
+    ):
+        handle = backend.add_layer(layer)
+        layers.append(RealizedLayer(
+            key=f"{view.id}:{role}",
+            layer_id=layer.layer_id,
+            handle=handle,
+        ))
 
     bar_keys, legend_controller = _realize_legends(
         backend, view, slot_diagrams,
@@ -403,8 +440,6 @@ def _refuse_unrealized_state(view: "MeshView") -> None:
     """State this slice cannot draw refuses loudly — a still that
     silently drops session state is a wrong picture, not a lenient
     one."""
-    from apeGmsh.results.session import MeshStyle
-
     if view.scope is not None and "loads" in view.slots:
         # The loads kind ignores its selector's resolved ids
         # (_loads.py:88-96 reads every record of the pattern), so a
@@ -416,18 +451,11 @@ def _refuse_unrealized_state(view: "MeshView") -> None:
             "kind renders every node of the pattern regardless of "
             "scope (INV-MESH-1). Clear the scope or the loads slot."
         )
-    if view.style != MeshStyle():
-        raise NotImplementedError(
-            "Style-button realization (mesh / outlines / nodes / gauss) "
-            "lands at S3; S1-A draws the boot style."
-        )
     if view.overlay:
         raise NotImplementedError(
-            "The undeformed overlay realizes in a later slice (S1-B)."
-        )
-    if view.clips:
-        raise NotImplementedError(
-            "View clips realize with the pane host slices (S3)."
+            "The undeformed overlay does not realize yet: it is this "
+            "mesh at scale 0 in the Outlines style (§3), which needs "
+            "the unposed cell set emitted alongside the posed one."
         )
 
 
@@ -472,6 +500,32 @@ def _resolve_instant(
             f"{instant.stage!r} with {n} step(s)."
         )
     return instant.stage, instant.step
+
+
+def recorded_components(
+    session: "ResultsSession", view: "MeshView",
+) -> "tuple[set[str], set[str]]":
+    """``(nodal, gauss)`` component tokens the view's instant records.
+
+    The vocabulary of every picker and every data-dependent control in
+    the window (the inspector's slot rows; the pane header's Gauss
+    style button). Resolved through the SAME §7 instant law realize
+    applies, so a control and the picture it describes cannot disagree
+    about which stage they mean. Empty sets when anything is missing —
+    a disabled control, never an error.
+    """
+    results = session.results
+    if results is None:
+        return set(), set()
+    try:
+        stage_id, _step = _resolve_instant(session, view, results)
+        components = results.inspect.components(stage=stage_id)
+    except Exception:
+        return set(), set()
+    return (
+        set(components.get("nodes", ())),
+        set(components.get("gauss", ())),
+    )
 
 
 def _mode_stage_id(results: "Results", mode: Optional[int]) -> str:
@@ -533,51 +587,361 @@ def _apply_pose(
 # =====================================================================
 
 
-def _substrate_layer(
-    pane_id: str, scene: "FEMSceneData", scoped: "ScopedSet",
-) -> MeshLayer:
-    """The grey analysis mesh as a scene-IR layer (boot style: fill +
-    element edges), replacing the raw ``add_mesh`` of the old paths.
+def _scoped_grid(scene: "FEMSceneData", scoped: "ScopedSet") -> Any:
+    """The pyvista grid of the view's ONE cell set (INV-MESH-1).
 
-    Restricted to the view's cell set when scoped — the grey mesh is a
-    layer of the one cell set like everything else (INV-MESH-1), not a
-    backdrop of the whole model.
+    Unscoped that is the whole posed analysis mesh; scoped it is the
+    extracted subset — the same grid the substrate, the outlines and
+    the node cloud are all read from, which is what makes "hide a cell
+    → its face, grid line and outline all go" (INV-MESH-3) true by
+    construction rather than by three agreeing filters.
+    """
+    grid = scene.grid
+    if scoped.is_unscoped:
+        return grid
+    cells = np.fromiter(
+        (
+            scene.element_id_to_cell.get(int(e), -1)
+            for e in scoped.element_ids
+        ),
+        dtype=np.int64,
+        count=int(scoped.element_ids.size),
+    )
+    cells = cells[cells >= 0]
+    if cells.size == 0:
+        raise ValueError(
+            "The view's scope selects no cell of the analysis mesh "
+            "— nothing to draw."
+        )
+    return grid.extract_cells(cells)
+
+
+def _palette() -> Any:
+    """The live palette, or ``None`` with no theme module (headless
+    realize outside the Qt tree). Callers fall back per colour."""
+    try:
+        from ..ui.theme import THEME
+        return THEME.current
+    except Exception:
+        return None
+
+
+def _substrate_layer(pane_id: str, grid: Any, show_edges: bool) -> MeshLayer:
+    """The grey analysis mesh as a scene-IR layer, replacing the raw
+    ``add_mesh`` of the old paths.
+
+    ``show_edges`` is the "Mesh" style button (INV-MESH-4): the
+    interior element grid is a property of the one surface, not a
+    second layer over it.
     """
     from ..backends.pyvista_qt import cellblocks_from_grid
 
-    try:
-        from ..ui.theme import THEME
-        palette = THEME.current
-        fill = palette.substrate_color
-        edge = palette.substrate_edge_color
-    except Exception:
-        fill, edge = "#bfbfbf", "#1a1a1a"
-    grid = scene.grid
-    if not scoped.is_unscoped:
-        cells = np.fromiter(
-            (
-                scene.element_id_to_cell.get(int(e), -1)
-                for e in scoped.element_ids
-            ),
-            dtype=np.int64,
-            count=int(scoped.element_ids.size),
-        )
-        cells = cells[cells >= 0]
-        if cells.size == 0:
-            raise ValueError(
-                "The view's scope selects no cell of the analysis mesh "
-                "— nothing to draw."
-            )
-        grid = grid.extract_cells(cells)
+    palette = _palette()
+    fill = getattr(palette, "substrate_color", None) or "#bfbfbf"
+    edge = getattr(palette, "substrate_edge_color", None) or "#1a1a1a"
     return MeshLayer(
         layer_id=f"{pane_id}:substrate",
         points=PointSet(np.asarray(grid.points)),
         cells=cellblocks_from_grid(grid),
         color=ColorSpec(mode="solid", solid_rgb=fill),
-        show_edges=True,
+        show_edges=bool(show_edges),
         edge_color=edge,
         line_width=1.0,
     )
+
+
+# =====================================================================
+# Style buttons (INV-MESH-3 / INV-MESH-4) — view chrome, never slots
+# =====================================================================
+
+#: Feature-edge threshold for the Outlines button. Same preference the
+#: old viewport's ADR 0089 outline pass reads, so the two draw the same
+#: creases; a stripped preferences.json falls back to its default.
+_OUTLINE_FEATURE_ANGLE = 25.0
+
+#: Screen-space glyph sizes for the node / Gauss clouds. Screen space,
+#: not world space, so a pane that is 240 px wide still shows readable
+#: markers — these are pick affordances (§8: click-pick requires the
+#: matching style button on), not measured geometry.
+_NODE_POINT_SIZE = 7.0
+_GAUSS_POINT_SIZE = 6.0
+
+
+def _with_surface_edges(spec: Any, kind_id: str, style: Any) -> Any:
+    """Ride the "Mesh" button onto an occluding slot's own style."""
+    from dataclasses import replace
+
+    if kind_id not in OCCLUDING_KINDS:
+        return spec
+    if not hasattr(spec.style, "show_edges"):
+        return spec
+    return replace(spec, style=replace(spec.style, show_edges=style.mesh))
+
+
+def _style_layers(
+    view: "MeshView",
+    scene: "FEMSceneData",
+    grid: Any,
+    scoped: "ScopedSet",
+    view_data: "ViewerData",
+    results: "Results",
+    stage_id: str,
+) -> "list[tuple[str, Any]]":
+    """``(role, layer)`` for every ON style button that draws its own
+    layer — "Mesh" is not here, it is ``show_edges`` of the surface."""
+    out: list[tuple[str, Any]] = []
+    style = view.style
+    if style.outlines:
+        layer = _outlines_layer(view.id, grid)
+        if layer is not None:
+            out.append(("outlines", layer))
+    if style.nodes:
+        layer = _nodes_layer(view.id, scene, scoped)
+        if layer is not None:
+            out.append(("nodes", layer))
+    # "They must not draw two clouds" (INV-MESH-4): the `gauss` SLOT
+    # already paints these points, with values and a scale. The button
+    # stays lit — it describes what is on screen — and emits nothing.
+    if style.gauss and "gauss" not in view.slots:
+        layer = _gauss_layer(
+            view.id, scene, scoped, view_data, results, stage_id,
+            posed=view.deform is not None,
+        )
+        if layer is not None:
+            out.append(("gauss", layer))
+    return out
+
+
+def _outlines_layer(pane_id: str, grid: Any) -> "Optional[MeshLayer]":
+    """Element / feature boundaries of the cell set (ADR 0089 D1).
+
+    ``None`` when the cell set has no such edges — a 1-D beam model
+    whose surface is already lines. An empty layer would be an actor
+    that draws nothing; the missing key is what tells a client the
+    button had nothing to draw.
+    """
+    from ..scene.mesh_scene import _extract_surface_fast
+    from ..scene_ir import CellBlocks
+
+    try:
+        # The project's own boundary extraction (vtkGeometryFilter in
+        # FastMode): the conservative path allocates a point-to-cell
+        # hash at ~96 B per point, which is ~466 MB at 607k points —
+        # and this now runs once per pane, per flush.
+        surface = _extract_surface_fast(grid)
+        edges = surface.extract_feature_edges(
+            feature_angle=_outline_feature_angle(),
+            boundary_edges=True,
+            feature_edges=True,
+            manifold_edges=False,
+            non_manifold_edges=False,
+        )
+    except Exception:
+        return None
+    if edges is None or edges.n_points == 0 or edges.n_lines == 0:
+        return None
+    conn = _two_point_lines(edges)
+    if conn is None:
+        return None
+    palette = _palette()
+    color = getattr(palette, "outline_color", None) or "#1a1a1a"
+    return MeshLayer(
+        layer_id=f"{pane_id}:outlines",
+        points=PointSet(np.asarray(edges.points)),
+        cells=CellBlocks({"line": conn}),
+        color=ColorSpec(mode="solid", solid_rgb=color),
+        wireframe=True,
+        line_width=2.0,
+        pickable=False,
+    )
+
+
+def _two_point_lines(edges: Any) -> "Optional[np.ndarray]":
+    """``(n, 2)`` connectivity of a feature-edge ``PolyData``.
+
+    ``PolyData`` carries lines as VTK's flat ``[npts, i, j, npts, ...]``
+    array and has no ``cells_dict``, so ``cellblocks_from_grid`` (which
+    reads that dict) cannot decompose it. ``extract_feature_edges``
+    emits 2-point segments; anything else would need a polyline split
+    this layer does not owe, so it declines rather than mis-reading the
+    stream.
+    """
+    flat = np.asarray(edges.lines, dtype=np.int64)
+    if flat.size == 0 or flat.size % 3 != 0:
+        return None
+    triples = flat.reshape(-1, 3)
+    if not bool(np.all(triples[:, 0] == 2)):
+        return None
+    return np.ascontiguousarray(triples[:, 1:])
+
+
+def _outline_feature_angle() -> float:
+    try:
+        from ..ui.preferences_manager import PREFERENCES
+        return float(PREFERENCES.current.feature_angle)
+    except Exception:
+        return _OUTLINE_FEATURE_ANGLE
+
+
+def _nodes_layer(
+    pane_id: str, scene: "FEMSceneData", scoped: "ScopedSet",
+) -> "Optional[MeshLayer]":
+    """Node glyphs of the cell set — the click-pick affordance (§8).
+
+    Read off ``scene.grid.points``, which the pose already moved, so
+    the glyphs follow the deformed model without a second sync.
+    """
+    from ..scene_ir import CellBlocks
+
+    points = np.asarray(scene.grid.points)
+    if scoped.is_unscoped:
+        rows = np.arange(points.shape[0], dtype=np.int64)
+    else:
+        rows = np.fromiter(
+            (
+                scene.node_id_to_idx.get(int(n), -1)
+                for n in scoped.node_ids
+            ),
+            dtype=np.int64,
+            count=int(scoped.node_ids.size),
+        )
+        rows = rows[rows >= 0]
+    if rows.size == 0:
+        return None
+    palette = _palette()
+    color = getattr(palette, "node_accent", None) or "#e0e0e0"
+    return MeshLayer(
+        layer_id=f"{pane_id}:nodes",
+        points=PointSet(points[rows]),
+        cells=CellBlocks(
+            {"vertex": np.arange(rows.size, dtype=np.int64).reshape(-1, 1)},
+        ),
+        color=ColorSpec(mode="solid", solid_rgb=color),
+        point_size=_NODE_POINT_SIZE,
+        render_points_as_spheres=True,
+        pickable=False,
+    )
+
+
+def _gauss_layer(
+    pane_id: str,
+    scene: "FEMSceneData",
+    scoped: "ScopedSet",
+    view_data: "ViewerData",
+    results: "Results",
+    stage_id: str,
+    *,
+    posed: bool,
+) -> "Optional[MeshLayer]":
+    """Integration-point glyphs — LOCATIONS, not values (INV-MESH-4).
+
+    The addresses come from a Gauss slab, which is read per component;
+    any recorded component answers the same ``(element_index,
+    natural_coords)`` pair, so the first one alphabetically is read
+    purely as the address probe and its values are discarded. A stage
+    that records no Gauss composite has no integration points to
+    place — the pane header disables the button in that case, and this
+    returns ``None`` rather than inventing a cloud.
+    """
+    from apeGmsh.results._gauss_world_coords import (
+        compute_global_coords_from_arrays,
+    )
+
+    from ..scene_ir import CellBlocks
+
+    probe = _gauss_probe_component(results, stage_id)
+    if probe is None:
+        return None
+    element_ids = (
+        scoped.element_ids if not scoped.is_unscoped
+        else np.asarray(scene.cell_to_element_id, dtype=np.int64)
+    )
+    if element_ids.size == 0:
+        return None
+    try:
+        slab = results.stage(stage_id).elements.gauss.get(
+            ids=tuple(int(e) for e in element_ids),
+            component=probe,
+            time=[0],
+        )
+    except Exception:
+        return None
+    if slab.element_index.size == 0:
+        return None
+    try:
+        coords = compute_global_coords_from_arrays(
+            np.asarray(slab.element_index, dtype=np.int64),
+            np.asarray(slab.natural_coords, dtype=np.float64),
+            view_data,
+            node_coords_override=(
+                np.asarray(scene.grid.points) if posed else None
+            ),
+        )
+    except Exception:
+        return None
+    coords = np.asarray(coords, dtype=np.float64)
+    if coords.size == 0:
+        return None
+    palette = _palette()
+    color = getattr(palette, "info", None) or "#7aa2f7"
+    n = coords.shape[0]
+    return MeshLayer(
+        layer_id=f"{pane_id}:gauss",
+        points=PointSet(coords),
+        cells=CellBlocks(
+            {"vertex": np.arange(n, dtype=np.int64).reshape(-1, 1)},
+        ),
+        color=ColorSpec(mode="solid", solid_rgb=color),
+        point_size=_GAUSS_POINT_SIZE,
+        render_points_as_spheres=True,
+        pickable=False,
+    )
+
+
+def _gauss_probe_component(
+    results: "Results", stage_id: str,
+) -> Optional[str]:
+    """The component read purely for its integration-point addresses."""
+    try:
+        recorded = results.inspect.components(stage=stage_id).get("gauss", ())
+    except Exception:
+        return None
+    tokens = sorted(str(t) for t in recorded)
+    return tokens[0] if tokens else None
+
+
+# =====================================================================
+# Clips (§3 — the 0083 machinery, ownership moved viewer → view)
+# =====================================================================
+
+
+def _apply_clips(backend: Any, view: "MeshView") -> None:
+    """Push this view's ACTIVE section planes onto the backend.
+
+    The record's ``offset`` resolves to an origin and ``flipped`` folds
+    into the normal's sign — the same resolution
+    ``ClipPlane.spec`` does, done here because the session IR owns the
+    planes now and the 0083 controller is never constructed on this
+    path. Inactive planes are simply absent from the set.
+    """
+    from ..scene_ir import ClipPlaneSpec
+
+    specs = []
+    for clip in view.clips:
+        if not clip.active:
+            continue
+        n = clip.normal
+        origin = tuple(c * float(clip.offset) for c in n)
+        if clip.flipped:
+            n = (-n[0], -n[1], -n[2])
+        specs.append(ClipPlaneSpec(origin=origin, normal=n))
+    try:
+        backend.set_clip_planes(specs)
+    except AttributeError:
+        # A backend with no clip support (a plain recorder) is not a
+        # realize failure — only a view that HAS clips would notice.
+        if specs:
+            raise
 
 
 # =====================================================================
@@ -651,4 +1015,6 @@ def _layer_lutspec(diagram: Any) -> Any:
     return diagram._current_lutspec()  # noqa: SLF001
 
 
-__all__ = ["RealizedLayer", "RealizedPane", "realize_pane"]
+__all__ = [
+    "RealizedLayer", "RealizedPane", "realize_pane", "recorded_components",
+]

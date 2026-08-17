@@ -25,7 +25,7 @@ from typing import Any, Callable, Optional
 from qtpy import QtWidgets
 
 from .._failures import safe_slot
-from ._realize import _resolve_instant
+from ._realize import recorded_components
 from ._specs import _AXIS_SUFFIXES, _TENSOR_SUFFIXES
 
 #: §4 line slot, v1 component vocabulary — the force half of the
@@ -363,25 +363,8 @@ class MeshInspectorPage:
     # -- data ----------------------------------------------------------
 
     def _recorded_components(self) -> "tuple[set[str], set[str]]":
-        """What the realized stage records — the pickers' vocabulary.
-
-        The same instant law realize applies (§7), so the picker and
-        the picture cannot disagree about which stage they mean.
-        """
-        results = self._session.results
-        if results is None:
-            return set(), set()
-        try:
-            stage_id, _step = _resolve_instant(
-                self._session, self._view, results,
-            )
-            components = results.inspect.components(stage=stage_id)
-        except Exception:
-            return set(), set()
-        return (
-            set(components.get("nodes", ())),
-            set(components.get("gauss", ())),
-        )
+        """What the realized stage records — the pickers' vocabulary."""
+        return recorded_components(self._session, self._view)
 
     def _load_patterns(self) -> "tuple[str, ...]":
         results = self._session.results

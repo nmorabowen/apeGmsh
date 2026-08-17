@@ -314,6 +314,56 @@ def _draw_mesh(p, QtCore, QtGui, color):
     p.drawLine(QtCore.QPointF(2, 8), QtCore.QPointF(8, 14))
 
 
+def _draw_outlines(p, QtCore, QtGui, color):
+    """Closed boundary polygon, NO interior lines (ADR 0098 A1.3).
+
+    The style-button sibling of ``mesh``: what separates them at 16 px
+    is exactly what separates the two pictures — ``mesh`` draws the
+    interior grid + two diagonals, ``outlines`` draws only the border.
+    Drawn as a hexagonal silhouette rather than the same square so the
+    pair is distinguishable even when both buttons are lit.
+    """
+    P = QtCore.QPointF
+    poly = [P(5, 2), P(11, 2), P(14, 8), P(11, 14), P(5, 14), P(2, 8)]
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPolygon(QtGui.QPolygonF(poly))
+
+
+def _draw_nodes(p, QtCore, QtGui, color):
+    """Cell corners as three filled dots (ADR 0098 A1.3).
+
+    A faint cell outline places the dots as *corners of a cell* rather
+    than an arbitrary dot triad (which is ``palette``'s metaphor); the
+    dots carry the meaning and stay legible at 16 px.
+    """
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawRect(QtCore.QRectF(3.5, 3.5, 9, 9))
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    for cx, cy in ((3.5, 3.5), (12.5, 3.5), (3.5, 12.5)):
+        p.drawEllipse(QtCore.QRectF(cx - 1.9, cy - 1.9, 3.8, 3.8))
+
+
+def _draw_gauss(p, QtCore, QtGui, color):
+    """Cell with a 2x2 interior dot pattern (ADR 0098 A1.3).
+
+    Integration-point LOCATIONS. Distinct from ``probe_slice`` (a 3x3
+    line grid, no dots) and from ``nodes`` (dots ON the corners): Gauss
+    points sit inside the cell, which is the whole distinction the
+    button has to carry.
+    """
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawRect(QtCore.QRectF(2, 2, 12, 12))
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    for cx in (5.6, 10.4):
+        for cy in (5.6, 10.4):
+            p.drawEllipse(QtCore.QRectF(cx - 1.5, cy - 1.5, 3.0, 3.0))
+
+
 # ── Visibility ────────────────────────────────────────────────────────
 
 def _draw_eye(p, QtCore, QtGui, color):
@@ -551,6 +601,11 @@ _GLYPHS: Dict[str, Callable[..., None]] = {
     "axes": _draw_axes,
     "stages": _draw_stages,
     "mesh": _draw_mesh,
+    # Mesh-view style buttons (ADR 0098 INV-MESH-4; ``mesh`` above is
+    # the fourth member of this family).
+    "outlines": _draw_outlines,
+    "nodes": _draw_nodes,
+    "gauss": _draw_gauss,
     # Visibility.
     "eye": _draw_eye,
     # Row / panel actions.

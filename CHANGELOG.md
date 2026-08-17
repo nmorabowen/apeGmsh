@@ -22,6 +22,62 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 Amendment 1 (S3): the pane host, per-view scope, style buttons
+
+The Results session window's centre becomes **N tiled panes**. The
+central widget is a `SessionPaneHost`: a root `QSplitter(Horizontal)`
+of columns, each a `QSplitter(Vertical)` of rows, depth exactly two,
+with one `QtInteractor` per mesh pane. The shape is a pure function of
+the pane count — `T(N)`: `C = ceil(sqrt(N))`, row-major fill in
+`session.panes` order — so adding a pane never moves the others unless
+the column count changes. A splitter whose child list changed resets to
+equal ratios; every other splitter keeps its dragged ones.
+
+**On the session path the shell builds no central interactor.** The
+seam is an additive, opt-in `central_interactor=False` +
+`set_central_widget` / `set_plotter_provider` on `ViewerWindow` /
+`ResultsWindow` that the old window never reaches — `results_viewer.py`
+is untouched. Every GL context in the window now belongs to a pane,
+which is what lets sixteen of the twenty-four acceptance criteria run
+in the default offscreen lane with injected backends. Toolbar camera
+presets / fit / screenshot act on the **active pane**.
+
+Each pane carries a `SessionPaneFrame`: kind glyph + name, the **four
+INV-MESH-4 style buttons** (mesh / outlines / nodes / gauss — pane
+header only; the inspector does not restate them), a reserved time
+badge, and a close glyph. The buttons realize: `mesh` is `show_edges`
+of whichever layer IS the one surface, `outlines` is a feature-edge
+layer of the same cell set, `nodes` and `gauss` are glyph clouds — and
+the Gauss button stands down when the `gauss` slot is occupied (one
+cloud, not two). Three new icon-factory glyphs (`outlines`, `nodes`,
+`gauss`) + four ADR 0087 Appendix A rows. View clips realize too (the
+0083 machinery, view-owned).
+
+The outline grows its second §9 job: **per-view scope** as checkboxes
+on one composition axis (physical groups | element types; `materials`
+renders disabled — no element→material index is published yet), plus
+the "New mesh view" / "New plot" rows with the A1.4 **Add gate**
+(disabled with the required width in the tooltip when `T(N+1)` breaches
+a pane floor; the gate constrains creation only — a script or a
+snapshot restore is tiled anyway). Zero panes renders the empty-state
+card. Splitter ratios persist as `panes/layout` +
+`panes/schema_version` under `QSettings('apeGmsh','ResultsSession')`;
+`_LAYOUT_SCHEMA_VERSION` stays 1 (no dock added).
+
+Three S2 defects the amendment named are fixed: inspector pages are now
+**evicted and disposed with their pane** (they only ever grew); a
+reconciler **bound** to a pane id whose view is gone paints **nothing**
+(the first-mesh-view fallback would repaint view 1 into a dying
+backend); and first-fit camera moves **onto the pane** (pane 2+ booted
+unframed). Criterion 12 is gated, not hoped: each reconciler keeps a
+pane-level signature over (instant, scope, pose, style, overlay, clips,
+slots, legends), so one slot fill in a four-pane session costs exactly
+one realize and one render, while a theme change forces all four.
+
+New: `tests/viewers/test_pane_host.py` (the sixteen `[off]` criteria +
+four mutation tests) and `tests/viewers/test_pane_host_window_qt.py`
+(criteria 18-20 on real GL, beside the existing probe).
+
 ### ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library
 
 `src/apeGmsh/studio/examples/<name>/**` ships three curated, package-data

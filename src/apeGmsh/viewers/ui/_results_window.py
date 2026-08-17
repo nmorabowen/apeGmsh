@@ -111,6 +111,7 @@ class ResultsWindow:
         title: str = "Results",
         on_close: Optional[Callable[[], None]] = None,
         extension_docks: Optional[Sequence[DockSpec]] = None,
+        central_interactor: bool = True,
     ) -> None:
         # Wrap user-supplied on_close so we always persist layout on shutdown.
         # ViewerWindow's _MainWindow.closeEvent calls on_close *before* tearing
@@ -125,7 +126,11 @@ class ResultsWindow:
             if user_on_close is not None:
                 user_on_close()
 
-        self._vw = ViewerWindow(title=title, on_close=_wrapped_on_close)
+        self._vw = ViewerWindow(
+            title=title,
+            on_close=_wrapped_on_close,
+            central_interactor=central_interactor,
+        )
 
         # Populated by _build_layout()
         self._dock_left: Any = None
@@ -175,8 +180,24 @@ class ResultsWindow:
 
     @property
     def plotter(self):
-        """The PyVista QtInteractor (plotter)."""
+        """The PyVista QtInteractor (plotter) the toolbar acts on.
+
+        With a pane host installed (ADR 0098 Amendment 1) this follows
+        the active pane — see :attr:`ViewerWindow.plotter`.
+        """
         return self._vw.plotter
+
+    def set_plotter_provider(self, provider) -> None:
+        """Route :attr:`plotter` through ``provider`` (forwarded)."""
+        self._vw.set_plotter_provider(provider)
+
+    def set_central_widget(self, widget) -> None:
+        """Mount ``widget`` as the central widget (forwarded).
+
+        The ADR 0098 Amendment 1 A1.1 seam: a shell built with
+        ``central_interactor=False`` mounts the pane host here.
+        """
+        self._vw.set_central_widget(widget)
 
     @property
     def window(self):

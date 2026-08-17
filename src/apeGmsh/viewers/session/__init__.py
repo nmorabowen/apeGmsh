@@ -9,20 +9,27 @@ session package — so the session IR never imports
 ``viewers.diagrams`` (the ``test_session_pure.py`` guard);
 ``ResultsSession.realize`` / ``.render`` reach in here lazily.
 
-The Qt pane client (S2) lives here as a further projection:
+The Qt pane client lives here as a further projection:
 :class:`SessionReconciler` (session diff → backend ops → one
-coalesced render), :class:`MeshPane` (injectable backend), the
-outline / inspector widgets, and :func:`show_session` — the
-``ResultsSession.show`` entry. The Qt-touching names are exported
-LAZILY (PEP 562): ``realize`` / ``render`` must keep working in
-environments with no qtpy, exactly as they did before S2.
+coalesced render), :class:`MeshPane` (injectable backend),
+:class:`SessionPaneHost` (the Amendment 1 tiled centre) with its
+:class:`SessionPaneFrame`\\ s, the outline / inspector widgets, and
+:func:`show_session` — the ``ResultsSession.show`` entry. The
+Qt-touching names are exported LAZILY (PEP 562): ``realize`` /
+``render`` must keep working in environments with no qtpy, exactly as
+they did before S2.
 """
 from __future__ import annotations
 
 from importlib import import_module
 
 from ._plots import RealizedPlot, RealizedSeries, realize_plot
-from ._realize import RealizedLayer, RealizedPane, realize_pane
+from ._realize import (
+    RealizedLayer,
+    RealizedPane,
+    realize_pane,
+    recorded_components,
+)
 from ._reconciler import LedgerBackend, SessionReconciler
 from ._scope import ScopedSet, resolve_scope
 from ._stills import render_still, resolve_pane
@@ -34,6 +41,14 @@ _QT_EXPORTS = {
     "SessionOutline": "._outline",
     "MeshInspectorPage": "._inspector",
     "PanePlaceholderPage": "._inspector",
+    "SessionPaneFrame": "._frame",
+    "PlotPanePlaceholder": "._frame",
+    "STYLE_BUTTONS": "._frame",
+    "SessionPaneHost": "._host",
+    "SessionPaneHostEmpty": "._host",
+    "required_extent": "._host",
+    "tile_columns": "._host",
+    "tile_shape": "._host",
     "SessionResultsWindow": "._window",
     "SessionWindow": "._window",
     "show_session": "._window",
@@ -54,24 +69,33 @@ def __dir__() -> "list[str]":
 
 
 __all__ = [
+    "STYLE_BUTTONS",
     "LedgerBackend",
     "MeshInspectorPage",
     "MeshPane",
     "PanePlaceholderPage",
+    "PlotPanePlaceholder",
     "RealizedLayer",
     "RealizedPane",
     "RealizedPlot",
     "RealizedSeries",
     "ScopedSet",
     "SessionOutline",
+    "SessionPaneFrame",
+    "SessionPaneHost",
+    "SessionPaneHostEmpty",
     "SessionReconciler",
     "SessionResultsWindow",
     "SessionWindow",
     "default_backend_factory",
     "realize_pane",
     "realize_plot",
+    "recorded_components",
     "render_still",
+    "required_extent",
     "resolve_pane",
     "resolve_scope",
     "show_session",
+    "tile_columns",
+    "tile_shape",
 ]
