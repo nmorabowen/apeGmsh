@@ -547,3 +547,127 @@ fallback; `g.assess`; `OpenSeesModel.assess()`; per-group planarity;
 step-walking; native-schema per-component coverage; a new ADR.
 `MESH.QUALITY_UNJUDGED` was considered and rejected (duplicates
 `skipped`).
+
+## Amendment 2 (2026-08-16) — `OpenSeesModel.assess()`: the solver-zone verdict
+
+Append-only. The Accepted body, the resolved and closed questions,
+and Amendment 1 stay. This amendment ships the Later row's
+`OpenSeesModel.assess()` — the solver-zone gates v1 deliberately
+refused because `FEMData` and `Results` lack pattern knowledge. It
+does not reopen the sidecar shape, the three verbs, FAIL-reserved,
+skip ≠ pass, or INV-1–INV-10.
+
+Evidence: a read of the shipped read-side broker
+(`opensees/opensees_model.py`, `_internal/typed_records.py`,
+`_internal/build.py::validate_from_model_cases`, `emitter/h5.py`).
+Three facts constrain the catalog:
+
+1. **`eigen` is not archived.** The H5 emitter treats `eigen` /
+   `eigen_feast` as runtime one-shot retrievals (deliberate no-op, no
+   schema). An eigen-only deck is indistinguishable from a deck that
+   never declared a run. No code below may claim to know the
+   analysis is modal.
+2. **`from_model(case)` provenance is not archived.** The read-side
+   `PatternRecord` carries the already-expanded `loads` / `sps` /
+   `ele_loads` lines, not case names. Per-case "declared but never
+   imported" is undecidable from an archive. (The inverse — a
+   pattern importing a case with zero records — already fails loud
+   at emit: `validate_from_model_cases`, ADR 0051.)
+3. The broker-side case inventory is `LoadRecord.pattern` (default
+   `"default"`) on `fem.nodes.loads` / `fem.elements.loads` plus the
+   non-homogeneous rows of `fem.nodes.sp`.
+
+### Entry point
+
+```python
+report = osm.assess()                  # OpenSeesModel, H5-safe
+report = osm.assess(results=results)   # + RES.ZERO_U cross-check
+```
+
+Same frozen `AssessmentReport` / `Finding` types. The runner lives
+in `apeGmsh.assess._opensees` and receives the broker object — the
+package still imports neither `gmsh`, `apeGmsh.viewers`, nor
+`apeGmsh.opensees` (INV-1 extended; the AST guard grows the third
+name). The method on `OpenSeesModel` lazy-imports the runner, same
+as `FEMData.assess` / `Results.assess`. No `figures=` — there is no
+`osm.render`; stills stay on `fem` / `results`.
+
+`osm.assess()` judges the `/opensees` zone only. It does not re-run
+`fem.assess(osm.fem)` — the skill teaches the trio (`fem` → `osm` →
+`results`) and `report.text` says so. One door per zone; no
+duplicated catalogs.
+
+Small API addition: a public `OpenSeesModel.analyze_call()` accessor
+(`tuple[steps, dt | None] | None`) — the field exists today, private
+only.
+
+**Staged decks are out of v1.** When `stages()` is non-empty the
+whole solver catalog lands in `report.skipped` with the reason
+"staged deck — stage-level judging is a follow-up". Stage support
+patterns hold DOFs and carry their own load imports; judging a
+staged deck with vanilla rules would false-flag every SSI model.
+
+### Catalog (solver zone, v1)
+
+| Code | Severity | Source | Notes |
+|---|---|---|---|
+| `OSM.NO_ANALYZE` | info | `analyze_call() is None` and `stages()` empty | "No `ops.analyze` archived." Eigen-only decks trip this by design — the message says eigen is not archived and a modal deck is fine. |
+| `OSM.NO_SUPPORT` | warning | `fixes()` empty **and** no homogeneous `SPRecord` in `fem.nodes.sp` **and** no pattern `sps` | Free-free eigen / DRM-style models are legal — hence warning, never error. |
+| `OSM.NO_PATTERN` | warning | `analyze_call()` present, `patterns()` empty | Free-vibration transients (initial conditions only) are the disclosed legal case. Skipped, not emitted, when `OSM.NO_ANALYZE` fired. |
+| `OSM.LOADS_UNIMPORTED` | warning | broker carries load records (`nodes.loads` / `elements.loads` / non-homogeneous `sp`) but every pattern block has empty `loads` + `sps` + `ele_loads` and no single-line pattern exists | The classic agent bug: `g.loads` declared, `from_model` forgotten. Fires also on a **zero-pattern** deck when an analyze is archived (vacuous-truth reading — `OSM.NO_PATTERN` alone reads as "free vibration is legal" and hides the stranded loads); with no archived analyze, declared loads may target a later deck (multi-deck workflow) — skipped, not judged. Zero-lines signal only — per-case attribution is undecidable (fact 2) and goes to `skipped` with that reason. |
+| `RES.ZERO_U` | info | `results=` passed; last-step displacement exactly all-zero while `analyze_call()` and ≥ 1 pattern exist | Measurement, `U_VS_DIAG` discipline: info until dogfood numbers justify promotion (amendment required). Listed in `skipped` when `results=None`. |
+
+FAIL-reserved is unchanged: none of these is `error`. Emit-time
+validation already hard-fails the certain cases (phantom case →
+`BridgeError`); assess reports what a run archive *looks like*, and
+every look-alike here has a legal reading.
+
+Skip ≠ pass (INV-3) applies: `RES.ZERO_U` without `results=`,
+per-case attribution, staged decks, and any check on a pre-schema
+archive (empty `stages()` on a pre-2.18.0 file is absence of
+evidence) land in `report.skipped`.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| `osm.assess()` delegates to `fem.assess()` | Duplicated findings, two catalogs behind one door. The trio stays composable; the skill sequences it. |
+| Any `error` severity in v1 | Every trigger has a legal reading (free-free eigen, free vibration, multi-deck workflows). Promotion needs numbers, per the Q4 discipline. |
+| Per-case `OSM.CASE_UNUSED` by matching expanded lines back to broker records | Fragile count-matching heuristic — one consistent-load expansion mismatch away from a false claim. |
+| Archiving `from_model_cases` provenance here | Real fix, wrong line — that is a `/opensees` schema change and belongs to the emitter/schema program. Named follow-up; it is what makes `OSM.CASE_UNUSED` honest. |
+| Inferring eigen from `analysis()` attrs | The chain attrs describe the last configured chain, not what ran. Guessing embarrasses the library (same class as faking SICN). |
+| Stage-aware judging in v1 | Stage capture buckets need their own sweep of hold/import semantics; a blanket skip is honest today. |
+
+### Acceptance (this amendment)
+
+- `osm.assess()` on a fixture deck with fixes + patterns + analyze
+  returns zero findings from this catalog; deleting the `fix` lines
+  yields `OSM.NO_SUPPORT`; dropping `from_model` while keeping
+  `g.loads` yields `OSM.LOADS_UNIMPORTED` — including on a
+  zero-pattern deck with an archived analyze (fires alongside
+  `OSM.NO_PATTERN`), while the same deck with no archived analyze
+  puts it in `skipped`; an eigen-style deck (no analyze) yields
+  `OSM.NO_ANALYZE` info and **skips** `OSM.NO_PATTERN`; a staged
+  fixture puts the whole catalog in `skipped`.
+- `results=` with an all-zero last step yields `RES.ZERO_U` info;
+  omitted `results=` lists it in `skipped`.
+- AST guard: `apeGmsh.assess` imports none of `gmsh` /
+  `apeGmsh.viewers` / `apeGmsh.opensees`.
+- `OpenSeesModel.analyze_call()` is public and covered.
+- Skill `assess.md` (canonical `skills/apegmsh/` and the synced
+  mirror) grows the solver-zone section: the trio order, the five
+  codes, and the three undecidables (eigen, per-case attribution,
+  staged decks) as honest limits.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **One door per zone** — yes; no delegation.
+2. **All non-error in v1** — yes; promotion is a numbered amendment
+   after dogfood.
+3. **Staged decks** — blanket skip in v1.
+
+Named follow-ups (not this amendment): archive `from_model_cases` on
+the pattern zone (schema bump) → per-case `OSM.CASE_UNUSED`;
+stage-aware solver judging.
