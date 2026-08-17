@@ -11,3 +11,9 @@
 # "## Unreleased — ..." ledger line); tests/test_changelog_structure.py
 # guards the known mangling mode (duplicated header line).
 CHANGELOG.md merge=union
+
+# Batch files are cmd.exe-only and must check out with CRLF regardless of
+# the cloning machine's core.autocrlf: cmd can mis-parse `goto` labels in
+# an LF-only .bat, and scripts/make-venv.bat relies on label jumps for its
+# name validation.
+*.bat text eol=crlf
