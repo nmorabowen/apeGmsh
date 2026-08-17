@@ -1107,3 +1107,148 @@ Resolved here:
 2. **Oracle-bearing v1** — yes (owner); no framework.
 3. **Full-solve verify on CI** — no; transcripts in the PR, honest
    lane note.
+
+## Amendment 8 (2026-08-17) — local git and the checkpoint contract
+
+Append-only. Parts 1–6, INV-1–INV-23, S0–S8b, and Amendments 1–7
+stay. The template already ships a curated `.gitignore` (results and
+binaries excluded, `run.json` kept visible) and Amendment 1 made
+markdown the canonical archive *because* it is git-tracked — yet
+nothing initializes a repo, no instruction file contains the word
+"commit", and runs carry no source provenance. This amendment makes
+**local git** a standard part of every habitat and defines the
+**checkpoint contract** that branches, merges, and (optional) PRs
+implement. The PR is a forge feature, not a git feature: forges stay
+a per-habitat choice, and the whole contract works in a local-only
+repo.
+
+### Decision
+
+- **`init` git-inits by default.** After the habitat's own
+  `check_template.py --strict` passes, `studio init` runs `git init`
+  + `git add -A` + one initial commit (`studio init: <name>`) in the
+  habitat root. Degrades, never gates: git missing → WARN (habitat
+  stays valid); target already inside a work tree → skip with a note
+  (no nested repos); `--no-git` opts out. This initial commit is the
+  only git write studio or lifecycle code ever makes (INV-24).
+- **The checkpoint contract.** Normative content here; the template
+  file is authored prose (INV-21):
+  1. `main` holds **checkpoints only** — commits where model `src/`,
+     accepted cases (`run.json`), and reports agree. Any commit on
+     main is safe to resume from.
+  2. Work happens on a branch — `work/<model>/<slug>`, one question
+     or lineage step per branch, never one branch per run.
+  3. **Branches are the question axis — nothing else.** A variant
+     that stays *live* (elastic and nonlinear analyses of the same
+     geometry) is a **case/driver dimension**: separate analysis
+     drivers in `src/`, all at tip, cases distinguish them.
+     Genuinely different idealizations coexist as separate model
+     ids under `models/`. The past is reachable by checkpoint tags.
+     Long-lived variant branches (an "elastic branch" kept as a
+     default while main goes nonlinear) are the anti-pattern.
+  4. A branch **becomes a checkpoint** by a `--no-ff` merge to main
+     after (a) the stage-accepted bar (reporting.md: oracle line,
+     EDP table, ≥1 still/curve, case links) and (b) a review pass —
+     local branch review, or PR review when the habitat has a forge.
+     The merge message / PR body carries stage + oracle line + case
+     links.
+  5. Accepted checkpoints get an annotated tag
+     `checkpoint/<model>/<slug>`; `git tag -l 'checkpoint/*'` lists
+     resumable states; resume = branch from the tag.
+  6. Local and forge are the **same contract**: the PR is the review
+     surface for 4(b) and nothing else. No studio code touches a
+     forge (INV-25).
+- **Teaching lives in the template.** New instruction file
+  `APE/instructions/checkpoints.md` teaches the contract to agent
+  and user (indexed in the instructions README); how-we-work.md
+  gains commit hygiene + a pointer. `start_session` prints
+  `branch @ sha (dirty: N files)`; `finish_session` prints the
+  uncommitted count — both print, never write.
+- **Run provenance.** The case contract (models/README.md) gains
+  `model_sha` (HEAD at run time) + `git_dirty` (bool) in `run.json`;
+  template helper `scripts/_habitat.py::git_provenance()` supplies
+  them and returns None outside a repo (fields then omitted).
+  reporting.md: model reports name the sha of each quoted case;
+  dirty = disclosure only (the Amendment 5 staleness pattern).
+
+### New invariants
+
+- **INV-24 (git writes are human/agent acts).** Beyond `init`'s
+  single initial commit, no studio code, MCP verb, or lifecycle
+  script ever adds, commits, tags, or pushes. Lifecycle scripts may
+  read (branch / sha / status) to print; they never write.
+- **INV-25 (forge-agnostic).** Studio and the template never call a
+  forge API nor require a remote. Every documented workflow — the
+  checkpoint contract included — works in a local-only repo. GitHub
+  or self-hosted is a per-habitat choice recorded in prose.
+- **INV-26 (blobs stay out of git).** Results and binary artifacts
+  never enter git — no LFS, no force-adds. The template `.gitignore`
+  is the enforcement surface; new binary formats are added there.
+  Provenance rides in `run.json`; blob archival is external sync,
+  out of scope for the repo.
+- **INV-27 (checkpoints are convention, not machinery).** The
+  checkpoint contract is prose + plain git. Studio grows no
+  checkpoint verbs, state files, or hooks; the MCP growth law
+  (INV-10) is unchanged.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S9a** | `--no-git` flag + git-init step in `_init_habitat.py` (init + `add -A` + initial commit after the strict check; WARN degrade; inside-work-tree skip) + tests: fresh init → repo with exactly one commit and **clean `git status --porcelain`** (proves the shipped `.gitignore` covers the initialized tree); `--no-git` → no `.git/`; nested target → skip + note; git absent from PATH → WARN, exit 0 | S7a |
+| **S9b** | Template: `APE/instructions/checkpoints.md` (authored, INV-21) + instructions README index + how-we-work commit hygiene + `start_session` branch/sha/dirty line + `finish_session` uncommitted-count line + `_habitat.py::git_provenance()` + models/README.md `run.json` fields + reporting.md sha / dirty-disclosure line | S9a |
+| **S9c** | Docs: `studio-habitat.md` gains the git default, `--no-git`, and a checkpoint-contract summary; skill Studio paragraph names both | S9b |
+
+No `contract_version` bump: `.apegmsh/*` schemas are untouched —
+`run.json` is the habitat's case manifest (prose contract), not
+habitat-state.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Git-LFS / committing results** | A 20 h run is not reproducible from a sha, and LFS quotas punish exactly what the `.gitignore` already excludes. Git holds text; blob sync stays external (INV-26). |
+| **Auto-commit / auto-checkpoint in lifecycle scripts** | Magic writes contradict the template's refuse-don't-overwrite stance; a checkpoint is an acceptance act, not a side effect (INV-24). |
+| **Git verbs in MCP** | INV-10 growth law; git is the agent's own tool — same stance as `init`: CLI/shell only. |
+| **Forge coupling (studio calls GitHub / Gitea APIs)** | Breaks air-gapped, client-confidential habitats (INV-25). |
+| **Require git / fail `init` without it** | WARN-degrade keeps habitats valid on locked-down machines — the visual-talk WARN stance. |
+| **Library-side provenance writer** | `run.json` is the habitat's contract obligation; habitats stay self-contained (Amendment 6) — the helper ships in template scripts. |
+| **Branch-per-case** | One branch per run drowns the history. Branches map to questions / lineage steps; cases stay folders inside the branch's checkpoint. |
+| **Long-lived variant branches** (elastic kept as a parallel "default" while main goes nonlinear) | Divergence + merge pain. Live variants are case drivers at tip; coexisting idealizations are model ids; history is tags (contract point 3). |
+
+### Acceptance (this amendment)
+
+- Fresh `studio init` into an empty tmp dir: `.git/` exists, exactly
+  one commit, `git status --porcelain` is clean, and the habitat's
+  own strict check passes. `--no-git`, nested-repo, and
+  no-git-on-PATH paths behave as sliced.
+- `checkpoints.md` teaches: main-as-checkpoints, work branches,
+  merge-with-review as acceptance, `checkpoint/*` tags,
+  resume-from-tag, the branch / case-driver / model-id axis rule
+  (contract point 3), and the local ↔ PR mapping — indexed from the
+  instructions README; how-we-work points to it.
+- `start_session` prints branch / sha / dirty; `finish_session`
+  prints the uncommitted count. Grep gate (INV-24): no
+  `git add|commit|tag|push` invocation in studio code or template
+  scripts outside `_init_habitat.py` — as a test.
+- A case using `git_provenance()` lands `model_sha` / `git_dirty` in
+  `run.json`; outside a repo the helper returns None and the case
+  still validates (fields optional).
+- Docs + skill updated (S9c).
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Default git init** — yes; `--no-git` opts out (owner).
+2. **Checkpoint definition** — merge-to-main + `checkpoint/*` tag;
+   PRs are the forge review surface only (owner).
+3. **`model_sha` home** — habitat `run.json` via the template
+   helper; ResultsSession (ADR 0098) may mirror it later, not here.
+4. **Dirty runs** — disclosure only (Amendment 5 pattern).
+
+Deferred:
+
+5. **Clone-to-new-machine re-alignment** (`.cursor/mcp.json` carries
+   an absolute root) — the how-to notes the manual edit; a re-align
+   verb only if dogfood demands it.
