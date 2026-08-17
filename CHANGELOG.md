@@ -22,6 +22,34 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the `live` surface on stock openseespy
+
+`tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular`
+passed on the Ladruno fork and failed on stock openseespy. The harness'
+early stop is `ops.analyze() != 0` and nothing else, so it inherits the
+backend's honesty: stock `BandGenLinLapackSolver::solve()` returns
+`-info+1`, which C reads as `(-info) + 1`, so `info == 1` — the zero pivot
+on the FIRST equation, exactly this section's free axial DOF — returns `0`
+== success. The fork returns `-info`. The test is now `@pytest.mark.ladruno_fork`
+with the mechanism written down; `_mc.py` is unchanged, because stock's
+values here are exact (symmetry holds the residual at zero) — only the
+*reporting* diverges.
+
+A companion test runs the same section on **every** build and checks each
+returned point against the closed form `M = min(EI0·κ, Mp)`, so marking the
+first one fork-only does not leave the degenerate section uncovered on stock.
+It is the half with real teeth there: a build that masks the singularity *and*
+corrupts the answer — a failed factorization leaves the load vector in the
+solution vector, which the caller then spends as a displacement increment —
+now fails instead of passing quietly.
+
+New `live-stock` CI lane closes the gap that hid it: no job installed
+openseespy, so every `live`-marked test skipped itself and the whole
+backend-driven surface reported green without executing. The lane installs
+stock openseespy, hard-asserts the backend actually imported (otherwise its
+own failure mode is the silent all-skip it exists to prevent), and runs
+`-m "live and not qt and not subprocess and not bench"` — 54 tests, ~80 s.
+
 ### FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
 
 Every `studio init` on a machine that was not the template author's
