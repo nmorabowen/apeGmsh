@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7996,6 +8007,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12541,6 +12563,31 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio">ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio<a class="headerlink" href="#added-adr-0095-amendment-6-s7as7b-habitat-template-ships-with-studio" title="Permanent link">&para;</a></h3>
+<p><code>apeGmsh.studio.template</code> now ships the APE Studio habitat tree as
+package data (playbook, memory stubs, skill/library doors + harvest
+tooling, session lifecycle scripts, soft-contract checker, postmortem
+/ reports skeletons, <code>ape.project.yaml</code>) — lifted byte-identical
+(INV-21) from the curated <code>ape-studio-template@bab594c</code> extraction.
+<code>python -m apeGmsh.studio init --name &lt;habitat&gt; --model &lt;model_id&gt;
+[--root DIR]</code> copies the packaged template into a target directory,
+substitutes <code>__HABITAT_NAME__</code> / <code>__MODEL_ID__</code>, aligns
+<code>.cursor/mcp.json</code>, scaffolds <code>models/&lt;model_id&gt;/{src,cases}</code>, and
+runs the new habitat's own <code>scripts/check_template.py --strict</code>;
+refuses (nonzero, no side effects) an already-initialized or
+conflicting non-empty target. The copier walks the packaged tree via
+<code>importlib.resources</code>, not <code>__file__</code>, so it works from an installed
+wheel. The template's own <code>.gitignore</code> and <code>.cursor/mcp.json</code> ship
+under safe names (<code>dot.gitignore</code>, <code>cursor/mcp.json</code> — package-data
+globs drop dot-prefixed entries) and are restored to their real
+dotfile paths by <code>init</code>. INV-20: the author's personal skill suites
+are named only in <code>APE/skills/README.md</code>'s optional-use guidance,
+never required; a grep gate pins this over the packaged tree. Habitats
+stay self-contained — <code>init</code> copies the lifecycle scripts and checker
+in, so an initialized habitat survives apeGmsh version drift. Docs:
+<code>docs/how-to/studio-habitat.md</code> gains a "Create a habitat" section;
+the apegmsh skill's Studio paragraph names <code>init</code>. No <code>contract_version</code>
+bump — <code>init</code> writes project files, not habitat-state files.</p>
 <h3 id="added-adr-0095-amendment-5-assess-snapshot-reaches-the-report">ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report<a class="headerlink" href="#added-adr-0095-amendment-5-assess-snapshot-reaches-the-report" title="Permanent link">&para;</a></h3>
 <p><code>--assess</code> (CLI and MCP, which shells to the CLI) now writes
 <code>.apegmsh/assess.json</code> — schema, timestamp, target paths, findings,

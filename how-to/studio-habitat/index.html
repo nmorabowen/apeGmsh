@@ -1395,6 +1395,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#create-a-habitat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a habitat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#project-root-inv-15" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3566,6 +3577,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#create-a-habitat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a habitat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#project-root-inv-15" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3708,6 +3730,23 @@ over <code>g.model.*</code>.</p>
 <p>This page is the S5e spawn / ownership / poll contract (ADR 0095
 Amendment 3). Identity is always labels / physical groups / phase, not
 tags.</p>
+<h2 id="create-a-habitat">Create a habitat<a class="headerlink" href="#create-a-habitat" title="Permanent link">&para;</a></h2>
+<p>An APE Studio <strong>habitat</strong> is a full FEM project scaffold: the <code>APE/</code>
+playbook (instructions, memory, skill/library doors), session lifecycle
+scripts, a soft-contract checker, and a <code>models/&lt;id&gt;/{src,cases}</code>
+lineage. Stamp one from the template apeGmsh ships (ADR 0095 Amendment
+6):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python -m apeGmsh.studio init --name &lt;habitat-name&gt; --model &lt;model_id&gt; [--root DIR]
+</span></code></pre></div>
+<p>Copies the packaged template into <code>DIR</code> (default cwd), substitutes the
+habitat name / model id, aligns <code>.cursor/mcp.json</code>, scaffolds
+<code>models/&lt;model_id&gt;/{src,cases}</code>, and finishes by running the new
+habitat's own <code>scripts/check_template.py --strict</code>. Refuses (nonzero,
+no side effects) if the target already looks initialized or is
+non-empty in a conflicting way. Habitats are self-contained — they
+carry their own lifecycle scripts and checker, so one survives apeGmsh
+version drift.</p>
+<p>Then open <code>APE/README.md</code> in the new habitat and follow session start.</p>
 <h2 id="project-root-inv-15">Project root (INV-15)<a class="headerlink" href="#project-root-inv-15" title="Permanent link">&para;</a></h2>
 <p>Habitat files live under <code>&lt;root&gt;/.apegmsh/</code>. Resolve root in this order:</p>
 <ol>
@@ -3721,19 +3760,19 @@ tags.</p>
 <code>root=</code> values. Do not <code>Set-Location</code> the apeGmsh library checkout.</p>
 <h2 id="spawn">Spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h2>
 <h3 id="mcp-agent-door">MCP (agent door)<a class="headerlink" href="#mcp-agent-door" title="Permanent link">&para;</a></h3>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c"># Quiet Ladruno/apeGmsh banners before Python starts (JSON-RPC).</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">$env:LADRUNO_OPENSEES_QUIET</span> <span class="p">=</span> <span class="s2">&quot;1&quot;</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">$env:APEGMSH_QUIET</span> <span class="p">=</span> <span class="s2">&quot;1&quot;</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nv">$env:APEGMSH_ROOT</span> <span class="p">=</span> <span class="s2">&quot;C:\path\to\model-project&quot;</span>   <span class="c"># optional default root</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">apeGmsh</span><span class="p">.</span><span class="n">studio</span><span class="p">.</span><span class="n">mcp</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c"># Quiet Ladruno/apeGmsh banners before Python starts (JSON-RPC).</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nv">$env:LADRUNO_OPENSEES_QUIET</span> <span class="p">=</span> <span class="s2">&quot;1&quot;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nv">$env:APEGMSH_QUIET</span> <span class="p">=</span> <span class="s2">&quot;1&quot;</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nv">$env:APEGMSH_ROOT</span> <span class="p">=</span> <span class="s2">&quot;C:\path\to\model-project&quot;</span>   <span class="c"># optional default root</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">apeGmsh</span><span class="p">.</span><span class="n">studio</span><span class="p">.</span><span class="n">mcp</span>
 </span></code></pre></div>
 <p>Cursor <code>mcp.json</code> can point at <code>scripts/studio-mcp.ps1</code> (quiet env only).
 Pass <code>root=</code> on each tool when <code>APEGMSH_ROOT</code> is unset.</p>
 <p>Needs <code>pip install apeGmsh[mcp]</code> (and usually <code>[viewer]</code> for the host).</p>
 <h3 id="qt-host-human-viewport">Qt host (human viewport)<a class="headerlink" href="#qt-host-human-viewport" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python -m apeGmsh.studio script.py --phase model --root &lt;project&gt;
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>python -m apeGmsh.studio script.py --phase mesh --root &lt;project&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python -m apeGmsh.studio script.py --phase model --root &lt;project&gt;
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python -m apeGmsh.studio script.py --phase mesh --root &lt;project&gt;
 </span></code></pre></div>
 <p>Picks write <code>&lt;root&gt;/.apegmsh/selection.json</code>. Replay is a subprocess /
 held-open session — agents do not share that Gmsh kernel (INV-5).</p>
@@ -3743,7 +3782,7 @@ claim reports busy and does nothing (INV-18); an unchanged file is a
 no-op ("Up to date"); a failed replay keeps the previous frame
 (INV-4). Ledger records gain a <code>trigger</code> field (<code>open</code> / <code>refresh</code>).</p>
 <h3 id="headless-replay-no-window">Headless replay (no window)<a class="headerlink" href="#headless-replay-no-window" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python -m apeGmsh.studio script.py --phase mesh --no-viewer --root &lt;project&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python -m apeGmsh.studio script.py --phase mesh --no-viewer --root &lt;project&gt;
 </span></code></pre></div>
 <p>Same gate as MCP <code>run_until</code>.</p>
 <h2 id="file-ownership">File ownership<a class="headerlink" href="#file-ownership" title="Permanent link">&para;</a></h2>
