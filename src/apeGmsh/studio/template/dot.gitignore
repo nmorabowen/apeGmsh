@@ -1,0 +1,20 @@
+.apegmsh/
+__pycache__/
+*.pyc
+*.h5
+*.ladruno
+*.mpco
+*.gif
+*.png
+!reports/figures/*.png
+!tools/**/human_sketches/**
+!tools/**/agentic_sketches/**
+# Keep run.json visible for report links / oracle clones; ignore bulk case data
+models/*/cases/**
+!models/*/cases/*/
+!models/*/cases/*/run.json
+tools/**/human_sketches/sessions/
+tools/**/human_sketches/assets/
+tools/**/agentic_sketches/sessions/
+tools/**/agentic_sketches/assets/
+tools/**/.apeSketch/

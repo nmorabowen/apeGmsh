@@ -12,6 +12,10 @@ the resolved project root (``--root`` / ``APEGMSH_ROOT`` / nearest
 ``--pin`` / ``--emit-report`` are S4c/Amendment 2 (ledger pin + docs/
 Markdown archive; ``--format html|canvas`` are skins of the same bundle).
 Stills go through ``python -m apeGmsh.viewers render``.
+
+``python -m apeGmsh.studio init --name <habitat> --model <model_id>
+[--root DIR]`` stamps a fresh habitat from the packaged template (ADR
+0095 Amendment 6, S7a) — see ``apeGmsh.studio._init_habitat``.
 """
 
 from __future__ import annotations
@@ -24,6 +28,17 @@ from typing import Optional, Sequence
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # `init` is special-cased on the raw argv, ahead of the `script`
+    # positional's Path resolution below: it takes its own --name/--model
+    # flags, not a script path, so it cannot share that parser. A script
+    # literally named `init` (unusual — no `.py`) needs a path prefix,
+    # e.g. `./init` or `init.py`.
+    raw = list(sys.argv[1:]) if argv is None else list(argv)
+    if raw and raw[0] == "init":
+        from apeGmsh.studio._init_habitat import main as init_main
+
+        return init_main(raw[1:])
+
     parser = argparse.ArgumentParser(
         prog="python -m apeGmsh.studio",
         description=(

@@ -116,7 +116,14 @@ include = ["apeGmsh*"]
 
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
-"apeGmsh.studio" = ["_api_index.json"]
+# ADR 0095 Amendment 6 S7a: the habitat template (md/yaml/json/ps1, plus
+# the two renamed dotfiles `dot.gitignore` / `cursor/mcp.json` — see
+# `apeGmsh/studio/template/` docstring) ships as inert package data.
+# "**" requires setuptools >= 62.3 (this project floors 77.0); note that
+# `glob` skips dot-prefixed entries even under "**", which is exactly why
+# the template's `.gitignore` / `.cursor/` are stored under safe names and
+# restored to their real dotfile names by `studio init`.
+"apeGmsh.studio" = ["_api_index.json", "template/**/*"]
 "apeGmsh.studio.schemas" = ["*.schema.json", "fixtures/*.json"]
 
 [tool.pytest.ini_options]

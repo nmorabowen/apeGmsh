@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "apegmsh-studio-habitat": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\nmb\\.cursor\\worktrees\\apeGmsh\\mcp-ledger\\scripts\\studio-mcp.ps1"
+      ],
+      "env": {
+        "LADRUNO_OPENSEES_QUIET": "1",
+        "APEGMSH_QUIET": "1",
+        "APEGMSH_STUDIO_ROOT": "__HABITAT_ROOT__",
+        "APEGMSH_PYTHON": "C:\\Users\\nmb\\venv\\opensees_env\\Scripts\\python.exe"
+      }
+    }
+  }
+}

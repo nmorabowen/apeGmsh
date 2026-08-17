@@ -219,6 +219,9 @@ After solve, still `assess()` + `render()`, not `viewer()`.
 When the agent must look, write visors under `.apegmsh/visors/`
 (`results.render` / labeled matplotlib) and read those PNGs — never
 capture the OS desktop or the human Qt window.
+`python -m apeGmsh.studio init --name <habitat> --model <model_id>`
+stamps a fresh APE Studio habitat from the packaged template (ADR 0095
+Amendment 6) — playbook, lifecycle scripts, checker, model lineage.
 Read-only MCP (ADR 0095 S4a–S4e / S5a / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
 `pip install mcp`). Tools: `status`, `get_selection`, `lookup`, `run_until`,
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
