@@ -17,7 +17,7 @@ lineage. Stamp one from the template apeGmsh ships (ADR 0095 Amendment
 6):
 
 ```text
-python -m apeGmsh.studio init --name <habitat-name> --model <model_id> [--root DIR]
+python -m apeGmsh.studio init --name <habitat-name> --model <model_id> [--root DIR] [--no-git]
 ```
 
 Copies the packaged template into `DIR` (default cwd), substitutes the
@@ -28,6 +28,35 @@ no side effects) if the target already looks initialized or is
 non-empty in a conflicting way. Habitats are self-contained — they
 carry their own lifecycle scripts and checker, so one survives apeGmsh
 version drift.
+
+`init` also leaves the habitat under **local git**: a repo on branch
+`main` with one initial commit (`studio init: <name>`) — the only git
+write any studio code ever makes (INV-24). `--no-git` opts out; a
+machine without git gets a WARN and a valid un-versioned habitat; a
+target already inside a work tree is left alone (no nested repos).
+
+### Git and checkpoints (ADR 0095 Amendment 8)
+
+The habitat's git workflow is the **checkpoint contract** — the full
+text ships in every habitat as `APE/instructions/checkpoints.md`. In
+short: `main` holds checkpoints only (commits where model source,
+accepted cases, and reports agree); work happens on
+`work/<model>/<slug>` branches, one question or lineage step each; a
+branch becomes a checkpoint by a `--no-ff` merge after the
+stage-accepted bar plus a review pass, and gets an annotated
+`checkpoint/<model>/<slug>` tag. Each case's `run.json` carries
+`model_sha` + `git_dirty` (from the habitat's own
+`scripts/_habitat.py::git_provenance()`), so results on disk always
+point back at the source that produced them. Results themselves never
+enter git — the shipped `.gitignore` keeps bulk artifacts out and
+`run.json` visible; no LFS. Forges are optional and per habitat: a PR
+is the review surface for the merge and nothing more — the whole
+contract works in a local-only repo, and nothing in studio calls a
+forge.
+
+Cloning a habitat onto another machine: `.cursor/mcp.json` carries the
+habitat root as an **absolute path** — edit it once on the new machine
+(`scripts/start_session.py` fails with the exact mismatch and the fix).
 
 Then open `APE/README.md` in the new habitat and follow session start.
 
