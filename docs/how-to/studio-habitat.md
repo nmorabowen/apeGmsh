@@ -56,9 +56,22 @@ is the review surface for the merge and nothing more — the whole
 contract works in a local-only repo, and nothing in studio calls a
 forge.
 
-Cloning a habitat onto another machine: `.cursor/mcp.json` carries the
-habitat root as an **absolute path** — edit it once on the new machine
-(`scripts/start_session.py` fails with the exact mismatch and the fix).
+`init` writes three machine-specific values into `.cursor/mcp.json`,
+none of which can live in package data: the MCP `command` (the
+interpreter that ran `init`), `PYTHONPATH` (where that interpreter's
+apeGmsh lives — pinning it stops another editable install from winning),
+and `APEGMSH_STUDIO_ROOT` (this habitat's absolute path). The server is
+launched as `<python> -m apeGmsh.studio.mcp`; the quiet-banner env vars
+sit in the same block, which is early enough because MCP applies `env`
+before the interpreter starts.
+
+Cloning a habitat onto another machine: all three are absolute paths, so
+re-run `init` into a fresh directory or edit the file once on the new
+machine (`scripts/start_session.py` fails with the exact root mismatch
+and the fix). The lifecycle scripts are independent of it —
+`scripts/start.ps1` / `finish.ps1` resolve their own interpreter, in
+order: `APEGMSH_PYTHON`, an activated `VIRTUAL_ENV`, the office venv
+names, then PATH `python`, printing whichever it picked.
 
 Then open `APE/README.md` in the new habitat and follow session start.
 

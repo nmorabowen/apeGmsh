@@ -14,9 +14,10 @@ REM directory makes `import pyvista` die with "DLL load failed while
 REM importing vtkCommonMath: The filename or extension is too long."
 REM A short root avoids it outright.
 REM
-REM `[all]` deliberately does NOT include the `mcp` extra upstream, so it
-REM is requested explicitly here - otherwise the Studio habitat installs
-REM but cannot start.
+REM `[all]` covers the Studio MCP extra as of 2026-08; `mcp>=1.2` is still
+REM named explicitly below so this script also works against an older
+REM checkout, where `[all]` installed the Studio package without the SDK
+REM needed to start it. pip treats the duplicate as satisfied.
 REM ---------------------------------------------------------------------
 
 set "VENV_ROOT=C:\venv"

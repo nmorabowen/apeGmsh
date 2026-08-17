@@ -105,10 +105,30 @@ docs = [
     "mkdocstrings[python]>=0.24",
     "mkdocs-redirects>=1.2",
 ]
+# `all` is the install line the README, the docs and every tutorial hand
+# out, so it must cover everything that installs cleanly on every
+# supported platform. `mcp` was absent until 2026-08 — `[all]` shipped the
+# `apeGmsh.studio` package without the SDK needed to start
+# `python -m apeGmsh.studio.mcp`, so the Studio door failed at launch and
+# nowhere earlier. It drags a server stack (uvicorn / starlette /
+# sse-starlette) plus pydantic, opentelemetry-api and pyjwt in behind it;
+# take the narrower extras (`apeGmsh[viewer,opensees]`) to avoid that.
+#
+# Deliberately still OUT, and why — do not "complete" this list without
+# reading these:
+#   partition-pymetis   pymetis has no PyPI Windows wheel (conda-forge
+#                       only), so folding it in would break
+#                       `pip install apeGmsh[all]` on Windows outright.
+#   partition-networkx  inert without nxmetis, which is git-install only
+#                       (see the note on the extra above).
+#   animation           imageio + imageio-ffmpeg; ffmpeg is a large
+#                       binary payload and only the video export needs it.
+#   docs, section-oracle  build/CI-only, never a user runtime dep.
 all = ["matplotlib", "scipy", "openseespy", "ezdxf",
        "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
        "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
-       "ipywidgets>=8.0", "nest_asyncio2"]
+       "ipywidgets>=8.0", "nest_asyncio2",
+       "mcp>=1.2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

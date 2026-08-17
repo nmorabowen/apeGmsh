@@ -19,7 +19,8 @@ tools/
 
 ## Open the interfaces
 
-From the habitat root (uses `opensees_env` if on `PATH`, else `python`):
+From the habitat root (any interpreter that can import `apeCAD` /
+`apeSketch` — `scripts/start.ps1` prints the one it resolved):
 
 ```text
 python tools/apeCAD/open_interface.py
@@ -37,6 +38,12 @@ python tools/apeSketch/open_interface.py --role agentic --http-only
 
 `--role` selects which sketch folder is the default save / session root
 for that run (`human_sketches` vs `agentic_sketches`).
+
+apeCAD refuses to start when its port (default 8765) already answers.
+That is deliberate: its server allows address reuse, so on Windows a
+second instance binds the same port as a running one and serves that
+session's sketch instead of an empty document — silently. Stop the other
+instance, or pass `--port N`.
 
 Clones are expected under `<github>/apeCAD` and `<github>/apeSketch`
 (`~/Documents/Github/…`) unless `APECAD_SRC` / `APESKETCH_SRC` point at

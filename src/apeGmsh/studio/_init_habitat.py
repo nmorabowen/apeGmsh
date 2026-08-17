@@ -40,6 +40,8 @@ TEMPLATE_PACKAGE = "apeGmsh.studio.template"
 HABITAT_PLACEHOLDER = "__HABITAT_NAME__"
 MODEL_PLACEHOLDER = "__MODEL_ID__"
 ROOT_PLACEHOLDER = "__HABITAT_ROOT__"
+PYTHON_PLACEHOLDER = "__APEGMSH_PYTHON__"
+SRC_PLACEHOLDER = "__APEGMSH_SRC__"
 
 # Packaging hazard workaround (see the template's own docstring / the PR
 # that introduced it): a literal nested ``.gitignore`` would apply its
@@ -144,25 +146,51 @@ def _substitute_placeholders(target: Path, name: str, model: str) -> None:
     print(f"OK: substituted {HABITAT_PLACEHOLDER}={name!r}, {MODEL_PLACEHOLDER}={model!r}")
 
 
+def _apegmsh_src() -> str:
+    """Directory that must be on ``PYTHONPATH`` for the apeGmsh running
+    this init to be importable — i.e. ``src/`` for an editable checkout,
+    ``site-packages`` for a wheel (already on the default path, so
+    pinning it there is a harmless no-op). Pinning it makes the habitat's
+    MCP server load *this* apeGmsh rather than whichever other editable
+    install happens to win on the target machine."""
+    import apeGmsh
+
+    return str(Path(apeGmsh.__file__).resolve().parent.parent)
+
+
 def _align_mcp_json(target: Path) -> None:
-    """Same mechanism as the template's own ``init_habitat.py`` /
-    ``_habitat.py``: point ``.cursor/mcp.json``'s ``APEGMSH_STUDIO_ROOT``
-    at this habitat's resolved path."""
+    """Personalize ``.cursor/mcp.json`` for this machine: the habitat
+    root (``APEGMSH_STUDIO_ROOT``), the interpreter that launches the
+    server (``command``), and the apeGmsh source it should import
+    (``PYTHONPATH``). None of the three can be baked into package data —
+    they are properties of the machine running ``init``, not of the
+    template."""
     mcp_json = target / ".cursor" / "mcp.json"
     if not mcp_json.is_file():
         print("WARN: .cursor/mcp.json missing, skipping")
         return
     data = json.loads(mcp_json.read_text(encoding="utf-8"))
     resolved = str(target.resolve())
+    python = sys.executable
+    src = _apegmsh_src()
+
     changed = False
     for cfg in (data.get("mcpServers") or {}).values():
         env = cfg.get("env") or {}
         if env.get("APEGMSH_STUDIO_ROOT") == ROOT_PLACEHOLDER:
             env["APEGMSH_STUDIO_ROOT"] = resolved
             changed = True
+        if env.get("PYTHONPATH") == SRC_PLACEHOLDER:
+            env["PYTHONPATH"] = src
+            changed = True
+        if cfg.get("command") == PYTHON_PLACEHOLDER:
+            cfg["command"] = python
+            changed = True
     if changed:
         mcp_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         print(f"OK: .cursor/mcp.json APEGMSH_STUDIO_ROOT -> {resolved}")
+        print(f"OK: .cursor/mcp.json command -> {python}")
+        print(f"OK: .cursor/mcp.json PYTHONPATH -> {src}")
     else:
         print(f"WARN: .cursor/mcp.json had no {ROOT_PLACEHOLDER} placeholder")
 
