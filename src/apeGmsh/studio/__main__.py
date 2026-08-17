@@ -82,6 +82,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Replay only; do not open the Qt host (for tests / headless).",
     )
     parser.add_argument(
+        "--no-watch",
+        dest="no_watch",
+        action="store_true",
+        help=(
+            "Disable the auto-refresh file watch (on by default, ADR 0095 "
+            "S6b). The host's 'Watch' toolbar toggle can still enable it "
+            "live."
+        ),
+    )
+    parser.add_argument(
         "--status",
         action="store_true",
         help="Print last run + names + pick from .apegmsh/ (no replay).",
@@ -281,6 +291,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             root=root,
             script=script,
             runner=runner,
+            watch=not args.no_watch,
         )
     finally:
         if result.session is not None and getattr(result.session, "is_active", False):

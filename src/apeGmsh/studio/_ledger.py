@@ -43,10 +43,11 @@ def make_record(
     ``script`` / ``cwd`` are root-relative posix paths when they fall
     under that root (S5i); absolute otherwise.
 
-    ``trigger`` (ADR 0095 Amendment 4 / S6a) records what caused this
-    run: ``"open"`` (host/CLI start), ``"refresh"`` (manual refresh),
-    or ``"watch"`` (S6b, not emitted yet). Additive — readers of older
-    records without the key must tolerate its absence (INV-17).
+    ``trigger`` (ADR 0095 Amendment 4 / S6a-S6b) records what caused
+    this run: ``"open"`` (host/CLI start), ``"refresh"`` (manual
+    refresh), or ``"watch"`` (settled file-watch tick). Additive —
+    readers of older records without the key must tolerate its
+    absence (INV-17).
     """
     labels: list[str] = []
     pgs: list[str] = []
