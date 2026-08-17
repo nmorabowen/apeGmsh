@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8018,6 +8029,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12585,6 +12607,23 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-habitat-template-visual-talk-convention-apecadapesketch-requisites">ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites<a class="headerlink" href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" title="Permanent link">&para;</a></h3>
+<p>apeCAD and apeSketch (spatial-intent CAD scratchpad and hand-ink bridge)
+are now public and pip-installable, so the habitat template gains a
+requisite check + protocol for the visual conversation the tools already
+ship launchers for. <code>scripts/start_session.py</code> import-checks <code>apeCAD</code> and
+<code>apeSketch</code> after the existing Studio check — missing is a WARN (not
+session-fatal; a post-processing-only session doesn't need either
+client) with the <code>pip install git+https://github.com/nmorabowen/...</code>
+hint, factored into <code>_check_visual_talk_requisite</code> for unit testing.
+<code>APE/instructions/socratic-geometry.md</code> gains an "Asking for a draft or
+ink" section defining the ask protocol: what the agent asks for, where
+artifacts land (<code>tools/apeSketch/human_sketches/</code> for human ink,
+<code>agentic_sketches/</code> for agent references, or <code>models/&lt;id&gt;/</code> for a
+lineage), and that the agent consumes <code>Document.to_json()</code>/<code>to_frame()</code>
+or the apeSketch session export by name, not pixel. <code>ape.project.yaml</code>
+gains an informational <code>requires:</code> block listing apeGmsh/apeCAD/apeSketch
+install hints. Mirrored into the <code>steel-connection</code> worked example.</p>
 <h3 id="added-adr-0095-amendment-6-template-improvement-workflow-v2">ADDED — ADR 0095 Amendment 6: template improvement-workflow v2<a class="headerlink" href="#added-adr-0095-amendment-6-template-improvement-workflow-v2" title="Permanent link">&para;</a></h3>
 <p><code>APE/instructions/continuous-improvement.md</code> gains a "Promotion lanes"
 section naming Lane A (habitat memory, immediate), Lane B (template —
