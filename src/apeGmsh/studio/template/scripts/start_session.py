@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import re
 import subprocess
 import sys
@@ -71,6 +72,27 @@ def _parse_backlog_open_items(path: Path) -> list[tuple[str, str]]:
         title = cells[2] if len(cells) > 2 and cells[2] else (cells[1] if len(cells) > 1 else "")
         items.append((match.group(0), title))
     return items
+
+
+def _check_visual_talk_requisite(
+    module_name: str, repo_name: str, import_func=importlib.import_module
+) -> str:
+    """Import-check one visual-talk package (apeCAD / apeSketch). Missing
+    is a WARN, not a failure — a post-processing-only session doesn't need
+    either client."""
+    try:
+        import_func(module_name)
+    except Exception:  # noqa: BLE001
+        return (
+            f"WARN: {module_name} not installed (visual-talk unavailable) — "
+            f"pip install git+https://github.com/nmorabowen/{repo_name}.git"
+        )
+    return f"OK: {module_name} import OK"
+
+
+def _print_visual_talk_requisites() -> None:
+    for module_name in ("apeCAD", "apeSketch"):
+        print(_check_visual_talk_requisite(module_name, module_name))
 
 
 def _print_backlog_summary() -> None:
@@ -137,6 +159,8 @@ def main() -> int:
         print("  Check APEGMSH_PYTHON / APEGMSH_SRC (apeGmsh src).")
         return 3
     print(f"OK: {msg}")
+
+    _print_visual_talk_requisites()
 
     # Live MCP root cannot be verified from this process (Cursor owns stdio).
     # Self-echo status(root=HABITAT) is theater — do not pretend it checks the server.

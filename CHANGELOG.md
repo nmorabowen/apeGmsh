@@ -46,6 +46,24 @@ openseespy / the Ladruno classic exe and is not CI-run — see the
 implementing PR for the local verify transcripts. `docs/how-to/studio-habitat.md`
 gains "Use the example library"; the `apegmsh` skill's Studio
 paragraph and `workflows.md` name the door.
+### ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites
+
+apeCAD and apeSketch (spatial-intent CAD scratchpad and hand-ink bridge)
+are now public and pip-installable, so the habitat template gains a
+requisite check + protocol for the visual conversation the tools already
+ship launchers for. `scripts/start_session.py` import-checks `apeCAD` and
+`apeSketch` after the existing Studio check — missing is a WARN (not
+session-fatal; a post-processing-only session doesn't need either
+client) with the `pip install git+https://github.com/nmorabowen/...`
+hint, factored into `_check_visual_talk_requisite` for unit testing.
+`APE/instructions/socratic-geometry.md` gains an "Asking for a draft or
+ink" section defining the ask protocol: what the agent asks for, where
+artifacts land (`tools/apeSketch/human_sketches/` for human ink,
+`agentic_sketches/` for agent references, or `models/<id>/` for a
+lineage), and that the agent consumes `Document.to_json()`/`to_frame()`
+or the apeSketch session export by name, not pixel. `ape.project.yaml`
+gains an informational `requires:` block listing apeGmsh/apeCAD/apeSketch
+install hints. Mirrored into the `steel-connection` worked example.
 
 ### ADDED — ADR 0095 Amendment 6: template improvement-workflow v2
 
