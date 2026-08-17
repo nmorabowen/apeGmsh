@@ -18,8 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._assess_snapshot import read_snapshot_safe
 from ._ledger import append_run, read_runs
-from ._paths import ledger_path, visors_path
+from ._paths import (
+    assess_path,
+    atomic_write_text,
+    ledger_path,
+    pin_assess_path,
+    visors_path,
+)
 from ._skins import default_canvas_path, render_canvas, render_html
 from ._status import collect_status
 
@@ -43,6 +50,7 @@ def collect_bundle(
     visors = list_visors(base)
     if pin_rec is not None and pin_rec.get("visors"):
         visors = [str(p) for p in pin_rec["visors"]]
+    assess, assess_error = _resolve_assess(base, pin_rec)
     return {
         "schema": BUNDLE_SCHEMA,
         "root": str(base),
@@ -51,8 +59,26 @@ def collect_bundle(
         "last_run": status.get("last_run"),
         "pin": pin_rec,
         "visors": visors,
-        "assess": (pin_rec or {}).get("assess"),
+        "assess": assess,
+        "assess_error": assess_error,
     }
+
+
+def _resolve_assess(
+    base: Path, pin_rec: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Pinned snapshot copy wins when a pin is referenced; else the live one.
+
+    The ledger's ``pin.assess`` field stays reserved (Amendment 5) — the
+    verdict comes from ``.apegmsh/assess.json`` / its pinned copy, never
+    from the ledger record.
+    """
+    pin_id = (pin_rec or {}).get("id") if pin_rec else None
+    if pin_id:
+        pinned = pin_assess_path(pin_id, base)
+        if pinned.is_file():
+            return read_snapshot_safe(pinned)
+    return read_snapshot_safe(assess_path(base))
 
 
 def results_pin(
@@ -84,12 +110,32 @@ def results_pin(
         "chapter": None,
     }
     append_run(ledger_path(base), record)
+    _pin_assess_snapshot(base, pin_id)
     return {
         "ok": True,
         "id": pin_id,
         "path": str(ledger_path(base)),
         "pin": record,
     }
+
+
+def _pin_assess_snapshot(base: Path, pin_id: str) -> None:
+    """Copy the live ``assess.json`` into the pin folder (ADR 0095 Amendment 5).
+
+    Best-effort, like ``append_run``: a missing or unreadable live
+    snapshot leaves nothing pinned rather than failing the pin.
+    """
+    live = assess_path(base)
+    if not live.is_file():
+        return
+    try:
+        text = live.read_text(encoding="utf-8")
+    except OSError:
+        return
+    try:
+        atomic_write_text(pin_assess_path(pin_id, base), text)
+    except OSError:
+        pass
 
 
 def emit_report(
@@ -275,6 +321,7 @@ def _render_markdown(
     last = bundle.get("last_run") or {}
     pin = bundle.get("pin") or {}
     assess = bundle.get("assess") or {}
+    assess_error = bundle.get("assess_error")
     lines = [
         "# Studio report",
         "",
@@ -333,18 +380,29 @@ def _render_markdown(
             f"- **hash:** `{last.get('hash') or '(none)'}`",
         ])
     lines.extend(["", "## Assess", ""])
-    text = assess.get("text") if isinstance(assess, dict) else None
-    if text:
-        lines.append(str(text).rstrip())
-    elif assess:
-        findings = assess.get("findings") or []
-        lines.append(f"{len(findings)} finding(s).")
-        for row in findings[:24]:
-            if isinstance(row, dict):
-                lines.append(
-                    f"- `{row.get('code')}` ({row.get('severity')}): "
-                    f"{row.get('message')}"
-                )
+    if assess:
+        lines.extend(_assess_meta_lines(assess))
+        text = assess.get("text")
+        if text:
+            lines.append(str(text).rstrip())
+        else:
+            findings = assess.get("findings") or []
+            lines.append(f"{len(findings)} finding(s).")
+            for row in findings[:24]:
+                if isinstance(row, dict):
+                    lines.append(
+                        f"- `{row.get('code')}` ({row.get('severity')}): "
+                        f"{row.get('message')}"
+                    )
+            skipped = assess.get("skipped") or []
+            if skipped:
+                lines.append("")
+                lines.append("Skipped checks:")
+                for row in skipped:
+                    if isinstance(row, dict):
+                        lines.append(f"- `{row.get('code')}` — {row.get('reason')}")
+    elif assess_error:
+        lines.append(f"(assess snapshot unreadable: {assess_error})")
     else:
         lines.append("(none — run assess first)")
     lines.extend(["", "## Figures", ""])
@@ -356,6 +414,21 @@ def _render_markdown(
             lines.append("")
     lines.append("")
     return "\n".join(lines)
+
+
+def _assess_meta_lines(assess: dict[str, Any]) -> list[str]:
+    """Target + timestamp line for the Assess section (disclosure, not policing)."""
+    targets = assess.get("targets") or {}
+    bits: list[str] = []
+    if targets.get("path"):
+        bits.append(f"target: `{targets['path']}`")
+    if targets.get("model_h5"):
+        bits.append(f"model_h5: `{targets['model_h5']}`")
+    if assess.get("ts"):
+        bits.append(f"assessed: {assess['ts']}")
+    if not bits:
+        return []
+    return [" · ".join(bits), ""]
 
 
 def _csv(items: Any) -> str:

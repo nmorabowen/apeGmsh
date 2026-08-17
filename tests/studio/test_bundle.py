@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from apeGmsh.studio.__main__ import main
+from apeGmsh.studio._assess_snapshot import write_snapshot
 from apeGmsh.studio._bundle import (
     BUNDLE_SCHEMA,
     collect_bundle,
@@ -14,6 +15,21 @@ from apeGmsh.studio._bundle import (
 )
 from apeGmsh.studio._ledger import append_run, make_record
 from apeGmsh.studio._status import collect_status
+
+
+def _assess_snapshot(tmp_path: Path, *, text: str = "Verdict: ok\n") -> None:
+    write_snapshot(
+        tmp_path,
+        {
+            "schema": 1,
+            "ts": "2026-08-17T00:00:00Z",
+            "targets": {"path": "model.h5", "model_h5": None},
+            "findings": [],
+            "skipped": [],
+            "figures": [],
+            "text": text,
+        },
+    )
 
 
 def _names(tmp_path: Path) -> None:
@@ -77,7 +93,8 @@ def test_emit_markdown_promotes_visors(tmp_path: Path) -> None:
     visor_dir = tmp_path / ".apegmsh" / "visors"
     visor_dir.mkdir(parents=True)
     (visor_dir / "mesh.png").write_bytes(b"png")
-    pin = results_pin(model, assess={"text": "Verdict: ok\n"}, root=tmp_path)
+    _assess_snapshot(tmp_path)
+    pin = results_pin(model, root=tmp_path)
     out = emit_report(root=tmp_path)
     chapter = Path(out["path"])
     assert chapter == (tmp_path / "docs" / "studio-report.md").resolve()
@@ -114,7 +131,8 @@ def test_emit_html_print_skin(tmp_path: Path) -> None:
     visor_dir = tmp_path / ".apegmsh" / "visors"
     visor_dir.mkdir(parents=True)
     (visor_dir / "mesh.png").write_bytes(b"png")
-    pin = results_pin(model, assess={"text": "Verdict: ok\n"}, root=tmp_path)
+    _assess_snapshot(tmp_path)
+    pin = results_pin(model, root=tmp_path)
     out = emit_report(format="html", root=tmp_path)
     html_path = Path(out["path"])
     archive = Path(out["archive"])
@@ -160,7 +178,8 @@ def test_emit_canvas_to_output(tmp_path: Path) -> None:
     visor_dir = tmp_path / ".apegmsh" / "visors"
     visor_dir.mkdir(parents=True)
     (visor_dir / "mesh.png").write_bytes(b"png")
-    pin = results_pin(model, assess={"text": "Verdict: ok\n"}, root=tmp_path)
+    _assess_snapshot(tmp_path)
+    pin = results_pin(model, root=tmp_path)
     dest = tmp_path / "review.canvas.tsx"
     out = emit_report(format="canvas", output=dest, root=tmp_path)
     canvas = Path(out["path"])

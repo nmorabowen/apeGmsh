@@ -22,6 +22,22 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report
+
+`--assess` (CLI and MCP, which shells to the CLI) now writes
+`.apegmsh/assess.json` — schema, timestamp, target paths, findings,
+skipped checks, figures, and the agent-facing markdown — via the same
+temp + `os.replace` discipline as `names.json` (INV-16); a torn file
+degrades to `assess=None` + a reason in `ReportBundle` instead of
+raising. `emit_report`'s Assess section now quotes that snapshot's
+verdict, findings, skipped list, and target/timestamp instead of
+always printing "(none — run assess first)". `--pin` copies the live
+snapshot into `.apegmsh/pins/<id>/assess.json` so a later re-emit
+against that pin keeps the verdict current at pin time even after the
+live file changes or is deleted; the ledger's reserved `pin.assess`
+field stays untouched. Published `assess.schema.json` + golden
+fixture; `contract_version` is `1.6.0`.
+
 ### ADDED — ADR 0095 Amendment 4 S6a: manual host refresh
 
 Toolbar action + F5 re-run the entry script (`.apegmsh/project.json`,

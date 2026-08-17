@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = "1.5.0"
+CONTRACT_VERSION = "1.6.0"
 CONTRACT_MAJOR = 1
 
 # kind → (schema file stem, expected per-file schema int)
@@ -29,6 +29,7 @@ _KINDS: dict[str, tuple[str, int]] = {
     "host": ("host", 1),
     "project": ("project", 1),
     "busy": ("busy", 1),
+    "assess": ("assess", 1),
 }
 
 

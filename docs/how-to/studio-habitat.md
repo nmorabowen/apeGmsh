@@ -76,12 +76,25 @@ Same gate as MCP `run_until`.
 | `busy.json` | `run_until` / replay (exclusive) | MCP `status` | O_EXCL create / unlink |
 | `mcp_calls.jsonl` | MCP adapter (side effect) | `studio.profile` | append (best-effort) |
 | `visors/` | `render` / `animate` / assess figures | agents / reports | ordinary writes |
+| `assess.json` | `--assess` / MCP `assess` | `emit_report` (via `ReportBundle`) | atomic replace |
+| `pins/<id>/assess.json` | `results_pin` (copies the live snapshot) | `emit_report` when that pin is referenced | atomic replace |
 
-Snapshot JSON (`selection` / `names` / `highlight` / `host` / `project`)
-is single-writer with atomic replace (INV-16). JSONL ledgers are
+Snapshot JSON (`selection` / `names` / `highlight` / `host` / `project` /
+`assess`) is single-writer with atomic replace (INV-16). JSONL ledgers are
 append-best-effort: more than one tool may append (`run_until` and
 `results_pin` both write `runs.jsonl`). Authored chapters go in
 `docs/`, never under `.apegmsh/` (INV-12).
+
+`--assess` / MCP `assess` writes `.apegmsh/assess.json` (target paths,
+findings, skipped checks, figures, and the same markdown text the verb
+prints) in addition to returning its payload (ADR 0095 Amendment 5).
+`emit_report` reads it — quoting the verdict, findings, skipped list,
+and target/timestamp in the Assess section — instead of always
+printing "(none — run assess first)". `results_pin` copies the live
+snapshot into `.apegmsh/pins/<id>/assess.json`; when a pin is
+referenced, `emit_report` prefers that pinned copy over the live file,
+so deleting or overwriting `assess.json` after pinning does not change
+an already-pinned chapter's verdict.
 
 ## Poll contract
 
@@ -130,7 +143,7 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.5.0` today). Published
+`status.contract_version` is the habitat semver (`1.6.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,

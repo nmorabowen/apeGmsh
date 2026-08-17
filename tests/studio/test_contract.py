@@ -24,6 +24,7 @@ from apeGmsh.studio._names import write_names
 
 _KINDS = (
     "selection", "names", "ledger", "highlight", "status", "host", "project", "busy",
+    "assess",
 )
 
 
