@@ -755,3 +755,111 @@ Resolved here:
 Named follow-ups (unchanged): `from_model_cases` provenance (schema
 bump) → per-case `OSM.CASE_UNUSED`; stage-aware judging; threshold
 promotions after more dogfood datapoints.
+
+## Amendment 4 (2026-08-17) — thresholds from dogfood numbers
+
+Append-only. The Accepted body and Amendments 1–3 stay. This is the
+amendment the body's Q4 and Amendment 2 promised: severity and
+threshold decisions made **after** real numbers, from two dogfood
+passes (shoebuckle arch; steel-connection habitat: elastic static,
+step-load transient, mortar and NTS contact cases). One promotion is
+made, one measurement is refined, and one promotion is **declined** —
+the numbers argue against it.
+
+### Evidence — the datapoint table
+
+| Run | Kind | `U_VS_DIAG` | Energy `ERR` (last step) |
+|---|---|---|---|
+| Shoebuckle arch, λ=1 pushover | MPCO, LoadControl | 5.3e-4 | no channel |
+| Shoebuckle arch, **stranded loads** (zero patterns) | broken by construction | **exactly 0** | no channel |
+| Steel connection, elastic static 100 kN | Ladruno static | 0.0185 | **all-zero frame** (channel recorded, unpopulated) |
+| Steel connection, step-load transient (Newmark, 0.04 s) | Ladruno transient | 0.0358 | **0.141 %** (startup spike 31 % at t=dt; last-step scope ignores it) |
+| Steel connection, mortar contact, 90 mm drive | Ladruno contact | 0.0516 | no channel |
+| Steel connection, NTS contact, 150 mm drive | Ladruno contact | 0.1245 | no channel |
+
+Cross-checks that make these trustworthy: the transient's energy
+closure is physical (KE + IE tracks ULW; DW = 0 on the undamped
+elastic model) and its peak displacement is 1.94× the static case —
+the textbook ≈ 2.0 step-load amplification.
+
+### Decision 1 — `RES.U_VS_DIAG`: promotion **declined**, permanently info
+
+Legitimate, converged, intended runs span **5.3e-4 to 0.1245** —
+nearly three orders of magnitude — because displacement-driven tests
+legitimately push past 10 % of the model diagonal. No fixed ratio
+separates a heavily-driven contact test from a diverging model; any
+threshold either false-flags every displacement-controlled run or is
+too high to catch anything a human would miss. The ratio's value is
+the **number itself** in the report, next to the extrema — not a
+gate.
+
+Revisit only if a context signal (load- vs displacement-driven)
+becomes honestly archivable — that is the `from_model` /
+analyze-provenance schema line, not this catalog.
+
+### Decision 2 — `RES.ENERGY_ERR`: unpopulated-channel honesty + a 5 % warning
+
+Two changes, both from the data:
+
+1. **All-zero frame → skipped, not info.** Ladruno **static** runs
+   record the `-G energy` channel with every component zero — the
+   accumulator populates on transients only. Today that reads
+   "|ERR| = 0 %", which an agent parses as a verified balance. When
+   the last-step frame is entirely zero (KE, IE, DW, ULW, RES, ERR
+   all 0), the check lands in `report.skipped` with reason "energy
+   channel recorded but unpopulated (static run) — not evidence of
+   balance". Skip ≠ pass, INV-3.
+2. **Nonzero frame: warning above 5 %.** Last-step `|ERR| > 5.0` (the
+   value is a percent) promotes the finding to **warning**; at or
+   below, it stays info with the measured value. Basis: the one
+   healthy implicit transient closes at 0.141 % (a 35× margin), and
+   ~5 % is the conventional energy-balance alarm in explicit-dynamics
+   practice. The 31 % first-step spike is a small-denominator
+   normalization artifact that the last-step scope (INV-9) already
+   ignores — no startup special-casing is added. Single-datapoint
+   basis is disclosed: the constant is revisited when explicit-run
+   datapoints exist (fork program), by amendment.
+
+`RES.ENERGY_NONFINITE` is unchanged (warning). FAIL-reserved is
+unchanged — neither energy code is ever `error`.
+
+### Decision 3 — `RES.ZERO_U`: info → **warning**
+
+Across six assessed runs: one true positive (the stranded-loads arch
+— exactly the bug the code exists for) and zero false positives. The
+one legal reading — a free-vibration transient started from rest and
+never perturbed — is a run whose author needs no protection from a
+warning, and the message already discloses it. Severity table entry
+flips to `warning`. Still not FAIL-reserved; still requires run
+evidence (Amendment 3) and `results=`.
+
+### Acceptance (this amendment)
+
+- Catalog table: `RES.ZERO_U` severity `warning`; existing tests
+  asserting `info` updated to the amendment, named in the PR body.
+- An all-zero last-step energy frame yields a `RES.ENERGY_ERR`
+  skip entry (reason names the unpopulated channel), no finding; the
+  transient fixture at 0.141 %-style values stays info; a fixture
+  frame with last-step `|ERR| = 6 %` yields severity `warning`.
+- `RES.U_VS_DIAG` emits info at 0.1245-style ratios — a regression
+  test pins that no threshold exists (the declined promotion is a
+  contract, not an omission).
+- The threshold constant lives once in `_catalog.py` (or sibling),
+  named, with the revisit note.
+- Skill `assess.md` (canonical + mirror): the three decisions in the
+  solver/results sections — U_VS_DIAG is a number to read, not a
+  gate; zero-energy statics are silent, not verified; ZERO_U is now
+  a warning.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **U_VS_DIAG threshold** — declined; permanent info (Q4 closed).
+2. **ENERGY_ERR warning at 5 %** — yes, single-datapoint basis
+   disclosed; revisit with explicit-run data by amendment.
+3. **ZERO_U severity** — warning.
+
+Named follow-ups (unchanged plus one): `from_model_cases` /
+drive-provenance archiving; stage-aware judging; explicit-run
+energy datapoints to confirm or move the 5 % constant.
