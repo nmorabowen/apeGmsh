@@ -13,13 +13,20 @@ The Qt pane client (S2) joins this package as a further projection.
 """
 from __future__ import annotations
 
+from ._plots import RealizedPlot, RealizedSeries, realize_plot
 from ._realize import RealizedLayer, RealizedPane, realize_pane
+from ._scope import ScopedSet, resolve_scope
 from ._stills import render_still, resolve_pane
 
 __all__ = [
     "RealizedLayer",
     "RealizedPane",
+    "RealizedPlot",
+    "RealizedSeries",
+    "ScopedSet",
     "realize_pane",
+    "realize_plot",
     "render_still",
     "resolve_pane",
+    "resolve_scope",
 ]
