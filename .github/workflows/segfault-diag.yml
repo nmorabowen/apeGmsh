@@ -17,48 +17,67 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: baseline-x3
+          - name: rate-run1cmd
             gcoff: '0'
-            trace: '0'
-            reps: '3'
-          - name: trace-threads
+            cmd: 'python -X faulthandler -m pytest'
+          - name: rate-plain
             gcoff: '0'
-            trace: '1'
-            reps: '1'
-          - name: gc-disabled-x3
+            cmd: 'pytest'
+          - name: rate-gcoff
             gcoff: '1'
-            trace: '0'
-            reps: '3'
+            cmd: 'python -X faulthandler -m pytest'
     name: ${{ matrix.name }}
     env:
       APEGMSH_EXPECT_GL: "1"
       DIAG_GC_OFF: ${{ matrix.gcoff }}
-      DIAG_TRACE_WIN: ${{ matrix.trace }}
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
-      - name: Install apt deps for Qt/VTK
+      - name: Install apt deps for Qt/VTK (+ gdb)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
-            libfontconfig1 libxcb-cursor0 libglu1-mesa
+            libfontconfig1 libxcb-cursor0 libglu1-mesa gdb
       - name: Install package
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
-      - name: Run tests/sections x${{ matrix.reps }}
+      - name: Arm core dumps
+        run: |
+          sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
+          sudo sysctl -w kernel.core_pattern='/tmp/cores/core.%e.%p'
+      - name: 30 reps of tests/sections
         run: |
           set +e
-          for i in $(seq 1 ${{ matrix.reps }}); do
-            echo "::group::rep ${i}"
-            PYTHONPATH=. pytest tests/sections -q -p no:cacheprovider -p diagplug \
-              -m "not live and not subprocess and not bench and not qt" 2>&1 | tail -60
-            echo "REP ${i} EXIT: ${PIPESTATUS[0]}"
+          ulimit -c unlimited
+          crashes=0
+          for i in $(seq 1 30); do
+            PYTHONPATH=. ${{ matrix.cmd }} tests/sections -q -p no:cacheprovider -p diagplug \
+              -m "not live and not subprocess and not bench and not qt" > /tmp/r$i.log 2>&1
+            rc=$?
+            if [ "$rc" != "0" ]; then
+              crashes=$((crashes+1))
+              echo "::group::REP ${i} EXIT ${rc}"
+              tail -25 /tmp/r$i.log
+              echo "::endgroup::"
+            fi
+          done
+          echo "=================================================="
+          echo "RESULT ${{ matrix.name }}: ${crashes} / 30 reps non-zero"
+          echo "=================================================="
+          grep -h "DIAG" /tmp/r*.log | sort | uniq -c | head
+          exit 0
+      - name: Backtraces
+        if: always()
+        run: |
+          for c in /tmp/cores/core.*; do
+            [ -e "$c" ] || continue
+            echo "::group::gdb $c"
+            gdb -batch -q -ex "set pagination off" -ex "bt 25" "$(which python)" "$c" 2>&1 | head -60
             echo "::endgroup::"
           done
-          exit 0
