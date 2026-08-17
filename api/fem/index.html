@@ -9784,7 +9784,7 @@ accepted; anything else raises <code>TypeError</code>.</p>
 
 
 <a href="#apeGmsh.mesh.FEMData.FEMData.render" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">render</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="s1">&#39;str | Path&#39;</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">camera</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;iso&#39;</span><span class="p">,</span> <span class="n">window_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1280</span><span class="p">,</span> <span class="mi">720</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="s1">&#39;Path | None&#39;</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">render</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="s1">&#39;str | Path&#39;</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">camera</span><span class="p">:</span> <span class="s1">&#39;str | None&#39;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">window_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1280</span><span class="p">,</span> <span class="mi">720</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="s1">&#39;Path | None&#39;</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -9794,6 +9794,9 @@ accepted; anything else raises <code>TypeError</code>.</p>
 written :class:<code>~pathlib.Path</code>, or <code>None</code> (and prints the
 <code>[skip viewer]</code> notice) under <code>APEGMSH_SKIP_VIEWER=1</code> or
 with no GL.</p>
+<p><code>camera=</code> defaults to <code>xy</code> for a planar model, <code>iso</code>
+otherwise (ADR 0094 Amendment 3); pass it explicitly to
+override.</p>
 
 
             <details class="mkdocstrings-source">
@@ -9815,11 +9818,15 @@ with no GL.</p>
 <span class="normal"><a href="#__codelineno-0-2283">2283</a></span>
 <span class="normal"><a href="#__codelineno-0-2284">2284</a></span>
 <span class="normal"><a href="#__codelineno-0-2285">2285</a></span>
-<span class="normal"><a href="#__codelineno-0-2286">2286</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2269"><a id="__codelineno-0-2269" name="__codelineno-0-2269"></a><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-2286">2286</a></span>
+<span class="normal"><a href="#__codelineno-0-2287">2287</a></span>
+<span class="normal"><a href="#__codelineno-0-2288">2288</a></span>
+<span class="normal"><a href="#__codelineno-0-2289">2289</a></span>
+<span class="normal"><a href="#__codelineno-0-2290">2290</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2269"><a id="__codelineno-0-2269" name="__codelineno-0-2269"></a><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
 </span><span id="__span-0-2270"><a id="__codelineno-0-2270" name="__codelineno-0-2270"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-2271"><a id="__codelineno-0-2271" name="__codelineno-0-2271"></a>    <span class="n">path</span><span class="p">:</span> <span class="s2">&quot;str | Path&quot;</span><span class="p">,</span>
 </span><span id="__span-0-2272"><a id="__codelineno-0-2272" name="__codelineno-0-2272"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-2273"><a id="__codelineno-0-2273" name="__codelineno-0-2273"></a>    <span class="n">camera</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;iso&quot;</span><span class="p">,</span>
+</span><span id="__span-0-2273"><a id="__codelineno-0-2273" name="__codelineno-0-2273"></a>    <span class="n">camera</span><span class="p">:</span> <span class="s2">&quot;str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 </span><span id="__span-0-2274"><a id="__codelineno-0-2274" name="__codelineno-0-2274"></a>    <span class="n">window_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1280</span><span class="p">,</span> <span class="mi">720</span><span class="p">),</span>
 </span><span id="__span-0-2275"><a id="__codelineno-0-2275" name="__codelineno-0-2275"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Path | None&quot;</span><span class="p">:</span>
 </span><span id="__span-0-2276"><a id="__codelineno-0-2276" name="__codelineno-0-2276"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Write one undeformed mesh still (ADR 0094 S1).</span>
@@ -9828,11 +9835,15 @@ with no GL.</p>
 </span><span id="__span-0-2279"><a id="__codelineno-0-2279" name="__codelineno-0-2279"></a><span class="sd">    written :class:`~pathlib.Path`, or ``None`` (and prints the</span>
 </span><span id="__span-0-2280"><a id="__codelineno-0-2280" name="__codelineno-0-2280"></a><span class="sd">    ``[skip viewer]`` notice) under ``APEGMSH_SKIP_VIEWER=1`` or</span>
 </span><span id="__span-0-2281"><a id="__codelineno-0-2281" name="__codelineno-0-2281"></a><span class="sd">    with no GL.</span>
-</span><span id="__span-0-2282"><a id="__codelineno-0-2282" name="__codelineno-0-2282"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2283"><a id="__codelineno-0-2283" name="__codelineno-0-2283"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.render</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_fem</span>
-</span><span id="__span-0-2284"><a id="__codelineno-0-2284" name="__codelineno-0-2284"></a>    <span class="k">return</span> <span class="n">render_fem</span><span class="p">(</span>
-</span><span id="__span-0-2285"><a id="__codelineno-0-2285" name="__codelineno-0-2285"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">camera</span><span class="o">=</span><span class="n">camera</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span>
-</span><span id="__span-0-2286"><a id="__codelineno-0-2286" name="__codelineno-0-2286"></a>    <span class="p">)</span>
+</span><span id="__span-0-2282"><a id="__codelineno-0-2282" name="__codelineno-0-2282"></a>
+</span><span id="__span-0-2283"><a id="__codelineno-0-2283" name="__codelineno-0-2283"></a><span class="sd">    ``camera=`` defaults to ``xy`` for a planar model, ``iso``</span>
+</span><span id="__span-0-2284"><a id="__codelineno-0-2284" name="__codelineno-0-2284"></a><span class="sd">    otherwise (ADR 0094 Amendment 3); pass it explicitly to</span>
+</span><span id="__span-0-2285"><a id="__codelineno-0-2285" name="__codelineno-0-2285"></a><span class="sd">    override.</span>
+</span><span id="__span-0-2286"><a id="__codelineno-0-2286" name="__codelineno-0-2286"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2287"><a id="__codelineno-0-2287" name="__codelineno-0-2287"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.render</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_fem</span>
+</span><span id="__span-0-2288"><a id="__codelineno-0-2288" name="__codelineno-0-2288"></a>    <span class="k">return</span> <span class="n">render_fem</span><span class="p">(</span>
+</span><span id="__span-0-2289"><a id="__codelineno-0-2289" name="__codelineno-0-2289"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">camera</span><span class="o">=</span><span class="n">camera</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span>
+</span><span id="__span-0-2290"><a id="__codelineno-0-2290" name="__codelineno-0-2290"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -9861,11 +9872,7 @@ mesh window, use <code>g.mesh.viewer()</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2288">2288</a></span>
-<span class="normal"><a href="#__codelineno-0-2289">2289</a></span>
-<span class="normal"><a href="#__codelineno-0-2290">2290</a></span>
-<span class="normal"><a href="#__codelineno-0-2291">2291</a></span>
-<span class="normal"><a href="#__codelineno-0-2292">2292</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2292">2292</a></span>
 <span class="normal"><a href="#__codelineno-0-2293">2293</a></span>
 <span class="normal"><a href="#__codelineno-0-2294">2294</a></span>
 <span class="normal"><a href="#__codelineno-0-2295">2295</a></span>
@@ -9873,19 +9880,23 @@ mesh window, use <code>g.mesh.viewer()</code>.</p>
 <span class="normal"><a href="#__codelineno-0-2297">2297</a></span>
 <span class="normal"><a href="#__codelineno-0-2298">2298</a></span>
 <span class="normal"><a href="#__codelineno-0-2299">2299</a></span>
-<span class="normal"><a href="#__codelineno-0-2300">2300</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2288"><a id="__codelineno-0-2288" name="__codelineno-0-2288"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2289"><a id="__codelineno-0-2289" name="__codelineno-0-2289"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open a non-interactive mesh viewer from this snapshot.</span>
-</span><span id="__span-0-2290"><a id="__codelineno-0-2290" name="__codelineno-0-2290"></a>
-</span><span id="__span-0-2291"><a id="__codelineno-0-2291" name="__codelineno-0-2291"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
-</span><span id="__span-0-2292"><a id="__codelineno-0-2292" name="__codelineno-0-2292"></a><span class="sd">    path was removed when the Results module was rebuilt. For a</span>
-</span><span id="__span-0-2293"><a id="__codelineno-0-2293" name="__codelineno-0-2293"></a><span class="sd">    headless mesh still use :meth:`render`. For an interactive</span>
-</span><span id="__span-0-2294"><a id="__codelineno-0-2294" name="__codelineno-0-2294"></a><span class="sd">    mesh window, use ``g.mesh.viewer()``.</span>
-</span><span id="__span-0-2295"><a id="__codelineno-0-2295" name="__codelineno-0-2295"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2296"><a id="__codelineno-0-2296" name="__codelineno-0-2296"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-</span><span id="__span-0-2297"><a id="__codelineno-0-2297" name="__codelineno-0-2297"></a>        <span class="s2">&quot;fem.viewer() relied on the legacy Results class which has &quot;</span>
-</span><span id="__span-0-2298"><a id="__codelineno-0-2298" name="__codelineno-0-2298"></a>        <span class="s2">&quot;been rebuilt. For a headless mesh still use fem.render(); &quot;</span>
-</span><span id="__span-0-2299"><a id="__codelineno-0-2299" name="__codelineno-0-2299"></a>        <span class="s2">&quot;for an interactive mesh window use g.mesh.viewer().&quot;</span>
-</span><span id="__span-0-2300"><a id="__codelineno-0-2300" name="__codelineno-0-2300"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-2300">2300</a></span>
+<span class="normal"><a href="#__codelineno-0-2301">2301</a></span>
+<span class="normal"><a href="#__codelineno-0-2302">2302</a></span>
+<span class="normal"><a href="#__codelineno-0-2303">2303</a></span>
+<span class="normal"><a href="#__codelineno-0-2304">2304</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2292"><a id="__codelineno-0-2292" name="__codelineno-0-2292"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2293"><a id="__codelineno-0-2293" name="__codelineno-0-2293"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open a non-interactive mesh viewer from this snapshot.</span>
+</span><span id="__span-0-2294"><a id="__codelineno-0-2294" name="__codelineno-0-2294"></a>
+</span><span id="__span-0-2295"><a id="__codelineno-0-2295" name="__codelineno-0-2295"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
+</span><span id="__span-0-2296"><a id="__codelineno-0-2296" name="__codelineno-0-2296"></a><span class="sd">    path was removed when the Results module was rebuilt. For a</span>
+</span><span id="__span-0-2297"><a id="__codelineno-0-2297" name="__codelineno-0-2297"></a><span class="sd">    headless mesh still use :meth:`render`. For an interactive</span>
+</span><span id="__span-0-2298"><a id="__codelineno-0-2298" name="__codelineno-0-2298"></a><span class="sd">    mesh window, use ``g.mesh.viewer()``.</span>
+</span><span id="__span-0-2299"><a id="__codelineno-0-2299" name="__codelineno-0-2299"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2300"><a id="__codelineno-0-2300" name="__codelineno-0-2300"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-2301"><a id="__codelineno-0-2301" name="__codelineno-0-2301"></a>        <span class="s2">&quot;fem.viewer() relied on the legacy Results class which has &quot;</span>
+</span><span id="__span-0-2302"><a id="__codelineno-0-2302" name="__codelineno-0-2302"></a>        <span class="s2">&quot;been rebuilt. For a headless mesh still use fem.render(); &quot;</span>
+</span><span id="__span-0-2303"><a id="__codelineno-0-2303" name="__codelineno-0-2303"></a>        <span class="s2">&quot;for an interactive mesh window use g.mesh.viewer().&quot;</span>
+</span><span id="__span-0-2304"><a id="__codelineno-0-2304" name="__codelineno-0-2304"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
