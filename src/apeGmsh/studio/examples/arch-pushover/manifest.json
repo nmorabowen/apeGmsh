@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "name": "arch-pushover",
+  "title": "Shoebuckle arch — pushover to lambda=1",
+  "tags": ["pushover", "loads", "mpco", "beam-column", "2d-frame", "openseespy"],
+  "teaches": "A 2-D fiber-section beam-column frame built through g.model.geometry (columns + a circular arch), pushed under a parametrised inward pressure field declared through g.loads and read back into the OpenSees deck via an explicit ops.pattern.Plain(...).from_model(...) import; a LoadControl ramp to lambda=1 with limit-point handling, MPCO recording, and Results.from_mpco() read-back including results.assess().",
+  "requires": ["openseespy"],
+  "provenance": "adapted from examples/shoebuckle_arch.py (PR #990); dogfood pass #1 (ADR 0094)",
+  "metrics": [
+    {
+      "name": "lambda_final",
+      "expected": 1.0,
+      "tol_abs": 1e-6,
+      "units": "-",
+      "note": "LoadControl + Linear timeSeries(factor=1): domain pseudo-time == load factor lambda."
+    },
+    {
+      "name": "n_steps",
+      "expected": 200,
+      "tol_abs": 0,
+      "units": "count"
+    },
+    {
+      "name": "crown_disp_x_mm",
+      "expected": 3.3546,
+      "tol_rel": 0.02,
+      "units": "mm",
+      "note": "Measured 2026-08-17 with the opensees_env interpreter; amendment approximation was 3.36."
+    },
+    {
+      "name": "crown_disp_y_mm",
+      "expected": 0.9367,
+      "tol_rel": 0.02,
+      "units": "mm",
+      "note": "Measured 2026-08-17; amendment approximation was 0.90 (4% delta)."
+    },
+    {
+      "name": "u_vs_diag",
+      "expected": 5.273e-4,
+      "tol_rel": 0.05,
+      "units": "-",
+      "note": "RES.U_VS_DIAG from results.assess() — |u|_max / model_diagonal. Measured 2026-08-17; amendment approximation was 5.3e-4."
+    }
+  ]
+}

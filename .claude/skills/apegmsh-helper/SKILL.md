@@ -197,6 +197,15 @@ capture the OS desktop or the human Qt window.
 `python -m apeGmsh.studio init --name <habitat> --model <model_id>`
 stamps a fresh APE Studio habitat from the packaged template (ADR 0095
 Amendment 6) — playbook, lifecycle scripts, checker, model lineage.
+Before building a covered shape from scratch, check
+`python -m apeGmsh.studio example list [--tag <domain>]` — the
+oracle-bearing example library (ADR 0095 Amendment 7): `show <name>`
+prints the manifest + README, `copy <name> [--dest DIR]` lands a
+runnable directory (script + `manifest.json` + `README.md` +
+`verify.py`) anywhere apeGmsh is installed, refusing to overwrite.
+Every example's metrics were produced by an actual run (INV-22) —
+discovery displaces src-grep, same as ADR 0096's lookup discipline
+but for recipes, not symbols. CLI only, not an MCP tool.
 Read-only MCP (ADR 0095 S4a–S4e / S5a / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
 `pip install mcp`). Tools: `status`, `get_selection`, `lookup`, `run_until`,
 `assess`, `render`, `animate(kind=history|yield)`, `results_pin`,

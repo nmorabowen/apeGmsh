@@ -22,6 +22,31 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library
+
+`src/apeGmsh/studio/examples/<name>/**` ships three curated, package-data
+examples — `arch-pushover` (adapted from `examples/shoebuckle_arch.py`,
+requires `openseespy`), `step-load-transient` (a new generic minimal
+cantilever carrying the density + step-load + Newmark + Ladruno
+`-G energy` transient pattern, requires `ladruno`), and
+`partitioned-frame` (adapted from `examples/partition_frame.py`,
+emit-only, `mesh-only`). Each directory carries the runnable script, a
+`manifest.json` (schema 1: tags, `teaches`, `requires`, provenance, and
+named oracle metrics with tolerances), a short `README.md`, and a
+`verify.py` printing one PASS/FAIL line per metric (INV-22 — every
+oracle number was produced by an actual run, not invented; INV-23 —
+each manifest's provenance names its dogfood source). New
+`python -m apeGmsh.studio example list [--tag T] | show <name> |
+copy <name> [--dest DIR]` verb (`apeGmsh.studio._examples`, same
+`importlib.resources` + raw-argv `__main__` pattern as `init`, CLI
+only — no MCP tool). The mesh-smoke lane
+(`tests/studio/test_example_library.py`) replays all three packaged
+copies to the `mesh` phase gate on CI; full-solve `verify.py` needs
+openseespy / the Ladruno classic exe and is not CI-run — see the
+implementing PR for the local verify transcripts. `docs/how-to/studio-habitat.md`
+gains "Use the example library"; the `apegmsh` skill's Studio
+paragraph and `workflows.md` name the door.
+
 ### ADDED — ADR 0095 Amendment 6: template improvement-workflow v2
 
 `APE/instructions/continuous-improvement.md` gains a "Promotion lanes"

@@ -123,7 +123,10 @@ apeGmsh = ["py.typed"]
 # `glob` skips dot-prefixed entries even under "**", which is exactly why
 # the template's `.gitignore` / `.cursor/` are stored under safe names and
 # restored to their real dotfile names by `studio init`.
-"apeGmsh.studio" = ["_api_index.json", "template/**/*"]
+# ADR 0095 Amendment 7 S8a: the oracle-bearing example library
+# (`apeGmsh/studio/examples/<name>/**` — script, manifest.json,
+# README.md, verify.py) ships the same way.
+"apeGmsh.studio" = ["_api_index.json", "template/**/*", "examples/**/*"]
 "apeGmsh.studio.schemas" = ["*.schema.json", "fixtures/*.json"]
 
 [tool.pytest.ini_options]

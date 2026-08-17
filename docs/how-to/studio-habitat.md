@@ -31,6 +31,39 @@ version drift.
 
 Then open `APE/README.md` in the new habitat and follow session start.
 
+## Use the example library
+
+Before building a shape from scratch, check whether the packaged
+example library already covers it — a curated set of small,
+**oracle-bearing** apeGmsh recipes that ship as apeGmsh package data
+and are copyable anywhere apeGmsh is installed (ADR 0095 Amendment 7).
+Each example is a self-contained directory: the runnable script, a
+`manifest.json` (tags, what it teaches, `requires`, provenance, and
+named oracle metrics with tolerances), a short `README.md`, and a
+`verify.py` that checks the metrics after a run and prints one
+PASS/FAIL line each.
+
+```text
+python -m apeGmsh.studio example list [--tag <domain>]
+python -m apeGmsh.studio example show <name>
+python -m apeGmsh.studio example copy <name> [--dest DIR]
+```
+
+`list` prints name / tags / title for every packaged example; `show`
+prints the manifest summary plus the README; `copy` lands the whole
+directory in `DIR` (default `cwd/<name>`), refusing to overwrite an
+existing directory. An unknown name is a clear error, nonzero exit.
+Running the copied script and then `verify.py` is the agent's job —
+`requires` in the manifest says what the example needs (`mesh-only` /
+`openseespy` / `ladruno`). CLI only, same stance as `init` — no MCP
+tool.
+
+An example without an oracle does not ship (INV-22): every metric in
+`manifest.json` was produced by an actual run, not invented. Discovery
+displaces src-grep — check `example list --tag <domain>` before
+reading `apeGmsh` internals to figure out how to wire up a case the
+library already covers.
+
 ## Project root (INV-15)
 
 Habitat files live under `<root>/.apegmsh/`. Resolve root in this order:
