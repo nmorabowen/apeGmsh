@@ -137,11 +137,11 @@ def classify_regions(fem) -> dict[int, str]:
     perimeter coordinate and the normal continuous across springing).
     """
     region: dict[int, str] = {}
-    for nid in fem.nodes.get(pg="LeftColumn").ids:
+    for nid in fem.nodes.physical.node_ids("LeftColumn"):
         region[int(nid)] = REGION_LEFT
-    for nid in fem.nodes.get(pg="RightColumn").ids:
+    for nid in fem.nodes.physical.node_ids("RightColumn"):
         region[int(nid)] = REGION_RIGHT
-    for nid in fem.nodes.get(pg="Arch").ids:
+    for nid in fem.nodes.physical.node_ids("Arch"):
         region[int(nid)] = REGION_ARCH
     return region
 
@@ -255,7 +255,7 @@ def build_fem():
         fem = g.mesh.queries.get_fem_data(dim=1, remove_orphans=True)
 
     # Sanity: two pinned bases, and add_arc gave us the crown arc.
-    base_ids = fem.nodes.get(pg="Base").ids
+    base_ids = fem.nodes.physical.node_ids("Base")
     assert len(base_ids) == 2, f"expected 2 base nodes, got {len(base_ids)}"
     ymax = max(float(c[1]) for c in fem.nodes.coords)
     assert abs(ymax - CROWN_Y) < 1e-3, (
@@ -298,9 +298,14 @@ def declare_model(fem):
 
     ops.fix(pg="Base", dofs=(1, 1, 0))                    # pinned bases
 
-    # No bridge load pattern: the inward-pressure field was declared
-    # through g.loads (build_fem). apeSees emits fem.nodes.loads as a
-    # synthesized Linear timeSeries + Plain pattern per ADR 0001.
+    # The inward-pressure field was declared through g.loads
+    # (build_fem, case "Pressure"). Broker loads reach the deck only
+    # via an explicit from_model import — without it the deck has no
+    # pattern at all and the arch "converges" to zero displacement
+    # everywhere (caught by the ADR 0094 A2 dogfood pass).
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.from_model("Pressure")
 
     # Analysis chain (emitted by run(); the loop overrides per-step).
     ops.constraints.Plain()
@@ -437,6 +442,7 @@ def _trace_post_peak(osi, crown_id: int, n: int = 80) -> None:
 def main() -> None:
     fem = build_fem()
     ops = declare_model(fem)
+    ops.h5("model.h5")   # persist the deck archive (skill: save model.h5)
     run_to_limit(ops, fem)
 
 
