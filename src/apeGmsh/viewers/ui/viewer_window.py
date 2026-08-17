@@ -275,6 +275,15 @@ class ViewerWindow:
                 self._qt_interactor.enable_anti_aliasing(_p.anti_aliasing)
             except Exception:
                 pass
+        # ── Mouse navigation (preference; View → Navigation swaps it
+        # live). Defensive: an unknown token in a hand-edited
+        # preferences.json must not kill window construction.
+        self._navigation_style = "vtk"
+        self._nav_menu_actions: dict[str, Any] = {}
+        try:
+            self.set_navigation_style(_p.mouse_navigation, persist=False)
+        except Exception:
+            pass
         # ── Plan 06 step 5 — Depth peeling ──────────────────────────
         # Order-independent transparency. Without it, two overlapping
         # semi-transparent diagrams composite incorrectly depending on
@@ -902,8 +911,78 @@ class ViewerWindow:
         return act
 
     # ------------------------------------------------------------------
+    # Mouse navigation (preference-backed, live-switchable)
+    # ------------------------------------------------------------------
+
+    def set_navigation_style(
+        self, token: str, *, persist: bool = True,
+    ) -> None:
+        """Apply a mouse-navigation convention to this window's viewport.
+
+        ``token`` is one of ``NAVIGATION_CHOICES`` (loud ``KeyError``
+        otherwise). With ``persist`` the choice is saved to
+        ``preferences.json`` so every later window boots with it —
+        the View → Navigation flow; construction applies the stored
+        preference with ``persist=False``.
+        """
+        from ._navigation import apply_navigation_style
+
+        apply_navigation_style(self._qt_interactor, token)
+        self._navigation_style = token
+        act = self._nav_menu_actions.get(token)
+        if act is not None and not act.isChecked():
+            act.setChecked(True)
+        if persist:
+            from .preferences_manager import PREFERENCES
+            PREFERENCES.update({"mouse_navigation": token})
+
+    @property
+    def navigation_style(self) -> str:
+        """The active mouse-navigation token."""
+        return self._navigation_style
+
+    # ------------------------------------------------------------------
     # Standard View submenus (ADR 0087 Appendix B — Camera / Theme)
     # ------------------------------------------------------------------
+
+    def populate_navigation_menu(self, menu) -> None:
+        """Fill ``menu`` with the radio-checked navigation roster.
+
+        One checkable action per ``NAVIGATION_CHOICES`` token, applied
+        LIVE to this window and persisted for the next ones (same
+        radio-group idiom as :meth:`populate_theme_menu`).
+        """
+        QtWidgets = self._QtWidgets
+        from .preferences_manager import NAVIGATION_CHOICES
+
+        labels = {
+            "apecad": "apeCAD (middle orbit, right pan)",
+            "gmsh": "Gmsh (left orbit, middle zoom, right pan)",
+            "vtk": "Classic VTK (left orbit, middle pan, right zoom)",
+        }
+        group = QtWidgets.QActionGroup(menu)
+        group.setExclusive(True)
+        for token in NAVIGATION_CHOICES:
+            act = menu.addAction(labels.get(token, token))
+            act.setCheckable(True)
+            group.addAction(act)
+            self._nav_menu_actions[token] = act
+            act.triggered.connect(
+                lambda _checked=False, t=token:
+                self.set_navigation_style(t),
+            )
+        current = self._nav_menu_actions.get(self._navigation_style)
+        if current is not None:
+            current.setChecked(True)
+        # Keep the exclusivity group alive for the window's lifetime.
+        self._nav_menu_group = group
+
+    def install_navigation_menu(self):
+        """View → Navigation submenu (mouse-mapping roster)."""
+        menu = self.add_view_menu_submenu("Navigation")
+        if menu is not None:
+            self.populate_navigation_menu(menu)
+        return menu
 
     def populate_camera_menu(self, menu) -> None:
         """Fill ``menu`` with the camera presets + Fit view + Orthographic.

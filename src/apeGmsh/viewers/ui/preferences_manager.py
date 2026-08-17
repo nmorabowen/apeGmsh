@@ -96,6 +96,15 @@ class Preferences:
 
     # ── Interaction & UI ────────────────────────────────────────────
     drag_threshold: int = 8               # Pixels moved before click → drag
+    # Viewport mouse-navigation convention. One of:
+    #   "apecad" — apeCAD's mapping (the product's own convention):
+    #              LEFT unbound (reserved for selection), MIDDLE
+    #              orbits, RIGHT pans, wheel zooms.
+    #   "gmsh"   — left rotates, middle zoom-drags, right pans.
+    #   "vtk"    — the stock VTK/ParaView trackball (left rotate,
+    #              middle pan, right zoom-drag) — the pre-2026-08
+    #              behaviour.
+    mouse_navigation: str = "apecad"
     # One of: "left", "top", "right", "bottom"
     tab_position: str = "left"
     dock_min_width: int = 320
@@ -110,6 +119,7 @@ DEFAULT_PREFERENCES = Preferences()
 # we trust callers and let Qt validate on the UI side).
 ANTI_ALIASING_CHOICES = ("none", "fxaa", "ssaa", "msaa")
 TAB_POSITION_CHOICES = ("left", "top", "right", "bottom")
+NAVIGATION_CHOICES = ("apecad", "gmsh", "vtk")
 
 
 # ======================================================================

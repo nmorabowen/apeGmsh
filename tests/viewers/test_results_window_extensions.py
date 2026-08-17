@@ -330,8 +330,13 @@ def _make_view_menu_stub(qapp):
     vw._act_parallel.setCheckable(True)
     vw._snap_view = lambda direction: None
     vw._fit_view = lambda: None
+    # Navigation-menu state the real populate method reads/writes.
+    vw._navigation_style = "apecad"
+    vw._nav_menu_actions = {}
+    vw.set_navigation_style = lambda token, persist=True: None
     for name in (
         "populate_camera_menu", "populate_theme_menu", "on_theme_changed",
+        "populate_navigation_menu",
     ):
         setattr(vw, name, types.MethodType(getattr(ViewerWindow, name), vw))
 
@@ -384,8 +389,15 @@ def test_view_menu_has_focus_mode_camera_and_theme(qapp):
         assert focus.shortcut().toString() == "Ctrl+H"
 
         submenus = {a.text(): a.menu() for a in actions if a.menu()}
+        assert "Navigation" in submenus
         assert "Camera" in submenus
         assert "Theme" in submenus
+
+        nav_radios = [
+            a for a in submenus["Navigation"].actions() if a.isCheckable()
+        ]
+        assert len(nav_radios) == 3  # apecad / gmsh / vtk roster
+        assert sum(1 for a in nav_radios if a.isChecked()) == 1
 
         cam_texts = [a.text() for a in submenus["Camera"].actions()]
         for label in (
@@ -415,7 +427,9 @@ def test_orbit_axis_submenu_inserts_between_camera_and_theme(qapp):
         submenu_order = [
             a.text() for a in rs._view_menu.actions() if a.menu()
         ]
-        assert submenu_order == ["Camera", "Orbit axis", "Theme"]
+        assert submenu_order == [
+            "Navigation", "Camera", "Orbit axis", "Theme",
+        ]
     finally:
         win.deleteLater()
 

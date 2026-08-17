@@ -18,6 +18,7 @@ from typing import Any
 from .preferences_manager import (
     ANTI_ALIASING_CHOICES,
     DEFAULT_PREFERENCES,
+    NAVIGATION_CHOICES,
     PREFERENCES,
     TAB_POSITION_CHOICES,
 )
@@ -169,6 +170,10 @@ class PreferencesDialog:
         iform = QtWidgets.QFormLayout(itab)
         self._sp_dt = _make_ispin(QtWidgets, value=p.drag_threshold, lo=1, hi=50)
         iform.addRow("Drag threshold (px)", self._sp_dt)
+        self._cmb_nav = _make_combo(
+            QtWidgets, choices=NAVIGATION_CHOICES, value=p.mouse_navigation,
+        )
+        iform.addRow("Mouse navigation", self._cmb_nav)
         self._cmb_tp = _make_combo(
             QtWidgets, choices=TAB_POSITION_CHOICES, value=p.tab_position,
         )
@@ -243,6 +248,7 @@ class PreferencesDialog:
             "origin_marker_include_world_origin": self._cb_origin.isChecked(),
             # Interaction & UI
             "drag_threshold": self._sp_dt.value(),
+            "mouse_navigation": self._cmb_nav.currentText(),
             "tab_position": self._cmb_tp.currentText(),
             "dock_min_width": self._sp_dmw.value(),
             "window_maximized": self._cb_max.isChecked(),
@@ -286,6 +292,9 @@ class PreferencesDialog:
         self._cb_origin.setChecked(d.origin_marker_include_world_origin)
         # Interaction & UI
         self._sp_dt.setValue(d.drag_threshold)
+        self._cmb_nav.setCurrentIndex(
+            NAVIGATION_CHOICES.index(d.mouse_navigation)
+        )
         self._cmb_tp.setCurrentIndex(TAB_POSITION_CHOICES.index(d.tab_position))
         self._sp_dmw.setValue(d.dock_min_width)
         self._cb_max.setChecked(d.window_maximized)
