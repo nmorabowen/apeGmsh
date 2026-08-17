@@ -214,6 +214,36 @@ def test_broker_loads_unimported_is_finding(tmp_path: Path) -> None:
     _assert_catalog_severities(report)
 
 
+def test_no_pattern_with_declared_loads_fires_both(tmp_path: Path) -> None:
+    """analyze archived + broker loads + zero patterns: the classic
+    forgot-``from_model`` deck needs OSM.LOADS_UNIMPORTED, not only a
+    shrug-able OSM.NO_PATTERN (whose message says free vibration is
+    legal)."""
+    model = _build_osm_with_unimported_loads(tmp_path)
+    variant = dataclasses.replace(
+        model, _analyze_call=(10, 0.1), _patterns=(),
+    )
+    report = variant.assess()
+    assert "OSM.NO_PATTERN" in _codes(report)
+    assert "OSM.LOADS_UNIMPORTED" in _codes(report)
+    _assert_catalog_severities(report)
+
+
+def test_no_analyze_with_declared_loads_is_skipped_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """Eigen-only / no-run deck with declared loads is a legal
+    multi-deck workflow — skipped, not judged."""
+    model = _build_osm_with_unimported_loads(tmp_path)
+    variant = dataclasses.replace(model, _patterns=())  # analyze stays None
+    report = variant.assess()
+    assert "OSM.LOADS_UNIMPORTED" not in _codes(report)
+    assert any(
+        code == "OSM.LOADS_UNIMPORTED" and "later deck" in reason
+        for code, reason in report.skipped
+    )
+
+
 def test_loads_imported_by_pattern_is_not_a_finding(tmp_path: Path) -> None:
     # _build_osm's pattern DOES import (p.load(...)) — the broker itself
     # carries no NodalLoadRecord, so the check is vacuously clean either

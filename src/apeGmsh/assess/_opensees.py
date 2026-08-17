@@ -74,7 +74,7 @@ def assess_opensees(
         ))
 
     _check_support(osm, findings)
-    _check_loads_unimported(osm, patterns, findings, skipped)
+    _check_loads_unimported(osm, patterns, analyze_call, findings, skipped)
     _check_zero_u(results, analyze_call, patterns, findings, skipped)
 
     return _report(findings, skipped)
@@ -120,16 +120,23 @@ def _check_support(osm: Any, findings: list[Finding]) -> None:
 def _check_loads_unimported(
     osm: Any,
     patterns: tuple[Any, ...],
+    analyze_call: "tuple[int, float | None] | None",
     findings: list[Finding],
     skipped: list[tuple[str, str]],
 ) -> None:
-    if not patterns:
-        # OSM.NO_ANALYZE / OSM.NO_PATTERN already cover "no pattern".
-        return
     node_loads = tuple(osm.fem.nodes.loads)
     elem_loads = tuple(osm.fem.elements.loads)
     prescribed_sp = tuple(osm.fem.nodes.sp.prescribed())
     if not node_loads and not elem_loads and not prescribed_sp:
+        return
+    if not patterns and analyze_call is None:
+        # Eigen-only / no-run deck with declared loads: a legal
+        # multi-deck workflow (the loads may target a later static
+        # deck) — not judged.
+        skipped.append((
+            "OSM.LOADS_UNIMPORTED",
+            "no archived analyze — declared loads may target a later deck",
+        ))
         return
 
     if any(p.type_token not in _BLOCK_PATTERN_TYPES for p in patterns):
