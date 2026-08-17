@@ -22,6 +22,46 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
+
+Every `studio init` on a machine that was not the template author's
+produced a broken habitat. Found by using the template from a real
+habitat (postmortem `2026-08-17_frame-example`, F1/F3/F4).
+
+- `template/cursor/mcp.json` hardcoded `C:\Users\nmb\...` for both the
+  launcher script and `APEGMSH_PYTHON`, and `_align_mcp_json` only
+  substituted `__HABITAT_ROOT__`. The `.ps1` indirection is gone: the
+  server now runs as `<python> -m apeGmsh.studio.mcp`, and `init`
+  substitutes the interpreter (`__APEGMSH_PYTHON__`) and its apeGmsh
+  source (`__APEGMSH_SRC__` → `PYTHONPATH`) alongside the root. Quiet
+  env still precedes interpreter startup — MCP applies `env` before exec.
+- `template/scripts/start.ps1` / `finish.ps1` probed a single venv
+  spelling (`opensees_env`), so any other naming fell through to PATH
+  `python` and failed as `No module named 'apeGmsh'`. They now probe
+  `APEGMSH_PYTHON` → `VIRTUAL_ENV` → both office spellings → PATH, and
+  print the interpreter they resolved.
+- `template/scripts/_habitat.py::ensure_pythonpath` defaulted
+  `APEGMSH_SRC` to one developer's worktree path, and only ever set the
+  env var — never `sys.path`, so the documented `APEGMSH_SRC` override
+  did nothing in-process. It now resolves from the importable apeGmsh
+  first, then `APEGMSH_SRC`, and guesses no default.
+- New regression test: no file in the packaged template may contain a
+  user home path.
+
+### ADDED — habitat template: apeCAD port guard + `studio init` version gate
+
+- `template/tools/apeCAD/open_interface.py` probes its target port and
+  refuses a bound one. apeCAD's `ThreadingHTTPServer` sets
+  `allow_reuse_address`, so on Windows a second instance bound port 8765
+  next to a running one and served that session's sketch — no bind
+  error, detectable only by diffing `/api/scene`. The matching guard in
+  `apeCAD.scratchpad.server.serve()` belongs to the apeCAD repo and is
+  not in this change.
+- `template/scripts/start_session.py` WARNs when
+  `apeGmsh.studio._init_habitat` is absent — a checkout predating S7a
+  fails `studio init` with a bare `ModuleNotFoundError` that reads like a
+  bug rather than a version gap. WARN, never fail: an already-stamped
+  habitat does not need the stamper.
 ### FIXED — `[all]` now includes the `mcp` extra
 
 `pip install "apeGmsh[all]"` installed the `apeGmsh.studio` package

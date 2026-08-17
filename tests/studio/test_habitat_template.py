@@ -9,8 +9,10 @@ docstring note in ``apeGmsh/studio/_init_habitat.py``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -142,9 +144,127 @@ def test_no_placeholders_remain_after_init(tmp_path: Path) -> None:
             text = p.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if "__HABITAT_NAME__" in text or "__MODEL_ID__" in text:
+        if any(
+            token in text
+            for token in (
+                "__HABITAT_NAME__",
+                "__MODEL_ID__",
+                "__HABITAT_ROOT__",
+                "__APEGMSH_PYTHON__",
+                "__APEGMSH_SRC__",
+            )
+        ):
             leftover.append(str(p.relative_to(target)))
     assert leftover == []
+
+
+# ---------------------------------------------------------------------------
+# Portability: nothing in the packaged template may name one machine
+# ---------------------------------------------------------------------------
+
+# ``C:\Users\<name>`` / ``/home/<name>`` in package data ships one
+# developer's filesystem to every user. mcp.json carried two of these and
+# _habitat.py a third, which broke `studio init` on any other machine
+# (postmortem 2026-08-17_frame-example, F1).
+HOME_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:\\+Users\\+|/home/|/Users/)(?!<)[A-Za-z0-9._-]+",
+)
+
+
+def test_packaged_template_names_no_user_home() -> None:
+    hits = {}
+    for rel in _iter_source_files(TEMPLATE_DIR):
+        try:
+            text = (TEMPLATE_DIR / rel).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        found = HOME_PATH_RE.findall(text)
+        if found:
+            hits[rel] = found
+    assert not hits, f"packaged template hardcodes a user home path: {hits}"
+
+
+def test_start_finish_probe_both_office_venv_spellings() -> None:
+    for rel in ("start.ps1", "finish.ps1"):
+        text = (TEMPLATE_DIR / "scripts" / rel).read_text(encoding="utf-8")
+        assert "APEGMSH_PYTHON" in text, rel
+        assert "VIRTUAL_ENV" in text, rel
+        assert "opensees_env" in text, rel
+        assert "opensees_venv" in text, rel
+
+
+def test_init_points_mcp_json_at_the_running_interpreter(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    proc = _init(target)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    data = json.loads((target / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+    cfg = data["mcpServers"]["apegmsh-studio-habitat"]
+    assert cfg["command"] == sys.executable
+    assert cfg["args"] == ["-m", "apeGmsh.studio.mcp"]
+    env = cfg["env"]
+    assert Path(env["PYTHONPATH"]).resolve() == SRC.resolve()
+    assert Path(env["APEGMSH_STUDIO_ROOT"]).resolve() == target.resolve()
+    # Quiet-before-startup still holds: the banner prints from a .pth at
+    # interpreter startup, and MCP applies env before exec.
+    assert env["LADRUNO_OPENSEES_QUIET"] == "1"
+    assert env["APEGMSH_QUIET"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# tools/apeCAD/open_interface.py — refuse an already-bound port
+# ---------------------------------------------------------------------------
+
+
+def _import_open_interface(target: Path):
+    """Import the habitat's apeCAD launcher (its module-level TOOL_DIR /
+    HABITAT resolve from ``target/tools/apeCAD``)."""
+    tool_dir = str(target / "tools" / "apeCAD")
+    tools_dir = str(target / "tools")
+    for mod in ("open_interface", "_launch"):
+        sys.modules.pop(mod, None)
+    sys.path.insert(0, tool_dir)
+    try:
+        import open_interface  # type: ignore
+    finally:
+        sys.path.remove(tool_dir)
+        if tools_dir in sys.path:
+            sys.path.remove(tools_dir)
+    return open_interface
+
+
+def test_port_probe_detects_a_bound_port(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+    mod = _import_open_interface(target)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen(1)
+        port = held.getsockname()[1]
+        assert mod.port_in_use("127.0.0.1", port) is True
+
+    # Closed again: the same port must read as free.
+    assert mod.port_in_use("127.0.0.1", port) is False
+
+
+def test_launcher_refuses_a_bound_port_before_importing_apecad(tmp_path: Path) -> None:
+    target = tmp_path / "habitat"
+    init = _init(target)
+    assert init.returncode == 0, init.stdout + init.stderr
+    mod = _import_open_interface(target)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen(1)
+        port = held.getsockname()[1]
+        with pytest.raises(SystemExit) as exc:
+            mod.main(["--host", "127.0.0.1", "--port", str(port), "--no-browser"])
+
+    message = str(exc.value)
+    assert "already in use" in message
+    assert "--port" in message
 
 
 # ---------------------------------------------------------------------------

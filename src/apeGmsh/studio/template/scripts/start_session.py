@@ -51,6 +51,26 @@ def _import_studio_ok() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def _check_studio_init_available(import_func=importlib.import_module) -> str:
+    """Import-check the ``studio init`` CLI (ADR 0095 Amendment 6, S7a).
+
+    A checkout that predates S7a has ``apeGmsh.studio`` but no
+    ``_init_habitat``, so ``python -m apeGmsh.studio init`` fails with a
+    bare ModuleNotFoundError that reads like a bug rather than a version
+    gap. WARN, never fail: a habitat already stamped does not need the
+    stamper, and this session can proceed without it.
+    """
+    try:
+        import_func("apeGmsh.studio._init_habitat")
+    except Exception:  # noqa: BLE001
+        return (
+            "WARN: `python -m apeGmsh.studio init` unavailable — this "
+            "apeGmsh checkout predates ADR 0095 S7a; update it to stamp "
+            "new habitats"
+        )
+    return "OK: studio init available"
+
+
 def _parse_backlog_open_items(path: Path) -> list[tuple[str, str]]:
     """Tolerant scan of the `## Open` table for P0/P1 rows: (priority,
     title) pairs. Not a strict table parser — habitats edit this by hand,
@@ -169,6 +189,7 @@ def main() -> int:
         print("  Check APEGMSH_PYTHON / APEGMSH_SRC (apeGmsh src).")
         return 3
     print(f"OK: {msg}")
+    print(_check_studio_init_available())
 
     _print_visual_talk_requisites()
 
