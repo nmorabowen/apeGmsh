@@ -9,24 +9,69 @@ session package — so the session IR never imports
 ``viewers.diagrams`` (the ``test_session_pure.py`` guard);
 ``ResultsSession.realize`` / ``.render`` reach in here lazily.
 
-The Qt pane client (S2) joins this package as a further projection.
+The Qt pane client (S2) lives here as a further projection:
+:class:`SessionReconciler` (session diff → backend ops → one
+coalesced render), :class:`MeshPane` (injectable backend), the
+outline / inspector widgets, and :func:`show_session` — the
+``ResultsSession.show`` entry. The Qt-touching names are exported
+LAZILY (PEP 562): ``realize`` / ``render`` must keep working in
+environments with no qtpy, exactly as they did before S2.
 """
 from __future__ import annotations
 
+from importlib import import_module
+
 from ._plots import RealizedPlot, RealizedSeries, realize_plot
 from ._realize import RealizedLayer, RealizedPane, realize_pane
+from ._reconciler import LedgerBackend, SessionReconciler
 from ._scope import ScopedSet, resolve_scope
 from ._stills import render_still, resolve_pane
 
+#: name → submodule for the lazily-exported Qt client surface.
+_QT_EXPORTS = {
+    "MeshPane": "._pane",
+    "default_backend_factory": "._pane",
+    "SessionOutline": "._outline",
+    "MeshInspectorPage": "._inspector",
+    "PanePlaceholderPage": "._inspector",
+    "SessionResultsWindow": "._window",
+    "SessionWindow": "._window",
+    "show_session": "._window",
+}
+
+
+def __getattr__(name: str):
+    submodule = _QT_EXPORTS.get(name)
+    if submodule is None:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}"
+        )
+    return getattr(import_module(submodule, __name__), name)
+
+
+def __dir__() -> "list[str]":
+    return sorted(set(globals()) | set(_QT_EXPORTS) | set(__all__))
+
+
 __all__ = [
+    "LedgerBackend",
+    "MeshInspectorPage",
+    "MeshPane",
+    "PanePlaceholderPage",
     "RealizedLayer",
     "RealizedPane",
     "RealizedPlot",
     "RealizedSeries",
     "ScopedSet",
+    "SessionOutline",
+    "SessionReconciler",
+    "SessionResultsWindow",
+    "SessionWindow",
+    "default_backend_factory",
     "realize_pane",
     "realize_plot",
     "render_still",
     "resolve_pane",
     "resolve_scope",
+    "show_session",
 ]
