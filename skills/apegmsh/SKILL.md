@@ -203,7 +203,15 @@ ADR 0095 INV-15). A successful
 stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
 what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
 (timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
-reads those files without replaying. Before a spatial edit, read the
+reads those files without replaying. The host window refreshes itself
+(ADR 0095 Amendment 4): a Refresh toolbar action / F5 replays the
+entry script, and a file watch replays it automatically when the
+saved file's mtime settles (`--no-watch` or the Watch toggle turn it
+off) — both honor the `busy.json` lock and append `runs.jsonl` with
+`trigger: "refresh"` / `"watch"`, so after editing the script the
+human's window follows the save; the agent does not need to reopen
+the host, and must not treat a `BUSY` `run_until` as an error while
+the host is replaying. Before a spatial edit, read the
 envelope, `names.json`, and `--status` — identity is
 `labels` / `physical_groups` / `phase`, not dimtags.
 An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.

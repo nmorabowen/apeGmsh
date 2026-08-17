@@ -56,6 +56,23 @@ def test_single_clean_change_produces_one_trigger() -> None:
     assert settled is False
 
 
+def test_busy_rearm_retries_same_mtime() -> None:
+    """The host's tick restores the pre-settle state on a busy outcome
+    (INV-18: nothing stolen, but the save is not swallowed) — restoring
+    and re-ticking the same mtime must settle again."""
+    state = seed_watch_state(100.0)
+    state, _ = watch_tick(state, 101.0)  # change observed
+    prev = state
+    state, settled = watch_tick(state, 101.0)
+    assert settled is True
+
+    # Busy: the tick restores ``prev``; the next poll re-settles.
+    state = prev
+    state, settled = watch_tick(state, 101.0)
+    assert settled is True
+    assert state.last_seen == 101.0
+
+
 def test_flapping_mtime_produces_exactly_one_trigger() -> None:
     state = seed_watch_state(100.0)
     sequence = [101.0, 102.0, 103.0, 103.0, 103.0]

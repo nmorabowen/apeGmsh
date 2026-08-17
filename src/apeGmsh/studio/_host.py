@@ -260,6 +260,7 @@ def _install_watch_loop(
     def tick() -> None:
         nonlocal state
         entry = _resolve_entry()
+        prev = state
         state, settled = watch_tick(state, _mtime(entry))
         if not settled or entry is None:
             return
@@ -267,6 +268,12 @@ def _install_watch_loop(
         outcome = refresh_host(
             runner, entry, phase=phase, on_success=rebuild, trigger="watch",
         )
+        if outcome["status"] == "busy":
+            # INV-18: nothing stolen — but the save must not be
+            # swallowed either. Restoring the pre-settle state re-arms
+            # the same mtime, so the next tick retries until the
+            # habitat frees up.
+            state = prev
         win.set_status(outcome["message"])
 
     timer = QTimer()
