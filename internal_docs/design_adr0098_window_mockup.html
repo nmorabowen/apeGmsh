@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ADR 0098 — ResultsSession window mockup</title>
+<style>
+  :root{
+    --bg:#1e2126; --panel:#25292f; --panel2:#2b3038; --edge:#3a4048;
+    --txt:#d6dae0; --dim:#8a919b; --accent:#4da3ff; --ok:#57c07a;
+    --chip:#333a44; --mesh:#6b7280; --meshfill:#3d434c;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; font-family:"Segoe UI",system-ui,sans-serif;}
+  body{background:var(--bg); color:var(--txt); font-size:12.5px; height:100vh; display:flex; flex-direction:column; overflow:hidden;}
+  .note{background:#14161a; color:var(--dim); padding:4px 10px; font-size:11px; border-bottom:1px solid var(--edge);}
+  .note b{color:var(--txt);}
+  .menubar{background:var(--panel); padding:4px 10px; border-bottom:1px solid var(--edge); color:var(--dim); display:flex; gap:14px;}
+  .main{flex:1; display:flex; min-height:0;}
+  .dock{background:var(--panel); border-right:1px solid var(--edge); display:flex; flex-direction:column; min-height:0;}
+  .dock h3{font-size:10.5px; letter-spacing:.08em; color:var(--dim); padding:8px 10px 4px;}
+  .dock .body{overflow-y:auto; flex:1;}
+  #outline{width:225px;}
+  #inspector{width:295px; border-right:none; border-left:1px solid var(--edge);}
+  .row{padding:5px 10px; cursor:pointer; display:flex; align-items:center; gap:6px; border-left:2px solid transparent;}
+  .row:hover{background:var(--panel2);}
+  .row.active{background:var(--panel2); border-left-color:var(--accent);}
+  .row .k{color:var(--dim); font-size:10.5px; margin-left:auto;}
+  .addrow{color:var(--accent); padding:5px 10px; cursor:pointer; font-size:12px;}
+  .addrow:hover{text-decoration:underline;}
+  select,input[type=range]{accent-color:var(--accent); background:var(--chip); color:var(--txt); border:1px solid var(--edge); border-radius:3px; padding:2px 4px; font-size:12px;}
+  .paneHost{flex:1; display:flex; gap:4px; padding:4px; background:#181a1e; min-width:0;}
+  .pane{flex:1; background:#20242a; border:1px solid var(--edge); border-radius:3px; position:relative; display:flex; flex-direction:column; min-width:0; cursor:pointer;}
+  .pane.active{border-color:var(--accent);}
+  .paneTitle{padding:3px 8px; font-size:11px; color:var(--dim); display:flex; gap:8px; align-items:center; border-bottom:1px solid var(--edge);}
+  .paneTitle .close{margin-left:auto; cursor:pointer; color:var(--dim);}
+  .paneTitle .close:hover{color:#e07070;}
+  .styleBtns{display:flex; gap:2px;}
+  .sbtn{padding:1px 7px; border-radius:3px; background:var(--chip); color:var(--dim); font-size:10.5px; cursor:pointer; border:1px solid transparent;}
+  .sbtn.on{color:var(--txt); border-color:var(--accent);}
+  .canvas{flex:1; position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  .legend{position:absolute; top:10px; right:10px; background:rgba(30,33,38,.9); border:1px solid var(--edge); border-radius:3px; padding:6px 8px; font-size:10.5px; display:flex; gap:6px;}
+  .legend .bar{width:12px; height:110px; border-radius:2px;}
+  .legend .lab{display:flex; flex-direction:column; justify-content:space-between;}
+  .oracle{position:absolute; left:10px; bottom:8px; font-size:10.5px; color:var(--ok);}
+  .insSection{border-bottom:1px solid var(--edge); padding:8px 10px;}
+  .insSection h4{font-size:11px; color:var(--txt); margin-bottom:6px;}
+  .kv{display:flex; align-items:center; gap:8px; margin:4px 0; color:var(--dim); font-size:12px;}
+  .slotRow{display:flex; align-items:center; gap:6px; padding:4px 0; font-size:12px;}
+  .slotRow .cat{width:72px; color:var(--dim);}
+  .slotRow .occ{color:var(--txt);}
+  .slotRow .addBtn{color:var(--accent); cursor:pointer;}
+  .slotRow .addBtn:hover{text-decoration:underline;}
+  .slotRow .clear{margin-left:auto; color:var(--dim); cursor:pointer;}
+  .slotRow .clear:hover{color:#e07070;}
+  .slotRow .avg{background:var(--chip); border:1px solid var(--edge); border-radius:3px; padding:0 6px; cursor:pointer; font-size:10.5px;}
+  .cm{font-size:9.5px; color:var(--dim); width:14px; text-align:center;}
+  .scrub{background:var(--panel); border-top:1px solid var(--edge); padding:6px 12px; display:flex; align-items:center; gap:12px;}
+  .scrub input[type=range]{flex:1;}
+  .statusbar{background:#14161a; border-top:1px solid var(--edge); padding:3px 10px; font-size:10.5px; color:var(--dim); display:flex; gap:18px;}
+  .statusbar .ok{color:var(--ok);}
+  #toast{position:fixed; bottom:70px; left:50%; transform:translateX(-50%); background:var(--chip); border:1px solid var(--edge); padding:6px 14px; border-radius:4px; opacity:0; transition:opacity .25s; pointer-events:none; font-size:12px;}
+  .plotCanvas{flex:1; position:relative;}
+  .checkrow{display:flex; gap:6px; align-items:center; padding:3px 10px 3px 22px; color:var(--txt); font-size:12px;}
+</style>
+</head>
+<body>
+<div class="note"><b>Mockup — ADR 0098 ResultsSession window</b> (illustrative palette, not the 0087 tokens). Wired: contour slot, deform pose, scope, style buttons, N panes, plot + time link. Other slots show the same row mechanism.</div>
+<div class="menubar"><span>File</span><span>View</span><span>Help</span></div>
+<div class="main">
+  <div class="dock" id="outline">
+    <h3>PANES</h3><div id="paneRows"></div>
+    <div class="addrow" onclick="addMeshView()">＋ New mesh view</div>
+    <div class="addrow" onclick="addPlot()">＋ New plot (tip Uy history)</div>
+    <h3 style="margin-top:8px">MODEL COMPOSITION</h3>
+    <div class="kv" style="padding:0 10px"><span>Axis</span>
+      <select onchange="toast('One axis per view (§9) — mockup wires physical groups')">
+        <option>Physical groups</option><option>Materials</option><option>Element types</option>
+      </select></div>
+    <div id="pgRows"></div>
+    <div class="addrow" style="color:var(--dim);font-size:11px">check = scope of the active view (§9)</div>
+  </div>
+
+  <div class="paneHost" id="paneHost"></div>
+
+  <div class="dock" id="inspector">
+    <h3 id="insTitle">INSPECTOR</h3>
+    <div class="body" id="insBody"></div>
+  </div>
+</div>
+<div class="scrub">
+  <span style="color:var(--dim)">Stage <b style="color:var(--txt)">push</b></span>
+  <input type="range" id="scrubber" min="0" max="20" value="12" oninput="setStep(+this.value,'scrubber')">
+  <span id="stepLabel" style="min-width:70px"></span>
+  <label class="kv" style="margin:0"><input type="checkbox" id="linkChk" checked onchange="S.linked=this.checked;renderAll()">Link time</label>
+</div>
+<div class="statusbar" id="statusbar"></div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+// ---------- session state (the IR the window projects) ----------
+const NX=12, NY=4, MAXSTEP=20;
+let uid=0;
+const S={
+  step:12, linked:true, active:'m1',
+  pgs:{Deck:true, Base:true},              // Deck = top 2 rows, Base = bottom 2 rows
+  panes:[meshView('m1','Mesh view 1')]
+};
+function meshView(id,name){ return {id, type:'mesh', name,
+  slots:{contour:null, vector:null, gauss:null, line:null, sand:null, loads:null, reactions:null},
+  deform:{on:false, scale:1.0}, style:{mesh:true, outlines:true, nodes:false, gauss:false}, step:12}; }
+
+// ---------- helpers ----------
+function jet(t){ t=Math.max(0,Math.min(1,t));
+  const r=Math.max(0,Math.min(1,1.5-Math.abs(4*t-3)));
+  const g=Math.max(0,Math.min(1,1.5-Math.abs(4*t-2)));
+  const b=Math.max(0,Math.min(1,1.5-Math.abs(4*t-1)));
+  return `rgb(${r*255|0},${g*255|0},${b*255|0})`; }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.opacity=1;
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.opacity=0,2600); }
+const pane=id=>S.panes.find(p=>p.id===id);
+const activePane=()=>pane(S.active);
+const effStep=p=>S.linked?S.step:(p.step??S.step);
+const legendCount=p=>['contour','vector','gauss','sand'].filter(k=>p.slots&&p.slots[k]).length; // colour-mapped set (§4)
+
+// ---------- mesh geometry (cantilever, fixed at left) ----------
+function nodeXY(i,j,p){ const L=440,H=140,x=20+i*(L/NX), y0=30+j*(H/NY);
+  const A=p.deform.on ? p.deform.scale*(effStep(p)/MAXSTEP)*46 : 0;
+  return [x, y0 + A*Math.pow(i/NX,2)]; }
+function quadPG(j){ return j<NY/2 ? 'Deck':'Base'; }
+function stress(i,j,p){ const xi=(i+0.5)/NX, yj=(j+0.5)/NY;
+  return (1-xi)*(1-2*yj)*(effStep(p)/MAXSTEP); }   // bending-ish, scales with step
+
+// ---------- render ----------
+function renderPanes(){
+  const host=document.getElementById('paneHost'); host.innerHTML='';
+  for(const p of S.panes){
+    const d=document.createElement('div');
+    d.className='pane'+(p.id===S.active?' active':'');
+    d.onclick=()=>{S.active=p.id; renderAll();};
+    const closer=S.panes.length>1?`<span class="close" onclick="closePane(event,'${p.id}')">✕</span>`:'';
+    if(p.type==='mesh'){
+      d.innerHTML=`<div class="paneTitle">${p.name}
+        <span class="styleBtns">${['mesh','outlines','nodes','gauss'].map(k=>
+          `<span class="sbtn ${p.style[k]?'on':''}" onclick="toggleStyle(event,'${p.id}','${k}')">${k[0].toUpperCase()+k.slice(1)}</span>`).join('')}</span>
+        ${closer}</div><div class="canvas">${meshSVG(p)}${legendHTML(p)}${oracleHTML(p)}</div>`;
+    } else {
+      d.innerHTML=`<div class="paneTitle">${p.name} <span style="color:var(--dim)">history · cursor ${S.linked?'linked':'unlinked'}</span>${closer}</div>
+        <div class="plotCanvas">${plotSVG(p)}</div>`;
+    }
+    host.appendChild(d);
+  }
+}
+function meshSVG(p){
+  const c=p.slots.contour; let cells='',edges='',outline='',nodes='',gauss='';
+  for(let j=0;j<NY;j++) for(let i=0;i<NX;i++){
+    if(!S.pgs[quadPG(j)]) continue;                       // INV-MESH-1/3: scope drives cells AND edges
+    const pts=[nodeXY(i,j,p),nodeXY(i+1,j,p),nodeXY(i+1,j+1,p),nodeXY(i,j+1,p)];
+    const path=pts.map(q=>q.join(',')).join(' ');
+    let fill='var(--meshfill)';
+    if(c){ let s=stress(i,j,p);
+      if(!c.averaged) s=Math.round(s*6)/6;                // unaveraged: banded per-cell
+      fill=jet((s+1)/2); }
+    cells+=`<polygon points="${path}" fill="${fill}" ${p.style.mesh?'stroke="#00000055" stroke-width="0.6"':''}/>`;
+    if(p.style.gauss){ for(const[a,b]of[[.3,.3],[.7,.3],[.3,.7],[.7,.7]]){
+      const g=[pts[0][0]+(pts[1][0]-pts[0][0])*a, pts[0][1]+(pts[3][1]-pts[0][1])*b];
+      gauss+=`<path d="M${g[0]-1.6},${g[1]} h3.2 M${g[0]},${g[1]-1.6} v3.2" stroke="#ffd166" stroke-width="0.9"/>`; }}
+  }
+  if(p.style.outlines){ // boundary of the visible cell set only
+    const rows=[...(S.pgs.Deck?[0,1]:[]),...(S.pgs.Base?[2,3]:[])];
+    if(rows.length){ const jt=Math.min(...rows), jb=Math.max(...rows)+1;
+      const top=[],bot=[];
+      for(let i=0;i<=NX;i++){ top.push(nodeXY(i,jt,p).join(',')); bot.push(nodeXY(i,jb,p).join(',')); }
+      const l=nodeXY(0,jt,p), l2=nodeXY(0,jb,p), r=nodeXY(NX,jt,p), r2=nodeXY(NX,jb,p);
+      outline=`<polyline points="${top.join(' ')}" fill="none" stroke="#c9ced6" stroke-width="1.4"/>
+               <polyline points="${bot.join(' ')}" fill="none" stroke="#c9ced6" stroke-width="1.4"/>
+               <line x1="${l[0]}" y1="${l[1]}" x2="${l2[0]}" y2="${l2[1]}" stroke="#c9ced6" stroke-width="1.4"/>
+               <line x1="${r[0]}" y1="${r[1]}" x2="${r2[0]}" y2="${r2[1]}" stroke="#c9ced6" stroke-width="1.4"/>`; }}
+  if(p.style.nodes){ for(let j=0;j<=NY;j++){ const touch=(j<NY/2&&S.pgs.Deck)||(j>NY/2&&S.pgs.Base)||(j===NY/2&&(S.pgs.Deck||S.pgs.Base));
+    if(!touch) continue;
+    for(let i=0;i<=NX;i++){ const q=nodeXY(i,j,p); nodes+=`<circle cx="${q[0]}" cy="${q[1]}" r="1.8" fill="#e8eaee"/>`; }}}
+  return `<svg viewBox="0 0 480 230" style="width:100%;height:100%">${cells}${outline}${nodes}${gauss}
+    <rect x="14" y="26" width="5" height="150" fill="#4a5058"/></svg>`;
+}
+function legendHTML(p){
+  if(!p.slots.contour) return '';
+  const stops=[...Array(7)].map((_,k)=>jet(1-k/6)).join(',');
+  return `<div class="legend"><div class="bar" style="background:linear-gradient(${stops})"></div>
+    <div class="lab"><span>+σ</span><span><b>S11</b><br>${p.slots.contour.averaged?'averaged':'unaveraged'}</span><span>−σ</span></div></div>`;
+}
+function oracleHTML(p){
+  if(p.deform.on && legendCount(p)===0)
+    return `<div class="oracle">deform on · slots empty → 0 legends ✓ (§5 oracle)</div>`;
+  return '';
+}
+function plotSVG(p){
+  const W=460,H=190, pad=28;
+  const pts=[...Array(MAXSTEP+1)].map((_,k)=>{
+    const x=pad+(W-2*pad)*k/MAXSTEP, y=H-pad-(H-2*pad)*Math.pow(k/MAXSTEP,2); return `${x},${y}`; }).join(' ');
+  const cx=pad+(W-2*pad)*S.step/MAXSTEP;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:100%" onmousedown="dragCursor(event,this)" onmousemove="if(event.buttons)dragCursor(event,this)">
+    <line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="var(--edge)"/>
+    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${H-pad}" stroke="var(--edge)"/>
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+    <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${H-pad}" stroke="#ffd166" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <text x="${pad}" y="${pad-8}" fill="var(--dim)" font-size="10">tip Uy — drag the cursor: linked time moves the meshes (§7)</text></svg>`;
+}
+function dragCursor(ev,svg){
+  const r=svg.getBoundingClientRect(); const W=460,pad=28;
+  const x=(ev.clientX-r.left)/r.width*W;
+  const k=Math.round(Math.max(0,Math.min(1,(x-pad)/(W-2*pad)))*MAXSTEP);
+  if(S.linked) setStep(k,'plot'); else toast('Time link is off — the cursor no longer drives the meshes');
+}
+function renderOutline(){
+  document.getElementById('paneRows').innerHTML=S.panes.map(p=>
+    `<div class="row ${p.id===S.active?'active':''}" onclick="S.active='${p.id}';renderAll()">
+       ${p.type==='mesh'?'▦':'📈'} ${p.name}<span class="k">${p.type}</span></div>`).join('');
+  document.getElementById('pgRows').innerHTML=Object.keys(S.pgs).map(g=>
+    `<label class="checkrow"><input type="checkbox" ${S.pgs[g]?'checked':''} onchange="S.pgs['${g}']=this.checked;renderAll()">${g}</label>`).join('');
+}
+function renderInspector(){
+  const p=activePane(); const el=document.getElementById('insBody');
+  document.getElementById('insTitle').textContent='INSPECTOR — '+p.name;
+  if(p.type==='plot'){ el.innerHTML=`<div class="insSection"><h4>Series</h4>
+    <div class="kv">tip node · Uy · history</div>
+    <div class="kv" style="font-size:11px">source = frozen copy of the selection at creation (§6)</div></div>`; return; }
+  const c=p.slots.contour;
+  const slotRow=(cat,cm,body)=>`<div class="slotRow"><span class="cm" title="${cm?'colour-mapped: emits a legend when occupied':'not colour-mapped: never emits a legend'}">${cm?'🎨':'—'}</span><span class="cat">${cat}</span>${body}</div>`;
+  el.innerHTML=`
+  <div class="insSection"><h4>Deform — pose, never a picture (§4)</h4>
+    <label class="kv"><input type="checkbox" ${p.deform.on?'checked':''}
+      onchange="activePane().deform.on=this.checked;renderAll()"> on · field: displacement</label>
+    <div class="kv">scale <input type="range" min="0" max="2" step="0.1" value="${p.deform.scale}"
+      oninput="activePane().deform.scale=+this.value;renderAll()"></div></div>
+  <div class="insSection"><h4>Slots — one occupant per category (§4)</h4>
+    ${slotRow('contour',true, c
+      ? `<span class="occ">S11</span><span class="avg" onclick="c_avg()">${c.averaged?'averaged ⇄':'unaveraged ⇄'}</span><span class="clear" onclick="c_clear()">✕</span>`
+      : `<span class="addBtn" onclick="c_add()">＋ Add…</span>`)}
+    ${slotRow('vector',true,`<span class="addBtn" onclick="toast('Same Add-row mechanism — not wired in this mockup')">＋ Add…</span>`)}
+    ${slotRow('gauss',true,`<span class="addBtn" onclick="toast('Values at IPs (own picker; shares the contour scale when the field matches)')">＋ Add…</span>`)}
+    ${slotRow('line',false,`<span class="addBtn" onclick="toast('Member diagrams — amplitude fill, no legend (§4)')">＋ Add…</span>`)}
+    ${slotRow('sand',true,`<span class="addBtn" onclick="toast('Field-coloured grain cloud — not wired in this mockup')">＋ Add…</span>`)}
+    ${slotRow('loads',false,`<span class="addBtn" onclick="toast('Uniform glyphs, no legend (§4)')">＋ Add…</span>`)}
+    ${slotRow('reactions',false,`<span class="addBtn" onclick="toast('Uniform glyphs, no legend (§4)')">＋ Add…</span>`)}
+    <div class="kv" style="font-size:10.5px">🎨 = colour-mapped: occupied ⇒ legend (INV-LEGEND-1)</div></div>
+  <div class="insSection"><h4>Pick target (§8)</h4>
+    <label class="kv"><input type="radio" name="pt" checked onclick="toast('Radio aims clicks/windows; it never owns or clears the set (§8)')"> Nodes</label>
+    <label class="kv"><input type="radio" name="pt" onclick="toast('Click-pick needs the Gauss style button on (§8)')"> Gauss</label></div>
+  <div class="insSection"><h4>Pane time</h4>
+    <div class="kv">${S.linked?'linked — session instant drives this pane (§7)':'unlinked — step '+effStep(p)}</div></div>`;
+}
+function renderScrubber(){
+  document.getElementById('scrubber').value=S.step;
+  document.getElementById('stepLabel').textContent='step '+S.step+' / '+MAXSTEP;
+}
+function renderStatus(){
+  const chips=S.panes.filter(p=>p.type==='mesh').map(p=>{
+    const n=legendCount(p);
+    return `<span>${p.name}: legends ${n} = occupied colour-mapped ${n} <span class="ok">✓</span></span>`;});
+  chips.push(`<span>selection: nodes ∅ (one store, §8)</span>`);
+  document.getElementById('statusbar').innerHTML=chips.join('');
+}
+function renderAll(){ renderPanes(); renderOutline(); renderInspector(); renderScrubber(); renderStatus(); }
+
+// ---------- actions (Qt clicks == the same verbs a script would call, §2) ----------
+function c_add(){ activePane().slots.contour={quantity:'S11',averaged:true}; renderAll(); }
+function c_clear(){ activePane().slots.contour=null; renderAll(); }
+function c_avg(){ const c=activePane().slots.contour; c.averaged=!c.averaged; renderAll(); }
+function toggleStyle(ev,id,k){ ev.stopPropagation(); const p=pane(id); p.style[k]=!p.style[k];
+  if(k==='gauss'&&p.style.gauss&&p.slots.gauss) toast('Button = locations, slot = values — one cloud, never two (§3)');
+  S.active=id; renderAll(); }
+function addMeshView(){ const n=S.panes.filter(p=>p.type==='mesh').length+1;
+  const v=meshView('m'+(++uid+1),'Mesh view '+n); S.panes.push(v); S.active=v.id; renderAll(); }
+function addPlot(){ if(S.panes.some(p=>p.type==='plot')){toast('One plot is enough for the mockup');return;}
+  S.panes.push({id:'p'+(++uid),type:'plot',name:'Plot 1'}); renderAll(); }
+function closePane(ev,id){ ev.stopPropagation(); S.panes=S.panes.filter(p=>p.id!==id);
+  if(!pane(S.active)) S.active=S.panes[0].id; renderAll(); }
+function setStep(k,src){ S.step=k; renderAll(); }
+
+renderAll();
+</script>
+</body>
+</html>
