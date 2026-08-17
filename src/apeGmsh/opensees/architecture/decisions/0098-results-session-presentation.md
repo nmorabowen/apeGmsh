@@ -482,8 +482,9 @@ pumps stay forbidden.
    recommended nested splitters as the baseline; what remains open
    is the detail — splitters vs tab+split editor area vs a mosaic +
    plot strip. Chrome (outline / inspector / scrubber) stays 0088
-   as amended above. The answer is recorded as Amendment 1 of this
-   ADR before S3 starts; it does not block S0–S2.
+   as amended above. **Resolved in Amendment 1** (nested
+   `QSplitter`s, auto-tiled by `T(N)`; one `QtInteractor` per mesh
+   pane).
 2. **Averaging region.** v1 averaged contour is global on the
    visible cell set. Averaging only within a material / PG is a
    later widening of the contour slot.
@@ -491,3 +492,599 @@ pumps stay forbidden.
    only as the `show_web` hatch’s internal implementation until
    then (Consequences); it does not survive as an ontology or a
    public surface.
+
+## Amendment 1 (2026-08-17) — the pane host
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog
+and the rejected-alternatives table all stay. This amendment closes
+**Open question 1** and nothing else.
+
+It is **UI, not IR.** No session record changes: `ResultsSession`,
+`MeshView`, `PlotView`, `realize()` and the (unwritten) snapshot are
+untouched. Layout is window chrome, exactly like dock geometry — it
+lives in `QSettings`, never in the session. Chrome outside the centre
+— outline, inspector, scrubber — stays ADR 0088 as amended by this
+ADR; no dock is added, renamed or retired, so
+`SessionResultsWindow._LAYOUT_SCHEMA_VERSION` stays 1.
+
+Required before S3 starts (implementation plan, hard sequence rule).
+
+---
+
+### Evidence — the spike, on both oracles
+
+The plan named "multi-interactor driver quirks" the single biggest S3
+risk and demanded a prototype on Windows **and** under CI Mesa before
+this amendment was written. It was built: **N pane-owned
+`QtInteractor`s in nested `QSplitter`s (an h-splitter of v-splitters)
+is viable.**
+
+| Oracle | Result |
+|---|---|
+| Windows, real GPU, 4 interactors | Eight probed failure modes pass: four distinct renderers, independent scenes, independent cameras (moving pane 0's camera left panes 1–3 untouched), exactly one scalar bar per pane, per-pane screenshots, splitter-resize survival, runtime add/remove of a pane, clean teardown |
+| Linux CI, `xvfb` + Mesa software GL (`qt-window-tests` lane) | 6 passed, 0 skipped |
+
+The six durable modes are committed as
+`tests/viewers/test_pane_host_probe.py` (PR #1019) and stay after the
+spike as S3's regression guard — the day a VTK or pyvistaqt bump makes
+four live interactors share a camera or leak a scalar bar, the pane
+host breaks and that file fails first.
+
+Two inherited facts, recorded so they are not re-derived:
+
+1. **Per-pane scalar bars are free.** Each plotter keeps its own
+   registry (`iren.scalar_bars` keys are per-plotter — proven by
+   `test_scalar_bars_stay_in_their_own_pane`). INV-LEGEND-5 needs no
+   legend-routing layer, and the reconciler's existing
+   `adopt_controller` per flush is already per-backend.
+2. **A `QT_QPA_PLATFORM=offscreen` segfault is platform GL, not a
+   pane-count problem.** Offscreen gives VTK no usable pixel format; a
+   *single* interactor dies identically, on Windows and in the default
+   CI lane alike. An offscreen crash during S3 is not evidence against
+   the pane host. It is also precisely why `MeshPane` takes an
+   injectable `backend_factory` (plan decision 7) and why half the
+   acceptance criteria below run through injected backends.
+
+**The fallback design — one render window with N VTK viewports — is
+dropped.** It was the plan's stated alternative to N interactors; the
+spike removes its motivation, and it costs: manual viewport-rect maths
+on every resize, one renderer stack to route N cameras through, no
+per-pane `screenshot()` (S1's stills law rides one screenshot per
+pane), a legend-routing layer to rebuild what the per-plotter registry
+gives free, and hand-written hit-region maths for S4's pick instead of
+Qt delivering the event to the right widget. Nothing is bought.
+
+*Note on framing:* the ADR's open question asks about the **layout
+idiom** (splitters vs tab+split vs mosaic+strip); the plan asks about
+the **rendering substrate** (N interactors vs N viewports). Both axes
+are settled here.
+
+---
+
+### A1.1 Decision
+
+**The pane host is one tree of nested `QSplitter`s, auto-tiled, in the
+window's central widget. Each mesh pane owns one `QtInteractor`; each
+plot pane owns one chart widget. No tabs, no MDI, no plot strip.**
+
+Concretely: the central widget is a root `QSplitter(Horizontal)` of
+**columns**; each column is a `QSplitter(Vertical)` of **rows**; each
+row is one pane frame. Depth is exactly two. That is the geometry the
+probe proved.
+
+The host is a projection of `session.panes`, on the S2 discipline: the
+session is truth, the widget tree follows. `session.add_view()` from
+Python and "New mesh view" from the outline produce the same window.
+
+### A1.2 The tiling law — `T(N)`
+
+The shape is a **pure function of the pane count**, not of click
+history:
+
+```
+C = ceil(sqrt(N))                 columns
+cells filled row-major, in session.panes order (creation order)
+column j holds panes j, j+C, j+2C, …    (top to bottom)
+```
+
+| N | Shape |
+|---|---|
+| 1 | one pane, no visible handle |
+| 2 | two columns |
+| 3 | col 1 = [p1, p3], col 2 = [p2] |
+| 4 | quad — col 1 = [p1, p3], col 2 = [p2, p4] |
+| 6 | 3 columns × 2 rows |
+
+Row-major fill is chosen over column-major because it minimises
+movement: **adding a pane never moves the others unless the column
+count changes** (at N = 2, 5, 10, …). Closing a pane re-tiles the same
+way.
+
+Handle positions are the user's. `T(N)` decides the *shape*; splitter
+ratios are dragged freely and persist (A1.5). Add, close and
+View → Reset layout return the ratios to equal — a tile is a tile.
+
+There is no per-Add split direction, because there is no local split:
+the grid re-tiles. This is the Abaqus "tile viewports" model, not the
+VS Code "split editor" model, and this window's operator knows the
+former.
+
+### A1.3 The pane frame
+
+Every pane — mesh or plot — is a `SessionPaneFrame`: a one-row header
+above the pane content.
+
+```
+┌ SessionPaneFrame ─────────────────────────────────────────┐
+│ SessionPaneHeader   h = DENSITY.row_h (22 / 28)           │
+│  ▦ Mesh view 1          [M][O][N][G]      (time)       ✕  │
+├───────────────────────────────────────────────────────────┤
+│  pane content — QtInteractor (mesh) | chart (plot)        │
+└───────────────────────────────────────────────────────────┘
+```
+
+| Zone | Mesh pane | Plot pane |
+|---|---|---|
+| Left | kind glyph + `view.name or view.id`, section-header role (`fs_head`, 600, `text`) | same, + dim `kind` word (`history`) |
+| Middle | the **four style buttons** (INV-MESH-4) as 16 px icons in 22 px hit areas | *(nothing — they do not act on a plot; 0087 INV-2)* |
+| Right, reserved | per-pane instant badge when the time link is off (**S4-3**; renders nothing in S3) | plot cursor badge, same slice |
+| Far right | `close` glyph | `close` glyph |
+
+Rules:
+
+- The pane is not a dock, so it owns its single title — 0087 INV-1's
+  stated exception for surfaces that render outside a dock. It is the
+  **only** title: no inner header inside the pane content.
+- **Style buttons live here and nowhere else.** They are view chrome,
+  not slots (INV-MESH-4); routing them through the inspector would
+  cost a pane selection per toggle (0088 D2's accepted
+  one-context-at-a-time cost) exactly during the gesture — comparing
+  two panes — that N panes exist for. The mesh-view inspector page
+  does **not** restate them: one state, one control.
+- **Icons, per 0087 INV-4.** `mesh` already exists in
+  `_icon_factory.py`; `outlines`, `nodes`, `gauss` are three new
+  glyphs and four new Appendix A rows. Metaphors, kept distinct at
+  16 px: `outlines` = closed boundary polygon, no interior lines
+  (vs `mesh`, interior grid + two diagonals); `nodes` = cell corners
+  as three filled dots; `gauss` = cell with a 2×2 interior dot
+  pattern (vs `probe_slice`, a 3×3 line grid with no dots). Word
+  labels were considered and refused: four words plus title plus
+  close do not fit the 240 px width floor.
+- Toggling a style button writes `session.pane(id).style` — the same
+  `MeshStyle` record a script would assign. It never touches another
+  pane.
+
+### A1.4 Floors, the Add gate, the empty host
+
+Two new `LAYOUT` fields, on that file's documented promotion path:
+
+| Field | Value | Why that number |
+|---|---|---|
+| `pane_min_width` | **240** | 0090's chip is content-derived, not a fixed rect: `box_px` returns 133.5 px wide for a default vertical entry (`displacement_z`, 5 labels, `font_scale` 1.0), and grows with the component name — a 16-character name reaches ~151. Plus `MARGIN_PX` 16 that is ~150–167; 240 leaves the model visible beside its own legend even for a long component name |
+| `pane_min_height` | **200** | same entry measures 154.5 px tall; height tracks `n_labels`, not the name — 5 labels 154.5, 6 labels 180.4, 7 labels 206.3. With `MARGIN_PX` the floor contains the default 5-label legend (170.5) and a 6-label one (196.4) but **not** a 7-label one (222.3), which needs a `font_scale` change. 200 is the "default legend fits" floor, not "any legend fits" |
+
+`splitter_handle_width` (4) is reused, not re-invented. Every splitter
+sets `childrenCollapsible(False)`; a pane can be dragged small, never
+to zero.
+
+**Add gate.** "New mesh view" / "New plot" are *enabled* only when
+`T(N+1)` clears both floors at the host's current size:
+
+```
+C' = ceil(sqrt(N+1))            R' = ceil((N+1) / C')
+host_w >= C'*240 + (C'-1)*4     host_h >= R'*200 + (R'-1)*4
+```
+
+Otherwise they render disabled with the reason in the tooltip — the
+shipped `_SlotRow(can_add=False)` idiom, restated (0087 INV-2: a
+control that cannot act does not pretend to). Practical ceilings:
+1280 × 800 → 4 panes; 1600 × 1000 (the shipped default window) →
+9 panes.
+
+**The gate constrains creation only.** A session that arrives with
+more panes than fit — `s.add_view()` in a script, an S5 snapshot
+restore — is tiled anyway; the IR is truth and the host never refuses
+a pane that exists. Qt then raises the window's minimum size. Beyond
+the screen the panes clip; accepted, and named here so it is not read
+as a defect.
+
+**Zero panes is a valid session** (`ResultsSession` docstring), so the
+host renders it: one `SessionPaneHostEmpty` card, one hint line, one
+action ("New mesh view") — the 0088 D3 empty-state-HUD idiom, INV-2
+shape, zero enabled data controls. The inspector shows its
+nothing-selected hint beside it.
+
+### A1.5 Active pane, closing, persistence
+
+**Active pane.** One at all times (when N ≥ 1). It is the same state
+as the outline's selection and the inspector's context — one state,
+three renderings:
+
+```
+outline row selected  ==  host.active_pane_id  ==  inspector context
+```
+
+It lives in the viewer's `ActiveObjects` (`activeViewChanged`, ADR
+0056 — 0098 already says the focus roster follows the new nouns), not
+in the session IR. Rendering: **1 px `accent` border on the active
+pane frame** — 0087 D1.4's "accent reserved for focus/active" — plus
+the outline row's existing 2 px left spine. Clicking anywhere in a
+pane makes it active; so does selecting its outline row.
+
+**Closing.** The header's `close` glyph calls
+`session.remove_pane(id)`; the outline row's context menu offers the
+same. The widget disappears because the session lost the pane, never
+before. Closing the **last** pane is allowed — it lands on the empty
+card. No undo, consistent with the rest of this window.
+
+**Persistence.** Shape is derived, so only ratios are stored, in the
+session window's own scope (plan decision 8), as one JSON string:
+
+| Key | Scope | Value |
+|---|---|---|
+| `panes/schema_version` | `QSettings('apeGmsh', 'ResultsSession')` | `1` |
+| `panes/layout` | same | `{"n":4,"cols":[0.5,0.5],"rows":[[0.5,0.5],[0.5,0.5]]}` |
+
+Ratios, not pixels, so a restore at another window size divides
+proportionally. Applied only when `n` equals the session's pane count
+and the schema version matches; otherwise equal ratios, silently (this
+is chrome — `_restore_layout`'s existing silent-mismatch behaviour,
+not §1's session-schema notice). Nothing is written under
+`('apeGmsh', 'ResultsViewer')`. **View → Reset layout** restores the
+0088 D1 dock set *and* re-tiles to `T(N)` with equal ratios.
+
+### A1.6 Decision table
+
+| Question | Decision | Serves |
+|---|---|---|
+| Layout idiom | Nested `QSplitter`s: root H of columns, each column a V of rows, depth 2 | Open question 1; probe geometry |
+| Rendering substrate | One `QtInteractor` per mesh pane; N-viewports fallback dropped | Spike, both oracles |
+| Split direction on Add | None — the grid re-tiles by `T(N+1)` | A1.2 |
+| Where a new pane lands | Next cell of `T(N+1)`, row-major in `session.panes` order; becomes active + outline-selected | §9, workshop loop |
+| Tabbed panes | **No.** A hidden pane is a pane not doing its job; tabs are a second navigation spine beside the outline (0088 D2's own rationale) | 0088 D2 |
+| Drag-reorder panes | Not in v1. Pane order is session order | keeps IR closed |
+| Minimum pane size | `LAYOUT.pane_min_width` 240 × `pane_min_height` 200; `childrenCollapsible(False)` | 0090 D3/D4 footprint |
+| Add gate | Disabled with a reason when `T(N+1)` breaches a floor | 0087 INV-2 |
+| More panes than fit (Python / restore) | Tiled anyway; window minimum grows; never refused | IR is truth |
+| Pane header shows | kind glyph + name · four style buttons (mesh only) · reserved time badge · close | INV-MESH-4, 0087 INV-1 |
+| Style buttons' home | Pane header only; inspector does not restate them | INV-MESH-4, INV-2 |
+| Active pane indicated by | 1 px `accent` frame border + outline row spine; `ActiveObjects.activeViewChanged` | 0087 D1.4, ADR 0056 |
+| Pane closed by | Header `close` → `session.remove_pane`; outline context menu | §9 |
+| Last pane closed | Allowed → empty-state card with one action | zero panes is valid IR |
+| Layout persisted | Yes — ratios only, `panes/layout` + `panes/schema_version` in the `'ResultsSession'` scope | plan decision 8, 0088 D6 |
+| Dock schema | Unchanged; `_LAYOUT_SCHEMA_VERSION` stays 1 (no dock added/renamed) | 0088 D6 |
+| Legends | Per pane, per plotter; 0090 slot allocation and containment measured against the **pane's** viewport | INV-LEGEND-5 |
+| Toolbar camera / screenshot / fit | Act on the **active pane** | one active object |
+| Plot panes | Same host, same frame, same tiling. No strip, no dock | §6 |
+| New view / new plot live | Outline only (§9). No View-menu duplicates | one spine |
+
+---
+
+### Wireframes
+
+Double rule = the 1 px `accent` border of the **active** pane.
+`[M][O][N][G]` = the four style buttons (Mesh / Outlines / Nodes /
+Gauss).
+
+**One pane — boot, 1280 × 800.** The host inherits the whole central
+region, so 0088 D1's invariant is unchanged: 1280 − 260 − 380 = 640 =
+50 %.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ File   View   Help                                                   │
+├───┬───────────┬──────────────────────────────────┬───────────────────┤
+│ T │ Outline   │╔════════════════════════════════╗│ Inspector         │
+│ o │ Views     │║▦ Mesh view 1  [M][O][N][G]   ✕ ║│  Deform      [ ]  │
+│ o │  Mesh v 1 │╟────────────────────────────────╢│  Contour   [Add]  │
+│ l │  + New …  │║                                ║│  Vector    [Add]  │
+│ b │           │║        grey mesh               ║│  Gauss     [Add]  │
+│ a │ Model     │║        (valid picture, §3)     ║│  …                │
+│ r │  □ Deck   │╚════════════════════════════════╝│                   │
+├───┴───────────┴──────────────────────────────────┴───────────────────┤
+│ Time scrubber                                                        │
+└──────────────────────────────────────────────────────────────────────┘
+     260 px              640 px — the pane host              380 px
+```
+
+**Two panes — after "New mesh view".** `T(2)`: two columns, 318 px
+each. The new pane is column 2, active and outline-selected; the
+inspector now edits it. Pane 1's legend stays pane 1's
+(INV-LEGEND-5).
+
+```
+┌───────────────────────────────┐╔═══════════════════════════════╗
+│▦ Mesh view 1 [M][O][N][G]   ✕ │║▦ Mesh view 2 [M][O][N][G]   ✕ ║
+├───────────────────────────────┤╟───────────────────────────────╢
+│  contour ▓▓▓▓▓▓       ┌─────┐ │║                               ║
+│                       │ S11 │ │║        grey mesh              ║
+│                       └─────┘ │║                               ║
+└───────────────────────────────┘╚═══════════════════════════════╝
+              ↑ 4 px handle — the only chrome between panes
+```
+
+**Four panes — `T(4)`, the quad.** Splitter tree
+`H[ V[p1,p3], V[p2,p4] ]` — the probe's geometry, 318 × 333 each.
+
+```
+┌──────────────────────────────┐┌──────────────────────────────┐
+│▦ Mesh view 1 [M][O][N][G]  ✕ ││▦ Mesh view 2 [M][O][N][G]  ✕ │
+├──────────────────────────────┤├──────────────────────────────┤
+│ contour S11  → 1 legend      ││ deform on, every slot empty  │
+│                       ┌────┐ ││ → ZERO legends (§5 oracle)   │
+│                       │S11 │ ││                              │
+└──────────────────────────────┘└──────────────────────────────┘
+╔══════════════════════════════╗┌──────────────────────────────┐
+║▦ Mesh view 3 [M][O][N][G]  ✕ ║│▦ Mesh view 4 [M][O][N][G]  ✕ │
+╟──────────────────────────────╢├──────────────────────────────┤
+║ gauss slot   → 1 legend      ║│ scope: Deck only             │
+║                       ┌────┐ ║│ (one cell set, INV-MESH-1)   │
+║                       │S11 │ ║│                              │
+╚══════════════════════════════╝└──────────────────────────────┘
+```
+
+**Mesh panes + a plot pane — `T(3)`.** A plot is a pane, not a strip
+and not a dock (§6). Creation order Mesh 1, Mesh 2, Plot 1 puts the
+plot at column 1 row 2; mesh 2 keeps the full-height right column.
+
+```
+┌──────────────────────────────┐╔══════════════════════════════╗
+│▦ Mesh view 1 [M][O][N][G]  ✕ │║▦ Mesh view 2 [M][O][N][G]  ✕ ║
+├──────────────────────────────┤╟──────────────────────────────╢
+│ contour + deform             │║                              ║
+│                       ┌────┐ │║   same model, unaveraged     ║
+│                       │S11 │ │║                              ║
+└──────────────────────────────┘║                              ║
+┌──────────────────────────────┐║                              ║
+│▤ Plot 1  history           ✕ │║                              ║
+├──────────────────────────────┤║                              ║
+│  tip Uy    ╱────┆ cursor     │║                              ║
+│      ─────╯     ┆            │║   drag the cursor → the      ║
+│                 ┆            │║   meshes move (link on, §7)  ║
+└──────────────────────────────┘╚══════════════════════════════╝
+```
+
+With one mesh view the same loop gives the simpler `T(2)`: mesh left,
+plot right.
+
+**Add to a full layout.** At 1280 × 800 with four panes, `T(5)` needs
+3 × 240 + 8 = 728 px of host width and only 640 exist:
+
+```
+ Outline                          status bar
+┌──────────────────┐             ┌───────────────────────────────────┐
+│ Views            │             │ Panes 4 · adding a fifth needs a  │
+│  Mesh view 1     │             │ wider window                      │
+│  …               │             └───────────────────────────────────┘
+│  + New mesh view │ ← disabled, tooltip:
+│  + New plot      │   "A fifth pane needs 728 px of viewport width
+└──────────────────┘    (240 px minimum per pane); the window has 640."
+```
+
+No dialog, no silent failure, no shrinking below the floor.
+
+**Last pane closed.**
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│              No views in this session.                        │
+│                                                               │
+│                   [ New mesh view ]                           │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+  one hint, one action, zero enabled data controls (0087 INV-2)
+```
+
+---
+
+### Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| **MDI subwindows** | Already rejected in the workshop as daily chrome; carried forward, not re-derived. Overlapping, z-ordered, hand-arranged windows make the operator do layout work before doing engineering work, and nothing tiles by itself. The ADR's table row stands |
+| **Tab + split editor area (VS Code)** | A tabbed pane is invisible while its neighbour is up — N panes exist for *simultaneous* comparison (§3, the workshop loop). Tabs are also a second navigation system beside the outline, which is the exact defect 0088 D2 removed from the tab spine |
+| **Mosaic of meshes + a plot strip** | Privileges mesh panes over plot panes and re-creates `dock_results_right` under a new name — the dock this ADR retires (§6: "a plot is a pane, not a dock of a contour") |
+| **One render window with N VTK viewports** | The plan's substrate alternative. The spike removes its motivation; it costs viewport-rect maths, a legend-routing layer, per-pane screenshots and S4 pick routing, and buys nothing |
+| **Local "split this pane" instead of auto-tiling** | Two shapes to reason about (the live tree and the canonical one), a persistence format for arbitrary trees, and depth > 2 with slat-shaped panes. Deferred as a widening, not needed for the loop |
+| **Free-drag pane reordering** | Would make pane order window state that disagrees with `session.panes`, or reopen the IR to carry order. Neither for a v1 comfort |
+| **Maximize / zoom one pane** | A hidden-siblings mode is tabs by another name; the operator can close a pane and re-add one. Revisit if the quad view proves too tight |
+| **Pane layout in the session snapshot** | Layout is chrome. Putting it in the IR would make a snapshot restore reproduce someone else's monitor, and would reopen S0's records for a UI question |
+
+---
+
+### Cautions S3 inherits
+
+1. **The S2 window adopts the shell's plotter and must stop.**
+   `viewers/session/_window.py` injects a factory returning
+   `PyVistaQtBackend(self._shell.plotter)`; with N panes each pane
+   uses `MeshPane.default_backend_factory` and owns its interactor.
+   The shell's own `QtInteractor` (built in `viewer_window.py:264` and
+   set as the central widget at :265) then has no viewer. Do not leave
+   it alive as an orphan GL context. The seam should be **additive and
+   opt-in** — the old window's construction path must stay
+   byte-identical (standing risk: nothing changes for
+   `results_viewer.py` before S6a).
+2. **pyvista's global theme is mutated *after* the shell's interactor
+   is constructed** (`viewer_window.py:264` vs :271–272 — the ADR 0090
+   E1 ordering defect). Pane interactors built later inherit
+   `dark` / white font. Legends are safe (0090 D1 routes their colours
+   through specs) and realize bakes substrate colours from the palette,
+   but any other pyvista-defaulted actor in a pane is not. Fix the
+   ordering, or construct panes with an explicit theme.
+3. **`MeshPane.set_pane` loses its caller.** In S2 the outline click
+   re-aimed the one viewport; from S3 each pane is constructed with its
+   own `pane_id` and never re-aimed — the click selects. Retire or keep
+   for tests; no behaviour may ride it.
+4. **N reconcilers, one tick.** Each pane owns a `SessionReconciler`
+   with its own coalescing timer, so a single session tick schedules N
+   flushes. At 18.6 M cells that is the plan's named responsiveness
+   concern multiplied. Criterion 12 pins the observable; the mechanism
+   is S3's (a pane-level signature over records + effective instant +
+   style + scope + clips + overlay, with a forced path for the theme /
+   density repaints, is the recommended shape). The inspector already
+   guards the other direction — `MeshInspectorPage.set_realized`
+   ignores a realization whose `pane_id` is not its view's.
+5. **N panes ⇒ N datasets.** Different scopes mean different ghost
+   arrays, so panes cannot share one `vtkDataSet`. Use `ShallowCopy`
+   (coordinates and connectivity shared, per-pane ghost array added to
+   the copy) rather than N deep copies, and measure. This intersects
+   the plan's ghost-mask-vs-cell-set-rebuild choice; verify early.
+6. **A quad-view legend is proportionally large.** 0090's box is
+   content-derived and does not shrink with the pane: a default
+   `displacement_z` chip measures 133.5 px, so with the 16 px margin it
+   eats ~47 % of a 318 px pane's width — and more for a longer
+   component name (a 16-character one reaches 150.9, ~52 %). `font_scale`
+   (0090 D4) is the existing knob. Auto-scaling the legend to the pane
+   would be a 0090 amendment and is not taken here.
+7. **objectNames.** New styled widgets follow 0087 INV-7's PascalCase
+   convention — `SessionPaneHost`, `SessionPaneFrame`,
+   `SessionPaneHeader`, `SessionPaneTitle`, `SessionPaneStyleButton`,
+   `SessionPaneHostEmpty` — with the pane id in a Qt property
+   (`paneId`) and the active state as a dynamic property
+   (`active="true"`, the `PlotPaneTabRow` pattern), so one QSS block
+   styles every pane. (S2's session widgets shipped snake_case names;
+   that inconsistency is noted, not reopened.) None of the four
+   retired 0088 D6 objectNames may appear.
+8. **Tests address panes through the host, not through objectNames** —
+   `host.frame(pane_id)` / `host.pane_frames`. Per-pane objectNames
+   would break INV-7's one-block-per-component rule.
+
+---
+
+### Acceptance criteria (S3)
+
+Lane tags: **[off]** runs in the default CI lane under
+`QT_QPA_PLATFORM=offscreen` with injected backends (no GL); **[qt]**
+needs a real GL context (`-m qt`, xvfb in CI).
+
+1. **[off]** Boot of a one-pane session: the central widget is
+   `SessionPaneHost` containing one root `QSplitter(Horizontal)` with
+   one child; `len(host.pane_frames) == 1`; the frame's `paneId`
+   equals `session.panes[0].id`.
+2. **[off]** The host is a projection: after any sequence of
+   `session.add_view()` / `add_plot()` / `remove_pane()` driven from
+   **Python only**, `[f.paneId for f in host.pane_frames] ==
+   [p.id for p in session.panes]`.
+3. **[off]** `T(N)` shape, asserted on the splitter tree for
+   N = 1, 2, 3, 4, 6: N = 4 gives a root `Horizontal` splitter with two
+   `Vertical` children of two panes each; N = 3 gives columns
+   `[p1, p3]` and `[p2]`.
+4. **[off]** Growth does not re-flow: going 3 → 4 panes leaves every
+   existing pane in the same (column, row) cell; going 4 → 5 (column
+   count changes) is allowed to move panes.
+5. **[off]** Floors: every pane frame's `minimumWidth() >=
+   LAYOUT.pane_min_width` and `minimumHeight() >=
+   LAYOUT.pane_min_height`; every splitter reports
+   `childrenCollapsible() is False`.
+6. **[off]** Add gate: with the host forced to 640 × 671 and four
+   panes, the outline's "New mesh view" and "New plot" are disabled and
+   their tooltips name the required width; with the host at 960 × 871
+   they are enabled. No exception is raised either way.
+7. **[off]** The gate does not gate the IR: `session.add_view()` on the
+   640 × 671 four-pane host still creates a fifth pane **and** a fifth
+   frame.
+8. **[off]** Closing the last pane leaves exactly one
+   `SessionPaneHostEmpty` card with one action button and zero enabled
+   data controls; the inspector shows its nothing-selected hint.
+9. **[off]** One active pane at all times: after each of {click a pane,
+   click an outline row, add a pane, close the active pane},
+   `host.active_pane_id == outline.selected_pane_id()` and the mounted
+   inspector page is that pane's.
+10. **[off]** Style buttons are per pane and two-way: clicking Outlines
+    on pane B sets `session.pane(B).style.outlines` and leaves
+    `session.pane(A).style` equal to its previous value; assigning
+    `MeshStyle` in Python updates B's button state.
+11. **[off]** Pane isolation at the backend: with `RecordingBackend`
+    injected per pane, filling pane A's contour slot produces layer ops
+    on A's backend only, and every emitted `RealizedPane.pane_id`
+    equals its own pane's id.
+12. **[off]** One gesture, one realize: filling pane A's contour slot
+    in a four-pane session costs exactly one `realize` and one
+    `render()` — not four. A theme change costs four (all panes
+    repaint).
+13. **[off]** Persistence: closing the window writes
+    `panes/schema_version == 1` and a `panes/layout` JSON whose `n`
+    equals the pane count under
+    `QSettings('apeGmsh','ResultsSession')`; nothing is written under
+    `QSettings('apeGmsh','ResultsViewer')`;
+    `SessionResultsWindow._LAYOUT_SCHEMA_VERSION == 1` (unchanged).
+14. **[off]** Restore with a matching `n` reproduces the stored ratios
+    (±1 px); restore with a different `n`, a bad version, or corrupt
+    JSON falls back to equal ratios without raising and without a
+    console message.
+15. **[off]** `View → Reset layout` from any arrangement gives the
+    0088 D1 dock set **and** `T(N)` with equal ratios.
+16. **[off]** Guards: the four retired 0088 D6 objectNames appear
+    nowhere in `viewers/**` (criterion 11 of 0088 still green); G-HEX,
+    G-SHOUT, G-QSS-SYNC and G-INLINE budgets unchanged or ratcheted
+    down; `glyph_names()` contains `outlines`, `nodes`, `gauss`, and
+    every style button binds a factory glyph (no text-only fallback).
+17. **[qt]** `tests/viewers/test_pane_host_probe.py` stays green
+    (6 passed, 0 skipped under xvfb + Mesa).
+18. **[qt]** The same eight properties hold on the real
+    `SessionWindow` with four mesh panes, not only on the synthetic
+    probe: four distinct renderers, independent cameras, one scalar
+    bar per pane, a non-flat per-pane screenshot, actors surviving a
+    splitter drag, and a clean teardown with no leaked interactor.
+19. **[qt]** ADR §11's S3 verify line: two mesh views with different
+    slots and different scopes render different pictures — pane A with
+    a contour reports one legend, pane B with deform on and no slots
+    reports zero (the §5 oracle, per pane).
+20. **[qt]** Toolbar camera preset / fit / screenshot act on the
+    active pane only: the other panes' camera positions are unchanged.
+21. **[qt]** Screenshot review bar (0087 INV-6): 1-pane, 2-pane and
+    4-pane captures in `catppuccin_mocha`, `neutral_studio` and
+    `paper`, attached to the PR; pane headers legible and unclipped at
+    both densities at the 240 px width floor.
+22. **Mutation test** (plan standing risk): inverting the `T(N)` fill
+    order, dropping the `childrenCollapsible` call, or pointing two
+    panes at one backend each makes at least one criterion above fail.
+    Recorded in the PR.
+
+---
+
+### Open sub-questions left to S3
+
+1. **How the shell stops building its own interactor.** Recommended
+   default: an additive, opt-in seam on `ViewerWindow` /
+   `ResultsWindow` (a constructor flag or a `set_central_widget`) that
+   the session window uses and the old window never touches. Caution 1.
+2. **The per-pane realize guard.** Recommended default: a pane-level
+   signature as described in caution 4; if it cannot be made total
+   over everything `realize` reads, accept N realizes per tick, record
+   the miss in the PR, and let criterion 12 be measured rather than
+   gated.
+3. **Shared tessellation across panes.** Recommended default:
+   `ShallowCopy` + per-pane ghost array (caution 5), verified early
+   against the plan's scope-realization choice.
+4. **Explicit split direction / pane reordering.** Recommended
+   default: not in S3. Both are widenings that need no IR change and
+   can land after the loop is proven.
+5. **Legend scale in small panes.** Recommended default: leave
+   `font_scale` as the user's knob (0090 D4). Revisit only if the quad
+   view is reported unusable — auto-scaling is a 0090 amendment.
+
+---
+
+### Consequences
+
+**Positive.** S3's biggest named risk is retired with evidence on both
+oracles, and the evidence is a committed regression test, not a
+changelog line. The centre becomes N panes with no new dock, no schema
+bump and no IR field — 0088's partition and 0098's ontology both
+survive intact. Legends, per-pane cameras and per-pane stills come
+free from the per-plotter registry. The shape is a pure function of the
+pane count, so the outline, the tiling and any future snapshot restore
+cannot disagree about what is on screen.
+
+**Negative / accepted.** Adding a pane re-tiles the grid when the
+column count changes (N = 2, 5, 10, …), so two panes move once each at
+those counts. Hand-dragged splitter ratios are reset by Add, by Close
+and by Reset layout. The window size, not a preference, caps the pane
+count (4 at 1280 × 800, 9 at 1600 × 1000). A legend occupies about half
+the width of a quad-view pane until the operator turns `font_scale`
+down. Three new glyphs and four Appendix A rows are owed before the
+style buttons can ship. And N live GL contexts is N times the driver
+surface — the probe says it works today on both oracles; the probe is
+also what will say when it stops.
