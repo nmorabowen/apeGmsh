@@ -351,8 +351,8 @@ def _check_u_vs_diag(
     findings.append(_finding(
         "RES.U_VS_DIAG",
         (
-            f"‖u‖_max / model_diagonal = {ratio:.4g} "
-            f"(‖u‖={best_mag:.4g}, diag={diag:.4g}) "
+            f"|u|_max / model_diagonal = {ratio:.4g} "
+            f"(|u|={best_mag:.4g}, diag={diag:.4g}) "
             f"at node {top['id']} xyz={top['xyz']} step={top['step']}"
         ),
         {
