@@ -22,18 +22,17 @@ from tests.opensees.fixtures.fem_stub import (  # noqa: E402
 
 
 def _fork_has_explicit() -> bool:
-    ops = openseespy
-    ops.wipe()
-    ops.model("basic", "-ndm", 1, "-ndf", 1)
-    ops.node(1, 0.0)
-    ops.node(2, 1.0)
-    try:
-        ops.integrator("ExplicitBathe", 0.54)
-        return True
-    except Exception:
-        return False
-    finally:
-        ops.wipe()
+    """True on a Ladruno fork build.
+
+    Asks the resolver's own build probe rather than try/except-ing an
+    ``integrator ExplicitBathe`` call: openseespy does NOT raise on an
+    unknown integrator type, so the old probe returned ``True`` on stock,
+    the skip never fired, and every test in this file failed on any
+    non-fork machine.
+    """
+    from apeGmsh.opensees._target import probe_live_capabilities
+
+    return probe_live_capabilities().has_fork
 
 
 pytestmark = pytest.mark.skipif(

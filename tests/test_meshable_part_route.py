@@ -168,6 +168,10 @@ def test_assembly_rejects_unknown_kind_still(tmp_path: Path):
 # LIVE — the tied interface transmits correctly: series closed form
 # --------------------------------------------------------------------------
 
+# ``enforce="equation"`` is fork-only at run time: stock openseespy takes
+# the equationConstraint command but does not enforce it equivalently (this
+# assertion read 71 % soft there before the live route was gated).
+@pytest.mark.ladruno_fork
 def test_tied_stack_matches_series_closed_form(tmp_path: Path):
     """Two stacked blocks, nu=0, equation tie: K = EA/L_total exactly.
 

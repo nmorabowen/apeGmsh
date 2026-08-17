@@ -188,11 +188,15 @@ class Assembly:
             independently-meshed parts. Calibration note (measured on a
             two-block series column with an exact answer, N/mm units):
             ``enforce="equation"`` is exact (−0.01 %) but requires the
-            Lagrange constraint handler and an unsymmetric system;
-            the default ``enforce="penalty"`` at its default
+            Lagrange constraint handler, an unsymmetric system, **and a
+            Ladruno fork build** — stock openseespy accepts
+            ``equationConstraint`` without enforcing it equivalently and
+            reads ~71 % soft, so the live route is gated (deck emission is
+            unaffected). The default ``enforce="penalty"`` at its default
             ``stiffness=1e18`` does not converge — penalty ≥ 1e12
-            fails outright and 1e10 reads ~1.3 % soft. Pass
-            ``enforce="equation"`` unless you have a reason not to.
+            fails outright and 1e10 reads ~1.3 % soft. On a fork build
+            pass ``enforce="equation"`` unless you have a reason not to;
+            on stock, use ``enforce="penalty"`` with a tuned ``stiffness``.
         ports : (str, str)
             **Bare** physical-group names, one per part: ``ports[0]`` on
             ``part_a``, ``ports[1]`` on ``part_b``. :meth:`materialize`
