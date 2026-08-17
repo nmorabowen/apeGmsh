@@ -1,10 +1,11 @@
 # ADR 0098 — Results presentation is a `ResultsSession` of views, not geometries of diagrams
 
-**Status:** Proposed (2026-08-16) — design ratified in the owner
+**Status:** Accepted (2026-08-16) — design ratified in the owner
 workshop the same day; record revised the same day after adversarial
-review. Implementation has not started. Qt layout of the pane host
-is a named follow-up (see *Open question 1*); the session IR does
-not wait on it.
+review. Implementation is under way: S0, S1-A, S1-B and S2 have
+merged. Qt layout of the pane host — *Open question 1* — is
+**resolved in Amendment 1** (2026-08-17), the gate the implementation
+plan puts before S3.
 
 Supersedes the **product ontology** of [ADR 0058](0058-concurrent-geometries.md)
 (a `Geometry` as the Results scene instance) and its
@@ -521,14 +522,22 @@ is viable.**
 
 | Oracle | Result |
 |---|---|
-| Windows, real GPU, 4 interactors | Eight probed failure modes pass: four distinct renderers, independent scenes, independent cameras (moving pane 0's camera left panes 1–3 untouched), exactly one scalar bar per pane, per-pane screenshots, splitter-resize survival, runtime add/remove of a pane, clean teardown |
-| Linux CI, `xvfb` + Mesa software GL (`qt-window-tests` lane) | 6 passed, 0 skipped |
+| Windows, real GPU, 4 interactors | Nine probed failure modes pass: four distinct renderers, independent scenes, independent cameras (moving pane 0's camera left panes 1–3 untouched), exactly one scalar bar per pane, per-pane screenshots, splitter-resize survival, runtime add/remove of a pane, **a live pane reparented between splitters keeping its camera pose and a non-flat frame**, clean teardown |
+| Linux CI, `xvfb` + Mesa software GL (`qt-window-tests` lane) | 7 passed, 0 skipped |
 
-The six durable modes are committed as
+The seven durable modes are committed as
 `tests/viewers/test_pane_host_probe.py` (PR #1019) and stay after the
 spike as S3's regression guard — the day a VTK or pyvistaqt bump makes
 four live interactors share a camera or leak a scalar bar, the pane
 host breaks and that file fails first.
+
+The reparent mode was added after adversarial review: `T(N)` re-tiles
+at every column-count change (N = 2, 5, 10…), which **moves** a live
+pane between splitters, and the original probe never did that — it
+closed one interactor and built a fresh one, a different operation.
+Reparenting a GL-native widget destroys and recreates its platform
+window, so this was the one lifecycle event the tiling law mandates
+and no oracle had exercised. It passes on both.
 
 Two inherited facts, recorded so they are not re-derived:
 
@@ -1116,7 +1125,7 @@ needs a real GL context (`-m qt`, xvfb in CI).
     down; `glyph_names()` contains `outlines`, `nodes`, `gauss`, and
     every style button binds a factory glyph (no text-only fallback).
 17. **[qt]** `tests/viewers/test_pane_host_probe.py` stays green
-    (6 passed, 0 skipped under xvfb + Mesa).
+    (7 passed, 0 skipped under xvfb + Mesa).
 18. **[qt]** The probe's properties hold on the real `SessionWindow`
     with four mesh panes, not only on the synthetic probe: four
     distinct renderers, independent cameras, one scalar bar per pane,
