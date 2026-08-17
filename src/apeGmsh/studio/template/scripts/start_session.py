@@ -22,6 +22,7 @@ from _habitat import (  # noqa: E402
     HABITAT,
     SESSION_FILE,
     ensure_pythonpath,
+    git_info,
     mcp_json_studio_root,
     utc_now,
     write_session,
@@ -130,6 +131,15 @@ def main() -> int:
 
     print("=== APE habitat START ===")
     print(f"root: {HABITAT}")
+
+    info = git_info()
+    if info is None:
+        print("git: none — un-versioned habitat (see APE/instructions/checkpoints.md)")
+    else:
+        print(
+            f"git: {info['branch']} @ {info['sha'][:9]} "
+            f"(dirty: {info['dirty_files']} files)"
+        )
 
     rc = _run_check_template()
     if rc != 0 and not args.skip_template:

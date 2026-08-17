@@ -8,6 +8,7 @@ or constitutive parameters change (those go in `APE/memory/`).
 | File | Purpose |
 |------|---------|
 | `how-we-work.md` | Session contract, folder roles, agent hygiene, template scope |
+| `checkpoints.md` | Git checkpoint contract — `main` holds checkpoints, `work/` branches, tags, PR mapping |
 | `socratic-geometry.md` | Human ↔ agent dialogue for geometry **and** physics (gates) |
 | `progressive-modeling.md` | Oracles, stage metrics, escalated complexity (incl. apeSees bridge) |
 | `session-postmortem.md` | End-of-session metrics + friction → backlog / upstream |

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,6 +43,7 @@ REQUIRED_FILES = [
     "ape.project.yaml",
     "APE/README.md",
     "APE/instructions/how-we-work.md",
+    "APE/instructions/checkpoints.md",
     "APE/instructions/reporting.md",
     "APE/instructions/session-postmortem.md",
     "APE/instructions/studio-mcp.md",
@@ -94,6 +97,37 @@ def write_session(payload: dict) -> None:
     SESSION_FILE.write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def git_info(path: Path = HABITAT) -> dict | None:
+    """Read-only git snapshot: branch, HEAD sha, dirty file count.
+    None without git on PATH, outside a repo, or before the first
+    commit. Never writes (INV-24, ADR 0095 Amendment 8)."""
+    if shutil.which("git") is None:
+        return None
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(path), *args], capture_output=True, text=True
+        )
+
+    head = run("rev-parse", "HEAD")
+    if head.returncode != 0:
+        return None
+    branch = run("branch", "--show-current").stdout.strip() or "(detached)"
+    status = run("status", "--porcelain")
+    dirty = [ln for ln in status.stdout.splitlines() if ln.strip()]
+    return {"branch": branch, "sha": head.stdout.strip(), "dirty_files": len(dirty)}
+
+
+def git_provenance(path: Path = HABITAT) -> dict | None:
+    """The ``run.json`` provenance fields (models/README.md contract):
+    which source produced a case. None when un-versioned — omit the
+    fields rather than writing null."""
+    info = git_info(path)
+    if info is None:
+        return None
+    return {"model_sha": info["sha"], "git_dirty": info["dirty_files"] > 0}
 
 
 def mcp_json_studio_root() -> str | None:

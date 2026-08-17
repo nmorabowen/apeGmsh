@@ -23,6 +23,7 @@ from _habitat import (  # noqa: E402
     HABITAT,
     SESSION_FILE,
     ensure_pythonpath,
+    git_info,
     read_session,
     utc_now,
     write_session,
@@ -230,6 +231,16 @@ def main() -> int:
 
     print("=== APE habitat FINISH ===")
     print(f"root: {HABITAT}")
+
+    info = git_info()
+    if info is not None:
+        if info["dirty_files"]:
+            print(
+                f"git: {info['dirty_files']} uncommitted files — "
+                "see APE/instructions/checkpoints.md before you leave"
+            )
+        else:
+            print("git: clean")
 
     sess = read_session()
     slug = args.slug or sess.get("slug") or "session"

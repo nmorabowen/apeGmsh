@@ -58,7 +58,12 @@ ape.project.yaml
    (`~/Documents/Github/`). `~/.claude/skills` is legacy if a GitHub copy exists.
 6. Do not invent memory: append decisions and assumptions when they stick.
 7. Authored reports stay in `reports/`; `.apegmsh/` is not the archive.
-8. **Session close** — run `scripts/finish.ps1` (profilers + postmortem
+8. **Git hygiene** — work on a `work/<model>/<slug>` branch; commit at
+   least once per session, and land source changes *before* running a
+   case so `run.json`'s `model_sha` names the code that ran. Merging to
+   `main` is a checkpoint — the full contract is
+   `instructions/checkpoints.md`.
+9. **Session close** — run `scripts/finish.ps1` (profilers + postmortem
    scaffold), then complete `session-postmortem.md` friction triage into
    `postmortem/backlog/open.md`.
 
