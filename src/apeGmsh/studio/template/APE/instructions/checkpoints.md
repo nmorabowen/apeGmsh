@@ -3,7 +3,9 @@
 One rule carries this file: **`main` holds checkpoints only.** A
 checkpoint is a commit where the model source, its accepted cases
 (`run.json`), and the stage report agree. Anything on `main` is safe
-to resume from blind; everything in between lives on a branch.
+to resume from blind; everything in between lives on a branch. (The
+one exception is process files — see "Process files commit to `main`"
+below; they never touch the model surface.)
 
 Results never enter git — the habitat `.gitignore` already excludes
 them (no LFS, no force-adds; do not fight it). Git records *that a run
