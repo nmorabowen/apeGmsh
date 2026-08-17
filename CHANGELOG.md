@@ -77,6 +77,30 @@ one realize and one render, while a theme change forces all four.
 New: `tests/viewers/test_pane_host.py` (the sixteen `[off]` criteria +
 four mutation tests) and `tests/viewers/test_pane_host_window_qt.py`
 (criteria 18-20 on real GL, beside the existing probe).
+### ADDED — docs: the Ladruno backend capability map
+
+`docs/concepts/backend-capabilities.md` publishes the tier boundary an
+outside user previously had to discover by running into it: tier 0 (no
+backend — geometry, meshing, the broker, **deck emission**, results,
+viewers, Studio), tier 1 (stock `openseespy` — the in-process run), and
+tier 2 (the Ladruno fork). Enumerates the fork-only elements,
+integrators, constraint/coupling verbs, analysis + solver commands,
+materials and recorders, and separates the two failure classes: the
+verbs apeGmsh gates with a curated `RuntimeError` (the ones stock would
+otherwise accept and answer wrongly) from those the engine rejects with
+a bare `OpenSeesError`. Also documents that `[all]` omits the `mcp`
+extra, and that the fork ships no wheels or releases.
+
+`tests/test_capability_map_drift.py` machine-checks the element and
+integrator lists against `_FORK_ONLY_ELEMENTS` / `_FORK_ONLY_INTEGRATORS`
+with a two-way ratchet (undocumented gate token fails; documented
+non-token fails), in the style of `test_skill_docs_drift.py`. The prose
+sections are out of scope — they name commands, not frozenset entries.
+
+Three pages that recommended `enforce="equation"` without mentioning the
+build requirement now say so and link the map (`concepts/constraints.md`,
+`how-to/tie-meshes.md`, `how-to/compose-modules.md`) — the live equation
+route became fork-gated when the silent 71 %-soft stock path was closed.
 
 ### ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library
 

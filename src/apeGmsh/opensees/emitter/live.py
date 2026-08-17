@@ -97,11 +97,24 @@ _TIE_FORCE_FORK_REQUIRED = (
 #: :meth:`LiveOpsEmitter.element` below.
 _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
-     "LadrunoBrick20", "LadrunoLST",
+     "LadrunoBrick", "LadrunoBrick20", "LadrunoLST",
      "LadrunoQuad", "LadrunoCST", "LadrunoUP",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
      "LadrunoEmbeddedNode", "LadrunoRigidBody",
      "LadrunoDispBeamColumn", "LadrunoIMKBeam"})
+
+#: Integrator types that exist only in the Ladruno fork build. Unlike the
+#: element gate, these cannot be verified after the fact: openseespy's
+#: ``integrator`` does NOT raise on an unknown type, so an ungated
+#: ``integrator ExplicitBathe`` on stock is silently accepted and the
+#: analysis then steps with whatever integrator was set before — a wrong
+#: answer with no diagnostic. Gated up front against the resolved build in
+#: :meth:`LiveOpsEmitter.integrator` below.
+_FORK_ONLY_INTEGRATORS = frozenset(
+    {"ExplicitBathe", "ExplicitBatheLNVD", "CentralDifferenceLadruno",
+     "LadrunoArcLength", "LadrunoDynamicRelaxation", "LadrunoIndirectControl",
+     "LadrunoHHT", "LadrunoGeneralizedAlpha",
+     "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS"})
 
 
 def _fork_element_required(ele_type: str) -> str:
@@ -113,6 +126,45 @@ def _fork_element_required(ele_type: str) -> str:
         f"deck in-process needs the fork. To run on a stock build, use the "
         f"direct-drive fallback (see bezier_apegmsh_integration.md)."
     )
+
+
+def _fork_integrator_required(i_type: str) -> str:
+    return (
+        f"integrator {i_type} requires the Ladruno fork build of OpenSees "
+        f"(fork-only) — the live build is stock openseespy, whose "
+        f"'integrator' command accepts an unknown type without error and "
+        f"leaves the previous integrator in place. Deck emission via "
+        f"ops.tcl(...) / ops.py(...) works on any build; only running the "
+        f"deck in-process needs the fork. On a stock build use Newmark / "
+        f"HHT / CentralDifference / ExplicitDifference instead."
+    )
+
+
+#: Raised by :meth:`LiveOpsEmitter.equationConstraint` on a stock build.
+#: ``equationConstraint`` EXISTS on stock openseespy and nothing raises, so
+#: this cannot be probed by symbol presence. Stock *does* satisfy a single
+#: isolated interpolation row exactly
+#: (tests/test_equation_tie_emission.py::test_equation_tie_enforced_in_live_solve
+#: — 3 masters, one slave, agrees to 1e-9), but it does NOT reproduce the
+#: fork on a realistic non-matching tie: 37 slave nodes onto 9 shared
+#: masters, byte-identical emission on both backends, measures 71 % soft
+#: against the closed form on stock and exact on the fork
+#: (tests/test_meshable_part_route.py::test_tied_stack_matches_series_closed_form).
+#: Where the two builds diverge is not expressible as a precondition the
+#: caller could check, and the failure is a converged wrong number rather
+#: than an error — so the live route is gated on the build outright.
+_EQUATION_TIE_FORK_REQUIRED = (
+    "enforce='equation' ties (equationConstraint / EQ_Constraint, ADR 0068) "
+    "require the Ladruno fork build of OpenSees for the in-process run. The "
+    "bound openseespy build is stock: it accepts the command, and satisfies "
+    "an isolated tie row, but does not reproduce the fork on a real "
+    "non-matching interface (measured 71 % soft on a two-block series column "
+    "whose emitted deck is identical on both builds) — a converged WRONG "
+    "answer with no warning. Deck emission via ops.tcl(...) / ops.py(...) "
+    "works on any build; only the in-process run is gated. On a stock build "
+    "use enforce='penalty' (tune 'stiffness' — the 1e18 default does not "
+    "converge; ~1e10 reads about 1.3 % soft) or enforce='penalty_al'."
+)
 
 
 class _NoOpOps:
@@ -463,7 +515,9 @@ class LiveOpsEmitter:
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # EQ_Constraint via live openseespy (ADR 0068): one call per tied
-        # DOF, flat varargs.
+        # DOF, flat varargs. Gated on the BUILD, not on symbol presence —
+        # stock openseespy has the symbol but not the behaviour.
+        self._stock_build_gate(_EQUATION_TIE_FORK_REQUIRED)
         flat: list[int | float] = []
         for rn, rd, rc in retained:
             flat += [int(rn), int(rd), float(rc)]
@@ -635,6 +689,24 @@ class LiveOpsEmitter:
             raise RuntimeError(_fork_element_required(ele_type))
         self._fork_verified_types.add(ele_type)
 
+    def _stock_build_gate(self, message: str) -> None:
+        """Raise ``message`` when the bound backend is not the Ladruno fork.
+
+        For the fork commands that CANNOT be verified after the fact —
+        stock openseespy accepts them and then does not honour them, so
+        there is no post-hoc probe like the element gate's ``getEleTags``.
+        The build test is the same one the resolver tags the backend with
+        (:func:`_resolve_ops` → ``criticalTimeStep``).
+
+        No-op while a partition block is open: ``self._ops`` is then the
+        ``_NoOpOps`` stand-in, which answers every ``hasattr`` and drives
+        no real domain, exactly as the element gate skips that case.
+        """
+        if self._in_partition:
+            return
+        if not hasattr(self._ops, "criticalTimeStep"):
+            raise RuntimeError(message)
+
     # -- Time series --------------------------------------------------------
 
     def timeSeries(
@@ -715,6 +787,8 @@ class LiveOpsEmitter:
         self._ops.algorithm(a_type, *args)
 
     def integrator(self, i_type: str, *args: int | float | str) -> None:
+        if i_type in _FORK_ONLY_INTEGRATORS:
+            self._stock_build_gate(_fork_integrator_required(i_type))
         self._ops.integrator(i_type, *args)
 
     def analysis(self, a_type: str) -> None:
