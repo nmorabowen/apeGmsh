@@ -576,6 +576,31 @@ The host is a projection of `session.panes`, on the S2 discipline: the
 session is truth, the widget tree follows. `session.add_view()` from
 Python and "New mesh view" from the outline produce the same window.
 
+**On the session path the shell builds no central interactor.** The
+pane host *is* the central widget; every GL context in the window
+belongs to a pane. The seam is additive and opt-in — a constructor
+flag or a `set_central_widget` on `ViewerWindow` / `ResultsWindow`
+that the session window passes and the old window never reaches, so
+`results_viewer.py`'s construction path stays byte-identical.
+
+This is part of the decision, not a detail deferred to S3, because
+the acceptance criteria below depend on it. Today
+`_results_window.py:128` builds a `ViewerWindow`, which builds a
+`QtInteractor` unconditionally at `viewer_window.py:264`; S2's own
+suite records the consequence — "constructing the real shell
+allocates a `QtInteractor` GL context, so the full composition smoke
+is qt-marked" (`tests/viewers/test_session_window.py:6-10`). Under
+`QT_QPA_PLATFORM=offscreen` that context cannot be created at all
+(inherited fact 2), so **seven of the `[off]` criteria below — 1, 6,
+7, 8, 9, 13, 14, 15 — are only honest if the shell stops building
+it.** Injecting pane backends does not help: it does not touch the
+*shell's* interactor. The alternative was to re-tag those seven
+`[qt]` and pay the xvfb lane for the whole host suite.
+
+It also disposes of a risk rather than managing it: with no shell
+interactor there is no orphaned central context to leak when the
+host mounts (caution 1), so that caution is closed by construction.
+
 ### A1.2 The tiling law — `T(N)`
 
 The shape is a **pure function of the pane count**, not of click
@@ -601,8 +626,29 @@ count changes** (at N = 2, 5, 10, …). Closing a pane re-tiles the same
 way.
 
 Handle positions are the user's. `T(N)` decides the *shape*; splitter
-ratios are dragged freely and persist (A1.5). Add, close and
-View → Reset layout return the ratios to equal — a tile is a tile.
+ratios are dragged freely and persist (A1.5), and a re-tile disturbs
+the least it can:
+
+```
+a splitter whose CHILD LIST changed  -> its ratios reset to equal
+every other splitter                 -> keeps its dragged ratios
+View → Reset layout                  -> everything resets
+```
+
+So adding a third pane (`T(2)` → `T(3)`, which only grows column 1)
+resets that column and leaves the root's hand-dragged 70/30 alone; a
+column-count change (N = 2, 5, 10…) rewrites the root's child list
+and does reset it. The rule stays a pure function of the shape
+change — no click history, nothing stored beyond the ratios already
+in `panes/layout` (A1.5 keys `cols` and `rows` separately, which is
+what makes per-splitter reset expressible).
+
+An earlier draft of this amendment reset *every* ratio on every Add
+and Close ("a tile is a tile"). Adversarial review named it the
+likeliest bug report in the first week — the one-large-mesh /
+one-narrow-plot arrangement this design explicitly supports is
+destroyed by an Add that never touches the splitter holding it — and
+it bought no determinism the narrower law does not also buy.
 
 There is no per-Add split direction, because there is no local split:
 the grid re-tiles. This is the Abaqus "tile viewports" model, not the
@@ -667,6 +713,13 @@ Two new `LAYOUT` fields, on that file's documented promotion path:
 sets `childrenCollapsible(False)`; a pane can be dragged small, never
 to zero.
 
+**These floors are measured against today's `_legend.py` content
+boxes, which pre-date 0090 D3's chip.** D3 adds an 8 px chip pad per
+side and moves containment onto the chip rect — +16 px per axis —
+under which the 200 floor no longer contains even a 6-label legend
+(196.4 + 16). When 0090's implementing phase lands, these two numbers
+are revisited; they are not a permanent contract.
+
 **Add gate.** "New mesh view" / "New plot" are *enabled* only when
 `T(N+1)` clears both floors at the host's current size:
 
@@ -708,8 +761,13 @@ It lives in the viewer's `ActiveObjects` (`activeViewChanged`, ADR
 0056 — 0098 already says the focus roster follows the new nouns), not
 in the session IR. Rendering: **1 px `accent` border on the active
 pane frame** — 0087 D1.4's "accent reserved for focus/active" — plus
-the outline row's existing 2 px left spine. Clicking anywhere in a
-pane makes it active; so does selecting its outline row.
+a 2 px `accent` left spine on the outline row. That spine is **owed
+work, not existing behaviour**: today the pattern exists only as
+`QFrame#PlotPaneTabRow[active="true"]` (`ui/theme.py:1055-1060`), and
+`session_outline_tree` has no QSS block at all. S3 reuses the
+`PlotPaneTabRow` idiom on the outline row; it does not inherit it.
+Clicking anywhere in a pane makes it active; so does selecting its
+outline row.
 
 **Closing.** The header's `close` glyph calls
 `session.remove_pane(id)`; the outline row's context menu offers the
@@ -732,6 +790,13 @@ is chrome — `_restore_layout`'s existing silent-mismatch behaviour,
 not §1's session-schema notice). Nothing is written under
 `('apeGmsh', 'ResultsViewer')`. **View → Reset layout** restores the
 0088 D1 dock set *and* re-tiles to `T(N)` with equal ratios.
+
+Within a live session, ratios survive per the A1.2 law: only the
+splitter whose child list changed is reset. Note that before S5 the
+stored ratios are nearly inert — a fresh session boots at N = 1, so
+the `n` guard rejects most restores. Their real consumers are the S5
+snapshot restore and same-shape scripted sessions; this is expected,
+not a persistence defect.
 
 ### A1.6 Decision table
 
@@ -949,6 +1014,25 @@ No dialog, no silent failure, no shrinking below the floor.
 8. **Tests address panes through the host, not through objectNames** —
    `host.frame(pane_id)` / `host.pane_frames`. Per-pane objectNames
    would break INV-7's one-block-per-component rule.
+9. **Inspector pages are never evicted.** `SessionWindow._pages` grows
+   only; a page subscribes to the session when constructed
+   (`viewers/session/_inspector.py:150`) and is disposed just once, at
+   window close (`_window.py:229`). With one pane that is harmless.
+   The moment the header's `close` glyph exists, every closed pane
+   leaks a live session subscriber refreshing a dead view. S3 evicts
+   and disposes the page with the pane.
+10. **The reconciler's stale-pane fallback becomes a hazard under N
+    panes.** `_reconciler.py:226-242` resolves an unknown or removed
+    `pane_id` by clearing it and painting **the first mesh view** —
+    correct for one viewport ("the outline re-aims on its next
+    selection"), wrong for a host: a closing pane can repaint view 1
+    into its dying backend on the removal tick, and a mis-wired pane
+    mirrors pane 1 instead of failing criterion 11. Host-owned panes
+    need stale → paint nothing. (Caution 3 covers `set_pane`; this is
+    a different line.)
+11. **First-fit camera is per window, not per pane.** `_window.py:88`
+    holds one `_camera_fit` bool, set once at `:205-210`. Kept global,
+    pane 2 and beyond boot unframed. It moves onto the pane.
 
 ---
 
@@ -967,12 +1051,23 @@ needs a real GL context (`-m qt`, xvfb in CI).
    **Python only**, `[f.paneId for f in host.pane_frames] ==
    [p.id for p in session.panes]`.
 3. **[off]** `T(N)` shape, asserted on the splitter tree for
-   N = 1, 2, 3, 4, 6: N = 4 gives a root `Horizontal` splitter with two
-   `Vertical` children of two panes each; N = 3 gives columns
-   `[p1, p3]` and `[p2]`.
-4. **[off]** Growth does not re-flow: going 3 → 4 panes leaves every
-   existing pane in the same (column, row) cell; going 4 → 5 (column
-   count changes) is allowed to move panes.
+   N = 1, 2, 3, 4, 5, 6: N = 4 gives a root `Horizontal` splitter with
+   two `Vertical` children of two panes each; N = 3 gives columns
+   `[p1, p3]` and `[p2]`; N = 5 — the first column-count change, which
+   criterion 4 hinges on — gives `[p1, p4] [p2, p5] [p3]`.
+4. **[off]** Growth moves panes without rebuilding them. Going
+   3 → 4 leaves every existing pane in the same (column, row) cell;
+   going 4 → 5 is allowed to move panes between splitters. **In both
+   cases, and for every pane, `host.frame(pane_id)` and its backend
+   are the SAME objects before and after** — identity, not just
+   arithmetic. A host that tears down and rebuilds panes on every Add
+   satisfies the cell arithmetic while silently destroying every
+   camera (backend state, not session state, so nothing else would
+   catch it); this criterion is what refuses it.
+4b. **[off]** Ratio survival (A1.2): with `T(2)` ratios dragged to
+   70/30, adding a third pane leaves the root splitter's sizes at
+   70/30 and resets only the column whose child list grew; going
+   4 → 5 resets the root.
 5. **[off]** Floors: every pane frame's `minimumWidth() >=
    LAYOUT.pane_min_width` and `minimumHeight() >=
    LAYOUT.pane_min_height`; every splitter reports
@@ -1022,11 +1117,14 @@ needs a real GL context (`-m qt`, xvfb in CI).
     every style button binds a factory glyph (no text-only fallback).
 17. **[qt]** `tests/viewers/test_pane_host_probe.py` stays green
     (6 passed, 0 skipped under xvfb + Mesa).
-18. **[qt]** The same eight properties hold on the real
-    `SessionWindow` with four mesh panes, not only on the synthetic
-    probe: four distinct renderers, independent cameras, one scalar
-    bar per pane, a non-flat per-pane screenshot, actors surviving a
-    splitter drag, and a clean teardown with no leaked interactor.
+18. **[qt]** The probe's properties hold on the real `SessionWindow`
+    with four mesh panes, not only on the synthetic probe: four
+    distinct renderers, independent cameras, one scalar bar per pane,
+    a non-flat per-pane screenshot, actors surviving a splitter drag,
+    a clean teardown with no leaked interactor, and — the mode the
+    tiling law forces — **a live pane surviving a reparent between
+    splitters at 4 → 5 with its camera pose and a non-flat frame
+    intact**.
 19. **[qt]** ADR §11's S3 verify line: two mesh views with different
     slots and different scopes render different pictures — pane A with
     a contour reports one legend, pane B with deform on and no slots
@@ -1038,23 +1136,40 @@ needs a real GL context (`-m qt`, xvfb in CI).
     `paper`, attached to the PR; pane headers legible and unclipped at
     both densities at the 240 px width floor.
 22. **Mutation test** (plan standing risk): inverting the `T(N)` fill
-    order, dropping the `childrenCollapsible` call, or pointing two
-    panes at one backend each makes at least one criterion above fail.
-    Recorded in the PR.
+    order, dropping the `childrenCollapsible` call, rebuilding panes
+    instead of moving them at 4 → 5, or pointing two panes at one
+    backend each makes at least one criterion above fail. Recorded in
+    the PR.
+23. **[off + qt]** `pytest tests/viewers -q` green in **both** lanes,
+    restating 0088 D8 criterion 12 — the guard budgets of criterion 16
+    are not a substitute for the suite.
+24. **[off]** The old window is untouched, which A1.1's no-shell-
+    interactor seam promises and nothing else asserts: `results_viewer
+    .py` and `viewer_window.py` construction paths are unchanged, and
+    the old window's own tests pass unmodified. The seam is additive
+    or it is not this amendment's seam.
 
 ---
 
 ### Open sub-questions left to S3
 
-1. **How the shell stops building its own interactor.** Recommended
-   default: an additive, opt-in seam on `ViewerWindow` /
-   `ResultsWindow` (a constructor flag or a `set_central_widget`) that
-   the session window uses and the old window never touches. Caution 1.
-2. **The per-pane realize guard.** Recommended default: a pane-level
-   signature as described in caution 4; if it cannot be made total
-   over everything `realize` reads, accept N realizes per tick, record
-   the miss in the PR, and let criterion 12 be measured rather than
-   gated.
+1. ~~How the shell stops building its own interactor.~~ **Closed in
+   A1.1** — the shell builds no central interactor on the session
+   path; the seam is an additive, opt-in constructor flag /
+   `set_central_widget` the old window never reaches. It was promoted
+   out of this list because seven acceptance criteria depend on it.
+   What remains for S3 is only the seam's exact spelling.
+2. **The per-pane realize guard — spelling only; the gate stands.**
+   Criterion 12 is a gate, not a hope: an earlier draft of this list
+   also licensed shipping N realizes per tick and "letting criterion
+   12 be measured rather than gated", which is a criterion its own
+   document authorises failing. The pane-level signature of caution 4
+   is buildable — the records are dataclasses, so equality over
+   (records, effective instant, style, scope, clips, overlay) is
+   cheap — so S3 builds it and criterion 12 holds. What is open is
+   only the signature's exact composition. If S3 finds a session
+   input the signature genuinely cannot cover, that is an amendment
+   to this list, argued on the evidence — not a silent downgrade.
 3. **Shared tessellation across panes.** Recommended default:
    `ShallowCopy` + per-pane ghost array (caution 5), verified early
    against the plan's scope-realization choice.
