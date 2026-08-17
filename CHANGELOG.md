@@ -22,6 +22,33 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 Amendment 6 S7a+S7b: habitat template ships with studio
+
+`apeGmsh.studio.template` now ships the APE Studio habitat tree as
+package data (playbook, memory stubs, skill/library doors + harvest
+tooling, session lifecycle scripts, soft-contract checker, postmortem
+/ reports skeletons, `ape.project.yaml`) — lifted byte-identical
+(INV-21) from the curated `ape-studio-template@bab594c` extraction.
+`python -m apeGmsh.studio init --name <habitat> --model <model_id>
+[--root DIR]` copies the packaged template into a target directory,
+substitutes `__HABITAT_NAME__` / `__MODEL_ID__`, aligns
+`.cursor/mcp.json`, scaffolds `models/<model_id>/{src,cases}`, and
+runs the new habitat's own `scripts/check_template.py --strict`;
+refuses (nonzero, no side effects) an already-initialized or
+conflicting non-empty target. The copier walks the packaged tree via
+`importlib.resources`, not `__file__`, so it works from an installed
+wheel. The template's own `.gitignore` and `.cursor/mcp.json` ship
+under safe names (`dot.gitignore`, `cursor/mcp.json` — package-data
+globs drop dot-prefixed entries) and are restored to their real
+dotfile paths by `init`. INV-20: the author's personal skill suites
+are named only in `APE/skills/README.md`'s optional-use guidance,
+never required; a grep gate pins this over the packaged tree. Habitats
+stay self-contained — `init` copies the lifecycle scripts and checker
+in, so an initialized habitat survives apeGmsh version drift. Docs:
+`docs/how-to/studio-habitat.md` gains a "Create a habitat" section;
+the apegmsh skill's Studio paragraph names `init`. No `contract_version`
+bump — `init` writes project files, not habitat-state files.
+
 ### ADDED — ADR 0095 Amendment 5: assess snapshot reaches the report
 
 `--assess` (CLI and MCP, which shells to the CLI) now writes

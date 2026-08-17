@@ -8,6 +8,29 @@ This page is the S5e spawn / ownership / poll contract (ADR 0095
 Amendment 3). Identity is always labels / physical groups / phase, not
 tags.
 
+## Create a habitat
+
+An APE Studio **habitat** is a full FEM project scaffold: the `APE/`
+playbook (instructions, memory, skill/library doors), session lifecycle
+scripts, a soft-contract checker, and a `models/<id>/{src,cases}`
+lineage. Stamp one from the template apeGmsh ships (ADR 0095 Amendment
+6):
+
+```text
+python -m apeGmsh.studio init --name <habitat-name> --model <model_id> [--root DIR]
+```
+
+Copies the packaged template into `DIR` (default cwd), substitutes the
+habitat name / model id, aligns `.cursor/mcp.json`, scaffolds
+`models/<model_id>/{src,cases}`, and finishes by running the new
+habitat's own `scripts/check_template.py --strict`. Refuses (nonzero,
+no side effects) if the target already looks initialized or is
+non-empty in a conflicting way. Habitats are self-contained — they
+carry their own lifecycle scripts and checker, so one survives apeGmsh
+version drift.
+
+Then open `APE/README.md` in the new habitat and follow session start.
+
 ## Project root (INV-15)
 
 Habitat files live under `<root>/.apegmsh/`. Resolve root in this order:
