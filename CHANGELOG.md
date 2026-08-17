@@ -22,6 +22,27 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `[all]` now includes the `mcp` extra
+
+`pip install "apeGmsh[all]"` installed the `apeGmsh.studio` package
+without the MCP SDK it needs, so the Studio door failed at launch and
+nowhere earlier — the install line the README, the docs and every
+tutorial hand out quietly did not cover the habitat. `mcp>=1.2` joins
+`all`; verified by resolving the extra (107 packages, `mcp` present).
+It brings a server stack (`uvicorn` / `starlette` / `sse-starlette`)
+plus `pydantic`, `opentelemetry-api` and `pyjwt` with it — use the
+narrower extras (`apeGmsh[viewer,opensees]`) to avoid that.
+
+`tests/test_capability_map_drift.py` gains an `[all]`-completeness lane
+so the next extra cannot slip through the same way: every extra must
+either be a subset of `all` or be registered in `_ALL_EXCLUSIONS` with a
+reason, and the registry is checked in both directions. Writing it
+surfaced three more gaps, all deliberate and now documented in
+`pyproject.toml` rather than merely absent — `partition-pymetis` (no
+PyPI Windows wheel, so folding it in would break `[all]` on Windows),
+`partition-networkx` (inert without git-only `nxmetis`) and `animation`
+(ffmpeg binary payload).
+
 ### ADDED — docs: the Ladruno backend capability map
 
 `docs/concepts/backend-capabilities.md` publishes the tier boundary an
