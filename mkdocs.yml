@@ -204,6 +204,7 @@ nav:
       - Solver bridge:
           - The FEM broker: concepts/fem-broker.md
           - The OpenSees bridge: concepts/opensees-bridge.md
+          - Backend capabilities: concepts/backend-capabilities.md
       - Results: concepts/results.md
   - Examples:
       - Overview: examples/index.md

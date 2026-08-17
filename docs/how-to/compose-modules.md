@@ -119,9 +119,13 @@ Three rules keep this route out of trouble:
 - **Extract each part with `get_fem_data(dim=None)`, not `dim=3`.** The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.
-- **`enforce="equation"` when you need it exact.** Measured on a two-block
-  series column with an exact answer (N/mm units): `"equation"` is exact to
-  −0.01 % but needs the Lagrange handler and an unsymmetric system. The
+- **`enforce="equation"` when you need it exact — on a fork build.**
+  Measured on a two-block series column with an exact answer (N/mm units):
+  `"equation"` is exact to −0.01 % but needs the Lagrange handler, an
+  unsymmetric system, and — for the in-process run — the Ladruno fork
+  ([Backend capabilities](../concepts/backend-capabilities.md); the same
+  column reads 71 % soft on stock, which is why the live route is gated).
+  The
   default penalty route now sizes its stiffness from the host material
   (`stiffness="auto"`) and converges to the same answer within the mesh's
   own discretization error — the old fixed `1e18` default, which did not
