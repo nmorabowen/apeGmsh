@@ -56,6 +56,7 @@ def render_html(
     last = bundle.get("last_run") or {}
     pin = bundle.get("pin") or {}
     assess = bundle.get("assess") or {}
+    assess_error = bundle.get("assess_error")
     esc = html.escape
 
     def csv(items: Any) -> str:
@@ -145,22 +146,36 @@ def render_html(
             "</ul>",
         ])
     body.append("<h2>Assess</h2>")
-    text = assess.get("text") if isinstance(assess, dict) else None
-    if text:
-        body.append(f"<pre>{esc(str(text).rstrip())}</pre>")
-    elif assess:
-        findings = assess.get("findings") or []
-        body.append(f"<p>{len(findings)} finding(s).</p>")
-        if findings:
-            body.append("<ul>")
-            for row in findings[:24]:
-                if isinstance(row, dict):
-                    body.append(
-                        f"<li><code>{esc(str(row.get('code') or ''))}</code> "
-                        f"({esc(str(row.get('severity') or ''))}): "
-                        f"{esc(str(row.get('message') or ''))}</li>"
-                    )
-            body.append("</ul>")
+    if assess:
+        body.append(_assess_meta_html(assess, esc))
+        text = assess.get("text")
+        if text:
+            body.append(f"<pre>{esc(str(text).rstrip())}</pre>")
+        else:
+            findings = assess.get("findings") or []
+            body.append(f"<p>{len(findings)} finding(s).</p>")
+            if findings:
+                body.append("<ul>")
+                for row in findings[:24]:
+                    if isinstance(row, dict):
+                        body.append(
+                            f"<li><code>{esc(str(row.get('code') or ''))}</code> "
+                            f"({esc(str(row.get('severity') or ''))}): "
+                            f"{esc(str(row.get('message') or ''))}</li>"
+                        )
+                body.append("</ul>")
+            skipped = assess.get("skipped") or []
+            if skipped:
+                body.append("<p>Skipped checks:</p><ul>")
+                for row in skipped:
+                    if isinstance(row, dict):
+                        body.append(
+                            f"<li><code>{esc(str(row.get('code') or ''))}</code> "
+                            f"— {esc(str(row.get('reason') or ''))}</li>"
+                        )
+                body.append("</ul>")
+    elif assess_error:
+        body.append(f"<p>(assess snapshot unreadable: {esc(str(assess_error))})</p>")
     else:
         body.append("<p>(none — run assess first)</p>")
     body.append("<h2>Figures</h2>")
@@ -177,6 +192,21 @@ def render_html(
     return "\n".join(body)
 
 
+def _assess_meta_html(assess: dict[str, Any], esc: Any) -> str:
+    """Target + timestamp line for the Assess section (disclosure, not policing)."""
+    targets = assess.get("targets") or {}
+    bits: list[str] = []
+    if targets.get("path"):
+        bits.append(f"target: <code>{esc(str(targets['path']))}</code>")
+    if targets.get("model_h5"):
+        bits.append(f"model_h5: <code>{esc(str(targets['model_h5']))}</code>")
+    if assess.get("ts"):
+        bits.append(f"assessed: {esc(str(assess['ts']))}")
+    if not bits:
+        return ""
+    return f'<p class="note">{" &middot; ".join(bits)}</p>'
+
+
 def render_canvas(
     bundle: dict[str, Any],
     *,
@@ -191,6 +221,7 @@ def render_canvas(
         "last_run": bundle.get("last_run") or {},
         "pin": bundle.get("pin") or {},
         "assess": bundle.get("assess") or {},
+        "assess_error": bundle.get("assess_error"),
         "figures": [{"caption": cap, "src": src} for cap, src in figures],
         "archive": archive,
     }
@@ -317,17 +348,42 @@ export default function StudioReport() {
       )}
 
       <H2>Assess</H2>
-      {assess && assess.text ? (
-        <Text>{String(assess.text)}</Text>
-      ) : findings.length ? (
-        <Table
-          headers={["Code", "Severity", "Message"]}
-          rows={findings.slice(0, 24).map((row) => [
-            String(row.code || ""),
-            String(row.severity || ""),
-            String(row.message || ""),
-          ])}
-        />
+      {assess && (assess.text || findings.length) ? (
+        <Stack gap={8}>
+          {assess.targets && (assess.targets.path || assess.ts) ? (
+            <Text tone="tertiary" size="small">
+              {assess.targets.path ? "target: " + assess.targets.path + "  " : ""}
+              {assess.ts ? "assessed: " + assess.ts : ""}
+            </Text>
+          ) : null}
+          {assess.text ? (
+            <Text>{String(assess.text)}</Text>
+          ) : (
+            <Stack gap={8}>
+              <Table
+                headers={["Code", "Severity", "Message"]}
+                rows={findings.slice(0, 24).map((row) => [
+                  String(row.code || ""),
+                  String(row.severity || ""),
+                  String(row.message || ""),
+                ])}
+              />
+              {(assess.skipped || []).length ? (
+                <Table
+                  headers={["Skipped", "Reason"]}
+                  rows={(assess.skipped || []).map((row) => [
+                    String(row.code || ""),
+                    String(row.reason || ""),
+                  ])}
+                />
+              ) : null}
+            </Stack>
+          )}
+        </Stack>
+      ) : BUNDLE.assess_error ? (
+        <Text tone="danger">
+          assess snapshot unreadable: {String(BUNDLE.assess_error)}
+        </Text>
       ) : (
         <Text>(none — run assess first)</Text>
       )}

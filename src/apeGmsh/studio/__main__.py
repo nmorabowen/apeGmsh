@@ -312,7 +312,9 @@ def _print_status(*, as_json: bool, root: Path) -> int:
 
 def _run_assess(args: argparse.Namespace, *, root: Path) -> int:
     import contextlib
+    from datetime import datetime, timezone
 
+    from apeGmsh.studio._assess_snapshot import build_snapshot, write_snapshot
     from apeGmsh.studio._paths import visors_path
     from apeGmsh.studio._verbs import assess_artifact, dumps_assess
 
@@ -327,6 +329,19 @@ def _run_assess(args: argparse.Namespace, *, root: Path) -> int:
     except (OSError, ValueError, TypeError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    if payload.get("ok"):
+        model_h5 = (
+            Path(args.model_h5).resolve() if args.model_h5 is not None else None
+        )
+        target = Path(payload["path"]) if payload.get("path") else args.assess.resolve()
+        snapshot = build_snapshot(
+            payload,
+            target=target,
+            model_h5=model_h5,
+            root=root,
+            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        write_snapshot(root, snapshot)
     if args.as_json:
         print(dumps_assess(payload))
     elif payload.get("ok"):

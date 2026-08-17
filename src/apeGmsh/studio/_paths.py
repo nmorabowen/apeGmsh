@@ -25,6 +25,8 @@ DEFAULT_MCP_CALLS_REL = Path(".apegmsh") / "mcp_calls.jsonl"
 DEFAULT_HOST_REL = Path(".apegmsh") / "host.json"
 DEFAULT_PROJECT_REL = Path(".apegmsh") / "project.json"
 DEFAULT_BUSY_REL = Path(".apegmsh") / "busy.json"
+DEFAULT_ASSESS_REL = Path(".apegmsh") / "assess.json"
+DEFAULT_PINS_REL = Path(".apegmsh") / "pins"
 
 ROOT_ENV = "APEGMSH_ROOT"
 
@@ -217,3 +219,19 @@ def busy_path(root: Path | None = None) -> Path:
     """Return ``<root>/.apegmsh/busy.json`` (``root`` via :func:`resolve_root`)."""
     base = resolve_root(root)
     return base / DEFAULT_BUSY_REL
+
+
+def assess_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/assess.json`` (``root`` via :func:`resolve_root`)."""
+    base = resolve_root(root)
+    return base / DEFAULT_ASSESS_REL
+
+
+def pin_assess_path(pin_id: str, root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/pins/<pin_id>/assess.json`` (ADR 0095 Amendment 5).
+
+    Where ``--pin`` copies the live assess snapshot so a later emit
+    against that pin keeps the verdict current at pin time.
+    """
+    base = resolve_root(root)
+    return base / DEFAULT_PINS_REL / pin_id / "assess.json"
