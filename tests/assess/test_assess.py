@@ -6,7 +6,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh.assess import CATALOG_SEVERITY, AssessmentReport, Finding
+from apeGmsh.assess import (
+    CATALOG_SEVERITY,
+    CONDITIONAL_SEVERITY,
+    ENERGY_ERR_WARN_PCT,
+    AssessmentReport,
+    Finding,
+)
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -92,7 +98,15 @@ def _tet10_info(*, count: int = 1):
 def _assert_catalog_severities(report: AssessmentReport) -> None:
     for finding in report.findings:
         assert finding.code in CATALOG_SEVERITY, finding
-        assert finding.severity == CATALOG_SEVERITY[finding.code], finding
+        # ADR 0094 Amendment 4: a handful of codes (currently only
+        # RES.ENERGY_ERR) have runtime-conditional severity.
+        # CATALOG_SEVERITY holds their BASE severity; CONDITIONAL_SEVERITY
+        # names the full legal set so this assertion stays strict for
+        # every other code instead of being weakened globally.
+        allowed = CONDITIONAL_SEVERITY.get(
+            finding.code, frozenset({CATALOG_SEVERITY[finding.code]}),
+        )
+        assert finding.severity in allowed, finding
         if finding.code == "RES.U_VS_DIAG":
             assert finding.severity == "info"
             assert finding.severity != "error"
@@ -606,6 +620,172 @@ def test_energy_valueerror_on_first_stage_tries_later(
     assert finding.detail["stage"] == "b"
     assert "0.05" in finding.message
     assert "%" in finding.message
+
+
+# ---------------------------------------------------------------------------
+# ADR 0094 Amendment 4 — energy thresholds from dogfood numbers
+# ---------------------------------------------------------------------------
+
+
+def test_energy_all_zero_frame_is_skipped_not_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ladruno static runs record ``-G energy`` with every component
+    zero — the accumulator populates on transients only. That must not
+    read as a verified balance (skip, not info)."""
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _zero_energy(self, *, region=None, stage=None):
+        return pd.DataFrame(
+            {
+                "KE": [0.0], "IE": [0.0], "DW": [0.0],
+                "ULW": [0.0], "RES": [0.0], "ERR": [0.0],
+            },
+            index=[0.0],
+        )
+
+    monkeypatch.setattr(Results, "energy", _zero_energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    assert "RES.ENERGY_ERR" not in _codes(report)
+    reason = next(
+        reason for code, reason in report.skipped if code == "RES.ENERGY_ERR"
+    )
+    assert "unpopulated" in reason
+    assert "not evidence" in reason
+    _assert_catalog_severities(report)
+
+
+def test_energy_err_above_5pct_is_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _energy(self, *, region=None, stage=None):
+        return pd.DataFrame({"ERR": [6.0]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.severity == "warning"
+    _assert_catalog_severities(report)
+
+
+def test_energy_err_exactly_5pct_stays_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contract: promotion fires only *above* 5%, not at it."""
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _energy(self, *, region=None, stage=None):
+        return pd.DataFrame({"ERR": [ENERGY_ERR_WARN_PCT]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.severity == "info"
+    _assert_catalog_severities(report)
+
+
+def test_energy_err_negative_above_5pct_magnitude_is_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Severity is judged on |ERR|, not the signed value."""
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _energy(self, *, region=None, stage=None):
+        return pd.DataFrame({"ERR": [-6.0]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.severity == "warning"
+    assert finding.detail["ERR"] == -6.0
+    _assert_catalog_severities(report)
+
+
+def test_energy_err_healthy_transient_stays_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dogfood healthy-transient datapoint (0.141%) stays info."""
+    import pandas as pd
+
+    path = _write_nodes(
+        tmp_path,
+        node_ids=np.array([1], dtype=np.int64),
+        components={"displacement_x": np.zeros((1, 1))},
+    )
+
+    def _energy(self, *, region=None, stage=None):
+        return pd.DataFrame({"ERR": [0.141]}, index=[0.0])
+
+    monkeypatch.setattr(Results, "energy", _energy)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.ENERGY_ERR")
+    assert finding.severity == "info"
+    _assert_catalog_severities(report)
+
+
+def test_conditional_severity_covers_only_energy_err() -> None:
+    """The exception list itself is covered: RES.ENERGY_ERR is the only
+    conditional code, and its legal set is exactly {info, warning}
+    (never error — FAIL-reserved is untouched, ADR 0094 Amendment 1)."""
+    assert set(CONDITIONAL_SEVERITY) == {"RES.ENERGY_ERR"}
+    assert CONDITIONAL_SEVERITY["RES.ENERGY_ERR"] == {"info", "warning"}
+    assert CATALOG_SEVERITY["RES.ENERGY_ERR"] == "info"
+
+
+def test_u_vs_diag_no_threshold_at_0_12_stays_info(tmp_path: Path) -> None:
+    """ADR 0094 Amendment 4 Decision 1: promotion is permanently
+    **declined** — legitimate, converged, intended runs span 5.3e-4 to
+    0.1245 in the dogfood data (nearly three orders of magnitude), so
+    no fixed ratio can separate a heavily-driven contact test from a
+    diverging model. This is a contract, not an omission: do not add a
+    threshold here even at ratios this high.
+    """
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    # diag of [(0,0,0), (0,0,1)] is 1.0; ratio = 0.12
+    uz = np.array([[0.0, 0.12]])
+    path = _write_nodes(
+        tmp_path, node_ids=node_ids, components={"displacement_z": uz},
+    )
+    with Results.from_native(
+        path, model=_open_model_from_h5(path), fem=fem,
+    ) as r:
+        report = r.assess()
+    finding = next(f for f in report.findings if f.code == "RES.U_VS_DIAG")
+    assert finding.severity == "info"
+    assert finding.detail["ratio"] == pytest.approx(0.12)
+    _assert_catalog_severities(report)
 
 
 def test_union_merge_fill_is_not_res_nan(tmp_path: Path) -> None:

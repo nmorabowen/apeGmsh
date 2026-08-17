@@ -1,5 +1,5 @@
 # Assess + render — agent check after mesh / solve
-<!-- skill-freshness: verified against apeGmsh feat/adr94-a3-run-evidence (2026-08-17) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh feat/adr94-a4-thresholds (2026-08-16) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 After `get_fem_data` / `Results.from_*` the check is the trio
 `fem.assess()` → `osm.assess()` → `results.assess()`, then `read_file`
@@ -71,7 +71,7 @@ Snapshot mesh stills stay on `fem.render`.
 Do not call `g.model.viewer()` / `g.mesh.viewer()` / `results.viewer()`
 / `show_web` / `gui()` for diagnosis.
 
-## Finding catalog (v1 + Amendment 1) → next action
+## Finding catalog (v1 + Amendments 1, 4) → next action
 
 New codes are an ADR 0094 amendment. The library does not emit `fix=`
 Python. Branch on `finding.code` and `report.skipped`.
@@ -86,15 +86,15 @@ Python. Branch on `finding.code` and `report.skipped`.
 | `RES.NO_STAGE` | error | No stages recorded. Re-run with a recorder / stage. |
 | `RES.NAN` / `RES.INF` | error | Unexplained non-finite on a recorded component at last step. Node-level **union-merge fill** (displacement everywhere + reactions on supports) is skip, not FAIL — see `skipped`. Re-record unexplained NaNs. |
 | `RES.LINEAGE` | warning | `results.lineage.warnings` — integrity, not physics. Assess never raises (ADR 0021). |
-| `RES.U_VS_DIAG` | info | ‖u‖_max / model diagonal. Never warning/error in v1. Skip `kind="mode"`. |
-| `RES.ENERGY_ERR` | info | Ladruno `ERR` in **%**. Measurement, not a gate. Native/MPCO → skip (`TypeError`), not OK. |
+| `RES.U_VS_DIAG` | info | ‖u‖_max / model diagonal. **Permanently** info — Amendment 4 declines a threshold by contract: legitimate dogfood runs span 5.3e-4 to 0.1245, so no fixed ratio separates a heavily-driven displacement/contact case from a diverging model. It is a number to read next to the extrema, not a gate. Skip `kind="mode"`. |
+| `RES.ENERGY_ERR` | info / **warning** above 5% | Ladruno `ERR` in **%** at the last step. An **all-zero last-step frame** (KE, IE, DW, ULW, RES, ERR all exactly 0) is a Ladruno **static** run — the accumulator only populates on transients, so a zero reading is unpopulated-channel silence, not a verified balance; it lands in `skipped`, never a finding. A nonzero frame promotes to `warning` when last-step `|ERR| > 5.0` (`ENERGY_ERR_WARN_PCT` in `_catalog.py`), else stays `info`. Basis: the one healthy dogfood transient closes at 0.141% (35x margin); ~5% is conventional explicit-dynamics practice — single-datapoint, revisit by amendment. Native/MPCO → skip (`TypeError`), not OK. |
 | `RES.ENERGY_NONFINITE` | warning | Last-step `ERR` is NaN/Inf. The one real energy signal. |
 
 A check that cannot run is omitted, not scored OK. `report.skipped`
 and the Verdict **Not evaluated (FAIL-reserved)** line name those
 codes.
 
-## Solver zone — `osm.assess()` (ADR 0094 Amendment 2 + 3)
+## Solver zone — `osm.assess()` (ADR 0094 Amendments 2, 3, 4)
 
 `osm` is the `OpenSeesModel` broker (`OpenSeesModel.from_h5(...)`, or
 the object a chain-phase build already hands you). It judges the
@@ -119,7 +119,7 @@ loads target a later static deck, stays legal and skipped.
 | `OSM.NO_SUPPORT` | warning | No `fix`, no homogeneous `sp`, no pattern `sp` line. Free-free eigen / DRM models are legal — confirm intent, don't assume a missing `ops.fix`. |
 | `OSM.NO_PATTERN` | warning | Analyze archived but no pattern declared. Free-vibration transients (initial conditions only) are legal. Skipped, not emitted, when `OSM.NO_ANALYZE` already fired. |
 | `OSM.LOADS_UNIMPORTED` | warning | Broker carries `g.loads` / prescribed-displacement records but no pattern imports them — the classic `from_model` forgotten bug. Add `p.from_model("case")` (or the matching pattern body). Judged whenever run evidence exists (archived analyze **or** `results=`); with no run evidence at all, declared loads may target a later deck (multi-deck workflow) — skipped, not judged. |
-| `RES.ZERO_U` | info | `results=` passed with >=1 non-mode stage — the results are themselves the run evidence, no `analyze_call()` / pattern required. Last-step displacement exactly all-zero. Measurement, not a gate — check the pattern actually drives the model. On a zero-pattern deck the message cross-references `OSM.LOADS_UNIMPORTED` so the two findings read as one story. Listed in `skipped` when `results=` is omitted. |
+| `RES.ZERO_U` | **warning** | `results=` passed with >=1 non-mode stage — the results are themselves the run evidence, no `analyze_call()` / pattern required. Last-step displacement exactly all-zero. Amendment 4 promotes info → warning: across six dogfood-assessed runs there was one true positive (a stranded-loads deck — exactly the bug this exists to catch) and zero false positives. Still not FAIL-reserved, still requires run evidence. Check the pattern actually drives the model — a free-vibration transient started from rest is a legal reading and the message already discloses it. On a zero-pattern deck the message cross-references `OSM.LOADS_UNIMPORTED` so the two findings read as one story. Listed in `skipped` when `results=` is omitted. |
 
 Three honest limits, not bugs to file:
 
