@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Mapping
+from typing import Literal, Mapping
 
-if TYPE_CHECKING:
-    from apeGmsh.opensees._internal.lineage import Lineage
-
+# ``Lineage`` (apeGmsh.opensees._internal.lineage) is intentionally NOT
+# imported, not even under TYPE_CHECKING: ADR 0094 Amendment 2 extends
+# INV-1 to forbid apeGmsh.opensees anywhere in this package. The
+# ``lineage`` field below stays an unresolved forward-reference string
+# (postponed evaluation, PEP 563) — nothing in-tree calls
+# ``typing.get_type_hints`` on these dataclasses.
 
 Severity = Literal["error", "warning", "info"]
 

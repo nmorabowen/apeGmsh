@@ -1,9 +1,10 @@
 # Assess + render — agent check after mesh / solve
-<!-- skill-freshness: verified against apeGmsh grok/adr94-closeout (2026-08-14) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh feat/adr94-a2-osm-assess@6b2d7f23 (2026-08-16) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
-After `get_fem_data` / `Results.from_*` the check is `assess()`, then
-`read_file` each PNG in `report.figures`. Not `viewer()` / `show_web()`.
-Qt is for humans who asked to look, and only after assess.
+After `get_fem_data` / `Results.from_*` the check is the trio
+`fem.assess()` → `osm.assess()` → `results.assess()`, then `read_file`
+each PNG in `report.figures`. Not `viewer()` / `show_web()`. Qt is for
+humans who asked to look, and only after assess.
 
 Read `report.skipped` **and** the Verdict line before treating
 `0 error(s)` as a pass. A FAIL-reserved check that did not run is
@@ -17,17 +18,17 @@ Three verbs stay distinct:
 |---|---|---|
 | `inspect` | Inventory (tables, strings) | `fem.inspect`, `results.inspect` |
 | `diagnose` | Routing of *one* empty query | `results.inspect.diagnose(component)` |
-| `assess` | Verdict: findings + short markdown | `fem.assess()`, `results.assess()` |
+| `assess` | Verdict: findings + short markdown | `fem.assess()`, `osm.assess()`, `results.assess()` |
 
 There is no `g.assess`. Live CAD health stays
-`g.model.io.diagnose() → ImportHealth`. There is no
-`OpenSeesModel.assess()` — assess does **not** check supports, loads,
-or “case never imported.”
+`g.model.io.diagnose() → ImportHealth`.
 
 ## Doors
 
 ```python
 report = fem.assess()                       # findings only
+report = osm.assess()                       # OpenSeesModel, solver zone
+report = osm.assess(results=results)        # + RES.ZERO_U cross-check
 report = results.assess()                   # + lineage as RES.LINEAGE
 report = results.assess(figures=True)       # + results.render_pack
 report = fem.assess(figures=True)           # + fem.render → mesh.png
@@ -45,8 +46,9 @@ for f in report.findings:
 ```
 
 `# src/apeGmsh/mesh/FEMData.py` (`assess` / `render`)
+`# src/apeGmsh/opensees/opensees_model.py` (`assess` / `analyze_call`)
 `# src/apeGmsh/results/Results.py` (`assess` / `render` / `render_pack`)
-`# verified: tests/assess/test_assess.py`
+`# verified: tests/assess/test_assess.py`, `tests/assess/test_assess_opensees.py`
 
 `figures=True` default is `False`. Headless stays cheap. Pass `True`
 when you need eyes. `APEGMSH_SKIP_VIEWER=1` or no GL: findings still
@@ -92,11 +94,44 @@ A check that cannot run is omitted, not scored OK. `report.skipped`
 and the Verdict **Not evaluated (FAIL-reserved)** line name those
 codes.
 
+## Solver zone — `osm.assess()` (ADR 0094 Amendment 2)
+
+`osm` is the `OpenSeesModel` broker (`OpenSeesModel.from_h5(...)`, or
+the object a chain-phase build already hands you). It judges the
+`/opensees` zone only — it does **not** re-run `fem.assess(osm.fem)`.
+Run the trio in order: `fem.assess()` → `osm.assess()` →
+`results.assess()`. No `figures=` — there is no `osm.render`.
+
+| Code | Sev | Next action |
+|---|---|---|
+| `OSM.NO_ANALYZE` | info | No `ops.analyze` archived. `eigen` is never archived, so an eigen-only / modal deck trips this by design — not a defect. |
+| `OSM.NO_SUPPORT` | warning | No `fix`, no homogeneous `sp`, no pattern `sp` line. Free-free eigen / DRM models are legal — confirm intent, don't assume a missing `ops.fix`. |
+| `OSM.NO_PATTERN` | warning | Analyze archived but no pattern declared. Free-vibration transients (initial conditions only) are legal. Skipped, not emitted, when `OSM.NO_ANALYZE` already fired. |
+| `OSM.LOADS_UNIMPORTED` | warning | Broker carries `g.loads` / prescribed-displacement records but no pattern imports them — the classic `from_model` forgotten bug. Add `p.from_model("case")` (or the matching pattern body). |
+| `RES.ZERO_U` | info | `results=` passed; last-step displacement is exactly all-zero with an analyze call and >=1 pattern archived. Measurement, not a gate — check the pattern actually drives the model. Listed in `skipped` when `results=` is omitted. |
+
+Three honest limits, not bugs to file:
+
+- **Eigen is not archived.** `ops.eigen` / `ops.eigen_feast` are
+  runtime one-shot retrievals with no `/opensees` schema — an
+  eigen-only deck is indistinguishable from a deck that never
+  declared a run. No code claims to know the analysis was modal.
+- **Per-case attribution is undecidable.** `from_model(case)`
+  provenance is not archived — `OSM.LOADS_UNIMPORTED` is a
+  zero-lines-imported signal only, never "case X was forgotten."
+- **Staged decks are a blanket skip.** When `osm.stages()` is
+  non-empty the whole solver catalog lands in `report.skipped`
+  ("staged deck — stage-level judging is a follow-up") — stage
+  support patterns hold DOFs and carry their own load imports, so
+  vanilla rules would false-flag every SSI model. `0 error(s)` on a
+  staged deck means "not judged," not "clean."
+
 ## Out of v1
 
-`CAD.SLIVER_*`, `MESH.SICN_LOW` from H5, `g.assess`,
-`OpenSeesModel.assess()`, AISC/ACI/fy, “in equilibrium”, invented
-units. Design checks belong in apeSteel / apeConcrete.
+`CAD.SLIVER_*`, `MESH.SICN_LOW` from H5, `g.assess`, AISC/ACI/fy, “in
+equilibrium”, invented units. Design checks belong in apeSteel /
+apeConcrete. Solver zone: per-case `OSM.CASE_UNUSED` (needs
+`from_model_cases` archival — a schema bump), stage-aware judging.
 
 `inspect` / `diagnose` remain for tables and one-component routing.
 Do not dump `node_table()` into context as the verdict.

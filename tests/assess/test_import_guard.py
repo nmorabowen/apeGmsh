@@ -1,8 +1,10 @@
-"""ADR 0094 INV-1 — ``apeGmsh.assess`` must not import viewers or gmsh.
+"""ADR 0094 INV-1 — ``apeGmsh.assess`` must not import viewers, gmsh,
+or (Amendment 2) ``apeGmsh.opensees``.
 
 Walks every ``.py`` under ``src/apeGmsh/assess/`` and flags
 ``import gmsh`` / ``from gmsh …`` / ``import apeGmsh.viewers`` /
-``from apeGmsh.viewers …``. Modeled on
+``from apeGmsh.viewers …`` / ``import apeGmsh.opensees`` /
+``from apeGmsh.opensees …``. Modeled on
 ``tests/test_viewers_pure_h5_consumer.py``; the positive-control
 pattern follows ``tests/opensees/h5/test_model_data_ast_guard.py``.
 """
@@ -25,6 +27,8 @@ def _is_forbidden(module: str) -> bool:
     if module == "gmsh" or module.startswith("gmsh."):
         return True
     if module == "apeGmsh.viewers" or module.startswith("apeGmsh.viewers."):
+        return True
+    if module == "apeGmsh.opensees" or module.startswith("apeGmsh.opensees."):
         return True
     return False
 
@@ -95,6 +99,18 @@ def test_positive_control_catches_viewers_import() -> None:
     modules = {mod for _, mod in found}
     assert "apeGmsh.viewers" in modules, found
     assert any(m.startswith("apeGmsh.viewers") for m in modules), found
+
+
+def test_positive_control_catches_opensees_import() -> None:
+    src = (
+        "import apeGmsh.opensees\n"
+        "from apeGmsh.opensees import OpenSeesModel\n"
+        "from apeGmsh.opensees.opensees_model import OpenSeesModel\n"
+    )
+    found = collect_offending_imports(src)
+    modules = {mod for _, mod in found}
+    assert "apeGmsh.opensees" in modules, found
+    assert any(m.startswith("apeGmsh.opensees") for m in modules), found
 
 
 def test_inv9_assess_does_not_read_all_steps() -> None:

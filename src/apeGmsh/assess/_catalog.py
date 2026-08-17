@@ -22,6 +22,14 @@ CATALOG_SEVERITY: dict[str, Severity] = {
     "RES.U_VS_DIAG": "info",
     "RES.ENERGY_ERR": "info",
     "RES.ENERGY_NONFINITE": "warning",
+    # ADR 0094 Amendment 2 — OpenSeesModel solver-zone catalog.
+    # Every trigger has a legal reading (free-free eigen, free
+    # vibration, multi-deck workflows) — none is error in v1.
+    "OSM.NO_ANALYZE": "info",
+    "OSM.NO_SUPPORT": "warning",
+    "OSM.NO_PATTERN": "warning",
+    "OSM.LOADS_UNIMPORTED": "warning",
+    "RES.ZERO_U": "info",
 }
 
 FAIL_RESERVED: frozenset[str] = frozenset({
