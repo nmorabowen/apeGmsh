@@ -9,12 +9,19 @@ directory, then personalized exactly as the original script did.
 Uses :mod:`importlib.resources` to walk the packaged template rather than
 ``__file__`` / filesystem assumptions, so it works from an installed
 wheel, not just an editable source checkout.
+
+ADR 0095 Amendment 8, S9a: after the strict check passes, the habitat is
+git-inited on branch ``main`` with one initial commit unless ``--no-git``.
+Degrades, never gates: WARN when git is unavailable, skip inside an
+existing work tree. This is the only git write any studio or lifecycle
+code makes (INV-24).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from importlib import resources
@@ -183,7 +190,48 @@ def _run_check_template(target: Path) -> int:
     )
 
 
-def run_init(name: str, model: str, root: Optional[str]) -> int:
+def _git(target: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(target), *args], capture_output=True, text=True
+    )
+
+
+def _git_init(target: Path, name: str) -> None:
+    """One repo, one initial commit — the only git write studio ever
+    makes (INV-24). Degrades, never gates (Amendment 8)."""
+    if shutil.which("git") is None:
+        print(
+            "WARN: git not found on PATH — habitat left un-versioned "
+            "(run git init later to adopt the checkpoint contract)"
+        )
+        return
+    probe = _git(target, "rev-parse", "--is-inside-work-tree")
+    if probe.returncode == 0 and probe.stdout.strip() == "true":
+        print(
+            "note: target is inside an existing git work tree — "
+            "skipping git init (no nested repos)"
+        )
+        return
+    for step in (("init", "-b", "main"), ("add", "-A")):
+        run = _git(target, *step)
+        if run.returncode != 0:
+            print(
+                f"WARN: git {step[0]} failed — habitat left un-versioned: "
+                f"{run.stderr.strip()}"
+            )
+            return
+    run = _git(target, "commit", "-m", f"studio init: {name}")
+    if run.returncode != 0:
+        detail = run.stderr.strip() or run.stdout.strip()
+        print(
+            "WARN: git commit failed (missing user.name/email?) — repo "
+            f"initialized without a commit: {detail}"
+        )
+        return
+    print("OK: git repo initialized on 'main' (1 initial commit)")
+
+
+def run_init(name: str, model: str, root: Optional[str], *, git: bool = True) -> int:
     target = Path(root).resolve() if root else Path.cwd()
 
     reason = _refusal_reason(target)
@@ -206,6 +254,12 @@ def run_init(name: str, model: str, root: Optional[str]) -> int:
     if rc != 0:
         print("FAIL: template check did not pass after init.")
         return rc
+
+    print()
+    if git:
+        _git_init(target, name)
+    else:
+        print("note: --no-git — habitat left un-versioned")
 
     print()
     print("Next: open APE/README.md and follow session start")
@@ -232,8 +286,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="target directory to initialize (default: cwd)",
     )
+    parser.add_argument(
+        "--no-git",
+        dest="no_git",
+        action="store_true",
+        help=(
+            "skip git init + initial commit (default: git-init the habitat "
+            "on branch 'main'; ADR 0095 Amendment 8)"
+        ),
+    )
     args = parser.parse_args(argv)
-    return run_init(args.name, args.model, args.root)
+    return run_init(args.name, args.model, args.root, git=not args.no_git)
 
 
 if __name__ == "__main__":
