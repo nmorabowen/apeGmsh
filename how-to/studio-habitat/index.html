@@ -1403,6 +1403,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Create a habitat">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#git-and-checkpoints-adr-0095-amendment-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Git and checkpoints (ADR 0095 Amendment 8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3596,6 +3613,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Create a habitat">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#git-and-checkpoints-adr-0095-amendment-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Git and checkpoints (ADR 0095 Amendment 8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3758,7 +3792,7 @@ playbook (instructions, memory, skill/library doors), session lifecycle
 scripts, a soft-contract checker, and a <code>models/&lt;id&gt;/{src,cases}</code>
 lineage. Stamp one from the template apeGmsh ships (ADR 0095 Amendment
 6):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python -m apeGmsh.studio init --name &lt;habitat-name&gt; --model &lt;model_id&gt; [--root DIR]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python -m apeGmsh.studio init --name &lt;habitat-name&gt; --model &lt;model_id&gt; [--root DIR] [--no-git]
 </span></code></pre></div>
 <p>Copies the packaged template into <code>DIR</code> (default cwd), substitutes the
 habitat name / model id, aligns <code>.cursor/mcp.json</code>, scaffolds
@@ -3768,6 +3802,31 @@ no side effects) if the target already looks initialized or is
 non-empty in a conflicting way. Habitats are self-contained — they
 carry their own lifecycle scripts and checker, so one survives apeGmsh
 version drift.</p>
+<p><code>init</code> also leaves the habitat under <strong>local git</strong>: a repo on branch
+<code>main</code> with one initial commit (<code>studio init: &lt;name&gt;</code>) — the only git
+write any studio code ever makes (INV-24). <code>--no-git</code> opts out; a
+machine without git gets a WARN and a valid un-versioned habitat; a
+target already inside a work tree is left alone (no nested repos).</p>
+<h3 id="git-and-checkpoints-adr-0095-amendment-8">Git and checkpoints (ADR 0095 Amendment 8)<a class="headerlink" href="#git-and-checkpoints-adr-0095-amendment-8" title="Permanent link">&para;</a></h3>
+<p>The habitat's git workflow is the <strong>checkpoint contract</strong> — the full
+text ships in every habitat as <code>APE/instructions/checkpoints.md</code>. In
+short: <code>main</code> holds checkpoints only (commits where model source,
+accepted cases, and reports agree); work happens on
+<code>work/&lt;model&gt;/&lt;slug&gt;</code> branches, one question or lineage step each; a
+branch becomes a checkpoint by a <code>--no-ff</code> merge after the
+stage-accepted bar plus a review pass, and gets an annotated
+<code>checkpoint/&lt;model&gt;/&lt;slug&gt;</code> tag. Each case's <code>run.json</code> carries
+<code>model_sha</code> + <code>git_dirty</code> (from the habitat's own
+<code>scripts/_habitat.py::git_provenance()</code>), so results on disk always
+point back at the source that produced them. Results themselves never
+enter git — the shipped <code>.gitignore</code> keeps bulk artifacts out and
+<code>run.json</code> visible; no LFS. Forges are optional and per habitat: a PR
+is the review surface for the merge and nothing more — the whole
+contract works in a local-only repo, and nothing in studio calls a
+forge.</p>
+<p>Cloning a habitat onto another machine: <code>.cursor/mcp.json</code> carries the
+habitat root as an <strong>absolute path</strong> — edit it once on the new machine
+(<code>scripts/start_session.py</code> fails with the exact mismatch and the fix).</p>
 <p>Then open <code>APE/README.md</code> in the new habitat and follow session start.</p>
 <h2 id="use-the-example-library">Use the example library<a class="headerlink" href="#use-the-example-library" title="Permanent link">&para;</a></h2>
 <p>Before building a shape from scratch, check whether the packaged
