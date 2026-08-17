@@ -614,7 +614,7 @@ staged deck with vanilla rules would false-flag every SSI model.
 | `OSM.NO_ANALYZE` | info | `analyze_call() is None` and `stages()` empty | "No `ops.analyze` archived." Eigen-only decks trip this by design — the message says eigen is not archived and a modal deck is fine. |
 | `OSM.NO_SUPPORT` | warning | `fixes()` empty **and** no homogeneous `SPRecord` in `fem.nodes.sp` **and** no pattern `sps` | Free-free eigen / DRM-style models are legal — hence warning, never error. |
 | `OSM.NO_PATTERN` | warning | `analyze_call()` present, `patterns()` empty | Free-vibration transients (initial conditions only) are the disclosed legal case. Skipped, not emitted, when `OSM.NO_ANALYZE` fired. |
-| `OSM.LOADS_UNIMPORTED` | warning | broker carries load records (`nodes.loads` / `elements.loads` / non-homogeneous `sp`) but every pattern block has empty `loads` + `sps` + `ele_loads` and no single-line pattern exists | The classic agent bug: `g.loads` declared, `from_model` forgotten. Zero-lines signal only — per-case attribution is undecidable (fact 2) and goes to `skipped` with that reason. |
+| `OSM.LOADS_UNIMPORTED` | warning | broker carries load records (`nodes.loads` / `elements.loads` / non-homogeneous `sp`) but every pattern block has empty `loads` + `sps` + `ele_loads` and no single-line pattern exists | The classic agent bug: `g.loads` declared, `from_model` forgotten. Fires also on a **zero-pattern** deck when an analyze is archived (vacuous-truth reading — `OSM.NO_PATTERN` alone reads as "free vibration is legal" and hides the stranded loads); with no archived analyze, declared loads may target a later deck (multi-deck workflow) — skipped, not judged. Zero-lines signal only — per-case attribution is undecidable (fact 2) and goes to `skipped` with that reason. |
 | `RES.ZERO_U` | info | `results=` passed; last-step displacement exactly all-zero while `analyze_call()` and ≥ 1 pattern exist | Measurement, `U_VS_DIAG` discipline: info until dogfood numbers justify promotion (amendment required). Listed in `skipped` when `results=None`. |
 
 FAIL-reserved is unchanged: none of these is `error`. Emit-time
@@ -643,10 +643,12 @@ evidence) land in `report.skipped`.
 - `osm.assess()` on a fixture deck with fixes + patterns + analyze
   returns zero findings from this catalog; deleting the `fix` lines
   yields `OSM.NO_SUPPORT`; dropping `from_model` while keeping
-  `g.loads` yields `OSM.LOADS_UNIMPORTED`; an eigen-style deck (no
-  analyze) yields `OSM.NO_ANALYZE` info and **skips**
-  `OSM.NO_PATTERN`; a staged fixture puts the whole catalog in
-  `skipped`.
+  `g.loads` yields `OSM.LOADS_UNIMPORTED` — including on a
+  zero-pattern deck with an archived analyze (fires alongside
+  `OSM.NO_PATTERN`), while the same deck with no archived analyze
+  puts it in `skipped`; an eigen-style deck (no analyze) yields
+  `OSM.NO_ANALYZE` info and **skips** `OSM.NO_PATTERN`; a staged
+  fixture puts the whole catalog in `skipped`.
 - `results=` with an all-zero last step yields `RES.ZERO_U` info;
   omitted `results=` lists it in `skipped`.
 - AST guard: `apeGmsh.assess` imports none of `gmsh` /
