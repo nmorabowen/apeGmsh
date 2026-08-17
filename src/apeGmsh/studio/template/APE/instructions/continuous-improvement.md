@@ -42,7 +42,8 @@ High-leverage process moves that postmortems should look for:
 2. **Burn down backlog at session start** — first agenda item: P0/P1 from
    `postmortem/backlog/open.md`, not only the new physics ask.
 3. **Promote patterns into the template** — if this habitat learned a
-   gate, put it in `APE/instructions/`, not only in this habitat’s memory.
+   gate, put it in `APE/instructions/` first (Lane B below), not only in
+   this habitat’s memory.
 4. **Golden cases as oracles** — progressive modeling needs reusable
    “stage 2 elastic passed” artifacts other habitats can clone.
 5. **Profile worth-it FEM runs** — `ops.profiler` / `analyze(profile=)` →
@@ -65,6 +66,26 @@ High-leverage process moves that postmortems should look for:
     this week; don’t pretend a chat workaround is a product.
 13. **Cadence** — periodic review of `backlog/open.md` (e.g. weekly):
     merge duplicates, close Done, pick one P1 to implement.
+
+---
+
+## Promotion lanes
+
+Not every improvement lives at the same altitude. Three lanes, one deferral:
+
+- **Lane A — habitat memory** (immediate): brief / decisions / assumptions
+  in this habitat. This already happens every session.
+- **Lane B — template**: edit *this* habitat's `APE/` copy first, prove it
+  across at least one session, then PR the change into apeGmsh's
+  `src/apeGmsh/studio/template/**`. Habitat↔template drift is by design;
+  reconciliation is manual and voice-preserving — never generated.
+  `scripts/template_drift.py` lists the candidates.
+- **Lane C — upstream** (library / skills / fork): a backlog item that
+  belongs upstream becomes an ADR amendment or issue in the right repo and
+  runs the propose → implement → probe → merge cadence — the loop, not
+  just "note an issue".
+- **Deferred — cross-habitat rollup**: one habitat exists today; name it,
+  build nothing.
 
 ---
 

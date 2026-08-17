@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,8 @@ from _habitat import (  # noqa: E402
 )
 
 MCP_SERVER_ID = "apegmsh-studio-habitat"
+BACKLOG_FILE = HABITAT / "postmortem" / "backlog" / "open.md"
+PRIORITY_RE = re.compile(r"\bP[0-3]\b")
 
 
 def _run_check_template() -> int:
@@ -44,6 +47,49 @@ def _import_studio_ok() -> tuple[bool, str]:
         return True, "apeGmsh.studio import OK"
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
+
+
+def _parse_backlog_open_items(path: Path) -> list[tuple[str, str]]:
+    """Tolerant scan of the `## Open` table for P0/P1 rows: (priority,
+    title) pairs. Not a strict table parser — habitats edit this by hand,
+    so match on the priority marker rather than a fixed column count."""
+    items: list[tuple[str, str]] = []
+    in_open = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_open = stripped[3:].strip().lower() == "open"
+            continue
+        if not in_open or not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not cells or cells[0].lower() == "id" or set(cells[0]) <= {"-", ":"}:
+            continue
+        match = PRIORITY_RE.search(stripped)
+        if match is None or match.group(0) not in ("P0", "P1"):
+            continue
+        title = cells[2] if len(cells) > 2 and cells[2] else (cells[1] if len(cells) > 1 else "")
+        items.append((match.group(0), title))
+    return items
+
+
+def _print_backlog_summary() -> None:
+    """Burn-down line for open P0/P1 backlog items. Never fails session
+    start over a missing or unparseable backlog file."""
+    if not BACKLOG_FILE.is_file():
+        print("backlog: no open P0/P1")
+        return
+    try:
+        items = _parse_backlog_open_items(BACKLOG_FILE)
+    except Exception as exc:  # noqa: BLE001
+        print(f"backlog: unreadable ({exc})")
+        return
+    if not items:
+        print("backlog: no open P0/P1")
+        return
+    titles = ", ".join(f"{p} {t}" for p, t in items[:3] if t)
+    more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
+    print(f"backlog: {len(items)} open P0/P1 — {titles}{more}")
 
 
 def main() -> int:
@@ -121,6 +167,7 @@ def main() -> int:
         }
     )
     print(f"OK: session marker -> {SESSION_FILE}")
+    _print_backlog_summary()
     print()
     print("Next: verify MCP status.root (above), then open APE/README.md.")
     print("      Tools: python tools/apeCAD/open_interface.py")

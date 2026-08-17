@@ -36,7 +36,12 @@ chat habits.
 5. **Fill `02_friction.md`** — Socratic with the human if needed: top
    frictions, false paths, missing Studio/bridge affordances, Socratic or
    progressive-modeling gaps.
-6. **Triage into `backlog/open.md`** — each item needs:
+6. **Verify last session's proof** — for each `backlog/open.md` row closed
+   or promoted in the *previous* postmortem, check its declared
+   next-postmortem proof against what actually happened this session. An
+   unverified proof is not a closed item: reopen it in `backlog/open.md`
+   with the evidence that failed it.
+7. **Triage into `backlog/open.md`** — each item needs:
    - **Target** (see `continuous-improvement.md` tags: `skills`,
      `opensees`, `apegmsh`, `apesees`, `studio`, `observability`,
      `tools-bridges`, `ape-instructions`, `memory`, `cases-oracles`,
@@ -45,9 +50,9 @@ chat habits.
    - **Symptom** → **proposed change** → **priority** (P0–P3) →
      **next-postmortem proof**;
    - **Evidence** (session folder link).
-7. **Optional promote** — if an item belongs upstream, note “open issue /
+8. **Optional promote** — if an item belongs upstream, note “open issue /
    ADR in `<github>/…`” rather than only leaving it in this habitat.
-8. **Hand off** — point the human to the session folder + backlog delta;
+9. **Hand off** — point the human to the session folder + backlog delta;
    stop building unless asked.
 
 ---
