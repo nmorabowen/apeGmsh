@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from apeGmsh.assess import CATALOG_SEVERITY, AssessmentReport
+from apeGmsh.assess import CATALOG_SEVERITY, CONDITIONAL_SEVERITY, AssessmentReport
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -42,7 +42,13 @@ def _codes(report: AssessmentReport) -> list[str]:
 def _assert_catalog_severities(report: AssessmentReport) -> None:
     for finding in report.findings:
         assert finding.code in CATALOG_SEVERITY, finding
-        assert finding.severity == CATALOG_SEVERITY[finding.code], finding
+        # ADR 0094 Amendment 4: RES.ENERGY_ERR's severity is runtime-
+        # conditional (see CONDITIONAL_SEVERITY); every other code stays
+        # single-valued against CATALOG_SEVERITY.
+        allowed = CONDITIONAL_SEVERITY.get(
+            finding.code, frozenset({CATALOG_SEVERITY[finding.code]}),
+        )
+        assert finding.severity in allowed, finding
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +299,9 @@ def _write_ux(tmp_path: Path, name: str, *, node_ids: np.ndarray, ux: np.ndarray
     return path
 
 
-def test_res_zero_u_all_zero_last_step_is_info(tmp_path: Path) -> None:
+def test_res_zero_u_all_zero_last_step_is_warning(tmp_path: Path) -> None:
+    # ADR 0094 Amendment 4: info -> warning (six dogfood runs, one true
+    # positive, zero false positives).
     model = _build_osm(tmp_path)
     ready = dataclasses.replace(model, _analyze_call=(10, 0.1))
     fem = build_simple_frame_fem()
@@ -304,7 +312,7 @@ def test_res_zero_u_all_zero_last_step_is_info(tmp_path: Path) -> None:
         report = ready.assess(results=r)
     assert "RES.ZERO_U" in _codes(report)
     finding = next(f for f in report.findings if f.code == "RES.ZERO_U")
-    assert finding.severity == "info"
+    assert finding.severity == "warning"
     _assert_catalog_severities(report)
 
 
@@ -392,7 +400,7 @@ def test_broken_shoebuckle_fires_both_loads_unimported_and_zero_u(
     assert unimported.severity == "warning"
     assert "RES.ZERO_U" in _codes(report)
     zero_u = next(f for f in report.findings if f.code == "RES.ZERO_U")
-    assert zero_u.severity == "info"
+    assert zero_u.severity == "warning"  # ADR 0094 Amendment 4
     assert "OSM.LOADS_UNIMPORTED" in zero_u.message
     _assert_catalog_severities(report)
 

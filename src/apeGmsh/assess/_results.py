@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
+from ._catalog import CATALOG_SEVERITY, ENERGY_ERR_WARN_PCT, EVIDENCE_CAP
 from ._fem import collect_fem, resolve_out_dir
 from ._report import NO_STILLS, render_text
-from ._types import AssessmentReport, Finding
+from ._types import AssessmentReport, Finding, Severity
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
@@ -109,10 +109,16 @@ def _results_figures(
     return written, None
 
 
-def _finding(code: str, message: str, detail: dict[str, object] | None = None) -> Finding:
+def _finding(
+    code: str,
+    message: str,
+    detail: dict[str, object] | None = None,
+    *,
+    severity: Severity | None = None,
+) -> Finding:
     return Finding(
         code=code,
-        severity=CATALOG_SEVERITY[code],
+        severity=severity if severity is not None else CATALOG_SEVERITY[code],
         message=message,
         detail=detail,
     )
@@ -388,6 +394,21 @@ def _displacement_mags(
     return np.sqrt(acc), common, step
 
 
+_ENERGY_FRAME_COLUMNS = ("KE", "IE", "DW", "ULW", "RES", "ERR")
+
+
+def _last_step_all_zero(df: Any) -> bool:
+    """True when every closure column is present and exactly 0 at the
+    last step. Ladruno **static** runs record the ``-G energy``
+    channel with every component zero — the accumulator populates on
+    transients only (ADR 0094 Amendment 4).
+    """
+    columns = getattr(df, "columns", ())
+    if not all(c in columns for c in _ENERGY_FRAME_COLUMNS):
+        return False
+    return all(float(df[c].iloc[-1]) == 0.0 for c in _ENERGY_FRAME_COLUMNS)
+
+
 def _check_energy(
     results: Results,
     stages: list[Any],
@@ -440,6 +461,15 @@ def _check_energy(
                 f"energy table has no ERR column (stage={stage.id!r})",
             ))
             continue
+        if _last_step_all_zero(df):
+            skipped.append((
+                "RES.ENERGY_ERR",
+                (
+                    "energy channel recorded but unpopulated (static "
+                    f"run) — not evidence of balance (stage={stage.id!r})"
+                ),
+            ))
+            continue
         err = float(df["ERR"].iloc[-1])
         if not np.isfinite(err):
             findings.append(_finding(
@@ -452,6 +482,9 @@ def _check_energy(
             ))
             continue
         abs_err = abs(err)
+        severity: Severity = (
+            "warning" if abs_err > ENERGY_ERR_WARN_PCT else "info"
+        )
         findings.append(_finding(
             "RES.ENERGY_ERR",
             (
@@ -459,6 +492,7 @@ def _check_energy(
                 f"at last step (stage={stage.id!r})"
             ),
             {"ERR": err, "stage": stage.id},
+            severity=severity,
         ))
     if not saw_table:
         skipped.append((

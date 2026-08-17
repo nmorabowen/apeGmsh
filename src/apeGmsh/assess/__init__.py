@@ -19,7 +19,13 @@ import ``apeGmsh.viewers``, ``gmsh``, or ``apeGmsh.opensees`` (ADR
 0094 Amendment 2 — ``osm`` is duck-typed).
 """
 
-from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP, FAIL_RESERVED
+from ._catalog import (
+    CATALOG_SEVERITY,
+    CONDITIONAL_SEVERITY,
+    ENERGY_ERR_WARN_PCT,
+    EVIDENCE_CAP,
+    FAIL_RESERVED,
+)
 from ._fem import assess_fem
 from ._opensees import assess_opensees
 from ._results import assess_results
@@ -28,6 +34,8 @@ from ._types import AssessmentReport, Finding
 __all__ = [
     "AssessmentReport",
     "CATALOG_SEVERITY",
+    "CONDITIONAL_SEVERITY",
+    "ENERGY_ERR_WARN_PCT",
     "EVIDENCE_CAP",
     "FAIL_RESERVED",
     "Finding",
