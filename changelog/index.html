@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8029,6 +8040,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12607,6 +12629,29 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library">ADDED — ADR 0095 Amendment 7 S8a+S8b: oracle-bearing example library<a class="headerlink" href="#added-adr-0095-amendment-7-s8as8b-oracle-bearing-example-library" title="Permanent link">&para;</a></h3>
+<p><code>src/apeGmsh/studio/examples/&lt;name&gt;/**</code> ships three curated, package-data
+examples — <code>arch-pushover</code> (adapted from <code>examples/shoebuckle_arch.py</code>,
+requires <code>openseespy</code>), <code>step-load-transient</code> (a new generic minimal
+cantilever carrying the density + step-load + Newmark + Ladruno
+<code>-G energy</code> transient pattern, requires <code>ladruno</code>), and
+<code>partitioned-frame</code> (adapted from <code>examples/partition_frame.py</code>,
+emit-only, <code>mesh-only</code>). Each directory carries the runnable script, a
+<code>manifest.json</code> (schema 1: tags, <code>teaches</code>, <code>requires</code>, provenance, and
+named oracle metrics with tolerances), a short <code>README.md</code>, and a
+<code>verify.py</code> printing one PASS/FAIL line per metric (INV-22 — every
+oracle number was produced by an actual run, not invented; INV-23 —
+each manifest's provenance names its dogfood source). New
+<code>python -m apeGmsh.studio example list [--tag T] | show &lt;name&gt; |
+copy &lt;name&gt; [--dest DIR]</code> verb (<code>apeGmsh.studio._examples</code>, same
+<code>importlib.resources</code> + raw-argv <code>__main__</code> pattern as <code>init</code>, CLI
+only — no MCP tool). The mesh-smoke lane
+(<code>tests/studio/test_example_library.py</code>) replays all three packaged
+copies to the <code>mesh</code> phase gate on CI; full-solve <code>verify.py</code> needs
+openseespy / the Ladruno classic exe and is not CI-run — see the
+implementing PR for the local verify transcripts. <code>docs/how-to/studio-habitat.md</code>
+gains "Use the example library"; the <code>apegmsh</code> skill's Studio
+paragraph and <code>workflows.md</code> name the door.</p>
 <h3 id="added-habitat-template-visual-talk-convention-apecadapesketch-requisites">ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites<a class="headerlink" href="#added-habitat-template-visual-talk-convention-apecadapesketch-requisites" title="Permanent link">&para;</a></h3>
 <p>apeCAD and apeSketch (spatial-intent CAD scratchpad and hand-ink bridge)
 are now public and pip-installable, so the habitat template gains a
