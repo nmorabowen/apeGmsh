@@ -50,8 +50,10 @@ chat habits.
    - **Symptom** → **proposed change** → **priority** (P0–P3) →
      **next-postmortem proof**;
    - **Evidence** (session folder link).
-8. **Optional promote** — if an item belongs upstream, note “open issue /
-   ADR in `<github>/…`” rather than only leaving it in this habitat.
+8. **Promote** — route items that should not stay in this habitat
+   through the promotion lanes (`continuous-improvement.md`): Lane B
+   template edits, Lane C upstream ADR / issue — the loop, not just a
+   note left in the backlog.
 9. **Hand off** — point the human to the session folder + backlog delta;
    stop building unless asked.
 
