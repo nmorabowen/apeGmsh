@@ -233,8 +233,17 @@ def test_g_qss_sync_no_dangling_selectors() -> None:
     selectors = set(re.findall(r"#([A-Za-z_]\w*)", selector_text))
     assert selectors, "No #ObjectName selectors found — extraction broke?"
 
-    scan_files = list(_ui_files()) + sorted(
-        p for p in VIEWERS_DIR.glob("*.py") if p.is_file()
+    # ``viewers/session/**`` joined the scan with ADR 0098 Amendment 1:
+    # the pane host's styled widgets (SessionPaneFrame, SessionPaneHeader,
+    # ...) live there, and a guard that cannot see their setObjectName
+    # calls would report every one of their QSS blocks as dangling. This
+    # WIDENS the guard — nothing was removed from its reach.
+    scan_files = (
+        list(_ui_files())
+        + sorted(p for p in VIEWERS_DIR.glob("*.py") if p.is_file())
+        + sorted(
+            p for p in (VIEWERS_DIR / "session").rglob("*.py") if p.is_file()
+        )
     )
     object_names: set[str] = set()
     for path in scan_files:

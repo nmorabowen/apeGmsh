@@ -365,6 +365,8 @@ theme).
 | Chevron | step ±1 | collapse/expand (trees use Qt's own) |
 | Chevron + terminal bar | jump to first/last | — |
 | Filled dot | state / series swatch | decoration |
+| Cell + interior grid (`mesh`) | the FE mesh itself | sampling grids (`probe_slice`) |
+| Cell + dots | where discrete quantities LIVE — on the corners (`nodes`) or inside (`gauss`) | any other point cloud |
 
 Transport deliberately never distinguishes controls by *size alone*
 (the audit's ▶ vs ▶︎ failure): play is a filled triangle, steps are
@@ -390,6 +392,10 @@ chevrons, jumps are chevron+bar — distinct silhouettes at 16 px.
 | `section` | square cut by diagonal, half filled | section-planes toolbar (wired) |
 | `axes` | origin triad | local-axes toolbar (wired) |
 | `stages` | two overlapping squares | stage-activation toolbar (wired) |
+| `mesh` | square + interior grid + two diagonals (an FE triangulation) | ADR 0098 mesh-view "Mesh" style button, and the mesh pane's kind glyph (`viewers/session/_frame.py`) |
+| `outlines` | closed boundary polygon, NO interior lines | ADR 0098 mesh-view "Outlines" style button. Distinct from `mesh` at 16 px by exactly what distinguishes the two pictures: interior grid vs border only |
+| `nodes` | cell outline + three filled corner dots | ADR 0098 mesh-view "Nodes" style button. The dots carry the meaning; the faint cell places them as *corners of a cell* rather than `palette`'s free dot triad |
+| `gauss` | cell with a 2×2 INTERIOR dot pattern | ADR 0098 mesh-view "Gauss" style button (integration-point locations). Distinct from `probe_slice` (a 3×3 line grid, no dots) and from `nodes` (dots ON the corners) — Gauss points sit inside the cell |
 | `add` | plus | Phase 2: outline "+" buttons `_outline_tree.py:103`, `_model_outline_tree.py:155` |
 | `close` | diagonal cross (12 px extent — close targets read lighter) | Phase 2: plane delete `_clip_planes_panel.py:315` "✕", HUD dismiss `_empty_state_hud.py:67` "×", plot-tab close `_plot_pane.py:310` "×", preferences chip `preferences.py:240/250` "×" |
 | `gear` | ring + eight teeth + filled hub | Phase 2: background toggle `_bg_toggle_gear.py:14` "⚙" |

@@ -155,11 +155,15 @@ def test_factory_default_session(session_results):
 # =====================================================================
 
 
-def test_empty_view_realizes_substrate_only(session_results, backend):
+def test_empty_view_realizes_the_boot_picture(session_results, backend):
+    """§3: the analysis mesh, grey, mesh + outlines on, nodes/Gauss
+    off, no legend. Two layers since S3 — the interior grid is the
+    surface's ``show_edges``, the feature boundaries are their own
+    layer (INV-MESH-4)."""
     session, view = _session_view(session_results)
     realized = realize_pane(session, view, backend)
 
-    assert _layer_keys(realized) == ["mesh-1:substrate"]
+    assert _layer_keys(realized) == ["mesh-1:substrate", "mesh-1:outlines"]
     layer = backend.layers["mesh-1:substrate"]
     assert layer.color.mode == "solid"
     assert layer.show_edges is True
@@ -180,7 +184,7 @@ def test_contour_replaces_substrate(session_results, backend):
     view.contour = Contour("displacement_z")
     realized = realize_pane(session, view, backend)
 
-    assert _layer_keys(realized) == ["mesh-1:contour"]
+    assert _layer_keys(realized) == ["mesh-1:contour", "mesh-1:outlines"]
     assert not any(k.endswith(":substrate") for k in backend.layers)
     layer = _contour_layer(backend, realized)
     assert layer.color.mode == "by_array"
@@ -276,7 +280,7 @@ def test_hidden_legend_emits_no_bar_keeps_picture(session_results, backend):
     assert backend.scalar_bars == {}
     assert realized.scalar_bars == ()
     # The picture stays painted.
-    assert _layer_keys(realized) == ["mesh-1:contour"]
+    assert _layer_keys(realized) == ["mesh-1:contour", "mesh-1:outlines"]
     assert _contour_layer(backend, realized).color.mode == "by_array"
 
 
@@ -520,7 +524,9 @@ def test_layer_keys_stable_across_realizations(session_results):
     view.contour = Contour("displacement_z")
     first = realize_pane(session, view, RecordingBackend())
     second = realize_pane(session, view, RecordingBackend())
-    assert _layer_keys(first) == _layer_keys(second) == ["mesh-1:contour"]
+    assert _layer_keys(first) == _layer_keys(second) == [
+        "mesh-1:contour", "mesh-1:outlines",
+    ]
 
 
 # =====================================================================
@@ -565,16 +571,18 @@ def test_mesh_pane_without_backend_refuses(session_results):
 @pytest.mark.parametrize(
     "mutate, match",
     [
-        (lambda v: setattr(v, "style", MeshStyle(nodes=True)), "S3"),
         (lambda v: setattr(v, "overlay", True), "overlay"),
-        (lambda v: v.add_clip((1, 0, 0)), "clip"),
     ],
-    ids=["style", "overlay", "clip"],
+    ids=["overlay"],
 )
 def test_unrealized_state_refuses_loudly(
     session_results, backend, mutate, match,
 ):
-    """A still that silently drops session state is a wrong picture."""
+    """A still that silently drops session state is a wrong picture.
+
+    The style buttons and the view clips left this list at S3 — they
+    realize now (see the INV-MESH-4 and clip tests below).
+    """
     session, view = _session_view(session_results)
     mutate(view)
     with pytest.raises(NotImplementedError, match=match):

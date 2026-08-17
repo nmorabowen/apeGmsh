@@ -130,9 +130,14 @@ def test_session_window_composes_shell_and_runs_the_add_loop(
     small_results,
 ):
     """The acceptance shape with no Python session writes: boot the
-    composed window (shell + outline + inspector + pane adopting the
-    shell's plotter), click Add on the contour row, and watch the
-    viewport reconcile. The human loop's automated understudy."""
+    composed window (shell + outline + inspector + the pane host),
+    click Add on the contour row, and watch that pane reconcile. The
+    human loop's automated understudy.
+
+    Since Amendment 1 the pane owns its OWN ``QtInteractor`` and the
+    shell builds none (A1.1), so the window's one GL context belongs to
+    the pane rather than being adopted from the shell.
+    """
     pytest.importorskip("pytestqt", reason="needs pytest-qt")
     pytest.importorskip("pyvistaqt")
     QtWidgets = pytest.importorskip("qtpy.QtWidgets")
@@ -147,14 +152,16 @@ def test_session_window_composes_shell_and_runs_the_add_loop(
         window.show(blocking=False)
         qapp.processEvents()  # boot flush (QTimer-deferred)
 
-        realized = window.pane.reconciler.realized
+        frame = window.host.frame(view.id)
+        realized = frame.pane.reconciler.realized
         assert realized is not None
         assert {layer.key for layer in realized.layers} == {
-            f"{view.id}:substrate",
+            f"{view.id}:substrate", f"{view.id}:outlines",
         }
-        # The pane adopted the SHELL's plotter — one interactor.
-        assert window.pane.surface is None
-        assert window.pane.backend.plotter is window.shell.plotter
+        # The pane owns its interactor; the shell has none of its own.
+        assert frame.pane.surface is not None
+        assert frame.pane.backend.plotter is frame.pane.surface
+        assert window.shell.plotter is frame.pane.surface
 
         # The discrete Add loop, driven through the real widgets.
         page = window.inspector_page(view.id)
@@ -162,9 +169,9 @@ def test_session_window_composes_shell_and_runs_the_add_loop(
         qapp.processEvents()  # coalesced flush
 
         assert view.contour is not None
-        realized = window.pane.reconciler.realized
+        realized = frame.pane.reconciler.realized
         assert {layer.key for layer in realized.layers} == {
-            f"{view.id}:contour",
+            f"{view.id}:contour", f"{view.id}:outlines",
         }
         # Outline lists the pane; inspector page is mounted.
         assert window.outline.selected_pane_id() == view.id

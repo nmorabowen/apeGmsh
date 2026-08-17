@@ -50,6 +50,95 @@ stock openseespy, hard-asserts the backend actually imported (otherwise its
 own failure mode is the silent all-skip it exists to prevent), and runs
 `-m "live and not qt and not subprocess and not bench"` — 54 tests, ~80 s.
 
+### ADDED — ADR 0098 Amendment 1 (S3): the pane host, per-view scope, style buttons
+
+The Results session window's centre becomes **N tiled panes**. The
+central widget is a `SessionPaneHost`: a root `QSplitter(Horizontal)`
+of columns, each a `QSplitter(Vertical)` of rows, depth exactly two,
+with one `QtInteractor` per mesh pane. The shape is a pure function of
+the pane count — `T(N)`: `C = ceil(sqrt(N))`, row-major fill in
+`session.panes` order — so adding a pane never moves the others unless
+the column count changes. A splitter whose child list changed resets to
+equal ratios; every other splitter keeps its dragged ones.
+
+**On the session path the shell builds no central interactor.** The
+seam is an additive, opt-in `central_interactor=False` +
+`set_central_widget` / `set_plotter_provider` on `ViewerWindow` /
+`ResultsWindow` that the old window never reaches — `results_viewer.py`
+is untouched. Every GL context in the window now belongs to a pane,
+which is what lets sixteen of the twenty-four acceptance criteria run
+in the default offscreen lane with injected backends. Toolbar camera
+presets / fit / screenshot act on the **active pane**.
+
+Each pane carries a `SessionPaneFrame`: kind glyph + name, the **four
+INV-MESH-4 style buttons** (mesh / outlines / nodes / gauss — pane
+header only; the inspector does not restate them), a reserved time
+badge, and a close glyph. The buttons realize: `mesh` is `show_edges`
+of whichever layer IS the one surface, `outlines` is a feature-edge
+layer of the same cell set, `nodes` and `gauss` are glyph clouds — and
+the Gauss button stands down when the `gauss` slot is occupied (one
+cloud, not two). Three new icon-factory glyphs (`outlines`, `nodes`,
+`gauss`) + four ADR 0087 Appendix A rows. View clips realize too (the
+0083 machinery, view-owned).
+
+The outline grows its second §9 job: **per-view scope** as checkboxes
+on one composition axis (physical groups | element types; `materials`
+renders disabled — no element→material index is published yet), plus
+the "New mesh view" / "New plot" rows with the A1.4 **Add gate**
+(disabled with the required width in the tooltip when `T(N+1)` breaches
+a pane floor; the gate constrains creation only — a script or a
+snapshot restore is tiled anyway). Zero panes renders the empty-state
+card. Splitter ratios persist as `panes/layout` +
+`panes/schema_version` under `QSettings('apeGmsh','ResultsSession')`;
+`_LAYOUT_SCHEMA_VERSION` stays 1 (no dock added).
+
+Three S2 defects the amendment named are fixed: inspector pages are now
+**evicted and disposed with their pane** (they only ever grew); a
+reconciler **bound** to a pane id whose view is gone paints **nothing**
+(the first-mesh-view fallback would repaint view 1 into a dying
+backend); and first-fit camera moves **onto the pane** (pane 2+ booted
+unframed). Criterion 12 is gated, not hoped: each reconciler keeps a
+pane-level signature over (instant, scope, pose, style, overlay, clips,
+slots, legends), so one slot fill in a four-pane session costs exactly
+one realize and one render, while a theme change forces all four.
+
+New: `tests/viewers/test_pane_host.py` (the sixteen `[off]` criteria +
+four mutation tests) and `tests/viewers/test_pane_host_window_qt.py`
+(criteria 18-20 on real GL, beside the existing probe).
+### FIXED — `doctor` no longer ships one developer's venv path
+
+`python -m apeGmsh doctor` printed a hardcoded home directory on every
+machine in the world that ran it: D1 compared `sys.prefix` against a
+literal office venv and named it even when absent, and D6 probed that
+same path to compare `baseUnits` — a package apeGmsh does not depend on.
+A site convention does not belong in a published wheel.
+
+Both are now opt-in environment configuration, with no literal path
+anywhere in the module:
+
+* `APEGMSH_REFERENCE_VENV` — a venv root D1 compares against. Unset,
+  D1 is a plain identity report (`Python 3.12.10 at <exe> (virtualenv)`);
+  set and mismatched it warns as before; set and missing it says so.
+  Resolves `Scripts/python.exe` or `bin/python`, so it works off Windows.
+* `APEGMSH_SHARED_PACKAGES` — comma-separated distributions whose
+  versions must agree across this interpreter and the reference venv
+  (`_check_baseunits` → `_check_shared_packages`,
+  `_baseunits_counterparts` → `_counterpart_interpreters`). Empty by
+  default; nothing apeGmsh depends on is installed non-editably into
+  several interpreters, so there is no honest default to ship. The
+  Windows-launcher counterpart is now `py -3` rather than a pinned 3.12.
+
+To keep the previous behaviour, set both in the shell:
+`APEGMSH_REFERENCE_VENV=<venv root>` and
+`APEGMSH_SHARED_PACKAGES=baseUnits`.
+
+Two guards in `tests/test_doctor.py`: the module source may not contain
+an absolute user path (verified by reintroducing the old literal — the
+lane fails), and with nothing configured no D1/D6 message may quote a
+home directory (D2 is exempt; it echoes where apeGmsh actually resides,
+discovered at runtime). The three D6 lanes were rewritten around
+`apeGmsh` itself instead of `baseUnits` — they previously skipped
+everywhere the office package was absent, which is to say on CI.
 ### FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
 
 Every `studio init` on a machine that was not the template author's

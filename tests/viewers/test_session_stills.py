@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
-from apeGmsh.results.session import Contour, ResultsSession
+from apeGmsh.results.session import Contour, MeshStyle, ResultsSession
 from apeGmsh.results.writers import NativeWriter
 
 from tests.conftest import _open_model_from_h5
@@ -120,11 +120,21 @@ def test_empty_view_still_parity_with_render_results_mesh(
     still_results, tmp_path: Path, frames_match_or_skip,
 ) -> None:
     """The scene-IR substrate emission reproduces the shipped grey
-    still (``render_results(view='mesh')``, raw ``add_mesh``)."""
+    still (``render_results(view='mesh')``, raw ``add_mesh``).
+
+    Outlines OFF: ``render_results`` draws the raw mesh with its
+    element edges and no feature-edge pass, so this pins the substrate
+    against exactly that. Since S3 the boot style has BOTH buttons on
+    (§3), which paints one more layer than the old still — a
+    difference in the picture, not in the substrate emission this
+    oracle is about. ``test_outlines_button_adds_ink`` covers the
+    other half.
+    """
     old = still_results.render(tmp_path / "old.png", view="mesh")
     if old is None:
         pytest.skip("no GL context for offscreen stills")
     session = still_results.session()
+    session.panes[0].style = MeshStyle(mesh=True, outlines=False)
     new = _render_or_skip(session, tmp_path / "new.png")
 
     import matplotlib.image as mpimg
@@ -142,7 +152,18 @@ def test_contour_still_parity_with_render_results(
     """Decision-5 pin at the pixel level: the session's one-shot
     realize (pose before extraction, session-authored legend) and
     ``render_results(view='contour')`` (attach then sync, diagram-
-    registered legend) must paint the same picture."""
+    registered legend) must paint the same picture.
+
+    Both style buttons off here: ``render_results(view='contour')``
+    paints the bare contour (``ContourStyle.show_edges`` defaults to
+    False and no feature-edge pass runs), while a session view boots
+    with mesh + outlines on — and since S3 the "Mesh" button rides the
+    OCCUPANT's ``show_edges`` when a contour is the one surface
+    (INV-MESH-2 + INV-MESH-4: the interior grid belongs to whichever
+    layer IS the surface, never to a second wire mesh over it). Turning
+    both off is what makes the two paths comparable; it is not a
+    difference in the realize path this oracle pins.
+    """
     old = still_results.render(
         tmp_path / "old.png", view="contour", component="displacement_z",
     )
@@ -150,6 +171,7 @@ def test_contour_still_parity_with_render_results(
         pytest.skip("no GL context for offscreen stills")
 
     session = still_results.session()
+    session.panes[0].style = MeshStyle(mesh=False, outlines=False)
     session.panes[0].contour = Contour("displacement_z")
     new = _render_or_skip(session, tmp_path / "new.png")
 
@@ -158,3 +180,23 @@ def test_contour_still_parity_with_render_results(
     old_px = (np.asarray(mpimg.imread(old)) * 255).astype(np.uint8)
     new_px = (np.asarray(mpimg.imread(new)) * 255).astype(np.uint8)
     frames_match_or_skip(new_px, old_px, what="session vs render_results")
+
+
+def test_outlines_button_adds_ink(
+    still_results, tmp_path: Path,
+) -> None:
+    """The other half of the two parity pins: the Outlines button is a
+    picture, not a no-op — the boot style paints strictly more than the
+    substrate alone (INV-MESH-4)."""
+    session = still_results.session()
+    session.panes[0].style = MeshStyle(mesh=True, outlines=False)
+    bare = _render_or_skip(session, tmp_path / "bare.png")
+    session.panes[0].style = MeshStyle(mesh=True, outlines=True)
+    lined = _render_or_skip(session, tmp_path / "lined.png")
+
+    import matplotlib.image as mpimg
+
+    bare_px = (np.asarray(mpimg.imread(bare)) * 255).astype(np.uint8)
+    lined_px = (np.asarray(mpimg.imread(lined)) * 255).astype(np.uint8)
+    assert bare_px.shape == lined_px.shape
+    assert not np.array_equal(bare_px, lined_px)

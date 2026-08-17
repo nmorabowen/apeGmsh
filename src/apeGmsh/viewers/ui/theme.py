@@ -1079,6 +1079,79 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
     }}
 
+    /* Pane host (ADR 0098 Amendment 1) — the tiled centre. One block
+       for every pane: the pane id rides a Qt property and the active
+       state a dynamic one, so no per-pane objectName is needed
+       (INV-7 / caution 7-8). The 1 px accent border is 0087 D1.4's
+       "accent reserved for focus/active"; inactive panes keep a
+       transparent border of the same width so nothing shifts. */
+    QWidget#SessionPaneHost {{
+        background-color: {p.base};
+    }}
+    QFrame#SessionPaneFrame {{
+        border: 1px solid transparent;
+        background-color: {p.base};
+    }}
+    QFrame#SessionPaneFrame[active="true"] {{
+        border: 1px solid {p.accent};
+    }}
+    QFrame#SessionPaneHeader {{
+        background-color: {p.mantle};
+        border-bottom: 1px solid {p.surface0};
+    }}
+    QLabel#SessionPaneTitle {{
+        color: {p.text};
+        font-size: {d_fs_body}px;
+        font-weight: 600;
+    }}
+    QLabel#SessionPaneKindWord, QLabel#SessionPaneTimeBadge {{
+        color: {p.overlay};
+        font-size: {d_fs_body}px;
+    }}
+    QToolButton#SessionPaneKind, QToolButton#SessionPaneClose,
+    QToolButton#SessionPaneStyleButton {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: {rad_sm}px;
+    }}
+    QToolButton#SessionPaneClose:hover,
+    QToolButton#SessionPaneStyleButton:hover {{
+        background-color: {p.surface0};
+        border-color: {p.surface1};
+    }}
+    QToolButton#SessionPaneStyleButton:checked {{
+        background-color: {_rgba(p.accent, 0.18)};
+        border: 1px solid {p.accent};
+    }}
+    QFrame#SessionPaneHostEmpty {{
+        background-color: {p.base};
+    }}
+    QLabel#SessionPaneHostEmptyHint {{
+        color: {p.overlay};
+        font-size: {d_fs_body}px;
+    }}
+    QLabel#SessionPanePlotPlaceholder {{
+        color: {p.overlay};
+        font-size: {d_fs_body}px;
+    }}
+    /* Session outline — the pane row's active spine reuses the
+       PlotPaneTabRow idiom (A1.5); selection IS the active pane, so
+       ::item:selected is the one state rendered here. */
+    QTreeWidget#SessionOutlineTree {{
+        border: none;
+        font-size: {d_fs_body}px;
+    }}
+    QTreeWidget#SessionOutlineTree::item {{
+        min-height: {d_row_h}px;
+        border-left: 2px solid transparent;
+        padding-left: 2px;
+    }}
+    QTreeWidget#SessionOutlineTree::item:selected {{
+        border-left: 2px solid {p.accent};
+        background-color: {p.surface0};
+        color: {p.text};
+    }}
+
     /* Details panel (right rail, bottom) */
     QWidget#DetailsPanel {{
         background-color: {p.mantle};

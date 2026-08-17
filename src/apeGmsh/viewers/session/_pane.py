@@ -1,17 +1,17 @@
 """MeshPane — the Qt widget projecting one mesh view of a session.
 
-ADR 0098 S2. Backend/interactor injection is a HARD design
-requirement (plan decision 7): the pane takes a ``backend_factory``
-so headless tests inject a ``RecordingBackend`` and the S2 oracle —
-widget event → session diff → repaint — runs in the DEFAULT
-offscreen CI lane, not only under xvfb. The default factory builds a
-real ``QtInteractor`` + ``PyVistaQtBackend``; the composed
-``SessionWindow`` injects a factory that adopts the shell's existing
-plotter instead (one interactor per window — the camera / theme /
-screenshot machinery keeps operating on the real one).
+ADR 0098 S2, generalized to N panes by Amendment 1. Backend/interactor
+injection is a HARD design requirement (plan decision 7): the pane
+takes a ``backend_factory`` so headless tests inject a
+``RecordingBackend`` and the pane-host oracle — widget event → session
+diff → repaint — runs in the DEFAULT offscreen CI lane, not only under
+xvfb. The default factory builds a real ``QtInteractor`` +
+``PyVistaQtBackend``, one per pane (A1.1: the shell builds none).
 
-The pane owns its :class:`~._reconciler.SessionReconciler` — the
-per-pane reconcile is the shape S3's pane host multiplies.
+The pane owns its :class:`~._reconciler.SessionReconciler` and its own
+first-fit camera. Both are per-pane on purpose: S2 held one
+``_camera_fit`` bool on the WINDOW (Amendment 1 caution 11), which
+would leave pane 2 and beyond booting unframed.
 """
 from __future__ import annotations
 
@@ -23,9 +23,46 @@ from ._reconciler import SessionReconciler
 
 #: ``factory(parent_widget) -> (surface_widget | None, backend)``.
 #: ``surface_widget`` (when not None) is mounted as the pane's child —
-#: the render surface. A factory adopting an external surface (the
-#: shell's plotter, a test's RecordingBackend) returns ``None`` there.
+#: the render surface. A factory adopting an external surface (a test's
+#: RecordingBackend) returns ``None`` there.
 BackendFactory = Callable[[QtWidgets.QWidget], "tuple[Any, Any]"]
+
+
+def _pane_theme() -> Any:
+    """An explicit pyvista theme for a pane-owned interactor.
+
+    Amendment 1 caution 2: ``viewer_window.py`` mutates pyvista's
+    GLOBAL theme (``set_plot_theme("dark")``, white font) at window
+    construction, so anything pyvista-defaulted inside a pane built
+    later inherits ``dark`` regardless of the live palette. The
+    amendment records legends as safe on the grounds that 0090 D1
+    routes their colours through specs — **it is not so**:
+    ``ScalarBarSpec`` carries geometry and font SIZES, no colour, so a
+    bar's title and labels take ``plotter.theme.font.color``. On
+    ``paper`` that meant white text on a light pane. Constructing each
+    pane with a theme carrying the palette's font colour is what
+    caution 2's "or construct panes with an explicit theme" buys, and
+    it closes the defect without reordering the old window.
+
+    ``None`` when pyvista's theme machinery is unavailable — the
+    interactor then falls back to the global theme, exactly as S2 did.
+    """
+    try:
+        import copy
+
+        import pyvista as pv
+
+        from ..ui.theme import THEME
+
+        # ``deepcopy``, not ``.copy()``: pyvista's theme object has no
+        # ``copy`` method on the shipped version, and an AttributeError
+        # swallowed here would silently leave the pane on the global
+        # (white-font) theme — which is exactly the bug.
+        theme = copy.deepcopy(pv.global_theme)
+        theme.font.color = THEME.current.text
+        return theme
+    except Exception:
+        return None
 
 
 def default_backend_factory(
@@ -36,15 +73,43 @@ def default_backend_factory(
 
     from ..backends import PyVistaQtBackend
 
-    interactor = QtInteractor(parent=parent)
+    theme = _pane_theme()
+    interactor = (
+        QtInteractor(parent=parent) if theme is None
+        else QtInteractor(parent=parent, theme=theme)
+    )
+    try:
+        # Order-independent transparency, per pane — the shell used to
+        # set this on its one central interactor (viewer_window.py).
+        renderer = interactor.renderer
+        renderer.SetUseDepthPeeling(True)
+        renderer.SetMaximumNumberOfPeels(4)
+        renderer.SetOcclusionRatio(0.0)
+    except Exception:
+        pass
+    try:
+        interactor.enable_parallel_projection()
+    except Exception:
+        pass
+    # Theme the pane's background NOW, not only on the next palette
+    # change: a pane is constructed after the shell has already applied
+    # its palette, so waiting for ``on_theme_changed`` leaves a fresh
+    # pane on VTK's own dark default — visibly wrong under `paper`.
+    try:
+        from ..scene.background import apply_background
+        from ..ui.theme import THEME
+
+        apply_background(interactor, THEME.current)
+    except Exception:
+        pass
     return interactor, PyVistaQtBackend(interactor)
 
 
 class MeshPane(QtWidgets.QWidget):
     """One mesh view, projected. The session is truth; this widget is
     a client (§1) — it holds no picture state of its own, only the
-    backend, the reconciler, and the render surface (when it owns
-    one).
+    backend, the reconciler, the render surface (when it owns one) and
+    its own first-fit camera flag.
     """
 
     def __init__(
@@ -66,11 +131,13 @@ class MeshPane(QtWidgets.QWidget):
             layout.addWidget(surface)
         self._surface = surface
         self._backend = backend
+        self._camera_fit = False
         # The reconciler schedules its own boot flush — the valid
         # empty picture (§3) paints without any session mutation.
         self._reconciler = SessionReconciler(
             session, backend, pane_id=pane_id, defer_fn=defer_fn,
         )
+        self._reconciler.add_listener(self._on_reconciled)
 
     # -- surface -------------------------------------------------------
 
@@ -90,21 +157,64 @@ class MeshPane(QtWidgets.QWidget):
         return self._reconciler
 
     def set_pane(self, pane_id: Optional[str]) -> None:
-        """Aim the projection at another mesh view (outline click)."""
+        """Aim the projection at another mesh view.
+
+        Vestigial under the pane host (Amendment 1 caution 3): a hosted
+        pane is constructed with its own id and never re-aimed. Kept
+        for the unhosted single-pane shape and for tests; no behaviour
+        rides it.
+        """
         self._reconciler.set_pane(pane_id)
 
     def request_reconcile(self) -> None:
         """Schedule a repaint for a backend-side change the session
-        cannot see (theme palette swap)."""
-        self._reconciler.schedule()
+        cannot see (theme palette swap, density tokens).
+
+        FORCED past the reconciler's signature guard — the palette is
+        not session state, so an equality check over the session would
+        skip exactly the repaint that is needed.
+        """
+        self._reconciler.schedule_forced()
 
     def dispose(self) -> None:
-        """Detach from the session (idempotent)."""
+        """Detach from the session AND close the pane's GL context.
+
+        Idempotent. Closing the interactor is not optional bookkeeping:
+        before Amendment 1 the shell owned the one context and
+        ``ViewerWindow._MainWindow.closeEvent`` closed it. With the
+        shell building none (A1.1), a pane that does not close its own
+        leaves a live render window behind every time a pane is closed
+        or a window shuts — caution 1's orphaned context, moved from
+        the shell to the panes. Windows tolerates the leak; Mesa
+        segfaults on the NEXT interactor in the process, which is what
+        the xvfb lane caught.
+        """
         self._reconciler.dispose()
+        if self._surface is not None:
+            try:
+                self._surface.close()
+            except Exception:
+                pass
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 — Qt API
         self.dispose()
         super().closeEvent(event)
+
+    # -- internals -----------------------------------------------------
+
+    def _on_reconciled(self, realized: Optional[Any]) -> None:
+        """First non-empty paint: frame the model once, in THIS pane.
+
+        Later flushes never reframe — an update is not a reason to move
+        the camera (the backend's own update path holds the same rule).
+        """
+        if self._camera_fit or realized is None or not realized.layers:
+            return
+        try:
+            self._backend.reset_camera()
+        except Exception:
+            pass
+        self._camera_fit = True
 
 
 __all__ = ["BackendFactory", "MeshPane", "default_backend_factory"]
