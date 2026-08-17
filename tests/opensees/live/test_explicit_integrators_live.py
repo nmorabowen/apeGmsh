@@ -3,7 +3,10 @@
 Gated by the ``live`` marker AND the OpenSees *Ladruno fork* build:
 ``ExplicitBathe`` / ``ExplicitBatheLNVD`` / ``CentralDifferenceLadruno``
 are fork-only integrators. On stock ``openseespy`` the
-``integrator <Type>`` call raises at run time — those tests skip.
+``integrator <Type>`` call does **not** raise — it is accepted silently
+and the previous integrator stays in effect — so the skip is driven by
+the build probe, and ``LiveOpsEmitter.integrator`` refuses these types
+outright on a non-fork build.
 
 Each test builds a tiny 2-node beam with tip mass, fixes the base, and
 drives a short explicit transient. The assertion is a smoke check
@@ -33,23 +36,18 @@ from tests.opensees.fixtures.fem_stub import (  # noqa: E402
 
 
 def _fork_has(integrator: str, *args: object) -> bool:
-    """True if the live OpenSees build accepts ``integrator <type> ...``.
+    """True on a Ladruno fork build, which is what these integrators need.
 
-    Probes a throwaway domain so a stock (non-fork) build skips cleanly
-    rather than failing.
+    Asks the resolver's build probe. The previous implementation
+    try/except-ed an ``integrator <type>`` call on a throwaway domain,
+    on the belief that stock raises — it does not. openseespy accepts an
+    unknown integrator type silently, so that probe returned ``True`` on
+    stock and every test below then ran a "successful" explicit transient
+    that was never explicit.
     """
-    ops = openseespy
-    ops.wipe()
-    ops.model("basic", "-ndm", 1, "-ndf", 1)
-    ops.node(1, 0.0)
-    ops.node(2, 1.0)
-    try:
-        ops.integrator(integrator, *args)
-        return True
-    except Exception:
-        return False
-    finally:
-        ops.wipe()
+    from apeGmsh.opensees._target import probe_live_capabilities
+
+    return probe_live_capabilities().has_fork
 
 
 def _build_tip_mass_beam(ops: apeSees) -> None:
