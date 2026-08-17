@@ -82,7 +82,9 @@ composed assemblies (`from_h5` + `compose`, or `Assembly` with
 where order-mismatched models live, since `set_order` is global per
 gmsh session. Requirements and limits (ADR 0086): `enforce="equation"`
 (so it needs the Lagrange handler and an unsymmetric solver, like any
-equation tie); a **flat, coincident** interface (`tolerance` is the
+equation tie — and, for the *live* run, a Ladruno fork build; see
+[Backend capabilities](../concepts/backend-capabilities.md)); a
+**flat, coincident** interface (`tolerance` is the
 out-of-plane gap allowance); convex facets with **straight edges**
 (every midside node at its edge midpoint — the kernel integrates on the
 corner polygon, which only equals the curved facet for straight edges);
