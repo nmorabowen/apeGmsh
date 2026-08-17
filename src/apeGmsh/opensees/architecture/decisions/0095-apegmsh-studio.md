@@ -903,3 +903,106 @@ Resolved here:
 1. **Snapshot file, not re-run, not ledger** — yes.
 2. **Pin copies the snapshot** — yes.
 3. **Staleness = disclosure only** — yes (revisit with dogfood).
+
+## Amendment 6 (2026-08-17) — the habitat template ships with studio
+
+Append-only. Parts 1–6, INV-1–INV-19, S0–S6c, and Amendments 1–5
+stay. This amendment gives studio its habitat **template**: the APE
+Studio project structure dogfooded in the steel-connection repo
+(playbook, memory, session lifecycle, soft-contract checker, model
+lineage layout) becomes part of apeGmsh.studio itself, stamped out by
+one CLI verb. Owner decision: the template is **part of apeGmsh
+studio** — not a standalone template repository (that alternative was
+built to the extraction stage and then redirected; the curated tree
+is this amendment's source material).
+
+### Decision
+
+- **Template as package data.** `apeGmsh/studio/template/**` ships
+  the habitat tree: `APE/` (instructions, memory *stubs*, skills /
+  libraries READMEs + harvest tooling), `scripts/` (start / finish /
+  `check_template` — habitats stay **self-contained**: they carry
+  their own lifecycle scripts and checker so an initialized habitat
+  survives apeGmsh version drift), `postmortem/` + `reports/`
+  skeletons, `models/README.md`, `ape.project.yaml` with a
+  `__HABITAT_NAME__` placeholder, `.cursor/mcp.json` template,
+  `.gitignore`, and `TEMPLATE.md` (provenance: extracted from
+  steel-connection@<sha>; pattern promotion flows template-ward per
+  the template's own `continuous-improvement.md`).
+- **One CLI verb.** `python -m apeGmsh.studio init --name <habitat>
+  --model <model_id> [--root DIR]` copies the template into the
+  target (default cwd), substitutes the name, aligns
+  `.cursor/mcp.json` through the same mechanism `start_session.py`
+  reads, creates `models/<model_id>/src/` + `cases/`, stamps the
+  memory brief's title, and finishes by running the habitat's own
+  `check_template.py --strict`. A target that already looks
+  initialized (no placeholder left, or a non-empty habitat) is
+  refused, not overwritten.
+- **CLI only — not an MCP tool.** Habitat lifecycle stays out of MCP
+  (same stance as the rejected host open/close verbs, Amendment 3).
+  The MCP growth law (INV-10) is unchanged.
+- **Studio never imports the template.** It is inert package data; the
+  only code surface is the `init` copier. The initialized habitat's
+  scripts are the template's, not studio's.
+
+### New invariants
+
+- **INV-20 (skills are personal).** The author's skill suites
+  (abaqus-theory, aci-concrete, opensees-*, apegmsh, …) are **not
+  distributed** with the template and never required by it. The
+  template's README lists them by name as the author's own, with one
+  line of agent guidance: *if these skills are installed, use them;
+  if not, ignore the references and proceed.* Nothing in the
+  template's instructions, checker, or init gates on their presence.
+- **INV-21 (template voice).** The template's instruction files are
+  authored prose, not generated documentation. Library changes never
+  regenerate or rewrite them; edits flow through the template's own
+  continuous-improvement path (habitat → template promotion), by
+  hand.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S7a** | `apeGmsh/studio/template/**` package data (lifted from the curated extraction tree) + `studio init` verb + tests: init into tmp → the habitat's own `check_template.py --strict` passes; re-init refused; a grep gate pins INV-20 (specimen and skill-suite names appear only in `TEMPLATE.md` provenance and the README's personal-skills list); packaged-data completeness (a file added to the template dir ships). | S5j |
+| **S7b** | Docs: `studio-habitat.md` how-to gains "create a habitat" (init verb, session start pointer); skill Studio paragraph names `init`. | S7a |
+
+No `contract_version` bump: `.apegmsh/*` schemas are untouched —
+`init` writes project files, not habitat-state files.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Standalone GitHub template repository** | Owner decision. Two artifacts to keep in sync; studio already owns the habitat contract (INV-15, the checker's soft contract) — the template belongs next to it. The extraction work is reused as the source tree. |
+| **Shipping the skills/libraries catalogs** | Personal IP rides along with a library install. INV-20: named in prose, never distributed, never required. |
+| **Studio-owned checker/lifecycle (habitats call the library)** | Couples every habitat to the installed apeGmsh version. Habitats stay self-contained; the template copies its scripts in. |
+| **`init` as an MCP tool** | Same class as host open/close: lifecycle is not an agent verb. CLI only. |
+| **Template files generated from docs** | INV-21. The playbook is authored prose in one human voice; generation is how it dies. |
+
+### Acceptance (this amendment)
+
+- `python -m apeGmsh.studio init --name test-habitat --model demo`
+  into an empty tmp dir succeeds; the habitat's own
+  `check_template.py --strict` passes; re-running init there is
+  refused with a clear message.
+- The template dir contains no specimen content (`models/` of the
+  seed) and no skill-suite files; the grep gate passes as a test.
+- The skills README carries the INV-20 list + the one-line agent
+  guidance verbatim in spirit (installed → use; absent → ignore).
+- `--status` on the freshly initialized (pre-session) habitat behaves
+  per the documented cold start.
+- Package data ships: init works from an installed (non-editable)
+  layout — the copier uses `importlib.resources`, not `__file__`
+  path assumptions that break in a wheel.
+- Skill + how-to updated (S7b).
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Part of studio vs standalone repo** — part of studio (owner).
+2. **Skills distribution** — never; README names + optional-use
+   guidance (INV-20).
+3. **Self-contained habitats** — yes; the template copies its own
+   scripts.
