@@ -177,3 +177,51 @@ def test_a_pane_can_be_removed_and_another_added(pane_host):
     assert fresh.renderer.GetActors().GetNumberOfItems() >= 1
     for k in range(PANES - 1):
         assert irens[k].renderer.GetActors().GetNumberOfItems() >= 1
+
+
+def test_a_live_interactor_survives_reparent_between_splitters(pane_host):
+    """The riskiest GL operation Amendment 1's tiling law mandates.
+
+    `T(N)` re-tiles whenever the column count changes (N = 2, 5, 10…),
+    which MOVES a live pane from one splitter to another. Reparenting
+    an OpenGL-native widget destroys and recreates its platform
+    window — the classic VTK black-pane class, and driver-dependent,
+    so Mesa and a real GPU can legitimately disagree here.
+
+    The pane must come through as the SAME object, still holding its
+    actors, still holding its camera pose, and still painting a
+    non-flat frame. Rebuilding the pane instead of moving it would
+    silently lose the camera (backend state, not session state, so
+    nothing downstream would catch it) — hence the identity assert.
+    """
+    app, win, irens = pane_host
+    QtCore = pytest.importorskip("qtpy.QtCore")
+    QtWidgets = pytest.importorskip("qtpy.QtWidgets")
+
+    outer = win.centralWidget()
+    victim = irens[0]
+    victim.camera.position = (7.0, 5.0, 3.0)
+    victim.render()
+    app.processEvents()
+    before_cam = tuple(victim.camera.position)
+    before_actors = victim.renderer.GetActors().GetNumberOfItems()
+
+    # The 4 -> 5 re-tile shape: a third column appears and an existing
+    # live pane moves into it.
+    new_col = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, outer)
+    outer.addWidget(new_col)
+    new_col.addWidget(victim)  # <- the reparent under test
+    app.processEvents()
+    victim.render()
+    app.processEvents()
+
+    assert victim is irens[0], "pane was rebuilt, not moved"
+    assert victim.parent() is not None
+    assert victim.renderer.GetActors().GetNumberOfItems() == before_actors
+    assert tuple(victim.camera.position) == before_cam, "camera lost"
+    img = np.asarray(victim.screenshot(return_img=True))
+    assert img.std() > 0, "reparented pane paints a flat/black frame"
+
+    # The panes that did not move are unaffected.
+    for k in range(1, PANES):
+        assert irens[k].renderer.GetActors().GetNumberOfItems() >= 1
