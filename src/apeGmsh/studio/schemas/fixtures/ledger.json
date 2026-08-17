@@ -17,5 +17,6 @@
   "visors": [],
   "error": null,
   "root": "/project",
-  "cwd": "/project"
+  "cwd": "/project",
+  "trigger": "open"
 }

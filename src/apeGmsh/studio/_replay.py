@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 PHASES = ("model", "mesh", "results")
+TRIGGERS = ("open", "refresh", "watch")
 
 
 class StopAtPhase(BaseException):
@@ -127,6 +128,7 @@ def _record_run(
     error: str | None,
     root: Path,
     cwd: Path | None,
+    trigger: str = "open",
 ) -> None:
     from ._ledger import append_run, make_record
     from ._paths import ledger_path
@@ -147,6 +149,7 @@ def _record_run(
             error=error,
             root=root,
             cwd=cwd,
+            trigger=trigger,
         ),
     )
     if ok and session is not None:
@@ -163,6 +166,7 @@ def _exec_hold_open(
     phase: str,
     *,
     root: Path | str | None = None,
+    trigger: str = "open",
 ) -> ReplayResult:
     """Exec *script* with sessions held open. Raises on failure."""
     if phase not in PHASES:
@@ -265,6 +269,7 @@ def _exec_hold_open(
             error=error_text,
             root=habitat,
             cwd=exec_cwd,
+            trigger=trigger,
         )
         raise caught
 
@@ -282,6 +287,7 @@ def _exec_hold_open(
         error=None,
         root=habitat,
         cwd=exec_cwd,
+        trigger=trigger,
     )
     return ReplayResult(
         ok=True,
@@ -316,9 +322,12 @@ class ReplayRunner:
         *,
         phase: str = "model",
         root: Path | str | None = None,
+        trigger: str = "open",
     ) -> ReplayResult:
         if phase not in PHASES:
             raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
+        if trigger not in TRIGGERS:
+            raise ValueError(f"trigger must be one of {TRIGGERS}; got {trigger!r}")
         from ._paths import display_path, resolve_root
 
         script = Path(script)
@@ -359,7 +368,7 @@ class ReplayRunner:
             )
         try:
             if self._exec is None:
-                result = _exec_hold_open(script, phase, root=habitat)
+                result = _exec_hold_open(script, phase, root=habitat, trigger=trigger)
             else:
                 result = self._exec(script, phase)
         except Exception:

@@ -1497,6 +1497,11 @@ class ModelViewer:
             _apply_filter(self._filter.active)
             plotter.render()
 
+        # Exposed for external callers that need to force a rebuild
+        # after mutating Gmsh state out-of-band (ADR 0095 S6a: studio
+        # host refresh calls this after a successful script replay).
+        self._rebuild_scene = _rebuild_scene
+
         parts_tree = None
         if parts_reg is not None:
             def _parts_select_only(dts):

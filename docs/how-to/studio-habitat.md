@@ -49,6 +49,12 @@ python -m apeGmsh.studio script.py --phase mesh --root <project>
 Picks write `<root>/.apegmsh/selection.json`. Replay is a subprocess /
 held-open session — agents do not share that Gmsh kernel (INV-5).
 
+The toolbar's Refresh action (or F5) re-runs the entry script at the
+current phase in the host process (ADR 0095 S6a). A live `busy.json`
+claim reports busy and does nothing (INV-18); an unchanged file is a
+no-op ("Up to date"); a failed replay keeps the previous frame
+(INV-4). Ledger records gain a `trigger` field (`open` / `refresh`).
+
 ### Headless replay (no window)
 
 ```text
@@ -124,7 +130,7 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.4.0` today). Published
+`status.contract_version` is the habitat semver (`1.5.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,

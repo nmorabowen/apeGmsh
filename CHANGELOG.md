@@ -22,6 +22,19 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0095 Amendment 4 S6a: manual host refresh
+
+Toolbar action + F5 re-run the entry script (`.apegmsh/project.json`,
+else the script the host opened with) at the current phase through
+`ReplayRunner.run_until` in the host process. A live `busy.json` claim
+reports busy and does nothing (INV-18, no steal); an unchanged
+`(hash, phase)` is a skip-hash no-op ("Up to date"); success rebuilds
+the `ModelViewer` scene preserving camera (`_rebuild_scene`, now
+exposed as `self._rebuild_scene`); a failed replay keeps the previous
+frame (INV-4). Ledger records gain an additive `trigger` field
+(`open` / `refresh` / `watch`, S6b will emit the last). `contract_version`
+is `1.5.0`.
+
 ### ADDED — ADR 0095 F-status-1: MCP status brief mode
 
 MCP ``status(mode="brief"|"full")`` defaults to ``brief`` (root, last-run
