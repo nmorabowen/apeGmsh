@@ -7,9 +7,11 @@ when no error-severity findings exist, ``1`` otherwise.
 Finding codes
 -------------
 ``D0``  A doctor check itself crashed (always an error — report it).
-``D1``  Interpreter identity — office venv vs some other interpreter
-        (the classic wrong-interpreter ``ModuleNotFoundError`` that
-        looks like a real bug but is only system Python 3.12).
+``D1``  Interpreter identity — which python is running, and whether it
+        is the reference venv named by ``APEGMSH_REFERENCE_VENV`` when
+        that variable is set. Catches the classic wrong-interpreter
+        ``ModuleNotFoundError`` that looks like a real bug but is only a
+        second Python on the machine.
 ``D2``  apeGmsh import path — the imported package tree vs the
         pip-registered editable install (PYTHONPATH / cwd drift).
 ``D3``  ``import gmsh`` works (hard dependency).
@@ -19,9 +21,11 @@ Finding codes
         ``ViewerWindow`` refuses to start (see the guard in
         ``apeGmsh/viewers/ui/viewer_window.py``).
 ``D5``  Ladruno OpenSees fork importable as the live backend.
-``D6``  baseUnits version agreement across the office interpreters —
-        baseUnits is installed *non-editably* in each, so the two can
-        silently disagree on unit conversion factors.
+``D6``  Version agreement for the distributions named by
+        ``APEGMSH_SHARED_PACKAGES`` across this interpreter and the
+        reference venv. Opt-in and empty by default: it guards packages
+        installed *non-editably* into several interpreters, which drift
+        apart silently.
 
 Caveats
 -------
@@ -29,8 +33,7 @@ Caveats
 dependencies, notably ``gmsh``) *before* this module runs. If the
 doctor itself dies with ``ModuleNotFoundError``, that traceback IS the
 diagnosis: you are almost certainly on the wrong interpreter (D1) —
-on the office machines use
-``C:\\Users\\nmora\\venv\\opensees_venv\\Scripts\\python.exe``.
+re-run with the python of the environment apeGmsh is installed into.
 
 That chicken-and-egg is why this module also runs **standalone**::
 
@@ -40,7 +43,7 @@ which needs nothing importable except the standard library. Point a
 suspect interpreter at it and D1/D2 tell you whether apeGmsh is even
 reachable from there, instead of dying on the package import.
 
-The office venv installs the Ladruno fork through a ``.pth`` boot hook
+Some environments install the Ladruno fork through a ``.pth`` boot hook
 (``ladruno_opensees.pth`` → ``_ladruno_opensees_boot``), which prints
 the fork's splash banner **to stdout at interpreter startup** — before
 any user code, this module included, can run. ``apeGmsh/__init__.py``
@@ -87,10 +90,43 @@ from typing import Callable, Literal, Mapping
 
 Severity = Literal["error", "warning", "info"]
 
-#: The office-standard interpreter home (see the office-wide notes).
-#: On machines where this path does not exist (CI, other installs) the
-#: identity check degrades to an informational finding.
-_OFFICE_VENV = Path(r"C:\Users\nmora\venv\opensees_venv")
+#: Environment variable naming a *reference* virtualenv root — the
+#: interpreter this machine's work is expected to run under. Unset on a
+#: normal install, and then D1 simply reports which interpreter is
+#: running instead of comparing against anything.
+#:
+#: This used to be a literal path to one developer's venv, which meant
+#: ``python -m apeGmsh doctor`` printed that person's home directory on
+#: every machine in the world that ran it. A site convention does not
+#: belong in a published wheel; it belongs in the environment of the
+#: site that has the convention.
+_REFERENCE_VENV_ENV = "APEGMSH_REFERENCE_VENV"
+
+#: Comma-separated distributions that must agree in version across the
+#: reference venv and this one (D6). Empty by default: this only matters
+#: for packages installed *non-editably* into several interpreters, where
+#: the copies can silently drift apart. Nothing in apeGmsh's own
+#: dependency set works that way, so there is no sensible default to ship.
+_SHARED_PACKAGES_ENV = "APEGMSH_SHARED_PACKAGES"
+
+
+def _reference_venv() -> Path | None:
+    """The configured reference venv root, or ``None`` when unset."""
+    raw = os.environ.get(_REFERENCE_VENV_ENV, "").strip()
+    return Path(raw) if raw else None
+
+
+def _shared_packages() -> tuple[str, ...]:
+    """Distributions whose versions must agree across interpreters."""
+    raw = os.environ.get(_SHARED_PACKAGES_ENV, "")
+    return tuple(p.strip() for p in raw.split(",") if p.strip())
+
+
+def _venv_python(root: Path) -> Path:
+    """The interpreter inside a venv root, on either layout."""
+    win = root / "Scripts" / "python.exe"
+    return win if win.exists() else root / "bin" / "python"
+
 
 #: Subprocess probe timeout, seconds. Importing an OpenSees backend
 #: cold can take a few seconds; a hung probe should not hang the doctor.
@@ -234,43 +270,60 @@ def _find_spec_ok(name: str) -> bool:
 # *diagnosed* condition; unexpected crashes are caught by run_doctor.
 # --------------------------------------------------------------------- #
 def _check_interpreter() -> list[DoctorFinding]:
-    """D1 — office venv vs some other interpreter."""
+    """D1 — which interpreter is running, and whether it is the expected one.
+
+    With no reference venv configured this is a plain identity report:
+    the useful "can this interpreter actually do the work" questions are
+    answered by D2 (apeGmsh importable), D3 (gmsh) and D5 (a backend),
+    which do not need to know about any site convention.
+    """
     exe = Path(sys.executable)
     pyver = ".".join(str(v) for v in sys.version_info[:3])
     in_venv = sys.prefix != sys.base_prefix
+    reference = _reference_venv()
     detail: dict[str, object] = {
         "executable": str(exe),
         "prefix": sys.prefix,
         "in_virtualenv": in_venv,
+        "reference_venv": str(reference) if reference else None,
     }
-    if not _OFFICE_VENV.exists():
-        kind = "virtualenv" if in_venv else "system interpreter"
+    kind = "virtualenv" if in_venv else "system interpreter"
+
+    if reference is None:
+        return [DoctorFinding(
+            code="D1",
+            severity="info",
+            message=f"Python {pyver} at {exe} ({kind}).",
+            detail=detail,
+        )]
+    if not reference.exists():
+        return [DoctorFinding(
+            code="D1",
+            severity="warning",
+            message=(
+                f"Python {pyver} at {exe} ({kind}). "
+                f"{_REFERENCE_VENV_ENV} points at {reference}, which does "
+                "not exist — fix or unset the variable."
+            ),
+            detail=detail,
+        )]
+    if _same_path(Path(sys.prefix), reference):
         return [DoctorFinding(
             code="D1",
             severity="info",
             message=(
-                f"Python {pyver} at {exe} ({kind}); office venv "
-                f"{_OFFICE_VENV} not present on this machine — "
-                "identity check skipped."
+                f"Reference interpreter (Python {pyver}, {exe})."
             ),
             detail=detail,
         )]
-    if _same_path(Path(sys.prefix), _OFFICE_VENV):
-        return [DoctorFinding(
-            code="D1",
-            severity="info",
-            message=f"Office venv interpreter (Python {pyver}, {exe}).",
-            detail=detail,
-        )]
-    kind = "a virtualenv" if in_venv else "a non-venv (system) interpreter"
     return [DoctorFinding(
         code="D1",
         severity="warning",
         message=(
-            f"Running {kind}: Python {pyver} at {exe}, not the office "
-            f"venv {_OFFICE_VENV}. Office packages (apeSteel, the "
-            "Ladruno openseespy fork, pydantic) may be missing here — "
-            "a ModuleNotFoundError under this interpreter usually means "
+            f"Python {pyver} at {exe} ({kind}) is not the reference venv "
+            f"{reference} named by {_REFERENCE_VENV_ENV}. Packages "
+            "installed only there will be missing here — a "
+            "ModuleNotFoundError under this interpreter usually means "
             "wrong interpreter, not a broken install."
         ),
         detail=detail,
@@ -305,8 +358,7 @@ def _check_import_path() -> list[DoctorFinding]:
                 "apeGmsh is NOT importable from this interpreter "
                 f"({sys.executable}). This is the ModuleNotFoundError "
                 "that looks like a bug but is the wrong interpreter — "
-                "see D1, and prefer the office venv "
-                f"({_OFFICE_VENV / 'Scripts' / 'python.exe'})."
+                "see D1."
             ),
             detail={"executable": sys.executable},
         )]
@@ -664,50 +716,85 @@ def _check_opensees() -> list[DoctorFinding]:
     )]
 
 
-def _baseunits_counterparts() -> list[tuple[str, list[str]]]:
-    """Sibling interpreters whose baseUnits must agree with ours."""
+def _counterpart_interpreters() -> list[tuple[str, list[str]]]:
+    """Sibling interpreters whose shared packages must agree with ours.
+
+    The configured reference venv, plus the Windows launcher's default
+    interpreter when it resolves to something else. Empty when no
+    reference venv is configured — with nothing to compare against, D6
+    has no work to do.
+    """
     counterparts: list[tuple[str, list[str]]] = []
-    office_py = _OFFICE_VENV / "Scripts" / "python.exe"
-    if office_py.exists() and not _same_path(office_py, Path(sys.executable)):
-        counterparts.append(("office venv", [str(office_py)]))
+    reference = _reference_venv()
+    if reference is not None:
+        ref_py = _venv_python(reference)
+        if ref_py.exists() and not _same_path(ref_py, Path(sys.executable)):
+            counterparts.append(("reference venv", [str(ref_py)]))
     if sys.platform == "win32" and shutil.which("py"):
-        counterparts.append(("system Python 3.12 (py -3.12)", ["py", "-3.12"]))
+        counterparts.append(("launcher default (py -3)", ["py", "-3"]))
     return counterparts
 
 
-def _check_baseunits() -> list[DoctorFinding]:
-    """D6 — baseUnits version agreement across office interpreters."""
+def _check_shared_packages() -> list[DoctorFinding]:
+    """D6 — shared-package version agreement across sibling interpreters.
+
+    Opt-in via ``APEGMSH_SHARED_PACKAGES``. The failure this guards is
+    specific: a distribution installed *non-editably* into two or more
+    interpreters can drift apart silently, so the same code computes
+    different numbers depending on which python ran it. Nothing apeGmsh
+    depends on is installed that way, hence no default list — a site with
+    such a package names it, everyone else gets a one-line skip.
+    """
     import importlib.metadata
 
-    try:
-        current: str | None = importlib.metadata.version("baseUnits")
-    except importlib.metadata.PackageNotFoundError:
-        current = None
+    packages = _shared_packages()
+    if not packages:
+        return [DoctorFinding(
+            code="D6",
+            severity="info",
+            message=(
+                "No shared packages configured — cross-interpreter version "
+                f"agreement not checked. Set {_SHARED_PACKAGES_ENV} (and "
+                f"{_REFERENCE_VENV_ENV}) if a non-editable package must "
+                "agree across several interpreters here."
+            ),
+            detail={"configured": ()},
+        )]
 
-    # Report the child's own executable alongside the version: launchers
-    # like `py -3.12` can resolve back to the interpreter we are already
+    # Report the child's own executable alongside the versions: launchers
+    # like `py -3` can resolve back to the interpreter we are already
     # running, and "1 of 1 agree" is falsely reassuring when the one
     # counterpart was ourselves.
     src = (
-        "import json, sys, importlib.metadata as m; "
-        "print(json.dumps({'exe': sys.executable, "
-        "'version': m.version('baseUnits')}))"
+        "import json, sys, importlib.metadata as m\n"
+        f"names = {list(packages)!r}\n"
+        "out = {}\n"
+        "for n in names:\n"
+        "    try:\n"
+        "        out[n] = m.version(n)\n"
+        "    except Exception:\n"
+        "        out[n] = None\n"
+        "print(json.dumps({'exe': sys.executable, 'versions': out}))\n"
     )
-    # Counterpart interpreters are office venvs too — quiet their boot
-    # banners so the JSON is the last thing on stdout.
+    # A counterpart may boot a fork with a splash banner — quiet it so the
+    # JSON is the last thing on stdout.
     env = dict(os.environ)
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     env["APEGMSH_QUIET"] = "1"
-    statuses: dict[str, str] = {}
-    mismatches: list[tuple[str, str]] = []
-    for label, argv in _baseunits_counterparts():
+
+    mine: dict[str, str | None] = {}
+    for name in packages:
+        try:
+            mine[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            mine[name] = None
+
+    statuses: dict[str, object] = {}
+    mismatches: list[str] = []
+    for label, argv in _counterpart_interpreters():
         probe = _run_probe(argv + ["-c", src], env=env)
         if not probe.ok:
-            statuses[label] = (
-                "baseUnits not installed"
-                if "PackageNotFoundError" in probe.stderr
-                else "probe failed"
-            )
+            statuses[label] = "probe failed"
             continue
         try:
             payload = json.loads(probe.last_stdout_line)
@@ -717,49 +804,43 @@ def _check_baseunits() -> list[DoctorFinding]:
         exe = str(payload.get("exe", ""))
         if exe and _same_path(Path(exe), Path(sys.executable)):
             continue  # resolved back to us — not a counterpart
-        version = str(payload.get("version", ""))
-        statuses[label] = version or "probe failed"
-        if version and current and version != current:
-            mismatches.append((label, version))
+        theirs = dict(payload.get("versions") or {})
+        statuses[label] = theirs
+        for name in packages:
+            ours, other = mine.get(name), theirs.get(name)
+            if ours and other and ours != other:
+                mismatches.append(f"{name}: here {ours}, {label} has {other}")
 
-    detail: dict[str, object] = {"current": current, "counterparts": statuses}
-    if current is None:
-        return [DoctorFinding(
-            code="D6",
-            severity="info",
-            message=(
-                "baseUnits not installed in this interpreter — "
-                "agreement check skipped."
-            ),
-            detail=detail,
-        )]
+    detail: dict[str, object] = {"current": mine, "counterparts": statuses}
     if mismatches:
-        pairs = "; ".join(f"{label} has {v}" for label, v in mismatches)
         return [DoctorFinding(
             code="D6",
             severity="error",
             message=(
-                f"baseUnits version disagreement: this interpreter has "
-                f"{current}, but {pairs}. baseUnits is installed "
-                "non-editably in each office interpreter, so they "
-                "silently disagree on unit conversion factors — "
-                "reinstall into EACH interpreter from the baseUnits "
-                "checkout: `<python> -m pip install --no-deps "
-                "--force-reinstall .`"
+                "Shared-package version disagreement — "
+                + "; ".join(mismatches)
+                + ". A non-editable install in each interpreter drifts "
+                "silently; reinstall into EACH from the package checkout: "
+                "`<python> -m pip install --no-deps --force-reinstall .`"
             ),
             detail=detail,
         )]
-    if statuses:
-        n_agree = sum(1 for v in statuses.values() if v == current)
+    installed = [n for n, v in mine.items() if v]
+    if not installed:
         message = (
-            f"baseUnits {current}; {n_agree} of {len(statuses)} counterpart "
-            "interpreter(s) agree (the rest have it uninstalled or were "
-            "not probeable)."
+            f"None of the configured shared packages ({', '.join(packages)}) "
+            "are installed in this interpreter — agreement check skipped."
+        )
+    elif statuses:
+        message = (
+            f"{', '.join(f'{n} {mine[n]}' for n in installed)}; "
+            f"{len(statuses)} counterpart interpreter(s) checked, no "
+            "disagreement."
         )
     else:
         message = (
-            f"baseUnits {current}; no counterpart interpreter found to "
-            "compare against."
+            f"{', '.join(f'{n} {mine[n]}' for n in installed)}; "
+            "no counterpart interpreter found to compare against."
         )
     return [DoctorFinding(
         code="D6", severity="info", message=message, detail=detail,
@@ -775,7 +856,7 @@ _CHECKS: tuple[Callable[[], list[DoctorFinding]], ...] = (
     _check_gmsh,
     _check_viewer_gl,
     _check_opensees,
-    _check_baseunits,
+    _check_shared_packages,
 )
 
 
