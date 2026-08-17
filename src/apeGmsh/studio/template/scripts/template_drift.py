@@ -85,7 +85,7 @@ def main() -> int:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file():
+            if path.is_file() and "__pycache__" not in path.parts:
                 habitat_map[path.relative_to(HABITAT).as_posix()] = path
 
     template_rels = set(template_map)
