@@ -830,3 +830,76 @@ Still open (does not block S6):
 1. Watch-poll period and debounce constants — fix at S6b with the
    code in hand; acceptance pins behavior, not milliseconds.
 
+
+## Amendment 5 (2026-08-17) — the assess snapshot reaches the report
+
+Append-only. Parts 1–6, INV-1–INV-19, S0–S6c, and Amendments 1–4
+stay. This amendment closes dogfood friction #5: an agent ran
+`--assess`, then `--pin`, then `--emit-report`, and the chapter's
+Assess section still said "(none — run assess first)" — the assess
+verb's output never reached the ReportBundle. Self-documentation that
+drops its own verdict is not self-documentation.
+
+### Decision
+
+The assess verb (CLI `--assess` and MCP `assess`) writes a snapshot
+`.apegmsh/assess.json` in addition to printing/returning its payload:
+
+- **Atomic single-writer** (INV-16, same `os.replace` discipline as
+  `names.json`); readers tolerate torn/unparseable payloads without
+  raising out of `status` / `emit_report`.
+- **Contents:** schema int, timestamp, the assessed target path(s)
+  (root-relative under the habitat, S5i), findings (code / severity /
+  message / detail), skipped pairs, and the figure paths when
+  `--figures` ran. The markdown `text` is included — it is the
+  agent-facing report and the chapter quotes it rather than
+  re-inventing prose (Amendment 1: emit from the bundle, never invent).
+- **ReportBundle** reads `assess.json`; `emit_report` populates the
+  Assess section from it. **`pin`** copies the snapshot into the pin
+  folder (same lifecycle as pinned figures) so the archived chapter
+  keeps the verdict that was current at pin time; the live chapter
+  section prefers the pinned copy when a pin is referenced, else the
+  live snapshot.
+- The ledger's reserved `assess` field **stays reserved** — the
+  snapshot is habitat state, not run history.
+- Published schema + golden fixtures (INV-17); `contract_version` →
+  **1.6.0**. `status` does not grow a field; a reader that wants the
+  verdict reads the snapshot.
+
+Staleness is disclosed, not policed: the snapshot carries its target
+paths and timestamp, and the chapter prints them next to the verdict.
+Re-running assess after a new solve is the loop's job (skill line);
+the bundle does not diff hashes in this amendment.
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Re-run assess at pin/emit time** | Couples pin to solve artifacts and re-pays the assess cost; emit must stay a cheap file-reader. |
+| **Assess payload on the ledger's `assess` field** | Run records are append-only history; the verdict is current-state. Mixing them makes every reader parse both. |
+| **Chapter section only when assess ran in the same process** | The verbs are separate processes by design (INV-5); in-memory handoff is the bug, not the fix. |
+| **Hash-gated staleness rejection** | Would block legitimate re-emits after cosmetic edits; disclosure (target + timestamp printed) is enough for v1. |
+
+### Acceptance (this amendment)
+
+- `--assess` (and MCP `assess`) writes `.apegmsh/assess.json`
+  atomically; a torn snapshot degrades (`assess=null` +
+  `assess_error`-style reason) in the bundle instead of raising.
+- The dogfood order — assess, pin, emit — produces a chapter whose
+  Assess section shows the verdict line, findings, skipped list, and
+  the snapshot's target + timestamp.
+- `pin` copies the snapshot; deleting the live `assess.json` and
+  re-emitting against the pin still shows the pinned verdict.
+- Schema + fixtures ship; `contract_version` is `1.6.0`; records
+  without the file still emit a chapter (section says no assess
+  recorded, as today).
+- Skill Studio paragraph: the loop order line — assess any time
+  before emit; the chapter picks up the snapshot.
+
+### Open questions (this amendment)
+
+Resolved here:
+
+1. **Snapshot file, not re-run, not ledger** — yes.
+2. **Pin copies the snapshot** — yes.
+3. **Staleness = disclosure only** — yes (revisit with dogfood).
