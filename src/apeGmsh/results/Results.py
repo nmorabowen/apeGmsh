@@ -1301,7 +1301,7 @@ class Results:
         component: Optional[str] = None,
         step: int = -1,
         deform: "Optional[Any]" = None,
-        camera: str = "iso",
+        camera: "Optional[str]" = None,
         window_size: tuple[int, int] = (1280, 720),
     ) -> "Optional[Path]":
         """Write one offscreen still (ADR 0094 S1).
@@ -1310,6 +1310,10 @@ class Results:
         Qt window, no event loop, no ``setup(plotter, director)``.
         ``view`` is a closed set: ``mesh`` / ``contour`` / ``deformed``
         / ``reactions``.
+
+        ``camera=`` defaults to ``xy`` for a planar model, ``iso``
+        otherwise (ADR 0094 Amendment 3); pass it explicitly to
+        override.
 
         Returns the written :class:`~pathlib.Path`, or ``None`` (and
         prints the ``[skip viewer]`` notice) under
@@ -1326,7 +1330,7 @@ class Results:
         self,
         out_dir: "str | Path",
         *,
-        camera: str = "iso",
+        camera: "Optional[str]" = None,
         window_size: tuple[int, int] = (1280, 720),
     ) -> tuple[Path, ...]:
         """Write the canned report pack (ADR 0094 S3).
@@ -1335,6 +1339,10 @@ class Results:
         ``APEGMSH_SKIP_VIEWER=1`` / no GL (and prints the
         ``[skip viewer]`` notice). Closed ``view=`` set only; no
         ``setup()``. There is no ``fem.render_pack``.
+
+        ``camera=`` defaults to ``xy`` for a planar model, ``iso``
+        otherwise (ADR 0094 Amendment 3); pass it explicitly to
+        override.
         """
         from apeGmsh.viewers.render import render_pack as _render_pack
         return _render_pack(

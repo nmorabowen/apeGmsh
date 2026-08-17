@@ -2270,7 +2270,7 @@ class FEMData:
         self,
         path: "str | Path",
         *,
-        camera: str = "iso",
+        camera: "str | None" = None,
         window_size: tuple[int, int] = (1280, 720),
     ) -> "Path | None":
         """Write one undeformed mesh still (ADR 0094 S1).
@@ -2279,6 +2279,10 @@ class FEMData:
         written :class:`~pathlib.Path`, or ``None`` (and prints the
         ``[skip viewer]`` notice) under ``APEGMSH_SKIP_VIEWER=1`` or
         with no GL.
+
+        ``camera=`` defaults to ``xy`` for a planar model, ``iso``
+        otherwise (ADR 0094 Amendment 3); pass it explicitly to
+        override.
         """
         from apeGmsh.viewers.render import render_fem
         return render_fem(

@@ -308,6 +308,25 @@ def test_res_zero_u_all_zero_last_step_is_info(tmp_path: Path) -> None:
     _assert_catalog_severities(report)
 
 
+def test_res_zero_u_no_loads_no_pattern_has_no_cross_reference(
+    tmp_path: Path,
+) -> None:
+    """A free-vibration-style deck (zero patterns, no broker loads)
+    with all-zero results fires RES.ZERO_U but must NOT point at an
+    OSM.LOADS_UNIMPORTED finding that does not exist."""
+    model = _build_osm(tmp_path)  # broker carries no load records
+    variant = dataclasses.replace(model, _analyze_call=(10, 0.1), _patterns=())
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    ux = np.zeros((1, node_ids.size))
+    path = _write_ux(tmp_path, "zero_u_free.h5", node_ids=node_ids, ux=ux)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = variant.assess(results=r)
+    assert "OSM.LOADS_UNIMPORTED" not in _codes(report)
+    finding = next(f for f in report.findings if f.code == "RES.ZERO_U")
+    assert "OSM.LOADS_UNIMPORTED" not in finding.message
+
+
 def test_res_zero_u_omitted_results_is_skipped(tmp_path: Path) -> None:
     model = _build_osm(tmp_path)
     ready = dataclasses.replace(model, _analyze_call=(10, 0.1))
@@ -327,3 +346,125 @@ def test_res_zero_u_nonzero_last_step_is_not_a_finding(tmp_path: Path) -> None:
         report = ready.assess(results=r)
     assert "RES.ZERO_U" not in _codes(report)
     _assert_catalog_severities(report)
+
+
+# ---------------------------------------------------------------------------
+# ADR 0094 Amendment 3 — run evidence from results
+# ---------------------------------------------------------------------------
+
+
+def _write_mode(tmp_path: Path, name: str, *, node_ids: np.ndarray) -> Path:
+    """A modal-only results file (``kind='mode'``, no other stages)."""
+    path = tmp_path / name
+    with NativeWriter(path) as w:
+        w.open(source_type="domain_capture")
+        sid = w.begin_stage(
+            name="mode1", kind="mode", time=np.array([0.0]),
+            eigenvalue=1.0, frequency_hz=1.0, period_s=1.0, mode_index=1,
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"displacement_z": np.array([[0.0, 1.0]])},
+        )
+        w.end_stage()
+    return path
+
+
+def test_broken_shoebuckle_fires_both_loads_unimported_and_zero_u(
+    tmp_path: Path,
+) -> None:
+    """Broker loads + zero patterns + no archived analyze + results= an
+    all-zero non-mode last step (the shoebuckle dogfood shape, PR #990):
+    both codes fire, and RES.ZERO_U cross-references OSM.LOADS_UNIMPORTED.
+    """
+    base = _build_osm_with_unimported_loads(tmp_path)  # _analyze_call stays None
+    model = dataclasses.replace(base, _patterns=())  # zero patterns
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    ux = np.zeros((1, node_ids.size))
+    path = _write_ux(tmp_path, "shoebuckle_zero_u.h5", node_ids=node_ids, ux=ux)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = model.assess(results=r)
+    assert "OSM.LOADS_UNIMPORTED" in _codes(report)
+    unimported = next(
+        f for f in report.findings if f.code == "OSM.LOADS_UNIMPORTED"
+    )
+    assert unimported.severity == "warning"
+    assert "RES.ZERO_U" in _codes(report)
+    zero_u = next(f for f in report.findings if f.code == "RES.ZERO_U")
+    assert zero_u.severity == "info"
+    assert "OSM.LOADS_UNIMPORTED" in zero_u.message
+    _assert_catalog_severities(report)
+
+
+def test_broken_shoebuckle_modal_only_results_keeps_both_skipped(
+    tmp_path: Path,
+) -> None:
+    """Same shape, but ``results=`` is modal-only — not run evidence."""
+    base = _build_osm_with_unimported_loads(tmp_path)
+    model = dataclasses.replace(base, _patterns=())  # zero patterns
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    path = _write_mode(tmp_path, "shoebuckle_mode.h5", node_ids=node_ids)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = model.assess(results=r)
+    assert "OSM.LOADS_UNIMPORTED" not in _codes(report)
+    assert "RES.ZERO_U" not in _codes(report)
+    codes_skipped = {code for code, _ in report.skipped}
+    assert "OSM.LOADS_UNIMPORTED" in codes_skipped
+    assert "RES.ZERO_U" in codes_skipped
+
+
+def test_results_nonzero_last_step_no_zero_u_but_loads_unimported_fires(
+    tmp_path: Path,
+) -> None:
+    """A non-mode stage with a nonzero last step is still run evidence —
+    OSM.LOADS_UNIMPORTED fires (zero-pattern deck) even though RES.ZERO_U
+    does not (displacement is not all-zero)."""
+    base = _build_osm_with_unimported_loads(tmp_path)
+    model = dataclasses.replace(base, _patterns=())  # zero patterns
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    ux = np.array([[0.0, 0.25]])
+    path = _write_ux(tmp_path, "shoebuckle_nonzero_u.h5", node_ids=node_ids, ux=ux)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = model.assess(results=r)
+    assert "RES.ZERO_U" not in _codes(report)
+    assert "OSM.LOADS_UNIMPORTED" in _codes(report)
+    _assert_catalog_severities(report)
+
+
+def test_no_results_no_analyze_matches_amendment2_behavior(tmp_path: Path) -> None:
+    """No results= and no archived analyze: identical to Amendment 2 —
+    both codes land in skipped, neither is a finding."""
+    base = _build_osm_with_unimported_loads(tmp_path)
+    model = dataclasses.replace(base, _patterns=())  # zero patterns
+    report = model.assess()
+    assert "OSM.LOADS_UNIMPORTED" not in _codes(report)
+    assert "RES.ZERO_U" not in _codes(report)
+    codes_skipped = {code for code, _ in report.skipped}
+    assert "OSM.LOADS_UNIMPORTED" in codes_skipped
+    assert "RES.ZERO_U" in codes_skipped
+
+
+def test_no_analyze_message_names_results_based_evidence(tmp_path: Path) -> None:
+    """OSM.NO_ANALYZE's message names the custom-driver reading when
+    results= itself supplies the run evidence."""
+    model = _build_osm(tmp_path)  # _analyze_call is None by construction
+    fem = build_simple_frame_fem()
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    ux = np.zeros((1, node_ids.size))
+    path = _write_ux(tmp_path, "no_analyze_with_results.h5", node_ids=node_ids, ux=ux)
+    with Results.from_native(path, model=_open_model_from_h5(path), fem=fem) as r:
+        report = model.assess(results=r)
+    finding = next(f for f in report.findings if f.code == "OSM.NO_ANALYZE")
+    assert finding.severity == "info"
+    assert "custom analyze loop" in finding.message
+
+
+def test_no_analyze_message_unchanged_without_results(tmp_path: Path) -> None:
+    """No results= at all: OSM.NO_ANALYZE keeps the Amendment 2 message."""
+    model = _build_osm(tmp_path)
+    report = model.assess()
+    finding = next(f for f in report.findings if f.code == "OSM.NO_ANALYZE")
+    assert "custom analyze loop" not in finding.message

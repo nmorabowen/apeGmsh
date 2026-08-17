@@ -1,5 +1,5 @@
 # Assess + render — agent check after mesh / solve
-<!-- skill-freshness: verified against apeGmsh feat/adr94-a2-osm-assess@6b2d7f23 (2026-08-16) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh feat/adr94-a3-run-evidence (2026-08-17) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 After `get_fem_data` / `Results.from_*` the check is the trio
 `fem.assess()` → `osm.assess()` → `results.assess()`, then `read_file`
@@ -94,7 +94,7 @@ A check that cannot run is omitted, not scored OK. `report.skipped`
 and the Verdict **Not evaluated (FAIL-reserved)** line name those
 codes.
 
-## Solver zone — `osm.assess()` (ADR 0094 Amendment 2)
+## Solver zone — `osm.assess()` (ADR 0094 Amendment 2 + 3)
 
 `osm` is the `OpenSeesModel` broker (`OpenSeesModel.from_h5(...)`, or
 the object a chain-phase build already hands you). It judges the
@@ -102,13 +102,24 @@ the object a chain-phase build already hands you). It judges the
 Run the trio in order: `fem.assess()` → `osm.assess()` →
 `results.assess()`. No `figures=` — there is no `osm.render`.
 
+**Run evidence (Amendment 3).** A deck *has run* when either an
+`ops.analyze` call is archived, **or** `results=` was passed and
+carries at least one **non-mode** stage with readable data. This
+closes the custom-driver gap: a hand-written `analyze()` loop leaves
+no `analyze_call()` trace, so without `results=` the deck reads as
+"never ran" and `OSM.LOADS_UNIMPORTED` / `RES.ZERO_U` both go quiet —
+exactly the decks most worth judging. Pass `results=` to get them
+judged. Modal-only `results=` (`kind="mode"` stages only) is
+deliberately **not** evidence — an eigen-only session, or a deck whose
+loads target a later static deck, stays legal and skipped.
+
 | Code | Sev | Next action |
 |---|---|---|
-| `OSM.NO_ANALYZE` | info | No `ops.analyze` archived. `eigen` is never archived, so an eigen-only / modal deck trips this by design — not a defect. |
+| `OSM.NO_ANALYZE` | info | No `ops.analyze` archived. `eigen` is never archived, so an eigen-only / modal deck trips this by design — not a defect. If `results=` supplies run evidence, the message says so (the deck was driven by a custom analyze loop). |
 | `OSM.NO_SUPPORT` | warning | No `fix`, no homogeneous `sp`, no pattern `sp` line. Free-free eigen / DRM models are legal — confirm intent, don't assume a missing `ops.fix`. |
 | `OSM.NO_PATTERN` | warning | Analyze archived but no pattern declared. Free-vibration transients (initial conditions only) are legal. Skipped, not emitted, when `OSM.NO_ANALYZE` already fired. |
-| `OSM.LOADS_UNIMPORTED` | warning | Broker carries `g.loads` / prescribed-displacement records but no pattern imports them — the classic `from_model` forgotten bug. Add `p.from_model("case")` (or the matching pattern body). |
-| `RES.ZERO_U` | info | `results=` passed; last-step displacement is exactly all-zero with an analyze call and >=1 pattern archived. Measurement, not a gate — check the pattern actually drives the model. Listed in `skipped` when `results=` is omitted. |
+| `OSM.LOADS_UNIMPORTED` | warning | Broker carries `g.loads` / prescribed-displacement records but no pattern imports them — the classic `from_model` forgotten bug. Add `p.from_model("case")` (or the matching pattern body). Judged whenever run evidence exists (archived analyze **or** `results=`); with no run evidence at all, declared loads may target a later deck (multi-deck workflow) — skipped, not judged. |
+| `RES.ZERO_U` | info | `results=` passed with >=1 non-mode stage — the results are themselves the run evidence, no `analyze_call()` / pattern required. Last-step displacement exactly all-zero. Measurement, not a gate — check the pattern actually drives the model. On a zero-pattern deck the message cross-references `OSM.LOADS_UNIMPORTED` so the two findings read as one story. Listed in `skipped` when `results=` is omitted. |
 
 Three honest limits, not bugs to file:
 

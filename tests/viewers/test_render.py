@@ -79,6 +79,136 @@ def test_bad_deform_raises(demo_results: Results, tmp_path: Path) -> None:
         demo_results.render(tmp_path / "x.png", deform="auto")
 
 
+# ---------------------------------------------------------------------------
+# ADR 0094 Amendment 3 — planar camera default
+# ---------------------------------------------------------------------------
+
+_PLANAR_COORDS = np.array(
+    [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [3.0, 4.0, 0.0], [0.0, 4.0, 0.0]],
+)
+_3D_COORDS = np.array(
+    [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [3.0, 4.0, 0.0], [0.0, 4.0, 5.0]],
+)
+
+
+def test_is_planar_true_for_flat_z_model() -> None:
+    from apeGmsh.results._geometry import is_planar
+
+    assert is_planar(_PLANAR_COORDS)
+
+
+def test_is_planar_false_for_3d_model() -> None:
+    from apeGmsh.results._geometry import is_planar
+
+    assert not is_planar(_3D_COORDS)
+
+
+def test_resolve_camera_defaults_xy_for_planar_coords() -> None:
+    assert render_mod._resolve_camera(None, _PLANAR_COORDS) == "xy"
+
+
+def test_resolve_camera_defaults_iso_for_3d_coords() -> None:
+    assert render_mod._resolve_camera(None, _3D_COORDS) == "iso"
+
+
+def test_resolve_camera_explicit_iso_wins_on_planar_coords() -> None:
+    assert render_mod._resolve_camera("iso", _PLANAR_COORDS) == "iso"
+
+
+class _NodesStub:
+    def __init__(self, coords: np.ndarray) -> None:
+        self.coords = coords
+
+
+class _FemStub:
+    def __init__(self, coords: np.ndarray) -> None:
+        self.nodes = _NodesStub(coords)
+
+
+class _ResultsStub:
+    def __init__(self, coords: np.ndarray) -> None:
+        self.fem = _FemStub(coords)
+
+
+@pytest.mark.parametrize(
+    "coords,expected",
+    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
+)
+def test_render_fem_planar_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    coords: np.ndarray, expected: str,
+) -> None:
+    """``fem.render()`` with no ``camera=`` resolves the Amendment 3
+    default. Runs under ``APEGMSH_SKIP_VIEWER=1`` so no pyvista/GL is
+    touched — the default is resolved before that env check."""
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    seen: dict[str, str] = {}
+    real_require = render_mod._require_camera
+
+    def spy(token: str) -> str:
+        seen["camera"] = token
+        return real_require(token)
+
+    monkeypatch.setattr(render_mod, "_require_camera", spy)
+    fem = _FemStub(coords)
+    assert render_mod.render_fem(fem, tmp_path / "x.png") is None
+    assert seen["camera"] == expected
+
+
+@pytest.mark.parametrize(
+    "coords,expected",
+    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
+)
+def test_render_results_planar_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    coords: np.ndarray, expected: str,
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    seen: dict[str, str] = {}
+    real_require = render_mod._require_camera
+
+    def spy(token: str) -> str:
+        seen["camera"] = token
+        return real_require(token)
+
+    monkeypatch.setattr(render_mod, "_require_camera", spy)
+    results = _ResultsStub(coords)
+    assert render_mod.render_results(results, tmp_path / "x.png") is None
+    assert seen["camera"] == expected
+
+
+def test_render_results_explicit_camera_iso_wins_on_planar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    results = _ResultsStub(_PLANAR_COORDS)
+    assert render_mod.render_results(
+        results, tmp_path / "x.png", camera="iso",
+    ) is None  # no exception — an explicit "iso" is honored on a planar model
+
+
+@pytest.mark.parametrize(
+    "coords,expected",
+    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
+)
+def test_render_pack_planar_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    coords: np.ndarray, expected: str,
+) -> None:
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    seen: dict[str, str] = {}
+    real_require = render_mod._require_camera
+
+    def spy(token: str) -> str:
+        seen["camera"] = token
+        return real_require(token)
+
+    monkeypatch.setattr(render_mod, "_require_camera", spy)
+    results = _ResultsStub(coords)
+    assert render_mod.render_pack(results, tmp_path / "pack") == ()
+    assert seen["camera"] == expected
+
+
 def test_render_module_never_enters_event_loop() -> None:
     tree = ast.parse(_RENDER_PY.read_text(encoding="utf-8"))
     forbidden_attrs = {"exec_", "exec"}
