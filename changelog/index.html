@@ -3463,6 +3463,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-habitat-template-apecad-port-guard-studio-init-version-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — habitat template: apeCAD port guard + studio init version gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-all-now-includes-the-mcp-extra" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8092,6 +8114,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-habitat-template-apecad-port-guard-studio-init-version-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — habitat template: apeCAD port guard + studio init version gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-all-now-includes-the-mcp-extra" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12703,6 +12747,46 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a">FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)<a class="headerlink" href="#fixed-habitat-template-shipped-one-machines-paths-adr-0095-s7a" title="Permanent link">&para;</a></h3>
+<p>Every <code>studio init</code> on a machine that was not the template author's
+produced a broken habitat. Found by using the template from a real
+habitat (postmortem <code>2026-08-17_frame-example</code>, F1/F3/F4).</p>
+<ul>
+<li><code>template/cursor/mcp.json</code> hardcoded <code>C:\Users\nmb\...</code> for both the
+  launcher script and <code>APEGMSH_PYTHON</code>, and <code>_align_mcp_json</code> only
+  substituted <code>__HABITAT_ROOT__</code>. The <code>.ps1</code> indirection is gone: the
+  server now runs as <code>&lt;python&gt; -m apeGmsh.studio.mcp</code>, and <code>init</code>
+  substitutes the interpreter (<code>__APEGMSH_PYTHON__</code>) and its apeGmsh
+  source (<code>__APEGMSH_SRC__</code> → <code>PYTHONPATH</code>) alongside the root. Quiet
+  env still precedes interpreter startup — MCP applies <code>env</code> before exec.</li>
+<li><code>template/scripts/start.ps1</code> / <code>finish.ps1</code> probed a single venv
+  spelling (<code>opensees_env</code>), so any other naming fell through to PATH
+  <code>python</code> and failed as <code>No module named 'apeGmsh'</code>. They now probe
+  <code>APEGMSH_PYTHON</code> → <code>VIRTUAL_ENV</code> → both office spellings → PATH, and
+  print the interpreter they resolved.</li>
+<li><code>template/scripts/_habitat.py::ensure_pythonpath</code> defaulted
+  <code>APEGMSH_SRC</code> to one developer's worktree path, and only ever set the
+  env var — never <code>sys.path</code>, so the documented <code>APEGMSH_SRC</code> override
+  did nothing in-process. It now resolves from the importable apeGmsh
+  first, then <code>APEGMSH_SRC</code>, and guesses no default.</li>
+<li>New regression test: no file in the packaged template may contain a
+  user home path.</li>
+</ul>
+<h3 id="added-habitat-template-apecad-port-guard-studio-init-version-gate">ADDED — habitat template: apeCAD port guard + <code>studio init</code> version gate<a class="headerlink" href="#added-habitat-template-apecad-port-guard-studio-init-version-gate" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>template/tools/apeCAD/open_interface.py</code> probes its target port and
+  refuses a bound one. apeCAD's <code>ThreadingHTTPServer</code> sets
+  <code>allow_reuse_address</code>, so on Windows a second instance bound port 8765
+  next to a running one and served that session's sketch — no bind
+  error, detectable only by diffing <code>/api/scene</code>. The matching guard in
+  <code>apeCAD.scratchpad.server.serve()</code> belongs to the apeCAD repo and is
+  not in this change.</li>
+<li><code>template/scripts/start_session.py</code> WARNs when
+  <code>apeGmsh.studio._init_habitat</code> is absent — a checkout predating S7a
+  fails <code>studio init</code> with a bare <code>ModuleNotFoundError</code> that reads like a
+  bug rather than a version gap. WARN, never fail: an already-stamped
+  habitat does not need the stamper.</li>
+</ul>
 <h3 id="fixed-all-now-includes-the-mcp-extra">FIXED — <code>[all]</code> now includes the <code>mcp</code> extra<a class="headerlink" href="#fixed-all-now-includes-the-mcp-extra" title="Permanent link">&para;</a></h3>
 <p><code>pip install "apeGmsh[all]"</code> installed the <code>apeGmsh.studio</code> package
 without the MCP SDK it needs, so the Studio door failed at launch and

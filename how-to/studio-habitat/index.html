@@ -3856,9 +3856,21 @@ the model surface (<code>models/</code>, <code>reports/</code>). Forges are opti
 is the review surface for the merge and nothing more — the whole
 contract works in a local-only repo, and nothing in studio calls a
 forge.</p>
-<p>Cloning a habitat onto another machine: <code>.cursor/mcp.json</code> carries the
-habitat root as an <strong>absolute path</strong> — edit it once on the new machine
-(<code>scripts/start_session.py</code> fails with the exact mismatch and the fix).</p>
+<p><code>init</code> writes three machine-specific values into <code>.cursor/mcp.json</code>,
+none of which can live in package data: the MCP <code>command</code> (the
+interpreter that ran <code>init</code>), <code>PYTHONPATH</code> (where that interpreter's
+apeGmsh lives — pinning it stops another editable install from winning),
+and <code>APEGMSH_STUDIO_ROOT</code> (this habitat's absolute path). The server is
+launched as <code>&lt;python&gt; -m apeGmsh.studio.mcp</code>; the quiet-banner env vars
+sit in the same block, which is early enough because MCP applies <code>env</code>
+before the interpreter starts.</p>
+<p>Cloning a habitat onto another machine: all three are absolute paths, so
+re-run <code>init</code> into a fresh directory or edit the file once on the new
+machine (<code>scripts/start_session.py</code> fails with the exact root mismatch
+and the fix). The lifecycle scripts are independent of it —
+<code>scripts/start.ps1</code> / <code>finish.ps1</code> resolve their own interpreter, in
+order: <code>APEGMSH_PYTHON</code>, an activated <code>VIRTUAL_ENV</code>, the office venv
+names, then PATH <code>python</code>, printing whichever it picked.</p>
 <p>Then open <code>APE/README.md</code> in the new habitat and follow session start.</p>
 <h2 id="use-the-example-library">Use the example library<a class="headerlink" href="#use-the-example-library" title="Permanent link">&para;</a></h2>
 <p>Before building a shape from scratch, check whether the packaged
