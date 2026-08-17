@@ -63,6 +63,20 @@ class LayoutMetrics:
     output_min_height: int = 100
     output_initial_height: int = 140
 
+    # Pane host floors (ADR 0098 Amendment 1 A1.4). One tiled pane must
+    # stay wide/tall enough to show the model BESIDE its own legend:
+    # 0090's chip is content-derived, so a default vertical entry
+    # measures ~133.5 x 154.5 px and grows with the component name.
+    # 240 leaves the model visible next to a 16-character component
+    # name; 200 contains the default 5-label legend (170.5 with
+    # MARGIN_PX) and a 6-label one (196.4), but NOT a 7-label one —
+    # that needs a font_scale change (0090 D4). Both numbers are
+    # measured against today's _legend.py content boxes, which pre-date
+    # 0090 D3's chip pad (+16 px per axis); they are revisited when
+    # that phase lands, and are not a permanent contract.
+    pane_min_width: int = 240
+    pane_min_height: int = 200
+
     # ── Tier 3: Panel internals ──────────────────────────────────────
     # Header (toolbar) strip inside the Outline panel — visual chrome.
     panel_header_height: int = 28

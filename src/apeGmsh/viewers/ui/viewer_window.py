@@ -177,6 +177,7 @@ class ViewerWindow:
         show_console: bool | None = None,
         extension_docks: Optional[Sequence[DockSpec]] = None,
         window_key: Optional[str] = None,
+        central_interactor: bool = True,
     ) -> None:
         QtWidgets, QtCore, QtGui, QtInteractor = _lazy_qt()
         if show_console is None:
@@ -205,9 +206,14 @@ class ViewerWindow:
         # Qt's "offscreen" platform never creates a native win32
         # surface, so pyvistaqt's QtInteractor hard-crashes (access
         # violation) during interactor initialize — fail loud with a
-        # catchable error before touching VTK.
+        # catchable error before touching VTK. Only when this window
+        # builds one: with ``central_interactor=False`` (ADR 0098
+        # Amendment 1 A1.1) the shell touches no VTK at all, which is
+        # exactly what lets the pane-host suite run in the default
+        # offscreen lane with injected backends.
         if (
-            sys.platform == "win32"
+            central_interactor
+            and sys.platform == "win32"
             and app.platformName().lower() == "offscreen"
         ):
             raise RuntimeError(
@@ -245,7 +251,8 @@ class ViewerWindow:
                 except Exception:
                     pass
                 try:
-                    ui_self._qt_interactor.close()
+                    if ui_self._qt_interactor is not None:
+                        ui_self._qt_interactor.close()
                 except Exception:
                     pass
                 super().closeEvent(event)
@@ -261,8 +268,18 @@ class ViewerWindow:
         self._graphics_colors_dialog: Any = None
 
         # ── Central: VTK plotter ────────────────────────────────────
-        self._qt_interactor = QtInteractor(parent=self._window)
-        self._window.setCentralWidget(self._qt_interactor.interactor)
+        # ADR 0098 Amendment 1 A1.1 — the seam: on the session path the
+        # shell builds NO central interactor (the pane host is the
+        # central widget and every GL context belongs to a pane), and
+        # ``plotter`` resolves through :meth:`set_plotter_provider` to
+        # whichever pane is active. Additive and opt-in: with the
+        # default ``central_interactor=True`` this is byte-for-byte the
+        # old construction path and ``plotter`` is this interactor.
+        self._qt_interactor: Any = None
+        self._plotter_provider: Optional[Callable[[], Any]] = None
+        if central_interactor:
+            self._qt_interactor = QtInteractor(parent=self._window)
+            self._window.setCentralWidget(self._qt_interactor.interactor)
 
         from .preferences_manager import PREFERENCES as _PREF
         _p = _PREF.current
@@ -270,7 +287,7 @@ class ViewerWindow:
         import pyvista as _pv
         _pv.set_plot_theme("dark")
         _pv.global_theme.font.color = "white"
-        if _p.anti_aliasing != "none":
+        if self._qt_interactor is not None and _p.anti_aliasing != "none":
             try:
                 self._qt_interactor.enable_anti_aliasing(_p.anti_aliasing)
             except Exception:
@@ -292,30 +309,31 @@ class ViewerWindow:
         # we ship; wrap in try/except to stay defensive against
         # older / stripped builds. Costs ~0 when nothing in the scene
         # is transparent.
-        try:
-            renderer = self._qt_interactor.renderer
-            renderer.SetUseDepthPeeling(True)
-            renderer.SetMaximumNumberOfPeels(4)
-            renderer.SetOcclusionRatio(0.0)
-        except Exception:
-            pass
-        _axes_kwargs = dict(
-            interactive=False,
-            line_width=_p.axis_line_width,
-            color="white",            # label text
-            # Shaft colors match the local-axes overlay convention
-            # (x=red, y=green, z=blue) so the corner gnomon reads as a
-            # world reference for sanity-checking element orientation
-            # against the per-element triads.
-            x_color="#FF4136",
-            y_color="#2ECC40",
-            z_color="#0074D9",
-        )
-        if _p.axis_labels_visible:
-            _axes_kwargs.update(xlabel="X", ylabel="Y", zlabel="Z")
-        else:
-            _axes_kwargs.update(xlabel="", ylabel="", zlabel="")
-        self._qt_interactor.add_axes(**_axes_kwargs)
+        if self._qt_interactor is not None:
+            try:
+                renderer = self._qt_interactor.renderer
+                renderer.SetUseDepthPeeling(True)
+                renderer.SetMaximumNumberOfPeels(4)
+                renderer.SetOcclusionRatio(0.0)
+            except Exception:
+                pass
+            _axes_kwargs = dict(
+                interactive=False,
+                line_width=_p.axis_line_width,
+                color="white",            # label text
+                # Shaft colors match the local-axes overlay convention
+                # (x=red, y=green, z=blue) so the corner gnomon reads as
+                # a world reference for sanity-checking element
+                # orientation against the per-element triads.
+                x_color="#FF4136",
+                y_color="#2ECC40",
+                z_color="#0074D9",
+            )
+            if _p.axis_labels_visible:
+                _axes_kwargs.update(xlabel="X", ylabel="Y", zlabel="Z")
+            else:
+                _axes_kwargs.update(xlabel="", ylabel="", zlabel="")
+            self._qt_interactor.add_axes(**_axes_kwargs)
 
         # ── Dock area defaults — vertical tab strip on tabified docks ──
         # When the user drags one dock onto another's title bar to
@@ -584,7 +602,10 @@ class ViewerWindow:
 
         # ── Background toggle gear ───────────────────────────────────
         from ._bg_toggle_gear import attach_bg_toggle
-        attach_bg_toggle(self._qt_interactor.interactor, self._qt_interactor)
+        if self._qt_interactor is not None:
+            attach_bg_toggle(
+                self._qt_interactor.interactor, self._qt_interactor,
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -592,8 +613,36 @@ class ViewerWindow:
 
     @property
     def plotter(self):
-        """The PyVista QtInteractor (plotter)."""
+        """The PyVista QtInteractor (plotter) the toolbar acts on.
+
+        Normally this window's own central interactor. When a client
+        installed a provider (:meth:`set_plotter_provider` — the ADR
+        0098 Amendment 1 pane host), it is the ACTIVE pane's plotter
+        instead, which is what makes the toolbar's camera presets / fit
+        / screenshot act on one pane (criterion 20). ``None`` when
+        there is no interactor to act on at all — a session window with
+        zero panes.
+        """
+        if self._plotter_provider is not None:
+            return self._plotter_provider()
         return self._qt_interactor
+
+    def set_plotter_provider(
+        self, provider: Optional[Callable[[], Any]],
+    ) -> None:
+        """Route :attr:`plotter` through ``provider`` (or back to the
+        window's own interactor with ``None``)."""
+        self._plotter_provider = provider
+
+    def set_central_widget(self, widget) -> None:
+        """Mount ``widget`` as the window's central widget.
+
+        The other half of the ADR 0098 Amendment 1 A1.1 seam: a window
+        built with ``central_interactor=False`` has no central widget
+        until its client mounts one (the pane host). Never reached by
+        the old window, which keeps its interactor there.
+        """
+        self._window.setCentralWidget(widget)
 
     @property
     def window(self):
@@ -927,7 +976,8 @@ class ViewerWindow:
         """
         from ._navigation import apply_navigation_style
 
-        apply_navigation_style(self._qt_interactor, token)
+        if self._qt_interactor is not None:
+            apply_navigation_style(self._qt_interactor, token)
         self._navigation_style = token
         act = self._nav_menu_actions.get(token)
         if act is not None and not act.isChecked():
@@ -1241,7 +1291,9 @@ class ViewerWindow:
         """
         # Default to orthographic projection
         try:
-            self._qt_interactor.enable_parallel_projection()
+            plotter = self.plotter
+            if plotter is not None:
+                plotter.enable_parallel_projection()
             self._act_parallel.setChecked(True)
         except Exception:
             pass
@@ -1265,7 +1317,9 @@ class ViewerWindow:
             self._window.raise_()
             self._window.activateWindow()
         try:
-            self._qt_interactor.render()
+            plotter = self.plotter
+            if plotter is not None:
+                plotter.render()
         except Exception as exc:
             import sys
             import traceback
@@ -1286,7 +1340,12 @@ class ViewerWindow:
     # ------------------------------------------------------------------
 
     def _snap_view(self, direction: str) -> None:
-        p = self._qt_interactor
+        # ``self.plotter``, not ``self._qt_interactor``: with a pane
+        # host installed this is the ACTIVE pane and the other panes'
+        # cameras stay put (ADR 0098 A1.6 / criterion 20).
+        p = self.plotter
+        if p is None:
+            return
         views = {
             "top":    lambda: p.view_xy(negative=False),
             "bottom": lambda: p.view_xy(negative=True),
@@ -1304,25 +1363,35 @@ class ViewerWindow:
             pass
 
     def _toggle_parallel(self, checked: bool) -> None:
+        p = self.plotter
+        if p is None:
+            return
         try:
             if checked:
-                self._qt_interactor.enable_parallel_projection()
+                p.enable_parallel_projection()
             else:
-                self._qt_interactor.disable_parallel_projection()
+                p.disable_parallel_projection()
         except Exception:
             pass
-        self._qt_interactor.render()
+        p.render()
 
     def _fit_view(self) -> None:
+        p = self.plotter
+        if p is None:
+            return
         try:
-            self._qt_interactor.reset_camera()
+            p.reset_camera()
         except Exception:
             pass
-        self._qt_interactor.render()
+        p.render()
 
     def _screenshot(self) -> None:
+        p = self.plotter
+        if p is None:
+            self.set_status("No active pane to screenshot", 4000)
+            return
         try:
-            img = self._qt_interactor.screenshot(return_img=True)
+            img = p.screenshot(return_img=True)
             from PIL import Image
             import io
             pil_img = Image.fromarray(img)
@@ -1349,8 +1418,12 @@ class ViewerWindow:
         )
         if not path:
             return
+        p = self.plotter
+        if p is None:
+            self.set_status("No active pane to save", 4000)
+            return
         try:
-            self._qt_interactor.screenshot(path, transparent_background=False)
+            p.screenshot(path, transparent_background=False)
             self.set_status(f"Screenshot saved: {path}", 4000)
         except Exception as exc:
             self.set_status(f"Save failed: {exc}", 4000)
@@ -1411,19 +1484,23 @@ class ViewerWindow:
         except Exception:
             density = None
         self._window.setStyleSheet(build_stylesheet(palette, density))
-        try:
-            from ..scene.background import apply_background
-            apply_background(self._qt_interactor, palette)
-        except Exception:
-            # Fallback to native linear gradient if the scene module or
-            # VTK texture path fails for any reason — keeps the viewer
-            # usable rather than crashing on palette change.
+        # The window's OWN interactor, not ``plotter``: a pane host owns
+        # its panes' backgrounds and repaints them from its own theme
+        # callback (one palette, N panes).
+        if self._qt_interactor is not None:
             try:
-                self._qt_interactor.set_background(
-                    palette.bg_top, top=palette.bg_bottom,
-                )
+                from ..scene.background import apply_background
+                apply_background(self._qt_interactor, palette)
             except Exception:
-                pass
+                # Fallback to native linear gradient if the scene module
+                # or VTK texture path fails for any reason — keeps the
+                # viewer usable rather than crashing on palette change.
+                try:
+                    self._qt_interactor.set_background(
+                        palette.bg_top, top=palette.bg_bottom,
+                    )
+                except Exception:
+                    pass
         self._refresh_toolbar_icons(palette.icon)
         for cb in list(self._theme_callbacks):
             try:
@@ -1434,7 +1511,8 @@ class ViewerWindow:
                     "theme callback failed: %r", cb,
                 )
         try:
-            self._qt_interactor.render()
+            if self._qt_interactor is not None:
+                self._qt_interactor.render()
         except Exception:
             pass
 

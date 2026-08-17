@@ -111,6 +111,16 @@ def _stable_keys(pane) -> set:
     return {layer.key for layer in realized.layers} if realized else set()
 
 
+def _boot_keys(view) -> set:
+    """The §3 boot picture: grey mesh, mesh + outlines on."""
+    return {f"{view.id}:substrate", f"{view.id}:outlines"}
+
+
+def _contour_keys(view) -> set:
+    """Contour occupying the one surface, outlines style still on."""
+    return {f"{view.id}:contour", f"{view.id}:outlines"}
+
+
 def _row(page, category):
     return page._rows[category]  # noqa: SLF001 — test introspection
 
@@ -127,13 +137,13 @@ def test_add_contour_click_paints_the_contour(rig):
     (INV-MESH-2) plus one scalar bar (§5). No session write happens in
     this test body — the widget performs it."""
     session, view, backend, pane, page = rig
-    assert _stable_keys(pane) == {f"{view.id}:substrate"}
+    assert _stable_keys(pane) == _boot_keys(view)
 
     row = _row(page, "contour")
     row._button.click()  # "Add"
 
     assert view.contour is not None  # widget event → session diff
-    assert _stable_keys(pane) == {f"{view.id}:contour"}  # → repaint
+    assert _stable_keys(pane) == _contour_keys(view)  # → repaint
     assert len(backend.scalar_bars) == 1
     assert row._button.text() == "Clear"
 
@@ -150,7 +160,7 @@ def test_quantity_combo_changes_the_record_and_repaints(rig):
     assert view.contour == Contour("stress_xx")
     combo.setCurrentText("displacement_z")
     assert view.contour == Contour("displacement_z")
-    assert _stable_keys(pane) == {f"{view.id}:contour"}
+    assert _stable_keys(pane) == _contour_keys(view)
 
 
 def test_averaging_combo_writes_display_state(rig):
@@ -171,7 +181,7 @@ def test_clear_click_restores_the_substrate(rig):
     row._button.click()  # Add
     row._button.click()  # Clear
     assert view.contour is None
-    assert _stable_keys(pane) == {f"{view.id}:substrate"}
+    assert _stable_keys(pane) == _boot_keys(view)
     assert backend.scalar_bars == {}
     assert row._button.text() == "Add"
 
@@ -285,12 +295,14 @@ def test_outline_lists_panes_and_selection_fires(rig):
     try:
         group = outline.widget.topLevelItem(0)
         assert group.text(0) == "Views"
-        assert group.childCount() == 1
+        # Pane rows + the two Add rows, which live in this group and
+        # nowhere else (§9 / Amendment 1 A1.6: one spine).
+        assert group.childCount() == 1 + 2
         outline.select_pane(view.id)
         assert selected == [view.id]
 
         plot = session.add_plot()
-        assert group.childCount() == 2
+        assert group.childCount() == 2 + 2
         outline.select_pane(plot.id)
         assert selected == [view.id, plot.id]
     finally:
@@ -335,11 +347,12 @@ def test_mesh_pane_default_factory_real_interactor(qapp, session_results):
         view.contour = Contour("stress_xx")
         realized = pane.reconciler.realized
         assert realized is not None
-        assert {layer.key for layer in realized.layers} == {
-            f"{view.id}:contour",
-        }
+        assert {layer.key for layer in realized.layers} == _contour_keys(view)
         # The live plotter holds exactly the realized actors.
         assert pane.backend.plotter is pane.surface
     finally:
+        # ``dispose`` closes the pane's own GL context — the test does
+        # not have to, and must not have to (a leaked context segfaults
+        # the next interactor in the process under Mesa).
         pane.dispose()
-        pane.surface.close()
+        assert pane.surface._closed is True  # noqa: SLF001

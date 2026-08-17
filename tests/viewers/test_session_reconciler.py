@@ -146,11 +146,19 @@ def _assert_backend_matches_realization(rec, backend) -> None:
 # =====================================================================
 
 
+def _boot_keys(view) -> set:
+    """The §3 boot picture: grey mesh with mesh + outlines on."""
+    return {f"{view.id}:substrate", f"{view.id}:outlines"}
+
+
 def _assert_contour_projected(view, rec, backend) -> None:
-    """After filling the contour slot and flushing: the realization is
-    the contour ALONE (the substrate replaced — INV-MESH-2), the
-    backend holds exactly that, and one scalar bar exists (§5)."""
-    assert _stable_keys(rec) == {f"{view.id}:contour"}
+    """After filling the contour slot and flushing: the contour has
+    REPLACED the substrate (INV-MESH-2 — no grey under it), the
+    outlines style survives as its own layer (INV-MESH-4), the backend
+    holds exactly that, and one scalar bar exists (§5)."""
+    assert _stable_keys(rec) == {
+        f"{view.id}:contour", f"{view.id}:outlines",
+    }
     _assert_backend_matches_realization(rec, backend)
     assert len(backend.scalar_bars) == 1
 
@@ -158,7 +166,7 @@ def _assert_contour_projected(view, rec, backend) -> None:
 def test_slot_fill_repaints(rig):
     session, view, backend, rec, drain = rig
     drain()  # boot flush — the valid empty picture
-    assert _stable_keys(rec) == {f"{view.id}:substrate"}
+    assert _stable_keys(rec) == _boot_keys(view)
     _assert_backend_matches_realization(rec, backend)
     assert backend.scalar_bars == {}
 
@@ -243,7 +251,7 @@ def test_clear_restores_substrate_and_drops_bar(rig):
     drain()
     view.contour = None
     drain()
-    assert _stable_keys(rec) == {f"{view.id}:substrate"}
+    assert _stable_keys(rec) == _boot_keys(view)
     _assert_backend_matches_realization(rec, backend)
     assert backend.scalar_bars == {}
 
@@ -286,7 +294,7 @@ def test_failed_realize_reports_and_sweeps_partial_emission(
     view.contour = None
     drain()
     assert "partial:orphan" not in backend.layers
-    assert _stable_keys(rec) == {f"{view.id}:substrate"}
+    assert _stable_keys(rec) == _boot_keys(view)
     _assert_backend_matches_realization(rec, backend)
 
 
@@ -317,22 +325,32 @@ def test_default_projection_is_first_mesh_view(rig):
     assert rec.realized.pane_id == view.id
 
 
-def test_set_pane_retargets_and_stale_id_falls_back(rig):
+def test_set_pane_retargets_and_a_stale_bound_id_paints_nothing(rig):
+    """ADR 0098 Amendment 1 caution 10.
+
+    A reconciler BOUND to a pane id whose view is gone paints nothing.
+    S2 fell back to the first mesh view — correct for one shared
+    viewport ("the outline re-aims on its next selection") and wrong
+    for a host: a pane closing on this very tick would repaint view 1
+    into its dying backend, and a mis-wired pane would silently mirror
+    pane 1 instead of failing pane isolation.
+    """
     session, view, backend, rec, drain = rig
     second = session.add_view("Second")
     second.contour = Contour("stress_xx")
     rec.set_pane(second.id)
     drain()
     assert rec.realized.pane_id == second.id
-    assert _stable_keys(rec) == {f"{second.id}:contour"}
+    assert _stable_keys(rec) == {
+        f"{second.id}:contour", f"{second.id}:outlines",
+    }
     _assert_backend_matches_realization(rec, backend)
 
     session.remove_pane(second.id)
     drain()
-    # Stale target: falls back to the first mesh view, never crashes.
-    assert rec.realized.pane_id == view.id
-    assert _stable_keys(rec) == {f"{view.id}:substrate"}
-    _assert_backend_matches_realization(rec, backend)
+    assert rec.realized is None
+    assert backend.layers == {}
+    assert backend.scalar_bars == {}
 
 
 def test_empty_session_paints_nothing(session_results):
