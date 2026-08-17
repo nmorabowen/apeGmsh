@@ -33,6 +33,7 @@ model_reports     →  “full calculation memory + results vs oracle”
 | Figures | Canonical **`reports/figures/`**; local `model_reports/<id>/…/figures/` only as aliases/copies if needed |
 | Studio `emit_report` | Markdown archive **SHOULD** land under `model_reports/<id>/` (or the stage folder) |
 | Stage accepted | **Oracle line + EDP table + ≥1 still/curve + case links** (`run.json`) |
+| Case provenance | Stage reports name each quoted case's `model_sha` (from `run.json`); `git_dirty: true` cases are disclosed as dirty. Disclosure, not enforcement (ADR 0095 Amendment 8) |
 | Language | Template **English**; translations MAY later |
 | Audience | Default **engineer + agent**; client-facing = optional export from briefs (no second mandatory tree) |
 
