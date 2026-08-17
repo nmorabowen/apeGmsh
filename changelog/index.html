@@ -3433,6 +3433,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 4 S6a: manual host refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-f-status-1-mcp-status-brief-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7974,6 +7985,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0095 Amendment 4 S6a: manual host refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0095-f-status-1-mcp-status-brief-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12497,6 +12519,17 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0095-amendment-4-s6a-manual-host-refresh">ADDED — ADR 0095 Amendment 4 S6a: manual host refresh<a class="headerlink" href="#added-adr-0095-amendment-4-s6a-manual-host-refresh" title="Permanent link">&para;</a></h3>
+<p>Toolbar action + F5 re-run the entry script (<code>.apegmsh/project.json</code>,
+else the script the host opened with) at the current phase through
+<code>ReplayRunner.run_until</code> in the host process. A live <code>busy.json</code> claim
+reports busy and does nothing (INV-18, no steal); an unchanged
+<code>(hash, phase)</code> is a skip-hash no-op ("Up to date"); success rebuilds
+the <code>ModelViewer</code> scene preserving camera (<code>_rebuild_scene</code>, now
+exposed as <code>self._rebuild_scene</code>); a failed replay keeps the previous
+frame (INV-4). Ledger records gain an additive <code>trigger</code> field
+(<code>open</code> / <code>refresh</code> / <code>watch</code>, S6b will emit the last). <code>contract_version</code>
+is <code>1.5.0</code>.</p>
 <h3 id="added-adr-0095-f-status-1-mcp-status-brief-mode">ADDED — ADR 0095 F-status-1: MCP status brief mode<a class="headerlink" href="#added-adr-0095-f-status-1-mcp-status-brief-mode" title="Permanent link">&para;</a></h3>
 <p>MCP <code>status(mode="brief"|"full")</code> defaults to <code>brief</code> (root, last-run
 intent, labels/PGs, counts summary, pick summary, CLI-shaped <code>text</code>) so

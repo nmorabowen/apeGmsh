@@ -3737,6 +3737,11 @@ Pass <code>root=</code> on each tool when <code>APEGMSH_ROOT</code> is unset.</p
 </span></code></pre></div>
 <p>Picks write <code>&lt;root&gt;/.apegmsh/selection.json</code>. Replay is a subprocess /
 held-open session — agents do not share that Gmsh kernel (INV-5).</p>
+<p>The toolbar's Refresh action (or F5) re-runs the entry script at the
+current phase in the host process (ADR 0095 S6a). A live <code>busy.json</code>
+claim reports busy and does nothing (INV-18); an unchanged file is a
+no-op ("Up to date"); a failed replay keeps the previous frame
+(INV-4). Ledger records gain a <code>trigger</code> field (<code>open</code> / <code>refresh</code>).</p>
 <h3 id="headless-replay-no-window">Headless replay (no window)<a class="headerlink" href="#headless-replay-no-window" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python -m apeGmsh.studio script.py --phase mesh --no-viewer --root &lt;project&gt;
 </span></code></pre></div>
@@ -3853,7 +3858,7 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.4.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.5.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
