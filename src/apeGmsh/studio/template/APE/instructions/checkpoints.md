@@ -56,6 +56,18 @@ branch" kept as a default while `main` goes nonlinear. The two
 diverge, every sync is a merge headache, and geometry fixes land on
 one side only. Keep live variants as drivers at tip.
 
+## Process files commit to `main`
+
+"Checkpoints only" governs the **model surface** — `models/**` and
+`reports/**` reach `main` through work branches and checkpoint merges.
+Everything that is habitat *process* — `postmortem/**`,
+`APE/memory/**`, the backlog, playbook edits, `scripts/` — commits
+**directly to `main`**: closing a session must not require a merge
+ceremony, and a postmortem is a record, not a reviewable model claim.
+A process commit that happens to ride an active work branch is
+harmless (it reaches `main` at the merge); salvage a dying branch's
+postmortem onto `main` before deleting the branch.
+
 ## With a forge (optional, per habitat)
 
 Same contract, one substitution: when the habitat has a remote
