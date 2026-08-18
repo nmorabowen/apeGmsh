@@ -81,8 +81,10 @@ Deform is not a slot: a warped mesh with every slot empty draws **no**
 scale at all. The scale names the slot's quantity, so warping by
 displacement while contouring stress gives a scale that says stress.
 
-Number format, orientation and font scale come from the slot's style;
-`Preferences → Labels → Colour-scale text size` sets the default size.
+Number format, orientation and font scale come from the slot's style.
+The global default size lives in the preferences editor, which this
+window has no menu entry for — open it from Python with
+`apeGmsh.viewers.settings()` (Labels → Colour-scale text size).
 
 ## Web viewers — `results.show_web()` / `results.serve_web()`
 

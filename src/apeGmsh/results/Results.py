@@ -1191,11 +1191,32 @@ class Results:
         no slots, no legends). Configure it (slots, deform, time), then
         ``s.render("a.png")`` for a still; the Qt client (``s.show()``)
         arrives at S2 and ``viewer()`` flips onto it at S6.
+
+        **Persisted section cuts boot as view clips** (ADR 0098 S6b).
+        The retired ``section_cut`` diagram kind took its auto-load
+        contract with it, but not the contract itself: cuts persisted
+        under ``/opensees/cuts/`` come back on the booted view as
+        clips. Only the ones that translate honestly do — a cut that
+        named a strict subset of the model's elements, or that carries
+        a bounding polygon, cuts LESS than a view clip does, so it is
+        skipped with one ``[session]`` line rather than silently
+        widening what disappears from the screen. Reading the cuts can
+        never fail this call: a bad zone is a line, not a traceback.
         """
         from .session import ResultsSession
+        from .session._cuts import attach_persisted_cuts
 
         s = ResultsSession(results=self)
-        s.add_view()
+        view = s.add_view()
+        try:
+            notices = attach_persisted_cuts(self, view)
+        except Exception as exc:  # noqa: BLE001 - the session always boots
+            notices = (
+                f"persisted section cuts could not be loaded as view "
+                f"clips: {type(exc).__name__}: {exc}",
+            )
+        for notice in notices:
+            print(f"[session] {notice}")
         return s
 
     def viewer(

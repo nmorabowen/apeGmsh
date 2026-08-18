@@ -1288,6 +1288,26 @@ picture is a notebook artifact and nothing else.
 - The five dedicated test files above are **not** retired by S6b.
   They cover code that survives, and S1 does not re-cover them —
   no slot renders any of the six.
+- **Corrected during S6b:** those five files are not the whole survivor
+  set. Six more tests of these kinds live inside files that are
+  otherwise per-kind retirements, and a sweep trusting the list above
+  would have deleted them with their hosts:
+  `test_diagram_deform_follow.py` (`test_fiber_cloud_follows_deformation`,
+  `test_layer_stack_follows_deformation`,
+  `test_spring_force_follows_deformation`),
+  `test_diagram_recorder_frame.py` (`test_fiber_cloud_uses_recorder_roll`,
+  `test_fiber_recorder_z_axes_empty_for_non_ladruno`) and
+  `test_no_data_error.py` (`test_spring_force_raises_nodata_when_no_springs`).
+  S6b keeps those three files whole rather than splitting them: the
+  surviving fraction makes deletion unsafe and the retired fraction
+  costs nothing to keep.
+- **The mechanism this amendment rests on is now itself tested.**
+  `tests/viewers/test_diagram_hatch_survival.py` pins that a bare
+  package import registers all six, that one still constructs through
+  the real `DiagramRegistry` — the call `WebViewer.director.registry.add`
+  makes — and that none of them acquired a §4 slot. Until S6b there was
+  no `test_web_viewer.py` and no direct coverage of the hatch at all,
+  so A2.2's "survival is near-free" was an untested claim.
 - The S6b import guard allowlists the hatch modules. That allowlist
   is the mechanism this disposition rides, so mutation-test it
   against a **near-miss** (a wrong module name in the allowlist),
