@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-7-s4-3-the-session-time-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8191,6 +8202,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-7-s4-3-the-session-time-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12901,6 +12923,68 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate">ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate<a class="headerlink" href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" title="Permanent link">&para;</a></h3>
+<p>A <code>ResultsSession</code> now serialises. <code>session.snapshot()</code> is the document
+as a JSON-safe dict and <code>session.save_snapshot()</code> writes it atomically
+to <code>&lt;results&gt;.session.json</code>; <code>restore_snapshot</code> / <code>load_snapshot</code> read
+it back. Panes and their ids, the slots, the pose, the scope, the clips
+with their plane ids, the legend-hide chrome, the time link <strong>and every
+pane's own instant</strong>, and the one §8 selection set. An agent can draw a
+still of what a human arranged, with no Qt in the loop — which is what
+S5b's pin (record key <code>session_snapshot</code>) and S5c's MCP <code>render</code> ride.</p>
+<p><strong>The schema is frozen at version 1</strong> and identified by <code>kind</code> +
+<code>version</code>, never by version arithmetic against the old file's
+<code>schema_version</code>. S4 never widened the time surface — the
+one-stage-at-a-time scrubber was a widget choice, <code>Instant</code> is
+<code>(stage, step)</code> either way — so it freezes against exactly what S0
+shipped and S5b's contract publishes without a second bump.</p>
+<p><strong>Two failure families, deliberately unlike each other.</strong> A schema or
+ontology violation refuses LOUDLY: an unknown result-slot category is
+the loudest, because the §4 catalog is closed (amended ADR 0094 INV-10)
+and a category this build does not have means a picture nobody
+authorised. Restore builds the real frozen records, so S0's laws — the
+closed catalog, the scope axes, the deform fields, the plot kinds, no
+negative steps — are the schema's laws, with no weaker second copy. A
+DATA mismatch degrades instead, with a notice on the returned
+<code>RestoredSession.notices</code>: an instant naming a stage these results no
+longer have drops to <code>None</code> and realize's documented fallback (last
+stage, last step) draws it. A stage rename must not cost the human every
+pane, slot and scope in the file, and silence is the only forbidden
+answer. Instants are validated at RESTORE through the same
+<code>results.stage()</code> lookup realize uses — unvalidated, a dead stage id
+surfaces as a traceback inside a repaint, for a fault that belongs to a
+file.</p>
+<p><strong>The legacy gate never destroys.</strong> Today's window still owns and
+overwrites <code>&lt;results&gt;.viewer-session.json</code> on close; the new session
+writes its own path until the S6 flip. A v13-shaped file meeting the new
+loader earns a notice and a <code>.legacy</code> rename-aside — and an existing
+<code>.legacy</code> is REFUSED, not replaced, so the second open cannot destroy
+what the first one moved. The destination is reserved with an exclusive
+create before the atomic replace, which makes that guarantee atomic
+rather than advisory. <code>legacy_shape(data)</code> is exported as the bare
+predicate, and <code>load_snapshot(..., rename_legacy=False)</code> refuses while
+touching nothing on disk — S5c's contract, ready to use.</p>
+<p><strong>Both id counters are re-seeded, not one.</strong> <code>ResultsSession._ids</code>
+numbers <code>mesh-N</code> / <code>plot-N</code>; each <code>MeshView._clip_ids</code> numbers <code>clip-N</code>
+independently. Restore a session holding <code>mesh-3</code> and add a view and
+without both re-seeds you get a second <code>mesh-1</code> — two panes with one id,
+and every id-addressed client (render, the outline, the MCP verb) picks
+whichever comes first.</p>
+<p><code>atomic_write_text</code> moved from <code>studio/_paths.py</code> to the package root as
+<code>apeGmsh._atomic_io</code> (studio re-exports it, so every studio call site is
+unchanged): <code>results</code> may not import <code>studio</code>, and a copy-paste would be
+two implementations of one atomicity guarantee.</p>
+<p>The round-trip oracle is at the scene-IR layer — restored-realize ==
+built-realize, structurally, over a <code>RecordingBackend</code> — with a
+non-empty selection, because an empty one round-trips identically
+whether or not the field is in the schema at all. It self-checks that
+two realizes of ONE session agree, and a companion test asserts that a
+snapshot stripped of its selection block realizes a DIFFERENT scene. 13
+mutations of the product all go red. Measured: 1k / 16k / 100k selected
+nodes snapshot+restore in 1.5 / 36 / 163 ms (1.3 MB of JSON at 100k) —
+linear, and only because S4-2 made the selection store set-backed.</p>
+<p>No window wiring in this slice: nothing save-on-closes or
+restore-on-opens yet — §11 puts those semantics in the S6 flip.</p>
 <h3 id="added-adr-0098-7-s4-3-the-session-time-link">ADDED — ADR 0098 §7 (S4-3): the session time link<a class="headerlink" href="#added-adr-0098-7-s4-3-the-session-time-link" title="Permanent link">&para;</a></h3>
 <p>The window gets its time back. <code>SessionScrubber</code> is the bottom-dock
 transport over the session's instant: slider, first/step/play/step/last,
