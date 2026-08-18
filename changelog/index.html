@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6a: viewer() opens a ResultsSession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5c-render-a-saved-session" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8268,6 +8279,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6a: viewer() opens a ResultsSession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5c-render-a-saved-session" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13055,6 +13077,57 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0098-11-s6a-viewer-opens-a-resultssession">CHANGED — ADR 0098 §11 S6a: <code>viewer()</code> opens a <code>ResultsSession</code><a class="headerlink" href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" title="Permanent link">&para;</a></h3>
+<p><code>results.viewer()</code> is the same one-liner and opens a different window.
+It is now sugar for <code>results.session().show()</code> — the document is a
+<code>ResultsSession</code> of tiled mesh and plot panes with the closed §4 slot
+catalog, and the window is a client that projects it. The blocking call
+<strong>returns that session</strong>, still live after the window closes, so you can
+query it, render stills off it or snapshot it. <code>blocking=False</code> still
+returns the <code>Popen</code> and the notebook in-memory fallback still returns
+the <code>WebViewer</code>: three different things on purpose, because a session in
+<em>this</em> process is not what a child window is showing.</p>
+<p><code>ResultsViewer</code> is <strong>de-published, not deleted</strong> — from
+<code>apeGmsh.viewers</code> and from the root <code>apeGmsh</code> package, which also
+exported it and is the shorter of the two ways to reach it. The module
+path keeps working, because <code>Results.export_animation</code> (the 0095 INV-11
+hatch) and the <code>show_web</code> hatch still import it there.</p>
+<p><code>viewer(cuts=)</code> is retired with the diagram ontology (§1): a cut plane
+is clip state on a view. Build defs with <code>apeGmsh.cuts</code>, then
+<code>results.session()</code> → <code>view.add_clip(normal, offset=…)</code>.</p>
+<p><strong>The restore/save semantics flipped with it</strong>, which is what §11 parked
+in this slice. <code>restore_session</code> and <code>save_session</code> keep their names,
+tokens and defaults and now drive a session snapshot;
+<code>&lt;results&gt;.viewer-session.json</code> is the file again, adopted from the old
+window now that nothing else writes it. <code>python -m apeGmsh.viewers</code>
+flipped for free — it already called <code>viewer(blocking=True)</code> — and grew
+<code>--restore-session</code> / <code>--no-save-session</code> so the child honours the
+policy the caller asked for, which before this it silently did not:
+<code>viewer(blocking=False, save_session=False)</code> saved anyway.</p>
+<p><strong>The window always opens.</strong> A session file that cannot be honoured is
+announced, the default picture boots, and auto-save is switched off for
+that window. The third part is the one that matters: the save target IS
+the file that was refused, so booting fresh with auto-save armed would
+overwrite on close exactly what the refusal was protecting. The v13
+session written by the retired window is not restorable — the first
+upgraded open says so and renames it to <code>.legacy</code>, overwriting neither
+it nor an aside already there. Upgrade, downgrade, upgrade again and the
+rename is refused, so you get your window with both files intact and a
+line naming the one to move.</p>
+<p>A restore that merely <em>degrades</em> is not a refusal: a snapshot naming a
+stage these results no longer have keeps every pane, slot and scope,
+drops the instant with a notice, and keeps its save target.</p>
+<p>ALSO — <strong>ADR 0098 Amendment 2</strong> records the six shipped diagram kinds
+with no slot (<code>fiber_section</code>, <code>layer_stack</code>, the three isochrones,
+<code>spring_force</code>): they survive as internal implementation of the
+<code>show_web</code> hatch, the catalog stays closed at seven, and the disposition
+expires with the hatch. They have no published surface today and lose
+their authoring UI at this flip; they cannot enter a session snapshot.</p>
+<p>Two behaviours of the retired window do NOT exist in the session window
+and the docs stop claiming them: the draggable / right-click colour-scale
+chrome (the legend <em>controller</em> carries over, the <em>interactor</em> does not)
+and <strong>File → Open Results…</strong>. Both are recorded for the S6b sweep to
+keep, port or drop deliberately.</p>
 <h3 id="added-adr-0098-11-s5c-render-a-saved-session">ADDED — ADR 0098 §11 S5c: render a saved session<a class="headerlink" href="#added-adr-0098-11-s5c-render-a-saved-session" title="Permanent link">&para;</a></h3>
 <p><code>python -m apeGmsh.results.session render &lt;snapshot&gt; &lt;out.png&gt;</code> draws one
 pane of a saved session out of process, and the Studio MCP <code>render</code> verb
