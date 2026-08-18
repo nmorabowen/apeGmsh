@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8147,6 +8158,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12813,6 +12835,67 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0098-8-s4-1-the-selection-surface-pane-pick">ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick<a class="headerlink" href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" title="Permanent link">&para;</a></h3>
+<p>A click or a rubber-band in a mesh pane now writes the session's <strong>one</strong>
+selection set. Selection is <strong>nodes XOR Gauss points</strong> and nothing else
+(§8): element and fiber pick targets are retired in this window — an
+element is a membership query, not a hit — so <code>core/results_pick.py</code>
+(three modes, dim-gate, geometry resolver) is not extended but replaced
+on the session path by a slim <code>viewers/session/_pick.py</code>. Zero new VTK:
+the <code>vtkCellPicker</code> ray, the press/move/release machine and the
+rubber-band overlay are the shared <code>PyVistaPickBackend</code>, reused verbatim
+(ADR 0047 INV-3). The old file and <code>results_viewer.py</code> are untouched.</p>
+<p>The pick targets come out of <strong>realize</strong>: <code>RealizedPane.targets</code> carries
+the node ids / <code>(element_id, gp_index)</code> pairs the pane last put on
+screen, with their posed coordinates, so a hit can only resolve to a
+point that pane is drawing — right scope, right pose, right instant —
+and "window … scoped to this view's visible cells" needs no second
+derivation. <code>GaussSlab</code> carries no gp-index column, so the index WITHIN
+each element is derived here, matching what the plot resolver expects.
+Both glyph clouds are emitted <strong>pickable</strong> (they were not): §8 names
+them as what a click hits, and a Gauss point — inside its element — has
+no other prop that can answer for it. A click snaps from the RAY's world
+point, not from the pixel, which is what keeps a node hidden behind the
+model unselectable. Plain click/drag replaces the set, Ctrl extends
+(Ctrl+click toggles), a plain click on nothing clears, and a click with
+the matching style button off is a non-event — never a silent clear of
+a set filled from elsewhere.</p>
+<p>The set is <strong>painted</strong>: a <code>&lt;pane&gt;:selection</code> layer marks it over the
+same posed cloud the glyphs use, in every pane, over only the points
+that pane draws. Because the highlight is realize output, the S3
+reconciler's per-pane signature grows a <strong>selection term</strong> — without it
+a selection write ticks the session, the signature compares equal, and
+the repaint the user just asked for is skipped. The term is the
+membership (not a count) and is read only when a glyph button is on, so
+an outline "select all" with glyphs off still costs those panes nothing.</p>
+<p>The pane header gains the §8 <strong>pick-target radio</strong> (Nodes | Gauss),
+beside the style buttons and separated from them: it aims THIS pane's
+clicks and windows only — it neither owns nor clears the set, and two
+panes may aim differently over the one set. The Gauss side disables
+itself when the stage records no Gauss composite.</p>
+<p><code>SessionSelection</code> gains <code>toggle_node</code> / <code>toggle_gauss</code> (the Ctrl+click
+writers, XOR law intact), and a pane's pick installation now dies on
+<code>MeshPane.dispose</code> — the same path that closes its GL context, because
+its observers live on that interactor.</p>
+<p>Taking LEFT for selection means the panes finally need the navigation
+convention that expects it. <code>ViewerWindow.set_navigation_style</code> styles
+<code>_qt_interactor</code>, which the session window does not build (A1.1), so
+every pane applied VTK's stock trackball — where LEFT orbits — and the
+pick's priority-10 abort would have left the pane with <strong>no orbit
+gesture at all</strong>. Panes now apply the <code>mouse_navigation</code> preference
+themselves (<code>apecad</code>: LEFT selection, MIDDLE orbit, RIGHT pan), and
+<code>ViewerWindow</code> gains an optional <code>navigation_hook</code> so View → Navigation
+reaches viewports a window does not own — additive, <code>None</code> for every
+window that owns its interactor.</p>
+<p>Two more from the same review round: the pick-target radio's checked
+state is a translucent tint + a 2 px accent underline rather than a
+solid accent chip (the glyph is drawn in the palette's <code>icon</code> colour
+and nothing re-tints it per state, so a solid fill read 1.07:1 on
+<code>high_contrast</code> and under 3:1 on 8 of 10 palettes); and the pane title
+is squeezable with the full name on its tooltip, so the widened header
+keeps a pane frame's real minimum inside A1.4's 240 px floor — the
+number <code>required_extent</code> / the Add gate compute with, and which a
+<code>QSplitter</code> will not shrink a child below.</p>
 <h3 id="fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy">FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the <code>live</code> surface on stock openseespy<a class="headerlink" href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" title="Permanent link">&para;</a></h3>
 <p><code>tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular</code>
 passed on the Ladruno fork and failed on stock openseespy. The harness'
