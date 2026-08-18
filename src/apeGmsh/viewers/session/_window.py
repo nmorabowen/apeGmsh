@@ -162,6 +162,22 @@ class SessionWindow:
         )
         self._shell.set_left_widget(self._outline.widget)
 
+        # ADR 0087 INV-2 (honest empty state). The shell creates the
+        # "Display" dock unconditionally and the View menu can summon
+        # it; the session window has not built its contents yet, so
+        # without this a user who opens it gets a blank panel. One
+        # muted hint line that says what to DO, per INV-2 — not a
+        # statement of what is absent. Fixed in S6b; the dock's real
+        # contents (point size, line width, ID labels) are a port owed
+        # by a later slice.
+        self._shell.set_session_widget(
+            PanePlaceholderPage(
+                "Use View → Theme to change the palette, or "
+                "apeGmsh.viewers.settings() for label and scale "
+                "defaults.",
+            ).widget,
+        )
+
         # §7's one control. Bottom dock, under the tiled panes, because
         # while the link is on it drives every one of them.
         self._scrubber = SessionScrubber(session, defer_fn=defer_fn)

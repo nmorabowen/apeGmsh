@@ -345,8 +345,8 @@ deformation/contours/camera are pixel-identical to the interactive viewer
 but no blocking event loop runs). `step_stride=N` captures every N-th step
 plus the last; `deform=None` (default) renders undeformed; `setup=` takes a
 `callback(plotter, director)` invoked after the scene builds and before
-capture (the escape hatch for contours / section cuts / camera work). The
-same export lives on the viewer GUI as a button.
+capture (the escape hatch for contours / section cuts / camera work). It is script-only: the retired window put it on a File
+menu, and the session window has no File menu (ADR 0098 S6b).
 `# src/apeGmsh/results/Results.py:1030`
 
 ### Concurrent geometries — `director.geometries` (ADR 0058)

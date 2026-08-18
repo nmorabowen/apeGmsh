@@ -597,6 +597,44 @@ things the sizing did not know, both verified while drafting:
   `_StubResults.viewer` needed the two new kwargs. Everything else in
   the ~80-file old suite is untouched and green.
 
+*S6b shipped (2026-08-18) — for S6d.*
+
+- **The disposition table is `internal_docs/s6b_honesty_table.md`.** Read
+  its §8 first: three of the sweep's decisions departed from the survey,
+  and each departure is a case where executing the plan literally would
+  have deleted coverage of something that survives.
+- **The rule that settled it:** a surviving PUBLIC surface keeps its
+  tests; a surviving implementation detail behind a hatch does not. That
+  is why `test_animation.py` was restored after deletion
+  (`export_animation` is 0095 INV-11, documented) while the director /
+  registry / dispatcher suites stayed deleted.
+- **Deleting the director suites left `show_web` with zero coverage**,
+  and ADR 0098 Amendment 2 rests the six slotless kinds on exactly that
+  hatch. `tests/viewers/test_diagram_hatch_survival.py` is the
+  load-bearing replacement; A2.4 was amended to record it, and to record
+  six survivor tests the amendment's original enumeration missed.
+- **Mixed files are kept whole, not split.** Splitting risks silently
+  dropping a survivor's coverage for a maintenance-only gain, and every
+  test in them still passes.
+- **Only two src modules are dead** — `viewers/_session_apply.py` and
+  `viewers/ui/_time_history.py` — because `export_animation`'s
+  `_realize_headless` reuses the FULL Qt window and merely hides the
+  docks. Their deletion is DEFERRED: it needs surgery inside the
+  hatch-live `results_viewer.py` for no behaviour change. Do it with the
+  export-slimming slice, then prune the two allowlist lines.
+- **S6d inherits less than planned** — S6a's gates already rewrote
+  `docs/api/viewers.md` and the skill's viewer section, and S6b fixed
+  three S6a defects (the blank Display dock, a docs path that did not
+  exist, a skill claim about a GUI button that is gone).
+- **Still owed, deliberately out of a retirement PR:** the File-menu port
+  (Open results / Save screenshot / Export animation / Preferences), the
+  legend hide-gesture, and a threshold port. All are ADDITIONS; the
+  honesty table §5 carries their sizes and the reasons.
+- **Do not "just wire up" the legend interactor** — the reconciler
+  rebuilds its `LegendController` whenever the signature changes, and
+  the signature includes `effective_instant`, so gesture-set state dies
+  on the next scrub tick.
+
 ## Standing risks (watch every slice)
 
 - The ~80 old test files must stay green until S6a merges: nothing under

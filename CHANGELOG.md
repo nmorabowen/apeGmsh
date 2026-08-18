@@ -22,6 +22,82 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0098 §11 S6b: the retirement sweep
+
+The Geometry / Composition / Diagram ontology stops being a tested
+public surface. 49 test files retire (`tests/viewers/` 176 → 128), and
+an import guard replaces them as the thing that keeps it retired.
+
+**S6 is de-publication, not deletion**, and this sweep found out how
+literally that is true: only **two** source modules are actually dead
+(`viewers/_session_apply.py`, `viewers/ui/_time_history.py`). Everything
+else is still reachable, because `Results.export_animation` runs
+`ResultsViewer.show(run_loop=False)` → `_realize_headless`, which builds
+the **full** Qt window and merely hides the docks. Deleting those two
+needs surgery inside that hatch-live file for no behaviour change, so it
+is deferred to the slice that slims the export.
+
+**`tests/viewers/test_diagrams_import_guard.py`** is the new gate: a
+27-module allowlist, ratcheted **both** ways — a new importer must be
+argued for, and an entry that stops importing must be pruned. It
+resolves relative imports, because inside `viewers/` nearly every real
+hit is `from ..diagrams import …` and a guard modelled naively on the
+`assess` one would have seen almost nothing and passed forever. Its
+docstring is honest about what it proves: eleven of those entries are
+alive only because of that fat headless window, so this is a ratchet
+against new importers, not evidence of a small surface.
+
+**Three sweep decisions departed from the plan, each because executing
+it literally would have deleted live coverage.**
+
+*`test_animation.py` was deleted and then restored.*
+`Results.export_animation` is a public, documented API (0095 INV-11),
+not an implementation detail, and those 12 tests were its only coverage.
+The rule that settled the rest of the sweep: a surviving **public
+surface** keeps its tests; a surviving **implementation detail behind a
+hatch** does not — which is what ADR 0098 already says about the
+director.
+
+*Deleting the director and registry suites left `show_web` with no
+coverage at all* — and ADR 0098 Amendment 2 rests the survival of the
+six slotless kinds on precisely that hatch, with no `test_web_viewer.py`
+anywhere. `tests/viewers/test_diagram_hatch_survival.py` is the
+load-bearing replacement: all six kinds registered by a bare package
+import, one constructing through the real `DiagramRegistry`, the §4
+catalog still closed at seven, and a near-miss snapshot refusal.
+
+*Mixed files are kept whole rather than split.* Eleven files span the
+retired and the surviving; splitting them risks silently dropping a
+survivor's coverage for a maintenance-only gain, and every test in them
+still passes. **Amendment 2 §A2.4 is corrected** accordingly — its
+"five dedicated test files survive" list missed six more survivor-kind
+tests living inside per-kind files, which a sweep trusting it would have
+deleted with their hosts.
+
+**Persisted section cuts now boot as view clips.** ADR 0098 keeps the
+h5 auto-load contract while retiring the `section_cut` picture, so
+`Results.session()` reads persisted cuts and attaches them as clips on
+the booted view (`results/session/_cuts.py`), preferring a bound
+`OpenSeesModel` handle over the file exactly as the retired director
+did. A `ViewClip` cuts the **whole view**, while a `SectionCutDef` cut
+only the elements it named — so a cut that names a subset of the model,
+or carries a bounding polygon, is **skipped with a notice** rather than
+silently widened into something that hides more than the original cut
+did. A cuts zone that cannot be read is a line, never a failed boot.
+
+**Three S6a defects fixed.** The **"Display" dock no longer opens
+blank** — the shell created it unconditionally and the View menu could
+summon it, but the session window mounted nothing, which is an ADR 0087
+INV-2 violation; it now carries one muted hint line. `docs/api/viewers.md`
+no longer points at `Preferences → Labels` as a path from a window that
+has no Preferences entry. The skill no longer claims Export animation is
+a button on the viewer GUI.
+
+The disposition of every file and every orphaned behaviour —  including
+the ones deliberately **not** ported (the File menu, the legend
+interactor's drag/right-click chrome, the probe overlay, threshold) —
+is recorded in `internal_docs/s6b_honesty_table.md`.
+
 ### CHANGED — ADR 0098 §11 S6a: `viewer()` opens a `ResultsSession`
 
 `results.viewer()` is the same one-liner and opens a different window.
