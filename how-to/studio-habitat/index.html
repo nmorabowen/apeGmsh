@@ -4085,6 +4085,16 @@ schemas. A <strong>run</strong> line carries no <code>kind</code> and validates 
 against <code>ledger_pin.schema.json</code>. Discriminate on <code>kind</code> before
 validating — a pin line has no <code>script</code> / <code>phase</code> / <code>ok</code> and is
 correctly refused by the run schema.</p>
+<p><code>render(session=…)</code> draws one pane of a saved ADR 0098 session snapshot
+(<code>&lt;results&gt;.session.json</code>) instead of a results file. Its content is the
+slot catalog the human arranged, not a view token, so <code>view</code> /
+<code>component</code> / <code>step</code> / <code>deform</code> / <code>pack</code> are refused with it
+(<code>INVALID_ARGS</code>) rather than ignored; <code>camera</code> and <code>output</code> still apply.
+An old <code>&lt;results&gt;.viewer-session.json</code> is refused and <strong>never renamed</strong> —
+the rename-aside belongs to the interactive flow. The same still is
+available from the command line:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python -m apeGmsh.results.session render &lt;snapshot&gt;.session.json shot.png
+</span></code></pre></div>
 <p><code>results_pin(session_snapshot=…)</code> pins the ADR 0098 presentation session
 (<code>&lt;results&gt;.session.json</code>). Unlike <code>model_h5</code> / <code>results</code>, which are
 recorded by path and hash only, that file is <strong>copied</strong> into

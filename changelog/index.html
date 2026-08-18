@@ -3463,6 +3463,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5c-render-a-saved-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5c: render a saved session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-one-opener-for-the-cli-doors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — one opener for the CLI doors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-legacy-rename-aside-now-survives-a-transient-windows-denial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the legacy rename-aside now survives a transient Windows denial
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8235,6 +8268,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5c-render-a-saved-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5c: render a saved session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-one-opener-for-the-cli-doors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — one opener for the CLI doors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-legacy-rename-aside-now-survives-a-transient-windows-denial" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the legacy rename-aside now survives a transient Windows denial
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12989,6 +13055,51 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0098-11-s5c-render-a-saved-session">ADDED — ADR 0098 §11 S5c: render a saved session<a class="headerlink" href="#added-adr-0098-11-s5c-render-a-saved-session" title="Permanent link">&para;</a></h3>
+<p><code>python -m apeGmsh.results.session render &lt;snapshot&gt; &lt;out.png&gt;</code> draws one
+pane of a saved session out of process, and the Studio MCP <code>render</code> verb
+grows a <code>session=</code> door onto it. The agent gets the picture a HUMAN
+arranged, with no Qt in the loop — which is what §11's S5 row asks for.</p>
+<p>Its own CLI entry rather than a subcommand of <code>python -m apeGmsh.viewers</code>,
+because that module flips at S6 and this door outlives it. The broker
+comes from <code>--results</code> or, failing that, from the <code>results_path</code> the
+snapshot recorded when it was written, so the common case is two
+arguments; <code>--model-h5</code> covers <code>.mpco</code>-backed results, which carry no
+model zone of their own.</p>
+<p><strong>A snapshot's content is the §4 slot catalog, not a view token</strong>, so
+<code>session=</code> skips the closed <code>view</code> check and REFUSES the old-ontology
+knobs (<code>view</code> / <code>component</code> / <code>step</code> / <code>deform</code> / <code>pack</code>) instead of
+ignoring them: silently drawing a snapshot's own instant while the caller
+passed <code>step=3</code> would hand them a different picture and call it theirs.
+<code>camera</code> is not refused — it is a property of the still, not of the
+picture. <code>view</code> / <code>step</code> / <code>camera</code> became <code>None</code>-defaulted so an
+explicit value is distinguishable from an unset one; the results door
+still falls back to <code>contour</code> / <code>-1</code> / <code>iso</code>.</p>
+<p><strong>Old sessions are refused and never renamed.</strong> The <code>.legacy</code>
+rename-aside belongs to the human flow (ADR 0098 Consequences); a batch
+verb or a CLI that moved a user's file would be doing surgery nobody
+asked for. Checked in the MCP parent before anything spawns, and again in
+the child with <code>rename_legacy=False</code>.</p>
+<p>Restore notices ride out on stderr rather than being swallowed: a still
+drawn at a different instant than the file asked for says so.</p>
+<h3 id="changed-one-opener-for-the-cli-doors">CHANGED — one opener for the CLI doors<a class="headerlink" href="#changed-one-opener-for-the-cli-doors" title="Permanent link">&para;</a></h3>
+<p><code>open_results(path, model_h5=None)</code> — which reader answers for which
+extension — moved from <code>viewers/__main__</code> to <code>apeGmsh.results._open</code>,
+beside the readers, so the new session door does not build on a module
+scheduled to retire. <code>viewers/__main__._open_results</code> delegates and keeps
+its <code>sys.exit(2)</code> contract; <code>studio/_verbs</code> already delegated to it, so
+both follow. The refusal is now a <code>ValueError</code> rather than a process
+exit, which a library caller can catch and an error envelope can report.
+<code>viewers/ui/_open_results.build_results</code> is deliberately untouched — it
+sniffs file CONTENTS for the Qt open dialog, a different job.</p>
+<h3 id="fixed-the-legacy-rename-aside-now-survives-a-transient-windows-denial">FIXED — the legacy rename-aside now survives a transient Windows denial<a class="headerlink" href="#fixed-the-legacy-rename-aside-now-survives-a-transient-windows-denial" title="Permanent link">&para;</a></h3>
+<p><code>atomic_write_text</code> has always retried <code>os.replace</code> because "a concurrent
+reader may briefly deny replace" on Windows; <code>rename_legacy_aside</code>
+(ADR 0098 S5a) called the same syscall on the same platform with no such
+guard. Both now go through one shared <code>replace_with_retry</code>, so the guard
+is not something the next caller has to remember. Surfaced as a single
+unreproducible failure during a full-suite run — causation unconfirmed,
+but the asymmetry was real either way.</p>
 <h3 id="added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot">ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot<a class="headerlink" href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" title="Permanent link">&para;</a></h3>
 <p><code>results_pin(session_snapshot=…)</code> pins the picture a human arranged. The
 ledger key is <code>session_snapshot</code> — <code>session</code> already means the run's
