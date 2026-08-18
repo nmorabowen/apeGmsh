@@ -42,7 +42,7 @@ writes and the cloud a pane highlights cannot disagree.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 
