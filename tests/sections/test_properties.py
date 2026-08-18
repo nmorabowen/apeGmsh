@@ -9,6 +9,7 @@ solve ran on a worker thread (the S6 no-solve-on-the-UI-thread law).
 """
 from __future__ import annotations
 
+import gc
 import threading
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from apeGmsh.sections import SectionDocument
 from apeGmsh.sections._properties import (
     BuildResult,
+    _no_cyclic_gc,
     PropertiesController,
     build_document,
     canonical_state,
@@ -171,3 +173,60 @@ def test_build_document_captures_error_instead_of_raising():
     res = build_document(doc.to_dict())
     assert res.error is not None
     assert res.analysis is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Qt-safety: no cyclic collection on the worker thread
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_worker_runs_with_the_cyclic_gc_paused():
+    """The build must not run under an armed cyclic collector.
+
+    A PySide6 wrapper finalized off the GUI thread is queued into
+    ``Shiboken::BindingManager``'s deferred-deletion list and destroyed
+    later from the main thread's pending-call queue, by which point the
+    entry is stale — the main thread jumps through it and the
+    interpreter dies inside ``runDeletionInMainThread()``, with no
+    Python traceback. This worker creates no Qt object, so the cyclic
+    collector is the only thing that could finalize one here; keeping
+    it off for the build's length is what makes the thread Qt-safe.
+    """
+    seen: "dict[str, object]" = {}
+
+    def probe(doc_dict):
+        seen["gc_enabled"] = gc.isenabled()
+        seen["thread"] = threading.get_ident()
+        return BuildResult(key="", kind="continuum", analysis=None,
+                           error="probe")
+
+    ctrl = PropertiesController(builder=probe, autostart_timer=False)
+    ctrl.request({"kind": "continuum"})
+    ctrl.join(30.0)
+    ctrl.drain()
+
+    assert seen["thread"] != threading.get_ident()   # really off-thread
+    assert seen["gc_enabled"] is False               # ...and gc was off
+    assert gc.isenabled() is True                    # restored afterwards
+
+
+def test_gc_pause_is_refcounted_across_overlapping_builds():
+    """Two overlapping builds must not let the first one to finish
+    re-arm the collector under the second."""
+    assert gc.isenabled() is True
+    with _no_cyclic_gc():
+        assert gc.isenabled() is False
+        with _no_cyclic_gc():
+            assert gc.isenabled() is False
+        assert gc.isenabled() is False               # inner exit holds it
+    assert gc.isenabled() is True
+
+
+def test_gc_pause_leaves_an_already_disabled_collector_alone():
+    gc.disable()
+    try:
+        with _no_cyclic_gc():
+            assert gc.isenabled() is False
+        assert gc.isenabled() is False               # not turned back on
+    finally:
+        gc.enable()

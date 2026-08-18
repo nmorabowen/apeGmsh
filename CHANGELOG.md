@@ -22,6 +22,39 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the ADR 0080 B6 properties worker segfaulted Linux through Shiboken
+
+`test_panel_matches_headless_build_off_ui_thread` aborted the Linux CI
+suite with exit 139 and no Python traceback. The named suspects were
+wrong: it is not Gmsh, not VTK/Mesa, and not the `_mesh_proc` fork. The
+core dump puts the fault on the **main** thread at
+`Shiboken::BindingManager::runDeletionInMainThread()`, reached from
+`make_pending_calls` — PySide6's deferred cross-thread delete queue,
+jumping through an entry that no longer describes a live object.
+
+Qt objects belong to the thread that created them. A PySide6 wrapper
+finalized off the GUI thread is queued for the main thread to destroy
+via `Py_AddPendingCall`; when the main thread drains that queue the
+destructor call lands on freed memory. The properties worker never
+*creates* a Qt object, so the only way it can finalize one is the
+**cyclic collector**, which runs on whichever thread trips the
+allocation threshold — and that thread allocates hard (document parse,
+`FEMData` unpickle, the NumPy solve). One gen-2 pass landing there
+while a builder window's widget tree is unreachable is enough.
+
+`PropertiesController._work` now runs under `_no_cyclic_gc()`, which
+pauses automatic cyclic collection for the build's length (refcounted
+across overlapping builds; an already-disabled collector is left off).
+Refcount frees are untouched, so nothing leaks — cyclic garbage is
+simply reaped by the next collection after the build.
+
+Measured on the Linux runner with a probe that primes Qt-holding cycles
+and hair-triggers the collector: **6/6 segfaults without the fix, 0/6
+with it**; `tests/sections` 0/10 failures and the full curated suite
+green. The Linux skip on the B6 test is lifted, and
+`test_worker_runs_with_the_cyclic_gc_paused` pins the invariant
+directly instead of waiting for the crash to come back.
+
 ### ADDED — ADR 0098 Amendment 1 (S3): the pane host, per-view scope, style buttons
 
 The Results session window's centre becomes **N tiled panes**. The
