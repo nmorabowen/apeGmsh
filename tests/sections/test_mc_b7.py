@@ -56,6 +56,18 @@ def _points_doc() -> SectionDocument:
     return doc
 
 
+def _degenerate_doc() -> SectionDocument:
+    """Four ElasticPP point fibers, all at |y| = 100 — so every fiber
+    yields at the same curvature and the tangent for the free axial DOF
+    drops to zero all at once."""
+    doc = SectionDocument.new(name="degenerate", kind="fiber")
+    doc.set_material("st", uniaxial=("ElasticPP", {"E": E, "epsyP": FY / E}))
+    for z in (-50.0, 50.0):
+        for y in (-100.0, 100.0):
+            doc.add_point(material="st", y=y, z=z, area=100.0)
+    return doc
+
+
 def _patch_doc(*, ny: int = 40, elastic: bool = False) -> SectionDocument:
     doc = SectionDocument.new(name="pp", kind="fiber")
     spec = (
@@ -159,20 +171,71 @@ def test_axial_compression_shifts_the_plateau():
 
 
 @requires_backend
+@pytest.mark.ladruno_fork
 def test_partial_curve_when_the_section_goes_singular():
     """Every fiber at the same |y| plastifies at once, leaving no
     stiffness for the free axial DOF. The curve stops and says so — a
-    partial result, not an exception."""
-    doc = SectionDocument.new(name="degenerate", kind="fiber")
-    doc.set_material("st", uniaxial=("ElasticPP", {"E": E, "epsyP": FY / E}))
-    for z in (-50.0, 50.0):
-        for y in (-100.0, 100.0):
-            doc.add_point(material="st", y=y, z=z, area=100.0)
+    partial result, not an exception.
+
+    Fork-gated, and the reason is worth writing down. The stop is
+    ``ops.analyze() != 0`` and nothing else, so its fidelity is the
+    backend's. Stock OpenSees' ``BandGenLinLapackSolver::solve()``
+    returns ``-info+1`` on a failed factorization, which C reads as
+    ``(-info) + 1`` — so ``info == 1``, the zero pivot sitting on the
+    FIRST equation, which is exactly this section's free axial DOF,
+    returns ``0`` == success. ``DisplacementControl`` does not read the
+    return anyway, Newton never learns, and the push runs to the end
+    marked complete. The Ladruno fork returns ``-info``; the failure
+    propagates and the curve truncates. Both builds print the same
+    ``matrix singular U(i,i) = 0, i= 0`` warning.
+
+    Stock's numbers here are not wrong — symmetry holds the residual at
+    zero, so κ, M and the axial displacement all come out exact. What
+    diverges is whether the singularity is *reported*, which is why
+    this asserts ``complete`` and nothing else about the values.
+    """
     kappa_y = FY / E / 100.0
-    curve = moment_curvature(doc, kappa_max=5.0 * kappa_y, n_steps=10)
+    curve = moment_curvature(
+        _degenerate_doc(), kappa_max=5.0 * kappa_y, n_steps=10,
+    )
     assert curve.complete is False
     assert len(curve.curvature) >= 2          # the elastic branch survives
     assert curve.EI0 == pytest.approx(E * 4 * 100.0 * 100.0 ** 2, rel=1e-9)
+
+
+@requires_backend
+def test_the_singular_section_reports_the_closed_form_on_any_build():
+    """The companion to the test above, and the half that runs
+    everywhere. Whether the singular step is *reported* is the backend's
+    business; whether the points that DID come back are the right points
+    is apeGmsh's, and that has to hold on stock too.
+
+    All four fibers sit at |y| = 100 and yield together, so the curve is
+    closed-form over its whole length: ``M = min(EI0·κ, Mp)``, the plateau
+    flat rather than merely bounded. Stock walks all ten steps (its solver
+    reports the zero pivot on equation 0 as success); the fork truncates at
+    the first singular step. Either way every returned point is checked, so
+    a build that masks the singularity AND corrupts the answer — a failed
+    factorization leaves the load vector sitting in the solution vector,
+    which the caller then spends as a displacement increment — fails here
+    instead of passing quietly the way it does upstream.
+    """
+    kappa_y = FY / E / 100.0
+    Mp = FY * 4 * 100.0 * 100.0
+    EI0 = E * 4 * 100.0 * 100.0 ** 2
+    n_steps = 10
+    dkappa = 5.0 * kappa_y / n_steps
+
+    curve = moment_curvature(
+        _degenerate_doc(), kappa_max=5.0 * kappa_y, n_steps=n_steps,
+    )
+
+    assert curve.EI0 == pytest.approx(EI0, rel=1e-9)
+    assert len(curve.curvature) >= 2          # the elastic branch survives
+    assert len(curve.curvature) == len(curve.moment)
+    for i, (kappa, moment) in enumerate(zip(curve.curvature, curve.moment)):
+        assert kappa == pytest.approx(i * dkappa, rel=1e-9)
+        assert moment == pytest.approx(min(EI0 * kappa, Mp), rel=1e-9)
 
 
 # ─────────────────────────────────────────────────────────────────────
