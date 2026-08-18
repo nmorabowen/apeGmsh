@@ -325,6 +325,12 @@ signatures) lives in the references.
   "v1.0" is stale. v2.0.0 shipped the three-broker chain
   `FEMData ⊂ OpenSeesModel ⊂ Results`, auto MP-constraint emission, and deleted
   `BindError`.
+- **Work from the latest apeGmsh.** At session open, pull (or upgrade) the
+  checkout behind the install, then verify the import actually points at it —
+  `apeGmsh.__file__` + `apeGmsh.__version__` — before the first run. After a
+  pull the environment can still silently resolve a stale install (multi-entry
+  `PYTHONPATH`, a forgotten editable install elsewhere); a session debugged
+  against a stale library is wasted.
 - **Removed/renamed** (never recommend these): `g.mass` → `g.masses`;
   `g.opensees` → the post-session `apeSees(fem)` bridge; `g.node_ndf` → ndf is
   inferred from element classes + `ops.ndf` for element-less nodes (ADR
