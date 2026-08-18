@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6b-the-retirement-sweep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6b: the retirement sweep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8279,6 +8290,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6b-the-retirement-sweep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6b: the retirement sweep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13077,6 +13099,71 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0098-11-s6b-the-retirement-sweep">CHANGED — ADR 0098 §11 S6b: the retirement sweep<a class="headerlink" href="#changed-adr-0098-11-s6b-the-retirement-sweep" title="Permanent link">&para;</a></h3>
+<p>The Geometry / Composition / Diagram ontology stops being a tested
+public surface. 49 test files retire (<code>tests/viewers/</code> 176 → 128), and
+an import guard replaces them as the thing that keeps it retired.</p>
+<p><strong>S6 is de-publication, not deletion</strong>, and this sweep found out how
+literally that is true: only <strong>two</strong> source modules are actually dead
+(<code>viewers/_session_apply.py</code>, <code>viewers/ui/_time_history.py</code>). Everything
+else is still reachable, because <code>Results.export_animation</code> runs
+<code>ResultsViewer.show(run_loop=False)</code> → <code>_realize_headless</code>, which builds
+the <strong>full</strong> Qt window and merely hides the docks. Deleting those two
+needs surgery inside that hatch-live file for no behaviour change, so it
+is deferred to the slice that slims the export.</p>
+<p><strong><code>tests/viewers/test_diagrams_import_guard.py</code></strong> is the new gate: a
+27-module allowlist, ratcheted <strong>both</strong> ways — a new importer must be
+argued for, and an entry that stops importing must be pruned. It
+resolves relative imports, because inside <code>viewers/</code> nearly every real
+hit is <code>from ..diagrams import …</code> and a guard modelled naively on the
+<code>assess</code> one would have seen almost nothing and passed forever. Its
+docstring is honest about what it proves: eleven of those entries are
+alive only because of that fat headless window, so this is a ratchet
+against new importers, not evidence of a small surface.</p>
+<p><strong>Three sweep decisions departed from the plan, each because executing
+it literally would have deleted live coverage.</strong></p>
+<p><em><code>test_animation.py</code> was deleted and then restored.</em>
+<code>Results.export_animation</code> is a public, documented API (0095 INV-11),
+not an implementation detail, and those 12 tests were its only coverage.
+The rule that settled the rest of the sweep: a surviving <strong>public
+surface</strong> keeps its tests; a surviving <strong>implementation detail behind a
+hatch</strong> does not — which is what ADR 0098 already says about the
+director.</p>
+<p><em>Deleting the director and registry suites left <code>show_web</code> with no
+coverage at all</em> — and ADR 0098 Amendment 2 rests the survival of the
+six slotless kinds on precisely that hatch, with no <code>test_web_viewer.py</code>
+anywhere. <code>tests/viewers/test_diagram_hatch_survival.py</code> is the
+load-bearing replacement: all six kinds registered by a bare package
+import, one constructing through the real <code>DiagramRegistry</code>, the §4
+catalog still closed at seven, and a near-miss snapshot refusal.</p>
+<p><em>Mixed files are kept whole rather than split.</em> Eleven files span the
+retired and the surviving; splitting them risks silently dropping a
+survivor's coverage for a maintenance-only gain, and every test in them
+still passes. <strong>Amendment 2 §A2.4 is corrected</strong> accordingly — its
+"five dedicated test files survive" list missed six more survivor-kind
+tests living inside per-kind files, which a sweep trusting it would have
+deleted with their hosts.</p>
+<p><strong>Persisted section cuts now boot as view clips.</strong> ADR 0098 keeps the
+h5 auto-load contract while retiring the <code>section_cut</code> picture, so
+<code>Results.session()</code> reads persisted cuts and attaches them as clips on
+the booted view (<code>results/session/_cuts.py</code>), preferring a bound
+<code>OpenSeesModel</code> handle over the file exactly as the retired director
+did. A <code>ViewClip</code> cuts the <strong>whole view</strong>, while a <code>SectionCutDef</code> cut
+only the elements it named — so a cut that names a subset of the model,
+or carries a bounding polygon, is <strong>skipped with a notice</strong> rather than
+silently widened into something that hides more than the original cut
+did. A cuts zone that cannot be read is a line, never a failed boot.</p>
+<p><strong>Three S6a defects fixed.</strong> The <strong>"Display" dock no longer opens
+blank</strong> — the shell created it unconditionally and the View menu could
+summon it, but the session window mounted nothing, which is an ADR 0087
+INV-2 violation; it now carries one muted hint line. <code>docs/api/viewers.md</code>
+no longer points at <code>Preferences → Labels</code> as a path from a window that
+has no Preferences entry. The skill no longer claims Export animation is
+a button on the viewer GUI.</p>
+<p>The disposition of every file and every orphaned behaviour —  including
+the ones deliberately <strong>not</strong> ported (the File menu, the legend
+interactor's drag/right-click chrome, the probe overlay, threshold) —
+is recorded in <code>internal_docs/s6b_honesty_table.md</code>.</p>
 <h3 id="changed-adr-0098-11-s6a-viewer-opens-a-resultssession">CHANGED — ADR 0098 §11 S6a: <code>viewer()</code> opens a <code>ResultsSession</code><a class="headerlink" href="#changed-adr-0098-11-s6a-viewer-opens-a-resultssession" title="Permanent link">&para;</a></h3>
 <p><code>results.viewer()</code> is the same one-liner and opens a different window.
 It is now sugar for <code>results.session().show()</code> — the document is a
