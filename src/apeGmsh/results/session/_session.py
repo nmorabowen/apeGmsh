@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union
 
 from ._selection import SessionSelection
 from ._time import Instant
-from ._views import MeshView, PlotSeries, PlotSource, PlotView
+from ._views import (
+    MeshView,
+    PlotSeries,
+    PlotSource,
+    PlotView,
+    _next_counter,
+)
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
@@ -138,6 +144,35 @@ class ResultsSession:
         # keep it alive.
         pane._notify = None
         self._tick()
+
+    # -- snapshot restore (S5a) ----------------------------------------
+
+    def _adopt_pane(self, pane: Pane) -> None:
+        """Append a pane restored from a snapshot, keeping ITS id.
+
+        ``add_view`` / ``add_plot`` mint an id; a restore must keep the
+        one the file names, because that id is how the snapshot, the
+        outline and the MCP verb address the pane. Wiring ``_notify``
+        here is what makes the restored pane a real member of this
+        session rather than a detached copy that never repaints.
+        """
+        pane._notify = self._tick
+        self._panes.append(pane)
+
+    def _reseed_ids(self) -> None:
+        """Re-seed the pane-id counter past every restored pane id.
+
+        TWO counters must be re-seeded by a restore, not one: this one
+        (``mesh-N`` / ``plot-N``, both drawn from the single sequence)
+        and each mesh view's own ``clip-N`` counter, in
+        ``MeshView._adopt_clips``. Restore a session holding ``mesh-3``,
+        add a view, and without this you get a SECOND ``mesh-1`` — two
+        panes with one id, and every id-addressed client picks whichever
+        comes first.
+        """
+        self._ids = _next_counter(
+            [pane.id for pane in self._panes], "mesh-", "plot-",
+        )
 
     # -- time (§7) -----------------------------------------------------
 
@@ -270,6 +305,34 @@ class ResultsSession:
         from apeGmsh.viewers.session import show_session
 
         return show_session(self, blocking=blocking, title=title)
+
+    # -- snapshot clients (S5) -----------------------------------------
+
+    def snapshot(self) -> dict:
+        """This session as a JSON-safe dict (ADR 0098 §11 S5).
+
+        Panes, slots, pose, the time link AND every pane's own instant,
+        the one selection set. Nothing derived (legends are a function
+        of the slots, §5) and nothing about a window: the snapshot is
+        the document, so an agent can draw a still of what a human
+        arranged without Qt.
+        """
+        from ._snapshot import snapshot
+
+        return snapshot(self)
+
+    def save_snapshot(self, path: "str | Path | None" = None) -> Path:
+        """Write :meth:`snapshot` atomically; returns the path written.
+
+        ``path=None`` defaults to ``<results>.session.json`` beside the
+        results file — deliberately NOT the old viewer's
+        ``<results>.viewer-session.json``, which today's window still
+        owns and overwrites on close (plan decision 11). The paths
+        merge at the S6 flip, behind the ``.legacy`` rename-aside.
+        """
+        from ._snapshot import save_snapshot
+
+        return save_snapshot(self, path)
 
     # -- observer surface ----------------------------------------------
 

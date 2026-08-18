@@ -15,7 +15,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, replace
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Iterable, Optional, Sequence, Union
 
 from ._slots import (
     COLOUR_MAPPED,
@@ -33,6 +33,27 @@ from ._slots import (
 from ._time import Instant
 
 _Notify = Optional[Callable[[], None]]
+
+
+def _next_counter(
+    names: "Iterable[str]", *prefixes: str,
+) -> "itertools.count":
+    """A fresh ``<prefix>-N`` counter that cannot re-mint an existing id.
+
+    Minted ids are identity — render, the outline, the MCP verb and the
+    snapshot all address panes and planes by them — so a counter that
+    restarts at 1 after a restore hands out a SECOND ``mesh-1``. Ids
+    that do not fit the pattern cannot collide with a minted one and
+    are ignored.
+    """
+    high = 0
+    for name in names:
+        for prefix in prefixes:
+            if name.startswith(prefix):
+                tail = name[len(prefix):]
+                if tail.isdigit():
+                    high = max(high, int(tail))
+    return itertools.count(high + 1)
 
 
 # ======================================================================
@@ -532,6 +553,27 @@ class MeshView:
                 self._changed()
                 return new
         raise KeyError(f"No clip {plane_id!r} on view {self._id!r}.")
+
+    def _adopt_clips(self, clips: "Sequence[ViewClip]") -> None:
+        """Install restored clip records verbatim (S5a snapshot restore).
+
+        Two things :meth:`add_clip` cannot do. It mints a fresh
+        ``clip-N``, but ``plane_id`` is identity — the outline and the
+        0083 gizmos address planes by it, and ``set_clip`` refuses to
+        change it — so a restore has to keep the id the file names. And
+        it leaves the counter at 1: this re-seeds it past every restored
+        id, so a view restored with ``clip-2`` mints ``clip-3`` next
+        rather than a second ``clip-1``. This is the SECOND of the two
+        counters a restore must re-seed; the first is the session's own
+        pane counter (``ResultsSession._reseed_ids``).
+
+        Silent, by design: restore is not a gesture, and the session
+        wires its change tick when it adopts the pane.
+        """
+        self._clips = list(clips)
+        self._clip_ids = _next_counter(
+            [clip.plane_id for clip in self._clips], "clip-",
+        )
 
     # -- internal ------------------------------------------------------
 

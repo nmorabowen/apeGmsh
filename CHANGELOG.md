@@ -22,6 +22,77 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate
+
+A `ResultsSession` now serialises. `session.snapshot()` is the document
+as a JSON-safe dict and `session.save_snapshot()` writes it atomically
+to `<results>.session.json`; `restore_snapshot` / `load_snapshot` read
+it back. Panes and their ids, the slots, the pose, the scope, the clips
+with their plane ids, the legend-hide chrome, the time link **and every
+pane's own instant**, and the one §8 selection set. An agent can draw a
+still of what a human arranged, with no Qt in the loop — which is what
+S5b's pin (record key `session_snapshot`) and S5c's MCP `render` ride.
+
+**The schema is frozen at version 1** and identified by `kind` +
+`version`, never by version arithmetic against the old file's
+`schema_version`. S4 never widened the time surface — the
+one-stage-at-a-time scrubber was a widget choice, `Instant` is
+`(stage, step)` either way — so it freezes against exactly what S0
+shipped and S5b's contract publishes without a second bump.
+
+**Two failure families, deliberately unlike each other.** A schema or
+ontology violation refuses LOUDLY: an unknown result-slot category is
+the loudest, because the §4 catalog is closed (amended ADR 0094 INV-10)
+and a category this build does not have means a picture nobody
+authorised. Restore builds the real frozen records, so S0's laws — the
+closed catalog, the scope axes, the deform fields, the plot kinds, no
+negative steps — are the schema's laws, with no weaker second copy. A
+DATA mismatch degrades instead, with a notice on the returned
+`RestoredSession.notices`: an instant naming a stage these results no
+longer have drops to `None` and realize's documented fallback (last
+stage, last step) draws it. A stage rename must not cost the human every
+pane, slot and scope in the file, and silence is the only forbidden
+answer. Instants are validated at RESTORE through the same
+`results.stage()` lookup realize uses — unvalidated, a dead stage id
+surfaces as a traceback inside a repaint, for a fault that belongs to a
+file.
+
+**The legacy gate never destroys.** Today's window still owns and
+overwrites `<results>.viewer-session.json` on close; the new session
+writes its own path until the S6 flip. A v13-shaped file meeting the new
+loader earns a notice and a `.legacy` rename-aside — and an existing
+`.legacy` is REFUSED, not replaced, so the second open cannot destroy
+what the first one moved. The destination is reserved with an exclusive
+create before the atomic replace, which makes that guarantee atomic
+rather than advisory. `legacy_shape(data)` is exported as the bare
+predicate, and `load_snapshot(..., rename_legacy=False)` refuses while
+touching nothing on disk — S5c's contract, ready to use.
+
+**Both id counters are re-seeded, not one.** `ResultsSession._ids`
+numbers `mesh-N` / `plot-N`; each `MeshView._clip_ids` numbers `clip-N`
+independently. Restore a session holding `mesh-3` and add a view and
+without both re-seeds you get a second `mesh-1` — two panes with one id,
+and every id-addressed client (render, the outline, the MCP verb) picks
+whichever comes first.
+
+`atomic_write_text` moved from `studio/_paths.py` to the package root as
+`apeGmsh._atomic_io` (studio re-exports it, so every studio call site is
+unchanged): `results` may not import `studio`, and a copy-paste would be
+two implementations of one atomicity guarantee.
+
+The round-trip oracle is at the scene-IR layer — restored-realize ==
+built-realize, structurally, over a `RecordingBackend` — with a
+non-empty selection, because an empty one round-trips identically
+whether or not the field is in the schema at all. It self-checks that
+two realizes of ONE session agree, and a companion test asserts that a
+snapshot stripped of its selection block realizes a DIFFERENT scene. 13
+mutations of the product all go red. Measured: 1k / 16k / 100k selected
+nodes snapshot+restore in 1.5 / 36 / 163 ms (1.3 MB of JSON at 100k) —
+linear, and only because S4-2 made the selection store set-backed.
+
+No window wiring in this slice: nothing save-on-closes or
+restore-on-opens yet — §11 puts those semantics in the S6 flip.
+
 ### ADDED — ADR 0098 §7 (S4-3): the session time link
 
 The window gets its time back. `SessionScrubber` is the bottom-dock
