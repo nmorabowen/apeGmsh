@@ -31,13 +31,31 @@ not reused.
 ``realize()`` / ``render()`` (S1) delegate to the viewers-side
 projection ``apeGmsh.viewers.session`` via call-time imports — the
 per-kind emit reuse lives THERE, so this package keeps the guarantee
-above. ``show()`` (Qt) is S2; the snapshot is S5. The old
+above. ``show()`` (Qt) is S2. The snapshot (S5a) lives HERE, in
+``_snapshot`` — it serialises the IR and nothing else, which is why
+it takes its atomic write from ``apeGmsh._atomic_io`` rather than
+from ``studio`` (the direction results→studio is forbidden). The old
 ``results.viewer()`` window is untouched until the S6 flip.
 """
 from __future__ import annotations
 
 from ._selection import SessionSelection, gauss_target, node_target
 from ._session import Pane, ResultsSession
+from ._snapshot import (
+    LEGACY_SUFFIX,
+    SNAPSHOT_KIND,
+    SNAPSHOT_VERSION,
+    LegacySessionFile,
+    RestoredSession,
+    SnapshotError,
+    default_snapshot_path,
+    legacy_shape,
+    load_snapshot,
+    rename_legacy_aside,
+    restore_snapshot,
+    save_snapshot,
+    snapshot,
+)
 from ._slots import (
     COLOUR_MAPPED,
     SLOT_CATALOG,
@@ -100,4 +118,18 @@ __all__ = [
     "SessionSelection",
     "node_target",
     "gauss_target",
+    # snapshot (S5)
+    "snapshot",
+    "restore_snapshot",
+    "save_snapshot",
+    "load_snapshot",
+    "default_snapshot_path",
+    "legacy_shape",
+    "rename_legacy_aside",
+    "RestoredSession",
+    "SnapshotError",
+    "LegacySessionFile",
+    "SNAPSHOT_KIND",
+    "SNAPSHOT_VERSION",
+    "LEGACY_SUFFIX",
 ]

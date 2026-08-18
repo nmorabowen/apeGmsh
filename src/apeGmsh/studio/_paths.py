@@ -11,10 +11,10 @@ happened to be."
 from __future__ import annotations
 
 import os
-import tempfile
-import time
 from pathlib import Path
 from typing import Mapping
+
+from .._atomic_io import atomic_write_text
 
 DEFAULT_ENVELOPE_REL = Path(".apegmsh") / "selection.json"
 DEFAULT_NAMES_REL = Path(".apegmsh") / "names.json"
@@ -79,49 +79,11 @@ def resolve_under(root: Path | str, path: Path | str) -> Path:
     return (base / p).resolve()
 
 
-def atomic_write_text(
-    path: Path | str,
-    text: str,
-    *,
-    encoding: str = "utf-8",
-) -> Path:
-    """Write *text* via temp file + ``os.replace`` (ADR 0095 INV-16).
-
-    Same-directory temp so replace is atomic on the habitat volume.
-    Readers may still see a missing file mid-replace; they must not see
-    a truncated JSON body.
-    """
-    dest = Path(path)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(dest.parent),
-        prefix=f".{dest.name}.",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding=encoding, newline="\n") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        # Windows: a concurrent reader may briefly deny replace.
-        last_err: OSError | None = None
-        for attempt in range(20):
-            try:
-                os.replace(tmp_name, dest)
-                last_err = None
-                break
-            except PermissionError as exc:
-                last_err = exc
-                time.sleep(0.01 * (attempt + 1))
-        if last_err is not None:
-            raise last_err
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
-    return dest
+# ``atomic_write_text`` now lives at the package root
+# (:mod:`apeGmsh._atomic_io`) so ``results.session``'s snapshot (ADR
+# 0098 S5a) can use the same implementation — ``results`` may not
+# import ``studio``. Re-exported here: the INV-16 guarantee and every
+# ``from ._paths import atomic_write_text`` call site are unchanged.
 
 
 def resolve_root(

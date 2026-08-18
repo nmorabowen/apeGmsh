@@ -173,6 +173,62 @@ slice's first hour (or in this plan) — not mid-PR.
     explicitly out of the flip PR's scope (INV-11 hatch, still constructs
     the old viewer offscreen).
 
+14. **S5a — is the §8 selection snapshot state?** *Settled: YES, the SET
+    is; the LOG is not.* The ADR does not say, but the code does:
+    `_realize.py:386` emits a `<pane>:selection` layer from
+    `session.selection`, so a snapshot that omits the set cannot satisfy
+    S5c's own oracle — restored-realize == built-realize is FALSE for any
+    session with a live selection. That also makes the naive round-trip
+    test worthless: an empty selection round-trips whether or not the
+    field is serialised, so the discriminating case is a snapshot taken
+    with a NON-EMPTY selection.
+    The `SelectionLog` op history is NOT state: nothing realizes from it,
+    it is an undo/provenance surface (0045), and a replayed log would
+    have to re-derive gestures that no longer have a model to hit.
+    Restore therefore writes the set as ONE `OpKind.SET` gesture through
+    the real store — the restored session's log honestly says "one write,
+    from a file", instead of forging a history.
+    The "wrong picture" worry is already answered by realize:
+    `_selection_layer` intersects the set with the points THIS pane draws
+    and returns `None` when nothing matches, so a stale selection
+    restores as an empty highlight, never a lie. And a snapshot is
+    already full of model-bound ids regardless — `PlotSource` carries
+    concrete node ids by §6's copy-the-membership law — so "ids may not
+    match the model" cannot be the line that excludes selection.
+
+15. **S5a — what does a snapshot of an UNLINKED session mean, and what
+    happens when the model moved?** *Settled: `time_linked` and every
+    pane's own instant are all snapshot state; and schema violations
+    refuse loudly while data mismatches degrade with a notice.*
+    Unlinked is the discriminating case: `session.time_linked` plus
+    `session.time` alone would restore an unlinked session with every
+    pane silently relinked to one instant, so each `MeshView.time` and
+    each `PlotView.cursor` is serialised on its own pane and pinned by a
+    test (a linked-only test passes either way — the panes' own instants
+    are ignored while the link is on).
+    The two failure families are deliberately NOT treated alike:
+    * **Schema / ontology violation** — an unknown slot category, pane
+      kind, plot kind, scope axis, deform field, a missing marker, an
+      unknown version — REFUSES LOUDLY. The file claims a picture this
+      ontology does not have; the closed §4 catalog is the amended-0094
+      INV-10 enforcement point, and restore reaches it by constructing
+      the real frozen records, so the IR's validators ARE the schema's
+      validators. There is no second, weaker copy of the laws.
+    * **Data mismatch** — an instant naming a stage these results no
+      longer have, a step past the end of a shortened run, a selected
+      node that is gone — DEGRADES with a notice on the returned
+      `RestoredSession.notices`. A stage rename must not cost the human
+      every pane, slot and scope in the file; the instant drops to
+      `None`, which realize already documents as "last stage, last
+      step". Silence is the only forbidden option.
+    Validation happens at RESTORE, not at first paint. Unvalidated, a
+    dead stage id surfaces as `results.stage()` raising inside a
+    repaint — a traceback that names a stage, deep in the reconciler,
+    for a fault that belongs to a file. Restore validates through the
+    same `results.stage(...)` lookup realize uses, so the two cannot
+    disagree about which stages exist. An IR-only restore (`results=None`)
+    has nothing to validate against and restores verbatim.
+
 ## Per-slice notes (what the sizing verified)
 
 **S0 (M).** New package `src/apeGmsh/results/session/` (`_time`, `_slots`,
@@ -293,6 +349,56 @@ _VIEWS token check; INVALID_ARGS when combined with view=; **MCP render
 refuses old-schema files, never renames** (the rename belongs to the human
 flow); primary oracle is restored-realize == built-realize at the IR layer,
 PNG behind a GL skip marker.
+
+*S5a shipped (2026-08-18) — for S5b and S5c:*
+
+- **The schema is `kind` + `version`, not `schema_version`.** The new file
+  carries `kind: "apegmsh.results.session"` and `version: 1`; the OLD
+  envelope carries an int `schema_version` and no `kind`. The two shapes
+  are told apart by a key that exists, never by comparing 1 against 13 —
+  `legacy_shape(data)` is the bare predicate, exported, and it is what
+  S5c's MCP verb should call. `load_snapshot(path, rename_legacy=False)`
+  already implements S5c's "refuse old-schema files, never rename":
+  it raises `LegacySessionFile` (carrying `.path` and `.schema_version`)
+  and touches nothing on disk.
+- **`restore_snapshot` returns a `RestoredSession(session, notices)`,
+  not a session.** Notices are a return value, not a log line, because
+  the caller decides how loud to be — S5b's pin report and S5c's MCP
+  response should surface them rather than drop them.
+- **`saved_at` is in the payload**, so two snapshots of one session are
+  not byte-identical. If S5b wants a stable content digest for a pin,
+  hash the payload with that key removed; do not remove the key.
+- **`atomic_write_text` moved to `apeGmsh._atomic_io`** (studio/_paths
+  re-exports it, so every studio call site is unchanged). Anything else
+  outside `studio` that needs an atomic write takes it from there.
+- **The realize oracle lives in
+  `tests/viewers/test_session_snapshot_realize.py`** and S5c reuses it
+  verbatim: `_canon` + `_scene` compare two realizes structurally. Two
+  gotchas it already pays for — `MeshLayer.layer_id` embeds `id()` of the
+  emitting object, so it differs between ANY two realizes (the stable
+  identity is `RealizedLayer.key`, and the digest substitutes it); and
+  `view.overlay` is still unrealizable (S1), so a realize oracle cannot
+  carry it even though it IS snapshot state.
+- **Cost at scale, measured (trap 4a):** panes are O(10) and slots O(7),
+  so the only term that grows with the model is the §8 selection. 1k /
+  16k / 100k selected nodes snapshot+restore in 1.5 / 36 / 163 ms, and
+  100k is 1.29 MB of JSON (202 ms including the atomic write and the
+  re-read). Linear — and only because S4-2 made the store set-backed;
+  the same 100k would have been ~17 min against the pre-S4-2 store.
+  `tests/results/session/test_snapshot.py` carries a deliberately loose
+  16k/5 s catastrophe detector, not a perf assertion.
+- **A snapshot whose stage ids no longer exist (trap 4b)** drops the
+  instant with a notice and keeps every pane, slot and scope; realize's
+  documented fallback (last stage, last step) then draws it. Validated
+  at RESTORE, through the same `results.stage()` lookup realize uses,
+  because unvalidated it surfaces as a traceback inside a repaint.
+- **Not in this slice, deliberately:** no window wiring. Nothing
+  save-on-closes or restore-on-opens yet — §11 puts "the restore/save
+  snapshot semantics" in the S6 flip, and the old window still owns
+  `<results>.viewer-session.json` until then. S5a is the serialization
+  surface plus the gate that makes that flip safe.
+- 13 mutations of the PRODUCT were run against the new tests; all 13 go
+  red (harness recipe in the PR body).
 
 **S6 (4 PRs, order S6c → S6a → S6b → S6d).** S6 is de-publication, not
 deletion — render.py tokens, web_viewer hatch, `_verbs._yield_setup` keep
