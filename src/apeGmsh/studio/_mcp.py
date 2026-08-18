@@ -445,20 +445,211 @@ def assess(
     return payload
 
 
+#: Old-ontology knobs that mean nothing to a snapshot. Refused rather
+#: than ignored: a caller who passes step= to a snapshot pinned at its
+#: own instant has a different picture in mind than the one they would
+#: get, and silently drawing the other one is the lie.
+_SESSION_CONFLICTS = ("view", "component", "step", "deform", "pack")
+
+
+def _render_session(
+    *,
+    session: str | Path,
+    output: str | Path | None,
+    path: str | Path | None,
+    view: str | None,
+    component: str | None,
+    step: int | None,
+    camera: str | None,
+    pack: bool,
+    deform: str | None,
+    model_h5: str | Path | None,
+    root: Path | str | None,
+) -> dict[str, Any]:
+    """``render(session=…)`` — one pane of a snapshot (ADR 0098 S5c)."""
+    passed = [
+        name for name, value in (
+            ("view", view), ("component", component), ("step", step),
+            ("deform", deform), ("pack", pack or None),
+        ) if value is not None
+    ]
+    if passed:
+        return _fail(
+            "INVALID_ARGS",
+            f"session= renders a saved session, whose pictures are the "
+            f"ADR 0098 slot catalog, not a view token — "
+            f"{', '.join(passed)} do not apply. The snapshot chooses "
+            f"what is drawn; pane= chooses which pane.",
+            written=[],
+        )
+    base = _require_root_dir(root)
+    if isinstance(base, dict):
+        return {**base, "written": [], "returncode": 2}
+    src = _resolve(session, base)
+    if not src.is_file():
+        return _fail(
+            "NOT_FOUND",
+            f"file not found: {src}",
+            returncode=2,
+            session=display_path(src, base),
+            written=[],
+        )
+    refusal = _refuse_old_session(src, base)
+    if refusal is not None:
+        return refusal
+
+    visors = visors_path(base)
+    visors.mkdir(parents=True, exist_ok=True)
+    out = (
+        _resolve(output, base) if output is not None
+        else visors / f"{src.stem}.png"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    argv = [
+        sys.executable, "-m", "apeGmsh.results.session", "render",
+        str(src), str(out),
+    ]
+    if path is not None:
+        argv.extend(["--results", str(_resolve(path, base))])
+    if model_h5 is not None:
+        argv.extend(["--model-h5", str(_resolve(model_h5, base))])
+    if camera is not None:
+        argv.extend(["--camera", camera])
+    argv.append("--json")
+    proc = _shell(argv, cwd=base)
+    if proc.timed_out:
+        return _fail(
+            "TIMEOUT",
+            f"render exceeded {_timeout_s()}s",
+            returncode=-1,
+            session=display_path(src, base),
+            written=[],
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
+    written = [display_path(w, base) for w in _parse_written(proc.stdout)]
+    ok = proc.returncode == 0
+    return {
+        "ok": ok,
+        "error": None if ok else {
+            "code": "RENDER_FAILED",
+            "message": (
+                _json_error(proc.stdout)
+                or (proc.stderr or "").strip()
+                or "render failed"
+            ),
+        },
+        "returncode": proc.returncode,
+        "session": display_path(src, base),
+        "written": written,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+    }
+
+
+def _refuse_old_session(src: Path, base: Path) -> "dict[str, Any] | None":
+    """Refuse a v13 viewer session. NEVER rename it.
+
+    The rename-aside belongs to the human flow (ADR 0098 Consequences):
+    a batch verb that moved a user's file aside would be doing surgery
+    nobody asked for. Checked HERE, before spawning anything, by the
+    marker — importing ``results.session`` to reuse its reader would
+    pull ``viewers`` into this module, which promises none. The child
+    validates again with ``rename_legacy=False``.
+    """
+    from ._bundle import _SESSION_SNAPSHOT_KIND
+
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return _fail(
+            "INVALID_ARGS",
+            f"{display_path(src, base)} is not readable JSON: {exc}",
+            written=[],
+        )
+    if isinstance(data, dict) and data.get("kind") == _SESSION_SNAPSHOT_KIND:
+        return None
+    legacy = isinstance(data, dict) and "schema_version" in data
+    if legacy:
+        message = (
+            f"{display_path(src, base)} is an OLD viewer session "
+            f"(schema v{data.get('schema_version')}); ADR 0098 does not "
+            f"render it, and this verb never renames files — open it in "
+            f"the results window to have it moved aside."
+        )
+    else:
+        message = (
+            f"{display_path(src, base)} is not an apeGmsh session "
+            f"snapshot (no {_SESSION_SNAPSHOT_KIND!r} marker)."
+        )
+    return _fail("INVALID_ARGS", message, written=[])
+
+
+def _json_error(stdout: str) -> str:
+    """The child's ``error`` field, when it emitted one."""
+    for line in reversed((stdout or "").strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and data.get("error"):
+                return str(data["error"])
+    return ""
+
+
 def render(
-    path: str | Path,
+    path: str | Path | None = None,
     output: str | Path | None = None,
     *,
-    view: str = "contour",
+    session: str | Path | None = None,
+    view: str | None = None,
     component: str | None = None,
-    step: int = -1,
-    camera: str = "iso",
+    step: int | None = None,
+    camera: str | None = None,
     pack: bool = False,
     deform: str | None = None,
     model_h5: str | Path | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """One still or ``render_pack`` via ``python -m apeGmsh.viewers render``."""
+    """One still or ``render_pack``, out of process.
+
+    Two doors, one verb. ``path=`` renders a results file through the
+    closed ``view`` vocabulary (ADR 0094 S5). ``session=`` renders one
+    pane of a saved ADR 0098 snapshot — the picture a HUMAN arranged,
+    whose content is the §4 slot catalog rather than a view token, so
+    the token check does not apply and the old-ontology knobs are
+    refused instead of silently ignored (S5c).
+
+    ``view`` / ``step`` / ``camera`` are ``None``-defaulted so an
+    explicit value is distinguishable from an unset one; the results
+    door still falls back to ``contour`` / ``-1`` / ``iso``.
+    """
+    if session is not None:
+        return _render_session(
+            session=session,
+            output=output,
+            path=path,
+            view=view,
+            component=component,
+            step=step,
+            camera=camera,
+            pack=pack,
+            deform=deform,
+            model_h5=model_h5,
+            root=root,
+        )
+    if path is None:
+        return _fail(
+            "INVALID_ARGS",
+            "render needs path= (a results file) or session= (a saved "
+            "ADR 0098 session snapshot).",
+            written=[],
+        )
+    view = "contour" if view is None else view
+    step = -1 if step is None else step
+    camera = "iso" if camera is None else camera
     if view not in _VIEWS:
         return _fail(
             "INVALID_VIEW",

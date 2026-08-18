@@ -91,6 +91,11 @@ def build_server() -> Any:
             "animate kind=history|yield; no setup=. formation is later. "
             "kind=yield is a von Mises contour on auto-scaled deform, "
             "not an iso-clip. "
+            "render(session=<results>.session.json) draws one pane of a "
+            "saved ADR 0098 session — the picture a human arranged. Its "
+            "content is the slot catalog, not a view token, so view / "
+            "component / step / deform / pack are refused with it, and "
+            "an old .viewer-session.json is refused and never renamed. "
             "results_pin(session_snapshot=) pins an ADR 0098 session "
             "snapshot (<results>.session.json) — stamped in the ledger "
             "under session_snapshot and COPIED into the pin; the old "
@@ -148,23 +153,25 @@ def build_server() -> Any:
 
     @mcp.tool()
     def render(
-        path: str,
+        path: str | None = None,
         output: str | None = None,
-        view: str = "contour",
+        session: str | None = None,
+        view: str | None = None,
         component: str | None = None,
-        step: int = -1,
-        camera: str = "iso",
+        step: int | None = None,
+        camera: str | None = None,
         pack: bool = False,
         deform: str | None = None,
         model_h5: str | None = None,
         root: str | None = None,
     ) -> dict[str, Any]:
-        """Write a still (or canned pack) under .apegmsh/visors/. Closed view=."""
+        """Write a still under .apegmsh/visors/. path= + closed view=, OR session= for a saved ADR 0098 snapshot."""
         return logged(
             "render",
             _render,
             path,
             output,
+            session=session,
             view=view,
             component=component,
             step=step,

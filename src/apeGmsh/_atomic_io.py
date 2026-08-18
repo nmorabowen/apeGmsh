@@ -21,6 +21,33 @@ import time
 from pathlib import Path
 
 
+def replace_with_retry(src: "Path | str", dest: "Path | str") -> None:
+    """``os.replace`` that survives a transient Windows denial.
+
+    On Windows a concurrent reader — an indexer, a scanner, another
+    process mid-read — can briefly deny a replace that would simply
+    succeed on POSIX. Retrying with a short backoff is the difference
+    between a rare, unreproducible failure on a loaded machine and a
+    correct operation.
+
+    Every atomic replace in the tree goes through here, so the guard is
+    not something a second caller has to remember to write. It is
+    ``replace`` semantics throughout: the destination is overwritten,
+    and callers who must NOT overwrite (the ADR 0098 legacy
+    rename-aside) prove the destination is free first.
+    """
+    last_err: OSError | None = None
+    for attempt in range(20):
+        try:
+            os.replace(src, dest)
+            return
+        except PermissionError as exc:
+            last_err = exc
+            time.sleep(0.01 * (attempt + 1))
+    if last_err is not None:
+        raise last_err
+
+
 def atomic_write_text(
     path: Path | str,
     text: str,
@@ -45,18 +72,7 @@ def atomic_write_text(
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        # Windows: a concurrent reader may briefly deny replace.
-        last_err: OSError | None = None
-        for attempt in range(20):
-            try:
-                os.replace(tmp_name, dest)
-                last_err = None
-                break
-            except PermissionError as exc:
-                last_err = exc
-                time.sleep(0.01 * (attempt + 1))
-        if last_err is not None:
-            raise last_err
+        replace_with_retry(tmp_name, dest)
     except Exception:
         try:
             os.unlink(tmp_name)
@@ -66,4 +82,4 @@ def atomic_write_text(
     return dest
 
 
-__all__ = ["atomic_write_text"]
+__all__ = ["atomic_write_text", "replace_with_retry"]
