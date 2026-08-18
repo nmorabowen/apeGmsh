@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/ledger_pin.schema.json",
+  "title": "RunLedgerPinRecord",
+  "description": "A pin line of .apegmsh/runs.jsonl (kind=\"pin\"). The file interleaves two record kinds: run lines, which carry no 'kind' and validate against ledger.schema.json, and pin lines, which carry kind=\"pin\" and validate against this one. Discriminate on the 'kind' field before validating; a pin line has no script/phase/ok and is correctly refused by the run schema.",
+  "type": "object",
+  "required": ["schema", "kind", "id", "ts"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "pin" },
+    "id": { "type": "string" },
+    "ts": { "type": "string" },
+    "model_h5": { "type": ["object", "null"] },
+    "results": { "type": ["object", "null"] },
+    "session_snapshot": { "type": ["object", "null"] },
+    "visors": { "type": "array" },
+    "assess": { "type": ["object", "null"] },
+    "chapter": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

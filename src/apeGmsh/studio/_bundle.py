@@ -12,6 +12,8 @@ Pure: no ``gmsh``, no Qt, no viewers.
 from __future__ import annotations
 
 import hashlib
+import itertools
+import json
 import os
 import shutil
 from datetime import datetime, timezone
@@ -25,6 +27,8 @@ from ._paths import (
     atomic_write_text,
     ledger_path,
     pin_assess_path,
+    pin_dir,
+    pin_session_snapshot_path,
     visors_path,
 )
 from ._skins import default_canvas_path, render_canvas, render_html
@@ -36,6 +40,15 @@ EMIT_SHIPPED = frozenset({"markdown", "html", "canvas"})
 _VISOR_SUFFIX = frozenset({".png", ".gif", ".mp4", ".jpg", ".jpeg", ".webp"})
 _DEFAULT_CHAPTER = Path("docs") / "studio-report.md"
 _DEFAULT_HTML = Path("docs") / "studio-report.html"
+
+#: The ADR 0098 session-snapshot marker. Duplicated here ON PURPOSE:
+#: ``results.session`` imports ``viewers.core.selection`` (S0's recorded
+#: layering exception), and this module promises no viewers — so it
+#: recognises a snapshot by its marker instead of importing the reader.
+#: ``tests/studio/test_bundle.py`` asserts this literal still equals
+#: ``apeGmsh.results.session.SNAPSHOT_KIND``, which is where a drift
+#: would otherwise go unnoticed.
+_SESSION_SNAPSHOT_KIND = "apegmsh.results.session"
 
 
 def collect_bundle(
@@ -86,18 +99,36 @@ def results_pin(
     results: str | Path | None = None,
     *,
     assess: dict[str, Any] | None = None,
+    session_snapshot: str | Path | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a pin line to ``runs.jsonl``. Records paths + hashes, no copy."""
+    """Append a pin line to ``runs.jsonl``.
+
+    ``model_h5`` / ``results`` are recorded by path + hash, never copied:
+    they are large and nobody rewrites them under you.
+
+    ``session_snapshot`` is the ADR 0098 presentation session (S5b) — the
+    picture a human arranged, so an agent can draw a still of it later
+    (§11 S5). That one IS copied into the pin folder, per the Amendment-5
+    lifecycle: the live ``<results>.session.json`` is rewritten on every
+    save, so a hash alone would pin content that is already gone.
+    """
     base = Path.cwd() if root is None else Path(root)
     model_path = _optional_file(model_h5, base)
     results_path = _optional_file(results, base)
-    if model_path is None and results_path is None:
-        raise ValueError("results_pin needs model_h5= and/or results=")
+    snapshot_path = _optional_file(session_snapshot, base)
+    if model_path is None and results_path is None and snapshot_path is None:
+        raise ValueError(
+            "results_pin needs model_h5=, results= and/or "
+            "session_snapshot="
+        )
+    snapshot_text = (
+        _read_session_snapshot(snapshot_path)
+        if snapshot_path is not None else None
+    )
     visors = list_visors(base)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    stamp = ts.replace("-", "").replace(":", "")
-    pin_id = f"pin-{stamp}"
+    pin_id = _unique_pin_id(base, ts.replace("-", "").replace(":", ""))
     record = {
         "schema": BUNDLE_SCHEMA,
         "kind": "pin",
@@ -105,10 +136,21 @@ def results_pin(
         "ts": ts,
         "model_h5": _file_stamp(model_path),
         "results": _file_stamp(results_path),
+        # `session_snapshot`, not `session`: a ledger record already uses
+        # `session` for the run's session name (plan decision 11).
+        "session_snapshot": _file_stamp(snapshot_path),
         "visors": visors,
         "assess": assess,
         "chapter": None,
     }
+    if snapshot_text is not None:
+        # BEFORE append_run, and not best-effort: the caller named this
+        # file, so a pin line claiming a snapshot that was never copied
+        # would be a lie. The assess copy below is best-effort because
+        # nobody asked for it — it is discovered, not named.
+        atomic_write_text(
+            pin_session_snapshot_path(pin_id, base), snapshot_text,
+        )
     append_run(ledger_path(base), record)
     _pin_assess_snapshot(base, pin_id)
     return {
@@ -117,6 +159,61 @@ def results_pin(
         "path": str(ledger_path(base)),
         "pin": record,
     }
+
+
+def _unique_pin_id(base: Path, stamp: str) -> str:
+    """A pin id nothing has taken yet.
+
+    The stamp is second-granular, so two pins inside one second used to
+    share an id: two ledger lines claiming to be the same pin, and the
+    second pin's folder written straight over the first's. That was
+    survivable while a pin folder held only the assess snapshot — a
+    re-derivable verdict — but the session snapshot (S5b) has usually
+    been overwritten in its live location by the time anyone opens the
+    pin, so losing the copy loses the picture outright.
+    """
+    taken = {
+        row.get("id") for row in read_runs(ledger_path(base))
+        if row.get("kind") == "pin"
+    }
+    for suffix in itertools.chain(
+        [""], (f"-{n}" for n in itertools.count(2)),
+    ):
+        candidate = f"pin-{stamp}{suffix}"
+        if candidate not in taken and not pin_dir(candidate, base).exists():
+            return candidate
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _read_session_snapshot(path: Path) -> str:
+    """The snapshot's bytes, after checking it really is one.
+
+    Refused loudly rather than pinned blind: the near-miss is the OLD
+    viewer's ``<results>.viewer-session.json``, which sits beside the new
+    file, has a similar name, and would pin as an opaque hash that S5c
+    then refuses at render time — a failure one step too late, against
+    the wrong artifact.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"session_snapshot={path} is not readable JSON: {exc}"
+        ) from None
+    kind = data.get("kind") if isinstance(data, dict) else None
+    if kind != _SESSION_SNAPSHOT_KIND:
+        extra = (
+            " That file is the OLD viewer's session (it carries "
+            "'schema_version'), not an ADR 0098 snapshot."
+            if isinstance(data, dict) and "schema_version" in data else ""
+        )
+        raise ValueError(
+            f"session_snapshot={path} is not an apeGmsh session "
+            f"snapshot: expected kind={_SESSION_SNAPSHOT_KIND!r}, got "
+            f"{kind!r}.{extra}"
+        )
+    return text
 
 
 def _pin_assess_snapshot(base: Path, pin_id: str) -> None:

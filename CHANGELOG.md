@@ -22,6 +22,54 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot
+
+`results_pin(session_snapshot=…)` pins the picture a human arranged. The
+ledger key is `session_snapshot` — `session` already means the run's
+session name in a ledger record — and unlike `model_h5` / `results`,
+which are recorded by path and hash only, that file is **copied** into
+`.apegmsh/pins/<pin-id>/session_snapshot.json` per the Amendment-5
+lifecycle. The reason is not symmetry: the live `<results>.session.json`
+is rewritten on every save, so a stamp alone pins content that is already
+gone. A file that is not a session snapshot is refused here — the retired
+`<results>.viewer-session.json` is the near-miss, and pinned blind it
+becomes an opaque hash that S5c refuses at render time, one step too late
+and against the wrong artifact.
+
+### ADDED — the pin record now HAS a published schema (INV-17)
+
+`runs.jsonl` interleaves two record kinds, and the published contract
+described only one of them. A real pin record from the shipped writer was
+**refused** by the shipped `ledger.schema.json` (`missing required
+'script'`), so any out-of-tree consumer validating the ledger line by
+line rejected every pin line. `ledger_pin.schema.json` + its golden
+fixture now describe pin lines: a run line carries no `kind` and
+validates as `ledger`, a pin line carries `kind: "pin"` and validates as
+`ledger_pin`, and a consumer discriminates on `kind` first. Two schemas
+rather than one `oneOf` because the shipped validator is a deliberate
+draft-07 subset a Workbench-side reimplementation can match without a
+JSON Schema library — and relaxing the run schema's `required` list to
+admit both would stop it catching a run line that lost its `script`. The
+new live-writer round-trip test validates a REAL `results_pin` record
+against the published schema, which is the check that was missing.
+`contract_version` is `1.7.0` (additive: new kind, new field, same
+major).
+
+### FIXED — two pins inside one second no longer destroy each other
+
+Pin ids are second-granular, so two pins in the same UTC second shared an
+id: two ledger lines claiming to be the same pin, and the second pin's
+folder written straight over the first's. Survivable while a pin folder
+held only the assess snapshot (a re-derivable verdict); data loss once it
+holds the session snapshot, whose live original has usually been
+overwritten by the time anyone opens the pin. `results_pin` now takes the
+first id no ledger line and no existing pin folder has claimed
+(`pin-<stamp>`, then `pin-<stamp>-2`, …). The folder check matters on its
+own: a pin folder left behind by a run whose ledger append tore (tolerated
+by design, INV-16) must still not be written over. Proven with a frozen
+clock — the first version of that test raced the wall clock and skipped,
+which is the same as not having it.
+
 ### ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate
 
 A `ResultsSession` now serialises. `session.snapshot()` is the document

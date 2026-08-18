@@ -91,6 +91,10 @@ def build_server() -> Any:
             "animate kind=history|yield; no setup=. formation is later. "
             "kind=yield is a von Mises contour on auto-scaled deform, "
             "not an iso-clip. "
+            "results_pin(session_snapshot=) pins an ADR 0098 session "
+            "snapshot (<results>.session.json) — stamped in the ledger "
+            "under session_snapshot and COPIED into the pin; the old "
+            ".viewer-session.json is refused. "
             "emit_report format=markdown|html|canvas; markdown is the archive; "
             "html is docs/ print; canvas is IDE canvases/ (not git-portable). "
             "highlight writes .apegmsh/highlight.json only (file poll, "
@@ -198,11 +202,17 @@ def build_server() -> Any:
     def results_pin(
         model_h5: str | None = None,
         results: str | None = None,
+        session_snapshot: str | None = None,
         root: str | None = None,
     ) -> dict[str, Any]:
-        """Stamp model.h5 / results path+hash into the ledger. No file copy."""
+        """Stamp model.h5 / results path+hash into the ledger. session_snapshot= also copies that file into the pin."""
         return logged(
-            "results_pin", _results_pin, model_h5=model_h5, results=results, root=root,
+            "results_pin",
+            _results_pin,
+            model_h5=model_h5,
+            results=results,
+            session_snapshot=session_snapshot,
+            root=root,
         )
 
     @mcp.tool()

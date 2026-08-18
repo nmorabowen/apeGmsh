@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "kind": "pin",
+  "id": "pin-20260818T120000Z",
+  "ts": "2026-08-18T12:00:00Z",
+  "model_h5": {
+    "path": "/project/model.h5",
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "size": 4096
+  },
+  "results": {
+    "path": "/project/outputs/results.h5",
+    "sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+    "size": 8192
+  },
+  "session_snapshot": {
+    "path": "/project/outputs/results.h5.session.json",
+    "sha256": "d2a84f4b8b650937ec8f73cd8be2c74add5a911ba64df27458ed8229da804a26",
+    "size": 512
+  },
+  "visors": [],
+  "assess": null,
+  "chapter": null
+}
