@@ -10,7 +10,6 @@ UI-thread law holds through the GUI.
 from __future__ import annotations
 
 import os
-import sys
 import threading
 
 import pytest
@@ -81,23 +80,6 @@ def test_dispatch_greys_until_fresh():
 # ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    sys.platform.startswith("linux"),
-    reason=(
-        "SEGFAULTS the interpreter on the Linux CI suite lane "
-        "(exit 139, no Python traceback — a native abort). This test "
-        "drives a worker-thread section build (subprocess mesh via "
-        "_mesh_proc) in a process that already holds gmsh + Qt + VTK; "
-        "``_properties._build`` documents that exact combination as "
-        "able to 'abort the interpreter outright, below the reach of "
-        "the except'. Deterministic (3/3) on ADR 0098 S3's merge with "
-        "main, green (2/2) on either parent alone, and green on "
-        "Windows — so the crash is real and latent, and the skip is a "
-        "TEMPORARY unblock, not a diagnosis. The product path it "
-        "covers (live properties in the section builder) can still "
-        "crash for a Linux user; re-enable with the root cause."
-    ),
-)
 def test_panel_matches_headless_build_off_ui_thread():
     _qapp()
     doc = _rect_doc()

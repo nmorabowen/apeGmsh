@@ -43,7 +43,10 @@ ape.project.yaml
 1. Start from `scripts/start.ps1` (template + mcp.json root), then
    `APE/README.md` → `instructions/how-we-work.md` →
    `instructions/studio-mcp.md` (verify live `status.root`) →
-   `memory/brief.md`.
+   `memory/brief.md`. Work from the **latest apeGmsh**: pull or upgrade
+   it before the first run and verify the import (`apeGmsh.__file__`,
+   `apeGmsh.__version__`) points at it — a session debugged against a
+   stale library is wasted.
 2. **Modeling is Socratic and progressive** —
    `instructions/socratic-geometry.md` (confirm intent) and
    `instructions/progressive-modeling.md` (oracle → metrics → escalate
