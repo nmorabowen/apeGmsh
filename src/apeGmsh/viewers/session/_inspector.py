@@ -146,6 +146,7 @@ class MeshInspectorPage:
         layout.setSpacing(4)
 
         layout.addWidget(self._build_deform_row())
+        layout.addWidget(self._build_time_row())
         self._rows: dict[str, _SlotRow] = {}
         for row in self._build_slot_rows():
             self._rows[row.category] = row
@@ -179,6 +180,7 @@ class MeshInspectorPage:
                 )
             for category, row in self._rows.items():
                 row.sync(view.slots.get(category))
+            self._sync_time_row()
         finally:
             self._syncing = False
 
@@ -366,6 +368,123 @@ class MeshInspectorPage:
         return write
 
     # -- data ----------------------------------------------------------
+
+    def _build_time_row(self) -> QtWidgets.QWidget:
+        """§9's "pane time — set it here; the link ignores it".
+
+        The control stays ENABLED while the link is on, because that
+        sentence is literal: this is the instant the pane takes when
+        the link comes off, and you set it here whenever. What changes
+        with the link is only the note beside it, which says whether
+        the value is currently the one on screen.
+        """
+        box = QtWidgets.QWidget()
+        outer = QtWidgets.QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        line = QtWidgets.QHBoxLayout()
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(4)
+        line.addWidget(QtWidgets.QLabel("Pane time"))
+
+        self._time_stage = QtWidgets.QComboBox()
+        self._time_stage.setObjectName("SessionInspectorPaneStage")
+        for stage_id in self._time_stages():
+            self._time_stage.addItem(stage_id, stage_id)
+        self._time_stage.currentIndexChanged.connect(
+            safe_slot(self._on_pane_time_changed),
+        )
+        line.addWidget(self._time_stage, stretch=1)
+
+        self._time_step = QtWidgets.QSpinBox()
+        self._time_step.setObjectName("SessionInspectorPaneStep")
+        self._time_step.setMinimum(0)
+        self._time_step.valueChanged.connect(
+            safe_slot(self._on_pane_time_changed),
+        )
+        line.addWidget(self._time_step)
+
+        self._time_clear = QtWidgets.QToolButton()
+        self._time_clear.setText("Clear")
+        self._time_clear.setToolTip(
+            "Drop this pane's own instant (it then has none of its own)."
+        )
+        self._time_clear.clicked.connect(safe_slot(self._on_pane_time_clear))
+        line.addWidget(self._time_clear)
+        outer.addLayout(line)
+
+        self._time_note = QtWidgets.QLabel("")
+        self._time_note.setObjectName("SessionInspectorPaneTimeNote")
+        self._time_note.setWordWrap(True)
+        self._time_note.setEnabled(False)
+        outer.addWidget(self._time_note)
+        return box
+
+    def _time_stages(self) -> "list[str]":
+        results = self._session.results
+        if results is None:
+            return []
+        try:
+            return [
+                str(s.id) for s in results.stages
+                if getattr(s, "kind", None) != "mode"
+            ]
+        except Exception:
+            return []
+
+    def _sync_time_row(self) -> None:
+        view = self._view
+        own = view.time
+        if own is not None:
+            index = self._time_stage.findData(own.stage)
+            if index >= 0:
+                self._time_stage.setCurrentIndex(index)
+            self._time_step.setValue(int(own.step))
+        stage_id = self._time_stage.currentData()
+        self._time_step.setMaximum(max(0, self._n_steps(stage_id) - 1))
+        self._time_clear.setEnabled(own is not None)
+        if view.is_mode_posed:
+            note = (
+                "This view is mode-posed, so it has no instant at all "
+                "and is frozen under the link (§4/§7)."
+            )
+        elif self._session.time_linked:
+            note = (
+                "The time link is on, so this pane follows the "
+                "scrubber and this value is ignored until you unlink."
+            )
+        elif own is None:
+            note = "No instant of its own — this pane draws nothing timed."
+        else:
+            note = "This pane is on its own instant."
+        self._time_note.setText(note)
+
+    def _n_steps(self, stage_id: Any) -> int:
+        results = self._session.results
+        if stage_id is None or results is None:
+            return 0
+        try:
+            return max(0, int(results.stage(str(stage_id)).n_steps))
+        except Exception:
+            return 0
+
+    def _on_pane_time_changed(self, *_args: Any) -> None:
+        if self._syncing:
+            return
+        stage_id = self._time_stage.currentData()
+        if stage_id is None:
+            return
+        from apeGmsh.results.session import Instant
+
+        n = self._n_steps(stage_id)
+        if n <= 0:
+            return
+        step = max(0, min(int(self._time_step.value()), n - 1))
+        self._view.time = Instant(str(stage_id), step)
+
+    def _on_pane_time_clear(self) -> None:
+        if not self._syncing:
+            self._view.time = None
 
     def _recorded_components(self) -> "tuple[set[str], set[str]]":
         """What the realized stage records — the pickers' vocabulary."""

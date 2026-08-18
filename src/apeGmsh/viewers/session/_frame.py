@@ -77,6 +77,19 @@ _ICON_PX = 16
 _HIT_PX = 22
 
 
+#: Longest stage id the badge spells out. Past this it elides, so a
+#: descriptive stage name ("stage_3_pushover_north") cannot widen the
+#: header — the full value is always in the tooltip.
+_BADGE_STAGE_CHARS = 12
+
+
+def _short_stage(stage_id: str) -> str:
+    text = str(stage_id)
+    if len(text) <= _BADGE_STAGE_CHARS:
+        return text
+    return text[: _BADGE_STAGE_CHARS - 1] + "…"
+
+
 class SessionPaneFrame(QtWidgets.QFrame):
     """One pane of the host — header + content, for a mesh or a plot."""
 
@@ -255,6 +268,7 @@ class SessionPaneFrame(QtWidgets.QFrame):
         # The label can be squeezed to nothing (see _build_header), so
         # the name has to survive somewhere legible.
         self._title.setToolTip(name)
+        self._refresh_time_badge()
         if not self._is_mesh:
             return
         self._syncing = True
@@ -266,6 +280,49 @@ class SessionPaneFrame(QtWidgets.QFrame):
                 button.setChecked(name == view.pick_target)
         finally:
             self._syncing = False
+
+    def _refresh_time_badge(self) -> None:
+        """Show THIS pane's instant — but only when it is news (§7).
+
+        Linked, every pane sits on the session instant the scrubber
+        already displays, so a badge on each one would be the same
+        number N times. It earns its space in exactly two states:
+
+        * the link is OFF, and this pane keeps its own instant;
+        * the view is MODE-POSED, which has no instant at all and is
+          frozen under the link either way (§4/§7) — the one case
+          where the scrubber is moving and this pane is not, which
+          without a badge reads as a broken pane.
+        """
+        view = self._view
+        if self._is_mesh and getattr(view, "is_mode_posed", False):
+            mode = getattr(view.deform, "mode", None)
+            self._time_badge.setText(
+                "mode" if mode is None else f"mode {mode}"
+            )
+            self._time_badge.setToolTip(
+                "A mode pose has no instant: this pane is frozen "
+                "under the time link (ADR 0098 §4/§7)."
+            )
+            self._time_badge.setVisible(True)
+            return
+        if self._session.time_linked:
+            self._time_badge.setVisible(False)
+            return
+        instant = self._session.effective_instant(view)
+        if instant is None:
+            self._time_badge.setText("no instant")
+            full = "This pane has no instant of its own."
+        else:
+            self._time_badge.setText(
+                f"{_short_stage(instant.stage)} · {instant.step}"
+            )
+            full = f"{instant.stage} · step {instant.step}"
+        self._time_badge.setToolTip(
+            f"{full}\nThe time link is off, so this pane keeps its "
+            f"own instant. Set it in the inspector."
+        )
+        self._time_badge.setVisible(True)
 
     # -- Qt ------------------------------------------------------------
 
@@ -341,12 +398,24 @@ class SessionPaneFrame(QtWidgets.QFrame):
                 self._pick_group.addButton(button)
             row.addStretch(1)
 
-        # Reserved: the per-pane instant badge (S4-3 when the time link
-        # is off / the plot cursor). Built and empty so the header's
-        # geometry does not shift when it starts rendering.
+        # The per-pane instant badge (§7, S4-3). Built empty since
+        # S4-1 so the header's geometry does not shift when it starts
+        # rendering; :meth:`_refresh_time_badge` fills it.
         self._time_badge = QtWidgets.QLabel("")
         self._time_badge.setObjectName("SessionPaneTimeBadge")
         self._time_badge.setVisible(False)
+        # Squeezable, exactly like the title (A1.4): the badge is
+        # CHROME, and a label that refuses to shrink below its text
+        # pushes the frame's minimumSizeHint past LAYOUT.pane_min_width
+        # — which required_extent() and the Add gate still compute
+        # with, so the gate would admit a column the splitter cannot
+        # fit. Measured: an unelided stage id took the frame's floor
+        # from 207 px to 593. The full value lives in the tooltip.
+        self._time_badge.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        self._time_badge.setMinimumWidth(0)
         row.addWidget(self._time_badge)
 
         self._close = QtWidgets.QToolButton()
