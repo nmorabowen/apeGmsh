@@ -1155,7 +1155,7 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.overlay};
         font-size: {d_fs_body}px;
     }}
-    QLabel#SessionPanePlotPlaceholder {{
+    QLabel#SessionPlotPaneUnavailable {{
         color: {p.overlay};
         font-size: {d_fs_body}px;
     }}

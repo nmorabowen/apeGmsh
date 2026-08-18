@@ -7,11 +7,29 @@ to arrays and nothing else: no matplotlib, no Qt. The matplotlib still
 numbers — the direct-equality oracle for this resolver is that a
 ``history`` series equals what ``results.plot.history`` plots.
 
-v1 sources are the concrete ones the §8 selection produces (a node or
-a Gauss point); ``label`` / ``physical_group`` sources need an
-aggregation rule (one curve per member vs one aggregate curve) that
-belongs to the S4-2 outline slice, so they refuse loudly here rather
-than guessing. ``path`` / ``xy`` plot kinds likewise wait for S4-2.
+Two rules settled in S4-2:
+
+* **A membership source is one curve PER MEMBER** (plan decision 10b).
+  ``add_plot_from_selection`` already expands a selection into one
+  ``PlotSeries`` per node / Gauss point (§6: "select → New plot COPIES
+  the membership"; "Several series on one chart are one plot view"), so
+  a ``label`` / ``physical_group`` source that aggregated instead would
+  make the same chart mean two different things depending on how it was
+  authored. An aggregate curve also needs a reducer token (mean? max?
+  sum?) that the IR has no field for, and defaulting to one silently is
+  worse than not offering it. The expansion is ONE slab read per
+  source, not one per member — ``pg=`` / ``label=`` are first-class
+  filters on the query layer and a slab is already (T, members).
+* **A plot has a curve cap** (:data:`MAX_SERIES`). It lives here
+  because this is the one place both authoring paths funnel through,
+  and because outline select-all (§8 writer 3) made
+  ``add_plot_from_selection`` able to hand this module 100k sources for
+  the first time. A chart with hundreds of curves is unreadable anyway;
+  what the cap really prevents is reading them.
+
+``path`` / ``xy`` plot kinds stay refusals (plan decision 10): neither
+has an authoring surface in v1, and ``xy`` has nowhere in the IR to put
+a second axis source.
 """
 from __future__ import annotations
 
@@ -20,11 +38,27 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
+from ._gauss_addr import gp_index_within_element
+
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
     from apeGmsh.results.session import (
         Instant, PlotSeries, PlotView, ResultsSession,
     )
+
+
+#: Most curves one plot pane resolves.
+#:
+#: Sized against what a named physical group actually holds — a base,
+#: a floor, one wall face is hundreds of nodes, and §9's select-all
+#: exists to plot exactly those — while still refusing the gesture
+#: that motivates the cap: "select all nodes" on the whole model then
+#: "New plot from selection", which arrives as one concrete source
+#: PER NODE (measured 0.3 ms each, so 100k nodes is ~30 s of reads
+#: for a chart of 100k overlaid lines). Past a few hundred curves the
+#: spaghetti carries no information anyway. The refusal has to come
+#: BEFORE the reads, not after them.
+MAX_SERIES = 256
 
 
 @dataclass(frozen=True, eq=False)
@@ -65,36 +99,54 @@ def realize_plot(
         )
     if plot.kind != "history":
         raise NotImplementedError(
-            f"S1-B resolves 'history' plots; {plot.kind!r} plots land "
-            f"with the S4-2 plot pane (path is evaluated at an instant, "
-            f"xy needs a second axis source — both are that slice's "
-            f"decision)."
+            f"This resolver draws 'history' plots; {plot.kind!r} plots "
+            f"have no v1 authoring surface. A 'path' plot needs an "
+            f"ORDERED source and an arc-length abscissa — §8's "
+            f"selection is a SET, and so is the outline's select-all — "
+            f"and an 'xy' plot needs a second axis source, which "
+            f"PlotSeries(source, quantity) has nowhere to hold. Both "
+            f"are IR widenings, not resolver work."
         )
+    # Cheap gate first: with N concrete sources the reads are N slabs,
+    # and "select all nodes" → "New plot from selection" makes N as
+    # large as the model (§8 writer 3). Refuse before reading anything.
+    _require_under_cap(len(plot.series), "source")
     cursor = session.effective_instant(plot)
     stage_id = cursor.stage if cursor is not None else _last_stage(results)
     scoped = results.stage(stage_id)
-    series = tuple(
-        _resolve_series(s, scoped, stage_id) for s in plot.series
-    )
+    series: list[RealizedSeries] = []
+    for spec in plot.series:
+        series.extend(_resolve_series(spec, scoped, stage_id))
+        _require_under_cap(len(series), "curve")
     return RealizedPlot(
-        pane_id=plot.id, kind=plot.kind, series=series, cursor=cursor,
+        pane_id=plot.id, kind=plot.kind, series=tuple(series), cursor=cursor,
+    )
+
+
+def _require_under_cap(count: int, noun: str) -> None:
+    if count <= MAX_SERIES:
+        return
+    raise ValueError(
+        f"This plot resolves {count} {noun}s; the cap is "
+        f"{MAX_SERIES}. A membership source is one curve per member "
+        f"(ADR 0098 §6), so a whole physical group or a select-all "
+        f"lands here as hundreds of reads for a chart no one can "
+        f"read. Narrow the selection, or name the nodes / Gauss "
+        f"points you mean."
     )
 
 
 def _resolve_series(
     series: "PlotSeries", scoped: "Results", stage_id: str,
-) -> RealizedSeries:
+) -> "list[RealizedSeries]":
+    """One spec → the curves it means. Concrete sources give exactly
+    one; a membership source gives one per member (decision 10b)."""
     source = series.source
     if source.kind == "node":
-        return _node_series(series, scoped, stage_id)
+        return [_node_series(series, scoped, stage_id)]
     if source.kind == "gauss":
-        return _gauss_series(series, scoped, stage_id)
-    raise NotImplementedError(
-        f"Plot source kind {source.kind!r} needs an aggregation rule "
-        f"(one curve per member, or one aggregate curve) — that is the "
-        f"S4-2 outline slice's decision. Use node or gauss sources, "
-        f"which is what a selection produces (§8)."
-    )
+        return [_gauss_series(series, scoped, stage_id)]
+    return _membership_series(series, scoped, stage_id)
 
 
 def _node_series(
@@ -162,6 +214,134 @@ def _gauss_series(
         quantity=series.quantity,
         time=np.asarray(slab.time),
         values=values[:, int(rows[gp_index])],
+    )
+
+
+def _membership_series(
+    series: "PlotSeries", scoped: "Results", stage_id: str,
+) -> "list[RealizedSeries]":
+    """A ``label`` / ``physical_group`` source → one curve per member.
+
+    ONE slab read, not one per member: ``pg=`` / ``label=`` are
+    first-class filters on the query layer and a slab already comes
+    back as ``(T, members)``. The membership is probed at a single
+    step first, so an over-cap group is refused BEFORE its whole
+    record is read — that is the difference between a loud refusal and
+    an out-of-memory read on a select-all-sized group.
+
+    Which topology the members are depends on the QUANTITY, not the
+    source: a nodal component means the group's nodes, a Gauss
+    component means its integration points. Nothing guesses — the
+    stage's recorded vocabulary decides, and an ambiguous or unknown
+    token refuses.
+    """
+    source = series.source
+    key = {"physical_group": "pg", "label": "label"}[source.kind]
+    where = {key: str(source.key)}
+    topology = _membership_topology(series.quantity, scoped, stage_id)
+    if topology == "nodes":
+        return _member_node_series(series, scoped, stage_id, where)
+    return _member_gauss_series(series, scoped, stage_id, where)
+
+
+def _membership_topology(
+    quantity: str, scoped: "Results", stage_id: str,
+) -> str:
+    """``"nodes"`` | ``"gauss"`` for a membership source's quantity."""
+    try:
+        recorded = scoped.inspect.components(stage=stage_id)
+    except Exception:
+        recorded = {}
+    nodal = quantity in set(recorded.get("nodes", ()))
+    gauss = quantity in set(recorded.get("gauss", ()))
+    if nodal and not gauss:
+        return "nodes"
+    if gauss and not nodal:
+        return "gauss"
+    if nodal and gauss:
+        raise ValueError(
+            f"Component {quantity!r} is recorded at BOTH the node and "
+            f"the Gauss level in stage {stage_id!r}, so a membership "
+            f"source cannot say which one it means. Use node or gauss "
+            f"sources to say it explicitly."
+        )
+    from apeGmsh.results import _derived
+
+    if _derived.is_derived(quantity) or _derived.is_shell_derived(quantity):
+        # Derived scalars (von Mises, principals, shell resultants) are
+        # computed on read and never appear in the recorded vocabulary,
+        # but they ARE Gauss quantities — refusing them here would make
+        # a membership source weaker than the concrete gauss source
+        # that resolves them today.
+        return "gauss"
+    raise ValueError(
+        f"Component {quantity!r} is recorded at neither the node nor "
+        f"the Gauss level in stage {stage_id!r} (nodes: "
+        f"{sorted(recorded.get('nodes', ()))}; gauss: "
+        f"{sorted(recorded.get('gauss', ()))})."
+    )
+
+
+def _member_node_series(
+    series: "PlotSeries", scoped: "Results", stage_id: str, where: dict,
+) -> "list[RealizedSeries]":
+    probe = scoped.nodes.get(component=series.quantity, time=[0], **where)
+    node_ids = np.asarray(probe.node_ids, dtype=np.int64)
+    _require_membership(node_ids.size, series, stage_id)
+    _require_under_cap(int(node_ids.size), "curve")
+    slab = scoped.nodes.get(component=series.quantity, **where)
+    values = np.asarray(slab.values)
+    time = np.asarray(slab.time)
+    return [
+        RealizedSeries(
+            label=f"node {int(node_id)} — {series.quantity}",
+            quantity=series.quantity,
+            time=time,
+            values=values[:, column],
+        )
+        for column, node_id in enumerate(np.asarray(slab.node_ids))
+    ]
+
+
+def _member_gauss_series(
+    series: "PlotSeries", scoped: "Results", stage_id: str, where: dict,
+) -> "list[RealizedSeries]":
+    probe = scoped.elements.gauss.get(
+        component=series.quantity, time=[0], **where,
+    )
+    _require_membership(int(np.asarray(probe.element_index).size), series,
+                        stage_id)
+    _require_under_cap(int(np.asarray(probe.element_index).size), "curve")
+    slab = scoped.elements.gauss.get(component=series.quantity, **where)
+    values = np.asarray(slab.values)
+    time = np.asarray(slab.time)
+    element_index = np.asarray(slab.element_index, dtype=np.int64)
+    gp_indices = gp_index_within_element(element_index)
+    return [
+        RealizedSeries(
+            label=(
+                f"element {int(element_index[column])} gp "
+                f"{int(gp_indices[column])} — {series.quantity}"
+            ),
+            quantity=series.quantity,
+            time=time,
+            values=values[:, column],
+        )
+        for column in range(element_index.size)
+    ]
+
+
+def _require_membership(
+    count: int, series: "PlotSeries", stage_id: str,
+) -> None:
+    """An empty membership is a wrong plot, not an empty one — the same
+    reading ``_scope.resolve_scope`` gives an empty cell set."""
+    if count:
+        return
+    raise ValueError(
+        f"{series.source.kind} {series.source.key!r} has no members "
+        f"recording {series.quantity!r} in stage {stage_id!r} — a plot "
+        f"of nothing is a wrong query, not an empty chart."
     )
 
 

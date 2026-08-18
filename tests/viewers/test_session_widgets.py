@@ -295,14 +295,15 @@ def test_outline_lists_panes_and_selection_fires(rig):
     try:
         group = outline.widget.topLevelItem(0)
         assert group.text(0) == "Views"
-        # Pane rows + the two Add rows, which live in this group and
-        # nowhere else (§9 / Amendment 1 A1.6: one spine).
-        assert group.childCount() == 1 + 2
+        # Pane rows + the THREE Add rows, which live in this group and
+        # nowhere else (§9 / Amendment 1 A1.6: one spine). S4-2 added
+        # "New plot from selection" beside "New mesh view" / "New plot".
+        assert group.childCount() == 1 + 3
         outline.select_pane(view.id)
         assert selected == [view.id]
 
         plot = session.add_plot()
-        assert group.childCount() == 2 + 2
+        assert group.childCount() == 2 + 3
         outline.select_pane(plot.id)
         assert selected == [view.id, plot.id]
     finally:
@@ -322,9 +323,12 @@ def test_outline_survives_slot_ticks_without_rebuilding(rig):
         outline.dispose()
 
 
-def test_placeholder_page_for_plot_panes():
-    page = PanePlaceholderPage("Plot pane 'plot-2': lands at S4-2.")
-    assert "S4-2" in page.widget.text()
+def test_placeholder_page_says_what_is_not_selected():
+    """S4-2 gave plot panes a real inspector page, so this class is now
+    only the nothing-selected hint beside an empty host (0088 D2). It
+    stays inert: no session subscription, nothing to dispose."""
+    page = PanePlaceholderPage("No pane selected.")
+    assert "No pane selected." in page.widget.text()
     page.set_realized(None)  # inert, never raises
     page.dispose()
 

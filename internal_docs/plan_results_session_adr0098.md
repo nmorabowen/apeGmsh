@@ -117,6 +117,29 @@ slice's first hour (or in this plan) — not mid-PR.
    at `_director.py:1142` is reference, not reuse). Decide before S4-3.
 10. **S4-2 — path/xy plot kinds**: history is the oracle; agree up front
     whether path/xy ship real or as stubs, else the slice doubles.
+    *Settled (S4-2, 2026-08-18): **stubs that keep refusing**.* Neither
+    has an authoring path in v1 and `xy` needs an IR field that does not
+    exist — `PlotSeries` is `(source, quantity)`, so a second axis
+    source has nowhere to live, and `path` needs an ORDERED source
+    (§8's selection is a set; the outline select-all is a set) plus an
+    arc-length abscissa. §11's S4 verify line is "Pick → plot; linked
+    cursor moves meshes" — history. The refusals now name the missing
+    IR / authoring surface instead of a slice number, so they stay true
+    whenever the kinds land. `PLOT_KINDS` keeps all three tokens: S5a
+    serialises the token, and dropping one would be the schema break.
+10b. **S4-2 — label / physical_group aggregation rule**: *settled: one
+    curve **per member**, expanded by the resolver, with a loud cap.*
+    `add_plot_from_selection` already expands a selection into one
+    `PlotSeries` per node/GP (§6: "select → New plot COPIES the
+    membership"; "Several series on one chart are one plot view"), so a
+    membership source that aggregated instead would make the same
+    chart mean two different things depending on how it was authored.
+    An aggregate curve additionally needs a reducer token (mean? max?
+    sum?) the IR has no field for, and defaulting to one silently is
+    the "don't pick silently" trap. The cap lives in the resolver
+    (`_plots.MAX_SERIES`) because that is the one place BOTH authoring
+    paths funnel through — and outline select-all makes
+    `add_plot_from_selection` a hang risk for the first time.
 11. **S5a — snapshot filename** (settle with the S6 owner): through S2–S5
     the OLD viewer still saves v13 JSON to `<results>.viewer-session.json`
     on close. *Recommendation: the new session writes
@@ -194,6 +217,33 @@ TimeHistoryPanel is template, rewritten (director-coupled). S4.4 time link:
 TimeScrubberDock genuinely adaptable (only the director binding changes);
 reentrancy needs the `_suppress_observer` discipline across two widgets +
 session; animation playback is the reconciler's first sustained-load test.
+
+*S4-2 shipped (2026-08-18) — what the sizing missed, for the S4-3 author:*
+
+- **"Watch SelectionLog cost" was a live defect, not a watch item.**
+  `SelectionState.select_batch` AND `SelectionLog._dedup_extend` both
+  deduped with a list scan: 1k targets 0.10 s, 4k 1.66 s, 16k 26.7 s,
+  100k ~17 min. Both are set-backed now (100k → 0.16 s). If S4-3's
+  playback ever writes the store per frame, the cost is linear.
+- **Node membership needs NO results read.** `_scope.resolve_scope` already
+  turns axis+names into element ids + node ids off `ViewerData`, and using
+  the same resolver for both knobs is what keeps "check Web" and "select
+  all of Web" meaning the same elements. Only the Gauss half reads (one
+  single-step probe slab).
+- **The §8 Gauss address encoding now lives in `_gauss_addr.py`**, shared by
+  realize's pick targets, select-all's membership and the plot resolver's
+  labels. Three consumers had to agree exactly; a divergence is silent.
+- **Plot panes have their own reconciler** (`_chart.PlotReconciler`) —
+  `SessionReconciler._resolve_pane` filters `MeshView`, so there was no
+  repaint path to widen. Its signature is `((pane_id, kind, series),
+  effective_instant)`, split so a cursor move takes a no-read path. **S4-3's
+  scrubber rides that cheap half**: moving `session.time` already moves
+  every plot's playhead and reads nothing, and the mesh panes already
+  re-realize off the same `effective_instant`. What S4-3 adds is the widget
+  and the reentrancy discipline, not the propagation.
+- **The per-pane instant badge is still empty** (`SessionPaneFrame`'s
+  `_time_badge`, built and hidden) — S4-3's, as reserved.
+- **The window's bottom widget is still the scrubber placeholder.**
 
 **S5 (3 PRs).** S5a: serialize/restore + legacy gate (v13 shape → notice +
 `.legacy` rename, never overwrite an existing `.legacy`) + atomic write

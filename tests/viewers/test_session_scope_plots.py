@@ -82,6 +82,53 @@ def two_body_results(g, tmp_path: Path):
     return Results.from_native(path, model=_open_model_from_h5(path))
 
 
+@pytest.fixture
+def one_body_recorded(g, tmp_path: Path):
+    """Two groups, but the nodal recorder only covered BodyA — so
+    BodyB exists in the model and has nothing recorded."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="a")
+    g.model.geometry.add_box(3, 0, 0, 1, 1, 1, label="b")
+    g.physical.add_volume("a", name="BodyA")
+    g.physical.add_volume("b", name="BodyB")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    covered = all_ids[coords[:, 0] <= 1.5]          # BodyA's half only
+    disp = np.stack([covered + t * 100.0 for t in range(T)])
+
+    path = tmp_path / "one_body.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name=STAGE, kind="static", stage_id=STAGE,
+            time=np.arange(T, dtype=np.float64),
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=covered,
+            components={"displacement_z": disp},
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def _count_node_reads(results, monkeypatch, key=None) -> list:
+    """Record every ``results.<stage>.nodes.get`` call. Returns the
+    live list — ``key`` records that kwarg instead of a bare marker."""
+    accessor = type(results.stage(STAGE).nodes)
+    real, reads = accessor.get, []
+    monkeypatch.setattr(
+        accessor, "get",
+        lambda self, *a, **kw: (
+            reads.append(1 if key is None else kw.get(key)),
+            real(self, *a, **kw),
+        )[1],
+    )
+    return reads
+
+
 def _realize(results, mutate):
     session = results.session()
     view = session.panes[0]
@@ -364,19 +411,192 @@ def test_unbound_session_plot_refuses():
 
 @pytest.mark.parametrize("kind", ["path", "xy"])
 def test_non_history_plot_kinds_refuse(two_body_results, kind):
+    """Plan decision 10 (settled S4-2): path / xy stay refusals, and
+    the refusal names the missing IR / authoring surface rather than a
+    slice number, so it stays true whenever they land."""
     session = two_body_results.session()
     plot = session.add_plot(kind=kind)
-    with pytest.raises(NotImplementedError, match="S4-2"):
+    with pytest.raises(NotImplementedError, match="no v1 authoring"):
         realize_pane(session, plot)
 
 
-def test_membership_sources_refuse_pending_aggregation_rule(two_body_results):
+# =====================================================================
+# Membership sources (§6, plan decision 10b) — one curve per member
+# =====================================================================
+
+
+def test_physical_group_source_is_one_curve_per_member(two_body_results):
+    """Decision 10b. A membership source resolves to exactly the curves
+    the same nodes would give as concrete sources, in the slab's own
+    column order — the rule ``add_plot_from_selection`` already uses."""
     session = two_body_results.session()
     plot = session.add_plot(series=[
         PlotSeries(PlotSource.physical_group("BodyA"), "displacement_z"),
     ])
-    with pytest.raises(NotImplementedError, match="aggregation rule"):
+    realized = realize_pane(session, plot)
+
+    members = two_body_results.stage(STAGE).nodes.get(
+        pg="BodyA", component="displacement_z",
+    )
+    ids = [int(i) for i in members.node_ids]
+    assert len(realized.series) == len(ids)
+    assert [s.label for s in realized.series] == [
+        f"node {i} — displacement_z" for i in ids
+    ]
+    # Each curve IS that node's record — the concrete-source oracle.
+    for curve, node_id in zip(realized.series, ids):
+        (one,) = realize_pane(session, session.add_plot(series=[
+            PlotSeries(PlotSource.node(node_id), "displacement_z"),
+        ])).series
+        np.testing.assert_allclose(curve.values, one.values)
+        np.testing.assert_allclose(curve.time, one.time)
+
+
+def test_a_membership_source_costs_one_read_per_source(
+    two_body_results, monkeypatch,
+):
+    """One curve per member must not mean one READ per member: ``pg=``
+    is a first-class filter and a slab is already (T, members). The
+    probe read that sizes the membership is the only second read."""
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyA"), "displacement_z"),
+    ])
+    reads = _count_node_reads(two_body_results, monkeypatch)
+    realized = realize_pane(session, plot)
+    assert len(realized.series) > 2, "the rig resolved too few members"
+    assert len(reads) == 2, f"{len(reads)} reads for one membership source"
+
+
+def test_the_gauss_half_of_a_membership_source_expands(two_body_results):
+    """The quantity picks the topology: a Gauss component means the
+    group's integration points, addressed the §8 way."""
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyA"), "stress_xx"),
+    ])
+    realized = realize_pane(session, plot)
+    slab = two_body_results.stage(STAGE).elements.gauss.get(
+        pg="BodyA", component="stress_xx",
+    )
+    assert len(realized.series) == int(np.asarray(slab.element_index).size)
+    assert realized.series[0].label == (
+        f"element {int(slab.element_index[0])} gp 0 — stress_xx"
+    )
+    np.testing.assert_allclose(
+        realized.series[0].values, np.asarray(slab.values)[:, 0],
+    )
+
+
+def test_a_quantity_recorded_at_neither_level_refuses(two_body_results):
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyA"), "no_such_thing"),
+    ])
+    with pytest.raises(ValueError, match="recorded at neither"):
         realize_pane(session, plot)
+
+
+def test_a_quantity_recorded_at_both_levels_refuses(
+    two_body_results, monkeypatch,
+):
+    """A membership source cannot say which topology it means when the
+    token exists at both — it refuses rather than picking one."""
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyA"), "displacement_z"),
+    ])
+    monkeypatch.setattr(
+        type(two_body_results.inspect), "components",
+        lambda self, **_kw: {
+            "nodes": ["displacement_z"], "gauss": ["displacement_z"],
+        },
+    )
+    with pytest.raises(ValueError, match="BOTH"):
+        realize_pane(session, plot)
+
+
+def test_an_unknown_membership_name_is_loud(two_body_results):
+    """The query layer already refuses a name the model does not have;
+    the resolver must not soften that into an empty chart."""
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("nothing-here"),
+                   "displacement_z"),
+    ])
+    with pytest.raises(KeyError, match="nothing-here"):
+        realize_pane(session, plot)
+
+
+def test_a_group_with_no_recorded_members_refuses(one_body_recorded):
+    """A group that EXISTS but that the recorder never covered reads
+    back as zero columns — the reader intersects silently, so the
+    refusal has to happen here. An empty chart would read as "this
+    group did not move"."""
+    session = one_body_recorded.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyB"), "displacement_z"),
+    ])
+    with pytest.raises(ValueError, match="no members recording"):
+        realize_pane(session, plot)
+
+
+# =====================================================================
+# The curve cap — it must refuse BEFORE reading (decision 10b)
+# =====================================================================
+
+
+def test_a_selection_sized_plot_refuses_before_it_reads(
+    two_body_results, monkeypatch,
+):
+    """"Select all nodes" then "New plot from selection" is one gesture
+    away from handing this resolver the whole model, as one concrete
+    source PER NODE. The cap has to fire before the reads, not after
+    them: the refusal is cheap, the N reads are what hang. The cap
+    VALUE is a judgement call, so the test pins the behaviour."""
+    from apeGmsh.viewers.session import _plots
+
+    monkeypatch.setattr(_plots, "MAX_SERIES", 4)
+    node_ids = [int(i) for i in two_body_results.fem.nodes.ids]
+    session = two_body_results.session()
+    session.selection.set_nodes(node_ids)
+    plot = session.add_plot_from_selection("displacement_z")
+
+    reads = _count_node_reads(two_body_results, monkeypatch)
+    with pytest.raises(ValueError, match="the cap is"):
+        realize_pane(session, plot)
+    assert reads == [], f"the cap fired after {len(reads)} read(s)"
+
+
+def test_an_over_cap_membership_refuses_after_one_probe(
+    two_body_results, monkeypatch,
+):
+    """A membership size is not known without asking, so ONE
+    single-step probe read is the price — never the whole record,
+    which for a select-all-sized group is what runs the machine out
+    of memory."""
+    from apeGmsh.viewers.session import _plots
+
+    monkeypatch.setattr(_plots, "MAX_SERIES", 1)
+    session = two_body_results.session()
+    plot = session.add_plot(series=[
+        PlotSeries(PlotSource.physical_group("BodyA"), "displacement_z"),
+    ])
+    reads = _count_node_reads(two_body_results, monkeypatch, key="time")
+    with pytest.raises(ValueError, match="the cap is"):
+        realize_pane(session, plot)
+    assert reads == [[0]], f"over-cap membership read {reads}"
+
+
+def test_the_cap_clears_a_named_physical_group(two_body_results):
+    """The cap must not make §9's select-all useless: one named group
+    of a real model is what it exists to plot."""
+    from apeGmsh.viewers.session._plots import MAX_SERIES
+
+    members = two_body_results.stage(STAGE).nodes.get(
+        pg="BodyA", component="displacement_z",
+    )
+    assert 1 < int(np.asarray(members.node_ids).size) <= MAX_SERIES
 
 
 def test_plot_pane_still_refuses(two_body_results, tmp_path):

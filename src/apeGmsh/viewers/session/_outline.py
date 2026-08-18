@@ -21,11 +21,28 @@
   exists to check against (see :mod:`._scope`). Offering it enabled
   would promise a picture the realize layer refuses.
 
-The select-all-nodes / select-all-Gauss half of §9's model tree is
-selection work and lands with S4-2.
+  Right-clicking a name (or its axis header) offers §9's other action:
+  **Select all nodes** / **Select all Gauss** of that category — the §8
+  selection's fourth writer. It is a context menu and not a checkbox
+  because it is not a STATE: scope is what the view draws and stays
+  checked, selection is what gets plotted and the next click replaces
+  it. Each entry carries its count and disables itself at zero (0087
+  INV-2), so "Select all Gauss" cannot promise integration points a
+  stage never recorded.
+
+  The two actions read the CHECKED names when the right-clicked row is
+  checked, and that one name otherwise — right-clicking a row you have
+  not checked should select that row, not silently something else.
+
+"New plot from selection" is the other half of §8's own test — "if
+selection does not produce a plot without a Python snippet, selection
+is still broken". It sits beside "New plot" and offers the quantities
+the realized stage records, so the discrete loop cannot ask for a
+curve that refuses.
 
 A projection throughout: it rebuilds from ``session.panes`` and reads
-``view.scope`` on the change tick, and holds no state of its own.
+``view.scope`` / the selection on the change tick, and holds no state
+of its own.
 """
 from __future__ import annotations
 
@@ -34,6 +51,8 @@ from typing import Any, Callable, Optional
 from qtpy import QtCore, QtWidgets
 
 from .._failures import safe_slot
+from ._select_all import counts as _select_all_counts
+from ._select_all import select_all
 
 _PANE_ID_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _ACTION_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -65,6 +84,7 @@ class SessionOutline:
         on_pane_selected: Optional[Callable[[str], None]] = None,
         on_new_view: Optional[Callable[[], None]] = None,
         on_new_plot: Optional[Callable[[], None]] = None,
+        on_new_plot_from_selection: Optional[Callable[[str], None]] = None,
         on_close_pane: Optional[Callable[[str], None]] = None,
         can_add: Optional[Callable[[], "tuple[bool, str]"]] = None,
     ) -> None:
@@ -72,10 +92,13 @@ class SessionOutline:
         self._on_pane_selected = on_pane_selected
         self._on_new_view = on_new_view
         self._on_new_plot = on_new_plot
+        self._on_new_plot_from_selection = on_new_plot_from_selection
         self._on_close_pane = on_close_pane
         self._can_add = can_add
         self._listed: tuple[tuple[str, Optional[str]], ...] = ()
         self._syncing = False
+        self._gate_allows_add = True
+        self._gate_reason = ""
         self._active_pane_id: Optional[str] = None
 
         tree = QtWidgets.QTreeWidget()
@@ -97,6 +120,9 @@ class SessionOutline:
         )
         self._new_view_item = self._make_action_item("New mesh view", "view")
         self._new_plot_item = self._make_action_item("New plot", "plot")
+        self._new_plot_from_selection_item = self._make_action_item(
+            "New plot from selection", "plot_from_selection",
+        )
 
         self._model_group = QtWidgets.QTreeWidgetItem(tree, ["Model"])
         self._model_group.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
@@ -124,6 +150,12 @@ class SessionOutline:
     def new_plot_item(self) -> QtWidgets.QTreeWidgetItem:
         """The "New plot" action row (the Add gate's subject)."""
         return self._new_plot_item
+
+    @property
+    def new_plot_from_selection_item(self) -> QtWidgets.QTreeWidgetItem:
+        """The §8 "select → New plot" row. Gated on the Add gate AND on
+        there being a selection to plot."""
+        return self._new_plot_from_selection_item
 
     def dispose(self) -> None:
         self._session.unsubscribe(self._on_session_tick)
@@ -196,6 +228,7 @@ class SessionOutline:
                         self._tree.setCurrentItem(item)
                 self._group.addChild(self._new_view_item)
                 self._group.addChild(self._new_plot_item)
+                self._group.addChild(self._new_plot_from_selection_item)
                 self._group.setExpanded(True)
                 self._listed = wanted
             finally:
@@ -208,9 +241,71 @@ class SessionOutline:
         allowed, reason = (
             self._can_add() if self._can_add is not None else (True, "")
         )
-        for item in (self._new_view_item, self._new_plot_item):
+        for item in (
+            self._new_view_item,
+            self._new_plot_item,
+            self._new_plot_from_selection_item,
+        ):
             item.setDisabled(not allowed)
             item.setToolTip(0, reason)
+        self._gate_allows_add = allowed
+        self._gate_reason = reason
+        # The selection row rides the Add gate but has a second gate of
+        # its own, so it always re-decides after this one moved.
+        self.refresh_selection_action()
+
+    def refresh_selection_action(self) -> None:
+        """Project the §8 selection onto the "New plot from selection"
+        row: its label carries what would be plotted, and it disables
+        itself on an empty set with the reason in the tooltip rather
+        than opening a picker that can only refuse (0087 INV-2)."""
+        try:
+            kind = self._session.selection.kind
+            count = len(self._session.selection)
+        except ValueError as exc:
+            # A heterogeneous store is a programming error the reader
+            # raises on; the row says so instead of hiding it.
+            kind, count = None, 0
+            self._new_plot_from_selection_item.setText(
+                0, "+ New plot from selection",
+            )
+            self._new_plot_from_selection_item.setDisabled(True)
+            self._new_plot_from_selection_item.setToolTip(0, str(exc))
+            return
+        label = "+ New plot from selection"
+        if kind is not None:
+            word = "node" if kind == "nodes" else "Gauss point"
+            label += f" ({count} {word}{'' if count == 1 else 's'})"
+        self._new_plot_from_selection_item.setText(0, label)
+        if not self._gate_allows_add:
+            return  # the Add gate already disabled it, with its reason
+        reason = self._plot_from_selection_reason(kind, count)
+        self._new_plot_from_selection_item.setDisabled(bool(reason))
+        self._new_plot_from_selection_item.setToolTip(0, reason)
+
+    @staticmethod
+    def _plot_from_selection_reason(kind: Optional[str], count: int) -> str:
+        """Why this row cannot act, or ``""`` when it can.
+
+        The curve cap is checked HERE and not left to the resolver: a
+        select-all-sized set would otherwise open a quantity picker
+        whose every choice raises. 0087 INV-2 again — a control that
+        cannot act does not pretend to."""
+        from ._plots import MAX_SERIES
+
+        if kind is None:
+            return (
+                "Nothing is selected. Click or window-pick in a pane, "
+                "or right-click a physical group / element type for "
+                "Select all."
+            )
+        if count > MAX_SERIES:
+            return (
+                f"{count} selected is past the {MAX_SERIES}-curve cap "
+                f"for one plot — a chart that large is unreadable and "
+                f"costs a read per curve. Narrow the selection first."
+            )
+        return ""
 
     def refresh_scope(self) -> None:
         """Project the active mesh view's scope onto the checkboxes."""
@@ -323,6 +418,8 @@ class SessionOutline:
             self._on_new_view()
         elif action == "plot" and self._on_new_plot is not None:
             self._on_new_plot()
+        elif action == "plot_from_selection":
+            self._offer_plot_from_selection()
 
     def _on_item_changed(self, item: Any, _column: int) -> None:
         """A scope checkbox moved → rewrite the active view's scope."""
@@ -349,13 +446,135 @@ class SessionOutline:
         if item is None:
             return
         pane_id = item.data(0, _PANE_ID_ROLE)
-        if pane_id is None or self._on_close_pane is None:
+        if pane_id is not None:
+            self._pane_context_menu(point, str(pane_id))
+            return
+        if item.data(0, _AXIS_ROLE) is not None:
+            self._select_all_menu(point, item)
+
+    def _pane_context_menu(self, point: Any, pane_id: str) -> None:
+        if self._on_close_pane is None:
             return
         menu = QtWidgets.QMenu(self._tree)
         action = menu.addAction("Close pane")
         chosen = menu.exec_(self._tree.viewport().mapToGlobal(point))
         if chosen is action:
-            self._on_close_pane(str(pane_id))
+            self._on_close_pane(pane_id)
+
+    def _select_all_menu(self, point: Any, item: Any) -> None:
+        """§9's other action on the model tree: select all nodes / all
+        Gauss of this category (§8 writer 3).
+
+        The subject is the CHECKED names when the clicked row is one of
+        them, and the clicked row alone otherwise — right-clicking a
+        row you have not checked must act on THAT row. An axis header
+        always means every name on it."""
+        axis = str(item.data(0, _AXIS_ROLE))
+        names = self._menu_subject(axis, item)
+        menu = QtWidgets.QMenu(self._tree)
+        if axis == "materials":
+            action = menu.addAction("Select all nodes")
+            action.setEnabled(False)
+            menu.setToolTipsVisible(True)
+            action.setToolTip(_MATERIALS_DISABLED)
+            menu.exec_(self._tree.viewport().mapToGlobal(point))
+            return
+        node_count, gauss_count = _select_all_counts(
+            self._session, axis=axis, names=names,
+            view=self._active_mesh_view(),
+        )
+        entries = (
+            ("nodes", f"Select all nodes ({node_count})", node_count),
+            ("gauss", f"Select all Gauss ({gauss_count})", gauss_count),
+        )
+        actions = {}
+        for kind, label, count in entries:
+            action = menu.addAction(label)
+            # 0087 INV-2 — "Select all Gauss (0)" on a stage that
+            # recorded none is a control that cannot act.
+            action.setEnabled(bool(count))
+            actions[action] = kind
+        chosen = menu.exec_(self._tree.viewport().mapToGlobal(point))
+        if chosen is None:
+            return
+        select_all(
+            self._session, actions[chosen], axis=axis, names=names,
+            view=self._active_mesh_view(),
+        )
+
+    def _menu_subject(self, axis: str, item: Any) -> "tuple[str, ...]":
+        rows = self._name_items[axis]
+        if item not in rows.values():
+            return tuple(rows)              # the axis header — every name
+        checked = tuple(
+            name for name, node in rows.items()
+            if node.checkState(0) == QtCore.Qt.CheckState.Checked
+        )
+        clicked = next(
+            name for name, node in rows.items() if node is item
+        )
+        return checked if clicked in checked else (clicked,)
+
+    def _offer_plot_from_selection(self) -> None:
+        """§8: "That set IS the source= of plots."
+
+        The quantity comes from a menu of what the realized stage
+        RECORDS for the selection's kind — the same picker discipline
+        the inspector's slot rows use, so the loop cannot author a
+        curve the resolver refuses."""
+        if self._on_new_plot_from_selection is None:
+            return
+        from qtpy import QtGui
+
+        menu = QtWidgets.QMenu(self._tree)
+        quantities = self._selection_quantities()
+        if not quantities:
+            # A disabled entry, not a silent non-event: a click that
+            # opens nothing reads as a broken row (0087 INV-2).
+            menu.setToolTipsVisible(True)
+            empty = menu.addAction("No recorded quantity to plot")
+            empty.setEnabled(False)
+            empty.setToolTip(
+                "This stage records nothing for the selected kind — "
+                "select nodes for a nodal component, or Gauss points "
+                "for a Gauss one."
+            )
+            menu.exec_(QtGui.QCursor.pos())
+            return
+        actions = {menu.addAction(q): q for q in quantities}
+        chosen = menu.exec_(QtGui.QCursor.pos())
+        if chosen is not None:
+            self._on_new_plot_from_selection(actions[chosen])
+
+    def _selection_quantities(self) -> "tuple[str, ...]":
+        """What this selection's kind can be plotted as.
+
+        Read through a MESH view, because that is what resolves a §7
+        instant to a stage — the active one when it is a mesh view, and
+        otherwise any of them, because a selection made in a mesh pane
+        has to stay plottable after the user clicks the plot pane
+        beside it. That fallback is right here and WRONG for scope,
+        which may only ever write the pane the user selected.
+        """
+        from ._realize import recorded_components
+
+        view = self._active_mesh_view() or self._any_mesh_view()
+        if view is None:
+            return ()
+        try:
+            kind = self._session.selection.kind
+        except ValueError:
+            return ()
+        nodal, gauss = recorded_components(self._session, view)
+        return tuple(sorted(nodal if kind == "nodes" else gauss))
+
+    def _any_mesh_view(self) -> Any:
+        from apeGmsh.results.session import MeshView
+
+        for pane in self._session.panes:
+            if isinstance(pane, MeshView):
+                return pane
+        return None
 
 
 __all__ = ["SessionOutline"]

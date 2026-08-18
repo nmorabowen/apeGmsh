@@ -78,6 +78,7 @@ from ..diagrams._scalar_bar_support import _default_vertical
 from ..diagrams._visual_store import VisualDataStore
 from ..scene.fem_scene import build_fem_scene
 from ..scene_ir import ColorSpec, MeshLayer, PointSet
+from ._gauss_addr import gp_index_within_element, probe_component
 from ._plots import realize_plot
 from ._scope import ScopedSet, resolve_scope
 from ._specs import OCCLUDING_KINDS, slot_spec
@@ -970,7 +971,7 @@ def _gauss_targets(
         compute_global_coords_from_arrays,
     )
 
-    probe = _gauss_probe_component(results, stage_id)
+    probe = probe_component(results, stage_id)
     if probe is None:
         return None
     element_ids = (
@@ -1006,7 +1007,7 @@ def _gauss_targets(
     element_index = np.asarray(slab.element_index, dtype=np.int64)
     return GaussTargets(
         element_ids=element_index,
-        gp_indices=_gp_index_within_element(element_index),
+        gp_indices=gp_index_within_element(element_index),
         coords=coords,
     )
 
@@ -1037,35 +1038,9 @@ def _gauss_targets_of(diagram: Any) -> "Optional[GaussTargets]":
         return None
     return GaussTargets(
         element_ids=element_index,
-        gp_indices=_gp_index_within_element(element_index),
+        gp_indices=gp_index_within_element(element_index),
         coords=coords,
     )
-
-
-def _gp_index_within_element(element_index: "np.ndarray") -> "np.ndarray":
-    """Each slab row's index WITHIN its element, in slab row order.
-
-    The §8 Gauss target is ``(element_id, gp_index)`` where ``gp_index``
-    counts integration points inside that one element — the same
-    ordering ``_plots._gauss_series`` resolves with
-    ``where(element_index == element_id)[gp_index]``. The slab itself
-    carries no such column (unlike ``FiberSlab``), so it is derived
-    here: a STABLE sort groups each element's rows while preserving
-    their slab order, and the position inside the group is the index.
-    """
-    n = int(element_index.size)
-    if n == 0:
-        return np.zeros(0, dtype=np.int64)
-    order = np.argsort(element_index, kind="stable")
-    grouped = element_index[order]
-    starts = np.flatnonzero(
-        np.r_[True, grouped[1:] != grouped[:-1]]
-    ).astype(np.int64)
-    counts = np.diff(np.r_[starts, np.int64(n)])
-    within = np.arange(n, dtype=np.int64) - np.repeat(starts, counts)
-    out = np.empty(n, dtype=np.int64)
-    out[order] = within
-    return out
 
 
 def _gauss_layer(pane_id: str, targets: "GaussTargets") -> "MeshLayer":
@@ -1168,18 +1143,6 @@ def _pair_isin(
     have = element_ids * stride + gp_indices
     want = wanted[:, 0] * stride + wanted[:, 1]
     return np.isin(have, want)
-
-
-def _gauss_probe_component(
-    results: "Results", stage_id: str,
-) -> Optional[str]:
-    """The component read purely for its integration-point addresses."""
-    try:
-        recorded = results.inspect.components(stage=stage_id).get("gauss", ())
-    except Exception:
-        return None
-    tokens = sorted(str(t) for t in recorded)
-    return tokens[0] if tokens else None
 
 
 # =====================================================================
