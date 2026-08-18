@@ -3463,6 +3463,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the live surface on stock openseespy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-amendment-1-s3-the-pane-host-per-view-scope-style-buttons" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8136,6 +8147,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the live surface on stock openseespy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-amendment-1-s3-the-pane-host-per-view-scope-style-buttons" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12791,6 +12813,30 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy">FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the <code>live</code> surface on stock openseespy<a class="headerlink" href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" title="Permanent link">&para;</a></h3>
+<p><code>tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular</code>
+passed on the Ladruno fork and failed on stock openseespy. The harness'
+early stop is <code>ops.analyze() != 0</code> and nothing else, so it inherits the
+backend's honesty: stock <code>BandGenLinLapackSolver::solve()</code> returns
+<code>-info+1</code>, which C reads as <code>(-info) + 1</code>, so <code>info == 1</code> — the zero pivot
+on the FIRST equation, exactly this section's free axial DOF — returns <code>0</code>
+== success. The fork returns <code>-info</code>. The test is now <code>@pytest.mark.ladruno_fork</code>
+with the mechanism written down; <code>_mc.py</code> is unchanged, because stock's
+values here are exact (symmetry holds the residual at zero) — only the
+<em>reporting</em> diverges.</p>
+<p>A companion test runs the same section on <strong>every</strong> build and checks each
+returned point against the closed form <code>M = min(EI0·κ, Mp)</code>, so marking the
+first one fork-only does not leave the degenerate section uncovered on stock.
+It is the half with real teeth there: a build that masks the singularity <em>and</em>
+corrupts the answer — a failed factorization leaves the load vector in the
+solution vector, which the caller then spends as a displacement increment —
+now fails instead of passing quietly.</p>
+<p>New <code>live-stock</code> CI lane closes the gap that hid it: no job installed
+openseespy, so every <code>live</code>-marked test skipped itself and the whole
+backend-driven surface reported green without executing. The lane installs
+stock openseespy, hard-asserts the backend actually imported (otherwise its
+own failure mode is the silent all-skip it exists to prevent), and runs
+<code>-m "live and not qt and not subprocess and not bench"</code> — 54 tests, ~80 s.</p>
 <h3 id="added-adr-0098-amendment-1-s3-the-pane-host-per-view-scope-style-buttons">ADDED — ADR 0098 Amendment 1 (S3): the pane host, per-view scope, style buttons<a class="headerlink" href="#added-adr-0098-amendment-1-s3-the-pane-host-per-view-scope-style-buttons" title="Permanent link">&para;</a></h3>
 <p>The Results session window's centre becomes <strong>N tiled panes</strong>. The
 central widget is a <code>SessionPaneHost</code>: a root <code>QSplitter(Horizontal)</code>
