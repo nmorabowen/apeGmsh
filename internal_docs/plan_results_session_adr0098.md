@@ -440,6 +440,38 @@ PNG behind a GL skip marker.
   `results_pin(session_snapshot=)` automatically; the human or the agent
   passes the path.
 
+*S5c shipped (2026-08-18) — S5 is complete. For S6:*
+
+- **The CLI door is `python -m apeGmsh.results.session render`**, not a
+  `viewers/__main__` subcommand — so S6a's flip does not have to carry it.
+  `_resolve_session(snapshot, results=None, model_h5=None)` is the shared
+  entry the tests use as the IR oracle without a subprocess; keep it that
+  way, or the oracle becomes a stall (see below).
+- **`open_results` now lives in `apeGmsh.results._open`.** S6b should
+  note that `viewers/__main__._open_results` and `studio/_verbs._open_results`
+  are now thin delegates — retiring them is a deletion, not a port.
+  `viewers/ui/_open_results.build_results` is a SEPARATE implementation
+  (sniffs contents for the open dialog); do not conflate them.
+- **`render()` gained a second door, so its signature is
+  `None`-defaulted** (`path`, `view`, `step`, `camera`). Anything reading
+  those defaults must resolve them itself now.
+- **Both S5b and S5c mutation passes found the same class of bad test:**
+  a refusal asserted only against input that was ALREADY refused for
+  another reason. S5b: a run line has no `kind`, so dropping the pin
+  schema's `const` changed nothing. S5c: a file with no `kind` is refused
+  whether the door compares the value or looks for the key. The
+  discriminating case is always the near-miss — the wrong `kind`, not the
+  missing one. Worth checking for in S6's import guard too.
+- **Do not point a mutation harness at `tests/studio/test_mcp.py`.** The
+  studio verbs wait up to `APEGMSH_STUDIO_TIMEOUT` (600 s) on a
+  subprocess, so a mutation stalls rather than fails; S5b's first pass
+  burned an hour. Assert argument rules in-process and exercise the
+  subprocess once, separately.
+- **A killed mutation harness leaves its last mutation on disk** — the
+  in-memory revert lives in a `finally` that a kill never runs. Check
+  `git diff` before trusting the tree; S5c's harness now warns if a file
+  does not restore.
+
 **S6 (4 PRs, order S6c → S6a → S6b → S6d).** S6 is de-publication, not
 deletion — render.py tokens, web_viewer hatch, `_verbs._yield_setup` keep
 importing diagrams privately. S6a gates: mkdocs --strict couples the

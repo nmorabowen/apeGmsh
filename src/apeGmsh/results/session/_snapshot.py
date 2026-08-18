@@ -53,7 +53,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from apeGmsh._atomic_io import atomic_write_text
+from apeGmsh._atomic_io import atomic_write_text, replace_with_retry
 
 from ._session import ResultsSession
 from ._slots import SLOT_CATALOG, Slot
@@ -638,8 +638,14 @@ def rename_legacy_aside(path: "str | Path") -> Path:
     os.close(fd)
     try:
         # Atomic, and the only thing it can overwrite is the empty
-        # placeholder we just proved we were the ones to create.
-        os.replace(src, dest)
+        # placeholder we just proved we were the ones to create. Through
+        # the shared retry because this is the same syscall, on the same
+        # platform, with the same transient-denial behaviour that
+        # atomic_write_text has always guarded against — an asymmetry
+        # that only shows up on a loaded machine, which is the worst
+        # kind of thing to leave to chance on a file a human cares
+        # about.
+        replace_with_retry(src, dest)
     except OSError:
         try:
             os.unlink(dest)  # never leave a 0-byte file blocking a retry

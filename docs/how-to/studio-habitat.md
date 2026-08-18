@@ -259,6 +259,19 @@ against `ledger_pin.schema.json`. Discriminate on `kind` before
 validating — a pin line has no `script` / `phase` / `ok` and is
 correctly refused by the run schema.
 
+`render(session=…)` draws one pane of a saved ADR 0098 session snapshot
+(`<results>.session.json`) instead of a results file. Its content is the
+slot catalog the human arranged, not a view token, so `view` /
+`component` / `step` / `deform` / `pack` are refused with it
+(`INVALID_ARGS`) rather than ignored; `camera` and `output` still apply.
+An old `<results>.viewer-session.json` is refused and **never renamed** —
+the rename-aside belongs to the interactive flow. The same still is
+available from the command line:
+
+```
+python -m apeGmsh.results.session render <snapshot>.session.json shot.png
+```
+
 `results_pin(session_snapshot=…)` pins the ADR 0098 presentation session
 (`<results>.session.json`). Unlike `model_h5` / `results`, which are
 recorded by path and hash only, that file is **copied** into

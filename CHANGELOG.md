@@ -22,6 +22,61 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §11 S5c: render a saved session
+
+`python -m apeGmsh.results.session render <snapshot> <out.png>` draws one
+pane of a saved session out of process, and the Studio MCP `render` verb
+grows a `session=` door onto it. The agent gets the picture a HUMAN
+arranged, with no Qt in the loop — which is what §11's S5 row asks for.
+
+Its own CLI entry rather than a subcommand of `python -m apeGmsh.viewers`,
+because that module flips at S6 and this door outlives it. The broker
+comes from `--results` or, failing that, from the `results_path` the
+snapshot recorded when it was written, so the common case is two
+arguments; `--model-h5` covers `.mpco`-backed results, which carry no
+model zone of their own.
+
+**A snapshot's content is the §4 slot catalog, not a view token**, so
+`session=` skips the closed `view` check and REFUSES the old-ontology
+knobs (`view` / `component` / `step` / `deform` / `pack`) instead of
+ignoring them: silently drawing a snapshot's own instant while the caller
+passed `step=3` would hand them a different picture and call it theirs.
+`camera` is not refused — it is a property of the still, not of the
+picture. `view` / `step` / `camera` became `None`-defaulted so an
+explicit value is distinguishable from an unset one; the results door
+still falls back to `contour` / `-1` / `iso`.
+
+**Old sessions are refused and never renamed.** The `.legacy`
+rename-aside belongs to the human flow (ADR 0098 Consequences); a batch
+verb or a CLI that moved a user's file would be doing surgery nobody
+asked for. Checked in the MCP parent before anything spawns, and again in
+the child with `rename_legacy=False`.
+
+Restore notices ride out on stderr rather than being swallowed: a still
+drawn at a different instant than the file asked for says so.
+
+### CHANGED — one opener for the CLI doors
+
+`open_results(path, model_h5=None)` — which reader answers for which
+extension — moved from `viewers/__main__` to `apeGmsh.results._open`,
+beside the readers, so the new session door does not build on a module
+scheduled to retire. `viewers/__main__._open_results` delegates and keeps
+its `sys.exit(2)` contract; `studio/_verbs` already delegated to it, so
+both follow. The refusal is now a `ValueError` rather than a process
+exit, which a library caller can catch and an error envelope can report.
+`viewers/ui/_open_results.build_results` is deliberately untouched — it
+sniffs file CONTENTS for the Qt open dialog, a different job.
+
+### FIXED — the legacy rename-aside now survives a transient Windows denial
+
+`atomic_write_text` has always retried `os.replace` because "a concurrent
+reader may briefly deny replace" on Windows; `rename_legacy_aside`
+(ADR 0098 S5a) called the same syscall on the same platform with no such
+guard. Both now go through one shared `replace_with_retry`, so the guard
+is not something the next caller has to remember. Surfaced as a single
+unreproducible failure during a full-suite run — causation unconfirmed,
+but the asymmetry was real either way.
+
 ### ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot
 
 `results_pin(session_snapshot=…)` pins the picture a human arranged. The

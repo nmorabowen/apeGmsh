@@ -28,36 +28,21 @@ from typing import Optional, Sequence
 def _open_results(path: Path, model_h5: Optional[Path]):
     """Pick the right reader by extension.
 
-    For ``.mpco`` the sibling ``model.h5`` is required — the file
-    itself carries no ``/opensees/`` zone, so the reader needs an
-    explicit pointer (Phase 8 made this mandatory on
-    :meth:`Results.from_mpco`).
+    Delegates to :func:`apeGmsh.results._open.open_results` — the
+    dispatch belongs beside the readers, and the session render door
+    (ADR 0098 S5c) needs it without importing this module, which flips
+    at S6. Kept as a wrapper so this CLI's ``sys.exit(2)`` contract for
+    a ``.mpco`` without its sibling archive is unchanged.
     """
-    from apeGmsh.opensees import OpenSeesModel
-    from apeGmsh.results import Results
-    if path.suffix.lower() == ".mpco":
-        if model_h5 is None:
-            print(
-                "error: --model-h5 PATH is required for .mpco files "
-                "(sibling model archive).",
-                file=sys.stderr,
-            )
+    from apeGmsh.results._open import open_results
+
+    try:
+        return open_results(path, model_h5)
+    except ValueError as exc:
+        if "--model-h5" in str(exc):
+            print(f"error: {exc}", file=sys.stderr)
             sys.exit(2)
-        return Results.from_mpco(path, model_h5=model_h5)
-    if path.suffix.lower() == ".ladruno":
-        # The Ladruno recorder is self-describing (model_h5 optional); a
-        # sibling archive, when supplied, binds a richer model. Routing
-        # this through the native branch would hand a .ladruno file to
-        # NativeReader and raise SchemaVersionError.
-        return Results.from_ladruno(path, model_h5=model_h5)
-    # Native results file — the model normally lives in the same path
-    # (Composed-file pattern carries ``/opensees/`` at root). When
-    # ``--model-h5`` is supplied, the model is read from that sibling
-    # archive instead — for results whose embedded ``/model`` zone is not
-    # independently readable (e.g. ``Results.demo()``).
-    model_src = model_h5 if model_h5 is not None else path
-    model = OpenSeesModel.from_h5(model_src)
-    return Results.from_native(path, model=model, model_path=model_h5)
+        raise
 
 
 def _is_model_only(path: Path) -> bool:
