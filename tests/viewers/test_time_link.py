@@ -16,8 +16,9 @@ Criteria (continuing S4-2's numbering):
     (§4/§7: a mode pose has no instant).
 41. The inspector's pane-time row writes ``view.time``, and the link
     ignores it while it is on (§9).
-42. Playback is one realize per frame per SHOWING pane — the
-    reconciler's first sustained-load test.
+42. Playback realizes only the panes that MOVED — the reconciler's
+    first sustained-load test. A mode-posed pane is frozen under
+    the link (§7), so it is the pane that proves the gate.
 
 Criterion 43 makes the mutation tests mandatory: a badge that is not
 squeezable, a stage switch that carries its step, and a scrubber that
@@ -316,21 +317,30 @@ def test_c41_the_inspector_sets_pane_time(rig, qapp):
 # =====================================================================
 
 
-def test_c42_playback_costs_one_realize_per_frame_per_pane(
+def test_c42_playback_realizes_only_the_panes_that_moved(
     rig, qapp, monkeypatch,
 ):
     """Criterion 42. Animation is the reconciler's first SUSTAINED
     load: every frame writes the session, and the tick is
     session-wide, so without the criterion-12 signature gate each
-    frame would cost one realize per pane in the session rather than
-    one per pane that actually moved."""
+    frame would cost one realize per pane in the SESSION rather than
+    one per pane that actually moved.
+
+    The discriminating pane is a MODE-POSED one. §7 freezes it under
+    the link — ``effective_instant`` is ``None`` for it whatever the
+    scrubber does — so a frame that costs the static pane a realize
+    must cost the mode pane nothing. Counting only panes that DO move
+    would pass with the gate ripped out (every tick changes every one
+    of them), which is exactly what the mutation pass caught.
+    """
     import apeGmsh.viewers.session._reconciler as reconciler_mod
 
     session, host, scrubber, _made = rig
-    session.add_view()                       # a SECOND mesh pane
+    static_view = session.panes[0]
+    frozen_view = session.add_view()
+    frozen_view.deform = Deform(field="displacement", mode=1)
     qapp.processEvents()
-    panes = [f for f in host.pane_frames if f.is_mesh]
-    assert len(panes) == 2
+    assert session.effective_instant(frozen_view) is None
 
     real = reconciler_mod.realize_pane
     calls: list = []
@@ -339,21 +349,22 @@ def test_c42_playback_costs_one_realize_per_frame_per_pane(
         lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
     )
 
-    # The session boots with time=None, so EVERY commit below is a
-    # real move — including step 0.
+    # The session boots with time=None, so every commit below moves it.
     assert session.time is None
     frames = 4
     for step in range(frames):
         scrubber._commit(step)               # noqa: SLF001 — one tick
         qapp.processEvents()
 
-    assert len(calls) == frames * len(panes), (
-        f"{len(calls)} realizes for {frames} instants across "
-        f"{len(panes)} panes"
+    assert calls.count(static_view.id) == frames
+    assert calls.count(frozen_view.id) == 0, (
+        f"the frozen pane realized {calls.count(frozen_view.id)} time(s) "
+        f"for a scrubber it does not follow"
     )
-    # And a re-commit of the SAME instant costs nothing — the gate,
-    # which is what keeps a 30 fps drag from realizing 30 times a
-    # second per pane for pictures that did not move.
+
+    # And a re-commit of the SAME instant costs nothing anywhere —
+    # what keeps a 30 fps drag from realizing 30 times a second per
+    # pane for pictures that did not move.
     calls.clear()
     scrubber._commit(frames - 1)             # noqa: SLF001
     qapp.processEvents()

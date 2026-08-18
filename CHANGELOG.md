@@ -22,6 +22,57 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §7 (S4-3): the session time link
+
+The window gets its time back. `SessionScrubber` is the bottom-dock
+transport over the session's instant: slider, first/step/play/step/last,
+fps and loop mode, a stage selector, and the §7 **link** toggle. It is
+`TimeScrubberDock`'s machinery with the binding swapped — `session.time`
+and the change tick in place of `director.set_step` / `subscribe_step`
+— which is all the plan sized it as; the old dock is untouched until
+S6a. Drag it and every mesh view re-poses and every plot's playhead
+slides, which is §7's own test ("if the link is on and moving the plot
+does not move the meshes, the link is a lie") read forwards.
+
+**One stage at a time** (plan decision 9, settled here). The slider
+spans the current stage's steps and a selector picks the stage; the
+director's concatenated multi-stage track is deferred. That way the
+scrubber's x-axis is the same axis every plot draws — the stage's own
+recorded time — so the cursor rides the curve literally rather than
+within-a-segment, and a history plot (resolved inside
+`results.stage(cursor.stage)`) swaps curves on an explicit stage change
+instead of mid-drag. Switching stage lands on step 0 rather than
+carrying a step that would mean a different time. Not a one-way door:
+`Instant` is `(stage, step)` under either traversal, so the IR and the
+S5 snapshot are identical.
+
+**Unlinked, each pane keeps its own instant** (§7). The scrubber then
+disables itself and says why, because a live slider that changes no
+picture is a control pretending it can act; the per-pane instant badge
+`SessionPaneFrame` has carried built-and-hidden since S4-1 takes over.
+That badge renders only when it is news — link off, or a **mode-posed**
+view, which has no instant at all and is frozen under the link either
+way (§4/§7), and which without a badge just looks like a pane that
+stopped working. The inspector gains §9's pane-time row (stage + step +
+Clear), enabled even while linked because "set it here; the link
+ignores it" is literal: that value is the instant the pane adopts the
+moment you unlink.
+
+**The badge had to be taught it is chrome.** Measured first: an
+unelided stage id took the pane frame's `minimumSizeHint` from 207 px
+to 593 against `LAYOUT.pane_min_width = 240`, which `required_extent()`
+and the Add gate both multiply by — so the gate would have admitted a
+column the splitter cannot fit, which is criterion 18's whole point. It
+now carries the title's squeeze policy and elides the stage id, with
+the full value in the tooltip: back to 209 px.
+
+Playback is the reconciler's first sustained-load test. The
+discriminating pane is a mode-posed one: it is frozen under the link,
+so a frame that costs a static pane a realize must cost it nothing.
+Counting only panes that DO move passes with the criterion-12 signature
+gate ripped out — which the mutation pass caught, and the test was
+rewritten around.
+
 ### ADDED — ADR 0098 §9/§6 (S4-2): outline select-all + the plot pane
 
 **Select all.** Right-clicking a physical group or an element type in

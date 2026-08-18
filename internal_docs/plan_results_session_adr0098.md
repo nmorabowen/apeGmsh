@@ -260,6 +260,25 @@ session; animation playback is the reconciler's first sustained-load test.
   `_time_badge`, built and hidden) — S4-3's, as reserved.
 - **The window's bottom widget is still the scrubber placeholder.**
 
+*S4-3 shipped (2026-08-18) — S4 is complete. For S5a:*
+
+- **The IR did not move.** Decision 9 landed on a one-stage-at-a-time
+  track, which is a WIDGET choice: `Instant` is `(stage, step)` under
+  either traversal, so S5a's snapshot schema can be frozen against what
+  S0 shipped. Nothing in S4-1/2/3 widened `_time.py`, `_views.py` or
+  `_session.py`'s time surface.
+- **`session.time_linked` and per-pane `view.time` are both snapshot
+  state**, and they interact: a snapshot taken while unlinked has to
+  carry each pane's own instant, or restoring it silently relinks
+  everything to one.
+- **`SessionScrubber.dispose()` is not optional** — a live animation
+  QTimer keeps writing the session into panes being torn down. The
+  window disposes it BEFORE the host for that reason.
+- The per-pane badge is squeezable + elided; anything else added to
+  `SessionPaneHeader` has to be measured against
+  `LAYOUT.pane_min_width` the same way (207 px is the floor with the
+  badge hidden, 209 with it showing).
+
 **S5 (3 PRs).** S5a: serialize/restore + legacy gate (v13 shape → notice +
 `.legacy` rename, never overwrite an existing `.legacy`) + atomic write
 (lift `studio/_paths.py:82` `atomic_write_text` into a shared module —
