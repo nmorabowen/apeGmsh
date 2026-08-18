@@ -762,8 +762,11 @@ eids — hence under `/opensees/`). They are stamped with the current bridge
 - append — `cuts.persist_to_h5(path, …)` (deletes only supplied groups);
 - primitive — `cuts._h5_io.write_cuts_into(f, …)` (raises if groups exist).
 
-The viewer auto-loads persisted cuts; an explicit `viewer(cuts=[…])`
-kwarg **wins** over persisted (no merge).
+Persisted cuts are read back with `cuts.load_cuts_from_h5(path)`. The
+`viewer(cuts=[…])` kwarg is **retired** (ADR 0098 §1) — a cut plane is
+clip state on a view now: `results.session()` → `view.add_clip(normal,
+offset=…)`. The h5 auto-load-as-view-clips contract is owed by ADR 0098
+S6b, not wired yet.
 <!-- verified: tests/opensees/h5/test_h5_apesees_cuts.py::test_apesees_h5_with_cuts_writes_groups, ::test_apesees_h5_bumps_schema_version_to_2_5_0 -->
 
 ## Emit / run / inspect

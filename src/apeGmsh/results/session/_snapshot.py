@@ -35,14 +35,16 @@ set restores as ONE honest ``SET`` write), the derived legends (§5:
 *hidden* chrome is state), and every widget geometry — the window is a
 projection, never truth.
 
-The legacy gate: through S2–S5 the OLD viewer still owns
-``<results>.viewer-session.json`` and the new session writes
-``<results>.session.json`` (plan decision 11); S6 adopts the old path.
-A v13-shaped file therefore gets a notice and a ``.legacy``
-rename-aside — and **never** an overwrite, of the original or of an
-existing ``.legacy``. :func:`legacy_shape` is the bare predicate so
-S5c's MCP verb can refuse an old file without renaming anything (the
-rename belongs to the human flow).
+The legacy gate: the S6a flip ADOPTED ``<results>.viewer-session.json``
+(plan decision 11), so save-on-close now writes exactly where a v13
+file from the retired window lives. A v13-shaped file therefore gets a
+notice and a ``.legacy`` rename-aside — and **never** an overwrite, of
+the original or of an existing ``.legacy``. :func:`legacy_shape` is the
+bare predicate so S5c's MCP verb can refuse an old file without
+renaming anything (the rename belongs to the human flow), and
+:mod:`apeGmsh.results.session._boot` is where the window's open policy
+turns a refused rename into a notice plus a disarmed auto-save instead
+of a window that will not open.
 """
 from __future__ import annotations
 
@@ -87,7 +89,13 @@ SNAPSHOT_VERSION = 1
 #: moved out of the new session's way.
 LEGACY_SUFFIX = ".legacy"
 
-_SNAPSHOT_SUFFIX = ".session.json"
+#: The snapshot filename, ADOPTED from the old viewer at the S6a flip
+#: (plan decision 11). Through S2–S5 the new session wrote
+#: ``<results>.session.json`` beside the old window's
+#: ``<results>.viewer-session.json``; the flip takes the old name over,
+#: which is why :func:`rename_legacy_aside` exists — save-on-close now
+#: writes exactly where a v13 file lives.
+_SNAPSHOT_SUFFIX = ".viewer-session.json"
 
 
 class SnapshotError(ValueError):
@@ -581,11 +589,12 @@ def restore_snapshot(
 # ======================================================================
 
 def default_snapshot_path(results_path: "str | Path") -> Path:
-    """``<results>.session.json`` beside the results file.
+    """``<results>.viewer-session.json`` beside the results file.
 
-    Distinct from the old viewer's ``<results>.viewer-session.json``,
-    which it still owns and overwrites on close (plan decision 11); S6
-    adopts that path with the ``.legacy`` rename-aside below.
+    The old viewer's name, adopted at the S6a flip (plan decision 11)
+    now that nothing else writes it. A file already at this path may
+    therefore be a v13 session from the retired window — which is what
+    :func:`legacy_shape` and :func:`rename_legacy_aside` below are for.
     """
     p = Path(results_path)
     return p.with_suffix(p.suffix + _SNAPSHOT_SUFFIX)
@@ -671,7 +680,8 @@ def save_snapshot(
         if results_path is None:
             raise ValueError(
                 "This session's Results was not opened from a file, so "
-                "there is no <results>.session.json to default to — "
+                "there is no <results>.viewer-session.json to default "
+                "to — "
                 "pass an explicit path."
             )
         path = default_snapshot_path(results_path)

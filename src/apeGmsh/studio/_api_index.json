@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-17T06:57:39Z",
+  "generated": "2026-08-18T21:40:50Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -268,9 +268,9 @@
     },
     "Results.viewer": {
       "symbol": "Results.viewer",
-      "signature": "viewer(*, blocking: \"'Optional[bool]'\" = None, title: 'Optional[str]' = None, restore_session: \"'bool | str'\" = 'prompt', save_session: 'bool' = True, cuts: \"'Optional[Any]'\" = None)",
+      "signature": "viewer(*, blocking: \"'Optional[bool]'\" = None, title: 'Optional[str]' = None, restore_session: \"'bool | str'\" = 'prompt', save_session: 'bool' = True)",
       "skill": "references/results.md",
-      "doc": "Open the post-solve results viewer."
+      "doc": "Open the post-solve results window on a ``ResultsSession``."
     },
     "g.begin": {
       "symbol": "g.begin",

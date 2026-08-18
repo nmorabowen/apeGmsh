@@ -658,12 +658,18 @@ def test_a_large_selection_round_trips_without_going_quadratic():
 # Disk surface
 # =====================================================================
 
-def test_default_snapshot_path_is_not_the_old_viewers_path():
+def test_default_snapshot_path_adopted_the_old_viewers_name():
+    """Flipped at ADR 0098 S6a (plan decision 11).
+
+    Through S2–S5 this deliberately avoided ``.viewer-session.json``
+    because the retired window still overwrote it on close. The flip
+    retired that window from this door, so the new session takes the
+    name over — which is what makes ``rename_legacy_aside`` load-bearing
+    rather than theoretical: the save target IS where a v13 file lives.
+    """
     path = default_snapshot_path("/tmp/run/out.h5")
 
-    assert path.name == "out.h5.session.json"
-    # The old window still owns (and overwrites on close) this one.
-    assert "viewer-session" not in path.name
+    assert path.name == "out.h5.viewer-session.json"
 
 
 def test_save_snapshot_writes_json_that_reloads(tmp_path):

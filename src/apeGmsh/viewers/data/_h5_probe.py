@@ -1,6 +1,6 @@
 """Existence probe for the ``model.h5`` OpenSees orientation zone.
 
-The post-solve :class:`apeGmsh.viewers.ResultsViewer` auto-resolves an
+The post-solve :class:`apeGmsh.viewers.results_viewer.ResultsViewer` auto-resolves an
 effective ``model_h5`` from ``results._path`` when the results were
 opened from disk (``Results.from_native``) **and** the file actually
 carries beam-orientation data — the

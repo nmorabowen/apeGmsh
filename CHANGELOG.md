@@ -22,6 +22,66 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0098 §11 S6a: `viewer()` opens a `ResultsSession`
+
+`results.viewer()` is the same one-liner and opens a different window.
+It is now sugar for `results.session().show()` — the document is a
+`ResultsSession` of tiled mesh and plot panes with the closed §4 slot
+catalog, and the window is a client that projects it. The blocking call
+**returns that session**, still live after the window closes, so you can
+query it, render stills off it or snapshot it. `blocking=False` still
+returns the `Popen` and the notebook in-memory fallback still returns
+the `WebViewer`: three different things on purpose, because a session in
+*this* process is not what a child window is showing.
+
+`ResultsViewer` is **de-published, not deleted** — from
+`apeGmsh.viewers` and from the root `apeGmsh` package, which also
+exported it and is the shorter of the two ways to reach it. The module
+path keeps working, because `Results.export_animation` (the 0095 INV-11
+hatch) and the `show_web` hatch still import it there.
+
+`viewer(cuts=)` is retired with the diagram ontology (§1): a cut plane
+is clip state on a view. Build defs with `apeGmsh.cuts`, then
+`results.session()` → `view.add_clip(normal, offset=…)`.
+
+**The restore/save semantics flipped with it**, which is what §11 parked
+in this slice. `restore_session` and `save_session` keep their names,
+tokens and defaults and now drive a session snapshot;
+`<results>.viewer-session.json` is the file again, adopted from the old
+window now that nothing else writes it. `python -m apeGmsh.viewers`
+flipped for free — it already called `viewer(blocking=True)` — and grew
+`--restore-session` / `--no-save-session` so the child honours the
+policy the caller asked for, which before this it silently did not:
+`viewer(blocking=False, save_session=False)` saved anyway.
+
+**The window always opens.** A session file that cannot be honoured is
+announced, the default picture boots, and auto-save is switched off for
+that window. The third part is the one that matters: the save target IS
+the file that was refused, so booting fresh with auto-save armed would
+overwrite on close exactly what the refusal was protecting. The v13
+session written by the retired window is not restorable — the first
+upgraded open says so and renames it to `.legacy`, overwriting neither
+it nor an aside already there. Upgrade, downgrade, upgrade again and the
+rename is refused, so you get your window with both files intact and a
+line naming the one to move.
+
+A restore that merely *degrades* is not a refusal: a snapshot naming a
+stage these results no longer have keeps every pane, slot and scope,
+drops the instant with a notice, and keeps its save target.
+
+ALSO — **ADR 0098 Amendment 2** records the six shipped diagram kinds
+with no slot (`fiber_section`, `layer_stack`, the three isochrones,
+`spring_force`): they survive as internal implementation of the
+`show_web` hatch, the catalog stays closed at seven, and the disposition
+expires with the hatch. They have no published surface today and lose
+their authoring UI at this flip; they cannot enter a session snapshot.
+
+Two behaviours of the retired window do NOT exist in the session window
+and the docs stop claiming them: the draggable / right-click colour-scale
+chrome (the legend *controller* carries over, the *interactor* does not)
+and **File → Open Results…**. Both are recorded for the S6b sweep to
+keep, port or drop deliberately.
+
 ### ADDED — ADR 0098 §11 S5c: render a saved session
 
 `python -m apeGmsh.results.session render <snapshot> <out.png>` draws one

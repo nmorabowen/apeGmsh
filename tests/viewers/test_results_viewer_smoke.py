@@ -219,8 +219,16 @@ def test_notebook_auto_default_in_memory_falls_back_to_web(
 
 def test_script_auto_default_blocks(small_results, monkeypatch):
     """Outside a notebook, ``blocking=None`` keeps the in-process Qt
-    path — script / CLI ergonomics unchanged."""
-    from apeGmsh.viewers import results_viewer as viewer_mod
+    path — script / CLI ergonomics unchanged.
+
+    Flipped at ADR 0098 S6a: the in-process path is now
+    ``session().show()``, so this stubs ``ResultsSession.show`` (the one
+    seam ``Results._show_session_window`` uses) instead of the retired
+    ``ResultsViewer``. What is asserted is unchanged — auto-detect
+    outside a kernel means in-process, not a subprocess. The flip's own
+    coverage is ``test_viewer_flip.py``.
+    """
+    from apeGmsh.results.session import ResultsSession
 
     monkeypatch.setattr(
         _results_module(), "_in_notebook_kernel", lambda: False,
@@ -228,17 +236,18 @@ def test_script_auto_default_blocks(small_results, monkeypatch):
 
     captured: dict = {}
 
-    class _FakeViewer:
-        def __init__(self, results, **kwargs):
-            captured["results"] = results
+    def _show(self, *, blocking=True, title=None):
+        captured["session"] = self
+        captured["blocking"] = blocking
+        return None
 
-        def show(self):
-            return self
+    monkeypatch.setattr(ResultsSession, "show", _show)
+    out = small_results.viewer(restore_session=False, save_session=False)
 
-    monkeypatch.setattr(viewer_mod, "ResultsViewer", _FakeViewer)
-    out = small_results.viewer()
-    assert isinstance(out, _FakeViewer)
-    assert captured["results"] is small_results
+    assert isinstance(out, ResultsSession)
+    assert captured["session"] is out
+    assert captured["blocking"] is True
+    assert out.results is small_results
 
 
 # =====================================================================
