@@ -277,3 +277,61 @@ def test_recorded_zz_nan_sentinel_reconstructed_per_gp():
     assert ok
     # gp0 reconstructed = 0.3·10 = 3; gp1 keeps the recorded 5.
     np.testing.assert_allclose(cols["stress_zz"], [[3.0, 5.0]])
+
+
+# ---------------------------------------------------------------------
+# A recorded σ_zz: finite is silent, NaN names the material
+# ---------------------------------------------------------------------
+
+def _recorded_zz_model():
+    return _model(
+        [_elem("LadrunoLST", (1,), fem_eid=1)],
+        [_mat("LadrunoJ2", 1, (1.333e8, 8e7, 1.2e5))],
+    )
+
+
+def test_recorded_finite_zz_raises_no_warning():
+    """A genuinely recorded σ_zz is the answer — nothing to report."""
+    cols = {"stress_xx": np.array([[10.0]]), "stress_yy": np.array([[2.0]]),
+            "stress_zz": np.array([[7.0]])}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pr.OutOfPlaneRecoveryWarning)
+        assert pr.inject_out_of_plane(
+            cols, np.array([1]), prefix="stress",
+            model=_recorded_zz_model(),
+        ) is False
+
+
+def test_recorded_nan_zz_warns_about_the_material_not_the_model():
+    """A NaN σ_zz means ``NDMaterial::getStressZZ`` had no override — the
+    element and its idealization parsed fine.  Pointing the user at
+    ``plane=`` / ``nu=`` (the unclassifiable-element remedy) would send
+    them the wrong way, so the message must be a different one."""
+    cols = {"stress_xx": np.array([[10.0]]), "stress_yy": np.array([[0.0]]),
+            "stress_zz": np.array([[np.nan]])}
+    with pytest.warns(pr.OutOfPlaneRecoveryWarning) as caught:
+        pr.inject_out_of_plane(
+            cols, np.array([1]), prefix="stress", model=_recorded_zz_model(),
+        )
+    messages = [str(w.message) for w in caught]
+    assert len(messages) == 1
+    assert "getStressZZ" in messages[0]
+    assert "could not be classified" not in messages[0]
+
+
+def test_recorded_nan_zz_warning_fires_once():
+    """Same dedupe contract as the unrecovered warning — the viewer
+    re-reads every frame."""
+    model = _recorded_zz_model()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for _ in range(4):
+            pr.inject_out_of_plane(
+                {"stress_xx": np.array([[10.0]]),
+                 "stress_yy": np.array([[0.0]]),
+                 "stress_zz": np.array([[np.nan]])},
+                np.array([1]), prefix="stress", model=model,
+            )
+    assert sum(
+        issubclass(w.category, pr.OutOfPlaneRecoveryWarning) for w in caught
+    ) == 1

@@ -927,3 +927,79 @@ def known_beam_type_tokens(ndm: int) -> tuple[str, ...]:
         if _transf_arg_tail_index(token, ndm, _ELEM_REGISTRY) is not None:
             tokens.append(token)
     return tuple(sorted(set(tokens)))
+
+
+# ---------------------------------------------------------------------------
+# Out-of-plane σ_zz capability (plane-strain stress response)
+# ---------------------------------------------------------------------------
+#
+# The fork exposes a 4-component plane-element response
+# ``stressesPlaneStrain`` = ``[σxx, σyy, σxy, σzz]`` per Gauss point — a
+# strict superset of the 3-component ``stresses``.  The σzz term comes from
+# ``NDMaterial::getStressZZ()``, whose base implementation returns
+# ``quiet_NaN`` (``NDMaterial.cpp:226``).  Recording the 4-component form on
+# an element/material pair that cannot supply σ33 therefore writes an
+# all-NaN column, which is strictly WORSE than the ν-recovery fallback in
+# :mod:`apeGmsh.results._plane_recovery` (NaN propagates silently through von
+# Mises, the principals and every other invariant).  Both lists below are the
+# gate that keeps that from happening; they were audited against the fork
+# source on 2026-08-18.
+
+#: The recorder response token that carries σzz.  The fork canonicalizes it
+#: to ``stressPlaneStrain`` internally (``LadrunoResponseTokens.h:74``); the
+#: spelling emitted here is the one every plane element's ``setResponse``
+#: matches directly.
+STRESS_PLANE_STRAIN_RESPONSE: str = "stressesPlaneStrain"
+
+#: apeGmsh ``Element`` classes whose ``setResponse`` accepts
+#: :data:`STRESS_PLANE_STRAIN_RESPONSE` — ``FourNodeQuad.cpp:1396``,
+#: ``Tri31.cpp:1260``, ``BezierTri6.cpp:1552``, ``LadrunoQuad.cpp:1522``,
+#: ``LadrunoCST.cpp:773``, ``LadrunoLST.cpp:874``.  ``SixNodeTri`` and
+#: ``LadrunoUP`` are plane elements WITHOUT the branch, so they are absent.
+SIGMA_ZZ_ELEMENT_CLASSES: frozenset[str] = frozenset({
+    "BezierTri6",
+    "FourNodeQuad",
+    "LadrunoCST",
+    "LadrunoLST",
+    "LadrunoQuad",
+    "Tri31",
+})
+
+#: apeGmsh ``NDMaterial`` classes that expose a real σ33 through the
+#: plane-strain view an element requests with ``getCopy("PlaneStrain")``:
+#: ``ElasticIsotropic`` → ``ElasticIsotropicPlaneStrain2D.cpp:138``,
+#: ``J2Plasticity`` → ``J2PlaneStrain.cpp:191``, ``DruckerPrager`` →
+#: ``DruckerPragerPlaneStrain.cpp:122``, ``PlaneStrain`` (the 3-D wrapper) →
+#: ``PlaneStrainMaterial.cpp:228``.  ``LadrunoJ2`` (``LadrunoJ2.cpp:407``)
+#: and ``LadrunoConcrete3D`` (``LadrunoConcrete3D.cpp:485``) answer only when
+#: their own ``dim == DIM_PSTRAIN`` — which is exactly what the
+#: ``plane_type`` gate in :func:`element_records_stress_zz` enforces.  Every
+#: other nD material inherits the NaN default.
+SIGMA_ZZ_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "DruckerPrager",
+    "ElasticIsotropic",
+    "J2Plasticity",
+    "LadrunoConcrete3D",
+    "LadrunoJ2",
+    "PlaneStrain",
+})
+
+
+def element_records_stress_zz(spec: Any) -> bool:
+    """True when an ``Element`` spec's Gauss points can record a real σ_zz.
+
+    All three conditions must hold: the element class has the
+    :data:`STRESS_PLANE_STRAIN_RESPONSE` branch, it is configured for plane
+    strain (a plane-stress view leaves σzz at the material's NaN default —
+    and σzz is 0 there by definition anyway), and its nD material overrides
+    ``getStressZZ``.  Anything unrecognised answers ``False``: the caller
+    then keeps the plain ``stresses`` token and the read side reconstructs
+    σzz from ν, which is an approximation but never a NaN.
+    """
+    if type(spec).__name__ not in SIGMA_ZZ_ELEMENT_CLASSES:
+        return False
+    if getattr(spec, "plane_type", None) != "PlaneStrain":
+        return False
+    return type(getattr(spec, "material", None)).__name__ in (
+        SIGMA_ZZ_MATERIAL_CLASSES
+    )

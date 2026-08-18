@@ -79,6 +79,43 @@ plane-strain block stays genuinely ambiguous between `LadrunoLST` and
 `BezierTri6`, whose Gauss orders differ; that now raises and asks for a
 `class_hint`, exactly as the 9-column `stress` block these two already
 share.
+### ADDED — a plane-strain `stress_zz` request now records the real σ_zz
+
+`ops.recorder.declare(gauss=(..., "stress_zz"), ...)` used to be a silent
+no-op: `stress_zz` is a valid canonical component, but it routes onto the
+plain `stresses` token, which carries only the three in-plane components.
+The σ_zz you then read back was reconstructed from Poisson's ratio —
+exact for a linear-elastic material, and wrong by up to ~68% at a plastic
+Gauss point, which quietly poisons von Mises, the principals and every
+other invariant built on the 3-D tensor.
+
+Such a record is now promoted, record-level, onto the fork's
+`stressesPlaneStrain` element response — `[σxx, σyy, σxy, σzz]` per Gauss
+point, a strict superset of `stresses`, so `stress_xx`/`_yy`/`_xy`
+declared in the same record ride along unchanged.
+
+**Promotion is gated, because the naive version is worse than the bug it
+fixes.** `NDMaterial::getStressZZ()` returns `quiet_NaN` unless the
+material overrides it, and only six element classes even expose the
+4-component response. Recording it blindly writes an all-NaN column, and
+NaN propagates where the ν-estimate at least stayed finite. So the
+promotion fires only when *every* element the record targets is one of
+`FourNodeQuad` / `Tri31` / `BezierTri6` / `LadrunoQuad` / `LadrunoCST` /
+`LadrunoLST`, at `plane_type="PlaneStrain"`, over a material that
+overrides `getStressZZ` (`ElasticIsotropic`, `J2Plasticity`,
+`DruckerPrager`, the `PlaneStrain` wrapper, and `LadrunoJ2` /
+`LadrunoConcrete3D` in their plane-strain view). Anything else keeps
+today's behaviour and warns once, at emit, with
+`StressZZNotRecordedWarning` — the only place the user can learn *why*
+their σ_zz is an estimate.
+
+A record that does not ask for `stress_zz` is untouched: same token, same
+deck, byte for byte.
+
+Read side: a recorded-but-NaN `stress_zz` column now falls back to
+ν-recovery with a message that names the material as the cause, distinct
+from the existing "cannot classify this element" warning. A genuinely
+recorded, finite σ_zz is used verbatim and raises nothing.
 
 ### ADDED — ADR 0098 §11 S5c: render a saved session
 
