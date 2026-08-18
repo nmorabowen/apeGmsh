@@ -3463,6 +3463,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-pin-record-now-has-a-published-schema-inv-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the pin record now HAS a published schema (INV-17)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-two-pins-inside-one-second-no-longer-destroy-each-other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — two pins inside one second no longer destroy each other
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8202,6 +8235,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-pin-record-now-has-a-published-schema-inv-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the pin record now HAS a published schema (INV-17)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-two-pins-inside-one-second-no-longer-destroy-each-other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — two pins inside one second no longer destroy each other
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12923,6 +12989,48 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot">ADDED — ADR 0098 §11 S5b: a pin can carry the session snapshot<a class="headerlink" href="#added-adr-0098-11-s5b-a-pin-can-carry-the-session-snapshot" title="Permanent link">&para;</a></h3>
+<p><code>results_pin(session_snapshot=…)</code> pins the picture a human arranged. The
+ledger key is <code>session_snapshot</code> — <code>session</code> already means the run's
+session name in a ledger record — and unlike <code>model_h5</code> / <code>results</code>,
+which are recorded by path and hash only, that file is <strong>copied</strong> into
+<code>.apegmsh/pins/&lt;pin-id&gt;/session_snapshot.json</code> per the Amendment-5
+lifecycle. The reason is not symmetry: the live <code>&lt;results&gt;.session.json</code>
+is rewritten on every save, so a stamp alone pins content that is already
+gone. A file that is not a session snapshot is refused here — the retired
+<code>&lt;results&gt;.viewer-session.json</code> is the near-miss, and pinned blind it
+becomes an opaque hash that S5c refuses at render time, one step too late
+and against the wrong artifact.</p>
+<h3 id="added-the-pin-record-now-has-a-published-schema-inv-17">ADDED — the pin record now HAS a published schema (INV-17)<a class="headerlink" href="#added-the-pin-record-now-has-a-published-schema-inv-17" title="Permanent link">&para;</a></h3>
+<p><code>runs.jsonl</code> interleaves two record kinds, and the published contract
+described only one of them. A real pin record from the shipped writer was
+<strong>refused</strong> by the shipped <code>ledger.schema.json</code> (<code>missing required
+'script'</code>), so any out-of-tree consumer validating the ledger line by
+line rejected every pin line. <code>ledger_pin.schema.json</code> + its golden
+fixture now describe pin lines: a run line carries no <code>kind</code> and
+validates as <code>ledger</code>, a pin line carries <code>kind: "pin"</code> and validates as
+<code>ledger_pin</code>, and a consumer discriminates on <code>kind</code> first. Two schemas
+rather than one <code>oneOf</code> because the shipped validator is a deliberate
+draft-07 subset a Workbench-side reimplementation can match without a
+JSON Schema library — and relaxing the run schema's <code>required</code> list to
+admit both would stop it catching a run line that lost its <code>script</code>. The
+new live-writer round-trip test validates a REAL <code>results_pin</code> record
+against the published schema, which is the check that was missing.
+<code>contract_version</code> is <code>1.7.0</code> (additive: new kind, new field, same
+major).</p>
+<h3 id="fixed-two-pins-inside-one-second-no-longer-destroy-each-other">FIXED — two pins inside one second no longer destroy each other<a class="headerlink" href="#fixed-two-pins-inside-one-second-no-longer-destroy-each-other" title="Permanent link">&para;</a></h3>
+<p>Pin ids are second-granular, so two pins in the same UTC second shared an
+id: two ledger lines claiming to be the same pin, and the second pin's
+folder written straight over the first's. Survivable while a pin folder
+held only the assess snapshot (a re-derivable verdict); data loss once it
+holds the session snapshot, whose live original has usually been
+overwritten by the time anyone opens the pin. <code>results_pin</code> now takes the
+first id no ledger line and no existing pin folder has claimed
+(<code>pin-&lt;stamp&gt;</code>, then <code>pin-&lt;stamp&gt;-2</code>, …). The folder check matters on its
+own: a pin folder left behind by a run whose ledger append tore (tolerated
+by design, INV-16) must still not be written over. Proven with a frozen
+clock — the first version of that test raced the wall clock and skipped,
+which is the same as not having it.</p>
 <h3 id="added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate">ADDED — ADR 0098 §11 S5a: the session snapshot + the legacy gate<a class="headerlink" href="#added-adr-0098-11-s5a-the-session-snapshot-the-legacy-gate" title="Permanent link">&para;</a></h3>
 <p>A <code>ResultsSession</code> now serialises. <code>session.snapshot()</code> is the document
 as a JSON-safe dict and <code>session.save_snapshot()</code> writes it atomically

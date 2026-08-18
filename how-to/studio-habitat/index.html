@@ -4071,7 +4071,7 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.6.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.7.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
@@ -4079,6 +4079,21 @@ and MCP <code>path</code> / <code>output</code> / <code>written</code> / <code>r
 root-relative posix; the <code>root</code> field itself stays absolute as the
 resolve anchor. A <code>project.json</code> entry outside the habitat root is
 refused (<code>OUTSIDE_ROOT</code>) when used as the <code>run_until</code> default.</p>
+<p><code>runs.jsonl</code> interleaves two record kinds, so it has two published
+schemas. A <strong>run</strong> line carries no <code>kind</code> and validates against
+<code>ledger.schema.json</code>; a <strong>pin</strong> line carries <code>kind: "pin"</code> and validates
+against <code>ledger_pin.schema.json</code>. Discriminate on <code>kind</code> before
+validating — a pin line has no <code>script</code> / <code>phase</code> / <code>ok</code> and is
+correctly refused by the run schema.</p>
+<p><code>results_pin(session_snapshot=…)</code> pins the ADR 0098 presentation session
+(<code>&lt;results&gt;.session.json</code>). Unlike <code>model_h5</code> / <code>results</code>, which are
+recorded by path and hash only, that file is <strong>copied</strong> into
+<code>.apegmsh/pins/&lt;pin-id&gt;/session_snapshot.json</code>: the live snapshot is
+rewritten every time the human saves, so a hash alone would pin content
+that is already gone. The ledger key is <code>session_snapshot</code> because
+<code>session</code> already means the run's session name. A file that is not a
+session snapshot — the retired <code>&lt;results&gt;.viewer-session.json</code> is the
+near-miss — is refused (<code>INVALID_ARGS</code>).</p>
 <h2 id="trust-boundary">Trust boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
 <p><code>run_until</code> executes the caller’s Python file on purpose. Treat it as a
 <strong>local trust boundary</strong> — not a service to expose on a network port.</p>
