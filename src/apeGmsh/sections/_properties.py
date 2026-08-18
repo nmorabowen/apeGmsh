@@ -129,6 +129,36 @@ def build_document(doc_dict: "dict[str, Any]") -> BuildResult:
                            error=str(exc))
 
 
+def _work(
+    builder: "Callable[[dict[str, Any]], BuildResult]",
+    results: "queue.Queue[BuildResult]",
+    key: str,
+    doc_dict: "dict[str, Any]",
+) -> None:
+    """Runs on the worker thread — the only off-UI-thread code.
+
+    **A module-level function on purpose, not a method.** A bound method
+    would make the *running thread* an owner of the controller, and the
+    controller reaches Qt: its ``QTimer``, and through ``on_result`` the
+    whole builder window. A build that outlives its window then drops
+    the last reference to that Qt graph on this thread. PySide6 defers
+    such deletions to the main thread (Shiboken's
+    ``runDeletionInMainThread``) and the deferred pass segfaults the
+    interpreter — exit 139, no Python traceback, reported at whichever
+    code the main thread happened to reach rather than here. Taking the
+    builder and the queue as plain arguments keeps this thread's
+    reachable set Qt-free, so the last drop always lands on the UI
+    thread.
+    """
+    try:
+        res = builder(doc_dict)
+    except Exception as exc:  # pragma: no cover - builder isolation
+        res = BuildResult(key=key, kind="?", error=str(exc))
+    res.key = key
+    res.worker_thread_id = threading.get_ident()
+    results.put(res)
+
+
 class PropertiesController:
     """Runs document builds off the UI thread and delivers fresh results
     back on it.
@@ -194,20 +224,12 @@ class PropertiesController:
         self._running = True
         self.build_count += 1
         t = threading.Thread(
-            target=self._work, args=(key, doc_dict), daemon=True,
+            target=_work,                       # module-level: see above
+            args=(self._builder, self._results, key, doc_dict),
+            daemon=True,
         )
         self._threads.append(t)
         t.start()
-
-    def _work(self, key: str, doc_dict: "dict[str, Any]") -> None:
-        """Runs on the worker thread — the only off-UI-thread code."""
-        try:
-            res = self._builder(doc_dict)
-        except Exception as exc:  # pragma: no cover - builder isolation
-            res = BuildResult(key=key, kind="?", error=str(exc))
-        res.key = key
-        res.worker_thread_id = threading.get_ident()
-        self._results.put(res)
 
     # ── drain (UI thread: QTimer tick or manual in tests) ────────────
 

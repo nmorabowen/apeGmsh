@@ -9,6 +9,7 @@ solve ran on a worker thread (the S6 no-solve-on-the-UI-thread law).
 """
 from __future__ import annotations
 
+import gc
 import threading
 
 import pytest
@@ -171,3 +172,36 @@ def test_build_document_captures_error_instead_of_raising():
     res = build_document(doc.to_dict())
     assert res.error is not None
     assert res.analysis is None
+
+
+def test_a_running_worker_owns_nothing_qt():
+    """Regression lock: a live worker thread must not reach the
+    controller.
+
+    It used to — the thread target was the bound ``ctrl._work`` — and
+    the controller reaches Qt (its ``QTimer``, and the builder window
+    through ``on_result``). When a build outlived its window, the
+    finishing thread dropped the last reference to that Qt graph off
+    the UI thread; PySide6 queues such deletions for the main thread
+    and the deferred pass segfaulted the interpreter (Linux CI exit
+    139, no traceback, crash site drifting to whatever test the main
+    thread had reached).
+    """
+    gate = threading.Event()
+
+    def blocking(doc_dict):
+        gate.wait(30.0)
+        return BuildResult(key="", kind="continuum")
+
+    ctrl = PropertiesController(builder=blocking, autostart_timer=False)
+    try:
+        ctrl.request({"kind": "continuum"})
+        thread = ctrl._threads[-1]
+        assert thread.is_alive()
+        # everything the running thread can reach, one hop out
+        reachable = set(map(id, gc.get_referents(thread._target)))
+        reachable.update(map(id, thread._args))
+        assert id(ctrl) not in reachable
+    finally:
+        gate.set()
+        ctrl.join(30.0)
