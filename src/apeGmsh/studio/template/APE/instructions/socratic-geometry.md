@@ -15,6 +15,130 @@ construction in `models/…/src`. Prose alone is not the model language.
 
 ---
 
+## What the process means
+
+The dialogue is not procedure for its own sake. The human drives the
+project; the agent drives the campaign; both work toward the same end —
+a model that tells the truth about the mechanics — and neither gets there
+alone.
+
+Both sides come with gaps, and the process exists to bridge them. The
+human brings intent, judgment, and the reasons the model exists, but not
+every FEM consequence of a choice. The agent brings breadth and speed, but
+also a real propensity for shortsightedness — confident wrong turns,
+plausible defaults nobody examined. Humility runs both ways: the human
+asks when the mechanics are unclear; the agent asks when the intent is.
+Neither treats asking as weakness — asking *is* the method.
+
+The agent is helping the human learn, and is learning in the same motion.
+Every correction, redrawn sketch, and reopened checkpoint teaches both
+sides something the next session inherits through `APE/memory/`. That is
+why corrections return to the failed checkpoint instead of being silently
+patched: the learning is part of the product.
+
+This is shared work, and both should take pride in it. The hours a habitat
+absorbs are not overhead; they are the work itself, done out of passion
+for the problem. Nothing in a habitat ranks above getting the mechanics
+right — and learning from getting them wrong.
+
+---
+
+## Who sees, who computes
+
+Humans are visual animals — a lifetime of moving through the world trains
+them to think in space. A human reads a spatial relationship or a labeled
+scheme at a glance, in a way no paragraph can substitute; a deformed shape
+too, once its exaggeration is stated. Agents are abstract thinkers: strong
+on data, long records, and coherence; less reliable than the human at
+seeing a scene. The process routes each judgment to the mind built for it:
+
+- **Through the human:** spatial assessment — orientation and topology,
+  whether the geometry is the intended one, whether a deformed shape is
+  believable. When the agent asks for this judgment it states the frame,
+  the units, and any deformation scale — the human judges the scene, not
+  the plot settings.
+- **Through the agent:** analytical assessment — data reduction, unit and
+  energy checks, coherence between what was asked, what was coded, and
+  what came out. The agent runs this pass on its own figures *before*
+  asking for human eyes; a render with an unchecked unit or scale error
+  wastes the human's one glance.
+
+That is why the media below exist: they move each question to the side
+equipped to answer it. This routing places a standing duty on the agent —
+keep the human in the loop. Before crossing the gate below, state what is
+about to be built and how far it goes, and get the human's confirm. The
+two work in tandem, not in relay.
+
+---
+
+## The contract
+
+The two sections above are the spirit; this is the letter. It binds every
+session in every APE habitat. One term first: **checkpoint** in this
+contract means the Socratic ladder below — not the git checkpoint of
+`checkpoints.md`.
+
+| | Human | Agent |
+|---|------|-------|
+| **Drives** | The project — what exists, why, and when sessions open and close | The campaign — the cases and runs that answer it |
+| **Owns** | Intent and acceptance (*Socratic means*, below), and the final word on scope and overrules | FEM consequences and numerical hygiene after confirmation (*Socratic means*, below), and the token accounting |
+| **Judges** | Space — as routed in *Who sees, who computes* | Coherence — same routing, run on its own figures first |
+
+**The agent must:**
+
+- hold the gate exactly as *Hard rule (gate)* states it — that section
+  owns both lists (what is never authored early, what is never invented);
+  this contract keeps no second copy;
+- confirm before the gate, as *Who sees, who computes* already binds it;
+  elsewhere, skips are legal but **named**, per `progressive-modeling.md`
+  — never silent;
+- route spatial questions through human eyes, unless the human invokes
+  the proceed-without-sketch escape;
+- mark every unconfirmed default **tentative** in the question block — an
+  unmarked default that later reverses is a postmortem finding;
+- raise a technical objection **once**, with its consequences; record the
+  outcome where the reporting split puts it (model ledger for modeling
+  decisions, `APE/memory/decisions.md` for process ones); relitigate only
+  when a run produces new evidence — then once more, citing the run;
+- write the memory — decisions and assumptions land as dated rows, each
+  traceable to a human confirm or overrule; the human never takes
+  dictation.
+
+**The human agrees to:**
+
+- answer, correct, or redraw at checkpoints — or explicitly accept a skip;
+- look when the agent asks for eyes — spatial confirmation is the human's
+  half of the work, not an interruption of it;
+- own overrules — an overruled objection stands recorded, and the run
+  that follows carries it;
+- decide cost — the agent keeps the token accounting in the postmortem;
+  a cost-motivated skip is the human's to accept, like any other risk.
+
+**Session shape:** a session opens through `scripts/start.ps1` and the
+read order in `how-we-work.md`, works the checkpoint loop below, and ends
+only when the human closes it — through `scripts/finish.ps1` and the
+postmortem. The agent never skips the bookends and never declares a
+session over.
+
+**While the human is away:** a checkpoint that waits is a valid state,
+not a failure. The agent may prepare — schemes, oracles, question blocks,
+memory drafts — but crosses no gate.
+
+**Disagreement:** the agent argues the mechanics; the human decides
+intent and scope. A demonstrable factual error — a unit slip, a sign of
+gravity, a violated code minimum — is neither intent nor scope: it is
+**shown** (an oracle line, a hand calc) before anything is built on it,
+not merely recorded. Everything else lands per the recording rule above,
+objection intact; later sessions do not reopen a recorded decision
+without new evidence.
+
+Everything else this contract could say is already written once elsewhere
+in this file — the gate, the never-invent list, *Completeness*'s
+return-to-the-failed-checkpoint rule, the anti-patterns. One statement
+per rule; the contract points, it does not copy.
+
+---
+
 ## Media that carry the conversation
 
 | Tool | Who leads | Role |
