@@ -76,5 +76,27 @@ elif MODE == "E":                      # gc forced ON the properties worker itse
         w.close()
     spin()
 
+elif MODE == "F":     # AUTOMATIC gc on the worker (the real-world trigger)
+    from apeGmsh.sections._builder_gui import SectionBuilderWindow
+    import apeGmsh.sections._properties as props
+
+    # leave a pile of unreachable Qt-holding cycles behind, then make the
+    # automatic collector hair-trigger so the next allocating thread runs
+    # it -- which is the properties worker.
+    for _ in range(6):
+        w = SectionBuilderWindow(rect_doc())
+        w.refresh_properties()
+        w._controller.join(60.0); w._controller.drain()
+        w.close()
+        del w
+    gc.set_threshold(10, 1, 1)
+    for _ in range(6):
+        w = SectionBuilderWindow(rect_doc())
+        w.refresh_properties()
+        w._controller.join(60.0); w._controller.drain()
+        w.close()
+        del w
+        spin()
+
 spin()
 print("SURVIVED", MODE, flush=True)

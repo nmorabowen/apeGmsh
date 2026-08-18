@@ -24,6 +24,8 @@ so tests never touch Gmsh.
 """
 from __future__ import annotations
 
+import contextlib
+import gc
 import json
 import queue
 import threading
@@ -58,6 +60,59 @@ class BuildResult:
     identities: "dict[str, Any] | None" = None
     error: "str | None" = None
     worker_thread_id: "int | None" = None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Qt-safety: the cyclic GC must not run on the worker thread
+# ─────────────────────────────────────────────────────────────────────
+
+#: Serializes the pause/resume bookkeeping below.
+_GC_GUARD = threading.Lock()
+#: How many workers are currently inside :func:`_no_cyclic_gc`.
+_GC_HOLDERS = 0
+#: Whether the cyclic GC was enabled when the first holder arrived.
+_GC_WAS_ENABLED = False
+
+
+@contextlib.contextmanager
+def _no_cyclic_gc():
+    """Pause automatic cyclic collection for the length of one build.
+
+    **Why this exists.** Qt objects belong to the thread that created
+    them: a PySide6 wrapper finalized off the GUI thread is handed to
+    ``Shiboken::BindingManager``'s deferred-deletion queue, which the
+    main thread later drains through ``Py_AddPendingCall``. By then the
+    queued entry no longer describes a live object, and the destructor
+    call jumps through it — SIGSEGV inside
+    ``runDeletionInMainThread()``, with no Python traceback and below
+    the reach of any ``except``.
+
+    This worker never *creates* a Qt object, so the only way it can
+    finalize one is the cyclic collector, which runs on whichever
+    thread happens to trip the allocation threshold — and this thread
+    allocates hard (document parse, ``FEMData`` unpickle, the NumPy
+    solve). One gen-2 pass landing here while a builder window's widget
+    tree is unreachable is all it takes.
+
+    Refcount-driven frees are unaffected, so this does not leak: it
+    only defers *cyclic* garbage to the next collection after the
+    build, on whatever thread runs it then. Nested/overlapping builds
+    are refcounted, and an interpreter that already had the collector
+    off keeps it off.
+    """
+    global _GC_HOLDERS, _GC_WAS_ENABLED
+    with _GC_GUARD:
+        if _GC_HOLDERS == 0:
+            _GC_WAS_ENABLED = gc.isenabled()
+            gc.disable()
+        _GC_HOLDERS += 1
+    try:
+        yield
+    finally:
+        with _GC_GUARD:
+            _GC_HOLDERS -= 1
+            if _GC_HOLDERS == 0 and _GC_WAS_ENABLED:
+                gc.enable()
 
 
 def canonical_state(doc_dict: "dict[str, Any]") -> str:
@@ -200,14 +255,21 @@ class PropertiesController:
         t.start()
 
     def _work(self, key: str, doc_dict: "dict[str, Any]") -> None:
-        """Runs on the worker thread — the only off-UI-thread code."""
-        try:
-            res = self._builder(doc_dict)
-        except Exception as exc:  # pragma: no cover - builder isolation
-            res = BuildResult(key=key, kind="?", error=str(exc))
-        res.key = key
-        res.worker_thread_id = threading.get_ident()
-        self._results.put(res)
+        """Runs on the worker thread — the only off-UI-thread code.
+
+        The whole body runs under :func:`_no_cyclic_gc`: a Qt object
+        finalized on this thread crashes the interpreter from the main
+        thread's pending-call queue, and the cyclic collector is the
+        only thing that could finalize one here.
+        """
+        with _no_cyclic_gc():
+            try:
+                res = self._builder(doc_dict)
+            except Exception as exc:  # pragma: no cover - builder isolation
+                res = BuildResult(key=key, kind="?", error=str(exc))
+            res.key = key
+            res.worker_thread_id = threading.get_ident()
+            self._results.put(res)
 
     # ── drain (UI thread: QTimer tick or manual in tests) ────────────
 
