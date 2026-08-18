@@ -22,6 +22,70 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §9/§6 (S4-2): outline select-all + the plot pane
+
+**Select all.** Right-clicking a physical group or an element type in
+the session outline offers *Select all nodes* / *Select all Gauss* —
+§8's fourth writer, over the same ADR 0045 store a click writes, so the
+nodes-XOR-Gauss law and the one-gesture undo apply to it unchanged. The
+subject is the checked names when the clicked row is one of them and
+that row alone otherwise; each entry carries its count and disables
+itself at zero. Selecting does **not** touch scope: scope is what the
+view draws, selection is what gets plotted. Node membership reads no
+results at all (pure model topology, resolved by the same `_scope`
+resolver a scope checkbox uses); Gauss membership costs one single-step
+probe slab, addressed through the encoding realize's pick targets share
+(`viewers/session/_gauss_addr.py`), so the outline and the highlight
+cannot disagree about which integration point is selected.
+
+**The plot pane.** `PlotPanePlaceholder` is replaced by a real
+matplotlib-in-Qt chart. `SessionReconciler` serves mesh views only, so
+the chart gets its own `PlotReconciler` restating the same three
+disciplines: one gesture one redraw; a signature gate that includes the
+§7 instant (leaving it out is the S4-1 defect one layer up — the
+playhead would never move); and failures that report rather than
+vanish. The gate has a cheap half — a cursor move slides the playhead
+over cached arrays and reads nothing, but only while the STAGE holds:
+the arrays are a function of `cursor.stage`, so crossing a stage
+re-reads rather than painting one stage's record under another's
+playhead. A plot's chart deliberately does **not** follow the
+selection, because §6 copies the membership at creation. matplotlib is an optional dependency; without it the pane
+renders a named refusal instead of failing to build. Plot panes get a
+real inspector page too (the series are the occupants: list, clear one,
+clear all).
+
+**The loop closes.** "New plot from selection" sits on the outline
+beside "New plot", labelled with what would be plotted and gated on the
+Add gate, on there being a selection, and on the curve cap. §8's own
+test — "if selection does not produce a plot without a Python snippet,
+selection is still broken" — is now two gestures.
+
+**Two S4-2 decisions recorded** (plan decisions 10 / 10b). `path` / `xy`
+plot kinds stay refusals and now name the missing surface rather than a
+slice number: neither has a v1 authoring path and `xy` has nowhere in
+`PlotSeries(source, quantity)` to hold a second axis source.
+`label` / `physical_group` sources resolve as **one curve per member**,
+matching what `add_plot_from_selection` already does, expanded by ONE
+slab read (`pg=` is a first-class query filter) rather than one read per
+member — with a curve cap that refuses before reading, because outline
+select-all made a 100k-source plot one gesture away.
+
+### FIXED — one `SelectionState` gesture was quadratic in the set size
+
+`SelectionState.select_batch` and `SelectionLog`'s reducer both deduped
+with `t not in <list>`, so a single SET gesture cost O(n²) equality
+comparisons: measured 0.10 s at 1k targets, 1.66 s at 4k, 26.7 s at
+16k — 100k extrapolated to about 17 minutes. It had never been
+exercised at scale because `ResultsViewer` never wrote `SelectionState`;
+"Select all nodes" on a physical group is the first writer that hands
+it a whole model. Both dedups are now set-backed and order-preserving
+(100k targets: 0.16 s), the `REMOVE` / `BOX_REMOVE` branch no longer
+scan-and-shifts, and `SelectionState.__len__` answers a count without
+copying the target list. Pinned by a comparison-count test (complexity,
+machine-independent) plus a whole-gesture budget that includes the two
+O(n) costs S4-1 rides on top — the reconciler's exact selection
+signature and the highlight's membership test.
+
 ### ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
 
 A click or a rubber-band in a mesh pane now writes the session's **one**

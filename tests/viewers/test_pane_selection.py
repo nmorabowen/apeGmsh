@@ -838,8 +838,15 @@ def test_c14_dispose_is_idempotent(host, qapp):
 def test_c15_gp_index_counts_within_the_element(element_index, expected):
     """Criterion 15, on the derivation. ``GaussSlab`` carries no
     gp_index column, and the §8 target means the index WITHIN the
-    element — the same one ``_plots._gauss_series`` resolves."""
-    out = realize_mod._gp_index_within_element(  # noqa: SLF001
+    element — the same one ``_plots._gauss_series`` resolves.
+
+    S4-2 moved the encoding to ``_gauss_addr`` when select-all and the
+    plot resolver became its second and third consumers; this pins it
+    wherever it lives.
+    """
+    from apeGmsh.viewers.session import _gauss_addr
+
+    out = _gauss_addr.gp_index_within_element(
         np.asarray(element_index, dtype=np.int64),
     )
     assert out.tolist() == expected
@@ -875,8 +882,9 @@ def test_c15_a_gauss_click_resolves_to_element_and_gp(host, qapp):
 def test_c15_the_selection_becomes_a_plot_source(host, qapp):
     """§8: "That set IS the ``source=`` of plots. If selection does not
     produce a plot without a Python snippet, selection is still
-    broken." The outline action is S4-2; the surface it will call is
-    here and it works off a PICKED set."""
+    broken." This pins the surface on a PICKED set; the outline row
+    that calls it ("New plot from selection", S4-2) is covered in
+    ``test_select_all_plot.py``."""
     session, widget = host
     view = session.panes[0]
     _nodes_on(view)

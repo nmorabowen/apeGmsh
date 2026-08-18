@@ -45,6 +45,7 @@ from qtpy import QtCore, QtWidgets
 from .._failures import safe_slot
 from ..ui._icon_factory import bind_button_glyph
 from ..ui._layout_metrics import LAYOUT
+from ._chart import PlotPane
 from ._pane import BackendFactory, MeshPane
 
 #: The four INV-MESH-4 buttons: (MeshStyle field, glyph, tooltip).
@@ -74,31 +75,6 @@ _KIND_GLYPH = {"mesh": "mesh", "plot": "probe_line"}
 
 _ICON_PX = 16
 _HIT_PX = 22
-
-
-class PlotPanePlaceholder(QtWidgets.QLabel):
-    """Content of a plot pane until the chart lands (S4-2).
-
-    A plot IS a pane from S3 on — it tiles, it activates, it closes,
-    it carries a header — so the host must be able to build one. What
-    is missing is only the chart widget, and saying so beats an empty
-    frame that looks like a failed render.
-    """
-
-    def __init__(self, view: Any, parent: Optional[QtWidgets.QWidget] = None):
-        super().__init__(
-            f"The Qt chart for this {view.kind} plot lands at S4-2. Its "
-            f"series realize today through results.plot / "
-            f"session.realize.",
-            parent,
-        )
-        self.setObjectName("SessionPanePlotPlaceholder")
-        self.setWordWrap(True)
-        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.setEnabled(False)
-
-    def dispose(self) -> None:
-        return None
 
 
 class SessionPaneFrame(QtWidgets.QFrame):
@@ -142,18 +118,24 @@ class SessionPaneFrame(QtWidgets.QFrame):
         outer.setSpacing(0)
         outer.addWidget(self._build_header())
 
-        self._pane: Optional[MeshPane] = None
+        # Both kinds of content answer the same small protocol
+        # (``reconciler`` / ``request_reconcile`` / ``apply_navigation``
+        # / ``dispose``, plus ``backend`` and ``surface``), so the frame
+        # holds ONE reference and branches on kind only where the two
+        # genuinely differ: the header's buttons.
         if self._is_mesh:
-            self._pane = MeshPane(
+            self._pane: Any = MeshPane(
                 session,
                 view.id,
                 backend_factory=backend_factory,
                 defer_fn=defer_fn,
                 parent=self,
             )
-            content: QtWidgets.QWidget = self._pane
         else:
-            content = PlotPanePlaceholder(view, parent=self)
+            self._pane = PlotPane(
+                session, view.id, defer_fn=defer_fn, parent=self,
+            )
+        content: QtWidgets.QWidget = self._pane
         self._content = content
         outer.addWidget(content, stretch=1)
 
@@ -186,8 +168,11 @@ class SessionPaneFrame(QtWidgets.QFrame):
         return self._is_mesh
 
     @property
-    def pane(self) -> Optional[MeshPane]:
-        """The :class:`MeshPane` for a mesh pane; ``None`` for a plot."""
+    def pane(self) -> Any:
+        """This frame's content pane — a :class:`~._pane.MeshPane` or a
+        :class:`~._chart.PlotPane`. Both carry ``reconciler``, so a
+        caller that only wants "what did this pane last realize" needs
+        no kind test."""
         return self._pane
 
     @property
@@ -196,16 +181,15 @@ class SessionPaneFrame(QtWidgets.QFrame):
 
     @property
     def backend(self) -> Any:
-        """The pane's render backend (``None`` for a plot pane)."""
-        return None if self._pane is None else self._pane.backend
+        """The pane's render backend (``None`` for a plot pane, which
+        paints itself)."""
+        return self._pane.backend
 
     @property
     def plotter(self) -> Any:
         """The pane's live plotter, for the toolbar's active-pane
         routing (criterion 20). ``None`` when the pane owns no surface
         — a plot pane, or an injected backend in the offscreen lane."""
-        if self._pane is None:
-            return None
         return self._pane.surface
 
     def style_button(self, name: str) -> QtWidgets.QToolButton:
@@ -244,14 +228,14 @@ class SessionPaneFrame(QtWidgets.QFrame):
             self._on_activate(self._pane_id)
 
     def request_reconcile(self) -> None:
-        """Forced repaint (theme / density) — no-op for a plot pane."""
-        if self._pane is not None:
-            self._pane.request_reconcile()
+        """Forced repaint (theme / density). A plot pane takes it too —
+        the chart bakes the palette into its facecolors, and the
+        palette is exactly the change no session signature can see."""
+        self._pane.request_reconcile()
 
     def apply_navigation(self, token: str) -> None:
-        """Re-apply a navigation convention — no-op for a plot pane."""
-        if self._pane is not None:
-            self._pane.apply_navigation(token)
+        """Re-apply a navigation convention (a chart has no camera)."""
+        self._pane.apply_navigation(token)
 
     def dispose(self) -> None:
         """Detach from the session (idempotent)."""
@@ -259,8 +243,7 @@ class SessionPaneFrame(QtWidgets.QFrame):
             self._session.unsubscribe(self._on_session_tick)
         except Exception:
             pass
-        if self._pane is not None:
-            self._pane.dispose()
+        self._pane.dispose()
 
     # -- projection ----------------------------------------------------
 
@@ -469,7 +452,4 @@ class SessionPaneFrame(QtWidgets.QFrame):
         self.refresh()
 
 
-__all__ = [
-    "PICK_BUTTONS", "PlotPanePlaceholder", "STYLE_BUTTONS",
-    "SessionPaneFrame",
-]
+__all__ = ["PICK_BUTTONS", "STYLE_BUTTONS", "SessionPaneFrame"]

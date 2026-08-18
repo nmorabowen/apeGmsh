@@ -8,6 +8,11 @@ action; an occupied slot is its editor (change quantity) plus
 ``view.contour = Contour(...)`` a script would run — and the
 reconciler repaints; the page holds no picture state.
 
+A plot pane gets :class:`PlotInspectorPage` instead: no slots, but
+the same discipline — its SERIES are the occupants, each row clears
+one, and adding happens where the selection actions live (the
+outline).
+
 Timebox (per the plan): contour + deform carry the full editors this
 slice was sized for; the other five categories ride the same row
 mechanism with a single-token picker. Pickers offer only quantities
@@ -382,9 +387,155 @@ class MeshInspectorPage:
         self.refresh()
 
 
+class PlotInspectorPage:
+    """Inspector page for one plot pane (§9, S4-2).
+
+    A plot has no §4 slots, so the Add / change / clear loop reads
+    differently here: the SERIES are the occupants. Each row names one
+    curve and clears it; the whole set clears at once. Adding is not on
+    this page — it is "New plot from selection" on the outline, because
+    what a new series means is a SELECTION, and the outline is where
+    the selection actions live (one control, one place).
+
+    Like every page here it is a projection: it rebuilds from
+    ``plot.series`` on the change tick and writes only through the
+    record a script would assign.
+    """
+
+    def __init__(self, session: Any, plot: Any) -> None:
+        self._session = session
+        self._plot = plot
+        self._syncing = False
+
+        self.widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.widget)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self._heading = QtWidgets.QLabel()
+        self._heading.setObjectName("SessionPlotInspectorHeading")
+        self._heading.setWordWrap(True)
+        layout.addWidget(self._heading)
+
+        self._rows = QtWidgets.QVBoxLayout()
+        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._rows.setSpacing(2)
+        layout.addLayout(self._rows)
+
+        self._clear_all = QtWidgets.QPushButton("Clear all series")
+        self._clear_all.setObjectName("SessionPlotInspectorClearAll")
+        self._clear_all.clicked.connect(safe_slot(self._on_clear_all))
+        layout.addWidget(self._clear_all)
+
+        self._status = QtWidgets.QLabel()
+        self._status.setObjectName("SessionPlotInspectorStatus")
+        self._status.setWordWrap(True)
+        self._status.setEnabled(False)
+        layout.addWidget(self._status)
+        layout.addStretch(1)
+
+        session.subscribe(self._on_tick)
+        self.refresh()
+
+    # -- projection ----------------------------------------------------
+
+    def refresh(self) -> None:
+        series = self._plot.series
+        self._heading.setText(
+            f"{self._plot.kind} plot — {len(series)} series"
+        )
+        self._syncing = True
+        try:
+            while self._rows.count():
+                item = self._rows.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
+            for index, spec in enumerate(series):
+                self._rows.addWidget(self._series_row(index, spec))
+        finally:
+            self._syncing = False
+        self._clear_all.setEnabled(bool(series))
+
+    def set_realized(self, realized: Optional[Any]) -> None:
+        """What the chart last managed to draw (§4's post-emission law,
+        restated for curves): a series that resolved to nothing, or a
+        plot that refused, says so here rather than leaving the author
+        to guess from empty axes."""
+        if realized is None:
+            self._status.setText(
+                "(nothing drawn — see the message on the chart)"
+                if self._plot.series else ""
+            )
+            return
+        drawn = len(realized.series)
+        specs = len(self._plot.series)
+        self._status.setText(
+            "" if drawn == specs
+            else f"({drawn} curve(s) from {specs} source(s))"
+        )
+
+    def dispose(self) -> None:
+        self._session.unsubscribe(self._on_tick)
+
+    # -- internals -----------------------------------------------------
+
+    def _series_row(self, index: int, spec: Any) -> QtWidgets.QWidget:
+        row = QtWidgets.QWidget()
+        line = QtWidgets.QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(4)
+        label = QtWidgets.QLabel(_series_title(spec))
+        label.setToolTip(_series_title(spec))
+        label.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        line.addWidget(label, stretch=1)
+        clear = QtWidgets.QToolButton()
+        clear.setObjectName("SessionPlotInspectorClear")
+        clear.setText("✕")
+        clear.setToolTip("Remove this series from the plot")
+        clear.clicked.connect(safe_slot(lambda *_a, i=index: self._drop(i)))
+        line.addWidget(clear)
+        return row
+
+    def _drop(self, index: int) -> None:
+        if self._syncing:
+            return
+        series = list(self._plot.series)
+        if not 0 <= index < len(series):
+            return
+        del series[index]
+        # ONE write of the whole tuple: series is a value, and the
+        # session ticks per assignment.
+        self._plot.series = series
+
+    def _on_clear_all(self) -> None:
+        if self._plot.series:
+            self._plot.series = ()
+
+    def _on_tick(self) -> None:
+        self.refresh()
+
+
+def _series_title(spec: Any) -> str:
+    """One series as a row label — the same words its curve carries in
+    the chart legend, so the two are recognisably the same thing."""
+    source = spec.source
+    if source.kind == "node":
+        where = f"node {source.key}"
+    elif source.kind == "gauss":
+        where = f"element {source.key[0]} gp {source.key[1]}"
+    else:
+        where = f"{source.kind.replace('_', ' ')} {source.key}"
+    return f"{where} — {spec.quantity}"
+
+
 class PanePlaceholderPage:
-    """Inspector page for panes S2 does not edit yet (plot panes —
-    S4-2). A named refusal, not a crash."""
+    """Inspector page for a pane with nothing to edit — the
+    nothing-selected hint beside an empty host (0088 D2). A named
+    statement, not a crash."""
 
     def __init__(self, text: str) -> None:
         self.widget = QtWidgets.QLabel(text)
@@ -398,4 +549,4 @@ class PanePlaceholderPage:
         return None
 
 
-__all__ = ["MeshInspectorPage", "PanePlaceholderPage"]
+__all__ = ["MeshInspectorPage", "PanePlaceholderPage", "PlotInspectorPage"]

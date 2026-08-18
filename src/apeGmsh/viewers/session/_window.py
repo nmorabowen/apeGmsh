@@ -50,7 +50,11 @@ from ._host import (
     SCHEMA_KEY,
     SessionPaneHost,
 )
-from ._inspector import MeshInspectorPage, PanePlaceholderPage
+from ._inspector import (
+    MeshInspectorPage,
+    PanePlaceholderPage,
+    PlotInspectorPage,
+)
 from ._outline import SessionOutline
 
 _SKIP_ENV_NOTICE = "[skip viewer] APEGMSH_SKIP_VIEWER set"
@@ -151,6 +155,7 @@ class SessionWindow:
             on_pane_selected=self._on_pane_selected,
             on_new_view=self._on_new_view,
             on_new_plot=self._on_new_plot,
+            on_new_plot_from_selection=self._on_new_plot_from_selection,
             on_close_pane=self._on_close_pane,
             can_add=self._host.can_add,
         )
@@ -159,7 +164,8 @@ class SessionWindow:
         from qtpy import QtWidgets
 
         placeholder = QtWidgets.QLabel(
-            "Time scrubber lands with the session time link (S4).",
+            "Time scrubber lands with the session time link (S4-3). "
+            "A plot's playhead already follows session.time.",
         )
         placeholder.setEnabled(False)
         self._shell.set_bottom_widget(placeholder)
@@ -274,25 +280,23 @@ class SessionWindow:
             if isinstance(pane, MeshView):
                 page = MeshInspectorPage(self._session, pane)
             else:
-                page = PanePlaceholderPage(
-                    f"Plot pane {pane_id!r}: the Qt plot pane lands "
-                    f"at S4-2. Its series realize today via "
-                    f"results.plot / session.realize.",
-                )
+                page = PlotInspectorPage(self._session, pane)
             self._pages[pane_id] = page
         self._current_page = page
         self._shell.set_inspector_widget(page.widget)
         page.set_realized(self._realized_for(pane_id))
 
     def _realized_for(self, pane_id: str) -> Any:
+        """What that pane last realized — a ``RealizedPane`` for a mesh
+        view, a ``RealizedPlot`` for a plot. Both content panes carry a
+        reconciler, so this needs no kind test."""
         if self._host is None:
             return None
         try:
             frame = self._host.frame(pane_id)
         except KeyError:
             return None
-        pane = frame.pane
-        return None if pane is None else pane.reconciler.realized
+        return frame.pane.reconciler.realized
 
     # -- pane lifecycle -------------------------------------------------
 
@@ -324,6 +328,16 @@ class SessionWindow:
 
     def _on_new_plot(self) -> None:
         plot = self._session.add_plot()
+        self._host.set_active(plot.id)
+
+    def _on_new_plot_from_selection(self, quantity: str) -> None:
+        """§8's own test, as a gesture: the set IS the source.
+
+        The membership is COPIED into concrete node / Gauss sources by
+        ``add_plot_from_selection`` (§6 — a live alias is not v1), so
+        the chart that opens keeps showing these curves however the
+        selection moves next."""
+        plot = self._session.add_plot_from_selection(quantity)
         self._host.set_active(plot.id)
 
     def _on_close_pane(self, pane_id: str) -> None:

@@ -171,7 +171,7 @@ class SessionSelection:
         self._state.clear()
 
     def __len__(self) -> int:
-        return len(self._state.targets)
+        return len(self._state)
 
     def __repr__(self) -> str:
         return f"<SessionSelection {self.kind or 'empty'} ({len(self)})>"

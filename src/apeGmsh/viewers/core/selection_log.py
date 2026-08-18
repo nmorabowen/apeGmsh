@@ -91,8 +91,18 @@ class GroupSnapshot:
 
 
 def _dedup_extend(picks: list, targets) -> None:
+    """Append ``targets`` to ``picks``, first occurrence wins.
+
+    Set-backed rather than a list scan: the reducer runs on every
+    gesture, and one ADR 0098 §8 "select all" op carries a whole
+    physical group, so ``t not in picks`` would make a single replay
+    quadratic in the set size. Tokens are required to be hashable —
+    the log's stated contract, and what ``box_add`` already assumes.
+    """
+    seen = set(picks)
     for t in targets:
-        if t not in picks:
+        if t not in seen:
+            seen.add(t)
             picks.append(t)
 
 
@@ -103,9 +113,11 @@ def _apply(st: GroupSnapshot, op: SelectionOp) -> None:
     if k in (OpKind.ADD, OpKind.BOX_ADD):
         _dedup_extend(st.working, op.targets)
     elif k in (OpKind.REMOVE, OpKind.BOX_REMOVE):
-        for t in op.targets:
-            if t in st.working:
-                st.working.remove(t)
+        # Same result as removing each target's first occurrence in
+        # turn (the working set is deduped by construction), without
+        # the O(n^2) scan-and-shift a big box-remove would pay.
+        drop = set(op.targets)
+        st.working = [t for t in st.working if t not in drop]
     elif k is OpKind.CLEAR:
         st.working = []
     elif k is OpKind.SET:

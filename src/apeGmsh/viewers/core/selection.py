@@ -171,6 +171,16 @@ class SelectionState:
         """The picked entities as unified ``SelectionTarget`` values."""
         return list(self._picks)
 
+    def __len__(self) -> int:
+        """How many entities are picked, without copying them.
+
+        ``targets`` hands out a defensive copy, which is right for a
+        reader and wrong for a count: ADR 0098's outline re-reads the
+        size on every session tick, and after a "select all nodes" on a
+        100k-node group that copy is the whole set, per tick, for a
+        label."""
+        return len(self._picks)
+
     def _sync(self) -> None:
         """Re-materialise the cached state from the log — the single
         source of truth (ADR 0045 S3c-2). ``_picks`` and the group fields
@@ -250,15 +260,22 @@ class SelectionState:
         # it actually changes the working set — otherwise a no-op batch
         # (e.g. re-selecting already-picked entities by double-clicking a
         # tree/part item) would leave a dead undo step behind.
+        #
+        # The dedup is set-backed, not a list scan. Order is preserved
+        # (first occurrence wins) because the working set IS an ordered
+        # record — tab-cycling and the highlight both read it in order
+        # — but ``t not in new`` over a growing list is O(n^2), and
+        # ADR 0098 §8's outline "select all" is the first writer that
+        # hands this method a whole physical group at once. Measured
+        # before the fix: 1k targets 0.10 s, 4k 1.66 s, 16k 27 s.
         if replace:
-            new: list[SelectionTarget] = []
-            for t in targets:
-                if t not in new:
-                    new.append(t)
+            new: list[SelectionTarget] = list(dict.fromkeys(targets))
         else:
             new = list(self._picks)
+            seen = set(new)
             for t in targets:
-                if t not in new:
+                if t not in seen:
+                    seen.add(t)
                     new.append(t)
         if new == self._picks:
             return

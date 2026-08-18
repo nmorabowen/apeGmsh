@@ -12,7 +12,10 @@ session package — so the session IR never imports
 S4-1 adds the §8 selection surface's projection: the node / Gauss
 pick targets realize puts on screen (:class:`PaneTargets`) and
 :class:`PanePick`, which turns one pane's clicks and rubber-bands into
-writes on the session's ONE selection set.
+writes on the session's ONE selection set. S4-2 adds the outline's
+select-all (:func:`select_all`, the §8 fourth writer) and the plot
+pane — :class:`PlotChart` and its own :class:`PlotReconciler`, because
+the mesh reconciler serves mesh views only.
 
 The Qt pane client lives here as a further projection:
 :class:`SessionReconciler` (session diff → backend ops → one
@@ -30,6 +33,7 @@ from importlib import import_module
 
 from ._pick import PanePick
 from ._plots import RealizedPlot, RealizedSeries, realize_plot
+from ._select_all import gauss_pairs, select_all
 from ._realize import (
     GaussTargets,
     NodeTargets,
@@ -50,8 +54,11 @@ _QT_EXPORTS = {
     "SessionOutline": "._outline",
     "MeshInspectorPage": "._inspector",
     "PanePlaceholderPage": "._inspector",
+    "PlotInspectorPage": "._inspector",
     "SessionPaneFrame": "._frame",
-    "PlotPanePlaceholder": "._frame",
+    "PlotChart": "._chart",
+    "PlotPane": "._chart",
+    "PlotReconciler": "._chart",
     "PICK_BUTTONS": "._frame",
     "STYLE_BUTTONS": "._frame",
     "SessionPaneHost": "._host",
@@ -89,7 +96,10 @@ __all__ = [
     "PanePick",
     "PaneTargets",
     "PanePlaceholderPage",
-    "PlotPanePlaceholder",
+    "PlotChart",
+    "PlotInspectorPage",
+    "PlotPane",
+    "PlotReconciler",
     "RealizedLayer",
     "RealizedPane",
     "RealizedPlot",
@@ -103,6 +113,7 @@ __all__ = [
     "SessionResultsWindow",
     "SessionWindow",
     "default_backend_factory",
+    "gauss_pairs",
     "realize_pane",
     "realize_plot",
     "recorded_components",
@@ -110,6 +121,7 @@ __all__ = [
     "required_extent",
     "resolve_pane",
     "resolve_scope",
+    "select_all",
     "show_session",
     "tile_columns",
     "tile_shape",

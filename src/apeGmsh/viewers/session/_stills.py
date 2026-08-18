@@ -74,9 +74,13 @@ def render_still(
     if not isinstance(view, MeshView):
         raise NotImplementedError(
             f"session.render writes stills of mesh panes; pane "
-            f"{view.id!r} is a plot pane — a matplotlib still of the "
-            f"same queries is results.plot (§10), and the plot pane's "
-            f"own still lands with S4-2."
+            f"{view.id!r} is a plot pane. The still of those same "
+            f"queries is results.plot (§10's own routing), and "
+            f"session.realize(pane) hands you the arrays. A plot pane "
+            f"draws to a live Qt canvas (S4-2); an OFFSCREEN chart "
+            f"still is a separate thing — its size, dpi and palette "
+            f"are none of them settled here — and belongs with the S5 "
+            f"snapshot render."
         )
     results = session.results
     if results is None:
