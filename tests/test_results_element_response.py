@@ -664,6 +664,18 @@ def test_catalog_coverage_v1() -> None:
         ("BezierTri6", IntRule.Triangle_GL_2, "strain"),
         ("BezierTri6", IntRule.Custom, "stress"),
         ("BezierTri6", IntRule.Custom, "strain"),
+        # stress_plane_strain — the fork's 4-component response (σ_zz
+        # appended). Exactly the six classes implementing the
+        # ``stressPlaneStrain`` branch in the fork source; NOT SixNodeTri
+        # and NOT LadrunoUP, which have no such branch. BezierTri6 is
+        # mirrored under Custom like its ``stress`` rows.
+        ("FourNodeQuad", IntRule.Quad_GL_2, "stress_plane_strain"),
+        ("LadrunoQuad", IntRule.Quad_GL_2, "stress_plane_strain"),
+        ("Tri31", IntRule.Triangle_GL_1, "stress_plane_strain"),
+        ("LadrunoCST", IntRule.Triangle_GL_1, "stress_plane_strain"),
+        ("LadrunoLST", IntRule.Triangle_GL_2, "stress_plane_strain"),
+        ("BezierTri6", IntRule.Triangle_GL_2, "stress_plane_strain"),
+        ("BezierTri6", IntRule.Custom, "stress_plane_strain"),
         ("SSPquad", IntRule.Quad_GL_1, "stress"),
         ("SSPquad", IntRule.Quad_GL_1, "strain"),
         ("EightNodeQuad", IntRule.Quad_GL_3, "stress"),

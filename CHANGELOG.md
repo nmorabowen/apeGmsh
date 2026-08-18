@@ -61,6 +61,25 @@ bucket repeats one scalar per fiber, but a continuum bucket repeats its
 component set once per GAUSS POINT — the multiplicity test dropped every
 multi-GP solid. Fiber buckets are now excluded by token.
 
+The 4-component plane-strain response gets its own catalog token,
+`stress_plane_strain`, wired from both keyword spellings
+(`stressesPlaneStrain` / `stressPlaneStrain`). The `.out` transcoder
+identifies a layout by (token, flat size) alone, so under the plain
+`stress` token a promoted 3-GP element's 3 x 4 = 12 columns collided
+exactly with `FourNodeQuad`'s 4 x 3 = 12 and were decoded as 4 Gauss points
+of 3 components — every value on the wrong Gauss point AND the wrong
+component, with no error. Registered for the six classes that implement the
+fork's `stressPlaneStrain` branch (`FourNodeQuad`, `Tri31`, `BezierTri6`,
+`LadrunoQuad`, `LadrunoCST`, `LadrunoLST`; NOT `SixNodeTri`, NOT
+`LadrunoUP`), each with its own `stress` entry's Gauss count and natural
+coordinates. Component order is `sigma11, sigma22, sigma12, sigma33` — σ_zz
+LAST, appended so the first three columns stay byte-compatible with
+`stresses` (`STRESS_PLANE_STRAIN` in `_vocabulary`). A 12-column
+plane-strain block stays genuinely ambiguous between `LadrunoLST` and
+`BezierTri6`, whose Gauss orders differ; that now raises and asks for a
+`class_hint`, exactly as the 9-column `stress` block these two already
+share.
+
 ### ADDED — ADR 0098 §11 S5c: render a saved session
 
 `python -m apeGmsh.results.session render <snapshot> <out.png>` draws one
