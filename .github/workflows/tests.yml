@@ -323,9 +323,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[plot,viewer,dxf]" openseespy pytest
 
+      # The openseespylinux wheel SHIPS its own libblas / liblapack /
+      # libgfortran under `openseespylinux/lib`, then wires up nothing:
+      # its `__init__` is a bare `from openseespylinux.opensees import *`,
+      # so the loader never looks there and the import dies on
+      # `libblas.so.3: cannot open shared object file`. Point
+      # LD_LIBRARY_PATH at the bundled directory rather than apt-installing
+      # system BLAS — these are the exact libs the extension was built
+      # against (it wants libgfortran.so.4; current Ubuntu ships .so.5).
+      #
+      # `find_spec` locates the package WITHOUT executing its `__init__`,
+      # which is required here: importing it is the very thing that fails.
+      - name: Put the wheel's bundled BLAS/LAPACK on the loader path
+        run: |
+          lib=$(python -c "
+          import importlib.util, os
+          spec = importlib.util.find_spec('openseespylinux')
+          print(os.path.join(list(spec.submodule_search_locations)[0], 'lib'))
+          ")
+          test -f "$lib/libblas.so.3" || { echo "no bundled BLAS under $lib"; ls -la "$lib" || true; exit 1; }
+          echo "LD_LIBRARY_PATH=$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
       # Without this the lane's own failure mode IS the bug it exists to
       # close: if the wheel does not import, every `live` test skips
-      # itself and the job reports green having run nothing.
+      # itself and the job reports green having run nothing. It has
+      # already earned its keep once — it is what caught the missing
+      # BLAS above instead of letting the lane pass having run zero tests.
       - name: Backend must really import (guard against a silent all-skip)
         run: |
           python -c "
