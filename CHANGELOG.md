@@ -22,6 +22,54 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
+
+A click or a rubber-band in a mesh pane now writes the session's **one**
+selection set. Selection is **nodes XOR Gauss points** and nothing else
+(§8): element and fiber pick targets are retired in this window — an
+element is a membership query, not a hit — so `core/results_pick.py`
+(three modes, dim-gate, geometry resolver) is not extended but replaced
+on the session path by a slim `viewers/session/_pick.py`. Zero new VTK:
+the `vtkCellPicker` ray, the press/move/release machine and the
+rubber-band overlay are the shared `PyVistaPickBackend`, reused verbatim
+(ADR 0047 INV-3). The old file and `results_viewer.py` are untouched.
+
+The pick targets come out of **realize**: `RealizedPane.targets` carries
+the node ids / `(element_id, gp_index)` pairs the pane last put on
+screen, with their posed coordinates, so a hit can only resolve to a
+point that pane is drawing — right scope, right pose, right instant —
+and "window … scoped to this view's visible cells" needs no second
+derivation. `GaussSlab` carries no gp-index column, so the index WITHIN
+each element is derived here, matching what the plot resolver expects.
+Both glyph clouds are emitted **pickable** (they were not): §8 names
+them as what a click hits, and a Gauss point — inside its element — has
+no other prop that can answer for it. A click snaps from the RAY's world
+point, not from the pixel, which is what keeps a node hidden behind the
+model unselectable. Plain click/drag replaces the set, Ctrl extends
+(Ctrl+click toggles), a plain click on nothing clears, and a click with
+the matching style button off is a non-event — never a silent clear of
+a set filled from elsewhere.
+
+The set is **painted**: a `<pane>:selection` layer marks it over the
+same posed cloud the glyphs use, in every pane, over only the points
+that pane draws. Because the highlight is realize output, the S3
+reconciler's per-pane signature grows a **selection term** — without it
+a selection write ticks the session, the signature compares equal, and
+the repaint the user just asked for is skipped. The term is the
+membership (not a count) and is read only when a glyph button is on, so
+an outline "select all" with glyphs off still costs those panes nothing.
+
+The pane header gains the §8 **pick-target radio** (Nodes | Gauss),
+beside the style buttons and separated from them: it aims THIS pane's
+clicks and windows only — it neither owns nor clears the set, and two
+panes may aim differently over the one set. The Gauss side disables
+itself when the stage records no Gauss composite.
+
+`SessionSelection` gains `toggle_node` / `toggle_gauss` (the Ctrl+click
+writers, XOR law intact), and a pane's pick installation now dies on
+`MeshPane.dispose` — the same path that closes its GL context, because
+its observers live on that interactor.
+
 ### FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the `live` surface on stock openseespy
 
 `tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular`

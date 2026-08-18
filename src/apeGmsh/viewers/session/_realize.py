@@ -40,6 +40,15 @@ Laws realized here:
   LOCATIONS and stands down when the `gauss` slot is occupied — the
   slot already draws that cloud, with values, and two clouds is the
   law's named failure.
+* **§8, selection** (S4-1): the node and Gauss clouds are emitted
+  ``pickable`` — they ARE the pick targets — and their addresses ride
+  out on :class:`PaneTargets` so a hit can only ever resolve to a
+  point this pane is drawing. The session's ONE set is then marked as
+  a ``<pane>:selection`` layer over those same posed coords, which is
+  what "highlights follow the current pose" costs here: nothing.
+  Because the highlight is realize output, the S2 reconciler's
+  signature carries a selection term — without it a selection write
+  ticks the session, compares equal, and the repaint is skipped.
 * **INV-LEGEND-1..5** (S1 decision 4): a null legend-controller is
   adopted for the backend before any diagram attaches, so
   ``ScalarBarSupport`` registrations no-op and the ONLY colour scales
@@ -102,6 +111,55 @@ class RealizedLayer:
     handle: Any
 
 
+@dataclass(frozen=True, eq=False)
+class NodeTargets:
+    """The node pick targets of one pane — ids and their POSED coords.
+
+    ``ids[i]`` is the FEM node id at ``coords[i]``. Row-aligned by
+    construction: both come off the one cell set (INV-MESH-1) at the
+    pose this flush realized, which is what makes §8's "highlights
+    follow the current pose" free.
+    """
+
+    ids: "np.ndarray"          # (n,) int64 FEM node ids
+    coords: "np.ndarray"       # (n, 3) posed world coords
+
+
+@dataclass(frozen=True, eq=False)
+class GaussTargets:
+    """The Gauss pick targets of one pane.
+
+    ``(element_ids[i], gp_indices[i])`` is the §8 target at
+    ``coords[i]``. ``gp_index`` is the row WITHIN that element, in the
+    slab's own row order — the encoding ``_plots._gauss_series``
+    resolves and ``SessionSelection`` stores.
+    """
+
+    element_ids: "np.ndarray"  # (n,) int64
+    gp_indices: "np.ndarray"   # (n,) int64
+    coords: "np.ndarray"       # (n, 3) posed world coords
+
+
+@dataclass(frozen=True, eq=False)
+class PaneTargets:
+    """What a click or a window can hit in this pane (§8).
+
+    Populated per style button, because that is the law: "click-pick
+    requires the matching style button on". A target family is ``None``
+    when its button is off — not an empty array, which would say "the
+    button is on and nothing is there".
+
+    The Gauss family is computed whenever the button is on, INCLUDING
+    when the `gauss` slot occupies and suppresses the button's own
+    layer: the slot is drawing that same cloud, with values, so those
+    points are on screen and a click must still be able to address
+    them.
+    """
+
+    nodes: Optional[NodeTargets] = None
+    gauss: Optional[GaussTargets] = None
+
+
 @dataclass(frozen=True)
 class RealizedPane:
     """One pane, realized. ``scalar_bars`` are the bar keys emitted to
@@ -112,6 +170,12 @@ class RealizedPane:
     alive for the caller's lifetime management (S2 drives
     ``update_to_step`` through them); tests may introspect, nothing
     else should.
+
+    ``targets`` is S4-1's addition: the node / Gauss addresses this
+    flush put on screen, which the pane's pick controller resolves a
+    hit against. Derived from the same cell set and the same pose as
+    the layers, so a pick can never address a point the pane is not
+    drawing.
     """
 
     pane_id: str
@@ -119,6 +183,7 @@ class RealizedPane:
     scalar_bars: tuple[str, ...]
     diagrams: tuple[Any, ...]
     legend_controller: Optional[LegendController]
+    targets: PaneTargets = PaneTargets()
 
 
 # =====================================================================
@@ -300,14 +365,29 @@ def _realize_mesh(
         slot_diagrams[category] = diagram
 
     # INV-MESH-3/4 — outlines / nodes / gauss as layers of the SAME cell
-    # set, emitted after the slots so they read above the surface.
-    for role, layer in _style_layers(
+    # set, emitted after the slots so they read above the surface. The
+    # same pass resolves the §8 pick targets: the glyph clouds ARE the
+    # pick targets, so their addresses and their layers come off one
+    # computation.
+    style_layers, targets = _style_and_targets(
         view, scene, grid, scoped, view_data, results, stage_id,
-    ):
+    )
+    for role, layer in style_layers:
         handle = backend.add_layer(layer)
         layers.append(RealizedLayer(
             key=f"{view.id}:{role}",
             layer_id=layer.layer_id,
+            handle=handle,
+        ))
+
+    # §8 — the selection, on THIS pane's pose and cell set. Emitted
+    # last so it reads above every glyph it marks.
+    highlight = _selection_layer(view.id, session.selection, targets)
+    if highlight is not None:
+        handle = backend.add_layer(highlight)
+        layers.append(RealizedLayer(
+            key=f"{view.id}:selection",
+            layer_id=highlight.layer_id,
             handle=handle,
         ))
 
@@ -321,6 +401,7 @@ def _realize_mesh(
         scalar_bars=bar_keys,
         diagrams=tuple(diagrams),
         legend_controller=legend_controller,
+        targets=targets,
     )
 
 
@@ -666,6 +747,10 @@ _OUTLINE_FEATURE_ANGLE = 25.0
 _NODE_POINT_SIZE = 7.0
 _GAUSS_POINT_SIZE = 6.0
 
+#: The §8 highlight, drawn over whichever cloud it marks — bigger than
+#: both so a selected glyph reads as marked, not merely recoloured.
+_SELECTION_POINT_SIZE = 12.0
+
 
 def _with_surface_edges(spec: Any, kind_id: str, style: Any) -> Any:
     """Ride the "Mesh" button onto an occluding slot's own style."""
@@ -678,7 +763,7 @@ def _with_surface_edges(spec: Any, kind_id: str, style: Any) -> Any:
     return replace(spec, style=replace(spec.style, show_edges=style.mesh))
 
 
-def _style_layers(
+def _style_and_targets(
     view: "MeshView",
     scene: "FEMSceneData",
     grid: Any,
@@ -686,30 +771,38 @@ def _style_layers(
     view_data: "ViewerData",
     results: "Results",
     stage_id: str,
-) -> "list[tuple[str, Any]]":
+) -> "tuple[list[tuple[str, Any]], PaneTargets]":
     """``(role, layer)`` for every ON style button that draws its own
-    layer — "Mesh" is not here, it is ``show_edges`` of the surface."""
+    layer, plus the §8 pick targets those buttons put on screen.
+
+    "Mesh" is not here — it is ``show_edges`` of the surface. Nodes and
+    Gauss are: their glyph clouds ARE the pick targets, so the
+    addresses and the layer come off ONE computation of each cloud.
+    """
     out: list[tuple[str, Any]] = []
+    nodes = gauss = None
     style = view.style
     if style.outlines:
         layer = _outlines_layer(view.id, grid)
         if layer is not None:
             out.append(("outlines", layer))
     if style.nodes:
-        layer = _nodes_layer(view.id, scene, scoped)
-        if layer is not None:
-            out.append(("nodes", layer))
-    # "They must not draw two clouds" (INV-MESH-4): the `gauss` SLOT
-    # already paints these points, with values and a scale. The button
-    # stays lit — it describes what is on screen — and emits nothing.
-    if style.gauss and "gauss" not in view.slots:
-        layer = _gauss_layer(
-            view.id, scene, scoped, view_data, results, stage_id,
+        nodes = _node_targets(scene, scoped)
+        if nodes is not None:
+            out.append(("nodes", _nodes_layer(view.id, nodes)))
+    if style.gauss:
+        gauss = _gauss_targets(
+            scene, scoped, view_data, results, stage_id,
             posed=view.deform is not None,
         )
-        if layer is not None:
-            out.append(("gauss", layer))
-    return out
+        # "They must not draw two clouds" (INV-MESH-4): the `gauss`
+        # SLOT already paints these points, with values and a scale.
+        # The button stays lit — it describes what is on screen — and
+        # emits nothing. The TARGETS still stand: the cloud is on
+        # screen, so §8 must still be able to hit it.
+        if gauss is not None and "gauss" not in view.slots:
+            out.append(("gauss", _gauss_layer(view.id, gauss)))
+    return out, PaneTargets(nodes=nodes, gauss=gauss)
 
 
 def _outlines_layer(pane_id: str, grid: Any) -> "Optional[MeshLayer]":
@@ -783,17 +876,19 @@ def _outline_feature_angle() -> float:
         return _OUTLINE_FEATURE_ANGLE
 
 
-def _nodes_layer(
-    pane_id: str, scene: "FEMSceneData", scoped: "ScopedSet",
-) -> "Optional[MeshLayer]":
-    """Node glyphs of the cell set — the click-pick affordance (§8).
+def _node_targets(
+    scene: "FEMSceneData", scoped: "ScopedSet",
+) -> "Optional[NodeTargets]":
+    """The nodes of the VISIBLE cells, with their posed coords (§8).
 
     Read off ``scene.grid.points``, which the pose already moved, so
-    the glyphs follow the deformed model without a second sync.
+    the glyphs — and the picks and highlights that ride them — follow
+    the deformed model without a second sync. ``scoped.node_ids`` is
+    the node-of-visible-cells incidence, derived once per flush by
+    ``resolve_scope`` and shared by every consumer here.
     """
-    from ..scene_ir import CellBlocks
-
     points = np.asarray(scene.grid.points)
+    node_ids = np.asarray(scene.node_ids, dtype=np.int64)
     if scoped.is_unscoped:
         rows = np.arange(points.shape[0], dtype=np.int64)
     else:
@@ -808,23 +903,39 @@ def _nodes_layer(
         rows = rows[rows >= 0]
     if rows.size == 0:
         return None
+    return NodeTargets(ids=node_ids[rows], coords=points[rows])
+
+
+def _nodes_layer(pane_id: str, targets: "NodeTargets") -> "MeshLayer":
+    """Node glyphs — the click-pick affordance (§8).
+
+    ``pickable=True`` because §8 names this cloud as what a click
+    hits: a hit on a glyph resolves THROUGH the glyph rather than
+    through whatever surface lies behind it. It is not what makes
+    picking possible — the one surface stays pickable, so the
+    ray-then-snap rule (:mod:`._pick`) answers a click on a face too —
+    it is what makes the glyph itself a target, which is the law the
+    style button gates.
+    """
+    from ..scene_ir import CellBlocks
+
     palette = _palette()
     color = getattr(palette, "node_accent", None) or "#e0e0e0"
+    n = int(targets.ids.size)
     return MeshLayer(
         layer_id=f"{pane_id}:nodes",
-        points=PointSet(points[rows]),
+        points=PointSet(targets.coords),
         cells=CellBlocks(
-            {"vertex": np.arange(rows.size, dtype=np.int64).reshape(-1, 1)},
+            {"vertex": np.arange(n, dtype=np.int64).reshape(-1, 1)},
         ),
         color=ColorSpec(mode="solid", solid_rgb=color),
         point_size=_NODE_POINT_SIZE,
         render_points_as_spheres=True,
-        pickable=False,
+        pickable=True,
     )
 
 
-def _gauss_layer(
-    pane_id: str,
+def _gauss_targets(
     scene: "FEMSceneData",
     scoped: "ScopedSet",
     view_data: "ViewerData",
@@ -832,8 +943,8 @@ def _gauss_layer(
     stage_id: str,
     *,
     posed: bool,
-) -> "Optional[MeshLayer]":
-    """Integration-point glyphs — LOCATIONS, not values (INV-MESH-4).
+) -> "Optional[GaussTargets]":
+    """Integration points of the cell set — LOCATIONS, not values.
 
     The addresses come from a Gauss slab, which is read per component;
     any recorded component answers the same ``(element_index,
@@ -846,8 +957,6 @@ def _gauss_layer(
     from apeGmsh.results._gauss_world_coords import (
         compute_global_coords_from_arrays,
     )
-
-    from ..scene_ir import CellBlocks
 
     probe = _gauss_probe_component(results, stage_id)
     if probe is None:
@@ -882,20 +991,140 @@ def _gauss_layer(
     coords = np.asarray(coords, dtype=np.float64)
     if coords.size == 0:
         return None
+    element_index = np.asarray(slab.element_index, dtype=np.int64)
+    return GaussTargets(
+        element_ids=element_index,
+        gp_indices=_gp_index_within_element(element_index),
+        coords=coords,
+    )
+
+
+def _gp_index_within_element(element_index: "np.ndarray") -> "np.ndarray":
+    """Each slab row's index WITHIN its element, in slab row order.
+
+    The §8 Gauss target is ``(element_id, gp_index)`` where ``gp_index``
+    counts integration points inside that one element — the same
+    ordering ``_plots._gauss_series`` resolves with
+    ``where(element_index == element_id)[gp_index]``. The slab itself
+    carries no such column (unlike ``FiberSlab``), so it is derived
+    here: a STABLE sort groups each element's rows while preserving
+    their slab order, and the position inside the group is the index.
+    """
+    n = int(element_index.size)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    order = np.argsort(element_index, kind="stable")
+    grouped = element_index[order]
+    starts = np.flatnonzero(
+        np.r_[True, grouped[1:] != grouped[:-1]]
+    ).astype(np.int64)
+    counts = np.diff(np.r_[starts, np.int64(n)])
+    within = np.arange(n, dtype=np.int64) - np.repeat(starts, counts)
+    out = np.empty(n, dtype=np.int64)
+    out[order] = within
+    return out
+
+
+def _gauss_layer(pane_id: str, targets: "GaussTargets") -> "MeshLayer":
+    """The integration-point glyph cloud (INV-MESH-4).
+
+    ``pickable=True`` for the same reason the node cloud is (§8 names
+    it as what a click hits) — and here it carries more weight:
+    integration points sit INSIDE their elements, so a Gauss glyph is
+    the only prop that can answer for one.
+    """
+    from ..scene_ir import CellBlocks
+
     palette = _palette()
     color = getattr(palette, "info", None) or "#7aa2f7"
-    n = coords.shape[0]
+    n = int(targets.coords.shape[0])
     return MeshLayer(
         layer_id=f"{pane_id}:gauss",
-        points=PointSet(coords),
+        points=PointSet(targets.coords),
         cells=CellBlocks(
             {"vertex": np.arange(n, dtype=np.int64).reshape(-1, 1)},
         ),
         color=ColorSpec(mode="solid", solid_rgb=color),
         point_size=_GAUSS_POINT_SIZE,
         render_points_as_spheres=True,
+        pickable=True,
+    )
+
+
+# =====================================================================
+# Selection highlight (§8) — the one set, on THIS pane's pose
+# =====================================================================
+
+
+def _selection_layer(
+    pane_id: str, selection: Any, targets: "PaneTargets",
+) -> "Optional[MeshLayer]":
+    """The session selection, marked on this pane's own glyph cloud.
+
+    The set is ONE (§8) and every pane marks it, but only over the
+    points that pane is actually drawing: a node outside this view's
+    scope has no coordinate here, and a set of the kind whose button
+    is off has nothing to mark — "query-from-outline may fill the set
+    with glyphs off; glyphs on is how you see it".
+
+    Sizes and colour are chrome. What is NOT chrome is that the coords
+    come from ``targets``, which this same flush posed: highlights
+    follow the current pose, always, with no second sync.
+    """
+    from ..scene_ir import CellBlocks
+
+    kind = selection.kind
+    if kind == "nodes" and targets.nodes is not None:
+        wanted = np.asarray(selection.nodes, dtype=np.int64)
+        rows = np.flatnonzero(np.isin(targets.nodes.ids, wanted))
+        coords = targets.nodes.coords[rows]
+    elif kind == "gauss" and targets.gauss is not None:
+        pairs = np.asarray(
+            selection.gauss, dtype=np.int64,
+        ).reshape(-1, 2)
+        rows = np.flatnonzero(_pair_isin(
+            targets.gauss.element_ids, targets.gauss.gp_indices, pairs,
+        ))
+        coords = targets.gauss.coords[rows]
+    else:
+        return None
+    if rows.size == 0:
+        # Selected, but not in this pane's picture. The missing key is
+        # what tells a client the pane marked nothing.
+        return None
+    palette = _palette()
+    color = getattr(palette, "accent", None) or "#ffb000"
+    return MeshLayer(
+        layer_id=f"{pane_id}:selection",
+        points=PointSet(coords),
+        cells=CellBlocks(
+            {"vertex": np.arange(rows.size, dtype=np.int64).reshape(-1, 1)},
+        ),
+        color=ColorSpec(mode="solid", solid_rgb=color),
+        point_size=_SELECTION_POINT_SIZE,
+        render_points_as_spheres=True,
         pickable=False,
     )
+
+
+def _pair_isin(
+    element_ids: "np.ndarray", gp_indices: "np.ndarray",
+    wanted: "np.ndarray",
+) -> "np.ndarray":
+    """Row-wise membership of ``(element_id, gp_index)`` in ``wanted``.
+
+    Flattened to ONE integer key per pair — ``eid * stride + gp`` with
+    ``stride`` taken from the data, so the encoding is exact rather
+    than a guessed maximum integration-point count.
+    """
+    if wanted.size == 0 or element_ids.size == 0:
+        return np.zeros(element_ids.size, dtype=bool)
+    stride = int(max(
+        int(gp_indices.max(initial=0)), int(wanted[:, 1].max(initial=0)),
+    )) + 1
+    have = element_ids * stride + gp_indices
+    want = wanted[:, 0] * stride + wanted[:, 1]
+    return np.isin(have, want)
 
 
 def _gauss_probe_component(
@@ -1016,5 +1245,6 @@ def _layer_lutspec(diagram: Any) -> Any:
 
 
 __all__ = [
-    "RealizedLayer", "RealizedPane", "realize_pane", "recorded_components",
+    "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
+    "RealizedPane", "realize_pane", "recorded_components",
 ]

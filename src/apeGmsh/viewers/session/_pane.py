@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from qtpy import QtWidgets
 
+from ._pick import PanePick
 from ._reconciler import SessionReconciler
 
 #: ``factory(parent_widget) -> (surface_widget | None, backend)``.
@@ -105,11 +106,23 @@ def default_backend_factory(
     return interactor, PyVistaQtBackend(interactor)
 
 
+def _supports_picking(backend: Any) -> bool:
+    """Whether ``backend`` exposes a ``PickBackend`` (ADR 0047 INV-1).
+
+    Probed, never assumed: ``supports_picking`` is an optional
+    capability. Only the PROBE is guarded — a backend that answers
+    ``True`` and then cannot build a picker is a broken backend, not a
+    pane that should quietly render without picking.
+    """
+    probe = getattr(backend, "supports_picking", None)
+    return bool(probe is not None and probe())
+
+
 class MeshPane(QtWidgets.QWidget):
     """One mesh view, projected. The session is truth; this widget is
     a client (§1) — it holds no picture state of its own, only the
-    backend, the reconciler, the render surface (when it owns one) and
-    its own first-fit camera flag.
+    backend, the reconciler, the §8 pick installation, the render
+    surface (when it owns one) and its own first-fit camera flag.
     """
 
     def __init__(
@@ -138,6 +151,16 @@ class MeshPane(QtWidgets.QWidget):
             session, backend, pane_id=pane_id, defer_fn=defer_fn,
         )
         self._reconciler.add_listener(self._on_reconciled)
+        # §8 — this pane's clicks and windows, aimed by ITS radio at
+        # the ONE session set. Only a backend that can ray-cast gets
+        # one; a view-only backend (a plain recorder) is legal and
+        # simply cannot pick (ADR 0042 INV-3 / 0047 INV-1).
+        self._pick: Optional[PanePick] = None
+        if _supports_picking(backend):
+            self._pick = PanePick(
+                session, backend.picking(),
+                lambda: self._reconciler.realized,
+            )
 
     # -- surface -------------------------------------------------------
 
@@ -155,6 +178,12 @@ class MeshPane(QtWidgets.QWidget):
     @property
     def reconciler(self) -> SessionReconciler:
         return self._reconciler
+
+    @property
+    def pick(self) -> Optional[PanePick]:
+        """This pane's §8 pick controller (``None`` when the backend
+        cannot ray-cast)."""
+        return self._pick
 
     def set_pane(self, pane_id: Optional[str]) -> None:
         """Aim the projection at another mesh view.
@@ -188,8 +217,14 @@ class MeshPane(QtWidgets.QWidget):
         the shell to the panes. Windows tolerates the leak; Mesa
         segfaults on the NEXT interactor in the process, which is what
         the xvfb lane caught.
+
+        The pick installation dies on this same path, for the same
+        reason: its observers live on the interactor this method is
+        about to close.
         """
         self._reconciler.dispose()
+        if self._pick is not None:
+            self._pick.dispose()
         if self._surface is not None:
             try:
                 self._surface.close()

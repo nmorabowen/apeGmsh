@@ -147,6 +147,26 @@ class SessionSelection:
             return
         self._state.select_batch(targets, replace=self.kind == "nodes")
 
+    def toggle_node(self, node_id: int) -> None:
+        """Ctrl+click on a node: add it, or drop it if already in.
+
+        On a Gauss set this is a write of the other kind, so the §8
+        last-writer law applies unchanged — the set is REPLACED by this
+        one node rather than becoming heterogeneous.
+        """
+        if self.kind == "gauss":
+            self.set_nodes([node_id])
+            return
+        self._state.toggle(node_target(node_id))
+
+    def toggle_gauss(self, element_id: int, gp_index: int) -> None:
+        """Ctrl+click on a Gauss point — the mirror of
+        :meth:`toggle_node`, replacing a node set."""
+        if self.kind == "nodes":
+            self.set_gauss([(element_id, gp_index)])
+            return
+        self._state.toggle(gauss_target(element_id, gp_index))
+
     def clear(self) -> None:
         self._state.clear()
 

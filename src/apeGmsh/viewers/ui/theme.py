@@ -1109,19 +1109,38 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         font-size: {d_fs_body}px;
     }}
     QToolButton#SessionPaneKind, QToolButton#SessionPaneClose,
-    QToolButton#SessionPaneStyleButton {{
+    QToolButton#SessionPaneStyleButton, QToolButton#SessionPanePickButton {{
         background: transparent;
         border: 1px solid transparent;
         border-radius: {rad_sm}px;
     }}
     QToolButton#SessionPaneClose:hover,
-    QToolButton#SessionPaneStyleButton:hover {{
+    QToolButton#SessionPaneStyleButton:hover,
+    QToolButton#SessionPanePickButton:hover {{
         background-color: {p.surface0};
         border-color: {p.surface1};
     }}
     QToolButton#SessionPaneStyleButton:checked {{
         background-color: {_rgba(p.accent, 0.18)};
         border: 1px solid {p.accent};
+    }}
+    /* The §8 pick-target radio shares the node / Gauss glyphs with the
+       style buttons beside it, so its CHECKED state must not: a filled
+       accent chip reads as "aimed here", against the style buttons'
+       outlined "drawn". One of the two is always checked — it is a
+       radio, not four independent toggles. */
+    QToolButton#SessionPanePickButton:checked {{
+        background-color: {p.accent};
+        border: 1px solid {p.accent};
+    }}
+    QToolButton#SessionPanePickButton:disabled {{
+        background: transparent;
+        border: 1px solid transparent;
+    }}
+    QFrame#SessionPaneHeaderSeparator {{
+        background-color: {p.surface1};
+        border: none;
+        margin: 3px 3px;
     }}
     QFrame#SessionPaneHostEmpty {{
         background-color: {p.base};

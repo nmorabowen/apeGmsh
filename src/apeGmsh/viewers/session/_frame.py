@@ -4,12 +4,12 @@ ADR 0098 Amendment 1 A1.3::
 
     ┌ SessionPaneFrame ─────────────────────────────────────────┐
     │ SessionPaneHeader   h = DENSITY.row_h (22 / 28)           │
-    │  ▦ Mesh view 1          [M][O][N][G]      (time)       ✕  │
+    │  ▦ Mesh view 1     [M][O][N][G] │ Pick(N|G)  (time)    ✕  │
     ├───────────────────────────────────────────────────────────┤
     │  pane content — QtInteractor (mesh) | chart (plot)        │
     └───────────────────────────────────────────────────────────┘
 
-Two rules the frame exists to hold:
+Three rules the frame exists to hold:
 
 * **The pane owns its single title** — 0087 INV-1's stated exception
   for a surface that renders outside a dock. It is the ONLY title:
@@ -21,10 +21,19 @@ Two rules the frame exists to hold:
   two panes) that N panes exist for. The mesh-view inspector page does
   not restate them: one state, one control.
 
+* **The pick-target radio sits beside them** (§8, S4-1) for the same
+  reason and one more: the radio aims THIS pane's clicks, and two
+  panes are allowed to aim differently over the one selection set, so
+  it must be readable and settable without first selecting the pane
+  you are about to click in. It is separated from the style group and
+  carries its own checked treatment, because "Nodes" here means *what
+  a click hits*, not *what is drawn* — the same two words, two
+  different knobs.
+
 Everything a button writes goes to ``session.pane(id)`` — the same
-``MeshStyle`` record a script would assign — and never to another
-pane. The frame is a projection: it re-syncs from the session on every
-tick and holds no style state of its own.
+``MeshStyle`` record, or ``pick_target``, a script would assign — and
+never to another pane. The frame is a projection: it re-syncs from the
+session on every tick and holds no state of its own.
 """
 from __future__ import annotations
 
@@ -46,6 +55,17 @@ STYLE_BUTTONS: "tuple[tuple[str, str, str], ...]" = (
     ("nodes", "nodes", "Nodes — node glyphs (required to click-pick nodes)"),
     ("gauss", "gauss", "Gauss — integration-point glyphs (required to "
                        "click-pick Gauss)"),
+)
+
+#: The §8 pick-target radio: (``MeshView.pick_target`` value, glyph,
+#: tooltip). Exactly two — selection is nodes XOR Gauss; element and
+#: fiber pick targets are retired in this window (an element is a
+#: membership query, not a hit).
+PICK_BUTTONS: "tuple[tuple[str, str, str], ...]" = (
+    ("nodes", "nodes", "Pick target: Nodes — clicks and windows in "
+                       "this view hit nodes"),
+    ("gauss", "gauss", "Pick target: Gauss — clicks and windows in "
+                       "this view hit integration points"),
 )
 
 #: Kind glyphs. Both are shipped roster entries: a mesh pane draws the
@@ -192,6 +212,10 @@ class SessionPaneFrame(QtWidgets.QFrame):
         """One of the four style buttons, by ``MeshStyle`` field name."""
         return self._style_buttons[name]
 
+    def pick_button(self, name: str) -> QtWidgets.QToolButton:
+        """One of the two pick-target buttons, by ``pick_target`` value."""
+        return self._pick_buttons[name]
+
     @property
     def close_button(self) -> QtWidgets.QToolButton:
         return self._close
@@ -246,6 +270,8 @@ class SessionPaneFrame(QtWidgets.QFrame):
             style = view.style
             for name, button in self._style_buttons.items():
                 button.setChecked(bool(getattr(style, name)))
+            for name, button in self._pick_buttons.items():
+                button.setChecked(name == view.pick_target)
         finally:
             self._syncing = False
 
@@ -291,6 +317,7 @@ class SessionPaneFrame(QtWidgets.QFrame):
         row.addStretch(1)
 
         self._style_buttons: dict[str, QtWidgets.QToolButton] = {}
+        self._pick_buttons: dict[str, QtWidgets.QToolButton] = {}
         if self._is_mesh:
             # 0087 INV-2: the buttons do not act on a plot, so a plot
             # pane does not render them disabled — it does not render
@@ -299,6 +326,13 @@ class SessionPaneFrame(QtWidgets.QFrame):
                 self._style_buttons[name] = self._build_style_button(
                     row, name, glyph, tooltip,
                 )
+            row.addWidget(self._build_separator())
+            self._pick_group = QtWidgets.QButtonGroup(header)
+            self._pick_group.setExclusive(True)
+            for name, glyph, tooltip in PICK_BUTTONS:
+                button = self._build_pick_button(row, name, glyph, tooltip)
+                self._pick_buttons[name] = button
+                self._pick_group.addButton(button)
             row.addStretch(1)
 
         # Reserved: the per-pane instant badge (S4-3 when the time link
@@ -342,6 +376,48 @@ class SessionPaneFrame(QtWidgets.QFrame):
         row.addWidget(button)
         return button
 
+    def _build_separator(self) -> QtWidgets.QWidget:
+        """The hairline between "what is drawn" and "what a click
+        hits" — the two groups share glyphs, so they must not read as
+        one strip of six toggles."""
+        line = QtWidgets.QFrame()
+        line.setObjectName("SessionPaneHeaderSeparator")
+        line.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        line.setFixedWidth(1)
+        return line
+
+    def _build_pick_button(
+        self, row: Any, name: str, glyph: str, tooltip: str,
+    ) -> QtWidgets.QToolButton:
+        button = QtWidgets.QToolButton()
+        button.setObjectName("SessionPanePickButton")
+        button.setProperty("pickTarget", name)
+        button.setCheckable(True)
+        button.setToolTip(tooltip)
+        button.setFixedSize(_HIT_PX, _HIT_PX)
+        bind_button_glyph(button, glyph, size=_ICON_PX)
+        if name == "gauss" and not self._gauss_available():
+            # 0087 INV-2 — aiming clicks at a cloud that cannot exist
+            # in this stage is a control that cannot act.
+            button.setEnabled(False)
+            button.setToolTip(
+                "No Gauss values recorded in this stage — there are no "
+                "integration points to pick.",
+            )
+        button.toggled.connect(safe_slot(self._on_pick_target_toggled))
+        row.addWidget(button)
+        return button
+
+    def _on_pick_target_toggled(self, *_args: Any) -> None:
+        if self._syncing:
+            return
+        for name, button in self._pick_buttons.items():
+            if button.isChecked():
+                # Aims THIS view's clicks and nothing else: it neither
+                # owns nor clears the session's one selection set (§8).
+                self._view.pick_target = name
+                return
+
     def _gauss_available(self) -> bool:
         from ._realize import recorded_components
 
@@ -370,4 +446,7 @@ class SessionPaneFrame(QtWidgets.QFrame):
         self.refresh()
 
 
-__all__ = ["PlotPanePlaceholder", "STYLE_BUTTONS", "SessionPaneFrame"]
+__all__ = [
+    "PICK_BUTTONS", "PlotPanePlaceholder", "STYLE_BUTTONS",
+    "SessionPaneFrame",
+]
