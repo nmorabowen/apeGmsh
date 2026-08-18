@@ -115,6 +115,21 @@ slice's first hour (or in this plan) — not mid-PR.
 9. **S4 — multi-stage Instant track**: how the scrubber traverses stages
    with `Instant=(stage,step)` (director combined-mode's concatenated time
    at `_director.py:1142` is reference, not reuse). Decide before S4-3.
+   *Settled (S4-3, 2026-08-18): **one stage at a time**, with an explicit
+   stage selector beside the slider; the concatenated track is deferred.*
+   Three reasons. (a) The scrubber's x-axis is then the SAME axis every
+   plot pane draws — the stage's own recorded time — so §7's "drag the
+   scrubber → the cursor rides the curve" is literally true instead of
+   true-within-a-segment. A concatenated track puts a global offset time
+   under a chart drawn on stage time, and the playhead jumps curves at
+   every boundary. (b) A history plot resolves its series inside
+   `results.stage(cursor.stage)`, so crossing a boundary swaps the whole
+   curve — legible as an explicit stage change, confusing as a drag.
+   (c) It is **not a one-way door**: `Instant` is `(stage, step)` either
+   way, so the IR and the S5 snapshot are identical under both, and a
+   concatenated track is a later widening of the WIDGET alone. The
+   director's `boundaries`/`combined_time`/eager-preload machinery is the
+   reference if that widening lands.
 10. **S4-2 — path/xy plot kinds**: history is the oracle; agree up front
     whether path/xy ship real or as stubs, else the slice doubles.
     *Settled (S4-2, 2026-08-18): **stubs that keep refusing**.* Neither
@@ -244,6 +259,25 @@ session; animation playback is the reconciler's first sustained-load test.
 - **The per-pane instant badge is still empty** (`SessionPaneFrame`'s
   `_time_badge`, built and hidden) — S4-3's, as reserved.
 - **The window's bottom widget is still the scrubber placeholder.**
+
+*S4-3 shipped (2026-08-18) — S4 is complete. For S5a:*
+
+- **The IR did not move.** Decision 9 landed on a one-stage-at-a-time
+  track, which is a WIDGET choice: `Instant` is `(stage, step)` under
+  either traversal, so S5a's snapshot schema can be frozen against what
+  S0 shipped. Nothing in S4-1/2/3 widened `_time.py`, `_views.py` or
+  `_session.py`'s time surface.
+- **`session.time_linked` and per-pane `view.time` are both snapshot
+  state**, and they interact: a snapshot taken while unlinked has to
+  carry each pane's own instant, or restoring it silently relinks
+  everything to one.
+- **`SessionScrubber.dispose()` is not optional** — a live animation
+  QTimer keeps writing the session into panes being torn down. The
+  window disposes it BEFORE the host for that reason.
+- The per-pane badge is squeezable + elided; anything else added to
+  `SessionPaneHeader` has to be measured against
+  `LAYOUT.pane_min_width` the same way (207 px is the floor with the
+  badge hidden, 209 with it showing).
 
 **S5 (3 PRs).** S5a: serialize/restore + legacy gate (v13 shape → notice +
 `.legacy` rename, never overwrite an existing `.legacy`) + atomic write

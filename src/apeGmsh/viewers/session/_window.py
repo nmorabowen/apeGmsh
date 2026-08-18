@@ -56,6 +56,7 @@ from ._inspector import (
     PlotInspectorPage,
 )
 from ._outline import SessionOutline
+from ._scrubber import SessionScrubber
 
 _SKIP_ENV_NOTICE = "[skip viewer] APEGMSH_SKIP_VIEWER set"
 
@@ -161,14 +162,10 @@ class SessionWindow:
         )
         self._shell.set_left_widget(self._outline.widget)
 
-        from qtpy import QtWidgets
-
-        placeholder = QtWidgets.QLabel(
-            "Time scrubber lands with the session time link (S4-3). "
-            "A plot's playhead already follows session.time.",
-        )
-        placeholder.setEnabled(False)
-        self._shell.set_bottom_widget(placeholder)
+        # §7's one control. Bottom dock, under the tiled panes, because
+        # while the link is on it drives every one of them.
+        self._scrubber = SessionScrubber(session, defer_fn=defer_fn)
+        self._shell.set_bottom_widget(self._scrubber.widget)
 
         # Boot selection: the host already made the first pane active;
         # mirror it onto the outline and the inspector.
@@ -213,6 +210,11 @@ class SessionWindow:
     @property
     def outline(self) -> SessionOutline:
         return self._outline
+
+    @property
+    def scrubber(self) -> SessionScrubber:
+        """The §7 time control (bottom dock)."""
+        return self._scrubber
 
     def inspector_page(self, pane_id: str) -> Any:
         """The (cached) inspector page for a pane id."""
@@ -429,6 +431,9 @@ class SessionWindow:
         self._closed = True
         self._save_pane_layout()
         unregister_error_handler(self._error_handler)
+        # Before the host: a live animation timer would keep writing
+        # the session into panes that are being torn down.
+        self._scrubber.dispose()
         self._host.dispose()
         if self._outline is not None:
             self._outline.dispose()
