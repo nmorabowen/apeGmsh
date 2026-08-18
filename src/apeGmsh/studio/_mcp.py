@@ -646,16 +646,29 @@ def results_pin(
     model_h5: str | Path | None = None,
     results: str | Path | None = None,
     *,
+    session_snapshot: str | Path | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Stamp model.h5 / results paths + hashes into the ledger (INV-12)."""
+    """Stamp model.h5 / results paths + hashes into the ledger (INV-12).
+
+    ``session_snapshot=`` pins an ADR 0098 session snapshot (S5b): the
+    stamp goes in the ledger and the bytes are COPIED into the pin
+    folder, so the pinned picture survives the next save. A file that is
+    not a session snapshot — the old ``.viewer-session.json`` is the
+    near-miss — is ``INVALID_ARGS`` here rather than a broken render
+    later.
+    """
     from ._bundle import results_pin as _pin
 
     base = _root(root)
     try:
-        payload = _pin(model_h5, results, root=base)
+        payload = _pin(
+            model_h5, results, session_snapshot=session_snapshot, root=base,
+        )
     except ValueError as exc:
         return _fail("INVALID_ARGS", str(exc))
+    except OSError as exc:
+        return _fail("PIN_FAILED", f"could not pin the session snapshot: {exc}")
     if isinstance(payload, dict) and "error" not in payload:
         payload = {
             **payload,

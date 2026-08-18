@@ -243,7 +243,7 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.6.0` today). Published
+`status.contract_version` is the habitat semver (`1.7.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
 the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,
@@ -251,6 +251,23 @@ and MCP `path` / `output` / `written` / `run_until.script`) are
 root-relative posix; the `root` field itself stays absolute as the
 resolve anchor. A `project.json` entry outside the habitat root is
 refused (`OUTSIDE_ROOT`) when used as the `run_until` default.
+
+`runs.jsonl` interleaves two record kinds, so it has two published
+schemas. A **run** line carries no `kind` and validates against
+`ledger.schema.json`; a **pin** line carries `kind: "pin"` and validates
+against `ledger_pin.schema.json`. Discriminate on `kind` before
+validating — a pin line has no `script` / `phase` / `ok` and is
+correctly refused by the run schema.
+
+`results_pin(session_snapshot=…)` pins the ADR 0098 presentation session
+(`<results>.session.json`). Unlike `model_h5` / `results`, which are
+recorded by path and hash only, that file is **copied** into
+`.apegmsh/pins/<pin-id>/session_snapshot.json`: the live snapshot is
+rewritten every time the human saves, so a hash alone would pin content
+that is already gone. The ledger key is `session_snapshot` because
+`session` already means the run's session name. A file that is not a
+session snapshot — the retired `<results>.viewer-session.json` is the
+near-miss — is refused (`INVALID_ARGS`).
 
 ## Trust boundary
 

@@ -400,6 +400,46 @@ PNG behind a GL skip marker.
 - 13 mutations of the PRODUCT were run against the new tests; all 13 go
   red (harness recipe in the PR body).
 
+*S5b shipped (2026-08-18) — for S5c:*
+
+- **The sizing said "almost everything reusable". The reusable part was
+  reusable; the contract part was BROKEN.** A real pin record from the
+  shipped writer was refused by the shipped `ledger.schema.json` —
+  `runs.jsonl` interleaves run lines and pin lines and only the run shape
+  was ever published, so the "live-writer round-trip test so the
+  hand-written schema can't drift" could not pass without first
+  publishing the pin shape. That test is the whole reason the gap was
+  found; it was a 20-minute question with a 2-hour answer.
+- **Two published ledger kinds now:** `ledger` (run lines, no `kind`) and
+  `ledger_pin` (`kind="pin"`). Discriminate on `kind` BEFORE validating.
+  Not a `oneOf` — `_contract._validate_against` is a deliberate draft-07
+  subset (type / required / properties / items / enum / const) so a
+  Workbench-side reimplementation can match it without a JSON Schema
+  library, and widening it is a bigger promise than adding a schema.
+- **`CONTRACT_VERSION` is `1.7.0`.** Additive, same major. The literal
+  also appears in `docs/how-to/studio-habitat.md` (updated) — no test
+  pins it, so it is easy to leave stale.
+- **The snapshot is COPIED, not just stamped** —
+  `pin_session_snapshot_path(pin_id, root)` resolves the copy, mirroring
+  `pin_assess_path`. S5c should render THAT file, not the recorded
+  `path`: by the time an agent opens a pin, the live
+  `<results>.session.json` has usually been overwritten, which is the
+  whole reason for the copy.
+- **`results_pin` refuses a non-snapshot** by marker
+  (`_SESSION_SNAPSHOT_KIND`, duplicated in `studio` on purpose — importing
+  `results.session` would pull `viewers` in behind it, and `_bundle`
+  promises no viewers; a test asserts the two literals still agree). S5c's
+  own "refuse old-schema files, never rename" can lean on S5a's
+  `legacy_shape` / `LegacySessionFile` instead.
+- **Fixed in passing, because S5b made it lossy:** pin ids are
+  second-granular and two pins in one second shared a folder, silently
+  overwriting the earlier pin's copy. Now disambiguated against both the
+  ledger and the filesystem. If S5c ever addresses a pin by id, ids are
+  `pin-<stamp>` OR `pin-<stamp>-N`; treat them as opaque strings.
+- **Still not wired to any window** — same as S5a. Nothing calls
+  `results_pin(session_snapshot=)` automatically; the human or the agent
+  passes the path.
+
 **S6 (4 PRs, order S6c → S6a → S6b → S6d).** S6 is de-publication, not
 deletion — render.py tokens, web_viewer hatch, `_verbs._yield_setup` keep
 importing diagrams privately. S6a gates: mkdocs --strict couples the

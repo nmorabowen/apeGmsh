@@ -7,6 +7,17 @@ consumer copies instead of importing the FEM stack.
 ``contract_version`` is a semver for the *habitat contract* (distinct
 from per-file integer ``schema`` fields). Additive fields never bump
 the major; readers ignore unknown keys; unknown major is refused.
+
+``runs.jsonl`` interleaves TWO record kinds and therefore has two
+published schemas: a run line carries no ``kind`` and validates as
+``"ledger"``; a pin line carries ``kind="pin"`` and validates as
+``"ledger_pin"``. A consumer walking the file discriminates on
+``kind`` first. They are separate schemas rather than one ``oneOf``
+because the validator below is a deliberate draft-07 SUBSET (type /
+required / properties / items / enum / const) that a Workbench-side
+reimplementation can match without a JSON Schema library — and
+relaxing the run schema's ``required`` list to admit both would stop
+it catching a run line that lost its ``script``.
 """
 
 from __future__ import annotations
@@ -16,7 +27,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = "1.6.0"
+CONTRACT_VERSION = "1.7.0"
 CONTRACT_MAJOR = 1
 
 # kind → (schema file stem, expected per-file schema int)
@@ -24,6 +35,7 @@ _KINDS: dict[str, tuple[str, int]] = {
     "selection": ("selection", 1),
     "names": ("names", 1),
     "ledger": ("ledger", 1),
+    "ledger_pin": ("ledger_pin", 1),
     "highlight": ("highlight", 1),
     "status": ("status", 1),
     "host": ("host", 1),

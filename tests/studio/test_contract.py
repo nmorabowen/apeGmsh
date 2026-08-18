@@ -23,8 +23,8 @@ from apeGmsh.studio._ledger import make_record
 from apeGmsh.studio._names import write_names
 
 _KINDS = (
-    "selection", "names", "ledger", "highlight", "status", "host", "project", "busy",
-    "assess",
+    "selection", "names", "ledger", "ledger_pin", "highlight", "status", "host",
+    "project", "busy", "assess",
 )
 
 
@@ -115,3 +115,115 @@ def test_live_writers_match_contract(tmp_path: Path) -> None:
         ts="2026-08-16T05:00:00Z",
     )
     validate("ledger", rec)
+
+
+# =====================================================================
+# ADR 0098 S5b — runs.jsonl has TWO record kinds, both published
+# =====================================================================
+
+def _pin_a_session(tmp_path: Path) -> dict:
+    """One REAL pin record, from the real writer, with a real snapshot."""
+    from apeGmsh.results.session import Contour, ResultsSession, save_snapshot
+    from apeGmsh.studio._bundle import results_pin
+
+    (tmp_path / ".apegmsh").mkdir(exist_ok=True)
+    session = ResultsSession()
+    session.add_view().contour = Contour("stress_xx")
+    snapshot = tmp_path / "out.h5.session.json"
+    save_snapshot(session, snapshot)
+    model = tmp_path / "model.h5"
+    model.write_bytes(b"pretend h5")
+
+    return results_pin(
+        model_h5=model, session_snapshot=snapshot, root=tmp_path,
+    )["pin"]
+
+
+def test_live_pin_writer_matches_the_published_pin_schema(tmp_path: Path):
+    """The drift guard the pin record never had.
+
+    ``ledger_pin.schema.json`` is hand-written and ``results_pin`` is
+    Python; nothing compared them until this test. It goes red if either
+    side moves — which is the only reason a published contract is worth
+    anything to a consumer that cannot import the FEM stack.
+    """
+    record = _pin_a_session(tmp_path)
+
+    validate("ledger_pin", record)
+    assert record["kind"] == "pin"
+    assert set(record["session_snapshot"]) == {"path", "sha256", "size"}
+
+
+def test_a_pin_line_is_refused_by_the_run_schema(tmp_path: Path):
+    """Documents WHY there are two schemas rather than one.
+
+    A pin line has no ``script`` / ``phase`` / ``ok``. Relaxing the run
+    schema's ``required`` list to admit both would stop it catching a run
+    line that lost its script — so a consumer discriminates on ``kind``
+    instead, and this asserts the discrimination is real.
+    """
+    record = _pin_a_session(tmp_path)
+
+    with pytest.raises(ContractError, match="missing required 'script'"):
+        validate("ledger", record)
+
+
+def test_a_run_line_is_refused_by_the_pin_schema(tmp_path: Path):
+    """The other direction — or `ledger_pin` would just be a looser
+    `ledger` and the split would buy nothing."""
+    run = make_record(
+        script=tmp_path / "box.py", phase="model", ok=True,
+        root=tmp_path, cwd=tmp_path, ts="2026-08-16T05:00:00Z",
+    )
+
+    with pytest.raises(ContractError):
+        validate("ledger_pin", run)
+
+
+def test_the_pin_schema_pins_the_kind_and_not_merely_its_presence(
+    tmp_path: Path,
+):
+    """A record carrying a DIFFERENT ``kind`` must be refused.
+
+    The discriminating case, found by a surviving mutation: dropping the
+    schema's ``const: "pin"`` broke nothing, because the only other
+    record this file holds — a run line — has no ``kind`` at all and is
+    already refused as *missing required*. So neither direction of the
+    existing pair could see the const disappear. A third kind in
+    ``runs.jsonl`` is the shape that can: without the const it would
+    validate as a pin and be handed to a pin reader.
+    """
+    record = _pin_a_session(tmp_path)
+
+    validate("ledger_pin", record)  # unchanged, it really is a pin
+
+    for foreign in ("checkpoint", "run", "PIN", ""):
+        with pytest.raises(ContractError):
+            validate("ledger_pin", {**record, "kind": foreign})
+
+
+def test_every_line_of_a_real_ledger_validates_under_one_of_the_two(
+    tmp_path: Path,
+):
+    """The consumer's actual walk: open runs.jsonl, dispatch on ``kind``.
+
+    Both kinds land in ONE file, so this is the loop a Workbench-style
+    reader writes — and before S5b its pin branch had no schema to call.
+    """
+    from apeGmsh.studio._ledger import append_run, read_runs
+    from apeGmsh.studio._paths import ledger_path
+
+    _pin_a_session(tmp_path)
+    append_run(ledger_path(tmp_path), make_record(
+        script=tmp_path / "box.py", phase="model", ok=True,
+        root=tmp_path, cwd=tmp_path, ts="2026-08-16T05:00:00Z",
+    ))
+
+    rows = read_runs(ledger_path(tmp_path))
+    kinds = []
+    for row in rows:
+        kind = "ledger_pin" if row.get("kind") == "pin" else "ledger"
+        validate(kind, row)
+        kinds.append(kind)
+
+    assert sorted(kinds) == ["ledger", "ledger_pin"]

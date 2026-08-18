@@ -189,11 +189,33 @@ def assess_path(root: Path | None = None) -> Path:
     return base / DEFAULT_ASSESS_REL
 
 
+def pin_dir(pin_id: str, root: Path | None = None) -> Path:
+    """``<root>/.apegmsh/pins/<pin_id>/`` — one pin's own folder."""
+    base = resolve_root(root)
+    return base / DEFAULT_PINS_REL / pin_id
+
+
+def pin_session_snapshot_path(pin_id: str, root: Path | None = None) -> Path:
+    """``<root>/.apegmsh/pins/<pin_id>/session_snapshot.json``.
+
+    Where ``results_pin(session_snapshot=)`` copies the ADR 0098 session
+    snapshot it was handed (S5b). A copy, not just a hash, for the same
+    reason Amendment 5 copies ``assess.json``: the live
+    ``<results>.session.json`` is rewritten every time the human saves,
+    so a stamp alone would pin content that no longer exists.
+
+    The file is named for the ledger's ``session_snapshot`` key, not
+    ``session.json`` — ``session`` already means the run's session name
+    in a ledger record, and one word for two things is how that
+    confusion starts.
+    """
+    return pin_dir(pin_id, root) / "session_snapshot.json"
+
+
 def pin_assess_path(pin_id: str, root: Path | None = None) -> Path:
     """Return ``<root>/.apegmsh/pins/<pin_id>/assess.json`` (ADR 0095 Amendment 5).
 
     Where ``--pin`` copies the live assess snapshot so a later emit
     against that pin keeps the verdict current at pin time.
     """
-    base = resolve_root(root)
-    return base / DEFAULT_PINS_REL / pin_id / "assess.json"
+    return pin_dir(pin_id, root) / "assess.json"
