@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
+from ...opensees._response_catalog import RESPONSE_CATALOG
+
 if TYPE_CHECKING:
     import h5py
 
@@ -199,13 +201,17 @@ _CONTINUUM_DIGIT_RE = re.compile(
     r"^(?P<kind>sigma|eta|epsp|epsilon|eps|pstrain)(?P<i>[123])(?P<j>[123])$"
 )
 _CONTINUUM_AXIS_RE = re.compile(
-    r"^(?P<kind>sigma|epsp|epsilon|eps|gamma|pstrain)_(?P<a>[xyz])(?P<b>[xyz])$"
+    r"^(?P<kind>sigma|epsp|epsilon|eps|gamma|pstrain|stress|strain)"
+    r"_(?P<a>[xyz])(?P<b>[xyz])$"
 )
 # Token stem → canonical tensor root. ``epsp`` (plastic strain, the
 # fork's natural tag following its ``eps11`` total-strain convention;
 # ``pstrain`` is the ASDPlasticMaterial3D response-token spelling) is
 # listed before ``eps`` in the alternations above so it wins the
 # prefix race.
+# ``stress``/``strain`` are the canonical roots themselves: blocks rebuilt
+# from RESPONSE_CATALOG (see ``resolve_generic_gauss_blocks``) already carry
+# apeGmsh canonicals, so canonicalisation must be idempotent on them.
 _KIND_TO_ROOT = {
     "sigma": "stress",
     "eta": "strain",
@@ -214,6 +220,8 @@ _KIND_TO_ROOT = {
     "gamma": "strain",
     "epsp": "plastic_strain",
     "pstrain": "plastic_strain",
+    "stress": "stress",
+    "strain": "strain",
 }
 
 # Scalar per-GP labels → canonical. The accumulated equivalent plastic
@@ -401,6 +409,97 @@ def _gp_param_for(
     return None
 
 
+# =====================================================================
+# Generic ``C1..Cn`` columns — named from RESPONSE_CATALOG
+# =====================================================================
+#
+# The module docstring's "the writer is self-describing" holds only as
+# far as the ELEMENT is: the recorder writes the names the element hands
+# it through ``output.tag("ResponseType", …)``. The fork's plain
+# ``stress`` / ``strain`` responses on its plane elements emit no such
+# tags (``LadrunoLST.cpp:872`` and siblings — only ``stressPlaneStrain``
+# does), so the recorder falls back to ``C1,C2,…,Cn`` on a SINGLE
+# element-level block. ``continuum_canonical("C1")`` is None, so every
+# Gauss stress/strain column of every Ladruno plane element was dropped
+# in silence (``available_components() == []``).
+#
+# For exactly those buckets the names come from ``RESPONSE_CATALOG``
+# instead, keyed by the class name in the bucket key
+# (``stress/33016-LadrunoLST[0:0:0]`` → ``LadrunoLST``) plus the
+# ON_ELEMENTS token. The bracket's rule field is ``0``
+# (NoIntegrationRule) for these buckets, so it cannot serve as the
+# catalog's ``int_rule`` key — the BLOCK WIDTH picks the layout instead.
+# Buckets whose COMP_NAMES are real names never reach this path.
+
+_GENERIC_COMP_RE = re.compile(r"^C\d+$")
+
+
+class GaussLayoutMismatch(Exception):
+    """A generic ``C1..Cn`` block does not fit any catalog layout.
+
+    Deliberately NOT a ``ValueError`` / ``KeyError``: the reads wrap
+    ``parse_blocks`` in ``except (KeyError, ValueError): continue``, and
+    a MIS-LABELLED component is worse than a missing one — this has to
+    surface rather than be skipped.
+    """
+
+
+def _class_name(bucket_key: str) -> str:
+    """``33016-LadrunoLST[0:0:0]`` → ``LadrunoLST``."""
+    return _class_prefix(bucket_key).partition("-")[2]
+
+
+def resolve_generic_gauss_blocks(
+    blocks: list[_Block], *, token: str, bucket_key: str,
+) -> list[_Block]:
+    """``blocks`` with any generic ``C1..Cn`` naming resolved.
+
+    Returns ``blocks`` unchanged unless the bucket is the single
+    element-level generic block an untagged element response produces;
+    that one is expanded into one block per Gauss point carrying the
+    catalog's (already canonical) component names. A class the catalog
+    does not know for this token is left alone — there is nothing to
+    name it with. A class it DOES know but at no layout matching the
+    block's width raises :class:`GaussLayoutMismatch`.
+    """
+    if len(blocks) != 1:
+        return blocks
+    b = blocks[0]
+    if b.gauss_id >= 0 or not b.comp_names:
+        return blocks
+    if not all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
+        return blocks
+    class_name = _class_name(bucket_key)
+    layouts = {
+        (lay.n_gauss_points, lay.component_layout)
+        for (cls, _rule, tok), lay in RESPONSE_CATALOG.items()
+        if cls == class_name and tok == token
+    }
+    if not layouts:
+        return blocks
+    fit = {lay for lay in layouts if lay[0] * len(lay[1]) == b.width}
+    if len(fit) != 1:
+        raise GaussLayoutMismatch(
+            f"Bucket {token}/{bucket_key} has {b.width} unnamed "
+            f"(C1..Cn) columns, but RESPONSE_CATALOG offers "
+            f"{sorted((n, n * len(c)) for n, c in layouts)} "
+            f"(n_gauss_points, width) for class {class_name!r} / token "
+            f"{token!r} — {'no' if not fit else 'more than one'} layout "
+            f"fits. Refusing to guess which component each column is: a "
+            f"wrong component name is worse than a missing one. Fix the "
+            f"RESPONSE_CATALOG entry, or have the element tag its "
+            f"ResponseType names so the file names its own columns."
+        )
+    n_gp, names = fit.pop()
+    return [
+        _Block(
+            level=1, gauss_id=gp, comp_names=names,
+            col_start=b.col_start + gp * len(names),
+        )
+        for gp in range(n_gp)
+    ]
+
+
 def _select_rows(
     bucket_grp: "h5py.Group", element_ids: "Optional[ndarray]",
 ) -> "Optional[tuple[ndarray, ndarray]]":
@@ -429,6 +528,9 @@ def gauss_available(on_elements: "h5py.Group") -> set[str]:
                 blocks = parse_blocks(on_elements[token][key])
             except (KeyError, ValueError):
                 continue
+            blocks = resolve_generic_gauss_blocks(
+                blocks, token=token, bucket_key=key,
+            )
             for b in blocks:
                 # Element-level rows are not Gauss data. Fiber buckets are
                 # excluded by token before this loop.
@@ -468,6 +570,9 @@ def read_gauss_slab(
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError):
                 continue
+            blocks = resolve_generic_gauss_blocks(
+                blocks, token=token, bucket_key=key,
+            )
             gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue

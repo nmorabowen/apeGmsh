@@ -125,6 +125,10 @@ ELE_TAG_LadrunoBrick20 = 33018
 ELE_TAG_LadrunoQuad = 33007
 # Ladruno-fork 3-node constant-strain triangle (live from ladruno:SRC/classTags.h).
 ELE_TAG_LadrunoCST = 33008
+# Ladruno-fork 6-node linear-strain triangle (live from ladruno:SRC/classTags.h,
+# ADR 70 P3). The same 33016 is ND_TAG_LogStrain2D in the material registry —
+# tag bands are per-registry, this is the ELE_TAG one.
+ELE_TAG_LadrunoLST = 33016
 # Shells
 ELE_TAG_ShellMITC4 = 53
 ELE_TAG_ShellMITC9 = 54
@@ -917,6 +921,25 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="barycentric_tri",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_LadrunoCST,
+    ),
+
+    # ── LadrunoLST (6-node linear-strain triangle, 3 GPs Triangle_GL_2) ─
+    # Ladruno-fork T6 (tag 33016, ADR 70 P3). ``stress``/``strain`` return
+    # Vector(3 * numgp) = 3 comp × 3 GPs, and the element's own 3-point
+    # interior rule (LadrunoLST.cpp:68–76) lists (2/3, 1/6), (1/6, 2/3),
+    # (1/6, 1/6) — the SixNodeTri anchor order, so ``_TRI_GL_2_COORDS``
+    # applies unpermuted (unlike the BezierTri6 sibling).
+    ("LadrunoLST", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_LadrunoLST,
+    ),
+    ("LadrunoLST", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_LadrunoLST,
     ),
 
     # ── SixNodeTri (6-node quadratic triangle, 3 GPs Triangle_GL_2) ──

@@ -22,6 +22,36 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `.ladruno` Gauss stress/strain on every Ladruno plane element
+
+`LadrunoCST` / `LadrunoLST` / `LadrunoQuad` recorded with the plain
+`elem_responses=("stress", "strain")` answered
+`results.elements.gauss.available_components() == []` — ALL continuum
+stress and strain was invisible on the `.ladruno` path.
+
+The fork's plain `stress` / `strain` responses on these elements emit no
+`output.tag("ResponseType", …)` (only `stressPlaneStrain` does), so the
+recorder writes a single element-level block named `C1,C2,…,Cn`, and the
+reader — which named columns from the file's `COMP_NAMES` alone — matched
+none of them. For exactly those anonymous buckets the names now come from
+`RESPONSE_CATALOG`, keyed by the class in the bucket key
+(`stress/33016-LadrunoLST[0:0:0]`) plus the ON_ELEMENTS token, with the
+**block width** picking the layout — the bracket's rule field is `0`
+(NoIntegrationRule) here, so it cannot be the catalog key. A width that
+fits no catalog layout raises `GaussLayoutMismatch` rather than guessing:
+a wrong component name is worse than a missing one. Buckets whose
+`COMP_NAMES` are real names never reach this path, and MPCO (which already
+consults the catalog) is untouched.
+
+`LadrunoLST` joins `RESPONSE_CATALOG` (tag 33016, 3 GPs `Triangle_GL_2`,
+the SixNodeTri anchor order unpermuted).
+
+Also fixed alongside: `gauss_available` / `read_gauss_slab` discarded every
+continuum block with `MULTIPLICITY > 1` as a fiber expansion. A fiber
+bucket repeats one scalar per fiber, but a continuum bucket repeats its
+component set once per GAUSS POINT — the multiplicity test dropped every
+multi-GP solid. Fiber buckets are now excluded by token.
+
 ### ADDED — ADR 0098 §11 S5c: render a saved session
 
 `python -m apeGmsh.results.session render <snapshot> <out.png>` draws one
