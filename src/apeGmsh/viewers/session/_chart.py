@@ -368,10 +368,11 @@ class PlotReconciler:
             and previous is not _NO_SIGNATURE
             and previous is not None
             and signature[0] == previous[0]
+            and _same_stage(signature[1], previous[1])
             and self._realized is not None
         ):
-            # Only the §7 instant moved. The arrays on screen are the
-            # whole record either way (§6), so the playhead slides over
+            # Only the STEP moved. The arrays on screen are the whole
+            # record of this stage (§6), so the playhead slides over
             # cached data and no read happens — the scrubber's drag
             # rate depends on this staying true.
             self._realized = _with_cursor(self._realized, signature[1])
@@ -390,6 +391,28 @@ class PlotReconciler:
             self._signature = _NO_SIGNATURE
             self._chart.show_message(f"{type(exc).__name__}: {exc}")
             report("pump.session_plot", exc)
+
+
+def _same_stage(a: Any, b: Any) -> bool:
+    """Whether two instants read the SAME stage — the limit of the
+    cheap path.
+
+    ``realize_plot`` resolves every series inside
+    ``results.stage(cursor.stage)``, so the cached arrays are a
+    function of the STAGE. The step may move freely (that is the
+    scrubber, and the whole reason the cheap path exists); a stage
+    change must re-read, or the chart paints one stage's record under
+    another stage's playhead — a stale picture, which is the failure
+    class this reconciler exists to prevent.
+
+    A ``None`` on either side is treated as a change: no instant means
+    ``realize_plot`` falls back to the LAST stage, and re-reading once
+    is cheaper than reasoning about whether that fallback happened to
+    agree.
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    return a.stage == b.stage
 
 
 def _with_cursor(realized: Any, cursor: Any) -> Any:

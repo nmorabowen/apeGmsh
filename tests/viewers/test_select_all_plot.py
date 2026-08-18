@@ -30,7 +30,9 @@ The criteria (continuing S4-1's numbering):
 29. One gesture, one redraw — and the gate does NOT skip the redraw
     that matters (a series change repaints; a cursor move moves the
     playhead).
-30. A cursor move costs no READ: the record is already on screen.
+30. A cursor move costs no READ: the record is already on screen —
+    UNLESS it crosses into another STAGE, which changes what the
+    arrays are and must re-read.
 31. A selection write does NOT redraw a plot. Membership is copied at
     creation (§6) — the inverse of the mesh pane's rule.
 32. A plot that cannot resolve says so ON the chart.
@@ -126,6 +128,38 @@ def session_results(g, tmp_path: Path):
             components={"stress_xx": sxx},
         )
         w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+@pytest.fixture
+def two_stage_results(g, tmp_path: Path):
+    """One model, TWO stages recording the same component at very
+    different magnitudes — so a chart showing the wrong stage is
+    visible in the numbers, not just in a stage id."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="a")
+    g.physical.add_volume("a", name="A")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+
+    path = tmp_path / "two_stage.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        for name, base in (("grav", 0.0), ("push", 1000.0)):
+            sid = w.begin_stage(
+                name=name, kind="static", stage_id=name,
+                time=np.arange(T, dtype=np.float64),
+            )
+            w.write_nodes(
+                sid, "partition_0", node_ids=ids,
+                components={
+                    "displacement_z": np.stack(
+                        [ids * 1.0 + base + t for t in range(T)]
+                    ),
+                },
+            )
+            w.end_stage()
     return Results.from_native(path, model=_open_model_from_h5(path))
 
 
@@ -654,6 +688,57 @@ def test_c30_a_cursor_move_reads_nothing(host, qapp, monkeypatch):
     assert reads == [], f"a cursor move cost {len(reads)} read(s)"
     assert drawn == [], "a cursor move redrew the whole chart"
     assert _marker_x(pane) == pytest.approx(float(T - 1))
+
+
+def test_c30_crossing_a_stage_re_reads(qapp, two_stage_results, fleet):
+    """Criterion 30's other half, and the limit of the cheap path.
+
+    ``realize_plot`` resolves every series INSIDE
+    ``results.stage(cursor.stage)``, so the cached arrays are a
+    function of the STAGE, not just of the series. The step is free to
+    move — that is the whole point of the cheap path — but a stage
+    change must re-read, or the chart paints one stage's record under
+    another stage's playhead: a stale picture, the worst ADR 0084
+    failure class.
+    """
+    session = two_stage_results.session()
+    widget = SessionPaneHost(
+        session, backend_factory=fleet, defer_fn=lambda fn: fn(),
+    )
+    widget.resize(*ROOMY)
+    widget.show()
+    qapp.processEvents()
+    try:
+        node_id = int(two_stage_results.fem.nodes.ids[0])
+        session.time = Instant("grav", 0)
+        plot = session.add_plot(series=[
+            PlotSeries(PlotSource.node(node_id), "displacement_z"),
+        ])
+        qapp.processEvents()
+        pane = widget.frame(plot.id).pane
+
+        def drawn():
+            return np.asarray(pane.chart.axes.lines[0].get_ydata())
+
+        def recorded(stage):
+            return np.asarray(two_stage_results.stage(stage).nodes.get(
+                ids=[node_id], component="displacement_z",
+            ).values)[:, 0]
+
+        np.testing.assert_allclose(drawn(), recorded("grav"))
+
+        session.time = Instant("push", 0)
+        qapp.processEvents()
+        np.testing.assert_allclose(drawn(), recorded("push"))
+
+        # ...and stepping WITHIN the new stage is still cheap.
+        session.time = Instant("push", T - 1)
+        qapp.processEvents()
+        np.testing.assert_allclose(drawn(), recorded("push"))
+        assert _marker_x(pane) == pytest.approx(float(T - 1))
+    finally:
+        widget.dispose()
+        widget.setParent(None)
 
 
 def test_c31_a_selection_write_does_not_redraw_a_plot(

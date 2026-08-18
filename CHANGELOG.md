@@ -45,9 +45,11 @@ disciplines: one gesture one redraw; a signature gate that includes the
 §7 instant (leaving it out is the S4-1 defect one layer up — the
 playhead would never move); and failures that report rather than
 vanish. The gate has a cheap half — a cursor move slides the playhead
-over cached arrays and reads nothing — and a plot's chart deliberately
-does **not** follow the selection, because §6 copies the membership at
-creation. matplotlib is an optional dependency; without it the pane
+over cached arrays and reads nothing, but only while the STAGE holds:
+the arrays are a function of `cursor.stage`, so crossing a stage
+re-reads rather than painting one stage's record under another's
+playhead. A plot's chart deliberately does **not** follow the
+selection, because §6 copies the membership at creation. matplotlib is an optional dependency; without it the pane
 renders a named refusal instead of failing to build. Plot panes get a
 real inspector page too (the series are the occupants: list, clear one,
 clear all).
