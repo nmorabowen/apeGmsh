@@ -166,6 +166,21 @@ _FIBER_CANONICAL_TO_TOKENS: dict[str, tuple[str, ...]] = {
 }
 
 
+def is_fiber_token(token: str) -> bool:
+    """True for a FIBER bucket, which must never surface as continuum Gauss.
+
+    ⚠ A TOKEN test on purpose.  ``MULTIPLICITY > 1`` looks like it would do
+    the job and does not: a fiber bucket repeats one scalar column per
+    fiber, but a CONTINUUM bucket repeats its component set once per GAUSS
+    POINT (``LadrunoLST``: NUM_COMP 3 x MULTIPLICITY 3 = 9 columns), and
+    ``SECTION_TAG`` / ``FIBER_ID`` are -1 in BOTH.  Filtering on
+    multiplicity therefore discarded every solid element carrying more than
+    one Gauss point -- stress / strain / eqpstrain vanished from the picker
+    and the viewer drew no continuum fields at all.
+    """
+    return token in _FIBER_TOKEN_TO_CANONICAL or ".fiber." in token
+
+
 def section_canonical(token: str) -> Optional[str]:
     """Map a ``section.force`` / ``section.deformation`` column token to a
     neutral name (``P``→``axial_force``, ``kappaZ``→``curvature_z``), else
@@ -277,10 +292,31 @@ class _Block:
     comp_names: tuple[str, ...]
     col_start: int          # first DATA column for this block
     multiplicity: int = 1
+    section_tag: int = -1
+    fiber_id: int = -1
 
     @property
     def width(self) -> int:
         return len(self.comp_names) * self.multiplicity
+
+    def gp_column(self, gp: int, offset: int) -> int:
+        """DATA column for component ``offset`` at Gauss point ``gp``.
+
+        Layout is GP-major within the block: the component set repeats
+        once per Gauss point.
+        """
+        return self.col_start + gp * len(self.comp_names) + offset
+
+    @property
+    def n_gauss(self) -> int:
+        """Gauss points this block spans."""
+        return self.multiplicity
+
+    def gauss_index(self, gp: int) -> int:
+        """Effective GP index: the repeat index when the block spans
+        several Gauss points, else the block's own ``gauss_id`` (which is
+        how ``section.force`` numbers its integration stations)."""
+        return gp if self.multiplicity > 1 else self.gauss_id
 
 
 def _decode_str(value) -> str:
@@ -307,6 +343,14 @@ def parse_blocks(bucket_grp: "h5py.Group") -> list[_Block]:
         mult = np.asarray(cm["MULTIPLICITY"][...], dtype=np.int64).flatten()
     else:
         mult = np.ones(n_blocks, dtype=np.int64)
+    if "SECTION_TAG" in cm:
+        sect = np.asarray(cm["SECTION_TAG"][...], dtype=np.int64).flatten()
+    else:
+        sect = np.full(n_blocks, -1, dtype=np.int64)
+    if "FIBER_ID" in cm:
+        fib = np.asarray(cm["FIBER_ID"][...], dtype=np.int64).flatten()
+    else:
+        fib = np.full(n_blocks, -1, dtype=np.int64)
     if len(lines) != n_blocks:
         raise ValueError(
             f"COLUMN_MAP has {n_blocks} rows but COMP_NAMES has "
@@ -320,6 +364,8 @@ def parse_blocks(bucket_grp: "h5py.Group") -> list[_Block]:
         blocks.append(_Block(
             level=int(levels[i]), gauss_id=int(gauss[i]),
             comp_names=names, col_start=col, multiplicity=m,
+            section_tag=int(sect[i]) if i < sect.size else -1,
+            fiber_id=int(fib[i]) if i < fib.size else -1,
         ))
         col += len(names) * m
     total = int(np.asarray(bucket_grp["DATA"].shape)[-1])
@@ -376,16 +422,17 @@ def _select_rows(
 def gauss_available(on_elements: "h5py.Group") -> set[str]:
     out: set[str] = set()
     for token in on_elements:
+        if is_fiber_token(token):
+            continue
         for key in on_elements[token]:
             try:
                 blocks = parse_blocks(on_elements[token][key])
             except (KeyError, ValueError):
                 continue
             for b in blocks:
-                # Skip element-level (gauss_id<0) and fiber-expansion
-                # (multiplicity>1) blocks — the latter are fiber stress/
-                # strain, read via read_fibers, not continuum Gauss points.
-                if b.gauss_id < 0 or b.multiplicity != 1:
+                # Element-level rows are not Gauss data. Fiber buckets are
+                # excluded by token before this loop.
+                if b.gauss_id < 0:
                     continue
                 for name in b.comp_names:
                     c = continuum_canonical(name)
@@ -412,6 +459,8 @@ def read_gauss_slab(
     coord_parts: list[ndarray] = []
 
     for token in on_elements:
+        if is_fiber_token(token):
+            continue
         token_grp = on_elements[token]
         for key in token_grp:
             bucket = token_grp[key]
@@ -419,17 +468,19 @@ def read_gauss_slab(
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError):
                 continue
-            gp_blocks = [
-                b for b in blocks if b.gauss_id >= 0 and b.multiplicity == 1
-            ]
+            gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue
             # (block, col-within-DATA) pairs that hold the component.
-            hits: list[tuple[_Block, int]] = []
+            # (block, gp, col) triples that hold the component. A block
+            # spanning several Gauss points contributes one hit per GP.
+            hits: list[tuple[_Block, int, int]] = []
             for b in gp_blocks:
                 for off, name in enumerate(b.comp_names):
-                    if continuum_canonical(name) == component:
-                        hits.append((b, b.col_start + off))
+                    if continuum_canonical(name) != component:
+                        continue
+                    for gp in range(b.n_gauss):
+                        hits.append((b, gp, b.gp_column(gp, off)))
             if not hits:
                 continue
             sel = _select_rows(bucket, element_ids)
@@ -441,12 +492,13 @@ def read_gauss_slab(
 
             # One slab column per (element, matching GP). GP-major within
             # an element so natural_coords line up with element_index.
-            for b, col in hits:
+            for b, gp, col in hits:
                 vals = data[t_idx][:, rows, col]              # (T, E_sel)
                 values_parts.append(vals)
                 eidx_parts.append(sel_ids)
-                if gp_param is not None and b.gauss_id < gp_param.shape[0]:
-                    nat = np.tile(gp_param[b.gauss_id], (sel_ids.size, 1))
+                g_idx = b.gauss_index(gp)
+                if gp_param is not None and g_idx < gp_param.shape[0]:
+                    nat = np.tile(gp_param[g_idx], (sel_ids.size, 1))
                 else:
                     nat = np.zeros((sel_ids.size, 0), dtype=np.float64)
                 coord_parts.append(nat)
