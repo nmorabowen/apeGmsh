@@ -11,33 +11,18 @@ env:
   PYTHONFAULTHANDLER: "1"
 
 jobs:
-  diag:
+  probe:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: rate-run1cmd
-            gcoff: '0'
-            cmd: 'python -X faulthandler -m pytest'
-          - name: rate-plain
-            gcoff: '0'
-            cmd: 'pytest'
-          - name: rate-gcoff
-            gcoff: '1'
-            cmd: 'python -X faulthandler -m pytest'
-    name: ${{ matrix.name }}
     env:
       APEGMSH_EXPECT_GL: "1"
-      DIAG_GC_OFF: ${{ matrix.gcoff }}
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
-      - name: Install apt deps for Qt/VTK (+ gdb)
+      - name: Install apt deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -47,30 +32,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
-      - name: Arm core dumps
+      - name: Arm cores
         run: |
           sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
           sudo sysctl -w kernel.core_pattern='/tmp/cores/core.%e.%p'
-      - name: 30 reps of tests/sections
+      - name: Run probes
         run: |
           set +e
           ulimit -c unlimited
-          crashes=0
-          for i in $(seq 1 30); do
-            PYTHONPATH=. ${{ matrix.cmd }} tests/sections -q -p no:cacheprovider -p diagplug \
-              -m "not live and not subprocess and not bench and not qt" > /tmp/r$i.log 2>&1
-            rc=$?
-            if [ "$rc" != "0" ]; then
-              crashes=$((crashes+1))
-              echo "::group::REP ${i} EXIT ${rc}"
-              tail -25 /tmp/r$i.log
-              echo "::endgroup::"
-            fi
+          for m in A B C D E; do
+            echo "::group::mode ${m}"
+            for rep in 1 2 3; do
+              python scratchpad_diag/shiboken_probe.py "$m" 2>&1 | tail -12
+              echo "  mode ${m} rep ${rep} EXIT ${PIPESTATUS[0]}"
+            done
+            echo "::endgroup::"
           done
-          echo "=================================================="
-          echo "RESULT ${{ matrix.name }}: ${crashes} / 30 reps non-zero"
-          echo "=================================================="
-          grep -h "DIAG" /tmp/r*.log | sort | uniq -c | head
           exit 0
       - name: Backtraces
         if: always()
@@ -78,6 +55,6 @@ jobs:
           for c in /tmp/cores/core.*; do
             [ -e "$c" ] || continue
             echo "::group::gdb $c"
-            gdb -batch -q -ex "set pagination off" -ex "bt 25" "$(which python)" "$c" 2>&1 | head -60
+            gdb -batch -q -ex "set pagination off" -ex "bt 20" "$(which python)" "$c" 2>&1 | head -40
             echo "::endgroup::"
           done
