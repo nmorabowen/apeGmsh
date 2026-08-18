@@ -281,9 +281,14 @@ Qt viewers are for **humans who asked to look**. After a solve, an
 agent's check is `results.assess()` (§3b / `assess.md`), not a
 window.
 
+Since ADR 0098 S6a, `viewer()` is sugar for `results.session().show()`
+— the window projects a **`ResultsSession`** (tiled mesh/plot panes,
+result slots per pane), not the retired Geometry / Composition /
+Diagram tree.
+
 ```python
 def viewer(self, *, blocking=None, title=None,
-           restore_session="prompt", save_session=True, cuts=None)
+           restore_session="prompt", save_session=True)
 ```
 
 - The **default is `blocking=None` (auto)**: `True` (in-process Qt) in
@@ -293,21 +298,36 @@ def viewer(self, *, blocking=None, title=None,
   prints one `[viewer]` line.
 - An **explicit** `blocking=True` still runs the VTK+Qt event loop
   in-process and **native-crashes a Jupyter / VS Code kernel**.
+- **Returns differ by path, on purpose**: blocking returns the
+  `ResultsSession` (still live after the window closes — query it,
+  `render()` off it, `snapshot()` it); `blocking=False` returns the
+  `subprocess.Popen`; the notebook in-memory fallback returns the
+  `WebViewer`.
 - `viewer(blocking=False)` always spawns a subprocess; needs a Results
   opened from disk, raises `RuntimeError` for in-memory.
-- `viewer()` already calls `.show()` — never chain
-  `results.viewer().show()` (opens two windows).
-- `viewer(cuts=...)` is **ignored** on the `blocking=False` subprocess
-  path (live `SectionCutDef` objects don't survive the argv hop).
+- `viewer()` already shows the window — never chain
+  `results.viewer().show()`; that would open a second one on the
+  returned session.
+- `save_session=True` (default) writes `<results>.viewer-session.json`
+  on close; `restore_session` is `True` / `False` / `"prompt"`
+  (default). A session file that cannot be read never blocks the
+  window: it is announced, the default picture boots, and auto-save is
+  disarmed for that window so the file survives. A v13 file from the
+  retired window is renamed to `…​.viewer-session.json.legacy`, never
+  overwritten.
+- `cuts=` is **retired** (ADR 0098 §1). A cut plane is clip state on a
+  view: build defs with `apeGmsh.cuts`, then
+  `results.session()` → `view.add_clip(normal, offset=…)`.
 - `APEGMSH_SKIP_VIEWER=1` makes the viewer call return `None` — lets a
-  cell survive `jupyter nbconvert --execute` / CI.
-- **File → Open Results…** (#757) opens another results file in the running
-  viewer, with a format-aware follow-up prompt for the model archive when the
-  format needs one (`.mpco` → `model_h5=`; `.ladruno` is self-sufficient).
+  cell survive `jupyter nbconvert --execute` / CI. Checked before
+  anything touches disk, so a skipped call never renames a session file.
 - Higher-order solids (tet10/20/27, tri6, quad8/9, prism15, Bézier fork
-  elements) now **render in the results viewer** (#763) — drawn as their
-  linear corner cell (mid-side nodes dropped); previously a quadratic /
-  fork-coded mesh emitted 0 cells and left the viewport blank.
+  elements) render as their linear corner cell (mid-side nodes dropped).
+- **Not in the session window** (they were features of the retired one,
+  pending ADR 0098 S6b dispositions): **File → Open Results…**, and the
+  draggable / right-click colour-scale chrome. Scales are still per-pane
+  and still caused by slots — see `INV-LEGEND-1..5` — but the legend
+  interactor is not installed.
 
 ### Headless animation export — `results.export_animation(...)` (#755)
 
@@ -331,11 +351,18 @@ same export lives on the viewer GUI as a button.
 
 ### Concurrent geometries — `director.geometries` (ADR 0058)
 
-A **Geometry is now a scene instance**, not just a deformation preset: every
+!!! warning "Retired from `viewer()` at ADR 0098 S6a"
+    Geometries belong to the retired diagram ontology. `viewer()`
+    now returns a `ResultsSession`, which has no `.director`, so
+    nothing below is reachable from it. The director survives only
+    inside the `show_web()` hatch (`wv.director.geometries`), as an
+    implementation detail with no compatibility promise. In a
+    session, per-pane state is the replacement: one `MeshView` per
+    pane, each with its own scope, pose and time.
+
+A **Geometry is a scene instance**, not just a deformation preset: every
 Geometry with `visible=True` renders **concurrently** at its own deform state,
-spatial offset, and stage pin. Mostly a GUI feature, but the same actions are
-scriptable on the open viewer's director (`viewer.director.geometries`, a
-`GeometryManager`) — only valid **after** the viewer window is open.
+spatial offset, and stage pin.
 
 ```python
 gm = viewer.director.geometries          # GeometryManager (src/apeGmsh/viewers/diagrams/_geometries.py)

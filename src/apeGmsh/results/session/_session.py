@@ -324,11 +324,12 @@ class ResultsSession:
     def save_snapshot(self, path: "str | Path | None" = None) -> Path:
         """Write :meth:`snapshot` atomically; returns the path written.
 
-        ``path=None`` defaults to ``<results>.session.json`` beside the
-        results file — deliberately NOT the old viewer's
-        ``<results>.viewer-session.json``, which today's window still
-        owns and overwrites on close (plan decision 11). The paths
-        merge at the S6 flip, behind the ``.legacy`` rename-aside.
+        ``path=None`` defaults to ``<results>.viewer-session.json``
+        beside the results file — the old viewer's name, adopted at the
+        S6a flip now that nothing else writes it (plan decision 11).
+        A v13 file already sitting there is renamed aside, never
+        overwritten; :func:`~apeGmsh.results.session.rename_legacy_aside`
+        is the guarantee.
         """
         from ._snapshot import save_snapshot
 

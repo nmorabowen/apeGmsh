@@ -1,7 +1,7 @@
 # Viewers
 
 Qt/PyVista viewers: session-embedded authoring viewers plus the
-results viewer for post-processing.
+results session window for post-processing.
 
 ## ModelViewer — `g.model.viewer()`
 
@@ -11,7 +11,22 @@ results viewer for post-processing.
 
 ::: apeGmsh.viewers.mesh_viewer.MeshViewer
 
-## ResultsViewer — `Results.viewer()`
+## Results session window — `Results.viewer()`
+
+`results.viewer()` opens the post-solve window. Since ADR 0098 it is
+sugar for `results.session().show()`: the document is a
+**`ResultsSession`** — tiled mesh and plot panes, each pane carrying
+result *slots* — and the window is one client that projects it. A
+script can build or read the same object with no window at all, and
+what the window saves is that object.
+
+```python
+results.viewer()               # the human one-liner (blocking)
+
+s = results.session()          # the same document, no window
+s.render("pane.png")           # a still, no Qt
+s.show()                       # the same window, from Python
+```
 
 !!! warning "Explicit `blocking=True` still crashes the Jupyter kernel"
     `results.viewer()` defaults to `blocking=None` (auto): `True`
@@ -21,36 +36,53 @@ results viewer for post-processing.
     `blocking=True` still drives the VTK+Qt event loop in-process and
     **kills the ipykernel**.
 
-::: apeGmsh.viewers.results_viewer.ResultsViewer
+The blocking call returns the `ResultsSession` once the window closes —
+still live, so you can query it, render stills off it, or snapshot it.
+`blocking=False` returns the `subprocess.Popen` handle instead, and the
+notebook in-memory fallback returns the `WebViewer`: three different
+things on purpose, because a session in *this* process is not what a
+child window is showing.
 
-### The colour scale
+### Saving and restoring
 
-Every contour, glyph, fibre and layer diagram that colours by an array
-publishes a colour scale. Scales belong to the *view*, not to the
-diagram: two diagrams showing the same component share one scale, and
-the same component on two concurrent geometries gets one each.
+`save_session=True` (the default) writes the session —  panes, slots,
+pose, time link, selection — to `<results>.viewer-session.json` when
+the window closes. `restore_session` decides what happens to a file
+already there: `True` restores it silently, `False` ignores it, and
+`"prompt"` (the default) asks first, listing what the file contains and
+anything about it that no longer fits these results.
 
-Scales dock down the right-hand edge and stack. Drag one anywhere you
-like; drag the corner opposite its anchor to resize it. Because a
-scale's box is computed from the text it has to hold — the title, the
-tick labels under the current number format — resizing scales the text
-and the box follows, so a scale can never end up too small to read.
-Drop one back against the edge it came from, or double-click it, and it
-rejoins the stack.
+The window always opens. A session file that cannot be read never
+blocks it and is never destroyed by it: the reason is printed, the
+default picture boots, and auto-save is switched off for that window so
+the file is still there afterwards. That last part matters because the
+save target *is* the file that was refused.
 
-Right-click a scale for the rest: hide it, flip it between vertical and
-horizontal, reset its size, change the number format, rescale it to the
-current step's data range, or open the colour-map editor on the diagram
-behind it. The same knobs live in the diagram's settings card when you
-want to set them precisely or from a preset.
+Sessions written by the retired Geometry / Composition / Diagram viewer
+are not restorable. The first upgraded open says so in one line and
+renames the old file to `<results>.viewer-session.json.legacy` —
+overwriting neither it nor an aside already sitting there.
 
-Whatever you do to a scale survives everything else — changing the
-colour map, stepping through time, re-fitting the range, hiding and
-showing it again. Placement is saved with the viewer session, so a
-scale you moved comes back where you left it; scales still docked are
-laid out fresh, which is what you want when you reopen on a different
-screen. `Preferences → Labels → Colour-scale text size` sets the
-default size for scales you have not resized by hand.
+<!-- The Qt names in ``apeGmsh.viewers.session`` are exported lazily
+     (PEP 562) so ``realize`` / ``render`` keep working with no qtpy, so
+     mkdocstrings has to collect the window from its own module. -->
+::: apeGmsh.viewers.session._window.SessionWindow
+
+### Colour scales
+
+A scale is caused by a slot, and belongs to the pane. Filling a
+colour-mapped slot creates its scale; clearing the slot destroys it;
+two slots showing the same quantity share one scale. Hiding a scale
+never hides the picture it names, and each pane carries the scales of
+its own slots — so a quad view of four contours is four panes with one
+scale each.
+
+Deform is not a slot: a warped mesh with every slot empty draws **no**
+scale at all. The scale names the slot's quantity, so warping by
+displacement while contouring stress gives a scale that says stress.
+
+Number format, orientation and font scale come from the slot's style;
+`Preferences → Labels → Colour-scale text size` sets the default size.
 
 ## Web viewers — `results.show_web()` / `results.serve_web()`
 

@@ -27,9 +27,9 @@ Hard sequence rules from the sizing:
   until S4's IR fields are frozen**, or the contract pays a second bump.
 - **S6b cannot start before S6a merges** (old suite stays green until the
   flip); a long-lived sweep branch rots against the 155-file tests/viewers tree.
-- **S6c (six-kind dispositions) first within S6** — it is an owner decision +
-  ADR amendment, zero code risk, and it unblocks the sweep. It has no
-  dependency and can be recorded any time.
+- **S6c (six-kind dispositions) first within S6** — DONE (2026-08-18): ADR
+  0098 Amendment 2, owner-signed, landed with the S6a flip. The sweep is
+  unblocked.
 
 ## Model and effort per slice
 
@@ -492,6 +492,110 @@ concentrated in pages that DESCRIBE machinery (~6 files); ~20 caller pages
 survive because `viewer()` stays the one-liner; internal_docs get a banner
 line only (redirects exist; no bulk archive prose per docs voice). Quote
 new signatures sparingly — every D-SIG entry pins a signature.
+
+*S6c recorded (2026-08-18) — ADR 0098 Amendment 2, owner-signed.* All
+six slotless kinds survive internally behind the `show_web` hatch;
+catalog stays closed at seven; expiry is bound to the hatch (the
+web-client ADR must re-disposition all six before it merges). Two
+things the sizing did not know, both verified while drafting:
+
+- **The six have no published surface at all** — zero occurrences in
+  `docs/` or the skill (the `spring_force` hits are the results
+  component `spring_force_0`, not the kind). So S6d owes them nothing,
+  and "de-publication" costs no page.
+- **Their five dedicated test files are NOT S6b deletions**
+  (`test_fiber_diagram`, `test_layer_diagram`,
+  `test_isochrone_diagrams`, `test_isochrone_math`,
+  `test_spring_force`). They cover code that survives, and S1
+  re-covers none of it — no slot renders any of the six.
+
+*S6a shipped (2026-08-18) — for S6b:*
+
+- **`viewer()` had TWO exports to de-publish, not one.** The sizing
+  named `viewers/__init__.py`; `src/apeGmsh/__init__.py:103,224` also
+  exported `ResultsViewer` at the ROOT — `from apeGmsh import
+  ResultsViewer` — which is the more public of the two. Both are gone;
+  the module path still works. Nothing in the repo imported the root
+  one, so it was a clean removal, but a sweep that greps only
+  `viewers/` will miss the next one of these.
+- **The restore/save policy is Qt-free and lives in
+  `results/session/_boot.py`**, not in the window.
+  `Results._show_session_window` is boot → `session.show()` → save, so
+  a bare `results.session().show()` stays disk-free exactly as S2
+  shipped it. Save-on-close needs **no Qt hook**: `show(blocking=True)`
+  returns after the window closed, and `_on_close` disposes WIDGETS
+  while the session IR survives, so writing right after the call
+  writes what was on screen.
+- **INV-SESSION-OPEN — the window always opens.** A session file that
+  cannot be honoured is announced, the default picture boots, and
+  **auto-save is disarmed for that window**. The third part is the one
+  that matters: at this flip the save target IS the refused file
+  (decision 11 adopted `<results>.viewer-session.json`), so booting
+  fresh with auto-save armed would overwrite on close exactly what the
+  refusal protected — and every "never destroys" test in
+  `test_snapshot_legacy_gate.py` would still be green. The tests assert
+  the FILES after a simulated close, not the notice.
+- **`rename_legacy_aside` was not touched.** It still refuses an
+  existing `.legacy`; the flip catches that refusal at the window
+  boundary. Upgrade → downgrade → upgrade is pinned end to end in both
+  `tests/results/session/test_boot_policy.py` and
+  `tests/viewers/test_viewer_flip.py`.
+- **`viewer(cuts=)` is gone** — §1 had already retired it, so this was
+  not a fresh decision. Nothing in `src/` or `tests/` passed it;
+  `test_section_cut_h5_autoload.py` drives
+  `ResultsViewer._apply_pending_cuts` directly and is unaffected. The
+  h5 auto-load-as-view-clips contract is still owed (S6b's
+  section_cut row) — `MeshView` already HAS clips and `_realize`
+  already applies them, so that port is smaller than the sizing feared.
+- **The subprocess path flipped for free** — `viewers/__main__.py`
+  already called `results.viewer(blocking=True)`. What it did NOT do
+  was carry the caller's policy, so `viewer(blocking=False,
+  save_session=False)` saved anyway. Fixed with
+  `--restore-session yes|no|prompt` / `--no-save-session`, emitted only
+  when non-default so the common argv is unchanged.
+- **TWO ORPHAN BEHAVIOURS found at S6a — for S6b's honesty table.**
+  Both are features of the retired window that the session window does
+  not have, and both were *published*:
+  * **the legend interactor** — drag a colour scale, right-click it for
+    hide / orientation / format / rescale / cmap. `install_legend_interactor`
+    (`viewers/core/_legend_interactor.py`) is wired in
+    `results_viewer.py:2423` and NOWHERE in `viewers/session/`. The
+    session's `_realize_legends` builds a real `LegendController`, so
+    layout and typography carry over; the INTERACTION does not.
+    `docs/api/viewers.md` described it in detail — that prose is
+    rewritten, and the skill now names the gap explicitly.
+  * **File → Open Results…** — lives in `results_viewer.py:786` and
+    `ui/viewer_window.py`, not in `ui/_results_window.ResultsWindow`,
+    which is the shell `SessionResultsWindow` subclasses.
+  Neither is a regression this PR introduced; both are keep/port/drop
+  calls the sweep now has on record instead of discovering after the
+  deletions.
+- **The three coupled gates all fired, as the sizing said.**
+  `mkdocs build --strict` needed `docs/api/viewers.md` rewritten —
+  and note that mkdocstrings **cannot** collect
+  `apeGmsh.viewers.session.SessionWindow`: the Qt names are lazy
+  (PEP 562) so griffe sees nothing, and the page has to name
+  `apeGmsh.viewers.session._window.SessionWindow`. `test_skill_docs_drift`
+  D-SIG fired on the `cuts=` parameter — and the canonical skill is
+  `skills/apegmsh/`, with `.claude/skills/apegmsh-helper/` a
+  byte-identical mirror, so BOTH copies need every edit.
+  `_api_index.json` regenerates with
+  `apeGmsh.studio._index_build.write_index()`; it harvests the
+  docstring's FIRST LINE, so a summary that wraps lands truncated in
+  the index.
+- **`flows.json` is hand-curated and `_embed.py` is its gate.** Editing
+  a method's `flow` steps to name a node that does not exist fails the
+  referential-integrity check (it validates every step's `node`/`to`
+  against `nodes`), so the two new packages are on the map now:
+  `results.session` and `viewer.session`, with edges. Re-embed with
+  `python docs/api-flows/_embed.py` — the check only runs there, not
+  in pytest.
+- **Only ONE old test asserted the flipped behaviour**
+  (`test_results_viewer_smoke.py::test_script_auto_default_blocks`,
+  which stubbed `viewer_mod.ResultsViewer`); it now stubs
+  `ResultsSession.show` and asserts the same thing. `test_viewers_main`'s
+  `_StubResults.viewer` needed the two new kwargs. Everything else in
+  the ~80-file old suite is untouched and green.
 
 ## Standing risks (watch every slice)
 

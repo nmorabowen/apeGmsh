@@ -1,8 +1,15 @@
 """``python -m apeGmsh.viewers`` — interactive Results viewer, or stills.
 
 ``python -m apeGmsh.viewers <path>`` opens a Results file in a fresh
-Qt viewer. Used by ``Results.viewer(blocking=False)`` to spawn a
+Qt window. Used by ``Results.viewer(blocking=False)`` to spawn a
 subprocess that survives a notebook/kernel crash.
+
+ADR 0098 S6a flipped what that window is: the child calls
+``results.viewer(blocking=True)``, which now opens a ``ResultsSession``
+(``apeGmsh.viewers.session``), so this door flipped with it and needs no
+ontology of its own. ``--restore-session`` / ``--no-save-session`` carry
+the parent's open policy across the argv hop; before the flip the child
+silently used the defaults.
 
 ``python -m apeGmsh.viewers render <path> …`` writes stills via
 ``viewers.render`` (ADR 0094 S5) so a GL crash stays out of the
@@ -172,6 +179,27 @@ def _main_interactive(argv: Sequence[str]) -> int:
             "the picker."
         ),
     )
+    parser.add_argument(
+        "--restore-session",
+        dest="restore_session",
+        choices=("yes", "no", "prompt"),
+        default="prompt",
+        help=(
+            "What to do with <results>.viewer-session.json: yes restores "
+            "silently, no ignores it, prompt (default) asks. Emitted by "
+            "the parent Results.viewer(blocking=False) launch so the "
+            "child honours the same policy the caller asked for."
+        ),
+    )
+    parser.add_argument(
+        "--no-save-session",
+        dest="save_session",
+        action="store_false",
+        help=(
+            "Do not write <results>.viewer-session.json when the window "
+            "closes."
+        ),
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -181,7 +209,14 @@ def _main_interactive(argv: Sequence[str]) -> int:
 
     results = _open_results(path, args.model_h5)
     _apply_defs(results, args.defs)
-    results.viewer(blocking=True, title=args.title)
+    results.viewer(
+        blocking=True,
+        title=args.title,
+        restore_session={"yes": True, "no": False}.get(
+            args.restore_session, "prompt",
+        ),
+        save_session=args.save_session,
+    )
     return 0
 
 
