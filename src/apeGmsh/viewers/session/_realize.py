@@ -149,11 +149,12 @@ class PaneTargets:
     when its button is off — not an empty array, which would say "the
     button is on and nothing is there".
 
-    The Gauss family is computed whenever the button is on, INCLUDING
+    The Gauss family is populated whenever the button is on, INCLUDING
     when the `gauss` slot occupies and suppresses the button's own
-    layer: the slot is drawing that same cloud, with values, so those
-    points are on screen and a click must still be able to address
-    them.
+    layer — the slot is drawing that cloud, with values, so those
+    points are on screen and a click must still address them. In that
+    case the targets are read off the SLOT's own cloud, so they cannot
+    diverge from it.
     """
 
     nodes: Optional[NodeTargets] = None
@@ -371,6 +372,7 @@ def _realize_mesh(
     # computation.
     style_layers, targets = _style_and_targets(
         view, scene, grid, scoped, view_data, results, stage_id,
+        slot_diagrams,
     )
     for role, layer in style_layers:
         handle = backend.add_layer(layer)
@@ -771,6 +773,7 @@ def _style_and_targets(
     view_data: "ViewerData",
     results: "Results",
     stage_id: str,
+    slot_diagrams: "dict[str, Any]",
 ) -> "tuple[list[tuple[str, Any]], PaneTargets]":
     """``(role, layer)`` for every ON style button that draws its own
     layer, plus the §8 pick targets those buttons put on screen.
@@ -791,17 +794,26 @@ def _style_and_targets(
         if nodes is not None:
             out.append(("nodes", _nodes_layer(view.id, nodes)))
     if style.gauss:
-        gauss = _gauss_targets(
-            scene, scoped, view_data, results, stage_id,
-            posed=view.deform is not None,
-        )
-        # "They must not draw two clouds" (INV-MESH-4): the `gauss`
-        # SLOT already paints these points, with values and a scale.
-        # The button stays lit — it describes what is on screen — and
-        # emits nothing. The TARGETS still stand: the cloud is on
-        # screen, so §8 must still be able to hit it.
-        if gauss is not None and "gauss" not in view.slots:
-            out.append(("gauss", _gauss_layer(view.id, gauss)))
+        # "They must not draw two clouds" (INV-MESH-4): when the `gauss`
+        # SLOT is occupied it already paints these points, with values
+        # and a scale, so the button emits nothing — it stays lit
+        # because it describes what is on screen. The TARGETS then come
+        # from the SLOT's own cloud, not from a second read: the probe
+        # component and the slot's quantity can live in different Gauss
+        # groups (different class_tag / int_rule), and a probe cloud
+        # would then address integration points this pane is not
+        # drawing — plus it would pay a whole second slab read on every
+        # flush.
+        occupant = slot_diagrams.get("gauss")
+        if occupant is not None:
+            gauss = _gauss_targets_of(occupant)
+        else:
+            gauss = _gauss_targets(
+                scene, scoped, view_data, results, stage_id,
+                posed=view.deform is not None,
+            )
+            if gauss is not None:
+                out.append(("gauss", _gauss_layer(view.id, gauss)))
     return out, PaneTargets(nodes=nodes, gauss=gauss)
 
 
@@ -992,6 +1004,37 @@ def _gauss_targets(
     if coords.size == 0:
         return None
     element_index = np.asarray(slab.element_index, dtype=np.int64)
+    return GaussTargets(
+        element_ids=element_index,
+        gp_indices=_gp_index_within_element(element_index),
+        coords=coords,
+    )
+
+
+def _gauss_targets_of(diagram: Any) -> "Optional[GaussTargets]":
+    """The pick targets of an OCCUPYING `gauss` slot — its own cloud.
+
+    ``GaussPointDiagram`` caches the slab's ``element_index`` and the
+    world centers it drew, and ``sync_substrate_points`` keeps those
+    centers posed — the same two arrays this module would otherwise
+    re-derive. Reading them makes the targets equal to what is on
+    screen BY CONSTRUCTION, which no second read of a probe component
+    can promise (the probe may resolve to a different Gauss group
+    entirely). ``None`` when the slot came up empty: an occupied slot
+    that drew nothing has nothing to hit.
+
+    Reaching into the diagram is this module's established idiom
+    (``_layer`` / ``_handle`` / ``_visual_store`` are all read the same
+    way) — the emitting objects are realize's own output.
+    """
+    element_index = getattr(diagram, "_gp_element_index", None)
+    coords = getattr(diagram, "_coords", None)
+    if element_index is None or coords is None:
+        return None
+    element_index = np.asarray(element_index, dtype=np.int64)
+    coords = np.asarray(coords, dtype=np.float64)
+    if element_index.size == 0 or coords.shape[0] != element_index.size:
+        return None
     return GaussTargets(
         element_ids=element_index,
         gp_indices=_gp_index_within_element(element_index),

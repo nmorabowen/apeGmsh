@@ -176,6 +176,9 @@ class SessionWindow:
         # N panes.
         self._shell.on_theme_changed(self._on_theme_changed)
         self._shell.reset_layout_hook = self._on_reset_layout
+        # The panes own the interactors, so the navigation menu has to
+        # reach them — one palette, one convention, N panes.
+        self._shell.navigation_hook = self._host.apply_navigation
 
         self._restore_pane_layout()
 

@@ -248,6 +248,11 @@ class SessionPaneFrame(QtWidgets.QFrame):
         if self._pane is not None:
             self._pane.request_reconcile()
 
+    def apply_navigation(self, token: str) -> None:
+        """Re-apply a navigation convention — no-op for a plot pane."""
+        if self._pane is not None:
+            self._pane.apply_navigation(token)
+
     def dispose(self) -> None:
         """Detach from the session (idempotent)."""
         try:
@@ -262,7 +267,11 @@ class SessionPaneFrame(QtWidgets.QFrame):
     def refresh(self) -> None:
         """Sync the header from the session record (never writes)."""
         view = self._view
-        self._title.setText(view.name or view.id)
+        name = view.name or view.id
+        self._title.setText(name)
+        # The label can be squeezed to nothing (see _build_header), so
+        # the name has to survive somewhere legible.
+        self._title.setToolTip(name)
         if not self._is_mesh:
             return
         self._syncing = True
@@ -309,6 +318,20 @@ class SessionPaneFrame(QtWidgets.QFrame):
 
         self._title = QtWidgets.QLabel(self._view.name or self._view.id)
         self._title.setObjectName("SessionPaneTitle")
+        # The title is the one elastic thing in the header, and it has
+        # to be: six buttons, a separator and a close glyph already
+        # spend most of A1.4's 240 px pane floor, and a QLabel that
+        # refuses to shrink below its text would push the frame's
+        # minimumSizeHint past that floor — which the Add gate and
+        # required_extent() still compute with, so the gate would admit
+        # a column the splitter cannot actually fit. Ignored policy +
+        # a zero minimum lets the pane reach the floor; the full name
+        # stays available as the tooltip.
+        self._title.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        self._title.setMinimumWidth(0)
         row.addWidget(self._title)
         if not self._is_mesh:
             kind_word = QtWidgets.QLabel(self._view.kind)

@@ -30,12 +30,18 @@ The criteria:
 13. The glyph clouds are pickable; nothing else this slice emits is.
 14. A pane that closes takes its pick installation with it.
 15. The Gauss target encoding is ``(element_id, gp-within-element)``.
+17. An occupied `gauss` slot lends its OWN cloud as the targets — one
+    read, and no way for the two to diverge.
+18. The widened header still fits the A1.4 pane floor.
+19. The checked pick-target chip does not bury its own glyph.
 
 Criterion 16 makes the mutation tests mandatory: dropping the
 signature's selection term, flipping the node cloud back to
 ``pickable=False``, or leaving the pick installed on pane teardown
 must each make one criterion above FAIL. They are at the bottom, each
-naming the criterion it breaks.
+naming the criterion it breaks. (Criterion 1's other half — a left
+drag must not also orbit the camera — needs a real interactor and
+lives in the ``[qt]`` file.)
 """
 from __future__ import annotations
 
@@ -882,6 +888,206 @@ def test_c15_the_selection_becomes_a_plot_source(host, qapp):
     assert [s.source.key for s in plot.series] == [node_id]
 
 
+# =====================================================================
+# 17 — an occupied slot lends its own cloud
+# =====================================================================
+
+
+def test_c17_an_occupied_gauss_slot_lends_its_own_cloud(host, qapp):
+    """Criterion 17, correctness half.
+
+    The button's own cloud comes from a PROBE component (the first one
+    recorded, alphabetically). The slot draws ITS quantity. Those can
+    resolve to different Gauss groups — different ``class_tag`` /
+    ``int_rule``, different elements — so targets read from the probe
+    could address integration points this pane is not drawing, and the
+    highlight would then mark a point nobody clicked.
+    """
+    session, widget = host
+    view = session.panes[0]
+    _gauss_on(view)
+    view.pick_target = "gauss"
+    view.gauss = Gauss("stress_xx")
+    qapp.processEvents()
+
+    realized = widget.frame(view.id).pane.reconciler.realized
+    occupant = next(
+        d for d in realized.diagrams
+        if getattr(d, "_gp_element_index", None) is not None
+    )
+    targets = realized.targets.gauss
+    assert targets is not None
+    assert np.array_equal(
+        targets.coords, np.asarray(occupant._coords),  # noqa: SLF001
+    )
+    assert np.array_equal(
+        targets.element_ids,
+        np.asarray(occupant._gp_element_index),  # noqa: SLF001
+    )
+
+
+def test_c17_the_button_adds_no_gauss_read_over_the_slot(
+    host, qapp, monkeypatch,
+):
+    """Criterion 17, cost half.
+
+    Lighting the Gauss button over an occupied slot must cost NOTHING
+    extra: the slot has already put that cloud on screen and realize
+    runs on every session mutation, so a second slab read (plus its
+    world-coordinate reconstruction) would be pure duplicate work at
+    exactly the scale — 600k elements — the plan sizes against. The
+    baseline is measured, not assumed: the slot itself reads at attach
+    and again when realize steps it to the instant.
+    """
+    session, widget = host
+    view = session.panes[0]
+    view.style = MeshStyle(mesh=True, outlines=True, nodes=False, gauss=False)
+    view.gauss = Gauss("stress_xx")
+    qapp.processEvents()
+
+    reads: list = []
+    accessor = type(session.results.stage(STAGE).elements.gauss)
+    real = accessor.get
+    monkeypatch.setattr(
+        accessor, "get",
+        lambda self, *a, **kw: (reads.append(1), real(self, *a, **kw))[1],
+    )
+
+    widget.frame(view.id).pane.request_reconcile()   # button OFF
+    qapp.processEvents()
+    without = len(reads)
+    assert without, "the rig read no gauss slab at all"
+
+    reads.clear()
+    _gauss_on(view)                                   # button ON
+    qapp.processEvents()
+
+    assert len(reads) == without, (
+        f"the Gauss button cost {len(reads) - without} extra slab "
+        f"read(s) for a cloud the slot had already drawn"
+    )
+
+
+def test_c17_a_slot_that_drew_nothing_leaves_no_targets(host, qapp):
+    """An occupied slot whose kind emitted nothing has no cloud on
+    screen, so there is nothing to hit — targets must not fall back to
+    a probe cloud the pane is not drawing."""
+    session, widget = host
+    view = session.panes[0]
+    _gauss_on(view)
+    view.pick_target = "gauss"
+    qapp.processEvents()
+    assert _targets(widget, view.id).gauss is not None
+
+    view.gauss = Gauss("no_such_component")
+    qapp.processEvents()
+    assert _targets(widget, view.id).gauss is None
+    node_world = _targets(widget, view.id)
+    del node_world
+
+
+# =====================================================================
+# 18-19 — the header fits, and the radio stays legible
+# =====================================================================
+
+
+def test_c18_the_pane_frame_fits_the_a1_4_floor(host, qapp):
+    """Criterion 18. ``required_extent`` / ``can_add`` multiply by
+    ``LAYOUT.pane_min_width``, and ``QSplitter`` will not shrink a
+    child below its ``minimumSizeHint`` — so a header that needs more
+    than the floor makes the Add gate admit a column the splitter
+    cannot fit, and the last pane is pushed outside the host."""
+    from apeGmsh.viewers.ui._layout_metrics import LAYOUT
+
+    session, widget = host
+    session.panes[0].name = "A deliberately long mesh view name"
+    qapp.processEvents()
+    frame = widget.pane_frames[0]
+    assert frame.minimumSizeHint().width() <= LAYOUT.pane_min_width
+    # The name has to stay readable somewhere: the label is squeezable.
+    assert frame._title.toolTip() == session.panes[0].name  # noqa: SLF001
+
+
+def _contrast(fg: str, bg: str) -> float:
+    """WCAG contrast ratio between two ``#rrggbb`` colours."""
+    def lum(value: str) -> float:
+        value = value.lstrip("#")
+        channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        channels = [
+            c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+            for c in channels
+        ]
+        return (
+            0.2126 * channels[0] + 0.7152 * channels[1]
+            + 0.0722 * channels[2]
+        )
+
+    a, b = lum(fg), lum(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _checked_background(qss: str, object_name: str, under: str) -> str:
+    """The effective ``#rrggbb`` a checked button's glyph sits on.
+
+    Reads the ``:checked`` rule's ``background-color`` out of the built
+    stylesheet and composites an ``rgba()`` over ``under`` (the header
+    fill), which is what the user actually sees.
+    """
+    import re
+
+    block = re.search(
+        rf"QToolButton#{object_name}:checked\s*\{{(.*?)\}}", qss, re.S,
+    )
+    assert block, f"no :checked rule for {object_name}"
+    decl = re.search(r"background-color:\s*([^;]+);", block.group(1))
+    assert decl, f"no background-color in {object_name}:checked"
+    value = decl.group(1).strip()
+    rgba = re.match(
+        r"rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\s*\)", value,
+    )
+    if rgba is None:
+        return value  # a flat hex
+    r, g, b, alpha = (
+        int(rgba.group(1)), int(rgba.group(2)), int(rgba.group(3)),
+        float(rgba.group(4)),
+    )
+    base = under.lstrip("#")
+    br, bg_, bb = (int(base[i:i + 2], 16) for i in (0, 2, 4))
+    mix = (
+        round(r * alpha + br * (1 - alpha)),
+        round(g * alpha + bg_ * (1 - alpha)),
+        round(b * alpha + bb * (1 - alpha)),
+    )
+    return "#%02x%02x%02x" % mix
+
+
+@pytest.mark.parametrize(
+    "object_name", ["SessionPanePickButton", "SessionPaneStyleButton"],
+)
+def test_c19_a_checked_header_button_keeps_its_glyph_legible(object_name):
+    """Criterion 19.
+
+    ``bind_button_glyph`` renders the glyph in ``palette.icon`` and
+    nothing re-tints it per state, so whatever the ``:checked`` rule
+    puts behind it is what the glyph must survive. A SOLID accent fill
+    reads as 1.07:1 on ``high_contrast`` (white glyph on yellow) — the
+    control is a radio, so one button is ALWAYS checked, and on that
+    palette the user could not see which target their clicks are
+    aimed at. 3:1 is WCAG 1.4.11's floor for non-text graphics.
+    """
+    from apeGmsh.viewers.ui.theme import PALETTES, build_stylesheet
+
+    for name, palette in PALETTES.items():
+        qss = build_stylesheet(palette)
+        background = _checked_background(qss, object_name, palette.mantle)
+        ratio = _contrast(palette.icon, background)
+        assert ratio >= 3.0, (
+            f"{object_name} checked on {name}: glyph {palette.icon} on "
+            f"{background} is {ratio:.2f}:1"
+        )
+
+
 def test_every_pick_target_token_has_a_target_family():
     """The radio addresses a ``PaneTargets`` field BY NAME, so a
     ``pick_target`` token with no family would aim at nothing and say
@@ -898,6 +1104,37 @@ def test_every_pick_target_token_has_a_target_family():
 # =====================================================================
 # 16 — mutation tests. Each names the criterion it must break.
 # =====================================================================
+
+
+def test_mutation_probe_sourced_gauss_targets_break_c17(
+    host, qapp, monkeypatch,
+):
+    """Read the Gauss targets from the probe component even while the
+    slot occupies -> criterion 17 fails.
+
+    The pre-fix behaviour, and the reason it is wrong: the probe cloud
+    is a different read of a possibly different Gauss group.
+    """
+    monkeypatch.setattr(
+        realize_mod, "_gauss_targets_of", lambda diagram: None,
+    )
+    session, widget = host
+    view = session.panes[0]
+    _gauss_on(view)
+    view.gauss = Gauss("stress_xx")
+    qapp.processEvents()
+
+    realized = widget.frame(view.id).pane.reconciler.realized
+    occupant = next(
+        d for d in realized.diagrams
+        if getattr(d, "_gp_element_index", None) is not None
+    )
+    with pytest.raises(AssertionError):
+        targets = realized.targets.gauss
+        assert targets is not None
+        assert np.array_equal(
+            targets.coords, np.asarray(occupant._coords),  # noqa: SLF001
+        )
 
 
 def test_mutation_signature_without_selection_breaks_c11(

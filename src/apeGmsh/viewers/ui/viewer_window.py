@@ -296,6 +296,13 @@ class ViewerWindow:
         # live). Defensive: an unknown token in a hand-edited
         # preferences.json must not kill window construction.
         self._navigation_style = "vtk"
+        #: Optional ``cb(token)`` fired after every navigation switch.
+        #: The mapping is applied to ``_qt_interactor``, which a window
+        #: built with ``central_interactor=False`` does not have — its
+        #: viewports live elsewhere (ADR 0098 A1.1's panes) and this is
+        #: how they hear about the change. ``None`` for every window
+        #: that owns its own interactor.
+        self.navigation_hook: "Optional[Callable[[str], None]]" = None
         self._nav_menu_actions: dict[str, Any] = {}
         try:
             self.set_navigation_style(_p.mouse_navigation, persist=False)
@@ -979,6 +986,8 @@ class ViewerWindow:
         if self._qt_interactor is not None:
             apply_navigation_style(self._qt_interactor, token)
         self._navigation_style = token
+        if self.navigation_hook is not None:
+            self.navigation_hook(token)
         act = self._nav_menu_actions.get(token)
         if act is not None and not act.isChecked():
             act.setChecked(True)

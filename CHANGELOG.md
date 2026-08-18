@@ -70,6 +70,27 @@ writers, XOR law intact), and a pane's pick installation now dies on
 `MeshPane.dispose` — the same path that closes its GL context, because
 its observers live on that interactor.
 
+Taking LEFT for selection means the panes finally need the navigation
+convention that expects it. `ViewerWindow.set_navigation_style` styles
+`_qt_interactor`, which the session window does not build (A1.1), so
+every pane applied VTK's stock trackball — where LEFT orbits — and the
+pick's priority-10 abort would have left the pane with **no orbit
+gesture at all**. Panes now apply the `mouse_navigation` preference
+themselves (`apecad`: LEFT selection, MIDDLE orbit, RIGHT pan), and
+`ViewerWindow` gains an optional `navigation_hook` so View → Navigation
+reaches viewports a window does not own — additive, `None` for every
+window that owns its interactor.
+
+Two more from the same review round: the pick-target radio's checked
+state is a translucent tint + a 2 px accent underline rather than a
+solid accent chip (the glyph is drawn in the palette's `icon` colour
+and nothing re-tints it per state, so a solid fill read 1.07:1 on
+`high_contrast` and under 3:1 on 8 of 10 palettes); and the pane title
+is squeezable with the full name on its tooltip, so the widened header
+keeps a pane frame's real minimum inside A1.4's 240 px floor — the
+number `required_extent` / the Add gate compute with, and which a
+`QSplitter` will not shrink a child below.
+
 ### FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the `live` surface on stock openseespy
 
 `tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular`

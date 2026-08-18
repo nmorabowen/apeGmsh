@@ -92,6 +92,7 @@ def default_backend_factory(
         interactor.enable_parallel_projection()
     except Exception:
         pass
+    apply_pane_navigation(interactor)
     # Theme the pane's background NOW, not only on the next palette
     # change: a pane is constructed after the shell has already applied
     # its palette, so waiting for ``on_theme_changed`` leaves a fresh
@@ -104,6 +105,38 @@ def default_backend_factory(
     except Exception:
         pass
     return interactor, PyVistaQtBackend(interactor)
+
+
+def apply_pane_navigation(
+    plotter: Any, token: "Optional[str]" = None,
+) -> None:
+    """Apply the mouse-navigation convention to ONE pane's interactor.
+
+    ``ViewerWindow.set_navigation_style`` applies the preference to
+    ``self._qt_interactor`` — which is ``None`` on the session path
+    (A1.1: the shell builds no central interactor), so without this
+    every pane would keep VTK's stock trackball, where LEFT orbits.
+    That matters more here than anywhere else: §8's pick installs at
+    interactor priority 10 and ABORTS the plain LMB chain, so a stock
+    pane would answer a left drag with a rubber-band and have no orbit
+    gesture left at all. ``apecad`` — the shipped default — is the
+    mapping that makes the two coexist: LEFT is selection, MIDDLE
+    orbits, RIGHT pans (``_navigation``'s own docstring names this
+    slice as the reason).
+
+    ``token=None`` reads the live preference. Failures are swallowed:
+    a pane that cannot install a style still renders, and the stock
+    trackball is a working camera, just not the configured one.
+    """
+    from ..ui._navigation import apply_navigation_style
+
+    try:
+        if token is None:
+            from ..ui.preferences_manager import PREFERENCES
+            token = PREFERENCES.current.mouse_navigation
+        apply_navigation_style(plotter, token)
+    except Exception:
+        pass
 
 
 def _supports_picking(backend: Any) -> bool:
@@ -195,6 +228,17 @@ class MeshPane(QtWidgets.QWidget):
         """
         self._reconciler.set_pane(pane_id)
 
+    def apply_navigation(self, token: str) -> None:
+        """Re-apply a navigation convention to this pane's surface.
+
+        The View → Navigation switch is a window-level gesture and the
+        panes own the interactors, so it has to reach every one of
+        them. A pane with no surface of its own (an injected backend)
+        has no interactor to style.
+        """
+        if self._surface is not None:
+            apply_pane_navigation(self._surface, token)
+
     def request_reconcile(self) -> None:
         """Schedule a repaint for a backend-side change the session
         cannot see (theme palette swap, density tokens).
@@ -252,4 +296,7 @@ class MeshPane(QtWidgets.QWidget):
         self._camera_fit = True
 
 
-__all__ = ["BackendFactory", "MeshPane", "default_backend_factory"]
+__all__ = [
+    "BackendFactory", "MeshPane", "apply_pane_navigation",
+    "default_backend_factory",
+]

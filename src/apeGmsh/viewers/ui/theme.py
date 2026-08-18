@@ -1125,13 +1125,19 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         border: 1px solid {p.accent};
     }}
     /* The §8 pick-target radio shares the node / Gauss glyphs with the
-       style buttons beside it, so its CHECKED state must not: a filled
-       accent chip reads as "aimed here", against the style buttons'
-       outlined "drawn". One of the two is always checked — it is a
-       radio, not four independent toggles. */
+       style buttons beside it, so its CHECKED state must not. It reads
+       as an AIMED tab — a 2 px accent underline, no outline — against
+       the style buttons' full outline. The fill stays a translucent
+       tint for one hard reason: the glyph is drawn in the palette's
+       `icon` colour and nothing re-tints it per state, so a SOLID
+       accent chip would put icon-on-accent (1.07:1 on high_contrast,
+       under 3:1 on 8 of 10 palettes) and the user could not see which
+       target their clicks are aimed at. One of the two is always
+       checked — it is a radio, not two independent toggles. */
     QToolButton#SessionPanePickButton:checked {{
-        background-color: {p.accent};
-        border: 1px solid {p.accent};
+        background-color: {_rgba(p.accent, 0.18)};
+        border: 1px solid transparent;
+        border-bottom: 2px solid {p.accent};
     }}
     QToolButton#SessionPanePickButton:disabled {{
         background: transparent;

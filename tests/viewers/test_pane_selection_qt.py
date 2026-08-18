@@ -4,7 +4,10 @@
 seam with a fake ``PickBackend``. This file proves the half a fake
 cannot: that the real
 :class:`~apeGmsh.viewers.backends._pyvista_pick.PyVistaPickBackend` is
-installed per pane, that the glyph cloud is pickable **at the actor**
+installed per pane, that a left drag selects while the MIDDLE button
+still orbits (the pick aborts the LMB chain, so the pane must have
+been handed the navigation convention that expects that), that the
+glyph cloud is pickable **at the actor**
 (the scene-IR flag is only a promise until VTK carries it, and
 ``vtkCellPicker`` skips a non-pickable prop outright), that a real
 interactor event resolves to a real node, and that closing the window
@@ -115,6 +118,32 @@ def _unit(vector: np.ndarray) -> np.ndarray:
     return vector / norm if norm else vector
 
 
+def _view_direction(camera) -> np.ndarray:
+    """Unit vector from the camera to its focal point.
+
+    A pan translates position AND focal point together, leaving this
+    unchanged; an orbit swings it. It is what separates the two.
+    """
+    delta = np.asarray(camera.focal_point) - np.asarray(camera.position)
+    norm = float(np.linalg.norm(delta))
+    return delta / (norm or 1.0)
+
+
+def _drag(interactor, button: str, start, end) -> None:
+    """One press-move-release drag on a named mouse button."""
+    press = getattr(interactor, f"{button}ButtonPressEvent")
+    release = getattr(interactor, f"{button}ButtonReleaseEvent")
+    interactor.SetEventInformation(
+        int(start[0]), int(start[1]), 0, 0, chr(0), 0, None,
+    )
+    press()
+    interactor.SetEventInformation(
+        int(end[0]), int(end[1]), 0, 0, chr(0), 0, None,
+    )
+    interactor.MouseMoveEvent()
+    release()
+
+
 def _press_release(interactor, x: int, y: int) -> None:
     """One plain LMB click at a display pixel, through real VTK."""
     interactor.SetEventInformation(int(x), int(y), 0, 0, chr(0), 0, None)
@@ -208,6 +237,77 @@ def test_a_real_click_selects_the_node_it_landed_on(live_window):
 
     assert session.selection.kind == "nodes"
     assert session.selection.nodes == (int(targets.ids[row]),)
+
+
+def test_the_left_button_is_selection_and_the_middle_orbits(live_window):
+    """The pick takes LEFT, so the pane must have been handed the
+    navigation convention that expects that.
+
+    ``PyVistaPickBackend`` observes the LMB chain at priority 10 and
+    ABORTS it, so on VTK's stock trackball — where LEFT orbits — a
+    session pane would silently lose its rotate gesture and answer a
+    drag with a rubber-band instead. ``ViewerWindow.set_navigation_style``
+    styles ``self._qt_interactor``, which this window does not build
+    (A1.1), so the panes have to receive the preference themselves.
+    ``apecad`` (the shipped default) is the mapping that makes the two
+    coexist: LEFT selection, MIDDLE orbit, RIGHT pan.
+
+    The middle-button assertion is on the view DIRECTION, not on the
+    camera position: under the stock trackball the middle button PANS,
+    which moves the position too, so "the camera moved" cannot tell an
+    orbit from a pan — and a pane left on the stock style would pass a
+    weaker test while having no orbit gesture at all.
+    """
+    app, window, session = live_window
+    frame = window.host.pane_frames[0]
+    plotter = frame.plotter
+    iren = plotter.iren.interactor
+
+    before_pos = tuple(plotter.camera.position)
+    _drag(iren, "Left", (400, 350), (500, 420))
+    app.processEvents()
+    assert tuple(plotter.camera.position) == before_pos, (
+        "a left drag moved the camera — LEFT belongs to selection"
+    )
+
+    before_dir = _view_direction(plotter.camera)
+    _drag(iren, "Middle", (400, 350), (500, 420))
+    app.processEvents()
+    after_dir = _view_direction(plotter.camera)
+    assert not np.allclose(before_dir, after_dir), (
+        "the middle button did not ORBIT (the view direction is "
+        "unchanged, so it panned at most): the pick took LEFT and "
+        "nothing rotates this pane"
+    )
+
+
+def test_the_navigation_menu_reaches_the_panes(live_window):
+    """View → Navigation is a window-level gesture and the PANES own
+    the interactors, so the switch has to fan out to them — otherwise
+    the menu ticks a radio and changes nothing.
+
+    ``apply_navigation_style`` installs a FRESH interactor style on
+    every call (that is its idempotence guarantee), so a new style
+    object on the pane's own interactor is the observable that the
+    token actually arrived here rather than stopping at the shell.
+    """
+    app, window, session = live_window
+    styles = {
+        f.paneId: id(f.plotter.iren.interactor.GetInteractorStyle())
+        for f in window.host.pane_frames
+    }
+    assert len(styles) == PANES
+
+    window.shell.set_navigation_style("gmsh", persist=False)
+    app.processEvents()
+
+    assert window.shell.navigation_style == "gmsh"
+    for frame in window.host.pane_frames:
+        restyled = id(frame.plotter.iren.interactor.GetInteractorStyle())
+        assert restyled != styles[frame.paneId], (
+            f"pane {frame.paneId} kept its old interactor style — the "
+            f"navigation switch never reached it"
+        )
 
 
 def test_the_selection_paints_a_layer_on_the_real_pane(live_window):
