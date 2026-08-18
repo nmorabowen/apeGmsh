@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from qtpy import QtWidgets
 
+from ._pick import PanePick
 from ._reconciler import SessionReconciler
 
 #: ``factory(parent_widget) -> (surface_widget | None, backend)``.
@@ -91,6 +92,7 @@ def default_backend_factory(
         interactor.enable_parallel_projection()
     except Exception:
         pass
+    apply_pane_navigation(interactor)
     # Theme the pane's background NOW, not only on the next palette
     # change: a pane is constructed after the shell has already applied
     # its palette, so waiting for ``on_theme_changed`` leaves a fresh
@@ -105,11 +107,55 @@ def default_backend_factory(
     return interactor, PyVistaQtBackend(interactor)
 
 
+def apply_pane_navigation(
+    plotter: Any, token: "Optional[str]" = None,
+) -> None:
+    """Apply the mouse-navigation convention to ONE pane's interactor.
+
+    ``ViewerWindow.set_navigation_style`` applies the preference to
+    ``self._qt_interactor`` — which is ``None`` on the session path
+    (A1.1: the shell builds no central interactor), so without this
+    every pane would keep VTK's stock trackball, where LEFT orbits.
+    That matters more here than anywhere else: §8's pick installs at
+    interactor priority 10 and ABORTS the plain LMB chain, so a stock
+    pane would answer a left drag with a rubber-band and have no orbit
+    gesture left at all. ``apecad`` — the shipped default — is the
+    mapping that makes the two coexist: LEFT is selection, MIDDLE
+    orbits, RIGHT pans (``_navigation``'s own docstring names this
+    slice as the reason).
+
+    ``token=None`` reads the live preference. Failures are swallowed:
+    a pane that cannot install a style still renders, and the stock
+    trackball is a working camera, just not the configured one.
+    """
+    from ..ui._navigation import apply_navigation_style
+
+    try:
+        if token is None:
+            from ..ui.preferences_manager import PREFERENCES
+            token = PREFERENCES.current.mouse_navigation
+        apply_navigation_style(plotter, token)
+    except Exception:
+        pass
+
+
+def _supports_picking(backend: Any) -> bool:
+    """Whether ``backend`` exposes a ``PickBackend`` (ADR 0047 INV-1).
+
+    Probed, never assumed: ``supports_picking`` is an optional
+    capability. Only the PROBE is guarded — a backend that answers
+    ``True`` and then cannot build a picker is a broken backend, not a
+    pane that should quietly render without picking.
+    """
+    probe = getattr(backend, "supports_picking", None)
+    return bool(probe is not None and probe())
+
+
 class MeshPane(QtWidgets.QWidget):
     """One mesh view, projected. The session is truth; this widget is
     a client (§1) — it holds no picture state of its own, only the
-    backend, the reconciler, the render surface (when it owns one) and
-    its own first-fit camera flag.
+    backend, the reconciler, the §8 pick installation, the render
+    surface (when it owns one) and its own first-fit camera flag.
     """
 
     def __init__(
@@ -138,6 +184,16 @@ class MeshPane(QtWidgets.QWidget):
             session, backend, pane_id=pane_id, defer_fn=defer_fn,
         )
         self._reconciler.add_listener(self._on_reconciled)
+        # §8 — this pane's clicks and windows, aimed by ITS radio at
+        # the ONE session set. Only a backend that can ray-cast gets
+        # one; a view-only backend (a plain recorder) is legal and
+        # simply cannot pick (ADR 0042 INV-3 / 0047 INV-1).
+        self._pick: Optional[PanePick] = None
+        if _supports_picking(backend):
+            self._pick = PanePick(
+                session, backend.picking(),
+                lambda: self._reconciler.realized,
+            )
 
     # -- surface -------------------------------------------------------
 
@@ -156,6 +212,12 @@ class MeshPane(QtWidgets.QWidget):
     def reconciler(self) -> SessionReconciler:
         return self._reconciler
 
+    @property
+    def pick(self) -> Optional[PanePick]:
+        """This pane's §8 pick controller (``None`` when the backend
+        cannot ray-cast)."""
+        return self._pick
+
     def set_pane(self, pane_id: Optional[str]) -> None:
         """Aim the projection at another mesh view.
 
@@ -165,6 +227,17 @@ class MeshPane(QtWidgets.QWidget):
         rides it.
         """
         self._reconciler.set_pane(pane_id)
+
+    def apply_navigation(self, token: str) -> None:
+        """Re-apply a navigation convention to this pane's surface.
+
+        The View → Navigation switch is a window-level gesture and the
+        panes own the interactors, so it has to reach every one of
+        them. A pane with no surface of its own (an injected backend)
+        has no interactor to style.
+        """
+        if self._surface is not None:
+            apply_pane_navigation(self._surface, token)
 
     def request_reconcile(self) -> None:
         """Schedule a repaint for a backend-side change the session
@@ -188,8 +261,14 @@ class MeshPane(QtWidgets.QWidget):
         the shell to the panes. Windows tolerates the leak; Mesa
         segfaults on the NEXT interactor in the process, which is what
         the xvfb lane caught.
+
+        The pick installation dies on this same path, for the same
+        reason: its observers live on the interactor this method is
+        about to close.
         """
         self._reconciler.dispose()
+        if self._pick is not None:
+            self._pick.dispose()
         if self._surface is not None:
             try:
                 self._surface.close()
@@ -217,4 +296,7 @@ class MeshPane(QtWidgets.QWidget):
         self._camera_fit = True
 
 
-__all__ = ["BackendFactory", "MeshPane", "default_backend_factory"]
+__all__ = [
+    "BackendFactory", "MeshPane", "apply_pane_navigation",
+    "default_backend_factory",
+]

@@ -336,6 +336,15 @@ class SessionPaneHost(QtWidgets.QWidget):
         for frame in self._frames.values():
             frame.request_reconcile()
 
+    def apply_navigation(self, token: str) -> None:
+        """Fan a navigation-convention change out to every pane.
+
+        The panes own the interactors (A1.1), so the window-level
+        View → Navigation gesture lands here.
+        """
+        for frame in self._frames.values():
+            frame.apply_navigation(token)
+
     def dispose(self) -> None:
         if self._disposed:
             return

@@ -35,10 +35,12 @@ The S2 diff protocol (plan decision 6, settled here):
   reconciler therefore keeps a **pane-level signature** over exactly
   the inputs ``realize_pane`` reads — the pane identity, its effective
   instant (§7, which folds in ``session.time`` / ``time_linked``), its
-  scope, pose, style, overlay, clips, occupied slots and derived
-  legends. Every one of those is a frozen record or a scalar, so
-  equality is cheap and total. An unchanged signature skips the flush
-  outright: no realize, no ``render()``. The escape hatch is
+  scope, pose, style, overlay, clips, occupied slots, derived
+  legends, and (S4-1) the §8 selection membership whenever a glyph
+  button is on. Every one of those is a frozen record, a scalar, or a
+  tuple of frozen targets, so equality is cheap and total. An
+  unchanged signature skips the flush outright: no realize, no
+  ``render()``. The escape hatch is
   :meth:`schedule_forced` — the theme / density repaint, whose input
   is a palette the session cannot see, so it must not be compared
   away.
@@ -314,7 +316,34 @@ class SessionReconciler:
             pane.clips,
             tuple(pane.slots.items()),
             pane.legends(),
+            self._selection_term(pane),
         )
+
+    def _selection_term(self, pane: Any) -> Any:
+        """The §8 selection, as this pane's signature reads it.
+
+        The selection highlight is realize OUTPUT (S4-1), so without a
+        term here a selection write ticks the session, the signature
+        compares equal, and the repaint the user just asked for is
+        skipped — the gate working exactly as designed, against the
+        picture. The term is the MEMBERSHIP, not a count: two different
+        five-node sets must not compare equal.
+
+        Read only when a glyph button is on, because that is when
+        realize reads it: with both off there is no cloud to mark, so
+        an outline "select all" costs this pane nothing (§8 —
+        "query-from-outline may fill the set with glyphs off").
+
+        Cost is O(set size) per flush attempt — a 100k-target gesture
+        builds a 100k tuple on every pane that could show it. That is
+        the price of an EXACT comparison, and it stays well under the
+        realize it gates; a cheaper proxy (a count, a log revision)
+        would either collide or reach into the store's internals, and
+        a collision here paints a stale picture.
+        """
+        if not (pane.style.nodes or pane.style.gauss):
+            return ()
+        return tuple(self._session.selection.targets)
 
     def _teardown(self) -> None:
         """Remove exactly what this reconciler emitted, by ledger."""

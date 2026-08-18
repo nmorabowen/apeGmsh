@@ -219,6 +219,28 @@ class ResultsWindow:
         """
         self._vw.present()
 
+    def set_navigation_style(self, token: str, **kwargs) -> None:
+        """Apply a mouse-navigation convention (forwarded)."""
+        self._vw.set_navigation_style(token, **kwargs)
+
+    @property
+    def navigation_style(self) -> str:
+        """The active mouse-navigation token."""
+        return self._vw.navigation_style
+
+    @property
+    def navigation_hook(self):
+        """``cb(token)`` fired after every navigation switch.
+
+        A shell whose viewports are not its own interactor (the ADR
+        0098 pane host) sets this to reach them.
+        """
+        return self._vw.navigation_hook
+
+    @navigation_hook.setter
+    def navigation_hook(self, callback) -> None:
+        self._vw.navigation_hook = callback
+
     def on_theme_changed(self, callback) -> None:
         """Register a callback fired with the new ``Palette`` on theme change.
 

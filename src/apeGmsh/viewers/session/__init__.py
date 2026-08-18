@@ -9,6 +9,11 @@ session package — so the session IR never imports
 ``viewers.diagrams`` (the ``test_session_pure.py`` guard);
 ``ResultsSession.realize`` / ``.render`` reach in here lazily.
 
+S4-1 adds the §8 selection surface's projection: the node / Gauss
+pick targets realize puts on screen (:class:`PaneTargets`) and
+:class:`PanePick`, which turns one pane's clicks and rubber-bands into
+writes on the session's ONE selection set.
+
 The Qt pane client lives here as a further projection:
 :class:`SessionReconciler` (session diff → backend ops → one
 coalesced render), :class:`MeshPane` (injectable backend),
@@ -23,8 +28,12 @@ from __future__ import annotations
 
 from importlib import import_module
 
+from ._pick import PanePick
 from ._plots import RealizedPlot, RealizedSeries, realize_plot
 from ._realize import (
+    GaussTargets,
+    NodeTargets,
+    PaneTargets,
     RealizedLayer,
     RealizedPane,
     realize_pane,
@@ -43,6 +52,7 @@ _QT_EXPORTS = {
     "PanePlaceholderPage": "._inspector",
     "SessionPaneFrame": "._frame",
     "PlotPanePlaceholder": "._frame",
+    "PICK_BUTTONS": "._frame",
     "STYLE_BUTTONS": "._frame",
     "SessionPaneHost": "._host",
     "SessionPaneHostEmpty": "._host",
@@ -69,10 +79,15 @@ def __dir__() -> "list[str]":
 
 
 __all__ = [
+    "PICK_BUTTONS",
     "STYLE_BUTTONS",
+    "GaussTargets",
     "LedgerBackend",
     "MeshInspectorPage",
     "MeshPane",
+    "NodeTargets",
+    "PanePick",
+    "PaneTargets",
     "PanePlaceholderPage",
     "PlotPanePlaceholder",
     "RealizedLayer",
