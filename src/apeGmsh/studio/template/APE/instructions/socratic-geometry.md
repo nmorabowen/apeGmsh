@@ -114,6 +114,12 @@ contract means the Socratic ladder below — not the git checkpoint of
 - decide cost — the agent keeps the token accounting in the postmortem;
   a cost-motivated skip is the human's to accept, like any other risk.
 
+**Session shape:** a session opens through `scripts/start.ps1` and the
+read order in `how-we-work.md`, works the checkpoint loop below, and ends
+only when the human closes it — through `scripts/finish.ps1` and the
+postmortem. The agent never skips the bookends and never declares a
+session over.
+
 **While the human is away:** a checkpoint that waits is a valid state,
 not a failure. The agent may prepare — schemes, oracles, question blocks,
 memory drafts — but crosses no gate.
