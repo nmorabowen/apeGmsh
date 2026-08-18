@@ -640,6 +640,12 @@ def test_catalog_coverage_v1() -> None:
         ("Tri31", IntRule.Triangle_GL_1, "strain"),
         ("LadrunoCST", IntRule.Triangle_GL_1, "stress"),
         ("LadrunoCST", IntRule.Triangle_GL_1, "strain"),
+        # LadrunoLST (Ladruno fork T6, 3 GPs) — the SixNodeTri rule and
+        # GP order, unpermuted. NO Custom mirror: the .ladruno path names
+        # its anonymous C1..Cn columns by class + width, not by the
+        # bracket rule (which is 0 there).
+        ("LadrunoLST", IntRule.Triangle_GL_2, "stress"),
+        ("LadrunoLST", IntRule.Triangle_GL_2, "strain"),
         # SixNodeTri (6-node quadratic triangle, 3 GPs) — registered
         # under BOTH the canonical Triangle_GL_2 rule (used by live
         # capture / .out transcoder) AND IntRule.Custom (used by MPCO

@@ -46,6 +46,15 @@ consults the catalog) is untouched.
 `LadrunoLST` joins `RESPONSE_CATALOG` (tag 33016, 3 GPs `Triangle_GL_2`,
 the SixNodeTri anchor order unpermuted).
 
+Recording `("stress", "stressesPlaneStrain")` in ONE recorder — the
+configuration the out-of-plane σ_zz work targets — puts two tokens on the
+same (element, Gauss point) slots, so the Gauss slab now deduplicates by
+slot: the bucket whose `COMP_NAMES` the FILE wrote wins over a
+catalog-reconstructed one (it is self-describing and a superset, 4
+components vs 3). Duplicates that disagree numerically raise instead of
+being picked arbitrarily. Without this `stress_xx` came back with twice the
+columns of `stress_zz` and `von_mises_stress` failed to broadcast.
+
 Also fixed alongside: `gauss_available` / `read_gauss_slab` discarded every
 continuum block with `MULTIPLICITY > 1` as a fiber expansion. A fiber
 bucket repeats one scalar per fiber, but a continuum bucket repeats its

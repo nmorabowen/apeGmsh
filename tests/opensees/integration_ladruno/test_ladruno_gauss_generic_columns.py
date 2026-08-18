@@ -43,7 +43,7 @@ def _nodes_on_x(fem, value: float) -> list[int]:
     ]
 
 
-def _run(kind: str, path: str):
+def _run(kind: str, path: str, responses=("stress", "strain"), material=None):
     """Solve a cantilevered plate of ``kind`` and record it to ``path``."""
     with apeGmsh(model_name=f"gc_{kind}", verbose=False) as g:
         rect = g.model.geometry.add_rectangle(0, 0, 0, 4, 1)
@@ -59,7 +59,10 @@ def _run(kind: str, path: str):
 
     ops = apeSees(fem)
     ops.model(ndm=2, ndf=2)
-    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
+    mat = (
+        ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25) if material is None
+        else material(ops)
+    )
     getattr(ops.element, kind)(
         pg="Plate", material=mat, thickness=0.1, plane_type="PlaneStrain",
     )
@@ -70,8 +73,7 @@ def _run(kind: str, path: str):
         for nid in _nodes_on_x(fem, 4.0):
             p.load(node=nid, forces=(0.0, -1.0e2))
 
-    # The plain tokens — the ones the fork leaves unnamed.
-    ops.recorder.Ladruno(file=path, elem_responses=("stress", "strain"))
+    ops.recorder.Ladruno(file=path, elem_responses=responses)
 
     ops.constraints.Plain()
     ops.numberer.RCM()
@@ -132,3 +134,76 @@ def test_plain_stress_strain_reaches_the_gauss_level(
     # Not every column is the same column: a uniformly-labelled slab would
     # pass everything above. The cantilever's σ_xx varies along the span.
     assert np.ptp(slab.values[-1]) > 0.0
+
+
+def _ladruno_j2(ops):
+    """Plane-strain J2 — a material that DOES expose the out-of-plane σ_zz."""
+    E, nu, = 2.0e8, 0.25
+    return ops.nDMaterial.LadrunoJ2(
+        K=E / (3.0 * (1.0 - 2.0 * nu)), G=E / (2.0 * (1.0 + nu)),
+        sig0=2.5e5,
+    )
+
+
+def test_both_stress_tokens_in_one_recorder_do_not_double_count(
+    tmp_path,
+) -> None:
+    """`stress` + `stressesPlaneStrain` cover the SAME (element, GP) slots.
+
+    The plain token is anonymous (named from RESPONSE_CATALOG, 3
+    components) and `stressesPlaneStrain` tags its own names and carries
+    σ_zz too (4 components). Concatenating both gave `stress_xx` twice the
+    columns of `stress_zz`, and any derived scalar needing both blew up
+    with a broadcast error. This is the configuration the out-of-plane
+    σ_zz work targets, not an edge case.
+    """
+    n_gp = 3                                # LadrunoLST
+    path = str(tmp_path / "both_tokens.ladruno")
+    emitter = _run(
+        "LadrunoLST", path,
+        responses=("stress", "stressesPlaneStrain"), material=_ladruno_j2,
+    )
+    eids = [int(e) for e in emitter.ops.getEleTags()]
+
+    r = Results.from_ladruno(path)
+    wanted = ("stress_xx", "stress_yy", "stress_zz", "stress_xy",
+              "von_mises_stress")
+    slabs = {c: r.elements.gauss.get(component=c) for c in wanted}
+
+    for component, slab in slabs.items():
+        # Single-count: one column per (element, GP), not two.
+        assert slab.values.shape[1] == len(eids) * n_gp, component
+        assert np.all(np.isfinite(slab.values)), component
+        np.testing.assert_array_equal(
+            slab.element_index, slabs["stress_xx"].element_index,
+        )
+
+    # σ_zz survives with the engine's own values — the named bucket won,
+    # and it is the only token carrying the out-of-plane component.
+    zz = slabs["stress_zz"]
+    for eid in eids:
+        flat = np.asarray(
+            emitter.ops.eleResponse(eid, "stressPlaneStrain"),
+            dtype=np.float64,
+        )
+        assert flat.size == 4 * n_gp
+        np.testing.assert_allclose(
+            np.sort(zz.values[-1][zz.element_index == eid]),
+            np.sort(flat.reshape(n_gp, 4)[:, 3]),
+            rtol=1e-10, atol=1e-12,
+        )
+    assert np.ptp(zz.values[-1]) > 0.0
+
+    # The four components line up slot-for-slot: von Mises from the
+    # recorded tensor must equal the derived scalar.
+    xx, yy, zzv, xy = (
+        slabs[c].values[-1]
+        for c in ("stress_xx", "stress_yy", "stress_zz", "stress_xy")
+    )
+    hand = np.sqrt(
+        0.5 * ((xx - yy) ** 2 + (yy - zzv) ** 2 + (zzv - xx) ** 2)
+        + 3.0 * xy ** 2
+    )
+    np.testing.assert_allclose(
+        slabs["von_mises_stress"].values[-1], hand, rtol=1e-10, atol=1e-9,
+    )

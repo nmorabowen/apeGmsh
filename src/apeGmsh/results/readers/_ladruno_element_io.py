@@ -554,11 +554,15 @@ def read_gauss_slab(
     """Return ``(values[T, sumGP], element_index, natural_coords[sumGP, d])``.
 
     Stitches every bucket whose blocks expose ``component`` at a Gauss
-    point. ``None`` if nothing matches.
+    point. ``None`` if nothing matches. Two tokens can cover the same
+    (element, GP) with the same component — see
+    :func:`_dedupe_gauss_columns`, which resolves that overlap.
     """
     values_parts: list[ndarray] = []
     eidx_parts: list[ndarray] = []
     coord_parts: list[ndarray] = []
+    gid_parts: list[ndarray] = []
+    named_parts: list[ndarray] = []
 
     for token in on_elements:
         if is_fiber_token(token):
@@ -570,9 +574,14 @@ def read_gauss_slab(
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError):
                 continue
-            blocks = resolve_generic_gauss_blocks(
+            resolved = resolve_generic_gauss_blocks(
                 blocks, token=token, bucket_key=key,
             )
+            # The resolver returns the SAME list object when it left the
+            # file's own names alone — that identity is the provenance
+            # flag the overlap tie-break needs.
+            from_file_names = resolved is blocks
+            blocks = resolved
             gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue
@@ -602,6 +611,10 @@ def read_gauss_slab(
                 values_parts.append(vals)
                 eidx_parts.append(sel_ids)
                 g_idx = b.gauss_index(gp)
+                gid_parts.append(np.full(sel_ids.size, g_idx, dtype=np.int64))
+                named_parts.append(
+                    np.full(sel_ids.size, from_file_names, dtype=bool)
+                )
                 if gp_param is not None and g_idx < gp_param.shape[0]:
                     nat = np.tile(gp_param[g_idx], (sel_ids.size, 1))
                 else:
@@ -621,7 +634,74 @@ def read_gauss_slab(
         )
         if max_dim else np.zeros((element_index.size, 0), dtype=np.float64)
     )
-    return values, element_index, coords
+    keep = _dedupe_gauss_columns(
+        values, element_index,
+        np.concatenate(gid_parts), np.concatenate(named_parts),
+        component=component,
+    )
+    if keep is None:
+        return values, element_index, coords
+    return values[:, keep], element_index[keep], coords[keep]
+
+
+def _dedupe_gauss_columns(
+    values: ndarray, element_index: ndarray, gauss_index: ndarray,
+    named: ndarray, *, component: str,
+) -> "Optional[ndarray]":
+    """Column indices to keep, or ``None`` when nothing overlaps.
+
+    One ``(element, Gauss point)`` slot can be covered by TWO tokens: the
+    fork emits the same plane stress under the unnamed ``stress`` (named
+    here from ``RESPONSE_CATALOG``) and under ``stressesPlaneStrain``,
+    which tags its own ``sigma11…sigma33`` and carries the out-of-plane
+    component as well. Concatenating both double-counts every in-plane
+    column, and the slab then no longer lines up with the components that
+    only ONE token carries (``stress_zz``) — which is how a derived
+    scalar like ``von_mises_stress`` ends up broadcasting (T, 204) into
+    (T, 408).
+
+    Precedence: the bucket whose COMP_NAMES the FILE wrote wins over a
+    catalog-reconstructed one. The named bucket is self-describing and
+    may be a superset, so preferring it keeps every slot on one
+    consistent source. Duplicates must agree numerically — they are the
+    same material state read twice — so a genuine disagreement means a
+    mis-labelled column and raises rather than picking one arbitrarily.
+    """
+    keys = element_index.astype(np.int64) * (int(gauss_index.max()) + 1)
+    keys = keys + gauss_index
+    _uniq, inverse, counts = np.unique(
+        keys, return_inverse=True, return_counts=True,
+    )
+    if counts.max() <= 1:
+        return None
+    # Sort by slot, then file-named first; the leader of each run wins.
+    order = np.lexsort((~named, keys))
+    first = np.unique(keys[order], return_index=True)[1]
+    winner = order[first]                       # one column per unique slot
+    dropped = np.setdiff1d(
+        np.arange(keys.size, dtype=np.int64), winner, assume_unique=False,
+    )
+    kept_for_dropped = winner[inverse[dropped]]
+    if not np.allclose(
+        values[:, dropped], values[:, kept_for_dropped],
+        rtol=1e-9, atol=0.0, equal_nan=True,
+    ):
+        bad = int(np.argmax(np.any(
+            ~np.isclose(
+                values[:, dropped], values[:, kept_for_dropped],
+                rtol=1e-9, atol=0.0, equal_nan=True,
+            ), axis=0,
+        )))
+        raise GaussLayoutMismatch(
+            f"Two .ladruno buckets report different values for "
+            f"{component!r} at element {int(element_index[dropped[bad]])} "
+            f"Gauss point {int(gauss_index[dropped[bad]])}. Same material "
+            f"state read twice must agree, so one of the buckets' columns "
+            f"is mis-labelled — refusing to pick one arbitrarily. Check "
+            f"the element's ResponseType tags against its RESPONSE_CATALOG "
+            f"component_layout."
+        )
+    return np.sort(winner)      # keep the original column order
 
 
 # =====================================================================

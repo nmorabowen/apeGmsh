@@ -693,3 +693,54 @@ def test_named_columns_untouched_by_the_resolver() -> None:
         blocks, token="stressesPlaneStrain",
         bucket_key="33016-LadrunoLST[0:0:0]",
     ) is blocks
+
+
+# ---------------------------------------------------------------------------
+# Overlapping tokens — one (element, GP) slot covered twice
+# ---------------------------------------------------------------------------
+#
+# `stress` (anonymous, catalog-named) and `stressesPlaneStrain` (self-named,
+# and a superset — it carries sigma33) both report the in-plane components
+# for the same elements at the same Gauss points. The live counterpart is
+# test_both_stress_tokens_in_one_recorder_do_not_double_count.
+
+def _overlap(v_named: float, v_generic: float):
+    """Two columns for element 7 / GP 0 — one file-named, one catalog."""
+    return (
+        np.array([[v_generic, v_named]]),      # values (T=1, 2)
+        np.array([7, 7]),                      # element_index
+        np.array([0, 0]),                      # gauss_index
+        np.array([False, True]),               # named
+    )
+
+
+def test_overlapping_tokens_keep_the_file_named_column() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _dedupe_gauss_columns,
+    )
+
+    keep = _dedupe_gauss_columns(*_overlap(5.0, 5.0), component="stress_xx")
+    assert keep.tolist() == [1]                # the file-named column
+
+
+def test_no_overlap_leaves_the_slab_alone() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _dedupe_gauss_columns,
+    )
+
+    assert _dedupe_gauss_columns(
+        np.array([[1.0, 2.0]]), np.array([7, 7]), np.array([0, 1]),
+        np.array([True, True]), component="stress_xx",
+    ) is None
+
+
+def test_overlapping_tokens_that_disagree_raise() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+        _dedupe_gauss_columns,
+    )
+
+    # Same material state read twice cannot differ — if it does, one of
+    # the two buckets' columns is mis-labelled. Do not pick one.
+    with pytest.raises(GaussLayoutMismatch, match="element 7 Gauss point 0"):
+        _dedupe_gauss_columns(*_overlap(5.0, -3.0), component="stress_xx")
