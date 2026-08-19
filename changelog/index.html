@@ -1196,6 +1196,8 @@
       
         
       
+        
+      
     
     
     
@@ -1253,6 +1255,34 @@
     
   
     Read displacement & reactions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/render-a-still/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Render a deformed shape or contour
   
 
     
@@ -2865,6 +2895,8 @@
       
         
       
+        
+      
     
     
     
@@ -3262,6 +3294,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../api/results-session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/selection/" class="md-nav__link">
         
   
@@ -3456,6 +3516,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
       
     </span>
   </a>
@@ -8290,6 +8361,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0098-11-s6b-the-retirement-sweep" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13099,6 +13181,57 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session">CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session<a class="headerlink" href="#changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session" title="Permanent link">&para;</a></h3>
+<p>The last S6 slice. Documentation stops describing the retired Geometry /
+Composition / Diagram ontology, and — the part the plan did not
+anticipate — the session finally gets a door.</p>
+<p><strong>There was no way in.</strong> <code>ResultsSession</code> had no API page, no <code>mkdocs.yml</code>
+nav entry, and nothing in <code>docs/how-to/**</code>, <code>docs/tutorials/**</code> or
+<code>examples/**</code> that called <code>results.session()</code>. <code>docs/how-to/index.md</code>
+still routed "plot a deformed shape or contour" at the old concepts
+page. Six slices built a model no reader could reach. Now:</p>
+<ul>
+<li><strong><code>docs/api/results-session.md</code></strong> — the session as the document:
+  panes, the closed seven-slot catalog, why deform is pose and not a
+  slot, and the legend law. (Named <code>results-session</code> because
+  <code>api/session.md</code> is the <em>builder</em> session — two different things.)</li>
+<li><strong><code>docs/how-to/render-a-still.md</code></strong> — the scripted path end to end:
+  <code>results.session()</code>, fill a slot, set the pose, <code>render()</code> a PNG with
+  no Qt in the loop. Every fence was executed before it shipped.</li>
+</ul>
+<p><strong>A whole-tree audit, not just the pages ADR 0098 touched</strong> — and that
+was the right call: several BROKEN claims sat outside them, and the
+worst had nothing to do with this ADR. Those are spun out separately
+rather than smuggled in here.</p>
+<p><strong>Fixed, from ADR 0098's own fallout:</strong> adopting
+<code>&lt;results&gt;.viewer-session.json</code> at S6a left the <em>old</em> name in eight
+places in shipped code — three in <code>python -m apeGmsh.results.session
+render --help</code>, two in the Studio MCP tool descriptions, plus studio
+docstrings and <code>docs/how-to/studio-habitat.md</code>. The MCP text was the
+worst of it: it told an agent that <code>.viewer-session.json</code> is "the old,
+refused" file when that is now the live name. The refusal is by
+<strong>payload shape, never by filename</strong> — the two are no longer
+distinguishable by name — and every site now says so.</p>
+<p><strong>Also corrected:</strong> <code>export_animation</code>'s claim that its frames are
+"pixel-identical to the interactive viewer". True before the flip; false
+after, because it builds the retired diagram-stack window offscreen
+while the interactive one is now the session window.</p>
+<p><strong>Retired from the skill:</strong> the <code>director.geometries</code> section (which
+carried a warning and then taught <code>viewer.director</code> anyway — an
+<code>AttributeError</code> since S6a), a session-schema number that was wrong
+twice over (the retired path is 13, the live snapshot is version 1 with
+<code>kind: "apegmsh.results.session"</code>), and <code>wv.director.registry.add(...)</code>
+as an authoring surface — it is <code>show_web</code>-hatch implementation with no
+compatibility promise, and nothing built through it can enter a
+snapshot, a pin, or an MCP render. <code>docs/design/results.md</code> gains a
+"the session is the document" section; it previously described
+concurrent geometries as current architecture and never mentioned
+<code>ResultsSession</code> at all.</p>
+<p><code>MeshView.add_clip</code> / <code>remove_clip</code> gained docstrings — public API that
+the new page needed and the source did not carry. The seven slot
+properties keep theirs on the <code>property(doc=…)</code> factory; they cannot
+appear in generated docs because griffe is static and never sees a
+factory-built property, so the page names them in prose instead.</p>
 <h3 id="changed-adr-0098-11-s6b-the-retirement-sweep">CHANGED — ADR 0098 §11 S6b: the retirement sweep<a class="headerlink" href="#changed-adr-0098-11-s6b-the-retirement-sweep" title="Permanent link">&para;</a></h3>
 <p>The Geometry / Composition / Diagram ontology stops being a tested
 public surface. 49 test files retire (<code>tests/viewers/</code> 176 → 128), and

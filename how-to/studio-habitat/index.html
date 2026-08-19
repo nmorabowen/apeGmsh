@@ -1202,6 +1202,8 @@
       
         
       
+        
+      
     
     
     
@@ -1259,6 +1261,34 @@
     
   
     Read displacement & reactions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../render-a-still/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Render a deformed shape or contour
   
 
     
@@ -3073,6 +3103,8 @@
       
         
       
+        
+      
     
     
     
@@ -3450,6 +3482,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results-session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results session
   
 
     
@@ -4086,24 +4146,30 @@ against <code>ledger_pin.schema.json</code>. Discriminate on <code>kind</code> b
 validating — a pin line has no <code>script</code> / <code>phase</code> / <code>ok</code> and is
 correctly refused by the run schema.</p>
 <p><code>render(session=…)</code> draws one pane of a saved ADR 0098 session snapshot
-(<code>&lt;results&gt;.session.json</code>) instead of a results file. Its content is the
-slot catalog the human arranged, not a view token, so <code>view</code> /
+(<code>&lt;results&gt;.viewer-session.json</code>) instead of a results file. Its content
+is the slot catalog the human arranged, not a view token, so <code>view</code> /
 <code>component</code> / <code>step</code> / <code>deform</code> / <code>pack</code> are refused with it
-(<code>INVALID_ARGS</code>) rather than ignored; <code>camera</code> and <code>output</code> still apply.
-An old <code>&lt;results&gt;.viewer-session.json</code> is refused and <strong>never renamed</strong> —
-the rename-aside belongs to the interactive flow. The same still is
-available from the command line:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python -m apeGmsh.results.session render &lt;snapshot&gt;.session.json shot.png
+(<code>INVALID_ARGS</code>) rather than ignored; <code>camera</code> and <code>output</code> still apply.</p>
+<p>A session written by the <strong>retired</strong> viewer is refused and <strong>never
+renamed</strong> — the rename-aside belongs to the interactive flow. Note the
+refusal is by the file's <em>payload shape</em>, not its name: the new session
+adopted <code>&lt;results&gt;.viewer-session.json</code> at ADR 0098 S6a, so the name
+alone no longer tells the two apart. A v13 payload carries an integer
+<code>schema_version</code> and no <code>kind</code>; a live one carries
+<code>kind: "apegmsh.results.session"</code>.</p>
+<p>The same still is available from the command line:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python -m apeGmsh.results.session render &lt;results&gt;.viewer-session.json shot.png
 </span></code></pre></div>
 <p><code>results_pin(session_snapshot=…)</code> pins the ADR 0098 presentation session
-(<code>&lt;results&gt;.session.json</code>). Unlike <code>model_h5</code> / <code>results</code>, which are
-recorded by path and hash only, that file is <strong>copied</strong> into
+(<code>&lt;results&gt;.viewer-session.json</code>). Unlike <code>model_h5</code> / <code>results</code>, which
+are recorded by path and hash only, that file is <strong>copied</strong> into
 <code>.apegmsh/pins/&lt;pin-id&gt;/session_snapshot.json</code>: the live snapshot is
 rewritten every time the human saves, so a hash alone would pin content
 that is already gone. The ledger key is <code>session_snapshot</code> because
 <code>session</code> already means the run's session name. A file that is not a
-session snapshot — the retired <code>&lt;results&gt;.viewer-session.json</code> is the
-near-miss — is refused (<code>INVALID_ARGS</code>).</p>
+session snapshot is refused (<code>INVALID_ARGS</code>) — and the discriminating
+case is a v13 payload sitting at exactly that adopted path, not a file
+with an obviously different name.</p>
 <h2 id="trust-boundary">Trust boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
 <p><code>run_until</code> executes the caller’s Python file on purpose. Treat it as a
 <strong>local trust boundary</strong> — not a service to expose on a network port.</p>

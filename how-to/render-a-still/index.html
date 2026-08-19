@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/checkpoint-resume/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/render-a-still/">
       
       
-        <link rel="prev" href="../export-script/">
+        <link rel="prev" href="../read-results/">
       
       
-        <link rel="next" href="../read-results/">
+        <link rel="next" href="../results-mpco/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Checkpoint & resume an analysis - apeGmsh</title>
+        <title>Render a deformed shape or contour - apeGmsh</title>
       
     
     
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#checkpoint-resume-an-analysis" class="md-skip">
+        <a href="#render-a-deformed-shape-or-contour" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Checkpoint & resume an analysis
+              Render a deformed shape or contour
             
           </span>
         </div>
@@ -1008,10 +1008,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1029,11 +1027,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
@@ -1054,7 +1052,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1153,37 +1151,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Checkpoint & resume an analysis
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../checkpoint-resume/" class="md-nav__link">
         
   
   
@@ -1199,92 +1170,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#prerequisite-a-build-with-the-mass-restart-fix" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisite: a build with the mass-restart fix
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-1-create-a-checkpoint" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 1 — create a checkpoint
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-2-resume-from-a-checkpoint" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 2 — resume from a checkpoint
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-3-benchmark-a-checkpoint-before-you-trust-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 3 — benchmark a checkpoint before you trust it
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes / gotchas
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1302,8 +1187,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1323,11 +1210,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" checked>
         
           
           <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
@@ -1348,7 +1235,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1391,10 +1278,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../render-a-still/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Render a deformed shape or contour
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1410,6 +1324,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-whole-recipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The whole recipe
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#name-a-real-stage-and-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Name a real stage and step
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#swap-the-picture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Swap the picture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#narrow-it-down" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Narrow it down
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#more-than-one-pane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        More than one pane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hand-the-same-picture-to-the-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hand the same picture to the window
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In CI
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3606,10 +3617,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisite-a-build-with-the-mass-restart-fix" class="md-nav__link">
+  <a href="#the-whole-recipe" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisite: a build with the mass-restart fix
+        The whole recipe
       
     </span>
   </a>
@@ -3617,10 +3628,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-1-create-a-checkpoint" class="md-nav__link">
+  <a href="#name-a-real-stage-and-step" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 1 — create a checkpoint
+        Name a real stage and step
       
     </span>
   </a>
@@ -3628,10 +3639,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-resume-from-a-checkpoint" class="md-nav__link">
+  <a href="#swap-the-picture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 2 — resume from a checkpoint
+        Swap the picture
       
     </span>
   </a>
@@ -3639,10 +3650,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-benchmark-a-checkpoint-before-you-trust-it" class="md-nav__link">
+  <a href="#narrow-it-down" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3 — benchmark a checkpoint before you trust it
+        Narrow it down
       
     </span>
   </a>
@@ -3650,10 +3661,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
+  <a href="#more-than-one-pane" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Notes / gotchas
+        More than one pane
       
     </span>
   </a>
@@ -3661,10 +3672,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#hand-the-same-picture-to-the-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See also
+        Hand the same picture to the window
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In CI
       
     </span>
   </a>
@@ -3691,202 +3713,124 @@
   
 
 
-<h1 id="checkpoint-resume-an-analysis">Checkpoint &amp; resume an analysis<a class="headerlink" href="#checkpoint-resume-an-analysis" title="Permanent link">&para;</a></h1>
-<p>Save the committed state of a running OpenSees analysis to disk and pick it up
-later — in a fresh process, after a crash, or as the start of a new leg — using
-OpenSees' <code>FE_Datastore</code> (<code>database</code> / <code>save</code> / <code>restore</code>). This is <em>flavor-3
-exact resume</em>: the same model, continued from an exact committed state.</p>
-<p>Reach for this when a transient run is long and you want a <strong>recovery point</strong>, or
-when you want a trusted <strong>benchmark point</strong> to validate that a restart reproduces
-an uninterrupted run.</p>
-<div class="admonition warning">
-<p class="admonition-title">This is not <code>g.save()</code> / model archival</p>
-<p><code>g.save()</code> / <code>fem.to_h5()</code> / <code>apeGmsh.from_h5(...)</code> persist the <strong>model</strong>
-(geometry, mesh, tags) so you can rebuild and re-run it — see
-<a href="../save-reload/">Save &amp; reload a model</a>. They do <strong>not</strong> carry the <em>committed
-solver state</em> (nodal velocity/acceleration, committed material state, current
-time) needed to <em>continue</em> a transient. That is what <code>save</code>/<code>restore</code> below
-do.</p>
-</div>
-<div class="admonition note">
-<p class="admonition-title">apeGmsh <code>checkpoint</code> / <code>from_checkpoint</code> is planned, not shipped</p>
-<p><strong>ADR 0043</strong> (<code>src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md</code>,
-§<em>Restart surfaces</em>) designs first-class <code>res.checkpoint("tag")</code> /
-<code>apeSees.from_checkpoint("tag")</code>
-wrappers (FE_Datastore save <strong>paired with a <code>model.h5</code></strong> for a deterministic
-topology rebuild). Until that lands, drive the underlying
-<code>ops.database</code>/<code>save</code>/<code>restore</code> on the live openseespy session directly, as
-shown here.</p>
-</div>
-<h2 id="prerequisite-a-build-with-the-mass-restart-fix">Prerequisite: a build with the mass-restart fix<a class="headerlink" href="#prerequisite-a-build-with-the-mass-restart-fix" title="Permanent link">&para;</a></h2>
-<p>Restarting a <strong>transient</strong> run exercises the mass matrix. Continuum plane
-elements (<code>quad</code>/<code>FourNodeQuad</code>, <code>tri31</code>, <code>NineNodeQuad</code>, <code>EightNodeQuad</code>,
-<code>SixNodeTri</code>, <code>FourNodeQuad3d</code>) had an upstream bug where the element density was
-not serialized, so a database/parallel restart rebuilt them with a <strong>garbage
-mass matrix</strong> — non-deterministic across processes, with the effective operator's
-eigenvalues going negative. This is fixed in Ladruno fork
-<strong><a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a></strong>.</p>
-<p>Use a fork build that includes it. If unsure, run the
-<a href="#step-3-benchmark-a-checkpoint-before-you-trust-it">verification benchmark</a>
-below: a build <strong>without</strong> the fix makes a restarted transient diverge wildly
-(or throws on a negative-eigenvalue solve); a build <strong>with</strong> it reproduces the
-uninterrupted run to machine precision.</p>
-<h2 id="step-1-create-a-checkpoint">Step 1 — create a checkpoint<a class="headerlink" href="#step-1-create-a-checkpoint" title="Permanent link">&para;</a></h2>
-<p>Build and run the first leg through apeGmsh exactly as usual, then reach the live
-openseespy session apeGmsh just drove and write a datastore checkpoint:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+<h1 id="render-a-deformed-shape-or-contour">Render a deformed shape or contour<a class="headerlink" href="#render-a-deformed-shape-or-contour" title="Permanent link">&para;</a></h1>
+<p><strong>Goal.</strong> Turn a solved <code>Results</code> into a picture from a script — no
+window, no notebook, no Qt event loop — so it can run in CI, in a
+report pipeline, or under an agent.</p>
+<p>The interactive door is <code>results.viewer()</code>. What it opens is a
+<strong><code>ResultsSession</code></strong>: the document that says what is on screen, at
+which time, with which pictures. <code>results.session()</code> hands you that
+same document with no window attached, and <code>session.render()</code> draws a
+still off it.</p>
+<h2 id="the-whole-recipe">The whole recipe<a class="headerlink" href="#the-whole-recipe" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">Contour</span><span class="p">,</span> <span class="n">Deform</span><span class="p">,</span> <span class="n">Instant</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># --- build the model (mesh -&gt; fem) as in any tutorial ---</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># ... g = apeGmsh(...); ...; fem = g.mesh.queries.get_fem_data(dim=2)</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># ... declare materials / elements / fixes / a load pattern ...</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># analysis chain</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Transformation</span><span class="p">()</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">BandGeneral</span><span class="p">()</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormDispIncr</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Newton</span><span class="p">()</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">Newmark</span><span class="p">(</span><span class="n">gamma</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Transient</span><span class="p">()</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># leg 1: run up to the checkpoint</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># --- write the checkpoint on the SAME live domain apeGmsh populated ---</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>                <span class="c1"># Ladruno fork (opensees.pyd)</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="k">except</span> <span class="ne">ModuleNotFoundError</span><span class="p">:</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>     <span class="c1"># stock openseespy</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="n">CKPT</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">"C:\work\run42\ckpt\step500"</span>      <span class="c1"># LOCAL disk, no extension</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">"File"</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">)</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">rc</span> <span class="o">=</span> <span class="n">osp</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                          <span class="c1"># 1 = the checkpoint key (commitTag)</span>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="k">assert</span> <span class="n">rc</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">rc</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"database save failed"</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">demo</span><span class="p">()</span>                    <span class="c1"># your own Results works the same</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">s</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">session</span><span class="p">()</span>                       <span class="c1"># the document — no window</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">view</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">panes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>                           <span class="c1"># the mesh view it booted with</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">view</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="n">Contour</span><span class="p">(</span><span class="s2">"displacement_x"</span><span class="p">)</span>    <span class="c1"># fill the contour slot</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">view</span><span class="o">.</span><span class="n">deform</span> <span class="o">=</span> <span class="n">Deform</span><span class="p">(</span><span class="s2">"displacement"</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>   <span class="c1"># set the pose</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">s</span><span class="o">.</span><span class="n">time</span> <span class="o">=</span> <span class="n">Instant</span><span class="p">(</span><span class="s2">"stage_0"</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>              <span class="c1"># pick the instant</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">png</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"tip.png"</span><span class="p">,</span> <span class="n">camera</span><span class="o">=</span><span class="s2">"xy"</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="p">(</span><span class="mi">1600</span><span class="p">,</span> <span class="mi">900</span><span class="p">))</span>
 </span></code></pre></div>
-<p><code>save(k)</code> writes the committed domain — nodes (including committed
-disp/<strong>vel/accel</strong>), elements and their committed material state, load patterns,
-constraints, and the current pseudo-time — into a set of small files next to
-<code>CKPT</code> (<code>step500.IDs.*</code>, <code>.VECs.*</code>, <code>.MATs.*</code>). <code>k</code> is an integer key you choose;
-you can hold several checkpoints in one datastore under different keys.</p>
-<p>Checkpoint <strong>only at a committed state</strong> — i.e. between <code>analyze</code> steps, never
-mid-step. <code>ops.analyze(steps=N, dt=...)</code> leaves the domain committed at the last
-step, which is exactly the right moment.</p>
-<h2 id="step-2-resume-from-a-checkpoint">Step 2 — resume from a checkpoint<a class="headerlink" href="#step-2-resume-from-a-checkpoint" title="Permanent link">&para;</a></h2>
-<p>Resume can run in a <strong>fresh process</strong>. <code>restore</code> rebuilds the <em>entire</em> model
-(topology <em>and</em> committed state) straight from the datastore — you do <strong>not</strong>
-rebuild the model through apeGmsh, and you must <strong>not</strong> call <code>ops.analyze()</code>
-again (the apeGmsh live path wipes and re-emits the model from the mesh, which
-would discard the restored state). Drive the continued analysis with raw
-openseespy instead:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">try</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">except</span> <span class="ne">ModuleNotFoundError</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">CKPT</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">"C:\work\run42\ckpt\step500"</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">osp</span><span class="o">.</span><span class="n">wipe</span><span class="p">()</span>                          <span class="c1"># start from an empty domain</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">"File"</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">)</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">osp</span><span class="o">.</span><span class="n">restore</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                      <span class="c1"># rebuilds nodes/elements/patterns + committed state</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># re-declare the analysis chain (the datastore does NOT store it)</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">osp</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="s2">"Transformation"</span><span class="p">)</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">osp</span><span class="o">.</span><span class="n">numberer</span><span class="p">(</span><span class="s2">"RCM"</span><span class="p">)</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">osp</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">"BandGeneral"</span><span class="p">)</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">osp</span><span class="o">.</span><span class="n">test</span><span class="p">(</span><span class="s2">"NormDispIncr"</span><span class="p">,</span> <span class="mf">1e-8</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">osp</span><span class="o">.</span><span class="n">algorithm</span><span class="p">(</span><span class="s2">"Newton"</span><span class="p">)</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">osp</span><span class="o">.</span><span class="n">integrator</span><span class="p">(</span><span class="s2">"Newmark"</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">)</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">osp</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="s2">"Transient"</span><span class="p">)</span>
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="c1"># leg 2: continue exactly where leg 1 stopped</span>
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">osp</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">500</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
+<p><code>render()</code> returns the <code>Path</code> it wrote, or <code>None</code> if it skipped (see
+<a href="#in-ci">In CI</a> below). <code>camera=</code> is <code>iso</code> / <code>xy</code> / <code>xz</code> / <code>yz</code>, and
+defaults to <code>xy</code> for a planar model and <code>iso</code> otherwise.</p>
+<p><code>Results.demo()</code> is a real cantilever pushover with no files to supply
+— handy for trying this cold. Swap in <code>Results.from_native(...)</code> /
+<code>from_mpco(...)</code> and the rest of the recipe is unchanged.</p>
+<h2 id="name-a-real-stage-and-step">Name a real stage and step<a class="headerlink" href="#name-a-real-stage-and-step" title="Permanent link">&para;</a></h2>
+<p><code>Instant</code> is a <em>name</em>, not an index trick: the stage id must exist and
+the step is a concrete recorded index (<code>-1</code> is rejected, because one
+instant with two names poisons the time link and the snapshot). Read
+both off the broker:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">for</span> <span class="n">stage</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">stages</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">stage</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">stage</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">stage</span><span class="o">.</span><span class="n">n_steps</span><span class="p">)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># stage_0 static 6</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">stage</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">s</span><span class="o">.</span><span class="n">time</span> <span class="o">=</span> <span class="n">Instant</span><span class="p">(</span><span class="n">stage</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">stage</span><span class="o">.</span><span class="n">n_steps</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>      <span class="c1"># the last recorded step</span>
 </span></code></pre></div>
-<p>The analysis chain (<code>constraints</code> … <code>analysis</code>) is <strong>not</strong> part of the saved
-state — re-declare it after <code>restore</code>, matching the integrator you checkpointed
-under. Everything else comes back from the datastore.</p>
-<h2 id="step-3-benchmark-a-checkpoint-before-you-trust-it">Step 3 — benchmark a checkpoint before you trust it<a class="headerlink" href="#step-3-benchmark-a-checkpoint-before-you-trust-it" title="Permanent link">&para;</a></h2>
-<p>Before you rely on a checkpoint, prove it reproduces the uninterrupted run. Run
-the model straight through, then run it again with a <code>save</code>/<code>wipe</code>/<code>restore</code> in
-the middle, and compare a probe over the <em>overlapping</em> steps:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">leg</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">dof</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">dt</span><span class="p">):</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steps</span><span class="p">):</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="k">assert</span> <span class="n">osp</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">nodeDisp</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">dof</span><span class="p">))</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="k">return</span> <span class="n">out</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># A) uninterrupted reference: N steps straight through</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">build_and_setup_analysis</span><span class="p">()</span>                      <span class="c1"># your model + chain (raw osp)</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">ref</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="c1"># B) checkpoint at step 6, restore, continue to 12</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">build_and_setup_analysis</span><span class="p">()</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">first</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">"File"</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">);</span> <span class="n">osp</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">osp</span><span class="o">.</span><span class="n">wipe</span><span class="p">();</span> <span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">"File"</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">);</span> <span class="n">osp</span><span class="o">.</span><span class="n">restore</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">setup_analysis_only</span><span class="p">()</span>                           <span class="c1"># re-declare the chain (no rebuild)</span>
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">rest</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="c1"># steps 7..12 must match the reference to ~machine precision</span>
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">rest</span><span class="p">,</span> <span class="n">ref</span><span class="p">[</span><span class="mi">6</span><span class="p">:]),</span> <span class="n">start</span><span class="o">=</span><span class="mi">7</span><span class="p">):</span>
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="n">rel</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="n">b</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">b</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-30</span><span class="p">)</span>
-</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    <span class="k">assert</span> <span class="n">rel</span> <span class="o">&lt;</span> <span class="mf">1e-9</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"step </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> diverged (rel=</span><span class="si">{</span><span class="n">rel</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">) — bad build or un-restored state"</span>
+<h2 id="swap-the-picture">Swap the picture<a class="headerlink" href="#swap-the-picture" title="Permanent link">&para;</a></h2>
+<p>The picture lives in the view's <strong>slots</strong> — a closed catalog of seven
+(<code>contour</code>, <code>vector</code>, <code>gauss</code>, <code>line</code>, <code>sand</code>, <code>loads</code>, <code>reactions</code>).
+Different categories stack; filling an occupied one <strong>replaces</strong> its
+occupant, and assigning <code>None</code> clears it.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">view</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="n">Contour</span><span class="p">(</span><span class="s2">"displacement_z"</span><span class="p">,</span> <span class="n">averaging</span><span class="o">=</span><span class="s2">"unaveraged"</span><span class="p">)</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">view</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="n">Contour</span><span class="p">(</span><span class="s2">"displacement_x"</span><span class="p">)</span>   <span class="c1"># replaces — never a 2nd contour</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">view</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="kc">None</span>                        <span class="c1"># clears</span>
 </span></code></pre></div>
-<p>A correct build reproduces the reference to ~1 ULP (rel ≈ 1e-16); it will <strong>not</strong>
-be bit-identical, because <code>restore</code> tears the domain down and rebuilds it, so
-floating-point summation order in reassembly can differ by a bit — compare with a
-tolerance, never with <code>==</code>. A restart that diverges by <em>percent</em> (or a negative
-eigenvalue) means either an element that doesn't round-trip its state or a build
-missing <a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a>.</p>
-<p>For a stronger, cheaper probe of the mass operator, capture eigenvalues before
-<code>save</code> and after <code>restore</code> and assert they match — a corrupt restored mass shows
-up immediately as a changed (often negative) spectrum:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">before</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">eigen</span><span class="p">(</span><span class="s2">"-fullGenLapack"</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># ... save / wipe / restore / re-declare chain ...</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">after</span>  <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">eigen</span><span class="p">(</span><span class="s2">"-fullGenLapack"</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="n">b</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1e-9</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="n">before</span><span class="p">))</span>
+<p><code>deform</code> is deliberately not one of the seven: it is a <em>pose</em>, so it
+warps the mesh and causes no colour scale. The scale you see is
+named by the slot, so warping by displacement while contouring stress
+gives one scale and it says stress.</p>
+<p>See <a href="../../api/results-session/">Results session</a> for the whole catalog
+and the legend law.</p>
+<h2 id="narrow-it-down">Narrow it down<a class="headerlink" href="#narrow-it-down" title="Permanent link">&para;</a></h2>
+<p>Scope picks the one cell set the whole view is a function of — one
+composition axis plus checked names. Clips are the view's own section
+planes.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">Scope</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">view</span><span class="o">.</span><span class="n">scope</span> <span class="o">=</span> <span class="n">Scope</span><span class="p">(</span><span class="s2">"physical_groups"</span><span class="p">,</span> <span class="p">(</span><span class="s2">"Cols"</span><span class="p">,))</span>     <span class="c1"># or materials / element_types</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">view</span><span class="o">.</span><span class="n">add_clip</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">offset</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"mid-height"</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"scoped.png"</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>The datastore is a <em>pile of small files</em>, not one file.</strong> <code>database("File",
-  CKPT)</code> writes <code>CKPT.IDs.*</code> / <code>CKPT.VECs.*</code> / <code>CKPT.MATs.*</code> next to <code>CKPT</code>. Point
-  it at <strong>local disk</strong> — a network/SeaDrive path is slow and can corrupt or lock
-  the many small handles. Keep each run's checkpoints in their own directory.</li>
-<li><strong><code>restore</code> needs the SAME build.</strong> The running OpenSees must register every
-  element/material class tag in the checkpoint in its object broker. Restoring
-  under a different (or older) build can fail with <em>"no Element type exists for
-  class tag …"</em>. Checkpoint and resume with the same fork binary.</li>
-<li><strong><code>save</code>/<code>restore</code> are all-or-nothing on the whole domain</strong>, keyed by an integer
-  <code>commitTag</code>. Reuse the same key you saved under; different keys hold different
-  checkpoints in one datastore.</li>
-<li><strong>Re-<code>database</code> before <code>restore</code> in a reused process.</strong> After <code>wipe()</code>, re-open
-  the datastore (<code>osp.database("File", CKPT)</code>) before <code>restore</code> so the file
-  handles are live; <code>wipe()</code> also releases handles on Windows before cleanup.</li>
-<li><strong>Staged models (<code>ops.stage(...)</code>) can't be driven live</strong> (Phase SSI-2.A) — emit
-  a deck with <code>ops.tcl(path, run=True)</code> / <code>ops.py(path, run=True)</code> and checkpoint
-  from within the deck's Python instead.</li>
-<li><strong>Recorders don't resume themselves.</strong> A recorder writes from when it is
-  declared; re-declare your recorders after <code>restore</code> (and expect a fresh output
-  file unless you manage appending yourself).</li>
-</ul>
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="../save-reload/">Save &amp; reload a model</a> — model archival (<code>g.save()</code> /
-  <code>apeGmsh.from_h5</code>), the <em>other</em> kind of persistence.</li>
-<li><a href="../export-script/">Export to a Tcl / openseespy script</a> — for staged or
-  deck-driven runs where you checkpoint from within the deck.</li>
-<li>ADR 0043 §<em>Restart surfaces</em> — the planned <code>checkpoint</code> / <code>from_checkpoint</code>
-  first-class API this recipe anticipates.</li>
-<li>Ladruno fork <a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a> — the
-  element-<code>rho</code> serialization fix that makes transient restarts correct and
-  deterministic (<code>LEDGER_quirks.md</code>: <em>element rho un-serialized</em>).</li>
-</ul>
+<p>A name the model does not carry raises <code>ValueError</code> at render, and the
+message lists the names it does have.</p>
+<h2 id="more-than-one-pane">More than one pane<a class="headerlink" href="#more-than-one-pane" title="Permanent link">&para;</a></h2>
+<p>With one pane <code>render()</code> needs no address. Add a second and every call
+takes a pane id — the same stable id the snapshot and the window's
+outline use.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">second</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_view</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"undeformed"</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">panes</span><span class="p">]</span>                    <span class="c1"># ['mesh-1', 'mesh-2']</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"deformed.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"plain.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">second</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Plot panes are arrays, not stills</p>
+<p><code>session.render()</code> writes stills of <strong>mesh</strong> panes; asking it for a
+plot pane raises <code>NotImplementedError</code>. Use
+<code>session.realize(pane=...)</code> to get the resolved arrays and draw
+them however you like:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlotSeries</span><span class="p">,</span> <span class="n">PlotSource</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">plot</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_plot</span><span class="p">(</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="s2">"history"</span><span class="p">,</span> <span class="n">series</span><span class="o">=</span><span class="p">[</span><span class="n">PlotSeries</span><span class="p">(</span><span class="n">PlotSource</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="mi">9</span><span class="p">),</span> <span class="s2">"displacement_x"</span><span class="p">)],</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">)</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">realized</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">realize</span><span class="p">(</span><span class="n">pane</span><span class="o">=</span><span class="n">plot</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">time</span>      <span class="c1"># array([0. , 0.4, 0.8, 1.2, 1.6, 2. ])</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">values</span>
+</span></code></pre></div>
+<p>For a ready-made chart, <code>results.plot.history(...)</code> is the
+matplotlib route.</p>
+</div>
+<h2 id="hand-the-same-picture-to-the-window">Hand the same picture to the window<a class="headerlink" href="#hand-the-same-picture-to-the-window" title="Permanent link">&para;</a></h2>
+<p>The session is what the window saves, so a scripted arrangement can be
+opened by a human — and vice versa.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">s</span><span class="o">.</span><span class="n">save_snapshot</span><span class="p">()</span>          <span class="c1"># -&gt; &lt;results&gt;.viewer-session.json</span>
+</span></code></pre></div>
+<p><code>results.viewer()</code> picks that file up on the next open (it asks first
+by default), and returns the session it projected once the window
+closes.</p>
+<h2 id="in-ci">In CI<a class="headerlink" href="#in-ci" title="Permanent link">&para;</a></h2>
+<p><code>APEGMSH_SKIP_VIEWER=1</code> makes <code>render()</code> print <code>[skip viewer]</code>, write
+no file, and return <code>None</code> — so the same script runs headless without a
+GL context, and a <code>None</code> return is the signal that no picture was
+produced.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">png</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"tip.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">if</span> <span class="n">png</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="o">...</span>        <span class="c1"># skipped: no GL, or APEGMSH_SKIP_VIEWER is set</span>
+</span></code></pre></div>
 <hr />
-<p><em>Next: <a href="../read-results/">Read a node's displacement and reactions</a>.</em></p>
+<p><em>Next: <a href="../../api/results-session/">Results session</a> — the full API of
+the document you just drove.</em></p>
 
 
 
