@@ -502,7 +502,9 @@ class TclEmitter:
         # node): plain-int tag + plain-float coords render via a single
         # f-string. ``{x!r}`` on an exact float is exactly what _join
         # emits, so the output is byte-identical; anything else falls
-        # through to the generic path.
+        # through to the generic path.  Two coords is the 2-D deck band
+        # (the build layer trims to ``ndm`` coordinates) and needs its
+        # own arm, or every node of a 2-D mesh takes the slow route.
         if ndf is None:
             if tag.__class__ is int:
                 if len(coords) == 3:

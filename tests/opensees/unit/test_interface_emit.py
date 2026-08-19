@@ -199,7 +199,8 @@ def test_mixed_ndf_emit_order_and_jnode_is_the_phantom():
         "node", "equalDOF", "uniaxialMaterial", "uniaxialMaterial", "element",
     ]
     node_call = em.calls[0]
-    assert node_call[1] == (101, 1.0, 0.5, 0.0)
+    # ndm=2 deck ⇒ TWO coordinates; a third would swallow the -ndf.
+    assert node_call[1] == (101, 1.0, 0.5)
     assert node_call[2] == {"ndf": 2}          # NOT the helper's hardcoded 6
     assert em.calls[1][1] == (20, 101, 1, 2)   # retained beam, constrained phantom
     ele = em.calls[-1][1]
@@ -212,7 +213,7 @@ def test_mixed_ndf_golden_tcl():
         TclEmitter(),
     ) == [
         "# RockLiner",
-        "node 101 1.0 0.5 0.0 -ndf 2",
+        "node 101 1.0 0.5 -ndf 2",
         "equalDOF 20 101 1 2",
         "uniaxialMaterial ENT 1 250000.0",
         "uniaxialMaterial ElasticPP 2 25000.0 0.0025",
@@ -227,7 +228,7 @@ def test_mixed_ndf_golden_py():
         PyEmitter(),
     ) == [
         "# RockLiner",
-        "ops.node(101, 1.0, 0.5, 0.0, '-ndf', 2)",
+        "ops.node(101, 1.0, 0.5, '-ndf', 2)",
         "ops.equalDOF(20, 101, 1, 2)",
         "ops.uniaxialMaterial('ENT', 1, 250000.0)",
         "ops.uniaxialMaterial('ElasticPP', 2, 25000.0, 0.0025)",

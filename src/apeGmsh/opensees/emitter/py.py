@@ -190,7 +190,9 @@ class PyEmitter:
         coords = trim_coords_to_ndm(coords, self._model_ndm)
         # Fast path for the dominant deck band — mirrors the
         # TclEmitter's: plain-int tag + plain-float coords render via a
-        # single f-string, byte-identical to the generic path.
+        # single f-string, byte-identical to the generic path.  The
+        # 2-coord arm is the 2-D deck band (the build layer trims to
+        # ``ndm`` coordinates).
         if ndf is None:
             if tag.__class__ is int:
                 if len(coords) == 3:

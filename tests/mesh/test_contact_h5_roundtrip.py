@@ -245,6 +245,76 @@ def test_decode_presence_probes_edge_columns():
     assert got.formulation == "mortar" and got.eps_n == "auto"
 
 
+def _nts_2d_record(outward):
+    """A hand-built 2D (nps=2) NTS record — chained master, node-set slave.
+
+    No gmsh: the encode/decode pair works on records directly, and the
+    orientation encoding is what is under test here, not the resolve.
+    """
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    return ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2], [2, 3]]), master_nps=2,
+        slave_nodes=[11, 12, 13], kn=1.0e6, outward=outward)
+
+
+def test_outward_mode_encodes_winding_without_a_vector():
+    """``outward="winding"`` carries NO direction, so it cannot ride in
+    ``has_outward`` — that decodes as ``== 1``, and a 2 there would decode
+    to None, silently dropping the declaration."""
+    from apeGmsh.mesh._femdata_h5_io import _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    row = np.zeros((1,), dtype=contact_payload_dtype())
+    row[0] = _encode_contact(_nts_2d_record("winding"))
+    assert int(row["outward_mode"][0]) == 2
+    assert int(row["has_outward"][0]) == 0
+    assert np.all(np.isnan(row["outward"][0]))
+
+
+def test_outward_mode_roundtrips_all_three_states(tmp_path):
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    from apeGmsh.mesh._femdata_h5_io import _decode_contact, _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    for src, expect in ((None, None),
+                        ((1.0, 0.0), (1.0, 0.0, 0.0)),   # 2D vector, z-padded
+                        ((0.0, 0.0, 1.0), (0.0, 0.0, 1.0)),
+                        ("winding", "winding")):
+        payload = np.zeros((1,), dtype=contact_payload_dtype())
+        payload[0] = _encode_contact(_nts_2d_record(src))
+        row = np.zeros((1,), dtype=[("payload", payload.dtype)])
+        row["payload"] = payload
+        got = _decode_contact(row[0], ContactRecord).outward
+        if expect is None or isinstance(expect, str):
+            assert got == expect
+        else:
+            assert tuple(got) == pytest.approx(expect)
+
+
+def test_decode_presence_probes_outward_mode_and_degrades_to_none():
+    """The out-of-window path. A reader that predates the 2.30.0
+    ``outward_mode`` column sees only ``has_outward=0`` and decodes "no
+    outward" — which makes the FORK run its own centroid vote and abort
+    loudly on the flush deck, rather than run a mis-oriented one. That
+    degradation is the reason winding writes has_outward=0 at all."""
+    from numpy.lib import recfunctions as rfn
+
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    from apeGmsh.mesh._femdata_h5_io import _decode_contact, _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    full = np.zeros((1,), dtype=contact_payload_dtype())
+    full[0] = _encode_contact(_nts_2d_record("winding"))
+    trimmed = rfn.drop_fields(full, ["outward_mode"])
+    assert "outward_mode" not in trimmed.dtype.names
+    row = np.zeros((1,), dtype=[("payload", trimmed.dtype)])
+    row["payload"] = trimmed
+    got = _decode_contact(row[0], ContactRecord)
+    assert got.outward is None            # degraded, never a bogus vector
+    assert got.master_nps == 2 and got.kn == 1.0e6
+
+
 def test_mortar_tie_roundtrip(tmp_path):
     fem = _contact_fem(lambda g: g.constraints.contact(
         "master", "slave", formulation="mortar", eps_n=1.0e7, tie=True,

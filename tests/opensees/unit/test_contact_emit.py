@@ -38,11 +38,22 @@ def test_slave_segments_faceted():
         ["-slave-segments", 3, 3, 4, 5]
 
 
+def test_master_2d_segments_with_stride_two():
+    # The fork's 2D lane: a flat stride-2 pair list, chained head-to-tail.
+    a = contact_surface_args("master", [1, 2, 2, 3, 3, 4], 2)
+    assert a == ["-master", 2, 1, 2, 2, 3, 3, 4]
+
+
 def test_faceted_rejects_bad_stride():
-    with pytest.raises(ValueError, match="nps"):
+    # nps=2 is the 2D line-segment surface and is now SUPPORTED (fork
+    # ADR-85); what stays refused is a tag count that is not a multiple of
+    # the stride, and an nps outside {2, 3, 4}.
+    with pytest.raises(ValueError, match="multiple"):
         contact_surface_args("master", [1, 2, 3], 2)
     with pytest.raises(ValueError, match="multiple"):
         contact_surface_args("master", [1, 2, 3, 4], 3)
+    with pytest.raises(ValueError, match="nps"):
+        contact_surface_args("master", [1, 2, 3, 4, 5], 5)
 
 
 def test_faceted_rejects_higher_order_stride():
@@ -102,6 +113,60 @@ def test_nts_no_kn_plus_outward_not_padded():
     # and-unreads it; no leading number to pad.
     a = contact_args(1, 2, "nts", outward=(0.0, 0.0, 1.0))
     assert a == [1, 2, "-outward", 0.0, 0.0, 1.0]
+
+
+# ── -outward arity: 2 components in 2D, 3 in 3D ─────────────────────
+#
+# NOT cosmetic. The fork picks the arity by peeking the referenced nodes'
+# getCrds().Size() and then checks the trailing token, so a stray oz on a
+# 2D surface fails that check and the deck dies at parse.
+
+def test_outward_emits_two_components_in_2d():
+    a = contact_args(1, 2, "nts", kn=1.0e6, outward=(1.0, 0.0, 0.0), ndm=2)
+    assert a == [1, 2, 1.0e6, 0.0, 0.0, "-outward", 1.0, 0.0]
+
+
+def test_outward_still_emits_three_components_in_3d():
+    a = contact_args(1, 2, "nts", kn=1.0e6, outward=(0.0, 0.0, 1.0), ndm=3)
+    assert a == [1, 2, 1.0e6, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0]
+    # and ndm defaults to 3 — every existing 3D call site is unchanged
+    assert contact_args(1, 2, "nts", kn=1.0e6,
+                        outward=(0.0, 0.0, 1.0)) == a
+
+
+def test_outward_accepts_a_bare_2vec_in_2d():
+    a = contact_args(1, 2, "nts", kn="auto", outward=(0.0, 1.0), ndm=2)
+    assert a == [1, 2, "auto", "-outward", 0.0, 1.0]
+
+
+def test_outward_refuses_a_nonzero_oz_in_2d():
+    # Dropping oz silently would emit a direction the caller never asked
+    # for; the fork has nowhere to carry it.
+    with pytest.raises(ValueError, match="oz=0.5.*non-zero|non-zero"):
+        contact_args(1, 2, "nts", kn=1.0e6, outward=(1.0, 0.0, 0.5), ndm=2)
+
+
+def test_outward_refuses_a_2vec_in_3d():
+    with pytest.raises(ValueError, match=r"\(ox, oy, oz\)"):
+        contact_args(1, 2, "nts", kn=1.0e6, outward=(1.0, 0.0), ndm=3)
+
+
+# ── -outward winding (fork F1, 2D NTS only) ─────────────────────────
+
+def test_outward_winding_emits_the_keyword():
+    a = contact_args(1, 2, "nts", kn=1.0e6, kt=5e5, mu=0.3,
+                     outward="winding", ndm=2)
+    assert a == [1, 2, 1.0e6, 5e5, 0.3, "-outward", "winding"]
+
+
+def test_outward_winding_is_refused_in_3d():
+    with pytest.raises(ValueError, match="2D NTS lane only"):
+        contact_args(1, 2, "nts", kn=1.0e6, outward="winding", ndm=3)
+
+
+def test_outward_rejects_an_unknown_sentinel():
+    with pytest.raises(ValueError, match="'winding'"):
+        contact_args(1, 2, "nts", kn=1.0e6, outward="auto", ndm=2)
 
 
 def test_mortar_frictionless():
@@ -300,9 +365,20 @@ def test_def_tie_excludes_friction():
                    formulation="mortar", tie=True, mu=0.3)
 
 
-def test_def_outward_must_be_3vec():
-    with pytest.raises(ValueError, match="3-vector"):
-        ContactDef(master_label="m", slave_label="s", outward=(0.0, 1.0))
+def test_def_outward_2vec_is_z_padded_not_refused():
+    """Re-scoped for the 2D lane: a 2-vector is the FORM the fork's 2D
+    lane requires (it rejects the 3-component one on a 2D surface), so the
+    def accepts it and z-pads — a 2D direction genuinely has oz = 0, which
+    keeps the record, the (3,) H5 slot and compose's rotation on one
+    shape. The emitter drops the pad back off in a 2D deck."""
+    d = ContactDef(master_label="m", slave_label="s", outward=(0.0, 1.0))
+    assert d.outward == (0.0, 1.0, 0.0)
+
+
+def test_def_outward_must_be_a_2vec_or_3vec():
+    with pytest.raises(ValueError, match="2-vector|3-vector"):
+        ContactDef(master_label="m", slave_label="s",
+                   outward=(0.0, 1.0, 0.0, 0.0))
 
 
 def test_def_outward_rejects_zero_vector():
@@ -708,6 +784,146 @@ def test_drop_to_corner_facets_rejects_unsupported_width():
 
 
 # --------------------------------------------------------------------------
+# 2D line-segment surfaces (fork ADR-85): the SIBLING corner drop
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("full_npe", [2, 3])
+def test_drop_to_corner_segments(full_npe):
+    from apeGmsh.core.ConstraintsComposite import _drop_to_corner_segments
+    segs = np.arange(2 * full_npe).reshape(2, full_npe)
+    out, nps = _drop_to_corner_segments(segs)
+    assert nps == 2
+    assert out.shape == (2, 2)
+    # corners are the LEADING columns (gmsh orders corners first) — the
+    # exact analogue of the tri6 → tri3 drop
+    np.testing.assert_array_equal(out, segs[:, :2])
+
+
+def test_drop_to_corner_segments_rejects_unsupported_width():
+    from apeGmsh.core.ConstraintsComposite import _drop_to_corner_segments
+    with pytest.raises(ValueError, match="not a supported line2"):
+        _drop_to_corner_segments(np.arange(8).reshape(2, 4))
+
+
+def test_segment_and_facet_key_spaces_never_meet():
+    """The two corner tables are siblings on purpose.
+
+    They share the key ``3``, which means tri6 → tri3 in one and line3 →
+    line2 in the other. Merging them would silently remap every 3D tri3
+    master — the commonest 3D facet — so the dispatch is by model
+    dimension and the tables stay disjoint by construction.
+    """
+    from apeGmsh.core.ConstraintsComposite import (
+        _LINE_CORNER_NPS, _SURFACE_CORNER_NPS,
+    )
+    assert _SURFACE_CORNER_NPS[3] == 3 and _LINE_CORNER_NPS[3] == 2
+    assert _SURFACE_CORNER_NPS is not _LINE_CORNER_NPS
+
+
+def test_mixed_line_widths_refused_by_name():
+    from apeGmsh.core.ConstraintsComposite import _stack_line_blocks
+    blocks = [(2, np.array([1, 2])), (3, np.array([2, 3, 9]))]
+    with pytest.raises(ValueError, match="mixes 2-node and 3-node"):
+        _stack_line_blocks(blocks, "face", "master")
+
+
+def test_uniform_line_widths_stack():
+    from apeGmsh.core.ConstraintsComposite import _stack_line_blocks
+    blocks = [(2, np.array([1, 2])), (2, np.array([2, 3, 3, 4]))]
+    out = _stack_line_blocks(blocks, "face", "master")
+    np.testing.assert_array_equal(out, [[1, 2], [2, 3], [3, 4]])
+
+
+# --------------------------------------------------------------------------
+# ContactRecord.__post_init__ — the chained-pair invariant
+# --------------------------------------------------------------------------
+def test_record_accepts_a_chained_2d_master():
+    rec = ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2], [2, 3], [3, 4]]), master_nps=2,
+        slave_nodes=[10, 11], kn=1.0e6)
+    assert rec.master_nps == 2 and rec.ndm == 2
+
+
+def test_record_accepts_a_closed_2d_loop():
+    rec = ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2], [2, 3], [3, 4], [4, 1]]),
+        master_nps=2, slave_nodes=[10], kn=1.0e6)
+    assert np.asarray(rec.master_faces).shape == (4, 2)
+
+
+def test_record_refuses_the_holed_2d_master():
+    """The whole point: the unchained shorthand must be undeclarable."""
+    with pytest.raises(ValueError, match="not chained head-to-tail"):
+        ContactRecord(
+            kind="contact", formulation="nts",
+            master_faces=np.array([[101, 102], [103, 104]]), master_nps=2,
+            slave_nodes=[10], kn=1.0e6)
+
+
+def test_record_refuses_a_node_used_three_times():
+    with pytest.raises(ValueError, match="more than twice"):
+        ContactRecord(
+            kind="contact", formulation="nts",
+            master_faces=np.array([[1, 2], [2, 3], [3, 2]]), master_nps=2,
+            slave_nodes=[10], kn=1.0e6)
+
+
+def test_record_applies_the_invariant_to_the_slave_side_too():
+    with pytest.raises(ValueError, match="2D slave surface is not chained"):
+        ContactRecord(
+            kind="contact", formulation="mortar",
+            master_faces=np.array([[1, 2], [2, 3]]), master_nps=2,
+            slave_faces=np.array([[11, 12], [13, 14]]), slave_nps=2,
+            eps_n="auto")
+
+
+def test_record_invariant_is_silent_on_3d_strides():
+    # A 3D tri/quad facet list carries no chaining contract.
+    rec = ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2, 3], [7, 8, 9]]), master_nps=3,
+        slave_nodes=[10], kn=1.0e6)
+    assert rec.ndm == 3
+
+
+def test_record_invariant_fires_on_the_h5_decode_chokepoint():
+    """A corrupted (unchained) payload must not decode into a record.
+
+    The validator lives on the dataclass, so every construction site gets
+    it: this pins the h5 half — ``_decode_contact`` really does construct
+    ``ContactRecord`` rather than mutating a blank one.
+    """
+    from apeGmsh.mesh._femdata_h5_io import _decode_contact, _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    rec = ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[101, 102], [102, 103]]), master_nps=2,
+        slave_nodes=[10], kn=1.0e6)
+    payload = list(_encode_contact(rec))
+    dt = contact_payload_dtype()
+    payload[dt.names.index("master_faces")] = np.array(
+        [101, 102, 103, 104], dtype=np.int64)      # the HOLED shorthand
+    p = np.array([tuple(payload)], dtype=dt)[0]
+    with pytest.raises(ValueError, match="not chained head-to-tail"):
+        _decode_contact({"payload": p}, ContactRecord)
+
+
+def test_record_invariant_survives_the_compose_tag_rewrite():
+    """``_rewrite_record`` goes through ``dataclasses.replace``, so the
+    validator fires at the compose chokepoint for free."""
+    from apeGmsh.mesh._compose import _rewrite_record
+    rec = ContactRecord(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2], [2, 3]]), master_nps=2,
+        slave_nodes=[10], kn=1.0e6, name="joint")
+    out = _rewrite_record(rec, offset=100, label="mod")
+    np.testing.assert_array_equal(
+        np.asarray(out.master_faces), [[101, 102], [102, 103]])
+
+
+# --------------------------------------------------------------------------
 # Record → emit (emit_contacts)
 # --------------------------------------------------------------------------
 class _Fem:
@@ -739,7 +955,7 @@ def _mortar_rec(**over):
 
 def test_emit_nts_two_surfaces_and_contact():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator())
+    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"]
     assert len(surf) == 2 and len(con) == 1
@@ -752,7 +968,7 @@ def test_emit_nts_two_surfaces_and_contact():
 
 def test_emit_mortar_slave_segments():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_mortar_rec()]), TagAllocator())
+    emit_contacts(em, _Fem([_mortar_rec()]), TagAllocator(), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"][0][1]
     assert "-slave-segments" in surf[1][1]
@@ -761,7 +977,7 @@ def test_emit_mortar_slave_segments():
 
 def test_emit_surface_and_contact_tags_distinct_namespaces():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator())
+    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"][0][1]
     m_tag, s_tag = surf[0][1][0], surf[1][1][0]
@@ -775,7 +991,7 @@ def test_emit_surface_and_contact_tags_distinct_namespaces():
 
 def test_emit_noop_when_no_contacts():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([]), TagAllocator())
+    emit_contacts(em, _Fem([]), TagAllocator(), ndm=3)
     assert [c for c in em.calls if c[0] in ("contact", "contact_surface")] == []
 
 
@@ -784,10 +1000,50 @@ def test_emit_carries_extension_modifiers():
     em = RecordingEmitter()
     rec = _nts_rec(kn="auto", kt=None, mu=None, outward=None,
                    soft=0.1, visc=1.0, consistent_tan=True, geom_tan=True)
-    emit_contacts(em, _Fem([rec]), TagAllocator())
+    emit_contacts(em, _Fem([rec]), TagAllocator(), ndm=3)
     cargs = [c for c in em.calls if c[0] == "contact"][0][1]
     for tok in ("-soft", 0.1, "-visc", 1.0, "-consistanttan", "-geomtan"):
         assert tok in cargs
+
+
+def _nts_2d_rec(**over):
+    base = dict(
+        kind="contact", formulation="nts",
+        master_faces=np.array([[1, 2], [2, 3], [3, 4]]), master_nps=2,
+        slave_nodes=[10, 11], kn=1.0e6, kt=5.0e5, mu=0.3,
+    )
+    base.update(over)
+    return ContactRecord(**base)
+
+
+def test_emit_2d_master_is_six_tags_for_three_segments():
+    em = RecordingEmitter()
+    emit_contacts(em, _Fem([_nts_2d_rec()]), TagAllocator(), ndm=2)
+    args = [c for c in em.calls if c[0] == "contact_surface"][0][1]
+    assert args[1] == "-master" and args[2] == 2
+    assert list(args[3:]) == [1, 2, 2, 3, 3, 4]     # NOT [1, 2, 3, 4]
+
+
+def test_emit_refuses_a_2d_record_in_a_3d_model():
+    """``BuiltModel.ndm`` is what the user declared in ``ops.model(...)``,
+    independent of the resolve-time ``gmsh.model.getDimension()`` gate — so
+    this catches a 2D mesh declared into a 3D model, and the compose /
+    from_h5 hole where an archived 2D record lands in a 3D assembly."""
+    from apeGmsh.opensees._internal.build import BridgeError
+    em = RecordingEmitter()
+    with pytest.raises(BridgeError) as exc:
+        emit_contacts(em, _Fem([_nts_2d_rec(name="joint")]),
+                      TagAllocator(), ndm=3)
+    msg = str(exc.value)
+    assert "master_nps=2" in msg and "ndm=3" in msg
+
+
+def test_emit_refuses_a_3d_record_in_a_2d_model():
+    from apeGmsh.opensees._internal.build import BridgeError
+    em = RecordingEmitter()
+    with pytest.raises(BridgeError) as exc:
+        emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=2)
+    assert "master_nps=3" in str(exc.value)
 
 
 def test_emit_carries_edge_edge_modifiers():
@@ -799,7 +1055,7 @@ def test_emit_carries_edge_edge_modifiers():
         edge_kt=1e6, edge_cohesion=1e3, edge_tau_max=5e5,
         edge_consistent_tan=True, edge_soft=0.1, edge_alm=True,
         edge_aug_tol=1e-6)
-    emit_contacts(em, _Fem([rec]), TagAllocator())
+    emit_contacts(em, _Fem([rec]), TagAllocator(), ndm=3)
     cargs = [c for c in em.calls if c[0] == "contact"][0][1]
     for tok in ("-edgeedge", "-edgeKn", "auto", "-edgeBand", "-edgeMu",
                 "-edgeKt", "-edgeCohesion", "-edgeTauMax",

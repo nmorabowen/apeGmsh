@@ -186,6 +186,9 @@ def test_mixed_ndf_flat_deck_phantom_equaldof_materials_zerolength(tmp_path):
         assert int(tok[4]) in phantoms
 
     # …and the per-pair block is ordered phantom → equalDOF → mats → element.
+    # ndm=2 ⇒ the phantom line carries TWO coordinates: a trailing z
+    # desynchronises the parser's optional-argument scan and swallows the
+    # ``-ndf 2`` that the whole mixed-ndf bridge depends on.
     for rec in recs:
         # ndm=2 deck: the emitter trims the broker's padded z, which
         # would otherwise swallow the -ndf flag.
