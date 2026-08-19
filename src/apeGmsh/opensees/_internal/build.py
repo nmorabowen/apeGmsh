@@ -123,6 +123,7 @@ __all__ = [
     "open_builder_ndf_bracket",
     "close_builder_ndf_bracket",
     "needs_builder_ndf_bracket",
+    "needs_builder_ndf_bracket_for_token",
     "validate_builder_scope_ordering",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
@@ -2084,6 +2085,28 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def needs_builder_ndf_bracket_for_token(
+    type_token: str, *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """True iff ``type_token``'s upstream parser needs a bracket here.
+
+    The token form of :func:`needs_builder_ndf_bracket`, for the replay
+    paths that carry deck records (``rec.type_token``) rather than
+    ``Element`` specs.  ``element_builder_ndf`` resolves class names AND
+    deck tokens (``_CLASS_TOKEN_ALIASES.get(name, name)``), so the two
+    forms cannot disagree.
+
+    Note the ``envelope_ndf`` term: a gated class under an envelope that
+    ALREADY matches its required builder ndf needs no bracket, and must
+    not be hoisted.  Keying on ``_BUILDER_NDF_GATED`` membership alone
+    would reorder every ndf=2 quad deck for nothing.
+    """
+    from .._element_capabilities import element_builder_ndf
+
+    need = element_builder_ndf(type_token, ndm)
+    return need is not None and int(need) != int(envelope_ndf)
+
+
 def needs_builder_ndf_bracket(
     spec: "Element", *, ndm: int, envelope_ndf: int,
 ) -> bool:
@@ -2094,10 +2117,9 @@ def needs_builder_ndf_bracket(
     in ``_emit_flat`` (which orders around it), and
     :func:`validate_builder_scope_ordering` (which guards it).
     """
-    from .._element_capabilities import element_builder_ndf
-
-    need = element_builder_ndf(type(spec).__name__, ndm)
-    return need is not None and int(need) != int(envelope_ndf)
+    return needs_builder_ndf_bracket_for_token(
+        type(spec).__name__, ndm=ndm, envelope_ndf=envelope_ndf,
+    )
 
 
 def validate_builder_scope_ordering(
