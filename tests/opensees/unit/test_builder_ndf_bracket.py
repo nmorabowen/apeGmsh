@@ -12,6 +12,12 @@ The emit orchestrators now bracket each gated element block with a
 does not wipe the domain — the same trick STKO decks use for their
 per-subset ndf switches).
 
+It DOES, however, delete the Tcl model builder, whose destructor purges
+the process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration``
+/ ``damping`` registries (fork ``TclModelBuilder.cpp:681``, measured on
+build ``25a0647f``).  ADR 0099 hoists the gated blocks above every such
+declaration on the flat path (INV-1) and fails loud everywhere else.
+
 Covers:
 
 * the capability table (:func:`element_builder_ndf`),
@@ -19,8 +25,9 @@ Covers:
 * end-to-end py + tcl decks for the flat path (mixed-ndf SixNodeTri +
   beam, FourNodeQuad variant, ungated Tri31, and the no-bracket flat
   ndf=2 case),
-* the stage-activated path (s.activate of a tri6n PG emits the bracket
-  inside the stage block).
+* the stage-activated path (ADR 0099 INV-4: refused, because the
+  bracket would fire mid-deck and destroy the global declarations),
+* ADR 0099 INV-1 ordering, and the INV-3 / INV-4 guards.
 """
 from __future__ import annotations
 
@@ -28,8 +35,10 @@ import pytest
 
 from apeGmsh.opensees._element_capabilities import element_builder_ndf
 from apeGmsh.opensees._internal.build import (
+    BridgeError,
     close_builder_ndf_bracket,
     open_builder_ndf_bracket,
+    validate_builder_scope_ordering,
 )
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -241,10 +250,105 @@ def test_tcl_deck_brackets_tri6n_under_mixed_envelope(tmp_path) -> None:
 
 
 # =====================================================================
-# Stage-activated path (s.activate of a gated PG)
+# ADR 0099 — builder-scoped declarations must follow the last model line
 # =====================================================================
 
-def test_stage_activated_tri6n_brackets_inside_stage_block(tmp_path) -> None:
+#: The four OpenSees declaration keywords a ``model`` re-issue destroys.
+_SCOPED_TOKENS = ("timeSeries", "geomTransf", "beamIntegration", "damping")
+
+
+def _bridge_all_four_kinds() -> apeSees:
+    """Mixed-ndf model carrying every builder-scoped declaration kind.
+
+    ``_bridge_with_beam`` already supplies section + geomTransf +
+    beamIntegration + the frame element that forces the ndf=3 envelope;
+    this adds the gated tri6n, a damping object and a timeSeries-backed
+    pattern.
+    """
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    ops.damping.uniform(
+        ratio=0.05, freq_lower=0.2, freq_upper=10.0, on=["Liner"],
+    )
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as pat:
+        pat.load(node=7, forces=(1000.0, 0.0, 0.0))
+    return ops
+
+
+def _tcl_deck(ops: apeSees, tmp_path) -> list[str]:
+    deck = tmp_path / "deck.tcl"
+    ops.tcl(str(deck))
+    return deck.read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    "writer, model_prefix",
+    [(_py_deck, "ops.model("), (_tcl_deck, "model ")],
+    ids=["py", "tcl"],
+)
+def test_inv1_scoped_declarations_follow_the_last_model_line(
+    tmp_path, writer, model_prefix,
+) -> None:
+    """INV-1, asserted as a contract rather than as line numbers.
+
+    Pre-0099 this deck declared timeSeries / geomTransf / beamIntegration
+    / damping ABOVE the tri6n bracket, so the bracket destroyed all four
+    and the deck died at ``pattern Plain``.
+    """
+    lines = writer(_bridge_all_four_kinds(), tmp_path)
+    last_model = max(
+        i for i, ln in enumerate(lines) if ln.startswith(model_prefix)
+    )
+    offenders = [
+        (i, ln) for i, ln in enumerate(lines[:last_model])
+        if any(tok in ln for tok in _SCOPED_TOKENS)
+    ]
+    assert offenders == [], (
+        f"builder-scoped declarations emitted before the last model line "
+        f"(index {last_model}); the bracket destroys them: {offenders}"
+    )
+    # ...and the deck really does carry all four, so this is not vacuous.
+    after = chr(10).join(lines[last_model:])
+    for tok in _SCOPED_TOKENS:
+        assert tok in after, f"{tok} missing from the deck entirely"
+
+
+def test_inv1_gated_block_is_hoisted_above_the_declarations(
+    tmp_path,
+) -> None:
+    """The mechanism: gated elements move up, the declarations do not move
+    down — a timeSeries can legitimately be consumed BY an element
+    (ASDAbsorbingBoundary's -fx/-fy/-fz), so deferring them is not safe.
+    """
+    lines = _py_deck(_bridge_all_four_kinds(), tmp_path)
+    tri = next(i for i, ln in enumerate(lines) if "ops.element(" in ln
+               and "tri6n" in ln)
+    transf = next(i for i, ln in enumerate(lines) if "ops.geomTransf(" in ln)
+    beam = next(i for i, ln in enumerate(lines) if "dispBeamColumn" in ln)
+    # gated block first, then the declarations, then the ungated frame.
+    assert tri < transf < beam
+
+
+def test_inv3_gated_element_may_not_depend_on_a_scoped_primitive() -> None:
+    """``quad(damp=...)`` is self-wiping: its own bracket destroys the
+    damping object it references, and OpenSees only warns."""
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    damp = ops.damping.uniform(ratio=0.05, freq_lower=0.2, freq_upper=10.0)
+    ops.element.FourNodeQuad(
+        pg="Rock", thickness=1.0, material=mat, damp=damp,
+    )
+    with pytest.raises(BridgeError, match="INV-3"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_inv4_stage_activated_gated_element_is_refused(tmp_path) -> None:
+    """A stage-activated gated element brackets INSIDE the stage block —
+    after the global declarations and, past the first stage, after a
+    pattern and a completed analyze.  Hoisting cannot reach it, so it is
+    refused until the declaration-replay slice lands."""
     ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
@@ -262,15 +366,47 @@ def test_stage_activated_tri6n_brackets_inside_stage_block(tmp_path) -> None:
         )
         s.run(n_increments=2, dt=0.5)
 
-    lines = _py_deck(ops, tmp_path)
-    stage = next(
-        i for i, ln in enumerate(lines) if "=== Stage: dig ===" in ln
-    )
-    models = [i for i, ln in enumerate(lines) if ln.startswith("ops.model(")]
-    ele = next(i for i, ln in enumerate(lines) if "ops.element('tri6n'" in ln)
+    with pytest.raises(BridgeError, match="stage-activated"):
+        _py_deck(ops, tmp_path)
 
-    # bracket + restore live inside the stage block, around the tri6n.
-    assert len(models) == 3
-    assert stage < models[1] < ele < models[2]
-    assert lines[models[1]].endswith("'-ndf', 2)")
-    assert lines[models[2]].endswith("'-ndf', 3)")
+
+def test_inv4_non_flat_paths_are_refused() -> None:
+    """The validator's path arm, unit-tested directly — a partitioned or
+    split fixture here would exercise the fixture, not the contract."""
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    gated = ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    scoped = ops.timeSeries.Linear()
+
+    for path in ("split", "partitioned"):
+        with pytest.raises(BridgeError, match=path):
+            validate_builder_scope_ordering(
+                [gated], [scoped], ops.fem,
+                ndm=2, envelope_ndf=3, path=path,
+            )
+
+    # ...and the flat path is exactly what the hoist makes safe.
+    validate_builder_scope_ordering(
+        [gated], [scoped], ops.fem,
+        ndm=2, envelope_ndf=3, path="flat",
+    )
+
+
+def test_validator_is_a_no_op_without_a_bracket_or_a_declaration() -> None:
+    """No gated element, or nothing builder-scoped to lose: no opinion."""
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ungated = ops.element.Tri31(pg="Rock", thickness=1.0, material=mat)
+    scoped = ops.timeSeries.Linear()
+
+    # ungated element + a declaration -> fine on any path.
+    validate_builder_scope_ordering(
+        [ungated], [scoped], ops.fem,
+        ndm=2, envelope_ndf=3, path="partitioned",
+    )
+    # gated element but nothing builder-scoped registered -> fine.
+    gated = ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    validate_builder_scope_ordering(
+        [gated], [mat], ops.fem,
+        ndm=2, envelope_ndf=3, path="partitioned",
+    )
