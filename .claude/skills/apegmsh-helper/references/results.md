@@ -282,7 +282,7 @@ agent's check is `results.assess()` (§3b / `assess.md`), not a
 window.
 
 `viewer()` is sugar for `results.session().show()`: the window projects
-a **`ResultsSession`** — tiled mesh and plot panes, result slots per
+a **`ResultsSession`** — docked mesh and plot panes, result slots per
 pane.
 
 ```python
@@ -354,7 +354,7 @@ path. `# src/apeGmsh/results/Results.py:1452`
 
 ### Per-pane state — the `MeshView` (ADR 0098 §3–§7)
 
-The picture belongs to the pane. A session is tiled panes; each mesh
+The picture belongs to the pane. A session is docked panes; each mesh
 pane is a `MeshView` carrying its own **scope** (ONE composition axis —
 `physical_groups` / `materials` / `element_types` — plus the names
 checked on it, never a boolean `concrete AND hex`), **pose**
