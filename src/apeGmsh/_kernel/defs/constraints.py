@@ -1482,10 +1482,12 @@ class ContactPlaneDef(ConstraintDef):
     ----------
     slave_label : str
         The meshed surface PG / part label whose nodes contact the plane.
-    normal : (float, float, float)
-        The plane's outward unit normal (toward the slave / open side).
-    point : (float, float, float)
-        Any point on the plane.
+    normal : (float, float, float) | (float, float)
+        The plane's outward unit normal (toward the slave / open side). **In a
+        2D model** it is the 2-vector ``(nx, ny)``, Z-PADDED here to
+        ``(nx, ny, 0.0)`` — see the note below.
+    point : (float, float, float) | (float, float)
+        Any point on the plane; ``(px, py)`` in a 2D model, z-padded likewise.
     kn : float
         Normal penalty stiffness (**required**; the fork reads it as a plain
         value — there is no ``"auto"`` sizing on ``contactPlane``).
@@ -1515,11 +1517,25 @@ class ContactPlaneDef(ConstraintDef):
     def __post_init__(self) -> None:
         if not self.slave_label:
             raise ValueError("ContactPlaneDef: slave_label is required.")
+        # Z-PAD, never reshape — the ContactDef.outward decision applied to
+        # the plane's geometry. A 2D plane's normal genuinely HAS nz = 0 and
+        # its point pz = 0, so the record, the (3,) H5 slots and compose's
+        # rotation (a z=0 vector rotates correctly under any in-plane
+        # rotation) all stay one shape, and the emitted line stays the one
+        # permanently-valid zero-padded 9-arg form. Unlike ``-outward`` there
+        # is no arity to drop back off at emit.
         for nm, v in (("normal", self.normal), ("point", self.point)):
-            if v is None or len(tuple(v)) != 3:
+            if v is None or len(tuple(v)) not in (2, 3):
                 raise ValueError(
-                    f"ContactPlaneDef: {nm} must be a 3-vector, got {v!r}.")
-        n = tuple(float(x) for x in self.normal)
+                    f"ContactPlaneDef: {nm} must be a 3-vector (or a 2-vector "
+                    f"in a 2D model), got {v!r}.")
+        self.normal = tuple(float(x) for x in self.normal)
+        self.point = tuple(float(x) for x in self.point)
+        if len(self.normal) == 2:
+            self.normal += (0.0,)
+        if len(self.point) == 2:
+            self.point += (0.0,)
+        n = self.normal
         if sum(c * c for c in n) == 0.0:
             raise ValueError("ContactPlaneDef: normal must be non-zero.")
         if self.kn is None:

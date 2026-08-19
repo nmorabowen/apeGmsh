@@ -291,7 +291,9 @@ def _refuse_flush_without_orientation(
         f"A flush interface is the normal 2D case, not an edge case.")
 
 
-def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
+def _refuse_contact_entity_dim(
+    entities, label, *, model_dim, role, verb="contact",
+) -> None:
     """The contact dimension gate — the single branch point of the 2D lane.
 
     In a 2D model a contact master is the meshed interface **curve** (a
@@ -306,6 +308,11 @@ def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
     The 3D **slave** is deliberately NOT gated: ``_collect_node_set`` is
     dimension-agnostic there today and retrofitting it would move the 3D
     battery.
+
+    ``verb`` names the caller in the refusal (the ``edge_frames`` idiom).
+    ``g.constraints.contact_plane`` reuses the gate with ``role="slave"``
+    only — a rigid plane has no master mesh — so its 2D slave gets the same
+    dim ≤ 1 rule and its 3D behaviour is untouched.
     """
     dims = sorted({int(d) for d, _ in entities})
     if model_dim == 2:
@@ -315,7 +322,7 @@ def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
             return
         if role == "master":
             raise ValueError(
-                f"contact: the model is 2D and master label {label!r} "
+                f"{verb}: the model is 2D and master label {label!r} "
                 f"resolves to entities of dimension {bad} — a 2D contact "
                 f"master must be the meshed interface CURVE (a dim-1 "
                 f"physical group), not the plane it bounds. Naming the "
@@ -324,7 +331,7 @@ def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
                 f"of SOLID elements. Declare the physical group on the "
                 f"boundary curve.")
         raise ValueError(
-            f"contact: the model is 2D and slave label {label!r} resolves "
+            f"{verb}: the model is 2D and slave label {label!r} resolves "
             f"to entities of dimension {bad} — a 2D contact slave must be "
             f"the meshed interface CURVE (dim-1) or a point set (dim-0). "
             f"A dim-2 slave physical group collects every INTERIOR node of "
@@ -334,12 +341,36 @@ def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
     bad = [d for d in dims if d not in (2, 3)]
     if bad:
         raise ValueError(
-            f"contact: the model is {model_dim}D and master label "
+            f"{verb}: the model is {model_dim}D and master label "
             f"{label!r} resolves to entities of dimension {bad} — a 3D "
             f"contact master must be a dim-2 face physical group (or a "
             f"dim-3 volume, whose boundary faces are used). A dim-1 curve "
             f"has no surface facets at all; the 2D segment lane is "
             f"reachable only in a 2D model.")
+
+
+def _refuse_contact_plane_out_of_plane(defn) -> None:
+    """Refuse a rigid plane whose ``normal``/``point`` leaves the 2D plane.
+
+    apeGmsh emits the zero-padded 9-argument ``contactPlane`` in both
+    dimensions, and on a 2D slave surface the fork *refuses* a non-zero
+    nz/pz rather than dropping it — there is no out-of-plane coordinate for
+    them to act on. So this is not a silent-wrong, it is a loud abort at
+    parse; refusing here only moves it earlier and names the declaration and
+    the component instead of a Tcl surface tag.
+    """
+    for nm, v in (("normal", defn.normal), ("point", defn.point)):
+        z = float(tuple(v)[2])
+        if z == 0.0:
+            continue
+        raise ValueError(
+            f"contact_plane: rigid plane "
+            f"{defn.name or defn.slave_label!r} declares {nm}={tuple(v)!r} "
+            f"with a non-zero z, but the model is 2D — a 2D plane lies in "
+            f"the modelling plane. The fork refuses a non-zero nz/pz on a 2D "
+            f"slave surface (there is no third coordinate for it to act on), "
+            f"so z has nowhere to go. Pass {nm}=({tuple(v)[0]}, "
+            f"{tuple(v)[1]}).")
 
 
 # Kuhn-decomposition tables — re-exported aliases for backward compat.
@@ -857,10 +888,16 @@ class ConstraintsComposite:
         ----------
         slave : str
             The meshed surface PG / part label whose nodes contact the plane.
-        normal : (float, float, float)
+            **In a 2D model** it is the meshed boundary CURVE (a dim-1 PG) or
+            a point set — naming the dim-2 plane collects every interior node
+            of the body and is refused by name.
+        normal : (float, float, float) | (float, float)
             The plane's outward unit normal (toward the slave / open side).
-        point : (float, float, float)
-            Any point on the plane.
+            **In a 2D model** it is the 2-vector ``(nx, ny)``; it is z-padded
+            internally and emitted as the fork's permanently-valid zero-padded
+            9-argument form, so there is only ever one grammar to read.
+        point : (float, float, float) | (float, float)
+            Any point on the plane; ``(px, py)`` in a 2D model.
         kn : float
             Normal penalty stiffness (**required** — there is no ``"auto"`` on
             ``contactPlane``).
@@ -896,15 +933,32 @@ class ConstraintsComposite:
         Gmsh session (mirroring the NTS slave of :meth:`resolve_contacts`).
         ``node_tags`` / ``node_coords`` are accepted for signature parity with
         the sibling resolvers. Serial-only (the fork contact subsystem is not
-        parallel)."""
+        parallel).
+
+        **The model dimension is read once, here, and threaded** — the
+        :meth:`resolve_contacts` idiom. This lane has no master mesh and no
+        facets, so the whole 2D difference is the slave gate below plus the
+        refusal of an out-of-plane normal / point: the rigid-plane lane keeps
+        the fork's ``ndf >= ndm`` (its adapter couples the first ``ndm`` DOFs
+        by construction, which is what lets a 3D ndf-6 shell sit on a plane),
+        so unlike the NTS/mortar lanes there is nothing else to branch on.
+        """
         records: list[ContactPlaneRecord] = []
         if not self.contact_plane_defs:
             self.contact_plane_records = records
             return records
 
+        import gmsh
+        model_dim = int(gmsh.model.getDimension())
+
         for defn in self.contact_plane_defs:
             s_ents = (defn.slave_entities
                       or self._entities_for_label(defn.slave_label))
+            _refuse_contact_entity_dim(
+                s_ents, defn.slave_label, model_dim=model_dim,
+                role="slave", verb="contact_plane")
+            if model_dim == 2:
+                _refuse_contact_plane_out_of_plane(defn)
             slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
             if not slave_nodes:
                 raise ValueError(

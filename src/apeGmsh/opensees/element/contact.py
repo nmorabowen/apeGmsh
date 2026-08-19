@@ -319,13 +319,29 @@ def contact_plane_args(
     master. `kn` is a plain value (no ``"auto"``). The optional `-visc` /
     `-soft` modifiers mirror the `contact` extension knobs (`-soft` peeks-and-
     unreads its SOFSCL, so it is safe before / after `-visc`).
+
+    **2D: z-pad, never a second grammar.** A 2-component `normal`/`point` is
+    accepted and padded with an explicit ``0.0``. The fork also has a shorter
+    5-number 2D layout (``nx ny px py kn``), but the zero-padded 9-arg form is
+    permanently valid on a 2D slave surface — fork T0 gated exactly that as a
+    back-compat falsifier row — so apeGmsh keeps ONE emitted grammar. The
+    padding is not a fiction: a 2D plane's normal genuinely has nz = 0, and the
+    fork *refuses* a non-zero nz/pz on a 2D surface rather than dropping it.
+    (Unlike ``-outward``, the arity here is not forced: this lane's parser
+    counts the leading numbers instead of peeking the node dimension, so both
+    forms parse and no trailing-token check can trip.)
     """
     n = tuple(float(x) for x in normal)
     p = tuple(float(x) for x in point)
-    if len(n) != 3 or len(p) != 3:
+    if len(n) not in (2, 3) or len(p) not in (2, 3):
         raise ValueError(
-            f"contactPlane: normal/point must be 3-vectors, got "
+            f"contactPlane: normal/point must be 3-vectors (or 2-vectors in a "
+            f"2D model, z-padded here), got "
             f"normal={normal!r}, point={point!r}")
+    if len(n) == 2:
+        n += (0.0,)
+    if len(p) == 2:
+        p += (0.0,)
     args: list[int | float | str] = [
         int(slave_tag), n[0], n[1], n[2], p[0], p[1], p[2], float(kn),
     ]

@@ -608,11 +608,17 @@ def contact_plane_payload_dtype() -> np.dtype:
     ``soft_mode`` (0 ⇒ None/off, 1 ⇒ bare ``-soft`` default SOFSCL, 2 ⇒
     numeric). Stored in a dedicated ``/contact_planes`` group (its own group,
     like ``/contacts`` — serial-only, resolves to ``fem.elements.contact_planes``).
+
+    A 2D plane is Z-PADDED into the same ``(3,)`` slots rather than reshaped —
+    the ``outward`` decision of :func:`contact_payload_dtype`. A 2D normal
+    genuinely has nz = 0, so the layout, the value domain and the reader are
+    all unchanged and this lane needs **no schema bump**: a record written
+    before 2D was reachable and one written after are the same bytes.
     """
     return np.dtype([
         ("slave_nodes", _vlen(np.int64)),    # contactSurface -slave set
-        ("normal", np.float64, (3,)),        # plane outward normal
-        ("point", np.float64, (3,)),         # a point on the plane
+        ("normal", np.float64, (3,)),        # plane outward normal (2D: z-pad)
+        ("point", np.float64, (3,)),         # a point on the plane (2D: z-pad)
         ("kn", np.float64),                  # normal penalty (numeric)
         ("visc", np.float64),                # viscous μ_c (NaN ⇒ None)
         ("soft", np.float64),                # SOFSCL value (mode 2)

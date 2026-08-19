@@ -42,9 +42,27 @@ def test_soft_false_and_none_emit_nothing():
     assert contact_plane_args(7, (0, 0, 1), (0, 0, 0), 1e7, soft=None) == base
 
 
-def test_args_reject_non_3vectors():
+def test_args_reject_bad_arity():
     with pytest.raises(ValueError, match="3-vector"):
-        contact_plane_args(7, (0, 1), (0, 0, 0), 1e7)
+        contact_plane_args(7, (1.0,), (0, 0, 0), 1e7)
+    with pytest.raises(ValueError, match="3-vector"):
+        contact_plane_args(7, (0, 0, 1), (0, 0, 0, 0), 1e7)
+
+
+# --------------------------------------------------------------------------
+# 2D: z-pad into the permanently-valid 9-arg form (fork ADR-85, slice S1)
+# --------------------------------------------------------------------------
+def test_2d_normal_and_point_z_pad_to_the_9_arg_form():
+    """The fork also takes a shorter 5-number 2D layout, but the zero-padded
+    9-argument form stays valid on a 2D slave surface (fork T0 gated exactly
+    that as a back-compat row), so apeGmsh keeps ONE emitted grammar."""
+    a = contact_plane_args(7, (0.0, 1.0), (0.0, 0.5), 1.0e7)
+    assert a == [7, 0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 1.0e7]
+
+
+def test_2d_z_pad_carries_the_modifiers():
+    a = contact_plane_args(7, (0, 1), (0, 0), 1e7, visc=2.5, soft=True)
+    assert a == [7, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1e7, "-visc", 2.5, "-soft"]
 
 
 # --------------------------------------------------------------------------
@@ -76,7 +94,23 @@ def test_def_normal_must_be_nonzero_3vec():
     with pytest.raises(ValueError, match="non-zero"):
         _def(normal=(0, 0, 0))
     with pytest.raises(ValueError, match="3-vector"):
-        _def(point=(0, 0))
+        _def(point=(0,))
+    with pytest.raises(ValueError, match="3-vector"):
+        _def(normal=(0, 0, 1, 0))
+
+
+def test_def_z_pads_a_2d_normal_and_point():
+    """Z-PAD, never reshape — the ContactDef.outward decision applied to the
+    plane's geometry, so the record, the (3,) H5 slots and compose's rotation
+    all keep one shape."""
+    d = _def(normal=(0, 1), point=(0, 0.5))
+    assert d.normal == (0.0, 1.0, 0.0)
+    assert d.point == (0.0, 0.5, 0.0)
+
+
+def test_def_still_refuses_an_all_zero_2d_normal():
+    with pytest.raises(ValueError, match="non-zero"):
+        _def(normal=(0, 0))
 
 
 def test_def_visc_and_soft_reject_negative():
@@ -118,6 +152,18 @@ def test_emit_surface_then_plane():
     cp = next(c for c in calls if c[0] == "contact_plane")
     # tag, slaveSurfTag, nx ny nz, px py pz, kn, -soft
     assert cp[1][1:] == (1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1e7, "-soft")
+
+
+def test_emit_2d_record_is_the_9_arg_form_with_zero_z_slots():
+    """A 2D record reaches emit already z-padded (the def pads on the way
+    in), so ``emit_contact_planes`` needs no dimension branch at all — which
+    is why the 3D deck is byte-identical."""
+    rec = ContactPlaneRecord(
+        kind="contact_plane", name=None, slave_nodes=[1, 2, 3],
+        normal=(0.0, 1.0, 0.0), point=(0.0, 0.5, 0.0), kn=1e6)
+    cp = next(c for c in _emit(rec) if c[0] == "contact_plane")
+    assert cp[1][1:] == (1, 0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 1e6)
+    assert cp[1][4] == 0.0 and cp[1][7] == 0.0        # nz, pz
 
 
 def test_emit_no_planes_is_noop():

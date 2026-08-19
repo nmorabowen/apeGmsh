@@ -644,7 +644,12 @@ class ContactPlaneRecord(ConstraintRecord):
     slave_nodes
         The slave surface node tags (the ``contactSurface -slave`` set).
     normal, point
-        The plane's outward normal + a point on it (3-vectors).
+        The plane's outward normal + a point on it — always 3-vectors here. A
+        2D plane is stored Z-PADDED, ``(nx, ny, 0.0)`` / ``(px, py, 0.0)``
+        (the ``ContactRecord.outward`` decision): the third component is
+        genuinely zero, so persistence, compose's rotation and emit all keep
+        one shape, and the emitted line stays the zero-padded 9-argument form
+        the fork accepts on a 2D and a 3D slave surface alike.
     kn
         Normal penalty stiffness.
     visc
