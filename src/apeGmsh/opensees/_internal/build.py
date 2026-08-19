@@ -2123,6 +2123,24 @@ def needs_builder_ndf_bracket(
     )
 
 
+#: Emit paths that satisfy ADR 0099 INV-1 by HOISTING their gated element
+#: blocks above the builder-scoped declarations, rather than by refusing.
+#:
+#: ``"flat"``        — S2, ``BuiltModel._emit_flat``.
+#: ``"partitioned"`` — S5, ``BuiltModel._emit_partitioned``.  Default
+#:   partitioned emit is ONE file with ``if {[getPID] == K}`` brace guards
+#:   and the declarations global, outside every guard; a brace is not a
+#:   file boundary, so the flat hoist replicates directly as one extra
+#:   rank-guard block per rank.
+#:
+#: Still refused: ``"split"`` (file-per-module, ADR 0043) and
+#: ``"partitioned per_rank"`` (file-per-rank, ADR 0061) — both need the
+#: fragment's ``source`` line moved rather than its element lines, which
+#: is a different mechanism (ADR 0099 §"How the two deferred paths should
+#: actually be fixed").
+_HOISTING_PATHS = frozenset({"flat", "partitioned"})
+
+
 def validate_builder_scope_ordering(
     elements: "Sequence[Element]",
     primitives: "Iterable[Primitive]",
@@ -2143,10 +2161,13 @@ def validate_builder_scope_ordering(
     ``SRC/modelbuilder/tcl/TclModelBuilder.cpp:681``; the audit lives in
     :data:`.._element_capabilities._BUILDER_SCOPED_KINDS`).
 
-    Only the flat path hoists its gated element blocks above those
-    declarations (INV-1).  Everywhere else the deck would die late — or,
-    for ``damping``, run to convergence and report an **undamped** answer,
-    because ``region -damp`` only warns.
+    The paths in :data:`_HOISTING_PATHS` hoist their gated element blocks
+    above those declarations (INV-1).  Everywhere else the deck would die
+    late — or, for ``damping``, run to convergence and report an
+    **undamped** answer, because ``region -damp`` only warns.  Under
+    partitioned emit both outcomes are RANK-LOCAL: a rank owning no gated
+    element never executes the bracket, so the failure is
+    non-deterministic in ``np``.
 
     Raises
     ------
@@ -2196,11 +2217,11 @@ def validate_builder_scope_ordering(
 
     fix = (
         "Per ADR 0099 INV-1 every such declaration must follow the LAST "
-        "model line in the deck. The flat (unpartitioned, non-split) emit "
-        "path hoists its gated element blocks above them; the other paths "
-        "do not yet."
+        "model line in the deck. The flat (unpartitioned, non-split) and "
+        "the default partitioned emit paths hoist their gated element "
+        "blocks above them; the remaining paths do not yet."
     )
-    if path != "flat":
+    if path not in _HOISTING_PATHS:
         raise BridgeError(
             f"emit path {path!r} would declare {', '.join(scoped)} before a "
             f"builder-ndf bracket opened for "

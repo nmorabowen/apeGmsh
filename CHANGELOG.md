@@ -77,6 +77,46 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)
+
+ADR 0099 S2 fixed the flat path and made every other path fail loud
+(INV-4).  Partitioned emit is now fixed rather than refused, because it
+is not the hard case it read as: the default partitioned deck is ONE
+file with ``if {[getPID] == K}`` **brace** guards and the builder-scoped
+declarations global, outside every guard.  A brace is not a file
+boundary, so the flat hoist replicates directly — one extra rank-guard
+block per rank that owns a gated element, carrying the nodes those
+elements need and then the bracketed blocks, placed above the
+declarations.
+
+The damage this removes was **rank-local**, which is what made it
+dangerous: a rank owning no gated element never executes the bracket and
+ran fine, so the same model passed on 2 ranks and died on 4.  Measured
+on Ladruno ``25a0647f`` with a mixed-ndf 2-rank deck run once per rank —
+before, rank 0 died at ``pattern Plain`` (``getTimeSeries … none found
+with tag: 1``) while rank 1 completed; with no pattern, rank 0 instead
+ran to the end reporting an **undamped** answer, because ``region
+-damp`` only warns.  After, both ranks build every object and match the
+flat reference to every printed digit.
+
+The hoist is gated on BOTH conditions it needs — at least one
+rank-OWNED gated element, and at least one builder-scoped declaration to
+lose — so every other partitioned deck is byte-identical to before
+(verified on three variants).  Element tags are untouched:
+``allocate_element_tags`` moves above the pre-element pass so the
+hoisted pass has a plan, and ``TagAllocator`` is per-kind.
+
+``per_rank=True`` (ADR 0061) keeps the refusal: it slices each rank
+guard into its own FILE, which is the ``split`` problem — the fragment's
+``source`` line has to move, not its element lines.  It is applied
+around ``BuiltModel.emit``, so it reaches the INV-4 gate as an emitter
+attribute (``per_rank_fragments``) and carries its own path token.
+Stage-OWNED gated elements are still refused on both paths.
+
+``repros/repro4_builder_scoped_wipe.py`` gains two arms that run decks
+on the binary rather than only reading them: ``--partitioned`` (this
+slice, once per rank) and ``--h5`` (the S4a replay, owed since S4c).
+
 ### FIXED — the capture route resolves `element_class_name` again
 
 `DomainCaptureSpec._lookup_class_hint_for_pgs` read

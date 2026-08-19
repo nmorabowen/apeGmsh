@@ -31,6 +31,8 @@ Covers:
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from apeGmsh.opensees._element_capabilities import element_builder_ndf
@@ -370,26 +372,30 @@ def test_inv4_stage_activated_gated_element_is_refused(tmp_path) -> None:
         _py_deck(ops, tmp_path)
 
 
-def test_inv4_non_flat_paths_are_refused() -> None:
-    """The validator's path arm, unit-tested directly — a partitioned or
-    split fixture here would exercise the fixture, not the contract."""
+def test_inv4_non_hoisting_paths_are_refused() -> None:
+    """The validator's path arm, unit-tested directly.
+
+    ``split`` and ``partitioned per_rank`` are the two file-per-fragment
+    layouts; both need the fragment's ``source`` line moved rather than
+    its element lines, so neither is fixed by the S2 / S5 hoist."""
     ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     gated = ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
     scoped = ops.timeSeries.Linear()
 
-    for path in ("split", "partitioned"):
+    for path in ("split", "partitioned per_rank"):
         with pytest.raises(BridgeError, match=path):
             validate_builder_scope_ordering(
                 [gated], [scoped], ops.fem,
                 ndm=2, envelope_ndf=3, path=path,
             )
 
-    # ...and the flat path is exactly what the hoist makes safe.
-    validate_builder_scope_ordering(
-        [gated], [scoped], ops.fem,
-        ndm=2, envelope_ndf=3, path="flat",
-    )
+    # ...and the two hoisting paths are exactly what S2 / S5 make safe.
+    for path in ("flat", "partitioned"):
+        validate_builder_scope_ordering(
+            [gated], [scoped], ops.fem,
+            ndm=2, envelope_ndf=3, path=path,
+        )
 
 
 def test_validator_is_a_no_op_without_a_bracket_or_a_declaration() -> None:
@@ -410,3 +416,260 @@ def test_validator_is_a_no_op_without_a_bracket_or_a_declaration() -> None:
         [gated], [mat], ops.fem,
         ndm=2, envelope_ndf=3, path="partitioned",
     )
+
+
+# =====================================================================
+# Partitioned emit (ADR 0099 S5)
+# =====================================================================
+
+#: rank -> the node ids that rank owns, per :func:`_partitioned_mixed_ndf_fem`.
+_RANK_NODES = {0: {1, 2, 3, 4, 5, 6}, 1: {7, 8}, 2: {9, 10}}
+
+
+def _partitioned_mixed_ndf_fem() -> FEMStub:
+    """Three ranks, only ONE of which owns a gated element.
+
+    Rank 0 gets a two-quad soil block on ndf-2 nodes; ranks 1 and 2 get a
+    two-node beam each on ndf-3 nodes.  The asymmetry is the point: the
+    pre-S5 damage is RANK-LOCAL, because a rank owning no gated element
+    never executes the bracket and runs fine.  A fixture where every rank
+    is gated would hide exactly what makes this defect non-deterministic
+    in ``np`` — the same model passes on 2 ranks and dies on 4.
+    """
+    nodes = _NodesStub(
+        ids=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0), (1.0, 1.0, 0.0), (2.0, 1.0, 0.0),
+            (0.0, 5.0, 0.0), (1.0, 5.0, 0.0),
+            (0.0, 9.0, 0.0), (1.0, 9.0, 0.0),
+        ],
+        node_pgs={"Base": (1, 2, 3), "Anchor": (7, 9), "Tip": (8,)},
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "Rock": _ElementGroupView(
+                ids=(1, 2), connectivity=((1, 2, 5, 4), (2, 3, 6, 5)),
+            ),
+            "Liner": _ElementGroupView(
+                ids=(3, 4), connectivity=((7, 8), (9, 10)),
+            ),
+        },
+    )
+    fem = FEMStub(nodes=nodes, elements=elements)
+    fem.set_partitions([
+        (1, [1, 2, 3, 4, 5, 6], [1, 2]),   # rank 0 — the gated soil block
+        (2, [7, 8], [3]),                  # rank 1 — beam only
+        (3, [9, 10], [4]),                 # rank 2 — beam only
+    ])
+    return fem
+
+
+def _partitioned_bridge(*, gated: bool = True, scoped: bool = True) -> apeSees:
+    """Mixed-ndf partitioned model; the two flags toggle the two
+    conditions the S5 hoist is gated on.
+
+    ``scoped`` carries the beam with it — geomTransf and beamIntegration
+    are what a frame element needs, so a genuinely declaration-free
+    variant is a soil-only one.
+    """
+    ops = apeSees(_partitioned_mixed_ndf_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2000.0, nu=0.25, rho=0.0)
+    sec = ops.section.Elastic(E=2.0e5, A=0.01, Iz=1.0e-4)
+    if gated:
+        ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    if scoped:
+        transf = ops.geomTransf.Linear()
+        integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+        ops.element.dispBeamColumn(
+            pg="Liner", transf=transf, integration=integ,
+        )
+        ops.damping.uniform(
+            ratio=0.05, freq_lower=0.2, freq_upper=10.0, on=["Liner"],
+        )
+        ts = ops.timeSeries.Linear()
+        with ops.pattern.Plain(series=ts) as pat:
+            pat.load(node=8, forces=(0.0, -1.0, 0.0))
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.fix(pg="Anchor", dofs=(1, 1, 1))
+    return ops
+
+
+_GUARD_OPEN = re.compile(r"^if \{\[getPID\] == (\d+)\} \{$")
+
+
+def _rank_streams(lines: list[str]) -> dict[int, list[str]]:
+    """Split a partitioned Tcl deck into one linear stream per rank.
+
+    Under OpenSeesMP every rank executes the WHOLE file, taking the global
+    lines plus the bodies of its own ``if {[getPID] == K} { ... }`` guards.
+    Reconstructing that stream is what makes INV-1 checkable PER RANK,
+    which is the only way rank-local damage shows up at all — the
+    file-wide reading says "fine" for the two ranks that own no soil.
+    """
+    ranks = {int(m.group(1)) for ln in lines if (m := _GUARD_OPEN.match(ln))}
+    streams: dict[int, list[str]] = {r: [] for r in ranks}
+    current: int | None = None
+    for ln in lines:
+        m = _GUARD_OPEN.match(ln)
+        if m is not None:
+            current = int(m.group(1))
+            continue
+        if current is not None and ln == "}":
+            current = None
+            continue
+        for rank in ranks:
+            if current is None or current == rank:
+                streams[rank].append(ln)
+    return streams
+
+
+def _inv1_offenders(stream: list[str]) -> list[tuple[int, str]]:
+    """Builder-scoped declarations preceding the stream's LAST model line."""
+    models = [
+        i for i, ln in enumerate(stream) if ln.strip().startswith("model ")
+    ]
+    if not models:
+        return []
+    return [
+        (i, ln) for i, ln in enumerate(stream[:models[-1]])
+        if any(ln.strip().startswith(tok) for tok in _SCOPED_TOKENS)
+    ]
+
+
+def _guard_count(lines: list[str], rank: int) -> int:
+    return sum(
+        1 for ln in lines
+        if (m := _GUARD_OPEN.match(ln)) and int(m.group(1)) == rank
+    )
+
+
+def test_s5_partitioned_inv1_holds_on_every_rank_stream(tmp_path) -> None:
+    """INV-1 asserted per RANK, not per file.
+
+    Pre-S5 this model was refused outright (INV-4); before the refusal
+    landed it emitted a deck whose rank-0 stream declared all four
+    builder-scoped kinds above the quad bracket — while the rank-1 and
+    rank-2 streams were already clean, because those ranks never execute
+    the bracket.  Checking the file as one text hides that.
+    """
+    lines = _tcl_deck(_partitioned_bridge(), tmp_path)
+    streams = _rank_streams(lines)
+    assert sorted(streams) == [0, 1, 2]
+
+    for rank, stream in streams.items():
+        assert _inv1_offenders(stream) == [], (
+            f"rank {rank} declares a builder-scoped kind above its last "
+            f"model line: {_inv1_offenders(stream)}"
+        )
+
+    # ...and this is not vacuous: rank 0 really does re-issue ``model``
+    # (it owns the gated block), and every rank really does carry all four
+    # declarations.
+    assert sum(
+        1 for ln in streams[0] if ln.strip().startswith("model ")
+    ) == 3
+    for rank, stream in streams.items():
+        for tok in _SCOPED_TOKENS:
+            assert any(ln.strip().startswith(tok) for ln in stream), (
+                f"{tok} missing from rank {rank}'s stream"
+            )
+
+
+def test_s5_only_the_owning_rank_carries_the_bracket(tmp_path) -> None:
+    """The hoisted block is emitted for the gated rank ONLY.
+
+    An empty extra guard is dead weight in Tcl and a syntax error in the
+    Python emitter, so a rank owning no gated element gets no block —
+    which is the same fact that made the pre-S5 failure np-dependent.
+    """
+    lines = _tcl_deck(_partitioned_bridge(), tmp_path)
+    streams = _rank_streams(lines)
+    for rank in (1, 2):
+        assert not [
+            ln for ln in streams[rank] if ln.strip().startswith("element quad")
+        ]
+        # deck header only — no bracket, no restore.
+        assert sum(
+            1 for ln in streams[rank] if ln.strip().startswith("model ")
+        ) == 1
+        assert _guard_count(lines, rank) == 1
+    assert len([
+        ln for ln in streams[0] if ln.strip().startswith("element quad")
+    ]) == 2
+    # rank 0 carries two guards: the hoisted gated block, then its own.
+    assert _guard_count(lines, 0) == 2
+
+
+def test_s5_hoist_moves_node_lines_it_does_not_add_or_drop_them(
+    tmp_path,
+) -> None:
+    """Splitting a rank's block in two must not duplicate or lose a node.
+
+    Each rank still declares exactly its owned node set, exactly once.
+    """
+    streams = _rank_streams(_tcl_deck(_partitioned_bridge(), tmp_path))
+    for rank, owned in _RANK_NODES.items():
+        tags = [
+            int(ln.split()[1]) for ln in streams[rank]
+            if ln.strip().startswith("node ")
+        ]
+        assert len(tags) == len(set(tags)), f"rank {rank} duplicated a node"
+        assert set(tags) == owned, f"rank {rank} node set changed"
+
+
+def test_s5_hoisted_elements_never_forward_reference_a_node(
+    tmp_path,
+) -> None:
+    """Every node an element names is declared earlier in the same rank
+    stream — the property the hoist could plausibly break by moving
+    elements above the per-rank node pass."""
+    streams = _rank_streams(_tcl_deck(_partitioned_bridge(), tmp_path))
+    for rank, stream in streams.items():
+        declared: set[int] = set()
+        for ln in stream:
+            s = ln.strip()
+            if s.startswith("node "):
+                declared.add(int(s.split()[1]))
+            elif s.startswith("element quad "):
+                # element quad <tag> n1 n2 n3 n4 ...
+                used = {int(t) for t in s.split()[3:7]}
+                assert used <= declared, (
+                    f"rank {rank}: {s!r} references undeclared nodes "
+                    f"{sorted(used - declared)}"
+                )
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"gated": False}, {"scoped": False}],
+    ids=["nothing-gated", "nothing-scoped"],
+)
+def test_s5_no_hoist_when_either_gate_is_open(tmp_path, kwargs) -> None:
+    """Both gates matter.  With nothing gated no bracket ever fires; with
+    nothing builder-scoped INV-1 holds vacuously.  Either way reordering
+    is pure churn, so the deck keeps the shape it had: one guard per rank
+    and the declarations in registration (topo) order above them."""
+    lines = _tcl_deck(_partitioned_bridge(**kwargs), tmp_path)
+    for rank in (0, 1, 2):
+        assert _guard_count(lines, rank) == 1
+    first_guard = next(i for i, ln in enumerate(lines) if _GUARD_OPEN.match(ln))
+    scoped_ix = [
+        i for i, ln in enumerate(lines)
+        if any(ln.startswith(tok) for tok in _SCOPED_TOKENS)
+    ]
+    if kwargs.get("scoped", True):
+        assert scoped_ix and max(scoped_ix) < first_guard
+    else:
+        assert scoped_ix == []
+
+
+def test_s5_per_rank_fragments_are_still_refused(tmp_path) -> None:
+    """``per_rank=True`` (ADR 0061) writes file-per-rank fragments, which
+    puts a FILE boundary where the single-file deck has only a brace — the
+    fix there is to move the fragment's ``source`` line, the same
+    mechanism ``split`` needs (ADR 0099 §"How the two deferred paths
+    should actually be fixed").  Deferred, so still refused."""
+    ops = _partitioned_bridge()
+    with pytest.raises(BridgeError, match="per_rank"):
+        ops.tcl(str(tmp_path / "d.tcl"), per_rank=True)
