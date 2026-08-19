@@ -57,6 +57,7 @@ import pstats
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
 
@@ -206,11 +207,39 @@ def _settle(app, window) -> None:
     app.processEvents()
 
 
-def _timed(app, window, action) -> float:
+class Sample(NamedTuple):
+    """One gesture iteration: what it cost, and whether it actually ran.
+
+    The pump catches a failing reconcile, reports it through
+    ``viewers._failures`` and keeps the viewport alive — by design, so a
+    bad slot cannot kill the window. For a profiler that is a trap: the
+    gesture still returns a duration, so the cost of a REFUSAL lands in
+    the table beside the cost of real work and drags the mean toward a
+    number no optimisation can move. A sample that reported a failure is
+    not a measurement of anything.
+    """
+    ms: float
+    failures: tuple
+
+
+_FAILURES: "list[tuple[str, BaseException]]" = []
+
+
+def _install_failure_capture() -> None:
+    """Route pump failures into ``_FAILURES`` so ``_timed`` can see them."""
+    from apeGmsh.viewers import _failures
+
+    _failures.register_error_handler(
+        lambda name, exc: _FAILURES.append((name, exc)))
+
+
+def _timed(app, window, action) -> Sample:
+    mark = len(_FAILURES)
     t = time.perf_counter()
     action()
     _settle(app, window)
-    return (time.perf_counter() - t) * 1000.0
+    ms = (time.perf_counter() - t) * 1000.0
+    return Sample(ms, tuple(n for n, _ in _FAILURES[mark:]))
 
 
 def gesture_scrub(app, window, ctx, repeat):
@@ -275,9 +304,29 @@ def gesture_scope(app, window, ctx, repeat):
     if len(groups) < 2:
         return []
     view = window.session.panes[0]
+
+    # Not every group can carry this pane's contour. A physical group
+    # whose elements never recorded the quantity - a boundary skin, or
+    # another element family - makes the slot refuse, and a refusal is
+    # not a re-scope. Probe each group once and keep the ones that do
+    # real work, rather than hardcoding which groups a given model has.
+    usable, refused = [], []
+    for name in groups:
+        probe = _timed(app, window, lambda n=name: setattr(
+            view, "scope", Scope("physical_groups", (n,))))
+        (refused if probe.failures else usable).append(name)
+    if refused:
+        print(f"[profile] scope: {len(refused)} of {len(groups)} group(s) "
+              f"refuse this pane's slots, excluded from the timing: "
+              f"{', '.join(refused)}")
+    if not usable:
+        view.scope = None
+        _settle(app, window)
+        return []
+
     out = []
     for i in range(repeat):
-        names = (groups[i % len(groups)],)
+        names = (usable[i % len(usable)],)
         out.append(_timed(app, window, lambda n=names: setattr(
             view, "scope", Scope("physical_groups", n))))
     view.scope = None
@@ -311,7 +360,7 @@ GESTURES = {
 # Reporting
 # ─────────────────────────────────────────────────────────────────────
 
-def _report(rows: "dict[str, list[float]]", panes: int) -> None:
+def _report(rows: "dict[str, list[Sample]]", panes: int) -> None:
     import numpy as np
 
     # ASCII in PRINTED output: this runs on a cp1252 Windows console, and
@@ -320,14 +369,38 @@ def _report(rows: "dict[str, list[float]]", panes: int) -> None:
     print(f"\n-- per-gesture cost, {panes} pane(s) (ms) --")
     print(f"  {'gesture':10s} {'n':>4s} {'mean':>9s} {'p50':>9s} "
           f"{'p95':>9s} {'max':>9s} {'total':>9s}")
+    dropped: "dict[str, int]" = {}
     for name, samples in rows.items():
-        if not samples:
-            print(f"  {name:10s} {'-':>4s}   (not applicable to this model)")
+        clean = [s for s in samples if not s.failures]
+        if len(clean) != len(samples):
+            dropped[name] = len(samples) - len(clean)
+        if not clean:
+            why = ("every iteration refused"
+                   if samples else "not applicable to this model")
+            print(f"  {name:10s} {'-':>4s}   ({why})")
             continue
-        a = np.asarray(samples)
+        a = np.asarray([s.ms for s in clean])
         print(f"  {name:10s} {a.size:4d} {a.mean():9.1f} "
               f"{np.percentile(a, 50):9.1f} {np.percentile(a, 95):9.1f} "
               f"{a.max():9.1f} {a.sum():9.1f}")
+
+    # Never let a refusal pass as a measurement in silence - a timing
+    # that came from an exception path is worse than a missing row.
+    if dropped:
+        print()
+        print("  ! excluded from the table above (the gesture raised, "
+              "so the duration is the cost of failing, not of working):")
+        for name, n in dropped.items():
+            print(f"      {name}: {n} iteration(s)")
+    if _FAILURES:
+        seen: "dict[str, int]" = {}
+        for slot, exc in _FAILURES:
+            seen[f"{slot}: {type(exc).__name__}: {exc}"] = (
+                seen.get(f"{slot}: {type(exc).__name__}: {exc}", 0) + 1)
+        print()
+        print(f"  ! {len(_FAILURES)} pump failure(s) during this run:")
+        for line, n in seen.items():
+            print(f"      x{n}  {line}")
 
 
 def _dump(profiler: cProfile.Profile, out: Path, label: str) -> None:
@@ -404,6 +477,7 @@ def main(argv: "list[str]") -> int:
               f"profile the wrong code.", file=sys.stderr)
         return 2
 
+    _install_failure_capture()
     results, session, stage, groups = build_session(
         args.results, args.panes, args.contour)
     del results
