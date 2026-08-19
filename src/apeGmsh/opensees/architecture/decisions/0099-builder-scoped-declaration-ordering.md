@@ -229,9 +229,44 @@ text rather than over any one emitter.
    element line rather than running silently undamped, so the guard buys an
    emit-time error in place of a runtime abort, not a silent-wrong rescue.
 
+5. **S5 — the partitioned hoist.** The `_emit_flat` pass replicated on
+   `_emit_partitioned`: one extra `if {[getPID] == K}` guard per rank that
+   OWNS a gated element, carrying the nodes those elements need and then
+   the bracketed blocks, placed between the surviving declarations and the
+   builder-scoped ones. Ranks owning none get no block — an empty guard is
+   dead weight in Tcl and a syntax error in the Python emitter. The INV-4
+   refusal is lifted for `partitioned` and kept for `partitioned per_rank`
+   (see below).
+
+   **Gated on both conditions, so unhoisted decks are byte-identical.**
+   With no builder-scoped declaration INV-1 holds vacuously; with no
+   rank-OWNED gated row no bracket ever fires. In either case the
+   pre-element pass stays one topo-ordered loop and the deck does not move
+   a byte — measured on three variants (nothing gated / nothing scoped /
+   neither), byte-identical against the pre-S5 emitter.
+
+   **Element tag allocation is unaffected**, by the same argument S2
+   recorded: `allocate_element_tags` (and the per-rank bucketing that
+   reads it) moves above the pre-element pass so the hoisted pass has a
+   plan, and `TagAllocator` is per-kind, so the element and `geomTransf`
+   counters do not interact. The staged branch has always allocated
+   there.
+
+   **Verified on the real binary, per rank.** A 2-rank mixed-ndf deck —
+   quads on rank 0, frame on rank 1, all four scoped kinds global — ran
+   through `OpenSees.exe` once per rank (a `proc getPID` driver
+   pre-empting the deck's own shim) and matched the flat reference to
+   every printed digit on both. Neutering the hoist reproduces the
+   pre-S5 split exactly: rank 0 dies at `pattern Plain` with all four
+   kinds listed as INV-1 offenders, rank 1 still passes. That arm is
+   `repros/repro4_builder_scoped_wipe.py --partitioned`; the S4a replay
+   is `--h5`.
+
 **Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
-defect** after S2 — they are not fixed here, they are made **loud** by
-INV-4. And the staged bracket **cannot be fixed by hoisting at all**: a
+defect** after S2 — they are not fixed there, they are made **loud** by
+INV-4. *(S5 has since fixed the default partitioned path; what remains
+refused is `_emit_split` and `per_rank=True`, the two file-per-fragment
+layouts — see the section below, which is what S5 was built from.)* And the staged bracket **cannot be fixed by hoisting at all**: a
 stage-activated gated element brackets after the pattern blocks and after
 completed `analyze` calls, so there is no earlier position to hoist to.
 That case needs a **replay of the builder-scoped declarations at bracket
@@ -253,7 +288,10 @@ round of design before an adversarial probe measured it.
   both ranks. Note also that the damage is **rank-local** — a rank owning no
   gated element never executes the bracket and runs fine today, so the
   current failure is non-deterministic in `np`. Only `per_rank=True` produces
-  the file-per-rank layout that resembles split.
+  the file-per-rank layout that resembles split. **Implemented in S5**,
+  including the rank-local asymmetry as a regression pin: the fixture puts
+  the gated block on one rank of three, so a hoist that fixed only the
+  file-wide reading would still fail it.
 
 - **Split IS hoistable — you move the `source` line, not the nodes.** The
   claim that hoisting a gated element would drag its nodes out of its
@@ -308,9 +346,12 @@ element or a `quad ... -damp`.
 ## Consequences
 
 - **Decks that previously emitted and silently ran wrong now raise.** The
-  affected class is split or partitioned emit, or staged emit with a
-  **stage-owned** gated element (a globally-activated one is not refused),
-  plus any builder-scoped declaration. This is a **deliberate breaking
+  affected class is split emit, `per_rank=True` emit, or staged emit with
+  a **stage-owned** gated element (a globally-activated one is not
+  refused), plus any builder-scoped declaration. *(Default partitioned
+  emit was in this set until S5 hoisted it; `per_rank` stays because it
+  turns each rank guard into a separate FILE, which is the `split`
+  problem, not the partitioned one.)* This is a **deliberate breaking
   change**, and it is strictly better than the status quo: those decks either
   died 30k lines downstream pointing at the wrong command, or — in the
   `damping` case, which only warns — converged on a wrong answer that nothing
@@ -318,7 +359,10 @@ element or a `quad ... -damp`.
   correctly yet.
 - **The flat path's deck line ORDER changes.** Same objects, same tags, same
   results; different positions. Any test pinning absolute deck line numbers
-  moves. Content-based and order-insensitive pins are unaffected.
+  moves. Content-based and order-insensitive pins are unaffected. The same
+  holds for the partitioned path after S5, and only for decks that carry
+  both a bracket-needing gated element and a builder-scoped declaration —
+  every other partitioned deck is byte-unchanged.
 - **The replayed deck's line ORDER changes too** (`build('tcl')` / `('py')`
   / `('live')`), and only for decks that carry both a bracket-needing gated
   element and at least one builder-scoped declaration — a 20-deck corpus
