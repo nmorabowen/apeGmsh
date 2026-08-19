@@ -123,7 +123,9 @@ __all__ = [
     "open_builder_ndf_bracket",
     "close_builder_ndf_bracket",
     "needs_builder_ndf_bracket",
+    "needs_builder_ndf_bracket_for_token",
     "validate_builder_scope_ordering",
+    "validate_builder_scope_replay",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
@@ -2084,6 +2086,28 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def needs_builder_ndf_bracket_for_token(
+    type_token: str, *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """True iff ``type_token``'s upstream parser needs a bracket here.
+
+    The token form of :func:`needs_builder_ndf_bracket`, for the replay
+    paths that carry deck records (``rec.type_token``) rather than
+    ``Element`` specs.  ``element_builder_ndf`` resolves class names AND
+    deck tokens (``_CLASS_TOKEN_ALIASES.get(name, name)``), so the two
+    forms cannot disagree.
+
+    Note the ``envelope_ndf`` term: a gated class under an envelope that
+    ALREADY matches its required builder ndf needs no bracket, and must
+    not be hoisted.  Keying on ``_BUILDER_NDF_GATED`` membership alone
+    would reorder every ndf=2 quad deck for nothing.
+    """
+    from .._element_capabilities import element_builder_ndf
+
+    need = element_builder_ndf(type_token, ndm)
+    return need is not None and int(need) != int(envelope_ndf)
+
+
 def needs_builder_ndf_bracket(
     spec: "Element", *, ndm: int, envelope_ndf: int,
 ) -> bool:
@@ -2094,10 +2118,9 @@ def needs_builder_ndf_bracket(
     in ``_emit_flat`` (which orders around it), and
     :func:`validate_builder_scope_ordering` (which guards it).
     """
-    from .._element_capabilities import element_builder_ndf
-
-    need = element_builder_ndf(type(spec).__name__, ndm)
-    return need is not None and int(need) != int(envelope_ndf)
+    return needs_builder_ndf_bracket_for_token(
+        type(spec).__name__, ndm=ndm, envelope_ndf=envelope_ndf,
+    )
 
 
 def validate_builder_scope_ordering(
@@ -2200,6 +2223,104 @@ def validate_builder_scope_ordering(
                 f"analyze. The bracket destroys those declarations. {fix} "
                 f"Activate this element's physical group globally instead "
                 f"of inside a stage."
+            )
+
+
+def validate_builder_scope_replay(
+    elements: "Sequence[Any]",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+    scoped_present: bool,
+    stage_owned_tags: "frozenset[int]" = frozenset(),
+    already_gated: bool = False,
+) -> None:
+    """Replay-side sibling of :func:`validate_builder_scope_ordering`.
+
+    ADR 0099 S4b.  The forward validator works over ``Element`` specs and
+    ``dependencies()``; replay carries deck RECORDS (a type token, a tag,
+    a flat arg tail), so the same two unfixable-by-ordering cases have to
+    be recognised differently.  Both are reachable only from a PRE-S1
+    archive — the bridge refuses to write either today — so this is
+    legacy-data defence, not a live path.
+
+    Raises
+    ------
+    BridgeError
+        INV-3 — a gated element record references a builder-scoped
+        declaration through its arg tail (``quad ... -damp N``).  Its own
+        bracket destroys that declaration, so no ordering satisfies both:
+        hoisted, the element resolves a tag not yet declared; unhoisted,
+        the bracket purges it after the fact.
+        INV-4 — a stage-owned gated element in an archive that also
+        carries builder-scoped declarations.  Its bracket emits INSIDE
+        the stage block, after the global declarations and (past the
+        first stage) after a completed ``analyze``; there is no earlier
+        position to hoist to.
+    """
+    from .._element_capabilities import (
+        builder_scoped_kind_for_arg,
+        element_builder_ndf,
+    )
+
+    # Gatedness is a property of the TOKEN at a fixed
+    # (ndm, envelope_ndf) — resolve it once per distinct token, never
+    # per element.  A deck carries a handful of tokens and can carry
+    # millions of elements, and this guard runs on every replayed deck.
+    # ``already_gated`` lets a caller that has ALREADY partitioned (the
+    # ADR 0099 hoist in ``_replay_into``) hand the gated list straight
+    # in, so the token pass is not paid twice on the same deck.
+    if already_gated:
+        gated = list(elements)
+    else:
+        gated_tokens = {
+            tok for tok in {rec.type_token for rec in elements}
+            if needs_builder_ndf_bracket_for_token(
+                tok, ndm=ndm, envelope_ndf=envelope_ndf,
+            )
+        }
+        if not gated_tokens:
+            return
+        gated = [rec for rec in elements if rec.type_token in gated_tokens]
+    if not gated:
+        return
+
+    for rec in gated:
+        # ``rec.args`` bare, not ``getattr(rec, "args", ())``: an
+        # args-less record is a broken contract, and defaulting to ()
+        # would SKIP the INV-3 scan silently — the one outcome this
+        # guard exists to prevent.  Matches the bare ``rec.tag`` below.
+        bad = sorted({
+            k for a in rec.args
+            if (k := builder_scoped_kind_for_arg(a)) is not None
+        })
+        if bad:
+            raise BridgeError(
+                f"replayed element {rec.type_token!r} (tag "
+                f"{int(rec.tag)}) needs a builder-ndf bracket "
+                f"(model basic -ndm {ndm} -ndf "
+                f"{element_builder_ndf(rec.type_token, ndm)}), and that "
+                f"bracket destroys the {', '.join(bad)} declaration its "
+                f"own arg tail references. Per ADR 0099 INV-3 no ordering "
+                f"of the deck can satisfy both. This archive predates the "
+                f"emit-time INV-3 guard; re-author the model attaching "
+                f"damping with ops.damping on a region instead of the "
+                f"element's damp= argument, or use an ungated element."
+            )
+
+    if stage_owned_tags and scoped_present:
+        staged = [rec for rec in gated if int(rec.tag) in stage_owned_tags]
+        if staged:
+            raise BridgeError(
+                f"replayed element {staged[0].type_token!r} (tag "
+                f"{int(staged[0].tag)}) is stage-owned, so its "
+                f"builder-ndf bracket emits INSIDE the stage block — "
+                f"after the global builder-scoped declarations, and (for "
+                f"any stage past the first) after a pattern and a "
+                f"completed analyze. The bracket destroys them and there "
+                f"is no earlier position to hoist to. Per ADR 0099 INV-4 "
+                f"this deck is refused rather than emitted wrong; "
+                f"activate this element's physical group globally."
             )
 
 

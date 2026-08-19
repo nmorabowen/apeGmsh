@@ -316,6 +316,7 @@ def _replay_into(
     skip_element_tags: "frozenset[int]" = frozenset(),
     initial_stress_tags: Any = None,
     reinforce_name_to_tag: "dict[str, int] | None" = None,
+    deck_ordering: bool = True,
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -337,13 +338,16 @@ def _replay_into(
       3. ``emitter.uniaxialMaterial`` / ``emitter.nDMaterial``
       4. ``emitter.section`` (simple) and the open/patch/fiber/layer/close
          sequence (complex)
+      4b. the builder-ndf-GATED elements, as one bracketed run (ADR 0099
+          INV-1, ``deck_ordering=True`` only) — see the note below
       5. ``emitter.geomTransf``
       6. ``emitter.beamIntegration``
       7. ``emitter.timeSeries`` (+ ``emitter.damping`` for tagged damping
          objects — ADR 0053 D3b — after the series a ``-factor`` references,
          before the elements an element-flag ``-damp`` references)
-      8. ``emitter.element``  (with ``set_element_nodes`` /
-         ``set_current_fem_element_id`` side channels for the H5 path)
+      8. ``emitter.element``  (the UNGATED elements when the 4b hoist
+         ran; all of them otherwise) — with ``set_element_nodes`` /
+         ``set_current_fem_element_id`` side channels for the H5 path
       8b. ``emit_reinforce_ties`` — g.reinforce ``LadrunoEmbeddedRebar``
           couplings, re-emitted from the neutral-zone ``fem`` (no dedicated
           deck record; tags allocated past the max element tag). Skipped when
@@ -359,6 +363,36 @@ def _replay_into(
           + ``emitter.analyze`` if present
 
     .. note::
+
+        **``deck_ordering`` — ADR 0099 INV-1.**  A builder-ndf bracket
+        re-issues ``model BasicBuilder``, which deletes the Tcl model
+        builder and purges the process-global ``timeSeries`` /
+        ``geomTransf`` / ``beamIntegration`` / ``damping`` registries
+        (fork ``TclModelBuilder.cpp:681``).  Steps 5-7b declare exactly
+        those kinds, so with the elements all at step 8 the bracket
+        destroys them and the deck dies at the first later reference —
+        ``pattern Plain`` — or, for ``damping``, runs silently undamped.
+        With ``deck_ordering`` the GATED elements hoist to step 4b, above
+        the declarations, matching what ``_emit_flat`` does.  Tag identity
+        is untouched: the records carry their tags, so only line
+        positions move.
+
+        Pass ``deck_ordering=False`` from a caller that produces no deck.
+        The H5 re-emit path (``OpenSeesModel._populate_emitter_h5``) does:
+        ``H5Emitter.model`` only stores ``ndm``/``ndf``, the bracket is
+        never persisted as a line, so the hoist buys that path nothing —
+        and skipping it keeps the archive-rewrite fixed point exactly as
+        it was, by construction rather than by argument.
+
+        ``build('live')`` deliberately does NOT opt out, even though it
+        emits no deck either.  Measured on the fork's in-process module:
+        a ``ops.model('basic', ...)`` re-issue does NOT purge the
+        registries there (a ``timeSeries`` and a ``geomTransf`` declared
+        before it both survive) — openseespy runs no ``TclModelBuilder``
+        destructor, so live never had this defect.  The hoist is kept
+        anyway because it is measurably harmless in-process and the
+        ordering then holds for ANY backend, rather than resting on one
+        backend's teardown behaviour staying as it is.
 
         **Tag identity may diverge from a fresh ``apeSees(fem).run()``**
         (ADR 0019 INV-5).  The bridge's :class:`TagAllocator`
@@ -424,6 +458,72 @@ def _replay_into(
             emitter.layer(layer.kind, *layer.args)
         emitter.section_close()
 
+    from .build import needs_builder_ndf_bracket_for_token
+
+    # 4b. ADR 0099 INV-1 — the builder-ndf-GATED elements, hoisted above
+    # the declarations their bracket would destroy.  Everything they need
+    # (an NDMaterial) is already emitted at step 3; nothing gated can
+    # reference a transform / integration / series / damping (the five
+    # non-quad gated classes take ``nodes matTag`` + flag options only,
+    # and ``quad``'s ``-damp`` is refused up front — INV-3).  The split is
+    # keyed on the ENVELOPE-aware predicate, so a gated element under an
+    # envelope that already matches its builder ndf stays in place at
+    # step 8 and no deck reorders for nothing.
+    # Gatedness is a property of the TOKEN at a fixed (ndm, envelope_ndf),
+    # so the predicate is resolved once per DISTINCT token and memoed — a
+    # deck carries a handful of them and can carry millions of elements.
+    # Per-element evaluation measured +13-15% on the emit of an
+    # ungated-only 200k-element deck, i.e. a cost on exactly the models
+    # this hoist does nothing for.
+    _kept = [rec for rec in elements if int(rec.tag) not in skip_element_tags]
+    _gated: "list[Any]" = []
+    _ungated = _kept
+    # A bracket is only harmful when there is a builder-scoped declaration
+    # for it to destroy.  With none present, INV-1 is satisfied vacuously:
+    # skip the hoist, and this deck keeps the line order it had — an O(1)
+    # test on four already-materialised sequences, before touching the
+    # element list at all.
+    if deck_ordering and (
+        transforms or beam_integrations or time_series or dampings
+    ):
+        # Gatedness is a property of the TOKEN at a fixed
+        # (ndm, envelope_ndf), so resolve it once per DISTINCT token —
+        # a deck carries a handful of those and can carry millions of
+        # elements.  Per-element evaluation measured +13-15% on the emit
+        # of an ungated-only 200k-element deck.
+        _gated_tokens = {
+            tok for tok in {rec.type_token for rec in _kept}
+            if needs_builder_ndf_bracket_for_token(
+                tok, ndm=int(ndm), envelope_ndf=int(ndf),
+            )
+        }
+        if _gated_tokens:
+            _gated = [r for r in _kept if r.type_token in _gated_tokens]
+            _ungated = [
+                r for r in _kept if r.type_token not in _gated_tokens
+            ]
+            # ADR 0099 INV-3 (S4b) — a rehydrated gated element whose arg
+            # tail references a builder-scoped declaration cannot be saved
+            # by ordering, hoisted or not.  Only a PRE-S1 archive can carry
+            # one; refuse rather than emit a deck that aborts at the
+            # element line.  Scanned over the ALREADY-PARTITIONED gated
+            # list, inside the vacuity branch: with no scoped declaration
+            # present a dangling ``-damp`` tag is a corrupt archive that
+            # already fails loud at load (measured: OpenSees warns and
+            # aborts at the element line), so the guard would buy nothing
+            # there while costing a full per-element arg scan — measured
+            # +13.8-22.3% on a gated-but-unscoped 200k-element replay.
+            from .build import validate_builder_scope_replay
+
+            validate_builder_scope_replay(
+                _gated, ndm=int(ndm), envelope_ndf=int(ndf),
+                scoped_present=True, already_gated=True,
+            )
+    if _gated:
+        _replay_elements_bracketed(
+            emitter, _gated, ndm=int(ndm), envelope_ndf=int(ndf),
+        )
+
     # 5. Transforms.  Schema deviation (TransformRecord docstring):
     # one record per ``geomTransf`` call, not per spec.  Replay
     # produces the same call shape: one ``geomTransf`` line per
@@ -455,9 +555,7 @@ def _replay_into(
     # ignore the calls (their ``set_*`` helpers no-op when the attr
     # is absent).
     _replay_elements_bracketed(
-        emitter,
-        [rec for rec in elements if int(rec.tag) not in skip_element_tags],
-        ndm=int(ndm), envelope_ndf=int(ndf),
+        emitter, _ungated, ndm=int(ndm), envelope_ndf=int(ndf),
     )
 
     # 8b. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar).
@@ -773,6 +871,34 @@ def _replay_staged_into(
     owned_element_tags = frozenset(
         int(t) for s in stages for t in s.owned_element_ids
     )
+
+    # ADR 0099 INV-4 (S4b) — a STAGE-OWNED gated element brackets inside
+    # its stage block, after the global builder-scoped declarations and
+    # (past the first stage) after a completed ``analyze``.  Unlike the
+    # global prefix, which the S4a hoist fixes, there is no earlier
+    # position to move it to; refuse rather than emit a deck that runs
+    # undamped or dies mid-history.  Placed HERE, before any emit, and
+    # NOT inside ``_replay_into`` — the H5 re-emit path replays a staged
+    # archive through the flat ``_replay_into`` and must stay able to
+    # rewrite one.  Only a pre-S1 archive can carry this.
+    if owned_element_tags:
+        from .build import validate_builder_scope_replay
+
+        # ``ndm`` / ``ndf`` are required keyword args of ``_replay_into``
+        # and always present here — indexed, not ``.get``-defaulted,
+        # because a wrong envelope would silently mis-evaluate the gate.
+        validate_builder_scope_replay(
+            replay_kwargs.get("elements", ()),
+            ndm=int(replay_kwargs["ndm"]),
+            envelope_ndf=int(replay_kwargs["ndf"]),
+            scoped_present=bool(
+                replay_kwargs.get("transforms")
+                or replay_kwargs.get("beam_integrations")
+                or replay_kwargs.get("time_series")
+                or replay_kwargs.get("dampings")
+            ),
+            stage_owned_tags=owned_element_tags,
+        )
 
     # ONE allocator threaded across the global prefix AND every stage
     # (the bridge reuses a single ``tags``; a per-stage allocator would

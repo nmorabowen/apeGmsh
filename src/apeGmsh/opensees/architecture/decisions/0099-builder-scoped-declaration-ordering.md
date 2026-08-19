@@ -65,7 +65,9 @@ bearing. Neither half can be dropped. **The defect is purely ordering.**
   bracket at `1991`.
 - `_emit_partitioned` — `apesees.py:2688-2716`, then the
   `emit_element_spec_partitioned` bracket at `_internal/build.py:7220`.
-- **H5 replay** — `_internal/compose.py:432-458`.
+- **H5 replay** — `_internal/compose.py:432-458`. *(As-found. Fixed by
+  S4 — replay is the one path here that could be hoisted rather than only
+  made loud; see the implementation plan.)*
 
 Plus the staged case, which is the worst of the five: a stage-activated gated
 element brackets at `apesees.py:2149`, and for stage index ≥ 2 that bracket
@@ -79,9 +81,21 @@ line-order problem at all; it lands mid-history.
 returns it from `dependencies()` (`solid.py:408-411`), and emits `-damp $tag`
 (`solid.py:431`). So `quad(damp=…)` under a mixed-ndf envelope declares its
 damping, **destroys it with its own bracket**, and then references the dead
-tag. Because the `damping` lookup only warns, the deck runs and reports a
-**silently undamped** answer. The other five gated classes depend only on an
-`NDMaterial`, which survives — `quad` is the sole self-wiping member today.
+tag. The other five gated classes depend only on an `NDMaterial`, which
+survives — `quad` is the sole self-wiping member today.
+
+> **Correction (S4, measured).** This paragraph originally said the deck
+> "runs and reports a **silently undamped** answer", on the strength of the
+> warn-only row in the survival table above. That is wrong, and it was the
+> strongest-sounding justification for INV-3, so it matters. Re-measured on
+> the binary, `element quad 101 … -damp 5` against a purged tag **aborts**:
+> `WARNING damping not found` / `FourNodeQuad element: 101` / `while
+> executing "element quad …"`. The warn-only property belongs to the
+> *lookup*, not to element construction — and `damping`'s *add* hard-errors
+> too (`MapOfTaggedObjects::addComponent - … similar tag exists`). INV-3
+> still stands, but on the honest ground that no ordering can satisfy it and
+> the alternative is a deck that dies at the element line, not one that lies
+> about damping.
 
 ### What RevA hits, and why the reported fix is not enough
 
@@ -169,19 +183,133 @@ text rather than over any one emitter.
    so a fork change to `~TclModelBuilder()` shows up as a failing repro rather
    than as a field report.
 
-**Deferred, plainly.** `_emit_split`, `_emit_partitioned` and H5 replay
-**keep the defect** after S2 — they are not fixed here, they are made
-**loud** by INV-4. And the staged bracket **cannot be fixed by hoisting at
-all**: a stage-activated gated element brackets after the pattern blocks and
-after completed `analyze` calls, so there is no earlier position to hoist to.
+4. **S4 — the H5 / deck-replay hoist + two legacy refusals.** Replay walks
+   ALREADY-RESOLVED records, so tags are fixed and reordering only moves
+   deck lines — this is the one deferred path that could be genuinely
+   *fixed* rather than only made loud.
+
+   *S4a — the hoist.* `needs_builder_ndf_bracket_for_token` (the token core
+   of the existing spec predicate — `element_builder_ndf` already resolves
+   both spellings, so they cannot disagree); `_replay_into` partitions its
+   elements on it and emits the gated run at a new **step 4b**, above the
+   four declarations. Two conditions gate the partition, and both matter:
+   the predicate is **envelope-aware** (a gated class under a matching
+   envelope needs no bracket and must not move, or every ndf=2 quad deck
+   reorders for nothing), and the hoist is skipped when the deck carries
+   **no builder-scoped declaration at all** (INV-1 then holds vacuously, so
+   reordering would be pure churn). Gatedness is resolved once per DISTINCT
+   token — per-element evaluation measured **+13-15%** on emit of an
+   ungated-only 200k-element deck, a cost landing precisely on the models
+   the hoist cannot help.
+
+   `build('h5')` **opts out** (`deck_ordering=False`): `H5Emitter.model`
+   only stores ndm/ndf, so the bracket is never persisted as a line and the
+   hoist buys that path nothing — while skipping it keeps the
+   archive-rewrite fixed point by construction rather than by argument.
+   `build('live')` deliberately does **not** opt out: measured, openseespy
+   runs no `TclModelBuilder` destructor (a `timeSeries` and a `geomTransf`
+   declared before an in-process `model` re-issue both survive), so live
+   never had this defect — the hoist is kept only so the ordering holds for
+   any backend rather than resting on one backend's teardown behaviour.
+
+   *S4b — the refusals.* `validate_builder_scope_replay`, a record-shaped
+   sibling of `validate_builder_scope_ordering` (replay has type tokens and
+   flat arg tails, not specs with `dependencies()`). Two arms: **INV-3**, a
+   gated record referencing a builder-scoped declaration through its arg
+   tail (`quad ... -damp N`); and **INV-4**, a stage-owned gated element,
+   guarded in `_replay_staged_into` and NOT in `_replay_into` — the H5
+   re-emit path replays a staged archive through the flat helper and must
+   stay able to rewrite one. The element arg-tail flags (`-damp`,
+   `-fx/-fy/-fz`) become a **third column on `_BUILDER_SCOPED_KINDS`**
+   rather than a literal at the call site, keeping INV-2's one-table rule.
+
+   Both arms are **pre-S1 legacy defence**: today's bridge refuses to write
+   either archive. Note the INV-3 severity is smaller than the ADR's
+   authoring-side case — measured post-S4a, that deck *aborts* at the
+   element line rather than running silently undamped, so the guard buys an
+   emit-time error in place of a runtime abort, not a silent-wrong rescue.
+
+**Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
+defect** after S2 — they are not fixed here, they are made **loud** by
+INV-4. And the staged bracket **cannot be fixed by hoisting at all**: a
+stage-activated gated element brackets after the pattern blocks and after
+completed `analyze` calls, so there is no earlier position to hoist to.
 That case needs a **replay of the builder-scoped declarations at bracket
 close**, which is a different mechanism with its own tag-identity questions.
 Future work, not a rider on this ADR.
 
+### How the two deferred paths should actually be fixed (measured, S4)
+
+Recorded because the obvious reading of the paragraph above — that split and
+partitioned are the same problem as staged — is **wrong**, and it cost a
+round of design before an adversarial probe measured it.
+
+- **Partitioned is the EASY case, not a sibling of split.** Default
+  partitioned emit is **one file** with `if {[getPID] == K}` brace guards;
+  the builder-scoped declarations sit global, *outside* every guard. A brace
+  is not a file boundary, so the S2 hoist replicates directly: one extra
+  rank-guard block carrying that rank's gated elements and their nodes,
+  placed above the declarations. Measured exact against the flat reference on
+  both ranks. Note also that the damage is **rank-local** — a rank owning no
+  gated element never executes the bracket and runs fine today, so the
+  current failure is non-deterministic in `np`. Only `per_rank=True` produces
+  the file-per-rank layout that resembles split.
+
+- **Split IS hoistable — you move the `source` line, not the nodes.** The
+  claim that hoisting a gated element would drag its nodes out of its
+  fragment is false: hoisting the gated module's `source` statement above the
+  declarations carries the nodes along *inside* the fragment, which stays
+  byte-identical. Measured: loads clean, matches the flat reference to 12
+  digits. The genuine boundary is narrower — it fails only when a **single
+  module** carries both a gated element and a builder-scoped-dependent
+  element, and even then that module can emit as **two ordered fragments**
+  (`A_gated` / `A_rest`), a shape ADR 0061's `per_rank` writer already
+  produces. So this is layout reuse, not new machinery.
+
+- **Do NOT make the bracket self-healing.** The tempting unification —
+  `close_builder_ndf_bracket` re-declaring what it destroyed — is
+  **rejected on measurement**. Re-declaring a tag that was *not* purged
+  hard-errors for all four kinds (`MapOfTaggedObjects::addComponent - …
+  similar tag exists`), and `ops.model()` under openseespy purges nothing, so
+  on `build('live')` the **second** heal collides — while split and
+  partitioned always carry M ≥ 2 brackets. It would fail on live for exactly
+  the model class it exists to fix, and it converts a deck-ordering property
+  into a backend-conditional one. If a heal is ever wanted for the staged
+  case, scope it there alone, gate it on the deck backends, and gate it on a
+  bracket having actually fired — never as a property of the bracket itself.
+  Even in staged, hoist every gated element that is not stage-activated first;
+  only truly stage-activated ones need the replay.
+
+The replay mechanism itself is **sound where it is needed** (measured): an
+element built before a purge keeps working — `FourNodeQuad` stores
+`(*damping).getCopy()` per integration point, so a damped quad stays damped
+across a purge (0.0239 vs 0.0535 undamped, identical to 6 s.f. before and
+after) — a `timeSeries` already bound to a `pattern` is a private copy that
+re-declaration neither orphans nor mutates, and 100 declare/bracket/replay
+cycles are bit-identical.
+
+Note what that leaves, once S4 lands. S1's write-time refusal is narrower
+than it first reads: it refuses split and partitioned outright, but refuses
+a staged model only when a gated element is **stage-OWNED**
+(`build.py`, `staged = [g for g in gated if id(g) in element_owner_stage]`)
+— a staged model whose gated element is activated **globally** writes to h5
+without complaint. So the post-S1 archive set carrying a gated element *and*
+a builder-scoped declaration is **flat archives plus globally-activated
+staged ones**, not flat alone.
+
+S4 still covers all of them, but for a mechanical reason rather than by
+elimination: `_replay_staged_into` delegates its global prefix to
+`_replay_into`, so the S4a hoist fires there too. *Measured* — such an
+archive replays with zero INV-1 offenders (`element quad` above
+`geomTransf`) and runs clean on the binary. The two S4b refusals remain
+**pre-S1 defence**: today's bridge still cannot write a stage-OWNED gated
+element or a `quad ... -damp`.
+
 ## Consequences
 
 - **Decks that previously emitted and silently ran wrong now raise.** The
-  affected class is split / partitioned / staged emit, with a gated element,
+  affected class is split or partitioned emit, or staged emit with a
+  **stage-owned** gated element (a globally-activated one is not refused),
   plus any builder-scoped declaration. This is a **deliberate breaking
   change**, and it is strictly better than the status quo: those decks either
   died 30k lines downstream pointing at the wrong command, or — in the
@@ -191,9 +319,16 @@ Future work, not a rider on this ADR.
 - **The flat path's deck line ORDER changes.** Same objects, same tags, same
   results; different positions. Any test pinning absolute deck line numbers
   moves. Content-based and order-insensitive pins are unaffected.
+- **The replayed deck's line ORDER changes too** (`build('tcl')` / `('py')`
+  / `('live')`), and only for decks that carry both a bracket-needing gated
+  element and at least one builder-scoped declaration — a 20-deck corpus
+  byte-diffed 18/20 identical across S4a, the 2 that moved being exactly the
+  intended hoist. `build('h5')` is byte-unchanged by construction.
 - `quad(damp=…)` under a mixed-ndf envelope becomes an emit-time error
   (INV-3). It is not a regression: that combination has never produced a
-  damped model, it produced an undamped one without saying so.
+  damped model. It dies at the element line (measured — see the correction
+  above; it does NOT run undamped), so this trades a failure 30k lines
+  downstream for one at emit.
 - The bracket itself is untouched. `_BUILDER_NDF_GATED` stays as it is, the
   fork gate it encodes stays as it is, and nothing about mixed-ndf authoring
   changes. Only where the four builder-scoped kinds land relative to the last

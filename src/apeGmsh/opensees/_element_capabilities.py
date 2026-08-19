@@ -890,17 +890,50 @@ def element_builder_ndf(
 #: them here.
 #: Primitive base -> the OpenSees declaration keyword it emits, so a
 #: diagnostic can name ``geomTransf`` rather than the concrete class
-#: ``Linear`` (which is also a TimeSeries spelling).
-_BUILDER_SCOPED_KINDS: "tuple[tuple[type, str], ...]" = (
-    (TimeSeries,      "timeSeries"),
-    (GeomTransf,      "geomTransf"),
-    (BeamIntegration, "beamIntegration"),
-    (Damping,         "damping"),
+#: ``Linear`` (which is also a TimeSeries spelling) -> the element
+#: ARG-TAIL FLAGS through which an element line references one by tag.
+#:
+#: The third column exists for the replay guard: a rehydrated deck record
+#: carries flags and ints, not typed primitives, so ``dependencies()`` is
+#: unavailable and the reference has to be recognised in the arg tail.
+#: Keeping it in this table rather than at the call site is INV-2 -- one
+#: row to re-audit when the fork changes.  Positional (unflagged)
+#: references -- ``dispBeamColumn``'s transfTag / integrationTag -- are
+#: deliberately NOT listed: no gated element takes one (the five non-quad
+#: gated classes are ``nodes matTag`` + options, and ``quad`` is
+#: ``nodes thick type matTag``), so a flag scan is sufficient AND cannot
+#: false-positive on an ungated element's positional tag.
+_BUILDER_SCOPED_KINDS: "tuple[tuple[type, str, tuple[str, ...]], ...]" = (
+    # -fx/-fy/-fz ride ASDAbsorbingBoundary* (ungated) -- listed so the
+    # set is complete if a gated absorbing shape ever lands.
+    (TimeSeries,      "timeSeries",      ("-fx", "-fy", "-fz")),
+    (GeomTransf,      "geomTransf",      ()),
+    (BeamIntegration, "beamIntegration", ()),
+    # -damp is emitted by exactly one helper (``damp_args``,
+    # ``_internal/tag_resolution.py``); ``quad`` is the only gated class
+    # carrying a ``damp`` field today.
+    (Damping,         "damping",         ("-damp",)),
 )
 
 _BUILDER_SCOPED_BASES: "tuple[type, ...]" = tuple(
-    base for base, _kw in _BUILDER_SCOPED_KINDS
+    base for base, _kw, _flags in _BUILDER_SCOPED_KINDS
 )
+
+#: ``flag token -> declaration keyword``, derived from the one table.
+_BUILDER_SCOPED_FLAGS: "dict[str, str]" = {
+    flag: keyword
+    for _base, keyword, flags in _BUILDER_SCOPED_KINDS
+    for flag in flags
+}
+
+
+def builder_scoped_kind_for_arg(arg: object) -> "str | None":
+    """The declaration keyword an element ARG-TAIL token references.
+
+    ``None`` for anything that is not a builder-scoped flag.  Used by the
+    replay-side guard, which sees deck records rather than specs.
+    """
+    return _BUILDER_SCOPED_FLAGS.get(arg) if isinstance(arg, str) else None
 
 
 def is_builder_scoped(prim: object) -> bool:
@@ -913,7 +946,7 @@ def is_builder_scoped(prim: object) -> bool:
 
 def builder_scoped_kind(prim: object) -> "str | None":
     """The OpenSees keyword ``prim`` declares, if it is builder-scoped."""
-    for base, keyword in _BUILDER_SCOPED_KINDS:
+    for base, keyword, _flags in _BUILDER_SCOPED_KINDS:
         if isinstance(prim, base):
             return keyword
     return None

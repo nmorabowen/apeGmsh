@@ -1242,6 +1242,12 @@ class OpenSeesModel:
             recorders=self._recorders,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
+            # ADR 0099: no deck here — ``H5Emitter.model`` only stores
+            # ndm/ndf, so a builder-ndf bracket is never persisted as a
+            # line and the INV-1 hoist would buy this path nothing.
+            # Opting out keeps the archive-rewrite fixed point exactly
+            # as it was, by construction rather than by argument.
+            deck_ordering=False,
         )
         # ADR 0055 Phase 1: initial-stress does NOT route through
         # ``_replay_into`` on the H5 path — its emit helpers drive the
