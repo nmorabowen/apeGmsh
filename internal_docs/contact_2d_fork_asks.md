@@ -1,5 +1,13 @@
 # apeGmsh ← Ladruno 2-D contact: the fork-side change request
 
+> **STATUS (2026-08-19).** Ask 1 (`-outward winding`) SHIPPED as fork
+> PR #764 — NTS lane only, with the connected-chain guard §A argued
+> for, plus a wire-format bump (`LCD_FMT_VERSION` 2→3) and one
+> disclosed limitation: a coarse closed loop (n ≤ 8) transmits
+> exactly zero. Asks 2 and 3 were NOT filed. **§B's plan is
+> superseded** by what shipped — see the status header of
+> `contact_2d_adoption.md`.
+
 The adoption brief (`contact_2d_adoption.md`) was written under a constraint
 that no longer holds: it assumed every gap between the fork's 2-D contact
 lane and apeGmsh had to be closed on the apeGmsh side. We can now ask the
