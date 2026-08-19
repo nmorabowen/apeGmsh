@@ -2188,7 +2188,7 @@ def validate_builder_scope_ordering(
 
     if stage_records:
         element_owner_stage, _ = compute_stage_ownership(
-            stage_records, list(elements), fem,
+            tuple(stage_records), list(elements), fem,
         )
         staged = [g for g in gated if id(g) in element_owner_stage]
         if staged:
