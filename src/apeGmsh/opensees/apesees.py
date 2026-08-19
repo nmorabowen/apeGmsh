@@ -2941,7 +2941,7 @@ class BuiltModel:
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf,
+                        self.ndf, self.ndm,
                     )
                     emitted_nodes.add(nid)
                 for ele_spec, ele_rows in gated_rows:
