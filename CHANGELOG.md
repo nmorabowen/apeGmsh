@@ -22,6 +22,64 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
+
+The last S6 slice. Documentation stops describing the retired Geometry /
+Composition / Diagram ontology, and — the part the plan did not
+anticipate — the session finally gets a door.
+
+**There was no way in.** `ResultsSession` had no API page, no `mkdocs.yml`
+nav entry, and nothing in `docs/how-to/**`, `docs/tutorials/**` or
+`examples/**` that called `results.session()`. `docs/how-to/index.md`
+still routed "plot a deformed shape or contour" at the old concepts
+page. Six slices built a model no reader could reach. Now:
+
+- **`docs/api/results-session.md`** — the session as the document:
+  panes, the closed seven-slot catalog, why deform is pose and not a
+  slot, and the legend law. (Named `results-session` because
+  `api/session.md` is the *builder* session — two different things.)
+- **`docs/how-to/render-a-still.md`** — the scripted path end to end:
+  `results.session()`, fill a slot, set the pose, `render()` a PNG with
+  no Qt in the loop. Every fence was executed before it shipped.
+
+**A whole-tree audit, not just the pages ADR 0098 touched** — and that
+was the right call: several BROKEN claims sat outside them, and the
+worst had nothing to do with this ADR. Those are spun out separately
+rather than smuggled in here.
+
+**Fixed, from ADR 0098's own fallout:** adopting
+`<results>.viewer-session.json` at S6a left the *old* name in eight
+places in shipped code — three in `python -m apeGmsh.results.session
+render --help`, two in the Studio MCP tool descriptions, plus studio
+docstrings and `docs/how-to/studio-habitat.md`. The MCP text was the
+worst of it: it told an agent that `.viewer-session.json` is "the old,
+refused" file when that is now the live name. The refusal is by
+**payload shape, never by filename** — the two are no longer
+distinguishable by name — and every site now says so.
+
+**Also corrected:** `export_animation`'s claim that its frames are
+"pixel-identical to the interactive viewer". True before the flip; false
+after, because it builds the retired diagram-stack window offscreen
+while the interactive one is now the session window.
+
+**Retired from the skill:** the `director.geometries` section (which
+carried a warning and then taught `viewer.director` anyway — an
+`AttributeError` since S6a), a session-schema number that was wrong
+twice over (the retired path is 13, the live snapshot is version 1 with
+`kind: "apegmsh.results.session"`), and `wv.director.registry.add(...)`
+as an authoring surface — it is `show_web`-hatch implementation with no
+compatibility promise, and nothing built through it can enter a
+snapshot, a pin, or an MCP render. `docs/design/results.md` gains a
+"the session is the document" section; it previously described
+concurrent geometries as current architecture and never mentioned
+`ResultsSession` at all.
+
+`MeshView.add_clip` / `remove_clip` gained docstrings — public API that
+the new page needed and the source did not carry. The seven slot
+properties keep theirs on the `property(doc=…)` factory; they cannot
+appear in generated docs because griffe is static and never sees a
+factory-built property, so the page names them in prose instead.
+
 ### CHANGED — ADR 0098 §11 S6b: the retirement sweep
 
 The Geometry / Composition / Diagram ontology stops being a tested
