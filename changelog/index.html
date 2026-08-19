@@ -3545,6 +3545,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-the-capture-route-resolves-element_class_name-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the capture route resolves element_class_name again
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-every-recording-route-promotes-stress_zz-not-just-the-deck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — every recording route promotes stress_zz, not just the deck
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-ladruno-gauss-stressstrain-on-every-ladruno-plane-element" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — .ladruno Gauss stress/strain on every Ladruno plane element
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-a-plane-strain-stress_zz-request-now-records-the-real-_zz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — a plane-strain stress_zz request now records the real σ_zz
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8398,6 +8442,50 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-capture-route-resolves-element_class_name-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the capture route resolves element_class_name again
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-every-recording-route-promotes-stress_zz-not-just-the-deck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — every recording route promotes stress_zz, not just the deck
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-ladruno-gauss-stressstrain-on-every-ladruno-plane-element" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — .ladruno Gauss stress/strain on every Ladruno plane element
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-a-plane-strain-stress_zz-request-now-records-the-real-_zz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — a plane-strain stress_zz request now records the real σ_zz
       
     </span>
   </a>
@@ -13272,6 +13360,150 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-the-capture-route-resolves-element_class_name-again">FIXED — the capture route resolves <code>element_class_name</code> again<a class="headerlink" href="#fixed-the-capture-route-resolves-element_class_name-again" title="Permanent link">&para;</a></h3>
+<p><code>DomainCaptureSpec._lookup_class_hint_for_pgs</code> read
+<code>self._opensees._elem_assignments</code>, an attribute of the legacy
+<code>g.opensees</code> composite removed in Phase 8. The <code>apeSees</code> bridge carries
+none, so the guarded <code>getattr</code> yielded <code>{}</code> and the lookup always
+answered <code>None</code> — every resolved record left <code>element_class_name</code> unset,
+silently. It now walks the bridge's typed <code>Element</code> primitives (the
+source the σ_zz capability gate already uses) via the shared
+<code>cpp_class_name_for_pgs</code>; an explicit <code>element_class_name=</code> still wins,
+and PGs spanning two element classes still answer <code>None</code>.</p>
+<p>That hint is what <code>_identify_layout</code> needs to separate two catalog
+entries sharing a flat column width — <code>LadrunoLST</code> and <code>BezierTri6</code> are
+both 3 GP × 4 components under <code>stress_plane_strain</code> (and both 3 × 3
+under <code>stress</code>), with different Gauss orderings — so without it such a
+record raised <code>Ambiguous catalog match</code>.</p>
+<p>Same commit: <code>_resolve_layer_section_metadata</code> dereferenced
+<code>_sections</code> / <code>_elem_assignments</code> with no guard, so resolving any
+<code>layers</code> record against a bridge raised
+<code>AttributeError: 'apeSees' object has no attribute '_sections'</code>. It now
+answers "no layered-section metadata", matching what it already returned
+with no bridge attached. Porting that lookup onto the bridge's <code>Section</code>
+primitives is a layered-shell change and is deliberately left out.</p>
+<p>Note the <code>.out</code> / <code>RecorderDeclaration</code> route is unchanged: its
+<code>element_class_name</code> is carried on the record but no reader consumes it
+(the H5 declaration bracket does not archive it), and <code>.out</code> reads go
+through a hand-built <code>ResolvedRecorderSpec</code> with no bridge to resolve
+from. Auto-populating it there would have changed nothing observable.</p>
+<h3 id="added-every-recording-route-promotes-stress_zz-not-just-the-deck">ADDED — every recording route promotes <code>stress_zz</code>, not just the deck<a class="headerlink" href="#added-every-recording-route-promotes-stress_zz-not-just-the-deck" title="Permanent link">&para;</a></h3>
+<p>The plane-strain σ_zz promotion now covers all three routes that resolve
+a Gauss response token, so a <code>stress_zz</code> request means the same thing
+wherever you record from:</p>
+<ul>
+<li>the bridge's <code>ops.recorder.declare(gauss=…)</code> deck (already shipped);</li>
+<li><strong><code>DomainCapture</code></strong> — the live in-process route, which queries
+  <code>ops.eleResponse</code> directly and therefore has its own resolution. It
+  used to drop a requested <code>stress_zz</code> on the floor, which is exactly
+  the silent no-op the feature exists to remove;</li>
+<li><strong>the <code>.out</code> route</strong> — both halves. <code>results/spec/_emit.py</code> writes the
+  promoted token, and the transcoder's read-side token derivation makes
+  the <em>same</em> promotion, because the token names the catalog family the
+  columns were written in: reading a 4-component file under the
+  3-component <code>stress</code> token finds no layout at that width.</li>
+</ul>
+<p>All three go through one shared decision
+(<code>_recorder_translate._stress_zz_tokens</code> / <code>stress_zz_keyword</code>), so they
+cannot drift into writing one shape and decoding another. The read site
+uses the silent variant — the emit side already said its piece.</p>
+<p>Capability comes from the same predicate everywhere. <code>DomainCapture</code>
+resolves it from the bridge's typed element primitives at spec
+resolution, mirroring the emit-side gate. <code>ResolvedRecorderSpec</code> — which
+carries no bridge back-reference — takes <code>sigma_zz_capable</code> from the
+caller, exactly as it already takes <code>element_class_name</code>; unset means
+unknown and keeps today's token silently.</p>
+<p><strong>Known sharp edge:</strong> a promoted 12-column file is genuinely ambiguous
+between <code>LadrunoLST</code> and <code>BezierTri6</code> (both 3 GP × 4 components), so the
+<code>.out</code> transcoder needs <code>element_class_name</code> and raises <code>Ambiguous
+catalog match</code> without it. It does not auto-resolve: the only auto-hint
+in the tree, <code>DomainCaptureSpec._lookup_class_hint_for_pgs</code>, reads an
+<code>_elem_assignments</code> attribute the <code>apeSees</code> bridge does not have, so it
+returns <code>None</code> for every model. <code>DomainCapture</code> itself is unaffected (it
+reads <code>ops.eleType</code> from the live domain).</p>
+<h3 id="fixed-ladruno-gauss-stressstrain-on-every-ladruno-plane-element">FIXED — <code>.ladruno</code> Gauss stress/strain on every Ladruno plane element<a class="headerlink" href="#fixed-ladruno-gauss-stressstrain-on-every-ladruno-plane-element" title="Permanent link">&para;</a></h3>
+<p><code>LadrunoCST</code> / <code>LadrunoLST</code> / <code>LadrunoQuad</code> recorded with the plain
+<code>elem_responses=("stress", "strain")</code> answered
+<code>results.elements.gauss.available_components() == []</code> — ALL continuum
+stress and strain was invisible on the <code>.ladruno</code> path.</p>
+<p>The fork's plain <code>stress</code> / <code>strain</code> responses on these elements emit no
+<code>output.tag("ResponseType", …)</code> (only <code>stressPlaneStrain</code> does), so the
+recorder writes a single element-level block named <code>C1,C2,…,Cn</code>, and the
+reader — which named columns from the file's <code>COMP_NAMES</code> alone — matched
+none of them. For exactly those anonymous buckets the names now come from
+<code>RESPONSE_CATALOG</code>, keyed by the class in the bucket key
+(<code>stress/33016-LadrunoLST[0:0:0]</code>) plus the ON_ELEMENTS token, with the
+<strong>block width</strong> picking the layout — the bracket's rule field is <code>0</code>
+(NoIntegrationRule) here, so it cannot be the catalog key. A width that
+fits no catalog layout raises <code>GaussLayoutMismatch</code> rather than guessing:
+a wrong component name is worse than a missing one. Buckets whose
+<code>COMP_NAMES</code> are real names never reach this path, and MPCO (which already
+consults the catalog) is untouched.</p>
+<p><code>LadrunoLST</code> joins <code>RESPONSE_CATALOG</code> (tag 33016, 3 GPs <code>Triangle_GL_2</code>,
+the SixNodeTri anchor order unpermuted).</p>
+<p>Recording <code>("stress", "stressesPlaneStrain")</code> in ONE recorder — the
+configuration the out-of-plane σ_zz work targets — puts two tokens on the
+same (element, Gauss point) slots, so the Gauss slab now deduplicates by
+slot: the bucket whose <code>COMP_NAMES</code> the FILE wrote wins over a
+catalog-reconstructed one (it is self-describing and a superset, 4
+components vs 3). Duplicates that disagree numerically raise instead of
+being picked arbitrarily. Without this <code>stress_xx</code> came back with twice the
+columns of <code>stress_zz</code> and <code>von_mises_stress</code> failed to broadcast.</p>
+<p>Also fixed alongside: <code>gauss_available</code> / <code>read_gauss_slab</code> discarded every
+continuum block with <code>MULTIPLICITY &gt; 1</code> as a fiber expansion. A fiber
+bucket repeats one scalar per fiber, but a continuum bucket repeats its
+component set once per GAUSS POINT — the multiplicity test dropped every
+multi-GP solid. Fiber buckets are now excluded by token.</p>
+<p>The 4-component plane-strain response gets its own catalog token,
+<code>stress_plane_strain</code>, wired from both keyword spellings
+(<code>stressesPlaneStrain</code> / <code>stressPlaneStrain</code>). The <code>.out</code> transcoder
+identifies a layout by (token, flat size) alone, so under the plain
+<code>stress</code> token a promoted 3-GP element's 3 x 4 = 12 columns collided
+exactly with <code>FourNodeQuad</code>'s 4 x 3 = 12 and were decoded as 4 Gauss points
+of 3 components — every value on the wrong Gauss point AND the wrong
+component, with no error. Registered for the six classes that implement the
+fork's <code>stressPlaneStrain</code> branch (<code>FourNodeQuad</code>, <code>Tri31</code>, <code>BezierTri6</code>,
+<code>LadrunoQuad</code>, <code>LadrunoCST</code>, <code>LadrunoLST</code>; NOT <code>SixNodeTri</code>, NOT
+<code>LadrunoUP</code>), each with its own <code>stress</code> entry's Gauss count and natural
+coordinates. Component order is <code>sigma11, sigma22, sigma12, sigma33</code> — σ_zz
+LAST, appended so the first three columns stay byte-compatible with
+<code>stresses</code> (<code>STRESS_PLANE_STRAIN</code> in <code>_vocabulary</code>). A 12-column
+plane-strain block stays genuinely ambiguous between <code>LadrunoLST</code> and
+<code>BezierTri6</code>, whose Gauss orders differ; that now raises and asks for a
+<code>class_hint</code>, exactly as the 9-column <code>stress</code> block these two already
+share.</p>
+<h3 id="added-a-plane-strain-stress_zz-request-now-records-the-real-_zz">ADDED — a plane-strain <code>stress_zz</code> request now records the real σ_zz<a class="headerlink" href="#added-a-plane-strain-stress_zz-request-now-records-the-real-_zz" title="Permanent link">&para;</a></h3>
+<p><code>ops.recorder.declare(gauss=(..., "stress_zz"), ...)</code> used to be a silent
+no-op: <code>stress_zz</code> is a valid canonical component, but it routes onto the
+plain <code>stresses</code> token, which carries only the three in-plane components.
+The σ_zz you then read back was reconstructed from Poisson's ratio —
+exact for a linear-elastic material, and wrong by up to ~68% at a plastic
+Gauss point, which quietly poisons von Mises, the principals and every
+other invariant built on the 3-D tensor.</p>
+<p>Such a record is now promoted, record-level, onto the fork's
+<code>stressesPlaneStrain</code> element response — <code>[σxx, σyy, σxy, σzz]</code> per Gauss
+point, a strict superset of <code>stresses</code>, so <code>stress_xx</code>/<code>_yy</code>/<code>_xy</code>
+declared in the same record ride along unchanged.</p>
+<p><strong>Promotion is gated, because the naive version is worse than the bug it
+fixes.</strong> <code>NDMaterial::getStressZZ()</code> returns <code>quiet_NaN</code> unless the
+material overrides it, and only six element classes even expose the
+4-component response. Recording it blindly writes an all-NaN column, and
+NaN propagates where the ν-estimate at least stayed finite. So the
+promotion fires only when <em>every</em> element the record targets is one of
+<code>FourNodeQuad</code> / <code>Tri31</code> / <code>BezierTri6</code> / <code>LadrunoQuad</code> / <code>LadrunoCST</code> /
+<code>LadrunoLST</code>, at <code>plane_type="PlaneStrain"</code>, over a material that
+overrides <code>getStressZZ</code> (<code>ElasticIsotropic</code>, <code>J2Plasticity</code>,
+<code>DruckerPrager</code>, the <code>PlaneStrain</code> wrapper, and <code>LadrunoJ2</code> /
+<code>LadrunoConcrete3D</code> in their plane-strain view). Anything else keeps
+today's behaviour and warns once, at emit, with
+<code>StressZZNotRecordedWarning</code> — the only place the user can learn <em>why</em>
+their σ_zz is an estimate.</p>
+<p>A record that does not ask for <code>stress_zz</code> is untouched: same token, same
+deck, byte for byte.</p>
+<p>Read side: a recorded-but-NaN <code>stress_zz</code> column now falls back to
+ν-recovery with a message that names the material as the cause, distinct
+from the existing "cannot classify this element" warning. A genuinely
+recorded, finite σ_zz is used verbatim and raises nothing.</p>
 <h3 id="changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session">CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session<a class="headerlink" href="#changed-adr-0098-11-s6d-docs-and-skill-move-onto-the-session" title="Permanent link">&para;</a></h3>
 <p>The last S6 slice. Documentation stops describing the retired Geometry /
 Composition / Diagram ontology, and — the part the plan did not
