@@ -460,7 +460,11 @@ def contact_payload_dtype() -> np.dtype:
     float column (decoded via round). The edge-edge fallback columns (ADR-57
     E2–E7, additive in neutral 2.25.0) mirror these: ``edge_kn`` uses
     ``edge_kn_mode`` (auto/None/numeric) and ``edge_soft`` uses
-    ``edge_soft_mode`` (None/bare/numeric). ``outward_mode`` (additive in
+    ``edge_soft_mode`` (None/bare/numeric). ``thickness`` (the 2D mortar
+    plane-model out-of-plane thickness, additive in neutral 2.31.0) is a
+    plain NaN-sentinel float — NaN decodes to ``None``, which IS the fork
+    default 1.0, so a file that predates the column reads back as the
+    h = 1 it always meant. ``outward_mode`` (additive in
     neutral 2.30.0) is the same idiom for orientation — 0 none / 1 the
     vector in ``outward`` / 2 the fork's declared-winding sentinel, which
     carries no vector at all. A 2D ``outward`` is Z-PADDED into the same
@@ -525,6 +529,15 @@ def contact_payload_dtype() -> np.dtype:
         # fork run its own centroid vote and abort loudly, rather than run
         # a mis-oriented contact.
         ("outward_mode", np.uint8),          # 0 none | 1 vector | 2 winding
+        # 2D mortar plane-model thickness h (neutral 2.31.0); NaN ⇒ None ⇒
+        # the fork default 1.0. Presence-probed on read like `cell` (2.23.0).
+        # APPENDED, not inserted next to `tie` where it belongs
+        # semantically: `_encode_contact` writes an un-keyed POSITIONAL
+        # tuple, so dtype order and tuple order are coupled by index alone
+        # with nothing to catch a drift. Every prior additive column landed
+        # here for the same reason — keeping the coupling monotonic means a
+        # version-to-version field index only ever grows.
+        ("thickness", np.float64),
         ("name", _utf8()),                   # declaration name ("" ⇒ None)
     ])
 

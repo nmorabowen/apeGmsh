@@ -211,12 +211,6 @@ def test_dim2_slave_pg_is_refused_by_name():
     assert "INTERIOR node" in msg
 
 
-def test_2d_mortar_is_refused_by_name():
-    with pytest.raises(NotImplementedError, match="2D mortar"):
-        _contact_fem(formulation="mortar", kn=None, kt=None, mu=None,
-                     eps_n="auto")
-
-
 def test_dim1_master_in_a_3d_model_is_refused_at_the_gate():
     """A dim-1 master in 3D must refuse by name, not fall through to
     'carries no surface mesh faces (is it meshed?)'."""
@@ -463,3 +457,227 @@ def test_winding_is_refused_on_the_mortar_lane_at_declaration():
     with pytest.raises(ValueError, match="NTS-only"):
         ContactDef(master_label="m", slave_label="s",
                    formulation="mortar", eps_n="auto", outward="winding")
+
+
+# =====================================================================
+# 2D mortar / tie / -thickness (slice S4)
+# =====================================================================
+#
+# `-slave-segments 2` reuses the master's chain walk and the same
+# stride-2 record validator, so the holed-slave listing — silently legal
+# fork-side exactly like the holed master — is unreachable by
+# construction here too.
+
+
+def _mortar_fem(**over):
+    kw = dict(formulation="mortar", kn=None, kt=None, mu=None,
+              eps_n="auto", outward=(1.0, 0.0), name="joint")
+    kw.update(over)
+    return _contact_fem(**kw)
+
+
+def test_2d_mortar_chains_both_surfaces():
+    rec = _mortar_fem().elements.contacts[0]
+    assert rec.formulation == "mortar"
+    assert rec.master_nps == 2 and rec.slave_nps == 2
+    assert rec.slave_nodes is None
+    for side in (rec.master_faces, rec.slave_faces):
+        faces = np.asarray(side)
+        assert faces.shape == (3, 2)          # n=4 divisions ⇒ 3 segments
+        for k in range(faces.shape[0] - 1):
+            assert int(faces[k, 1]) == int(faces[k + 1, 0])
+
+
+def test_2d_mortar_slave_chain_follows_the_geometry():
+    """The slave chain is a real traversal of the RIGHT square's left edge,
+    not merely a valid graph — and it is a distinct node set from the
+    master's (the two squares are un-fragmented and meet flush at x=1)."""
+    fem = _mortar_fem()
+    coords = {int(t): c for t, c in zip(fem.nodes.ids, fem.nodes.coords)}
+    rec = fem.elements.contacts[0]
+    slave = np.asarray(rec.slave_faces)
+    ys = [coords[int(slave[0, 0])][1]] + [coords[int(b)][1]
+                                          for b in slave[:, 1]]
+    assert ys == sorted(ys) or ys == sorted(ys, reverse=True)
+    assert all(abs(coords[int(t)][0] - 1.0) < 1e-9 for t in slave.reshape(-1))
+    assert not (set(int(t) for t in slave.reshape(-1))
+                & set(int(t) for t in np.asarray(rec.master_faces).reshape(-1)))
+
+
+def test_2d_mortar_deck_emits_the_chained_slave_segments(tmp_path):
+    fem = _mortar_fem()
+    path = tmp_path / "deck.tcl"
+    _quad_ops(fem).tcl(str(path))
+    line = next(ln for ln in path.read_text().splitlines()
+                if ln.startswith("contactSurface") and "-slave-segments" in ln)
+    toks = line.split()
+    assert toks[2] == "-slave-segments" and toks[3] == "2"
+    tags = [int(t) for t in toks[4:]]
+    assert len(tags) == 6                      # 3 segments, SIX tags
+    for k in range(0, len(tags) - 2, 2):       # chained head-to-tail
+        assert tags[k + 1] == tags[k + 2]
+
+
+def test_2d_mortar_dim2_slave_pg_is_refused_by_name():
+    with pytest.raises(ValueError) as exc:
+        _mortar_fem(slave="liner")
+    assert "slave label 'liner'" in str(exc.value)
+
+
+def test_2d_mortar_tie_round_trips_and_emits(tmp_path):
+    """A 2D mortar mesh-tie. ``tie=True`` already mandates an explicit
+    outward (the fork's gate H2 silently drops an unoriented tie to zero
+    force), which is also the only orientation a mortar interface can
+    declare — winding is NTS-only."""
+    fem = _mortar_fem(tie=True, thickness=0.5)
+    rec = fem.elements.contacts[0]
+    assert rec.tie is True and rec.thickness == 0.5
+    path = tmp_path / "tie.tcl"
+    _quad_ops(fem).tcl(str(path))
+    line = next(ln for ln in path.read_text().splitlines()
+                if ln.startswith("contact ") and "-mortar" in ln)
+    toks = line.split()
+    assert "-tie" in toks
+    assert toks[toks.index("-thickness") + 1] == "0.5"
+    assert toks.index("-thickness") < toks.index("-tie")
+
+
+def test_2d_mortar_thickness_round_trips_h5(tmp_path):
+    from apeGmsh.mesh.FEMData import FEMData
+    fem = _mortar_fem(thickness=0.25)
+    path = tmp_path / "model.h5"
+    fem.to_h5(str(path))
+    back = FEMData.from_h5(str(path)).elements.contacts[0]
+    assert back.thickness == 0.25
+    assert back.slave_nps == 2 and back.master_nps == 2
+    assert np.array_equal(np.asarray(back.slave_faces),
+                          np.asarray(fem.elements.contacts[0].slave_faces))
+
+
+def test_mortar_without_thickness_stays_none():
+    """No thickness ⇒ no ``-thickness`` token ⇒ the fork default h = 1.0.
+    apeGmsh never invents an h from the element thickness: element
+    thickness is baked into element stiffness and contact never re-reads
+    it."""
+    assert _mortar_fem().elements.contacts[0].thickness is None
+
+
+def test_thickness_in_a_3d_model_is_refused_by_name():
+    """A 3D mortar deck's thickness lives in its ELEMENTS; the fork FATALs
+    on a 3D pair carrying ``-thickness`` at handle()."""
+    with apeGmsh(model_name="thickness_in_3d", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        faces = [abs(t) for _, t in gmsh.model.getBoundary(
+            [(3, box)], oriented=False)]
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="solid")
+        g.physical.add(2, [faces[0]], name="m3d")
+        g.physical.add(2, [faces[1]], name="s3d")
+        g.constraints.contact("m3d", "s3d", formulation="mortar",
+                              eps_n="auto", thickness=0.5)
+        with pytest.raises(ValueError) as exc:
+            g.mesh.queries.get_fem_data(dim=3)
+    msg = str(exc.value)
+    assert "the model is 3D" in msg
+    assert "lives in its ELEMENTS" in msg
+
+
+def test_2d_mortar_under_partitioning_is_refused_by_name(tmp_path):
+    """Parallel / DDM 2D contact is out of scope fork-side on BOTH lanes;
+    the emit-side gate keys off ``master_nps``, which mortar carries too."""
+    fem = _mortar_fem(partition=2)
+    assert len(fem.partitions) == 2
+    with pytest.raises(BridgeError) as exc:
+        _quad_ops(fem).tcl(str(tmp_path / "deck.tcl"))
+    msg = str(exc.value)
+    assert "2D line-segment contact (master_nps=2)" in msg
+    assert "out of scope" in msg
+
+
+# ── the F1 asymmetry: winding is NTS-only, so flush mortar needs a vector ──
+
+def test_flush_mortar_refusal_does_not_offer_winding():
+    """Carried, not papered over: the fork shipped ``-outward winding`` on
+    the NTS lane only — its 2D mortar lane has no chain-integrity scan to
+    rest winding's one-connected-chain invariant on. So the flush refusal
+    must not send a mortar user to an option the fork will reject."""
+    with pytest.raises(ValueError) as exc:
+        _mortar_fem(outward=None)
+    msg = str(exc.value)
+    assert "FLUSH" in msg
+    assert "outward=(ox, oy)" in msg
+    assert "NOT available on this lane" in msg
+    assert "no chain-integrity scan" in msg
+
+
+def test_flush_mortar_lref_spans_both_surfaces():
+    """The fork's 2D MORTAR Lref is the min segment length over BOTH
+    surfaces (its interval clip projects the slave endpoints too), so a
+    finely-meshed slave lowers the floor. Reproducing that matters in one
+    direction only: a master-only Lref would be too LARGE and would refuse
+    decks the fork accepts."""
+    with apeGmsh(model_name="mortar_lref", verbose=False) as g:
+        left = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        right = g.model.geometry.add_rectangle(1, 0, 0, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(2, left)], n=3)     # coarse
+        g.mesh.structured.set_transfinite([(2, right)], n=9)    # fine
+        g.mesh.generation.generate(2)
+        g.physical.add(2, [left], name="rock")
+        g.physical.add(2, [right], name="liner")
+        g.physical.add(1, [_curve_at_x(left, 1.0)], name="face")
+        g.physical.add(1, [_curve_at_x(right, 1.0)], name="wire")
+        g.constraints.contact("face", "wire", formulation="mortar",
+                              eps_n="auto", name="joint")
+        with pytest.raises(ValueError) as exc:
+            g.mesh.queries.get_fem_data(dim=2)
+    msg = str(exc.value)
+    assert "EITHER surface" in msg
+    # 1e-6 x the SLAVE's 0.125 segment, not the master's 0.5
+    assert "1.25e-07" in msg
+
+
+def test_winding_is_refused_on_the_mortar_lane_at_the_session_call():
+    with pytest.raises(ValueError, match="NTS-only"):
+        _mortar_fem(outward="winding")
+
+
+def test_2d_mortar_wrong_side_master_is_still_refused():
+    """The wrong-side guard is apeGmsh's on BOTH lanes: the fork's vote
+    only picks a SIGN, so a far-side master resolves happily and orients a
+    contact against a boundary the slave never reaches."""
+    with apeGmsh(model_name="mortar_wrong_side", verbose=False) as g:
+        left, _ = _build_two_squares(g)
+        g.physical.add(1, [_curve_at_x(left, 0.0)], name="far")
+        g.constraints.contact("far", "wire", formulation="mortar",
+                              eps_n="auto", outward=(1.0, 0.0),
+                              name="backwards")
+        with pytest.raises(ValueError) as exc:
+            g.mesh.queries.get_fem_data(dim=2)
+    assert "FACE AWAY from the slave" in str(exc.value)
+
+
+def test_2d_mortar_point_set_slave_is_refused_by_name():
+    """A dim-0 slave is the NTS lane's shape (a bare node set); the mortar
+    lane needs SEGMENTS to chain. The shared dim gate allows dim-0 for
+    both, so the mortar lane refuses it by label here rather than let the
+    corner drop report a "1-node line element" without saying whose."""
+    with apeGmsh(model_name="mortar_point_slave", verbose=False) as g:
+        left, right = _build_two_squares(g)
+        corner = gmsh.model.getBoundary(
+            [(1, _curve_at_x(right, 1.0))], oriented=False)[0][1]
+        g.physical.add(0, [abs(int(corner))], name="dot")
+        g.constraints.contact("face", "dot", formulation="mortar",
+                              eps_n="auto", outward=(1.0, 0.0), name="joint")
+        with pytest.raises(ValueError) as exc:
+            g.mesh.queries.get_fem_data(dim=2)
+    msg = str(exc.value)
+    assert "slave label 'dot'" in msg
+    assert "a 2D MORTAR slave is `-slave-segments 2`" in msg
+    assert "no segments to chain" in msg
+    # ...and the NTS lane still accepts a dim-0 slave through the SAME gate
+    from apeGmsh.core.ConstraintsComposite import _refuse_contact_entity_dim
+    _refuse_contact_entity_dim([(0, 7)], "dot", model_dim=2, role="slave",
+                               formulation="nts")
