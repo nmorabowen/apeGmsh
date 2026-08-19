@@ -182,6 +182,7 @@ nav:
           - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
       - Results:
           - Read displacement & reactions: how-to/read-results.md
+          - Render a deformed shape or contour: how-to/render-a-still.md
           - Get results via MPCO: how-to/results-mpco.md
           - Choose a results strategy: how-to/choose-results-strategy.md
           - Drive Studio / MCP habitat: how-to/studio-habitat.md
@@ -242,6 +243,7 @@ nav:
       - FEM Broker: api/fem.md
       - OpenSees: api/opensees.md
       - Results: api/results.md
+      - Results session: api/results-session.md
       - Selection: api/selection.md
       - Viewers: api/viewers.md
       - Viz: api/viz.md

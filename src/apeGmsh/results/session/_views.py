@@ -514,6 +514,14 @@ class MeshView:
         flipped: bool = False,
         gizmo_visible: bool = True,
     ) -> ViewClip:
+        """Cut this view with a half-space plane; returns the record.
+
+        ``normal`` is normalised on the way in and points into the half
+        that SURVIVES; ``offset`` is the signed distance from the origin
+        along it. A clip belongs to the view, not to a slot — every
+        layer the pane draws is cut by it (ADR 0083 field shape, ADR
+        0098 ownership). Persisted section cuts boot as clips this way.
+        """
         clip = ViewClip(
             plane_id=f"clip-{next(self._clip_ids)}",
             name=name or f"Plane {len(self._clips) + 1}",
@@ -528,6 +536,9 @@ class MeshView:
         return clip
 
     def remove_clip(self, plane_id: str) -> None:
+        """Drop one clip by its ``plane_id``. ``KeyError`` if absent —
+        a silent no-op would leave the caller believing the model is
+        uncut when it is not."""
         for clip in self._clips:
             if clip.plane_id == plane_id:
                 self._clips.remove(clip)
