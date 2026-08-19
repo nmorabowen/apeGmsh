@@ -3545,6 +3545,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — 2-D mortar contact: -slave-segments 2, tie, and -thickness (fork ADR-85, adoption S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8453,6 +8464,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — 2-D mortar contact: -slave-segments 2, tie, and -thickness (fork ADR-85, adoption S4)
       
     </span>
   </a>
@@ -13382,6 +13404,79 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4">ADDED — 2-D mortar contact: <code>-slave-segments 2</code>, tie, and <code>-thickness</code> (fork ADR-85, adoption S4)<a class="headerlink" href="#added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.contact(..., formulation="mortar")</code> works in a 2-D model.
+It was refused by name until now — the fork's 2-D mortar lane shipped in
+ADR-85 T3, apeGmsh could only reach the NTS one.</p>
+<p>The slave surface is the fork's <code>-slave-segments 2</code>, a flat stride-2 pair
+list chained head-to-tail, and it carries the same hazard the master does:
+the shorthand <code>10 11 12 13</code> is <em>silently legal</em> fork-side and declares a
+<strong>holed</strong> surface that converges to a wrong answer. So the slave goes
+through the same chain walk as the master (<code>_boundary_chain.edge_frames</code> +
+<code>chain_edges</code>, each segment wound against its own continuum element) and
+the same <code>ContactRecord</code> stride-2 validator, which already covered
+<code>slave_faces</code>. The hole is unreachable by construction on both sides. The
+walk's refusals grew a <code>role=</code> noun so a mis-declared <em>slave</em> curve is no
+longer reported as a "master" one; the interface lane's text is unchanged.</p>
+<p><code>thickness=h</code> emits the mortar-only <code>-thickness h</code> (the 2-D plane-model
+out-of-plane thickness; the fork default is 1.0). Three conventions have
+to stay apart, and apeGmsh scales nothing itself — it emits the token and
+the fork applies <code>h</code> once, at its 2-D injection site:</p>
+<ul>
+<li>the <strong>element</strong> thickness (<code>ops.element.FourNodeQuad(thickness=…)</code>) is
+  baked into element stiffness and contact never re-reads it;</li>
+<li><code>thickness=h</code> scales the EXPLICIT <code>eps_n</code> / <code>eps_t</code> / <code>visc</code> /
+  <code>cohesion</code> / <code>tau_max</code> and the tie stiffness;</li>
+<li><code>eps_n="auto"</code> is <strong>not</strong> h-scaled — it already absorbs the element's
+  thickness via <code>getInitialStiff()</code>, so re-scaling would be an h² error.</li>
+</ul>
+<p>Measured on fork build <code>e7555f2c9</code>: no <code>-thickness</code> is bit-identical to
+<code>-thickness 1.0</code>; halving <code>h</code> against an explicit <code>-epsN</code> doubles the
+interface penetration part exactly (4.013e-06 both times — applied once,
+not squared); and <code>-epsN auto</code> at <code>h = 1.0</code> vs <code>h = 0.5</code> is bit-identical
+(5.244762212098e-05). A flush 2-D mortar <strong>tie</strong> deck closes equilibrium
+at machine precision. <code>thickness=</code> on the NTS lane is refused at
+declaration (the fork parser refuses <code>-thickness</code> without <code>-mortar</code>) and
+in a 3-D model at resolve (a 3-D mortar deck's thickness lives in its
+elements; the fork FATALs at <code>handle()</code>).</p>
+<p><strong><code>outward="winding"</code> stays NTS-only</strong> — the F1 asymmetry, carried rather
+than papered over. The fork shipped declared winding on the NTS lane alone
+because its 2-D mortar lane has no chain-integrity scan to rest winding's
+one-connected-chain invariant on, so a flush <strong>mortar</strong> interface still
+requires an explicit <code>outward=(ox, oy)</code>; the flush refusal now offers a
+mortar caller the vector alone and says why. Its <code>Lref</code> also widened to
+the shortest segment of <em>either</em> surface on the mortar lane, matching the
+fork's own mortar floor (whose interval clip projects the slave endpoints
+too) — a master-only <code>Lref</code> would be too large and would refuse decks the
+fork accepts. The wrong-side-master guard now documents itself honestly as
+apeGmsh's on both lanes: the fork's centroid vote only picks a sign, so a
+far-side master resolves happily against a boundary the slave never
+reaches.</p>
+<p>Neutral schema 2.31.0 — additive <code>thickness</code> column on
+<code>contact_payload_dtype</code>, presence-probed on read, NaN ⇒ <code>None</code> ⇒ the fork
+default 1.0, so a 2.30.x file reads back as the <code>h = 1</code> it always meant.
+Parallel/DDM 2-D contact stays refused by name on both lanes (out of scope
+fork-side); the existing <code>master_nps == 2</code> emit gate already covers mortar.</p>
+<p>Review follow-ups, all in this slice. Both lane-exclusive knobs are now
+refused at the EMIT layer too, not just at <code>ContactDef</code>: a <code>ContactRecord</code>
+can reach <code>contact_args</code> without ever passing a def (an h5 decode, a
+compose rewrite, a hand-built record), and there <code>thickness</code> on the NTS
+lane was silently dropped while <code>outward="winding"</code> on the mortar lane
+went straight into a deck the fork refuses at parse — the 3-D winding rule
+was already gated three deep, the mortar one had a single gate. The 2-D
+mortar slave's dim-1 rule moved into <code>_refuse_contact_entity_dim</code> (via a
+new <code>formulation=</code>) instead of sitting beside it as a second gate, which
+is what that function's docstring means by "the single branch point of the
+2D lane". <code>ContactRecord.__post_init__</code> now refuses a slave stride that
+disagrees with the master's on dimension (nps 2 vs 3/4) — the h5 encoder
+and decoder each validated one side in isolation and <code>emit_contacts</code>
+checks only <code>master_nps</code> against <code>ndm</code>, so a 2-D master paired with tri
+slave facets reached the fork's own declaration guard. And the
+whole-domain scratch <code>edge_frames</code> recomputes — one Python-level pass over
+every domain element with a numpy allocation each — is hoisted into a
+shared <code>DomainFrames</code>, built once per resolve instead of once per surface
+(the mortar lane walks two surfaces per contact, on top of one per contact
+already).</p>
 <h3 id="fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5">FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)<a class="headerlink" href="#fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5" title="Permanent link">&para;</a></h3>
 <p>ADR 0099 S2 fixed the flat path and made every other path fail loud
 (INV-4).  Partitioned emit is now fixed rather than refused, because it
