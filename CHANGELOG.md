@@ -77,6 +77,170 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the capture route resolves `element_class_name` again
+
+`DomainCaptureSpec._lookup_class_hint_for_pgs` read
+`self._opensees._elem_assignments`, an attribute of the legacy
+`g.opensees` composite removed in Phase 8. The `apeSees` bridge carries
+none, so the guarded `getattr` yielded `{}` and the lookup always
+answered `None` — every resolved record left `element_class_name` unset,
+silently. It now walks the bridge's typed `Element` primitives (the
+source the σ_zz capability gate already uses) via the shared
+`cpp_class_name_for_pgs`; an explicit `element_class_name=` still wins,
+and PGs spanning two element classes still answer `None`.
+
+That hint is what `_identify_layout` needs to separate two catalog
+entries sharing a flat column width — `LadrunoLST` and `BezierTri6` are
+both 3 GP × 4 components under `stress_plane_strain` (and both 3 × 3
+under `stress`), with different Gauss orderings — so without it such a
+record raised `Ambiguous catalog match`.
+
+Same commit: `_resolve_layer_section_metadata` dereferenced
+`_sections` / `_elem_assignments` with no guard, so resolving any
+`layers` record against a bridge raised
+`AttributeError: 'apeSees' object has no attribute '_sections'`. It now
+answers "no layered-section metadata", matching what it already returned
+with no bridge attached. Porting that lookup onto the bridge's `Section`
+primitives is a layered-shell change and is deliberately left out.
+
+Note the `.out` / `RecorderDeclaration` route is unchanged: its
+`element_class_name` is carried on the record but no reader consumes it
+(the H5 declaration bracket does not archive it), and `.out` reads go
+through a hand-built `ResolvedRecorderSpec` with no bridge to resolve
+from. Auto-populating it there would have changed nothing observable.
+
+### ADDED — every recording route promotes `stress_zz`, not just the deck
+
+The plane-strain σ_zz promotion now covers all three routes that resolve
+a Gauss response token, so a `stress_zz` request means the same thing
+wherever you record from:
+
+- the bridge's `ops.recorder.declare(gauss=…)` deck (already shipped);
+- **`DomainCapture`** — the live in-process route, which queries
+  `ops.eleResponse` directly and therefore has its own resolution. It
+  used to drop a requested `stress_zz` on the floor, which is exactly
+  the silent no-op the feature exists to remove;
+- **the `.out` route** — both halves. `results/spec/_emit.py` writes the
+  promoted token, and the transcoder's read-side token derivation makes
+  the *same* promotion, because the token names the catalog family the
+  columns were written in: reading a 4-component file under the
+  3-component `stress` token finds no layout at that width.
+
+All three go through one shared decision
+(`_recorder_translate._stress_zz_tokens` / `stress_zz_keyword`), so they
+cannot drift into writing one shape and decoding another. The read site
+uses the silent variant — the emit side already said its piece.
+
+Capability comes from the same predicate everywhere. `DomainCapture`
+resolves it from the bridge's typed element primitives at spec
+resolution, mirroring the emit-side gate. `ResolvedRecorderSpec` — which
+carries no bridge back-reference — takes `sigma_zz_capable` from the
+caller, exactly as it already takes `element_class_name`; unset means
+unknown and keeps today's token silently.
+
+**Known sharp edge:** a promoted 12-column file is genuinely ambiguous
+between `LadrunoLST` and `BezierTri6` (both 3 GP × 4 components), so the
+`.out` transcoder needs `element_class_name` and raises `Ambiguous
+catalog match` without it. It does not auto-resolve: the only auto-hint
+in the tree, `DomainCaptureSpec._lookup_class_hint_for_pgs`, reads an
+`_elem_assignments` attribute the `apeSees` bridge does not have, so it
+returns `None` for every model. `DomainCapture` itself is unaffected (it
+reads `ops.eleType` from the live domain).
+
+### FIXED — `.ladruno` Gauss stress/strain on every Ladruno plane element
+
+`LadrunoCST` / `LadrunoLST` / `LadrunoQuad` recorded with the plain
+`elem_responses=("stress", "strain")` answered
+`results.elements.gauss.available_components() == []` — ALL continuum
+stress and strain was invisible on the `.ladruno` path.
+
+The fork's plain `stress` / `strain` responses on these elements emit no
+`output.tag("ResponseType", …)` (only `stressPlaneStrain` does), so the
+recorder writes a single element-level block named `C1,C2,…,Cn`, and the
+reader — which named columns from the file's `COMP_NAMES` alone — matched
+none of them. For exactly those anonymous buckets the names now come from
+`RESPONSE_CATALOG`, keyed by the class in the bucket key
+(`stress/33016-LadrunoLST[0:0:0]`) plus the ON_ELEMENTS token, with the
+**block width** picking the layout — the bracket's rule field is `0`
+(NoIntegrationRule) here, so it cannot be the catalog key. A width that
+fits no catalog layout raises `GaussLayoutMismatch` rather than guessing:
+a wrong component name is worse than a missing one. Buckets whose
+`COMP_NAMES` are real names never reach this path, and MPCO (which already
+consults the catalog) is untouched.
+
+`LadrunoLST` joins `RESPONSE_CATALOG` (tag 33016, 3 GPs `Triangle_GL_2`,
+the SixNodeTri anchor order unpermuted).
+
+Recording `("stress", "stressesPlaneStrain")` in ONE recorder — the
+configuration the out-of-plane σ_zz work targets — puts two tokens on the
+same (element, Gauss point) slots, so the Gauss slab now deduplicates by
+slot: the bucket whose `COMP_NAMES` the FILE wrote wins over a
+catalog-reconstructed one (it is self-describing and a superset, 4
+components vs 3). Duplicates that disagree numerically raise instead of
+being picked arbitrarily. Without this `stress_xx` came back with twice the
+columns of `stress_zz` and `von_mises_stress` failed to broadcast.
+
+Also fixed alongside: `gauss_available` / `read_gauss_slab` discarded every
+continuum block with `MULTIPLICITY > 1` as a fiber expansion. A fiber
+bucket repeats one scalar per fiber, but a continuum bucket repeats its
+component set once per GAUSS POINT — the multiplicity test dropped every
+multi-GP solid. Fiber buckets are now excluded by token.
+
+The 4-component plane-strain response gets its own catalog token,
+`stress_plane_strain`, wired from both keyword spellings
+(`stressesPlaneStrain` / `stressPlaneStrain`). The `.out` transcoder
+identifies a layout by (token, flat size) alone, so under the plain
+`stress` token a promoted 3-GP element's 3 x 4 = 12 columns collided
+exactly with `FourNodeQuad`'s 4 x 3 = 12 and were decoded as 4 Gauss points
+of 3 components — every value on the wrong Gauss point AND the wrong
+component, with no error. Registered for the six classes that implement the
+fork's `stressPlaneStrain` branch (`FourNodeQuad`, `Tri31`, `BezierTri6`,
+`LadrunoQuad`, `LadrunoCST`, `LadrunoLST`; NOT `SixNodeTri`, NOT
+`LadrunoUP`), each with its own `stress` entry's Gauss count and natural
+coordinates. Component order is `sigma11, sigma22, sigma12, sigma33` — σ_zz
+LAST, appended so the first three columns stay byte-compatible with
+`stresses` (`STRESS_PLANE_STRAIN` in `_vocabulary`). A 12-column
+plane-strain block stays genuinely ambiguous between `LadrunoLST` and
+`BezierTri6`, whose Gauss orders differ; that now raises and asks for a
+`class_hint`, exactly as the 9-column `stress` block these two already
+share.
+### ADDED — a plane-strain `stress_zz` request now records the real σ_zz
+
+`ops.recorder.declare(gauss=(..., "stress_zz"), ...)` used to be a silent
+no-op: `stress_zz` is a valid canonical component, but it routes onto the
+plain `stresses` token, which carries only the three in-plane components.
+The σ_zz you then read back was reconstructed from Poisson's ratio —
+exact for a linear-elastic material, and wrong by up to ~68% at a plastic
+Gauss point, which quietly poisons von Mises, the principals and every
+other invariant built on the 3-D tensor.
+
+Such a record is now promoted, record-level, onto the fork's
+`stressesPlaneStrain` element response — `[σxx, σyy, σxy, σzz]` per Gauss
+point, a strict superset of `stresses`, so `stress_xx`/`_yy`/`_xy`
+declared in the same record ride along unchanged.
+
+**Promotion is gated, because the naive version is worse than the bug it
+fixes.** `NDMaterial::getStressZZ()` returns `quiet_NaN` unless the
+material overrides it, and only six element classes even expose the
+4-component response. Recording it blindly writes an all-NaN column, and
+NaN propagates where the ν-estimate at least stayed finite. So the
+promotion fires only when *every* element the record targets is one of
+`FourNodeQuad` / `Tri31` / `BezierTri6` / `LadrunoQuad` / `LadrunoCST` /
+`LadrunoLST`, at `plane_type="PlaneStrain"`, over a material that
+overrides `getStressZZ` (`ElasticIsotropic`, `J2Plasticity`,
+`DruckerPrager`, the `PlaneStrain` wrapper, and `LadrunoJ2` /
+`LadrunoConcrete3D` in their plane-strain view). Anything else keeps
+today's behaviour and warns once, at emit, with
+`StressZZNotRecordedWarning` — the only place the user can learn *why*
+their σ_zz is an estimate.
+
+A record that does not ask for `stress_zz` is untouched: same token, same
+deck, byte for byte.
+
+Read side: a recorded-but-NaN `stress_zz` column now falls back to
+ν-recovery with a message that names the material as the cause, distinct
+from the existing "cannot classify this element" warning. A genuinely
+recorded, finite σ_zz is used verbatim and raises nothing.
 ### CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
 
 The last S6 slice. Documentation stops describing the retired Geometry /

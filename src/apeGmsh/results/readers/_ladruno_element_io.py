@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
+from ...opensees._response_catalog import RESPONSE_CATALOG
+
 if TYPE_CHECKING:
     import h5py
 
@@ -166,6 +168,21 @@ _FIBER_CANONICAL_TO_TOKENS: dict[str, tuple[str, ...]] = {
 }
 
 
+def is_fiber_token(token: str) -> bool:
+    """True for a FIBER bucket, which must never surface as continuum Gauss.
+
+    ⚠ A TOKEN test on purpose.  ``MULTIPLICITY > 1`` looks like it would do
+    the job and does not: a fiber bucket repeats one scalar column per
+    fiber, but a CONTINUUM bucket repeats its component set once per GAUSS
+    POINT (``LadrunoLST``: NUM_COMP 3 x MULTIPLICITY 3 = 9 columns), and
+    ``SECTION_TAG`` / ``FIBER_ID`` are -1 in BOTH.  Filtering on
+    multiplicity therefore discarded every solid element carrying more than
+    one Gauss point -- stress / strain / eqpstrain vanished from the picker
+    and the viewer drew no continuum fields at all.
+    """
+    return token in _FIBER_TOKEN_TO_CANONICAL or ".fiber." in token
+
+
 def section_canonical(token: str) -> Optional[str]:
     """Map a ``section.force`` / ``section.deformation`` column token to a
     neutral name (``P``→``axial_force``, ``kappaZ``→``curvature_z``), else
@@ -184,13 +201,17 @@ _CONTINUUM_DIGIT_RE = re.compile(
     r"^(?P<kind>sigma|eta|epsp|epsilon|eps|pstrain)(?P<i>[123])(?P<j>[123])$"
 )
 _CONTINUUM_AXIS_RE = re.compile(
-    r"^(?P<kind>sigma|epsp|epsilon|eps|gamma|pstrain)_(?P<a>[xyz])(?P<b>[xyz])$"
+    r"^(?P<kind>sigma|epsp|epsilon|eps|gamma|pstrain|stress|strain)"
+    r"_(?P<a>[xyz])(?P<b>[xyz])$"
 )
 # Token stem → canonical tensor root. ``epsp`` (plastic strain, the
 # fork's natural tag following its ``eps11`` total-strain convention;
 # ``pstrain`` is the ASDPlasticMaterial3D response-token spelling) is
 # listed before ``eps`` in the alternations above so it wins the
 # prefix race.
+# ``stress``/``strain`` are the canonical roots themselves: blocks rebuilt
+# from RESPONSE_CATALOG (see ``resolve_generic_gauss_blocks``) already carry
+# apeGmsh canonicals, so canonicalisation must be idempotent on them.
 _KIND_TO_ROOT = {
     "sigma": "stress",
     "eta": "strain",
@@ -199,6 +220,8 @@ _KIND_TO_ROOT = {
     "gamma": "strain",
     "epsp": "plastic_strain",
     "pstrain": "plastic_strain",
+    "stress": "stress",
+    "strain": "strain",
 }
 
 # Scalar per-GP labels → canonical. The accumulated equivalent plastic
@@ -277,10 +300,31 @@ class _Block:
     comp_names: tuple[str, ...]
     col_start: int          # first DATA column for this block
     multiplicity: int = 1
+    section_tag: int = -1
+    fiber_id: int = -1
 
     @property
     def width(self) -> int:
         return len(self.comp_names) * self.multiplicity
+
+    def gp_column(self, gp: int, offset: int) -> int:
+        """DATA column for component ``offset`` at Gauss point ``gp``.
+
+        Layout is GP-major within the block: the component set repeats
+        once per Gauss point.
+        """
+        return self.col_start + gp * len(self.comp_names) + offset
+
+    @property
+    def n_gauss(self) -> int:
+        """Gauss points this block spans."""
+        return self.multiplicity
+
+    def gauss_index(self, gp: int) -> int:
+        """Effective GP index: the repeat index when the block spans
+        several Gauss points, else the block's own ``gauss_id`` (which is
+        how ``section.force`` numbers its integration stations)."""
+        return gp if self.multiplicity > 1 else self.gauss_id
 
 
 def _decode_str(value) -> str:
@@ -307,6 +351,14 @@ def parse_blocks(bucket_grp: "h5py.Group") -> list[_Block]:
         mult = np.asarray(cm["MULTIPLICITY"][...], dtype=np.int64).flatten()
     else:
         mult = np.ones(n_blocks, dtype=np.int64)
+    if "SECTION_TAG" in cm:
+        sect = np.asarray(cm["SECTION_TAG"][...], dtype=np.int64).flatten()
+    else:
+        sect = np.full(n_blocks, -1, dtype=np.int64)
+    if "FIBER_ID" in cm:
+        fib = np.asarray(cm["FIBER_ID"][...], dtype=np.int64).flatten()
+    else:
+        fib = np.full(n_blocks, -1, dtype=np.int64)
     if len(lines) != n_blocks:
         raise ValueError(
             f"COLUMN_MAP has {n_blocks} rows but COMP_NAMES has "
@@ -320,6 +372,8 @@ def parse_blocks(bucket_grp: "h5py.Group") -> list[_Block]:
         blocks.append(_Block(
             level=int(levels[i]), gauss_id=int(gauss[i]),
             comp_names=names, col_start=col, multiplicity=m,
+            section_tag=int(sect[i]) if i < sect.size else -1,
+            fiber_id=int(fib[i]) if i < fib.size else -1,
         ))
         col += len(names) * m
     total = int(np.asarray(bucket_grp["DATA"].shape)[-1])
@@ -355,6 +409,97 @@ def _gp_param_for(
     return None
 
 
+# =====================================================================
+# Generic ``C1..Cn`` columns — named from RESPONSE_CATALOG
+# =====================================================================
+#
+# The module docstring's "the writer is self-describing" holds only as
+# far as the ELEMENT is: the recorder writes the names the element hands
+# it through ``output.tag("ResponseType", …)``. The fork's plain
+# ``stress`` / ``strain`` responses on its plane elements emit no such
+# tags (``LadrunoLST.cpp:872`` and siblings — only ``stressPlaneStrain``
+# does), so the recorder falls back to ``C1,C2,…,Cn`` on a SINGLE
+# element-level block. ``continuum_canonical("C1")`` is None, so every
+# Gauss stress/strain column of every Ladruno plane element was dropped
+# in silence (``available_components() == []``).
+#
+# For exactly those buckets the names come from ``RESPONSE_CATALOG``
+# instead, keyed by the class name in the bucket key
+# (``stress/33016-LadrunoLST[0:0:0]`` → ``LadrunoLST``) plus the
+# ON_ELEMENTS token. The bracket's rule field is ``0``
+# (NoIntegrationRule) for these buckets, so it cannot serve as the
+# catalog's ``int_rule`` key — the BLOCK WIDTH picks the layout instead.
+# Buckets whose COMP_NAMES are real names never reach this path.
+
+_GENERIC_COMP_RE = re.compile(r"^C\d+$")
+
+
+class GaussLayoutMismatch(Exception):
+    """A generic ``C1..Cn`` block does not fit any catalog layout.
+
+    Deliberately NOT a ``ValueError`` / ``KeyError``: the reads wrap
+    ``parse_blocks`` in ``except (KeyError, ValueError): continue``, and
+    a MIS-LABELLED component is worse than a missing one — this has to
+    surface rather than be skipped.
+    """
+
+
+def _class_name(bucket_key: str) -> str:
+    """``33016-LadrunoLST[0:0:0]`` → ``LadrunoLST``."""
+    return _class_prefix(bucket_key).partition("-")[2]
+
+
+def resolve_generic_gauss_blocks(
+    blocks: list[_Block], *, token: str, bucket_key: str,
+) -> list[_Block]:
+    """``blocks`` with any generic ``C1..Cn`` naming resolved.
+
+    Returns ``blocks`` unchanged unless the bucket is the single
+    element-level generic block an untagged element response produces;
+    that one is expanded into one block per Gauss point carrying the
+    catalog's (already canonical) component names. A class the catalog
+    does not know for this token is left alone — there is nothing to
+    name it with. A class it DOES know but at no layout matching the
+    block's width raises :class:`GaussLayoutMismatch`.
+    """
+    if len(blocks) != 1:
+        return blocks
+    b = blocks[0]
+    if b.gauss_id >= 0 or not b.comp_names:
+        return blocks
+    if not all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
+        return blocks
+    class_name = _class_name(bucket_key)
+    layouts = {
+        (lay.n_gauss_points, lay.component_layout)
+        for (cls, _rule, tok), lay in RESPONSE_CATALOG.items()
+        if cls == class_name and tok == token
+    }
+    if not layouts:
+        return blocks
+    fit = {lay for lay in layouts if lay[0] * len(lay[1]) == b.width}
+    if len(fit) != 1:
+        raise GaussLayoutMismatch(
+            f"Bucket {token}/{bucket_key} has {b.width} unnamed "
+            f"(C1..Cn) columns, but RESPONSE_CATALOG offers "
+            f"{sorted((n, n * len(c)) for n, c in layouts)} "
+            f"(n_gauss_points, width) for class {class_name!r} / token "
+            f"{token!r} — {'no' if not fit else 'more than one'} layout "
+            f"fits. Refusing to guess which component each column is: a "
+            f"wrong component name is worse than a missing one. Fix the "
+            f"RESPONSE_CATALOG entry, or have the element tag its "
+            f"ResponseType names so the file names its own columns."
+        )
+    n_gp, names = fit.pop()
+    return [
+        _Block(
+            level=1, gauss_id=gp, comp_names=names,
+            col_start=b.col_start + gp * len(names),
+        )
+        for gp in range(n_gp)
+    ]
+
+
 def _select_rows(
     bucket_grp: "h5py.Group", element_ids: "Optional[ndarray]",
 ) -> "Optional[tuple[ndarray, ndarray]]":
@@ -376,16 +521,20 @@ def _select_rows(
 def gauss_available(on_elements: "h5py.Group") -> set[str]:
     out: set[str] = set()
     for token in on_elements:
+        if is_fiber_token(token):
+            continue
         for key in on_elements[token]:
             try:
                 blocks = parse_blocks(on_elements[token][key])
             except (KeyError, ValueError):
                 continue
+            blocks = resolve_generic_gauss_blocks(
+                blocks, token=token, bucket_key=key,
+            )
             for b in blocks:
-                # Skip element-level (gauss_id<0) and fiber-expansion
-                # (multiplicity>1) blocks — the latter are fiber stress/
-                # strain, read via read_fibers, not continuum Gauss points.
-                if b.gauss_id < 0 or b.multiplicity != 1:
+                # Element-level rows are not Gauss data. Fiber buckets are
+                # excluded by token before this loop.
+                if b.gauss_id < 0:
                     continue
                 for name in b.comp_names:
                     c = continuum_canonical(name)
@@ -405,13 +554,19 @@ def read_gauss_slab(
     """Return ``(values[T, sumGP], element_index, natural_coords[sumGP, d])``.
 
     Stitches every bucket whose blocks expose ``component`` at a Gauss
-    point. ``None`` if nothing matches.
+    point. ``None`` if nothing matches. Two tokens can cover the same
+    (element, GP) with the same component — see
+    :func:`_dedupe_gauss_columns`, which resolves that overlap.
     """
     values_parts: list[ndarray] = []
     eidx_parts: list[ndarray] = []
     coord_parts: list[ndarray] = []
+    gid_parts: list[ndarray] = []
+    named_parts: list[ndarray] = []
 
     for token in on_elements:
+        if is_fiber_token(token):
+            continue
         token_grp = on_elements[token]
         for key in token_grp:
             bucket = token_grp[key]
@@ -419,17 +574,27 @@ def read_gauss_slab(
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError):
                 continue
-            gp_blocks = [
-                b for b in blocks if b.gauss_id >= 0 and b.multiplicity == 1
-            ]
+            resolved = resolve_generic_gauss_blocks(
+                blocks, token=token, bucket_key=key,
+            )
+            # The resolver returns the SAME list object when it left the
+            # file's own names alone — that identity is the provenance
+            # flag the overlap tie-break needs.
+            from_file_names = resolved is blocks
+            blocks = resolved
+            gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue
             # (block, col-within-DATA) pairs that hold the component.
-            hits: list[tuple[_Block, int]] = []
+            # (block, gp, col) triples that hold the component. A block
+            # spanning several Gauss points contributes one hit per GP.
+            hits: list[tuple[_Block, int, int]] = []
             for b in gp_blocks:
                 for off, name in enumerate(b.comp_names):
-                    if continuum_canonical(name) == component:
-                        hits.append((b, b.col_start + off))
+                    if continuum_canonical(name) != component:
+                        continue
+                    for gp in range(b.n_gauss):
+                        hits.append((b, gp, b.gp_column(gp, off)))
             if not hits:
                 continue
             sel = _select_rows(bucket, element_ids)
@@ -441,12 +606,17 @@ def read_gauss_slab(
 
             # One slab column per (element, matching GP). GP-major within
             # an element so natural_coords line up with element_index.
-            for b, col in hits:
+            for b, gp, col in hits:
                 vals = data[t_idx][:, rows, col]              # (T, E_sel)
                 values_parts.append(vals)
                 eidx_parts.append(sel_ids)
-                if gp_param is not None and b.gauss_id < gp_param.shape[0]:
-                    nat = np.tile(gp_param[b.gauss_id], (sel_ids.size, 1))
+                g_idx = b.gauss_index(gp)
+                gid_parts.append(np.full(sel_ids.size, g_idx, dtype=np.int64))
+                named_parts.append(
+                    np.full(sel_ids.size, from_file_names, dtype=bool)
+                )
+                if gp_param is not None and g_idx < gp_param.shape[0]:
+                    nat = np.tile(gp_param[g_idx], (sel_ids.size, 1))
                 else:
                     nat = np.zeros((sel_ids.size, 0), dtype=np.float64)
                 coord_parts.append(nat)
@@ -464,7 +634,74 @@ def read_gauss_slab(
         )
         if max_dim else np.zeros((element_index.size, 0), dtype=np.float64)
     )
-    return values, element_index, coords
+    keep = _dedupe_gauss_columns(
+        values, element_index,
+        np.concatenate(gid_parts), np.concatenate(named_parts),
+        component=component,
+    )
+    if keep is None:
+        return values, element_index, coords
+    return values[:, keep], element_index[keep], coords[keep]
+
+
+def _dedupe_gauss_columns(
+    values: ndarray, element_index: ndarray, gauss_index: ndarray,
+    named: ndarray, *, component: str,
+) -> "Optional[ndarray]":
+    """Column indices to keep, or ``None`` when nothing overlaps.
+
+    One ``(element, Gauss point)`` slot can be covered by TWO tokens: the
+    fork emits the same plane stress under the unnamed ``stress`` (named
+    here from ``RESPONSE_CATALOG``) and under ``stressesPlaneStrain``,
+    which tags its own ``sigma11…sigma33`` and carries the out-of-plane
+    component as well. Concatenating both double-counts every in-plane
+    column, and the slab then no longer lines up with the components that
+    only ONE token carries (``stress_zz``) — which is how a derived
+    scalar like ``von_mises_stress`` ends up broadcasting (T, 204) into
+    (T, 408).
+
+    Precedence: the bucket whose COMP_NAMES the FILE wrote wins over a
+    catalog-reconstructed one. The named bucket is self-describing and
+    may be a superset, so preferring it keeps every slot on one
+    consistent source. Duplicates must agree numerically — they are the
+    same material state read twice — so a genuine disagreement means a
+    mis-labelled column and raises rather than picking one arbitrarily.
+    """
+    keys = element_index.astype(np.int64) * (int(gauss_index.max()) + 1)
+    keys = keys + gauss_index
+    _uniq, inverse, counts = np.unique(
+        keys, return_inverse=True, return_counts=True,
+    )
+    if counts.max() <= 1:
+        return None
+    # Sort by slot, then file-named first; the leader of each run wins.
+    order = np.lexsort((~named, keys))
+    first = np.unique(keys[order], return_index=True)[1]
+    winner = order[first]                       # one column per unique slot
+    dropped = np.setdiff1d(
+        np.arange(keys.size, dtype=np.int64), winner, assume_unique=False,
+    )
+    kept_for_dropped = winner[inverse[dropped]]
+    if not np.allclose(
+        values[:, dropped], values[:, kept_for_dropped],
+        rtol=1e-9, atol=0.0, equal_nan=True,
+    ):
+        bad = int(np.argmax(np.any(
+            ~np.isclose(
+                values[:, dropped], values[:, kept_for_dropped],
+                rtol=1e-9, atol=0.0, equal_nan=True,
+            ), axis=0,
+        )))
+        raise GaussLayoutMismatch(
+            f"Two .ladruno buckets report different values for "
+            f"{component!r} at element {int(element_index[dropped[bad]])} "
+            f"Gauss point {int(gauss_index[dropped[bad]])}. Same material "
+            f"state read twice must agree, so one of the buckets' columns "
+            f"is mis-labelled — refusing to pick one arbitrarily. Check "
+            f"the element's ResponseType tags against its RESPONSE_CATALOG "
+            f"component_layout."
+        )
+    return np.sort(winner)      # keep the original column order
 
 
 # =====================================================================

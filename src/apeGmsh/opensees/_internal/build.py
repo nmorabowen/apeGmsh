@@ -4197,8 +4197,20 @@ def _emit_element_level_record(
     emitted_canonical = False
 
     if record.components:
+        # ``None`` = "the question does not apply here", which the
+        # translator distinguishes from a checked-and-incapable ``False``
+        # so it does not warn about something it cannot know or that is
+        # already fine.  Two such cases: no element plan to check against
+        # (legacy direct callers / ModelData's fem-eid-verbatim recorder
+        # rendering), and a 3-D model, whose ``stresses`` response carries
+        # σ_zz already — the plane-strain promotion is a 2-D affair.
+        sigma_zz_capable = (
+            None if (fem_eid_to_ops_tag is None or decl.ndm != 2)
+            else fem_eid_to_ops_tag.all_sigma_zz_capable(elem_ids)
+        )
         tokens = response_tokens(  # type: ignore[operator]
             record.category, record.components, record_name=record.name,
+            sigma_zz_capable=sigma_zz_capable,
         )
         if tokens is not None:
             file_path = _recorder_file_path(
@@ -6800,11 +6812,25 @@ class FemToOpsTagMap:
     sentinel; it is filtered out at construction exactly as the old
     comprehension's ``if eid != MISSING_FEM_ELEMENT_ID`` guard did, so it
     never becomes a key.
+
+    The map also carries the plan's σ_zz capability (``sigma_zz_blocks``):
+    :meth:`from_plan` is the only place in the emit pipeline where an
+    element's ops tags and its typed spec (element class + ``plane_type``
+    + material) are both in hand, and the recorder fan-out — the consumer
+    that needs the answer — already receives this map.  The blocks alias
+    the very tag arrays built for the map itself, so carrying them costs
+    no extra allocation.
     """
 
-    __slots__ = ("_eids", "_tags", "_order", "_sorted_eids", "_sorted_tags")
+    __slots__ = (
+        "_eids", "_tags", "_order", "_sorted_eids", "_sorted_tags",
+        "_sigma_zz_blocks", "_sigma_zz_tags",
+    )
 
-    def __init__(self, eids: "np.ndarray", tags: "np.ndarray") -> None:
+    def __init__(
+        self, eids: "np.ndarray", tags: "np.ndarray",
+        sigma_zz_blocks: "Iterable[np.ndarray]" = (),
+    ) -> None:
         # ``eids`` / ``tags`` are parallel int64 arrays in PLAN order
         # (so ``items`` reproduces the old dict's insertion order). We
         # also keep a sorted view for O(log N) point membership.
@@ -6814,6 +6840,13 @@ class FemToOpsTagMap:
         self._order = order
         self._sorted_eids = eids[order]
         self._sorted_tags = tags[order]
+        # Per-spec ops-tag blocks for the σ_zz-capable specs; concatenated
+        # + sorted lazily on the first query so a model nobody records
+        # σ_zz on never pays for them.
+        self._sigma_zz_blocks: "tuple[np.ndarray, ...]" = tuple(
+            sigma_zz_blocks
+        )
+        self._sigma_zz_tags: "np.ndarray | None" = None
 
     @classmethod
     def from_pairs(
@@ -6845,9 +6878,16 @@ class FemToOpsTagMap:
         Concatenates each spec's ``(eids, tag_start + arange)`` in plan
         order, dropping node-pair sentinel rows. Identical key/value set
         to the old ``{eid: tag}`` comprehension, in the same order.
+
+        Each σ_zz-capable spec's tag block is retained by reference (it is
+        already built for the map) so the recorder fan-out can gate the
+        plane-strain stress promotion — see :meth:`all_sigma_zz_capable`.
         """
+        from .._element_capabilities import element_records_stress_zz
+
         eid_blocks: "list[np.ndarray]" = []
         tag_blocks: "list[np.ndarray]" = []
+        sigma_zz_blocks: "list[np.ndarray]" = []
         for _spec, sub in plan:
             n = len(sub)
             if n == 0:
@@ -6866,10 +6906,32 @@ class FemToOpsTagMap:
             if eids.shape[0]:
                 eid_blocks.append(eids)
                 tag_blocks.append(tags)
+                if element_records_stress_zz(_spec):
+                    sigma_zz_blocks.append(tags)
         if not eid_blocks:
             empty = np.empty((0,), dtype=np.int64)
             return cls(empty, empty)
-        return cls(np.concatenate(eid_blocks), np.concatenate(tag_blocks))
+        return cls(
+            np.concatenate(eid_blocks), np.concatenate(tag_blocks),
+            sigma_zz_blocks,
+        )
+
+    def all_sigma_zz_capable(self, ops_tags: "Iterable[int]") -> bool:
+        """True when every tag in ``ops_tags`` can record a real σ_zz.
+
+        Empty ``ops_tags`` answers ``False`` — there is nothing to promote
+        for, and the un-promoted token is always the safe choice.
+        """
+        if not self._sigma_zz_blocks:
+            return False        # no capable spec at all — O(1) for 3-D models
+        want = np.asarray(tuple(ops_tags), dtype=np.int64)
+        if want.size == 0:
+            return False
+        if self._sigma_zz_tags is None:
+            self._sigma_zz_tags = np.unique(
+                np.concatenate(self._sigma_zz_blocks)
+            )
+        return bool(np.isin(want, self._sigma_zz_tags).all())
 
     def __len__(self) -> int:
         return int(self._eids.shape[0])

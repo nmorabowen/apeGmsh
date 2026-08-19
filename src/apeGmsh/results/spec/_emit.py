@@ -110,7 +110,17 @@ def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     can't be emitted under a single Element recorder. Mixing within
     one keyword is OK (membrane_force + bending_moment both go under
     ``stresses``).
+
+    A ``stress_zz`` record whose ``sigma_zz_capable`` says the elements
+    can report the material's σ33 is promoted to the 4-component
+    plane-strain response, the same record-level promotion the bridge
+    and live-capture routes make — the decision (and the warning when it
+    is refused) lives in the one shared helper so the three routes cannot
+    disagree.  Like ``element_class_name``, this route takes the answer
+    from the caller: it has no bridge back-reference to derive it from,
+    so an unset field means "unknown" and keeps today's token.
     """
+    from apeGmsh.opensees._recorder_translate import _stress_zz_tokens
     from apeGmsh.opensees._response_catalog import gauss_keyword_for_canonical
     keywords: set[str] = set()
     for comp in rec.components:
@@ -125,7 +135,12 @@ def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
             f"families ({sorted(keywords)}); split into separate records "
             f"(one per ops keyword)."
         )
-    return next(iter(keywords))
+    keyword = next(iter(keywords))
+    if keyword == "stresses" and "stress_zz" in rec.components:
+        keyword = _stress_zz_tokens(
+            rec.name, getattr(rec, "sigma_zz_capable", None),
+        )[0]
+    return keyword
 
 
 def _per_material_strain_skip_reason(
