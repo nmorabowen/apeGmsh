@@ -125,6 +125,7 @@ __all__ = [
     "needs_builder_ndf_bracket",
     "needs_builder_ndf_bracket_for_token",
     "validate_builder_scope_ordering",
+    "validate_builder_scope_replay",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
@@ -2222,6 +2223,91 @@ def validate_builder_scope_ordering(
                 f"analyze. The bracket destroys those declarations. {fix} "
                 f"Activate this element's physical group globally instead "
                 f"of inside a stage."
+            )
+
+
+def validate_builder_scope_replay(
+    elements: "Sequence[Any]",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+    scoped_present: bool,
+    stage_owned_tags: "frozenset[int]" = frozenset(),
+) -> None:
+    """Replay-side sibling of :func:`validate_builder_scope_ordering`.
+
+    ADR 0099 S4b.  The forward validator works over ``Element`` specs and
+    ``dependencies()``; replay carries deck RECORDS (a type token, a tag,
+    a flat arg tail), so the same two unfixable-by-ordering cases have to
+    be recognised differently.  Both are reachable only from a PRE-S1
+    archive — the bridge refuses to write either today — so this is
+    legacy-data defence, not a live path.
+
+    Raises
+    ------
+    BridgeError
+        INV-3 — a gated element record references a builder-scoped
+        declaration through its arg tail (``quad ... -damp N``).  Its own
+        bracket destroys that declaration, so no ordering satisfies both:
+        hoisted, the element resolves a tag not yet declared; unhoisted,
+        the bracket purges it after the fact.
+        INV-4 — a stage-owned gated element in an archive that also
+        carries builder-scoped declarations.  Its bracket emits INSIDE
+        the stage block, after the global declarations and (past the
+        first stage) after a completed ``analyze``; there is no earlier
+        position to hoist to.
+    """
+    from .._element_capabilities import (
+        builder_scoped_kind_for_arg,
+        element_builder_ndf,
+    )
+
+    # Gatedness is a property of the TOKEN at a fixed
+    # (ndm, envelope_ndf) — resolve it once per distinct token, never
+    # per element.  A deck carries a handful of tokens and can carry
+    # millions of elements, and this guard runs on every replayed deck.
+    gated_tokens = {
+        tok for tok in {rec.type_token for rec in elements}
+        if needs_builder_ndf_bracket_for_token(
+            tok, ndm=ndm, envelope_ndf=envelope_ndf,
+        )
+    }
+    if not gated_tokens:
+        return
+    gated = [rec for rec in elements if rec.type_token in gated_tokens]
+
+    for rec in gated:
+        bad = sorted({
+            k for a in getattr(rec, "args", ())
+            if (k := builder_scoped_kind_for_arg(a)) is not None
+        })
+        if bad:
+            raise BridgeError(
+                f"replayed element {rec.type_token!r} (tag "
+                f"{int(rec.tag)}) needs a builder-ndf bracket "
+                f"(model basic -ndm {ndm} -ndf "
+                f"{element_builder_ndf(rec.type_token, ndm)}), and that "
+                f"bracket destroys the {', '.join(bad)} declaration its "
+                f"own arg tail references. Per ADR 0099 INV-3 no ordering "
+                f"of the deck can satisfy both. This archive predates the "
+                f"emit-time INV-3 guard; re-author the model attaching "
+                f"damping with ops.damping on a region instead of the "
+                f"element's damp= argument, or use an ungated element."
+            )
+
+    if stage_owned_tags and scoped_present:
+        staged = [rec for rec in gated if int(rec.tag) in stage_owned_tags]
+        if staged:
+            raise BridgeError(
+                f"replayed element {staged[0].type_token!r} (tag "
+                f"{int(staged[0].tag)}) is stage-owned, so its "
+                f"builder-ndf bracket emits INSIDE the stage block — "
+                f"after the global builder-scoped declarations, and (for "
+                f"any stage past the first) after a pattern and a "
+                f"completed analyze. The bracket destroys them and there "
+                f"is no earlier position to hoist to. Per ADR 0099 INV-4 "
+                f"this deck is refused rather than emitted wrong; "
+                f"activate this element's physical group globally."
             )
 
 

@@ -65,7 +65,9 @@ bearing. Neither half can be dropped. **The defect is purely ordering.**
   bracket at `1991`.
 - `_emit_partitioned` — `apesees.py:2688-2716`, then the
   `emit_element_spec_partitioned` bracket at `_internal/build.py:7220`.
-- **H5 replay** — `_internal/compose.py:432-458`.
+- **H5 replay** — `_internal/compose.py:432-458`. *(As-found. Fixed by
+  S4 — replay is the one path here that could be hoisted rather than only
+  made loud; see the implementation plan.)*
 
 Plus the staged case, which is the worst of the five: a stage-activated gated
 element brackets at `apesees.py:2149`, and for stage index ≥ 2 that bracket
@@ -169,14 +171,66 @@ text rather than over any one emitter.
    so a fork change to `~TclModelBuilder()` shows up as a failing repro rather
    than as a field report.
 
-**Deferred, plainly.** `_emit_split`, `_emit_partitioned` and H5 replay
-**keep the defect** after S2 — they are not fixed here, they are made
-**loud** by INV-4. And the staged bracket **cannot be fixed by hoisting at
-all**: a stage-activated gated element brackets after the pattern blocks and
-after completed `analyze` calls, so there is no earlier position to hoist to.
+4. **S4 — the H5 / deck-replay hoist + two legacy refusals.** Replay walks
+   ALREADY-RESOLVED records, so tags are fixed and reordering only moves
+   deck lines — this is the one deferred path that could be genuinely
+   *fixed* rather than only made loud.
+
+   *S4a — the hoist.* `needs_builder_ndf_bracket_for_token` (the token core
+   of the existing spec predicate — `element_builder_ndf` already resolves
+   both spellings, so they cannot disagree); `_replay_into` partitions its
+   elements on it and emits the gated run at a new **step 4b**, above the
+   four declarations. Two conditions gate the partition, and both matter:
+   the predicate is **envelope-aware** (a gated class under a matching
+   envelope needs no bracket and must not move, or every ndf=2 quad deck
+   reorders for nothing), and the hoist is skipped when the deck carries
+   **no builder-scoped declaration at all** (INV-1 then holds vacuously, so
+   reordering would be pure churn). Gatedness is resolved once per DISTINCT
+   token — per-element evaluation measured **+13-15%** on emit of an
+   ungated-only 200k-element deck, a cost landing precisely on the models
+   the hoist cannot help.
+
+   `build('h5')` **opts out** (`deck_ordering=False`): `H5Emitter.model`
+   only stores ndm/ndf, so the bracket is never persisted as a line and the
+   hoist buys that path nothing — while skipping it keeps the
+   archive-rewrite fixed point by construction rather than by argument.
+   `build('live')` deliberately does **not** opt out: measured, openseespy
+   runs no `TclModelBuilder` destructor (a `timeSeries` and a `geomTransf`
+   declared before an in-process `model` re-issue both survive), so live
+   never had this defect — the hoist is kept only so the ordering holds for
+   any backend rather than resting on one backend's teardown behaviour.
+
+   *S4b — the refusals.* `validate_builder_scope_replay`, a record-shaped
+   sibling of `validate_builder_scope_ordering` (replay has type tokens and
+   flat arg tails, not specs with `dependencies()`). Two arms: **INV-3**, a
+   gated record referencing a builder-scoped declaration through its arg
+   tail (`quad ... -damp N`); and **INV-4**, a stage-owned gated element,
+   guarded in `_replay_staged_into` and NOT in `_replay_into` — the H5
+   re-emit path replays a staged archive through the flat helper and must
+   stay able to rewrite one. The element arg-tail flags (`-damp`,
+   `-fx/-fy/-fz`) become a **third column on `_BUILDER_SCOPED_KINDS`**
+   rather than a literal at the call site, keeping INV-2's one-table rule.
+
+   Both arms are **pre-S1 legacy defence**: today's bridge refuses to write
+   either archive. Note the INV-3 severity is smaller than the ADR's
+   authoring-side case — measured post-S4a, that deck *aborts* at the
+   element line rather than running silently undamped, so the guard buys an
+   emit-time error in place of a runtime abort, not a silent-wrong rescue.
+
+**Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
+defect** after S2 — they are not fixed here, they are made **loud** by
+INV-4. And the staged bracket **cannot be fixed by hoisting at all**: a
+stage-activated gated element brackets after the pattern blocks and after
+completed `analyze` calls, so there is no earlier position to hoist to.
 That case needs a **replay of the builder-scoped declarations at bracket
 close**, which is a different mechanism with its own tag-identity questions.
 Future work, not a rider on this ADR.
+
+Note what that leaves, once S4 lands: because S1 refuses split / partitioned
+/ staged **at write time**, the only archive a post-S1 apeGmsh can produce
+carrying a gated element *and* a builder-scoped declaration is a **flat**
+one — and flat replay is exactly what S4 fixes. S4 therefore covers 100% of
+post-S1 archives, and its two refusals exist for **pre-S1 data only**.
 
 ## Consequences
 
@@ -191,6 +245,11 @@ Future work, not a rider on this ADR.
 - **The flat path's deck line ORDER changes.** Same objects, same tags, same
   results; different positions. Any test pinning absolute deck line numbers
   moves. Content-based and order-insensitive pins are unaffected.
+- **The replayed deck's line ORDER changes too** (`build('tcl')` / `('py')`
+  / `('live')`), and only for decks that carry both a bracket-needing gated
+  element and at least one builder-scoped declaration — a 20-deck corpus
+  byte-diffed 18/20 identical across S4a, the 2 that moved being exactly the
+  intended hoist. `build('h5')` is byte-unchanged by construction.
 - `quad(damp=…)` under a mixed-ndf envelope becomes an emit-time error
   (INV-3). It is not a regression: that combination has never produced a
   damped model, it produced an undamped one without saying so.

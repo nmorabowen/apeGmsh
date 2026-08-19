@@ -441,6 +441,158 @@ def test_no_scoped_declarations_means_no_hoist(tmp_path: Path) -> None:
     assert _first(lines, "element Truss") < _first(lines, "element quad")
 
 
+# ---------------------------------------------------------------------------
+# S4b — the two legacy-archive refusals (INV-3 / INV-4)
+# ---------------------------------------------------------------------------
+
+
+class _Rec:
+    """Minimal ElementRecord stand-in for the refusal probes."""
+
+    __slots__ = ("tag", "type_token", "args", "connectivity", "fem_eid")
+
+    def __init__(self, tag: int, token: str, args: tuple = ()) -> None:
+        self.tag = tag
+        self.type_token = token
+        self.args = args
+        self.connectivity = ()
+        self.fem_eid = tag
+
+
+def test_inv3_legacy_damp_record_is_refused() -> None:
+    """``quad ... -damp N`` in a rehydrated archive refuses to emit.
+
+    Unfixable by ordering: hoisted, the element resolves a tag not yet
+    declared; unhoisted, its own bracket purges the declaration after the
+    fact.  Must be FABRICATED — the bridge's emit-time INV-3 guard means
+    no current apeGmsh can write this archive, so it only reaches us from
+    a pre-S1 file.
+
+    Measured on the binary: post-S4a this deck aborts at the element
+    line rather than running silently undamped, so the guard upgrades a
+    30k-lines-later runtime abort into an emit-time error — it is not
+    rescuing a silent wrong answer, which S4a already fixed.
+    """
+    from apeGmsh.opensees._internal.compose import _replay_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    class _Damp:
+        type_token = "Uniform"
+        tag = 1
+        args = (0.03, 0.5, 10.0)
+
+    with pytest.raises(Exception, match="INV-3"):
+        _replay_into(
+            RecordingEmitter(), ndm=2, ndf=3,
+            dampings=(_Damp(),),
+            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0, "-damp", 1)),),
+        )
+
+
+def test_inv3_is_checked_even_when_nothing_would_hoist() -> None:
+    """The INV-3 conflict is the element's OWN bracket, not deck order.
+
+    So it must be caught even when the vacuous-case early-out skips the
+    hoist — i.e. with no builder-scoped DECLARATION records present, only
+    the dangling reference in the arg tail.
+    """
+    from apeGmsh.opensees._internal.compose import _replay_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    with pytest.raises(Exception, match="INV-3"):
+        _replay_into(
+            RecordingEmitter(), ndm=2, ndf=3,
+            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0, "-damp", 1)),),
+        )
+
+
+def test_inv3_ignores_the_flag_on_an_UNGATED_element() -> None:
+    """``-damp`` on an ungated element is fine and must NOT refuse.
+
+    It is the bracket that destroys the declaration, and an ungated
+    element has none.  This is the false-positive direction: a guard that
+    simply grepped for ``-damp`` would break every damped beam model.
+    """
+    from apeGmsh.opensees._internal.compose import _replay_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    class _Damp:
+        type_token = "Uniform"
+        tag = 1
+        args = (0.03, 0.5, 10.0)
+
+    _replay_into(
+        RecordingEmitter(), ndm=2, ndf=3,
+        dampings=(_Damp(),),
+        elements=(_Rec(1, "dispBeamColumn", (5, 6, 1, 1, "-damp", 1)),),
+    )
+
+
+def test_inv4_stage_owned_gated_element_is_refused() -> None:
+    """A stage-OWNED gated element refuses on the staged replay path.
+
+    Its bracket emits inside the stage block — after the global
+    declarations and, past the first stage, after a completed
+    ``analyze`` — so unlike the global prefix (which S4a hoists) there is
+    no earlier position to move it to.
+    """
+    from apeGmsh.opensees._internal.compose import _replay_staged_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    class _Transf:
+        type_token = "Linear"
+        tag = 1
+        vec = ()
+
+    class _Stage:
+        name = "excavation"
+        owned_node_ids = ()
+        owned_element_ids = (1,)
+
+    with pytest.raises(Exception, match="INV-4"):
+        _replay_staged_into(
+            RecordingEmitter(), stages=(_Stage(),),
+            ndm=2, ndf=3,
+            transforms=(_Transf(),),
+            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0)),),
+        )
+
+
+def test_inv4_global_gated_element_in_a_staged_archive_is_allowed() -> None:
+    """The complement: gated but NOT stage-owned must NOT refuse.
+
+    S4a's hoist handles that case in the global prefix — the probe
+    measured it going from 3 INV-1 offenders to 0 and running clean on
+    the binary.  Refusing it as well would be a false positive that
+    breaks every staged soil model.
+
+    Pinned on the guard directly rather than through
+    ``_replay_staged_into``: the subject here is which elements the guard
+    discriminates, and driving the full stage machinery would only add a
+    fat stage stub between the test and what it asserts.
+    """
+    from apeGmsh.opensees._internal.build import (
+        validate_builder_scope_replay,
+    )
+
+    args = {
+        "ndm": 2, "envelope_ndf": 3, "scoped_present": True,
+    }
+    gated = (_Rec(1, "quad", (1, 2, 3, 4, 1.0)),)
+
+    # Owned by a stage -> refused.
+    with pytest.raises(Exception, match="INV-4"):
+        validate_builder_scope_replay(
+            gated, stage_owned_tags=frozenset({1}), **args,
+        )
+    # Same element, owned globally -> allowed.
+    validate_builder_scope_replay(
+        gated, stage_owned_tags=frozenset({99}), **args,
+    )
+    # And with no stages at all.
+    validate_builder_scope_replay(gated, **args)
+
+
 def test_h5_roundtrip_fixed_point_on_a_gated_archive(tmp_path: Path) -> None:
     """``h5 → from_h5 → to_h5`` stays a fixed point on a mixed-ndf archive.
 

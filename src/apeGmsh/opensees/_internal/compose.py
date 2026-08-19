@@ -483,6 +483,22 @@ def _replay_into(
     # skip the hoist, and this deck keeps the line order it had — an O(1)
     # test on four already-materialised sequences, before touching the
     # element list at all.
+    if deck_ordering:
+        # ADR 0099 INV-3 (S4b) — a rehydrated gated element whose arg
+        # tail references a builder-scoped declaration cannot be saved by
+        # ordering, hoisted or not.  Only a PRE-S1 archive can carry one
+        # (the bridge refuses to write it); refuse the deck rather than
+        # emit one that aborts 30k lines later at the element line.
+        # Checked whether or not the hoist below fires: the conflict is
+        # the element's own bracket, not the deck order.
+        from .build import validate_builder_scope_replay
+
+        validate_builder_scope_replay(
+            _kept, ndm=int(ndm), envelope_ndf=int(ndf),
+            scoped_present=bool(
+                transforms or beam_integrations or time_series or dampings
+            ),
+        )
     if deck_ordering and (
         transforms or beam_integrations or time_series or dampings
     ):
@@ -854,6 +870,34 @@ def _replay_staged_into(
     owned_element_tags = frozenset(
         int(t) for s in stages for t in s.owned_element_ids
     )
+
+    # ADR 0099 INV-4 (S4b) — a STAGE-OWNED gated element brackets inside
+    # its stage block, after the global builder-scoped declarations and
+    # (past the first stage) after a completed ``analyze``.  Unlike the
+    # global prefix, which the S4a hoist fixes, there is no earlier
+    # position to move it to; refuse rather than emit a deck that runs
+    # undamped or dies mid-history.  Placed HERE, before any emit, and
+    # NOT inside ``_replay_into`` — the H5 re-emit path replays a staged
+    # archive through the flat ``_replay_into`` and must stay able to
+    # rewrite one.  Only a pre-S1 archive can carry this.
+    if owned_element_tags:
+        from .build import validate_builder_scope_replay
+
+        # ``ndm`` / ``ndf`` are required keyword args of ``_replay_into``
+        # and always present here — indexed, not ``.get``-defaulted,
+        # because a wrong envelope would silently mis-evaluate the gate.
+        validate_builder_scope_replay(
+            replay_kwargs.get("elements", ()),
+            ndm=int(replay_kwargs["ndm"]),
+            envelope_ndf=int(replay_kwargs["ndf"]),
+            scoped_present=bool(
+                replay_kwargs.get("transforms")
+                or replay_kwargs.get("beam_integrations")
+                or replay_kwargs.get("time_series")
+                or replay_kwargs.get("dampings")
+            ),
+            stage_owned_tags=owned_element_tags,
+        )
 
     # ONE allocator threaded across the global prefix AND every stage
     # (the bridge reuses a single ``tags``; a per-stage allocator would
