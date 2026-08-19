@@ -398,3 +398,105 @@ def test_contour_clim_falls_back_to_step0_without_store(
     # No store -> per-step range -> step 0 is all-zero -> degenerate (0, 1).
     # (This is exactly the washed-out animation the store fixes.)
     assert (lo, hi) == (0.0, 1.0)
+
+# ---------------------------------------------------------------------
+# ADR 0098 A4.1 Bug A — an UNSCOPED gauss contour is the common case,
+# and it was the one case that got neither the accumulator nor the mask
+# ---------------------------------------------------------------------
+def _attach_gauss_contour(results, headless_plotter, *, ids=None, store=None):
+    """A gauss contour, scoped to ``ids`` or (the default) unscoped."""
+    spec = DiagramSpec(
+        kind="contour",
+        selector=SlabSelector(component="stress_xx", ids=ids),
+        style=ContourStyle(topology="gauss", averaging="averaged"),
+    )
+    scene = build_fem_scene(results.fem)
+    diagram = ContourDiagram(spec, results)
+    diagram._visual_store = store or VisualDataStore()  # noqa: SLF001
+    diagram.attach(headless_plotter, results.fem, scene)
+    return diagram, scene
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+def test_gauss_contour_builds_the_accumulator_and_mask(
+    results_with_stress_magnitude, headless_plotter, scoped,
+):
+    """A4.1 Bug A.
+
+    ``_specs._scope_ids`` / ``resolve_element_ids`` both return ``None``
+    for an unscoped view meaning ALL elements. ``_build_gauss_state``
+    read that as "nothing to build" and returned early, so the whole-mesh
+    contour — the default pane — ran the per-element Python fallback AND
+    re-read HDF5 every frame. Both halves must be built either way.
+    """
+    results = results_with_stress_magnitude
+    ids = _all_element_ids(results.fem) if scoped else None
+    diagram, _scene = _attach_gauss_contour(
+        results, headless_plotter, ids=ids,
+    )
+    assert diagram._gauss_gp_mask is not None, "no cached GP mask"  # noqa: SLF001
+    assert diagram._gauss_accumulator is not None, (  # noqa: SLF001
+        "no GaussToNodeAccumulator — the per-element loop is back"
+    )
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+def test_accumulator_paints_what_the_fallback_paints(
+    results_with_stress_magnitude, headless_plotter, scoped,
+):
+    """The fast path is only worth having if it is the SAME picture.
+
+    Drives both routes over every step and compares the painted scalar
+    buffer: the accumulator's batched matmul against
+    ``extrapolate_gauss_slab_to_nodes``, the reference it replaced.
+    """
+    results = results_with_stress_magnitude
+    ids = _all_element_ids(results.fem) if scoped else None
+    n_steps = len(results.stage(_stage_id(results)).time)
+
+    fast, _ = _attach_gauss_contour(results, headless_plotter, ids=ids)
+    assert fast._gauss_accumulator is not None  # noqa: SLF001
+
+    slow, _ = _attach_gauss_contour(results, headless_plotter, ids=ids)
+    slow._gauss_accumulator = None  # noqa: SLF001 - force the reference path
+    slow._gauss_gp_mask = None  # noqa: SLF001
+
+    for step in range(n_steps):
+        fast.update_to_step(step)
+        slow.update_to_step(step)
+        np.testing.assert_allclose(
+            np.asarray(fast._scalar_values),  # noqa: SLF001
+            np.asarray(slow._scalar_values),  # noqa: SLF001
+            rtol=1e-6, atol=1e-6,
+            err_msg=f"accumulator and fallback disagree at step {step}",
+        )
+
+
+def test_unscoped_gauss_playback_does_no_hdf5_read(
+    results_with_stress_magnitude, headless_plotter,
+):
+    """The other half of Bug A: with no cached mask,
+    ``_visual_gauss_step_subslab`` bailed on the same ``eids is None``
+    guard, so every frame went back to HDF5 instead of the RAM slab.
+    """
+    results = results_with_stress_magnitude
+    diagram, _scene = _attach_gauss_contour(results, headless_plotter)
+
+    reader = results._reader  # noqa: SLF001
+    reads = {"n": 0}
+    orig = reader.read_gauss
+
+    def counting(*a, **k):
+        reads["n"] += 1
+        return orig(*a, **k)
+
+    reader.read_gauss = counting
+    try:
+        for step in range(len(results.stage(_stage_id(results)).time)):
+            diagram.update_to_step(step)
+    finally:
+        reader.read_gauss = orig
+
+    assert reads["n"] == 0, (
+        f"expected 0 HDF5 gauss reads during playback, got {reads['n']}"
+    )

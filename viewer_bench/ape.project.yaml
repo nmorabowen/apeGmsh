@@ -1,0 +1,49 @@
+# Soft APE Studio habitat manifest (MAY grow).
+# Template seed: copy APE/ + this file; replace memory/ and models/ per habitat.
+schema: 1
+name: viewer_bench
+role: habitat
+habitat_root: .
+studio:
+  generated: .apegmsh
+  mcp_env: APEGMSH_STUDIO_ROOT
+ape_project: APE
+context: APE
+instructions: APE/instructions
+memory: APE/memory
+skills_door: APE/skills/catalog.md
+skills_catalog: APE/skills/catalog.json
+skills_harvest: APE/skills/harvest.py
+libraries_door: APE/libraries/catalog.md
+libraries_catalog: APE/libraries/catalog.json
+libraries_harvest: APE/libraries/harvest.py
+tools: tools
+tools_apecad: tools/apeCAD
+tools_apesketch: tools/apeSketch
+# Visual-talk requisites (informational; start_session.py warns, doesn't gate).
+requires:
+  apegmsh: pip install apeGmsh
+  apecad: pip install git+https://github.com/nmorabowen/apeCAD.git
+  apesketch: pip install git+https://github.com/nmorabowen/apeSketch.git
+postmortem: postmortem
+postmortem_sessions: postmortem/sessions
+postmortem_backlog: postmortem/backlog/open.md
+session_postmortem: APE/instructions/session-postmortem.md
+references: references
+scripts: scripts
+session_start: scripts/start.ps1
+session_finish: scripts/finish.ps1
+reports: reports
+reports_briefs: reports/technical_briefs
+reports_ledgers: reports/model_ledgers
+reports_model: reports/model_reports
+reports_figures: reports/figures
+reporting_playbook: APE/instructions/reporting.md
+studio_mcp: APE/instructions/studio-mcp.md
+mcp_server_id: apegmsh-studio-habitat
+models:
+  - id: ssi_frame_wall
+    src: models/ssi_frame_wall/src
+    entry: build.py
+    cases: models/ssi_frame_wall/cases
+    canonical_cases: [c001_baseline_small]

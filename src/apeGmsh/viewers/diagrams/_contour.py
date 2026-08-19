@@ -84,6 +84,23 @@ _EFFECTIVE_GAUSS_NODE = "gauss_node"                # n_gp>1, averaged
 _EFFECTIVE_GAUSS_NODE_DISCRETE = "gauss_node_discrete"   # n_gp>1, discrete
 
 
+def _gp_mask(element_index: "ndarray", eids: "ndarray | None") -> "ndarray":
+    """Which GP rows of ``element_index`` belong to ``eids``.
+
+    ``eids is None`` means UNRESTRICTED — every element — which is what
+    ``resolve_element_ids`` and ``_specs._scope_ids`` both return for an
+    unscoped view. Reading that ``None`` as "nothing selected" is the
+    ADR 0098 A4.1 Bug A: it left the whole-mesh Gauss contour with no
+    accumulator and no cached mask, so every frame fell back to the
+    per-element Python loop AND re-read HDF5. The identity mask is the
+    correct reading, and it is exactly what the store's own slab holds
+    (it is loaded with ``ids=None``, so same rows in the same order).
+    """
+    if eids is None:
+        return np.ones(element_index.size, dtype=bool)
+    return np.isin(element_index, np.asarray(eids, dtype=np.int64))
+
+
 @register_diagram_kind(label="Contour", style_class=ContourStyle, order=10)
 class ContourDiagram(ScalarColorSupport, Diagram):
     """Scalar contour painted on a slice of the substrate mesh.
@@ -182,15 +199,29 @@ class ContourDiagram(ScalarColorSupport, Diagram):
 
         topology = self._resolve_topology()
         if topology == _TOPO_GAUSS:
-            # Peek at step 0 to choose cell-vs-node sub-path.
-            self._attach_gauss(scene)
-            # Pre-warm the visual store gauss slab now (at attach) so the
-            # first step-change reads from the float16 RAM cache instead of
-            # triggering a blocking full (T × GP) HDF5 read mid-playback.
-            # Skipped under a plane override — that cache holds the
-            # default-recovery values, so this diagram cannot use it.
+            # Warm the store BEFORE the sub-path attach, not after.
+            #
+            # `_attach_gauss` computes `_initial_clim`, and
+            # `_compute_initial_clim` prefers the store's whole-history
+            # (vmin, vmax) so the scale does not collapse to step 0.
+            # Warming afterwards meant that preference could never fire
+            # on a cold store — the clim silently fell back to step 0's
+            # range — while a store already warm from another diagram or
+            # an earlier realize DID get it. Same pane, two colour
+            # scales, decided by cache warmth. Order it once, here.
+            #
+            # The nodal path already reads this way: `_attach_nodes`
+            # resolves its slab columns before it computes the clim.
             if not self._plane_override_active():
                 self._visual_gauss_slab()
+            # Peek at step 0 to choose cell-vs-node sub-path.
+            self._attach_gauss(scene)
+            # The slab is already warm (above), which is also what keeps
+            # the first step-change off a blocking full (T × GP) HDF5
+            # read mid-playback. Skipped under a plane override — that
+            # cache holds the default-recovery values, so this diagram
+            # cannot use it.
+            if not self._plane_override_active():
                 # Build the cached isin mask + nodal accumulator from the
                 # now-warm slab so per-frame work is minimal.
                 self._build_gauss_state()
@@ -1103,11 +1134,8 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         full = self._visual_gauss_slab()
         if full is None:
             return
-        eids = self._resolved_element_ids
-        if eids is None:
-            return
         ei = np.asarray(full.element_index, dtype=np.int64)
-        mask = np.isin(ei, np.asarray(eids, dtype=np.int64))
+        mask = _gp_mask(ei, self._resolved_element_ids)
         if not bool(mask.any()):
             return
         self._gauss_gp_mask = mask
@@ -1122,8 +1150,15 @@ class ContourDiagram(ScalarColorSupport, Diagram):
                     )[mask],
                     fem=self._view,
                 )
-            except Exception:
+            except Exception as exc:
+                # A mesh whose extrapolation matrix cannot be formed
+                # still draws — through the per-element fallback. But it
+                # draws SLOWLY, and a silent bail here is exactly how
+                # A4.1's Bug A survived: report it (ADR 0084 D4).
+                from .._failures import report
+
                 self._gauss_accumulator = None
+                report("diagram.gauss_accumulator", exc)
 
     def _visual_gauss_step_subslab(
         self, step_index: int, eids: "ndarray | None",
@@ -1138,7 +1173,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         ``np.isin`` over the stage GP rows (RAM-only - the HDF5
         full-(T,N) read that made playback crawl is gone).
         """
-        if eids is None or self._plane_override_active():
+        if self._plane_override_active():
             return None
         full = self._visual_gauss_slab()
         if full is None:
@@ -1148,7 +1183,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         # Use the pre-cached mask when available (built once at attach).
         mask = self._gauss_gp_mask
         if mask is None:
-            mask = np.isin(ei, np.asarray(eids, dtype=np.int64))
+            mask = _gp_mask(ei, eids)
         if not bool(mask.any()):
             return None
         vals = np.asarray(full.values)

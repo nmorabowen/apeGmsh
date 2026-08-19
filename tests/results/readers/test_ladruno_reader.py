@@ -617,3 +617,130 @@ def test_node_envelope_unknown_component_raises() -> None:
     with LadrunoReader(NODE_ENVELOPE) as r:
         with pytest.raises(ValueError, match="not in this .ladruno's node"):
             r.read_node_envelope("stage_0", "temperature")
+
+
+# ---------------------------------------------------------------------------
+# Generic ``C1..Cn`` columns — named from RESPONSE_CATALOG
+# ---------------------------------------------------------------------------
+#
+# The fork's plain ``stress`` / ``strain`` responses on its plane elements
+# tag no ResponseType, so the recorder writes anonymous columns. These pin
+# the resolver's outcomes without needing the fork; the live counterpart is
+# tests/opensees/integration_ladruno/test_ladruno_gauss_generic_columns.py.
+
+def _generic_block(width: int) -> list:
+    from apeGmsh.results.readers._ladruno_element_io import _Block
+
+    return [_Block(
+        level=0, gauss_id=-1,
+        comp_names=tuple(f"C{i + 1}" for i in range(width)), col_start=0,
+    )]
+
+
+def test_generic_columns_named_from_catalog() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        resolve_generic_gauss_blocks,
+    )
+
+    out = resolve_generic_gauss_blocks(
+        _generic_block(9), token="stress",
+        bucket_key="33016-LadrunoLST[0:0:0]",
+    )
+    assert [b.gauss_id for b in out] == [0, 1, 2]
+    assert [b.col_start for b in out] == [0, 3, 6]
+    assert all(
+        b.comp_names == ("stress_xx", "stress_yy", "stress_xy") for b in out
+    )
+
+
+def test_generic_columns_wrong_width_raises() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+        resolve_generic_gauss_blocks,
+    )
+
+    # A wrong component name is worse than a missing one: 8 columns fit no
+    # LadrunoLST layout, so the reader refuses rather than mis-labelling.
+    with pytest.raises(GaussLayoutMismatch, match="Refusing to guess"):
+        resolve_generic_gauss_blocks(
+            _generic_block(8), token="stress",
+            bucket_key="33016-LadrunoLST[0:0:0]",
+        )
+
+
+def test_generic_columns_unknown_class_left_alone() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        resolve_generic_gauss_blocks,
+    )
+
+    blocks = _generic_block(9)
+    assert resolve_generic_gauss_blocks(
+        blocks, token="stress", bucket_key="99999-NotACatalogedClass[0:0:0]",
+    ) is blocks
+
+
+def test_named_columns_untouched_by_the_resolver() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _Block,
+        resolve_generic_gauss_blocks,
+    )
+
+    blocks = [_Block(
+        level=1, gauss_id=0,
+        comp_names=("sigma11", "sigma22", "sigma12", "sigma33"), col_start=0,
+    )]
+    assert resolve_generic_gauss_blocks(
+        blocks, token="stressesPlaneStrain",
+        bucket_key="33016-LadrunoLST[0:0:0]",
+    ) is blocks
+
+
+# ---------------------------------------------------------------------------
+# Overlapping tokens — one (element, GP) slot covered twice
+# ---------------------------------------------------------------------------
+#
+# `stress` (anonymous, catalog-named) and `stressesPlaneStrain` (self-named,
+# and a superset — it carries sigma33) both report the in-plane components
+# for the same elements at the same Gauss points. The live counterpart is
+# test_both_stress_tokens_in_one_recorder_do_not_double_count.
+
+def _overlap(v_named: float, v_generic: float):
+    """Two columns for element 7 / GP 0 — one file-named, one catalog."""
+    return (
+        np.array([[v_generic, v_named]]),      # values (T=1, 2)
+        np.array([7, 7]),                      # element_index
+        np.array([0, 0]),                      # gauss_index
+        np.array([False, True]),               # named
+    )
+
+
+def test_overlapping_tokens_keep_the_file_named_column() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _dedupe_gauss_columns,
+    )
+
+    keep = _dedupe_gauss_columns(*_overlap(5.0, 5.0), component="stress_xx")
+    assert keep.tolist() == [1]                # the file-named column
+
+
+def test_no_overlap_leaves_the_slab_alone() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _dedupe_gauss_columns,
+    )
+
+    assert _dedupe_gauss_columns(
+        np.array([[1.0, 2.0]]), np.array([7, 7]), np.array([0, 1]),
+        np.array([True, True]), component="stress_xx",
+    ) is None
+
+
+def test_overlapping_tokens_that_disagree_raise() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+        _dedupe_gauss_columns,
+    )
+
+    # Same material state read twice cannot differ — if it does, one of
+    # the two buckets' columns is mis-labelled. Do not pick one.
+    with pytest.raises(GaussLayoutMismatch, match="element 7 Gauss point 0"):
+        _dedupe_gauss_columns(*_overlap(5.0, -3.0), component="stress_xx")

@@ -3,9 +3,11 @@
 **Status:** Accepted (2026-08-16) — design ratified in the owner
 workshop the same day; record revised the same day after adversarial
 review. Implementation is under way: S0, S1-A, S1-B and S2 have
-merged. Qt layout of the pane host — *Open question 1* — is
+merged. Qt layout of the pane host — *Open question 1* — was
 **resolved in Amendment 1** (2026-08-17), the gate the implementation
-plan puts before S3.
+plan puts before S3, and **re-decided in Amendment 3** (2026-08-19):
+the central-widget host does not survive its own first show, so the
+panes are dock panels.
 
 Supersedes the **product ontology** of [ADR 0058](0058-concurrent-geometries.md)
 (a `Geometry` as the Results scene instance) and its
@@ -1323,3 +1325,360 @@ This disposition is bound to the hatch and does not outlive it.
 2. **Any one of the six is asked for in the session window.** That is
    a §4 slot-widening amendment here, argued on the evidence, at the
    same review bar as a new slot — not a reopening of this amendment.
+
+## Amendment 3 (2026-08-19) — the panes are dock panels
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog and
+the rejected-alternatives table all stand. Amendment 2 is untouched.
+
+This amendment **reverses Amendment 1's A1.1 decision** — one
+`SessionPaneHost` as the window's central widget — and replaces it with
+one dock panel per pane. It is **UI, not IR**, exactly as A1 was: no
+session record changes, `ResultsSession` / `MeshView` / `PlotView` /
+`realize()` and the snapshot are untouched, and layout stays window
+chrome in `QSettings`, never in the session.
+
+A1 is reversed on a fact A1 did not have: **the central-widget
+arrangement does not work, and cannot be made to work by sizing it.**
+
+### A3.1 Evidence — measured on a real model, not a fixture
+
+Found by opening the `viewer_bench/ssi_frame_wall` bench against a live
+run — three panes: a clipped stress contour, a frame moment diagram, a
+history plot. Every number below is from that window.
+
+**The pane host is never actually the central widget.**
+`SessionWindow.__init__` mounts it (`viewers/session/_window.py:150`) and
+it *is* seated; the instant the window is first shown, `centralWidget()`
+returns `None`. Traced with an instrumented `QMainWindow`:
+`setCentralWidget` is called exactly **once**, with the host, and
+`takeCentralWidget` is called **never**. The host object stays alive and
+still parented to the window, so it paints at its untouched **640×480**
+default *on top of* the docks, while the two side docks split the whole
+width (**1254 + 1253** px of 2560). The floating 640×480 pane cluster
+users see is that orphan.
+
+**The obvious repair crashes.** Occupying the centre from construction
+with a placeholder — so `_build_layout` arranges the docks around a real
+centre and `set_central_widget` merely replaces it — makes the host truly
+central, and the first show then dies:
+
+```
+Windows fatal exception: access violation
+  viewer_window.py:1322 in present   ->  showMaximized()
+```
+
+and identically on a plain `window.show()`. Reverted.
+
+**The crash is specific to being the central widget.** It is not multiple
+GL contexts and it is not size:
+
+| Configuration | Result |
+|---|---|
+| host as central widget | access violation on first show |
+| host orphaned (shipped behaviour) | survives — the 640×480 bug |
+| host resized to 1800×900 while orphaned | survives |
+| second pane added, re-tiled, resized again | survives |
+| host inside one `QDockWidget` | survives show, float, resize to 1400×800 |
+| **one dock per pane, 3 panes** | **survives show, float, resize, re-dock, tabify** |
+
+Three timer-based repairs of the central-widget path were tried and all
+reverted: a `singleShot(0)` re-seat after show, a deferred `resizeDocks`,
+and the placeholder centre. The first two measure perfectly on a
+fixed-size `show()` and wreck the real *maximized* window; the third
+crashes. **A Qt layout fix must be verified on the path the user runs —
+maximized, real window — not on a fixed-size `show()`.** That mistake was
+made twice during this investigation and reported as success once.
+
+### A3.2 Decision
+
+**Each pane is its own `QDockWidget`** — movable, floatable, closable —
+placed with `splitDockWidget` at creation. The window keeps ADR 0088 D1's
+partition (outline left, panes in the middle, inspector right, scrubber
+bottom), but the middle is dock panels, not a central viewport.
+
+What this buys beyond not crashing: a pane can be dragged out, floated,
+resized on its own, tabbed onto another pane and restored — all from Qt,
+none of it hand-written. A1.2's `T(N)` exists to answer "where does pane
+N go" with no user input; Qt's dock layout answers the same question and
+then lets the user override it, which is what a viewer should do.
+
+**A1.2's tiling law, `layout_ratios` / `apply_ratios` / `reset_tiling`
+and the splitter host retire with it.** A1.3's pane frame survives
+unchanged — it becomes the dock's widget. A1.4's floors survive as dock
+minimum sizes. A1.5's active-pane rule survives, expressed as dock focus.
+
+### A3.3 Persistence — who owns the arrangement
+
+Two systems now describe the panes, and they must not fight.
+
+**The session is authoritative for existence; the saved arrangement is
+advisory for placement.** Concretely:
+
+1. `ResultsSession.panes` decides which panes exist. Nothing in
+   `QSettings` may create or destroy a pane.
+2. Each pane dock carries a stable `objectName` derived from the pane id,
+   so `saveState` / `restoreState` can address it.
+3. On restore, a saved entry naming a pane that no longer exists is
+   **dropped**; a pane with no saved entry takes **default placement**.
+   Neither is an error and neither prompts.
+
+Qt implements exactly this, but only through
+`QMainWindow.restoreDockWidget`, not through a second `restoreState`:
+the window restores its state before any pane dock exists, each pane
+dock is then seated at default placement and claims its own entry out
+of the pending state. Re-applying the whole state after the fact was
+tried and measured — it leaves the entire Left area, outline included,
+unplaced at negative coordinates.
+
+This keeps §1's law intact — layout is chrome, the snapshot is the
+document — and makes the mismatch case (a session snapshot restored
+beside a stale window layout) decidable instead of undefined.
+
+### A3.4 Geometry lessons that are contract, not folklore
+
+All three were measured, and all three are silent when wrong:
+
+- **`resizeDocks` across dock areas needs two passes, one event-loop turn
+  apart.** The Left chain (outline, panes) settles on the first pass and
+  the Right one (inspector) only on the second; two calls inside one turn
+  move nothing.
+- **`resizeDocks(..., Vertical)` does not move the scrubber.** It sat at
+  730 px through every variant. A maximum-height ceiling does.
+- **The inspector needs a width floor.** Its slot rows and Add buttons
+  measure ~375 px; without `setMinimumWidth` the settle leaves it at ~352
+  and clips them.
+- **A dock derives its minimum from its widget.** A 240 x 200 pane frame
+  makes its dock measure 240 x 224 with no `setMinimum*` call on the dock
+  at all — so A1.4's floors reach the dock through the FRAME, and
+  restating them on the dock can only ever *lower* the real floor (it
+  took the height from 224 back to 200). The floors stay on the frame.
+- **View -> Reset layout has to re-apply the extents.** The default dock
+  state the shell restores predates the panes, so re-seating them alone
+  lands every pane on its A1.4 minimum with the middle column half empty
+  (measured: 240 + 301 px of 1871). The same two-pass schedule as the
+  boot path fixes it.
+
+And one trap that cost two measurement rounds: `ResultsWindow._build_layout`
+imports `QtCore` **locally**, so code factored out of it loses the name —
+and the `resizeDocks` block sits inside `except Exception: pass`, which
+turns the resulting `NameError` into a silent no-op.
+
+### A3.5 Consequences
+
+- `SessionResultsWindow._LAYOUT_SCHEMA_VERSION` goes **1 → 2**: the dock
+  set changed structurally, so v1 state must not half-apply. The retired
+  objectName discipline applies — `dock_results_panes`, the intermediate
+  single-panel spike, must not be reused for different content.
+- `tests/viewers/test_pane_host.py` encodes the central-widget contract
+  (`centralWidget() is window.host`) and the `T(N)` splitter geometry; it
+  is rewritten with this amendment, not patched around.
+  `test_session_window_schema_numbering_restarts_at_1` asserts schema 1
+  and moves to 2.
+- The S3 acceptance criteria that name splitters or `T(N)` are restated
+  against dock placement. The criteria about *what a pane draws* are
+  untouched — this amendment never reaches the IR.
+- ADR 0088 D1's "viewport keeps ≥ 50 % of the width" survives as a
+  property of the panes' dock column and is now measurable: on a 2560 px
+  window the panes hold 1870 px against outline 253 and inspector 380.
+
+### A3.6 Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Keep the central widget, fix the sizing | Not a sizing bug — the centre is dropped on first show, and forcing it in crashes |
+| One dock holding the splitter host | A movable *container*, not movable views; buys nothing over the centre except not crashing |
+| One render window with N viewports | Would dodge multi-context GL entirely, but the evidence says multi-context is not the fault (two panes resize fine) — a rewrite of the pane host and the backend seam for a problem we do not have |
+| MDI subwindows | Still rejected on A1's original UX grounds; docks are not MDI and give tabbing and persistence for free |
+| Leave it broken and document it | The window is the product; a 640×480 cluster painted over the docks is not a viewer |
+
+## Amendment 4 (2026-08-19) — a time change stops rebuilding the pane
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog and
+the rejected-alternatives table all stand. Amendments 1–3 are untouched,
+and this one never reaches the IR: no session record changes, `realize()`
+still exists and still produces exactly what it produced.
+
+This amendment **lifts the one-shot restriction** `_reconciler.py` froze
+in S2 — "update-in-place by key is deliberately NOT the v1 protocol" —
+for exactly one case: the instant moved and nothing else did. That
+restriction was the right call with no evidence; there is evidence now.
+
+### A4.1 Evidence — measured on the bench, with a harness that stays
+
+`internal_docs/profiling/results_session/profile_session.py` drives a
+deterministic gesture workload against `ssi_frame_wall`,
+`c001_baseline_small`. Every number below is from it, `--no-profile`
+(cProfile inflates wall clock ~1.4x):
+
+| gesture | mean ms | p50 | p95 |
+|---|---:|---:|---:|
+| **scrub** | **405** | 401 | 425 |
+| pane add+close | 336 | 332 | 359 |
+| slot fill/clear | 166 | 118 | 285 |
+| scope flip | 57 | 27 | 173 |
+| camera orbit | 18 | 16 | 37 |
+
+The scrubber defaults to 30 fps — 33 ms. Scrub is **12x over budget**,
+and it is not the GPU: VTK `Render` is 7 ms/step and an orbit is 18 ms.
+
+Pane count is not the driver either. One pane is already most of it:
+
+| panes | scrub mean ms |
+|---|---:|
+| 1 (contour + deform + clip) | 284 |
+| 2 (+ line diagram) | 399 |
+| 3 (+ history plot) | 408 |
+
+The plot pane costs **9 ms** — `PlotReconciler`'s cheap cursor path
+working exactly as designed, and the existence proof for this amendment.
+
+Attribution, 10 steps on one pane with a Gauss contour:
+
+| | cum s | ncalls | |
+|---|---:|---:|---|
+| `_reconciler._flush` | 3.86 | 20 | the pump |
+| ↳ `realize_pane` / `_realize_mesh` | 3.27 | 10 | once per step — correct |
+| ↳↳ `extrapolate_gauss_slab_to_nodes` | 2.43 | **20** | twice per step |
+| ↳↳↳ `extrapolate_gauss_slab_per_element` | 1.61 | 20 | 164 020 `np.broadcast_to` |
+| `_contour.attach` | 1.60 | 10 | a full re-attach every step |
+| `_contour.update_to_step` | 1.25 | 10 | |
+| `_reconciler._teardown` | 0.47 | 10 | |
+| VTK `Render` | 0.74 | 80 | 7 ms/step |
+
+**Two of the three causes are plain bugs, not design.**
+
+**Bug A — the Gauss accumulator is dead on every unscoped view.**
+`_specs._scope_ids` returns `None` for an unscoped view, meaning *all
+elements*. `_contour._build_gauss_state` reads that `None` as *nothing to
+build* and returns early. So the default whole-mesh pane gets no
+`GaussToNodeAccumulator` — the per-element Python loop above — and no
+`_gauss_gp_mask`, which makes `_visual_gauss_step_subslab` bail on the
+same guard and re-read HDF5 every step instead of using the RAM slab.
+Both halves of the optimisation that commit was written to deliver are
+inert on the common path. `tests/test_gauss_extrapolation.py` covers the
+accumulator in isolation; nothing asserted that a contour ever builds
+one. **This is in `viewers/diagrams/_contour.py`, shared with the old
+viewer — an unscoped Gauss contour is slow there too.**
+
+**Bug B — a fresh `VisualDataStore` per flush.** `_realize_mesh`
+constructs one, so a cache whose stated purpose is 30 fps scrubbing from
+RAM is empty on every step and dies with the call — and because
+`ContourDiagram.attach` pre-warms it, every flush pays a full
+`(T, N_gp)` HDF5 read and throws it away. The old viewer owns exactly one
+on the director for the whole session. N panes currently mean N stores of
+the same slab.
+
+**Cause C — the design.** `_pane_signature` is one flat tuple with the
+instant inside it, so any step change fails equality; `_flush` then tears
+down every layer and scalar bar and re-realizes, which rebuilds
+`build_fem_scene`, `ViewerData.from_fem`, the scoped grid, and a
+brand-new diagram per slot whose `attach()` redoes submesh extraction,
+`isin` and the accumulator build — *before* calling `update_to_step`.
+
+### A4.2 Decision
+
+**The pane signature splits in two, and a cursor-only change re-steps
+instead of re-realizing.**
+
+    signature = (structure, cursor)
+    structure = everything the picture is built FROM
+    cursor    = session.effective_instant(pane)
+
+* `structure` equal, `cursor` moved **within one stage**, not forced, and
+  the pane re-steppable → drive `update_to_step` through
+  `RealizedPane.diagrams`, re-pose in place, re-point the realize-owned
+  layers from row maps realize recorded, refresh the pick targets.
+  No teardown, no `realize_pane`, no actor churn.
+* Anything else → today's one-shot path, unchanged.
+
+This is not a new idea in this codebase. It is what `PlotReconciler`
+already does for plots (`_chart.py`), what the old viewer's `pump_step`
+did for every diagram, and what `RealizedPane.diagrams` was added to
+allow — `_reconciler.py` names this exact fix as owed work.
+
+`deform` stays in `structure`: a scale change is rare and a full realize
+is the conservative answer. The selection term stays in `structure` too,
+so the S4-1 selection-repaint defect stays fixed.
+
+### A4.3 The invariants the fast path must preserve
+
+Each one names the oracle that holds it. A fast path without these is a
+stale-picture generator, which is precisely what the one-shot rule was
+protecting against.
+
+1. **Parity.** The layers the fast path leaves behind are identical to
+   what a forced full realize produces at the same instant. Oracle: scrub
+   several steps, snapshot every layer's points and fields, then
+   `schedule_forced()` at the same instant and compare. The oracle is
+   itself mutation-tested — stub the re-step to a no-op and the parity
+   body must fail.
+2. **Criterion 12 both halves.** A step-only tick calls `realize_pane`
+   **zero** times; a theme change still costs every pane a full realize
+   (`_forced` bypasses the fast branch entirely).
+3. **One render per gesture.** Structural, not asserted: both branches
+   fall through to the single existing `render()` call.
+4. **No scalar-bar churn.** `backend.scalar_bars` is identical before and
+   after a scrub — the contour's clim comes from the store's
+   whole-history limits and is fixed at attach, so tearing bars down per
+   step was never buying correctness.
+5. **Pick targets stay pose-current.** `realized.targets` is what
+   `PanePick` and the window read; after a scrub with a pose it must
+   equal the posed coordinates.
+
+### A4.4 When the fast path refuses
+
+Refusing is free — it costs today's time and today's behaviour. It
+refuses when:
+
+* realize could not record a row map for a layer it owns;
+* the **stage** changed (the cached arrays are a function of the stage —
+  the same limit `PlotReconciler._same_stage` already enforces);
+* the flush is `_forced` (theme / density);
+* an occupied slot's kind re-fits its LUT to the displayed values per
+  step (`gauss_marker`, `vector_glyph`, `principal_glyph`, `sand`, with
+  no explicit `clim`) — reproducing that means re-registering the bar,
+  which this amendment does not take on. `contour` is deliberately not in
+  that set, so the hot case is unaffected;
+* the re-step raises — it reports and **falls through to the full realize
+  in the same flush**, never leaving a half-stepped picture.
+
+### A4.5 Consequences
+
+- `_reconciler.py`'s "update-in-place is not the v1 protocol" docstring is
+  restated: it is the protocol for a cursor-only change and nothing else.
+- **Bug A's fix changes the old viewer too**, and for the better — it is
+  the same `ContourDiagram`. It is covered by a bit-identical parity test
+  against the fallback path rather than by assertion.
+- **Bug B's fix holds cached slabs for the life of the `Results`**, which
+  is the old viewer's behaviour; the `APEGMSH_VIEWER_CACHE_BYTES` LRU
+  already exists for the models where that matters.
+- `NodeTargets` / `GaussTargets` gain the row maps realize already
+  computes and discarded; `RealizedPane` gains one `restep` carrier. All
+  additive.
+- **Achieved** (same bench, same harness): one pane **294 -> 18 ms**,
+  three panes **405 -> 74 ms** — 16x and 5.5x, under the 33 ms budget.
+  The Gauss and nodal cases converge at 18 ms because with no re-attach
+  per step the extrapolation is paid once and never again. The
+  structural gestures are deliberately unchanged (`slot` 148, `scope`
+  60, `pane` 325): they take the full path, as A4.2 says they should.
+- One visible consequence of ordering the store warm-up before the clim:
+  a Gauss contour on the session path now carries the WHOLE-HISTORY
+  colour scale rather than one fitted to step 0. That is what the old
+  viewer does and what S1-A P10 intended, and it is what makes a scrub
+  comparable frame to frame — but it does change how an existing pane
+  looks, and a single step reads flatter against the wider scale.
+- The profiling harness is part of the deliverable, not scaffolding:
+  `internal_docs/profiling/results_session/` keeps the workload and the
+  measured trajectory so the next regression is caught by a number rather
+  than by feel.
+
+### A4.6 Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Fix only Bugs A and B | Gets ~294 → ~90-120 ms. Real, cheap, and still 3x over budget: the per-step teardown-and-rebuild is the floor |
+| Cache `realize_pane` on the signature | Memoizes the wrong thing — the output is layers already pushed to a backend, and the cost is the rebuild, not the diffing |
+| Move the whole pane onto the old `ResultsDirector` | Reinstates the director the session was designed to remove (§1); the parts worth having are the store and `update_to_step`, and both are reachable without it |
+| Throttle the scrubber to what the renderer can do | Hides the defect and makes playback lie about time |
+| One shared diagram set across panes | Panes are independent by construction (criterion 11); sharing them re-creates the coupling N panes exist to avoid |

@@ -20,6 +20,8 @@ from typing import Any
 
 from apeGmsh._types import DimTag  # noqa: F401  — re-exported by OpenSees.py
 
+from ._internal.types import BeamIntegration, Damping, GeomTransf, TimeSeries
+
 
 # ---------------------------------------------------------------------------
 # Gmsh element type -> (corner_node_count, topological_dim)
@@ -857,6 +859,100 @@ def element_builder_ndf(
 
 
 # ---------------------------------------------------------------------------
+# Builder-scoped declarations -- what a bracket DESTROYS (ADR 0099 INV-2)
+# ---------------------------------------------------------------------------
+
+#: Primitive families whose OpenSees declaration is destroyed by a
+#: ``model BasicBuilder`` re-issue -- the other half of the
+#: :data:`_BUILDER_NDF_GATED` audit.  ``specifyModelBuilder`` (fork
+#: ``SRC/modelbuilder/tcl/myCommands.cpp:85``) deletes the old builder
+#: before constructing the new one, and ``~TclModelBuilder()`` (fork
+#: ``SRC/modelbuilder/tcl/TclModelBuilder.cpp:681``) purges a set of
+#: *process-global* registries on the way out.  The ``Domain`` is a
+#: file-static that is reused, so nodes and elements survive -- which is
+#: exactly why :func:`open_builder_ndf_bracket`'s "does not wipe the
+#: domain" premise read as safe and hid this.
+#:
+#: Measured on Ladruno build ``25a0647f``, one probe deck per row:
+#:
+#:   * **survive** -- ``node``, ``uniaxialMaterial``, ``nDMaterial``,
+#:     ``section``, and the analysis chain (their ``clearAll`` calls are
+#:     commented out in the destructor, or they are not builder-owned).
+#:   * **destroyed** -- ``timeSeries``, ``geomTransf``,
+#:     ``beamIntegration``, ``damping``.  ``damping`` is the dangerous
+#:     one: ``region -damp`` WARNS and continues rather than erroring,
+#:     so the deck runs and reports an undamped answer.
+#:
+#: The destructor also clears ``frictionModel`` / ``limitCurve`` /
+#: ``damageModel`` / ``hystereticBackbone``; none of the four is
+#: reachable from apeGmsh today (no primitive, no namespace, no
+#: ``Emitter`` Protocol method).  Whoever wires friction bearings adds
+#: them here.
+#: Primitive base -> the OpenSees declaration keyword it emits, so a
+#: diagnostic can name ``geomTransf`` rather than the concrete class
+#: ``Linear`` (which is also a TimeSeries spelling) -> the element
+#: ARG-TAIL FLAGS through which an element line references one by tag.
+#:
+#: The third column exists for the replay guard: a rehydrated deck record
+#: carries flags and ints, not typed primitives, so ``dependencies()`` is
+#: unavailable and the reference has to be recognised in the arg tail.
+#: Keeping it in this table rather than at the call site is INV-2 -- one
+#: row to re-audit when the fork changes.  Positional (unflagged)
+#: references -- ``dispBeamColumn``'s transfTag / integrationTag -- are
+#: deliberately NOT listed: no gated element takes one (the five non-quad
+#: gated classes are ``nodes matTag`` + options, and ``quad`` is
+#: ``nodes thick type matTag``), so a flag scan is sufficient AND cannot
+#: false-positive on an ungated element's positional tag.
+_BUILDER_SCOPED_KINDS: "tuple[tuple[type, str, tuple[str, ...]], ...]" = (
+    # -fx/-fy/-fz ride ASDAbsorbingBoundary* (ungated) -- listed so the
+    # set is complete if a gated absorbing shape ever lands.
+    (TimeSeries,      "timeSeries",      ("-fx", "-fy", "-fz")),
+    (GeomTransf,      "geomTransf",      ()),
+    (BeamIntegration, "beamIntegration", ()),
+    # -damp is emitted by exactly one helper (``damp_args``,
+    # ``_internal/tag_resolution.py``); ``quad`` is the only gated class
+    # carrying a ``damp`` field today.
+    (Damping,         "damping",         ("-damp",)),
+)
+
+_BUILDER_SCOPED_BASES: "tuple[type, ...]" = tuple(
+    base for base, _kw, _flags in _BUILDER_SCOPED_KINDS
+)
+
+#: ``flag token -> declaration keyword``, derived from the one table.
+_BUILDER_SCOPED_FLAGS: "dict[str, str]" = {
+    flag: keyword
+    for _base, keyword, flags in _BUILDER_SCOPED_KINDS
+    for flag in flags
+}
+
+
+def builder_scoped_kind_for_arg(arg: object) -> "str | None":
+    """The declaration keyword an element ARG-TAIL token references.
+
+    ``None`` for anything that is not a builder-scoped flag.  Used by the
+    replay-side guard, which sees deck records rather than specs.
+    """
+    return _BUILDER_SCOPED_FLAGS.get(arg) if isinstance(arg, str) else None
+
+
+def is_builder_scoped(prim: object) -> bool:
+    """True iff ``prim``'s declaration dies at the next ``model`` re-issue.
+
+    See :data:`_BUILDER_SCOPED_KINDS` for the fork audit behind the set.
+    """
+    return isinstance(prim, _BUILDER_SCOPED_BASES)
+
+
+def builder_scoped_kind(prim: object) -> "str | None":
+    """The OpenSees keyword ``prim`` declares, if it is builder-scoped."""
+    for base, keyword, _flags in _BUILDER_SCOPED_KINDS:
+        if isinstance(prim, base):
+            return keyword
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Transf-arg-tail slot lookup (shared single source of truth, ADR 0018 INV-3)
 # ---------------------------------------------------------------------------
 
@@ -927,3 +1023,115 @@ def known_beam_type_tokens(ndm: int) -> tuple[str, ...]:
         if _transf_arg_tail_index(token, ndm, _ELEM_REGISTRY) is not None:
             tokens.append(token)
     return tuple(sorted(set(tokens)))
+
+
+# ---------------------------------------------------------------------------
+# Out-of-plane σ_zz capability (plane-strain stress response)
+# ---------------------------------------------------------------------------
+#
+# The fork exposes a 4-component plane-element response
+# ``stressesPlaneStrain`` = ``[σxx, σyy, σxy, σzz]`` per Gauss point — a
+# strict superset of the 3-component ``stresses``.  The σzz term comes from
+# ``NDMaterial::getStressZZ()``, whose base implementation returns
+# ``quiet_NaN`` (``NDMaterial.cpp:226``).  Recording the 4-component form on
+# an element/material pair that cannot supply σ33 therefore writes an
+# all-NaN column, which is strictly WORSE than the ν-recovery fallback in
+# :mod:`apeGmsh.results._plane_recovery` (NaN propagates silently through von
+# Mises, the principals and every other invariant).  Both lists below are the
+# gate that keeps that from happening; they were audited against the fork
+# source on 2026-08-18.
+
+#: The recorder response token that carries σzz.  The fork canonicalizes it
+#: to ``stressPlaneStrain`` internally (``LadrunoResponseTokens.h:74``); the
+#: spelling emitted here is the one every plane element's ``setResponse``
+#: matches directly.
+STRESS_PLANE_STRAIN_RESPONSE: str = "stressesPlaneStrain"
+
+#: apeGmsh ``Element`` classes whose ``setResponse`` accepts
+#: :data:`STRESS_PLANE_STRAIN_RESPONSE` — ``FourNodeQuad.cpp:1396``,
+#: ``Tri31.cpp:1260``, ``BezierTri6.cpp:1552``, ``LadrunoQuad.cpp:1522``,
+#: ``LadrunoCST.cpp:773``, ``LadrunoLST.cpp:874``.  ``SixNodeTri`` and
+#: ``LadrunoUP`` are plane elements WITHOUT the branch, so they are absent.
+SIGMA_ZZ_ELEMENT_CLASSES: frozenset[str] = frozenset({
+    "BezierTri6",
+    "FourNodeQuad",
+    "LadrunoCST",
+    "LadrunoLST",
+    "LadrunoQuad",
+    "Tri31",
+})
+
+#: apeGmsh ``NDMaterial`` classes that expose a real σ33 through the
+#: plane-strain view an element requests with ``getCopy("PlaneStrain")``:
+#: ``ElasticIsotropic`` → ``ElasticIsotropicPlaneStrain2D.cpp:138``,
+#: ``J2Plasticity`` → ``J2PlaneStrain.cpp:191``, ``DruckerPrager`` →
+#: ``DruckerPragerPlaneStrain.cpp:122``, ``PlaneStrain`` (the 3-D wrapper) →
+#: ``PlaneStrainMaterial.cpp:228``.  ``LadrunoJ2`` (``LadrunoJ2.cpp:407``)
+#: and ``LadrunoConcrete3D`` (``LadrunoConcrete3D.cpp:485``) answer only when
+#: their own ``dim == DIM_PSTRAIN`` — which is exactly what the
+#: ``plane_type`` gate in :func:`element_records_stress_zz` enforces.  Every
+#: other nD material inherits the NaN default.
+SIGMA_ZZ_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "DruckerPrager",
+    "ElasticIsotropic",
+    "J2Plasticity",
+    "LadrunoConcrete3D",
+    "LadrunoJ2",
+    "PlaneStrain",
+})
+
+
+def element_records_stress_zz(spec: Any) -> bool:
+    """True when an ``Element`` spec's Gauss points can record a real σ_zz.
+
+    All three conditions must hold: the element class has the
+    :data:`STRESS_PLANE_STRAIN_RESPONSE` branch, it is configured for plane
+    strain (a plane-stress view leaves σzz at the material's NaN default —
+    and σzz is 0 there by definition anyway), and its nD material overrides
+    ``getStressZZ``.  Anything unrecognised answers ``False``: the caller
+    then keeps the plain ``stresses`` token and the read side reconstructs
+    σzz from ν, which is an approximation but never a NaN.
+    """
+    if type(spec).__name__ not in SIGMA_ZZ_ELEMENT_CLASSES:
+        return False
+    if getattr(spec, "plane_type", None) != "PlaneStrain":
+        return False
+    return type(getattr(spec, "material", None)).__name__ in (
+        SIGMA_ZZ_MATERIAL_CLASSES
+    )
+
+
+def cpp_class_name_for_pgs(
+    bridge: Any, pgs: "tuple[str, ...] | None",
+) -> "str | None":
+    """The single C++ element class covering ``pgs``, or ``None``.
+
+    Walks ``bridge._primitives`` for ``Element`` instances whose ``pg``
+    is in ``pgs`` and maps each through :data:`_ELEM_REGISTRY`.  Returns
+    ``None`` when there is no bridge, no PG was named, or the PGs span
+    more than one class — the ``.out`` transcoder needs exactly one.
+
+    Feeds ``element_class_name`` on both read routes.  ``_identify_layout``
+    cannot separate two catalog entries that share a flat column width
+    (``LadrunoLST`` and ``BezierTri6`` are both 3 GP x 4 components under
+    ``stress_plane_strain``, and both 3 GP x 3 under ``stress``), so
+    without this hint such a record raises ``Ambiguous catalog match``
+    and the user has to name the class by hand.
+    """
+    if not pgs or bridge is None:
+        return None
+    from ._internal.types import Element
+
+    wanted = set(pgs)
+    names: set[str] = set()
+    for prim in getattr(bridge, "_primitives", ()):
+        if not isinstance(prim, Element):
+            continue
+        if getattr(prim, "pg", None) not in wanted:
+            continue
+        ops_type = type(prim).__name__
+        spec = _ELEM_REGISTRY.get(ops_type)
+        names.add(spec.cpp_class_name or ops_type if spec else ops_type)
+    if len(names) == 1:
+        return next(iter(names))
+    return None

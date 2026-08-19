@@ -1,0 +1,58 @@
+{
+  "case": "c001_baseline_small",
+  "model": "ssi_frame_wall",
+  "script": "models/ssi_frame_wall/src/build.py",
+  "ran_at": "2026-08-19T03:41:55Z",
+  "duration_s": 177.1,
+  "run_exit": 0,
+  "results": [
+    "results/model.h5",
+    "results/run.h5",
+    "results/slots/contour.png",
+    "results/slots/gauss.png",
+    "results/slots/line.png",
+    "results/slots/loads.png",
+    "results/slots/pose_acceleration.png",
+    "results/slots/pose_displacement.png",
+    "results/slots/pose_mode1.png",
+    "results/slots/pose_mode3.png",
+    "results/slots/pose_velocity.png",
+    "results/slots/reactions.png",
+    "results/slots/sand.png",
+    "results/slots/scope_element_types.png",
+    "results/slots/scope_physical_groups.png",
+    "results/slots/vector.png"
+  ],
+  "logs": [
+    "logs/run.log",
+    "logs/verify.log"
+  ],
+  "deck": "none \u2014 in-process run (see deck/README.md)",
+  "verify": {
+    "script": "models/ssi_frame_wall/src/check_slots.py",
+    "exit": 0,
+    "passed": 17,
+    "failed": 0,
+    "lines": [
+      "PASS motion \u2014 25.17 mm peak-to-peak",
+      "PASS slot contour \u2014 legends=['stress_zz']",
+      "PASS slot vector \u2014 legends=['displacement']",
+      "PASS slot gauss \u2014 legends=['von_mises_stress']",
+      "PASS slot line \u2014 legends=[]",
+      "PASS slot sand \u2014 legends=['displacement_x']",
+      "PASS slot loads \u2014 legends=[]",
+      "PASS slot reactions \u2014 legends=[]",
+      "PASS pose displacement \u2014 legends=()",
+      "PASS pose velocity \u2014 legends=()",
+      "PASS pose acceleration \u2014 legends=()",
+      "PASS pose mode 1 \u2014 legends=()",
+      "PASS pose mode 3 \u2014 legends=()",
+      "PASS scope physical_groups",
+      "PASS scope element_types",
+      "PASS scope materials \u2014 refuses loudly, as it must (NotImplementedError)",
+      "PASS plot \u2014 history on node 297 (2 panes)"
+    ]
+  },
+  "model_sha": "bfe618fe46bb53c916c89be0e06f3775191783fc",
+  "git_dirty": true
+}

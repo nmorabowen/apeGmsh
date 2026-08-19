@@ -190,6 +190,8 @@ def test_mixed_ndf_flat_deck_phantom_equaldof_materials_zerolength(tmp_path):
     # desynchronises the parser's optional-argument scan and swallows the
     # ``-ndf 2`` that the whole mixed-ndf bridge depends on.
     for rec in recs:
+        # ndm=2 deck: the emitter trims the broker's padded z, which
+        # would otherwise swallow the -ndf flag.
         i_node = lines.index(f"node {int(rec.phantom_node)} "
                              f"{float(rec.phantom_coords[0])!r} "
                              f"{float(rec.phantom_coords[1])!r} -ndf 2")

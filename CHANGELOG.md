@@ -2,6 +2,61 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### FIXED — a `node` line now carries exactly `ndm` coordinates (2-D `-ndf` / `-mass` were silently dropped)
+
+The broker stores every node as ``(x, y, z)`` and the emitters wrote all
+three, so a 2-D deck emitted ``node 1 0.0 0.0 0.0 -ndf 2``.  OpenSees
+reads ``ndm`` coordinates and then scans what follows for optional
+flags, so the padding desynchronised that scan and the flag was never
+consumed — measured on Ladruno ``25a0647f``: the node silently kept the
+envelope ndf, and ``-mass`` produced *"incorrect number of nodal mass
+terms"*.
+
+The dropped ``-ndf`` was the dangerous half.  ADR 0032/0033 per-node ndf
+was **inert in every 2-D deck**: a gated continuum element (``tri6n`` /
+``LadrunoLST`` / ``quad``) still parsed, because the builder-ndf bracket
+satisfies the parser gate, but ``setDomain`` then bailed on the wrong
+node ndf without setting the element's domain pointer and the deck died
+at analysis with ``FATAL FE_Element::FE_Element() - element has no
+domain``.  That is the second half of what blocked the mixed-ndf
+lined-tunnel / SSI shape; ADR 0099 was the first.
+
+``TclEmitter`` / ``PyEmitter`` / ``LiveOpsEmitter`` / ``RecordingEmitter``
+now trim node coordinates to the ``ndm`` they learn from ``model()``
+(``trim_coords_to_ndm`` in ``emitter/base.py``).  3-D decks are
+byte-identical — the trim is the identity on a 3-tuple — and ``H5Emitter``
+still archives the full ``(x, y, z)``.  The foreign-node-decl recognisers
+in ``tests/opensees/_helpers/partition_diff.py`` accept 1–3 coordinates
+instead of exactly 3.
+
+### FIXED — the builder-ndf bracket destroyed every declaration above it (ADR 0099)
+
+``open_builder_ndf_bracket`` wraps a gated element block (``quad`` /
+``tri6n`` / ``LadrunoQuad`` / ``LadrunoCST`` / ``LadrunoLST`` /
+``LadrunoUP``) in a ``model BasicBuilder`` re-issue.  That re-issue
+deletes the Tcl model builder, and its destructor purges the
+process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration`` /
+``damping`` registries (fork ``TclModelBuilder.cpp:681``).  apeGmsh
+emitted all four ABOVE the bracket, so any model combining a gated
+continuum element, a frame element (which forces the mixed-ndf
+envelope) and a load pattern emitted a deck that died at ``pattern
+Plain`` — the standard lined-tunnel / SSI shape.  ``damping`` was worse
+than the rest: ``region -damp`` only warns, so such a deck ran to
+convergence and reported an **undamped** answer.
+
+The flat emit path now hoists its gated element blocks above every
+builder-scoped declaration, so the last ``model`` line in the deck
+precedes all of them (INV-1); gated parsers only ever need an
+``nDMaterial``, which survives the re-issue.  A new
+``validate_builder_scope_ordering`` fails loud where that is not yet
+possible: the split, partitioned and H5-replay paths (INV-4), a
+stage-activated gated element whose bracket fires mid-deck (INV-4), and
+``quad(damp=...)``, which is self-wiping (INV-3).  Those decks
+previously emitted and either died late or ran wrong.
+
+``repros/repro4_builder_scoped_wipe.py`` is the executable survival
+table, measured against the fork binary.
+
 ### FIXED — ``Pardiso`` / ``Mumps`` always emit ``-matrixType`` (incl. 0)
 
 ``Pardiso(matrix_type="unsymmetric")`` mapped to code ``0`` then
@@ -22,6 +77,210 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)
+
+ADR 0099 S2 fixed the flat path and made every other path fail loud
+(INV-4).  Partitioned emit is now fixed rather than refused, because it
+is not the hard case it read as: the default partitioned deck is ONE
+file with ``if {[getPID] == K}`` **brace** guards and the builder-scoped
+declarations global, outside every guard.  A brace is not a file
+boundary, so the flat hoist replicates directly — one extra rank-guard
+block per rank that owns a gated element, carrying the nodes those
+elements need and then the bracketed blocks, placed above the
+declarations.
+
+The damage this removes was **rank-local**, which is what made it
+dangerous: a rank owning no gated element never executes the bracket and
+ran fine, so the same model passed on 2 ranks and died on 4.  Measured
+on Ladruno ``25a0647f`` with a mixed-ndf 2-rank deck run once per rank —
+before, rank 0 died at ``pattern Plain`` (``getTimeSeries … none found
+with tag: 1``) while rank 1 completed; with no pattern, rank 0 instead
+ran to the end reporting an **undamped** answer, because ``region
+-damp`` only warns.  After, both ranks build every object and match the
+flat reference to every printed digit.
+
+The hoist is gated on BOTH conditions it needs — at least one
+rank-OWNED gated element, and at least one builder-scoped declaration to
+lose — so every other partitioned deck is byte-identical to before
+(verified on three variants).  Element tags are untouched:
+``allocate_element_tags`` moves above the pre-element pass so the
+hoisted pass has a plan, and ``TagAllocator`` is per-kind.
+
+``per_rank=True`` (ADR 0061) keeps the refusal: it slices each rank
+guard into its own FILE, which is the ``split`` problem — the fragment's
+``source`` line has to move, not its element lines.  It is applied
+around ``BuiltModel.emit``, so it reaches the INV-4 gate as an emitter
+attribute (``per_rank_fragments``) and carries its own path token.
+Stage-OWNED gated elements are still refused on both paths.
+
+``repros/repro4_builder_scoped_wipe.py`` gains two arms that run decks
+on the binary rather than only reading them: ``--partitioned`` (this
+slice, once per rank) and ``--h5`` (the S4a replay, owed since S4c).
+
+### FIXED — the capture route resolves `element_class_name` again
+
+`DomainCaptureSpec._lookup_class_hint_for_pgs` read
+`self._opensees._elem_assignments`, an attribute of the legacy
+`g.opensees` composite removed in Phase 8. The `apeSees` bridge carries
+none, so the guarded `getattr` yielded `{}` and the lookup always
+answered `None` — every resolved record left `element_class_name` unset,
+silently. It now walks the bridge's typed `Element` primitives (the
+source the σ_zz capability gate already uses) via the shared
+`cpp_class_name_for_pgs`; an explicit `element_class_name=` still wins,
+and PGs spanning two element classes still answer `None`.
+
+That hint is what `_identify_layout` needs to separate two catalog
+entries sharing a flat column width — `LadrunoLST` and `BezierTri6` are
+both 3 GP × 4 components under `stress_plane_strain` (and both 3 × 3
+under `stress`), with different Gauss orderings — so without it such a
+record raised `Ambiguous catalog match`.
+
+Same commit: `_resolve_layer_section_metadata` dereferenced
+`_sections` / `_elem_assignments` with no guard, so resolving any
+`layers` record against a bridge raised
+`AttributeError: 'apeSees' object has no attribute '_sections'`. It now
+answers "no layered-section metadata", matching what it already returned
+with no bridge attached. Porting that lookup onto the bridge's `Section`
+primitives is a layered-shell change and is deliberately left out.
+
+Note the `.out` / `RecorderDeclaration` route is unchanged: its
+`element_class_name` is carried on the record but no reader consumes it
+(the H5 declaration bracket does not archive it), and `.out` reads go
+through a hand-built `ResolvedRecorderSpec` with no bridge to resolve
+from. Auto-populating it there would have changed nothing observable.
+
+### ADDED — every recording route promotes `stress_zz`, not just the deck
+
+The plane-strain σ_zz promotion now covers all three routes that resolve
+a Gauss response token, so a `stress_zz` request means the same thing
+wherever you record from:
+
+- the bridge's `ops.recorder.declare(gauss=…)` deck (already shipped);
+- **`DomainCapture`** — the live in-process route, which queries
+  `ops.eleResponse` directly and therefore has its own resolution. It
+  used to drop a requested `stress_zz` on the floor, which is exactly
+  the silent no-op the feature exists to remove;
+- **the `.out` route** — both halves. `results/spec/_emit.py` writes the
+  promoted token, and the transcoder's read-side token derivation makes
+  the *same* promotion, because the token names the catalog family the
+  columns were written in: reading a 4-component file under the
+  3-component `stress` token finds no layout at that width.
+
+All three go through one shared decision
+(`_recorder_translate._stress_zz_tokens` / `stress_zz_keyword`), so they
+cannot drift into writing one shape and decoding another. The read site
+uses the silent variant — the emit side already said its piece.
+
+Capability comes from the same predicate everywhere. `DomainCapture`
+resolves it from the bridge's typed element primitives at spec
+resolution, mirroring the emit-side gate. `ResolvedRecorderSpec` — which
+carries no bridge back-reference — takes `sigma_zz_capable` from the
+caller, exactly as it already takes `element_class_name`; unset means
+unknown and keeps today's token silently.
+
+**Known sharp edge:** a promoted 12-column file is genuinely ambiguous
+between `LadrunoLST` and `BezierTri6` (both 3 GP × 4 components), so the
+`.out` transcoder needs `element_class_name` and raises `Ambiguous
+catalog match` without it. It does not auto-resolve: the only auto-hint
+in the tree, `DomainCaptureSpec._lookup_class_hint_for_pgs`, reads an
+`_elem_assignments` attribute the `apeSees` bridge does not have, so it
+returns `None` for every model. `DomainCapture` itself is unaffected (it
+reads `ops.eleType` from the live domain).
+
+### FIXED — `.ladruno` Gauss stress/strain on every Ladruno plane element
+
+`LadrunoCST` / `LadrunoLST` / `LadrunoQuad` recorded with the plain
+`elem_responses=("stress", "strain")` answered
+`results.elements.gauss.available_components() == []` — ALL continuum
+stress and strain was invisible on the `.ladruno` path.
+
+The fork's plain `stress` / `strain` responses on these elements emit no
+`output.tag("ResponseType", …)` (only `stressPlaneStrain` does), so the
+recorder writes a single element-level block named `C1,C2,…,Cn`, and the
+reader — which named columns from the file's `COMP_NAMES` alone — matched
+none of them. For exactly those anonymous buckets the names now come from
+`RESPONSE_CATALOG`, keyed by the class in the bucket key
+(`stress/33016-LadrunoLST[0:0:0]`) plus the ON_ELEMENTS token, with the
+**block width** picking the layout — the bracket's rule field is `0`
+(NoIntegrationRule) here, so it cannot be the catalog key. A width that
+fits no catalog layout raises `GaussLayoutMismatch` rather than guessing:
+a wrong component name is worse than a missing one. Buckets whose
+`COMP_NAMES` are real names never reach this path, and MPCO (which already
+consults the catalog) is untouched.
+
+`LadrunoLST` joins `RESPONSE_CATALOG` (tag 33016, 3 GPs `Triangle_GL_2`,
+the SixNodeTri anchor order unpermuted).
+
+Recording `("stress", "stressesPlaneStrain")` in ONE recorder — the
+configuration the out-of-plane σ_zz work targets — puts two tokens on the
+same (element, Gauss point) slots, so the Gauss slab now deduplicates by
+slot: the bucket whose `COMP_NAMES` the FILE wrote wins over a
+catalog-reconstructed one (it is self-describing and a superset, 4
+components vs 3). Duplicates that disagree numerically raise instead of
+being picked arbitrarily. Without this `stress_xx` came back with twice the
+columns of `stress_zz` and `von_mises_stress` failed to broadcast.
+
+Also fixed alongside: `gauss_available` / `read_gauss_slab` discarded every
+continuum block with `MULTIPLICITY > 1` as a fiber expansion. A fiber
+bucket repeats one scalar per fiber, but a continuum bucket repeats its
+component set once per GAUSS POINT — the multiplicity test dropped every
+multi-GP solid. Fiber buckets are now excluded by token.
+
+The 4-component plane-strain response gets its own catalog token,
+`stress_plane_strain`, wired from both keyword spellings
+(`stressesPlaneStrain` / `stressPlaneStrain`). The `.out` transcoder
+identifies a layout by (token, flat size) alone, so under the plain
+`stress` token a promoted 3-GP element's 3 x 4 = 12 columns collided
+exactly with `FourNodeQuad`'s 4 x 3 = 12 and were decoded as 4 Gauss points
+of 3 components — every value on the wrong Gauss point AND the wrong
+component, with no error. Registered for the six classes that implement the
+fork's `stressPlaneStrain` branch (`FourNodeQuad`, `Tri31`, `BezierTri6`,
+`LadrunoQuad`, `LadrunoCST`, `LadrunoLST`; NOT `SixNodeTri`, NOT
+`LadrunoUP`), each with its own `stress` entry's Gauss count and natural
+coordinates. Component order is `sigma11, sigma22, sigma12, sigma33` — σ_zz
+LAST, appended so the first three columns stay byte-compatible with
+`stresses` (`STRESS_PLANE_STRAIN` in `_vocabulary`). A 12-column
+plane-strain block stays genuinely ambiguous between `LadrunoLST` and
+`BezierTri6`, whose Gauss orders differ; that now raises and asks for a
+`class_hint`, exactly as the 9-column `stress` block these two already
+share.
+### ADDED — a plane-strain `stress_zz` request now records the real σ_zz
+
+`ops.recorder.declare(gauss=(..., "stress_zz"), ...)` used to be a silent
+no-op: `stress_zz` is a valid canonical component, but it routes onto the
+plain `stresses` token, which carries only the three in-plane components.
+The σ_zz you then read back was reconstructed from Poisson's ratio —
+exact for a linear-elastic material, and wrong by up to ~68% at a plastic
+Gauss point, which quietly poisons von Mises, the principals and every
+other invariant built on the 3-D tensor.
+
+Such a record is now promoted, record-level, onto the fork's
+`stressesPlaneStrain` element response — `[σxx, σyy, σxy, σzz]` per Gauss
+point, a strict superset of `stresses`, so `stress_xx`/`_yy`/`_xy`
+declared in the same record ride along unchanged.
+
+**Promotion is gated, because the naive version is worse than the bug it
+fixes.** `NDMaterial::getStressZZ()` returns `quiet_NaN` unless the
+material overrides it, and only six element classes even expose the
+4-component response. Recording it blindly writes an all-NaN column, and
+NaN propagates where the ν-estimate at least stayed finite. So the
+promotion fires only when *every* element the record targets is one of
+`FourNodeQuad` / `Tri31` / `BezierTri6` / `LadrunoQuad` / `LadrunoCST` /
+`LadrunoLST`, at `plane_type="PlaneStrain"`, over a material that
+overrides `getStressZZ` (`ElasticIsotropic`, `J2Plasticity`,
+`DruckerPrager`, the `PlaneStrain` wrapper, and `LadrunoJ2` /
+`LadrunoConcrete3D` in their plane-strain view). Anything else keeps
+today's behaviour and warns once, at emit, with
+`StressZZNotRecordedWarning` — the only place the user can learn *why*
+their σ_zz is an estimate.
+
+A record that does not ask for `stress_zz` is untouched: same token, same
+deck, byte for byte.
+
+Read side: a recorded-but-NaN `stress_zz` column now falls back to
+ν-recovery with a message that names the material as the cause, distinct
+from the existing "cannot classify this element" warning. A genuinely
+recorded, finite σ_zz is used verbatim and raises nothing.
 ### CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
 
 The last S6 slice. Documentation stops describing the retired Geometry /

@@ -22,18 +22,10 @@ remains.
 
 Supported emit syntaxes:
 
-* **Tcl** — ``node <tag> <x> <y> [<z>] -ndf <K>`` (foreign) /
-  ``node <tag> <x> <y> [<z>]`` (native, never stripped).
-* **Py** — ``ops.node(<tag>, <x>, <y>[, <z>], '-ndf', <K>)`` (foreign) /
-  ``ops.node(<tag>, <x>, <y>[, <z>])`` (native, never stripped).
-
-The third coordinate is **absent in an ``ndm == 2`` deck** — the build
-layer trims each ``node`` line to the ``ndm`` coordinates OpenSees
-actually consumes, because a trailing ``0.0`` desynchronises the
-parser's optional-argument scan and swallows the following ``-ndf K``.
-Both regexes make ``<z>`` optional for that reason: a 2-coordinate
-foreign decl that stopped matching would not fail here, it would
-**silently** re-classify as ordinary content and move the diff.
+* **Tcl** — ``node <tag> <x> <y> <z> -ndf <K>`` (foreign) /
+  ``node <tag> <x> <y> <z>`` (native, never stripped).
+* **Py** — ``ops.node(<tag>, <x>, <y>, <z>, '-ndf', <K>)`` (foreign) /
+  ``ops.node(<tag>, <x>, <y>, <z>)`` (native, never stripped).
 
 Native-decl lines are **not** stripped: they appear once per rank
 (each rank natively owns disjoint nodes), so a caller comparing two
@@ -61,28 +53,28 @@ __all__ = [
 # ---------------------------------------------------------------------
 #
 # Tcl form, post-emitter formatting:
-#     node <tag> <x> <y> [<z>] -ndf <K>
+#     node <tag> <x> [<y> [<z>]] -ndf <K>
 # emitted by ``TclEmitter.node(..., ndf=K)`` → ``_join("node", tag,
 # *coords, "-ndf", K)`` (single spaces, no leading whitespace beyond
-# the partition indent ``_LineBuf`` adds).  ``<z>`` is present only in
-# an ``ndm == 3`` deck.  The regex matches the whole line modulo
-# leading whitespace.
+# the partition indent ``_LineBuf`` adds).  The emitter trims the
+# broker's padded (x, y, z) down to the model's ``ndm`` — a padding
+# coordinate would swallow the ``-ndf`` flag — so the coordinate count
+# is 1-3, not always 3.  Greedy ``\S+`` plus the ``-ndf`` anchor
+# disambiguates (a negative coordinate also starts with ``-``).
 FOREIGN_NODE_DECL_RE_TCL = re.compile(
-    r"^\s*node\s+\S+\s+\S+\s+\S+(?:\s+\S+)?\s+-ndf\s+\S+\s*$"
+    r"^\s*node\s+\S+(?:\s+\S+){1,3}\s+-ndf\s+\S+\s*$"
 )
 
 # Py form, post-emitter formatting:
-#     ops.node(<tag>, <x>, <y>[, <z>], '-ndf', <K>)
+#     ops.node(<tag>, <x>[, <y>[, <z>]], '-ndf', <K>)
 # emitted by ``PyEmitter.node(..., ndf=K)`` → ``_ops_call("node", tag,
-# *coords, "-ndf", K)``.  Strings are repr'd with single quotes
+# *coords, "-ndf", K)``.  Coordinate count is the model's ``ndm`` (see
+# the Tcl note above).  Strings are repr'd with single quotes
 # (``_fmt_value`` in ``emitter/py.py``); accept double quotes too in
 # case future hand-written variants appear.
 FOREIGN_NODE_DECL_RE_PY = re.compile(
     r"""^\s*ops\.node\(
-        [^,]+,\s*        # tag
-        [^,]+,\s*        # x
-        [^,]+,\s*        # y
-        (?:[^,]+,\s*)?   # z — ndm == 3 only
+        (?:[^,]+,\s*){2,4}   # tag + 1-3 coordinates
         ['"]-ndf['"]\s*,\s*
         [^,)]+\)\s*$
     """,

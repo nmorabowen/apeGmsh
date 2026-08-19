@@ -21,7 +21,7 @@ import os
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, cast
 
-from .base import StrategySpec
+from .base import StrategySpec, trim_coords_to_ndm
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -445,12 +445,21 @@ class LiveOpsEmitter:
 
     # -- Model ---------------------------------------------------------------
 
+    #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
+    #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
+    _model_ndm: "int | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
+        self._model_ndm = ndm
         self._ops.model("basic", "-ndm", ndm, "-ndf", ndf)
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        # openseespy parses the node argv exactly as Tcl does, so a
+        # padded coordinate swallows -ndf here too — see
+        # trim_coords_to_ndm.
+        coords = trim_coords_to_ndm(coords, self._model_ndm)
         if ndf is None:
             self._ops.node(tag, *coords)
         else:

@@ -1,7 +1,7 @@
 # Results session
 
 The **document** behind post-solve presentation: `ResultsSession` —
-tiled mesh and plot panes, one time link, one selection. `Results`
+docked mesh and plot panes, one time link, one selection. `Results`
 answers *what did the solver write?*; the session answers *what is on
 screen, at which time, with which pictures, with which pick.*
 

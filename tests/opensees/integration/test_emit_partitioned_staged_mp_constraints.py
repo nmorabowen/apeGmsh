@@ -292,7 +292,7 @@ def test_constraint_only_stage_emits_embedded(tmp_path) -> None:
     ), f"stage 2 rank 0 lost the stage-claimed embed: {rank0}"
     # The constrained node lives on rank 1 — rank 0 must ghost-declare it
     # BEFORE the element that references it (ADR 0027 INV-2 ordering).
-    ghost = rank0.index("node 5 0.5 0.5")
+    ghost = rank0.index("node 5 0.5 0.5")   # ndm=2: no padded z
     ele = next(
         i for i, ln in enumerate(rank0)
         if ln.startswith("element ASDEmbeddedNodeElement")

@@ -62,7 +62,8 @@ from typing import Any, Callable, Optional
 
 from .._failures import report
 from ..core._legend import adopt_controller
-from ._realize import realize_pane
+from ._chart import _same_stage
+from ._realize import can_restep, realize_pane, restep_pane
 
 _Listener = Callable[[Optional[Any]], None]
 
@@ -295,28 +296,42 @@ class SessionReconciler:
         return None
 
     def _pane_signature(self, pane: Optional[Any]) -> Any:
-        """Everything ``realize_pane`` reads off the session, as a
-        comparable tuple (the criterion-12 gate).
+        """Everything ``realize_pane`` reads off the session, split into
+        ``(structure, cursor)`` — the criterion-12 gate, and since
+        ADR 0098 A4.2 the fast-path gate too.
+
+        ``structure`` is what the picture is BUILT from; ``cursor`` is
+        where in time it is shown. A change to the cursor alone can be
+        re-stepped in place; anything in ``structure`` re-realizes.
+        Same shape as ``PlotReconciler._signature_of``, which has split
+        this way since S4-2.
+
+        ``deform`` sits in ``structure`` on purpose: a scale change is
+        rare, and a full realize is the conservative answer. So does
+        the selection term — the S4-1 defect (a selection write ticks
+        the session, the signature compares equal, and the repaint the
+        user just asked for is skipped) stays fixed.
 
         Deliberately NOT a hash: these are small frozen records and
         tuples, so ``==`` is exact. A hash could collide and a
         collision here paints a stale picture — the worst ADR 0084
-        failure class, and the reason the diff protocol does not
-        update-in-place either.
+        failure class.
         """
         if pane is None:
             return None
         return (
-            pane.id,
+            (
+                pane.id,
+                pane.scope,
+                pane.deform,
+                pane.style,
+                pane.overlay,
+                pane.clips,
+                tuple(pane.slots.items()),
+                pane.legends(),
+                self._selection_term(pane),
+            ),
             self._session.effective_instant(pane),
-            pane.scope,
-            pane.deform,
-            pane.style,
-            pane.overlay,
-            pane.clips,
-            tuple(pane.slots.items()),
-            pane.legends(),
-            self._selection_term(pane),
         )
 
     def _selection_term(self, pane: Any) -> Any:
@@ -368,28 +383,63 @@ class SessionReconciler:
             self._signature = _NO_SIGNATURE
             report("pump.session_reconcile", exc)
             return
+        previous = self._signature
         if (
             not forced
-            and signature == self._signature
-            and self._signature is not _NO_SIGNATURE
+            and signature == previous
+            and previous is not _NO_SIGNATURE
         ):
             # Nothing this pane draws moved — criterion 12: the other
             # panes of an N-pane session cost nothing when one pane's
             # slot is filled.
             return
         self._signature = signature
-        try:
-            self._teardown()
-            if pane is not None:
-                self._realized = realize_pane(
-                    self._session, pane, self._ledger,
+
+        # ADR 0098 A4.2 — the cursor moved and NOTHING else did: re-step
+        # this pane in place rather than tearing it down and rebuilding
+        # it. Guarded by ``forced`` (theme / density rebuild the colours
+        # realize bakes in, which the session cannot see) and by the
+        # STAGE, because the diagrams' cached arrays are a function of
+        # the stage — the same limit ``_same_stage`` already enforces
+        # for plots. Any doubt falls through to the full path below.
+        restepped = False
+        if (
+            not forced
+            and pane is not None
+            and previous is not _NO_SIGNATURE
+            and previous is not None
+            and signature is not None
+            and signature[0] == previous[0]
+            and _same_stage(signature[1], previous[1])
+            and can_restep(self._realized, pane)
+        ):
+            try:
+                self._realized = restep_pane(
+                    self._session, pane, self._realized, self._ledger,
                 )
-                controller = self._realized.legend_controller
-                if controller is not None:
-                    # The S1 runway: realize adopts a null controller
-                    # for its backend; the pane must own its real
-                    # legend owner or controller_for() answers null.
-                    adopt_controller(self._ledger, controller)
+            except Exception as exc:
+                # Never leave a HALF re-stepped pane on screen: report,
+                # then fall through to the full realize in THIS flush.
+                # ``restep_pane`` only updates layers in place, so a
+                # failed one leaves no orphaned handle behind.
+                report("pump.session_restep", exc)
+            else:
+                restepped = True
+
+        try:
+            if not restepped:
+                self._teardown()
+                if pane is not None:
+                    self._realized = realize_pane(
+                        self._session, pane, self._ledger,
+                    )
+                    controller = self._realized.legend_controller
+                    if controller is not None:
+                        # The S1 runway: realize adopts a null
+                        # controller for its backend; the pane must own
+                        # its real legend owner or controller_for()
+                        # answers null.
+                        adopt_controller(self._ledger, controller)
         except Exception as exc:
             # The viewport must survive (the ledger swept, or sweeps
             # on the next flush, whatever was partially emitted) but

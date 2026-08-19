@@ -122,6 +122,10 @@ __all__ = [
     "emit_element_spec_partitioned",
     "open_builder_ndf_bracket",
     "close_builder_ndf_bracket",
+    "needs_builder_ndf_bracket",
+    "needs_builder_ndf_bracket_for_token",
+    "validate_builder_scope_ordering",
+    "validate_builder_scope_replay",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
@@ -2120,6 +2124,265 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def needs_builder_ndf_bracket_for_token(
+    type_token: str, *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """True iff ``type_token``'s upstream parser needs a bracket here.
+
+    The token form of :func:`needs_builder_ndf_bracket`, for the replay
+    paths that carry deck records (``rec.type_token``) rather than
+    ``Element`` specs.  ``element_builder_ndf`` resolves class names AND
+    deck tokens (``_CLASS_TOKEN_ALIASES.get(name, name)``), so the two
+    forms cannot disagree.
+
+    Note the ``envelope_ndf`` term: a gated class under an envelope that
+    ALREADY matches its required builder ndf needs no bracket, and must
+    not be hoisted.  Keying on ``_BUILDER_NDF_GATED`` membership alone
+    would reorder every ndf=2 quad deck for nothing.
+    """
+    from .._element_capabilities import element_builder_ndf
+
+    need = element_builder_ndf(type_token, ndm)
+    return need is not None and int(need) != int(envelope_ndf)
+
+
+def needs_builder_ndf_bracket(
+    spec: "Element", *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """True iff ``spec``'s upstream parser needs a builder-ndf bracket here.
+
+    The single definition of the bracket condition, shared by
+    :func:`open_builder_ndf_bracket` (which emits it), the ADR 0099 hoist
+    in ``_emit_flat`` (which orders around it), and
+    :func:`validate_builder_scope_ordering` (which guards it).
+    """
+    return needs_builder_ndf_bracket_for_token(
+        type(spec).__name__, ndm=ndm, envelope_ndf=envelope_ndf,
+    )
+
+
+#: Emit paths that satisfy ADR 0099 INV-1 by HOISTING their gated element
+#: blocks above the builder-scoped declarations, rather than by refusing.
+#:
+#: ``"flat"``        — S2, ``BuiltModel._emit_flat``.
+#: ``"partitioned"`` — S5, ``BuiltModel._emit_partitioned``.  Default
+#:   partitioned emit is ONE file with ``if {[getPID] == K}`` brace guards
+#:   and the declarations global, outside every guard; a brace is not a
+#:   file boundary, so the flat hoist replicates directly as one extra
+#:   rank-guard block per rank.
+#:
+#: Still refused: ``"split"`` (file-per-module, ADR 0043) and
+#: ``"partitioned per_rank"`` (file-per-rank, ADR 0061) — both need the
+#: fragment's ``source`` line moved rather than its element lines, which
+#: is a different mechanism (ADR 0099 §"How the two deferred paths should
+#: actually be fixed").
+_HOISTING_PATHS = frozenset({"flat", "partitioned"})
+
+
+def validate_builder_scope_ordering(
+    elements: "Sequence[Element]",
+    primitives: "Iterable[Primitive]",
+    fem: "FEMData",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+    path: str,
+    stage_records: "Sequence[StageRecord]" = (),
+) -> None:
+    """Fail loud when a builder-ndf bracket would destroy a declaration.
+
+    ADR 0099.  A gated element block is wrapped in a ``model basic -ndf K``
+    re-issue + envelope restore (:func:`open_builder_ndf_bracket`), and that
+    re-issue DELETES the Tcl model builder — whose destructor purges the
+    process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration`` /
+    ``damping`` registries on the way out (fork
+    ``SRC/modelbuilder/tcl/TclModelBuilder.cpp:681``; the audit lives in
+    :data:`.._element_capabilities._BUILDER_SCOPED_KINDS`).
+
+    The paths in :data:`_HOISTING_PATHS` hoist their gated element blocks
+    above those declarations (INV-1).  Everywhere else the deck would die
+    late — or, for ``damping``, run to convergence and report an
+    **undamped** answer, because ``region -damp`` only warns.  Under
+    partitioned emit both outcomes are RANK-LOCAL: a rank owning no gated
+    element never executes the bracket, so the failure is
+    non-deterministic in ``np``.
+
+    Raises
+    ------
+    BridgeError
+        INV-3 — a gated element directly depends on a builder-scoped
+        primitive (``quad(damp=...)``), so no ordering can save it: the
+        element's own bracket destroys the declaration it references.
+        INV-4 — a gated element brackets on an emit path that cannot
+        satisfy INV-1 (``split`` / ``partitioned`` / stage-activated).
+    """
+    from .._element_capabilities import (
+        builder_scoped_kind,
+        element_builder_ndf,
+    )
+
+    gated = [
+        e for e in elements
+        if needs_builder_ndf_bracket(e, ndm=ndm, envelope_ndf=envelope_ndf)
+    ]
+    if not gated:
+        return
+
+    # INV-3 — direct dependencies only: the failure mode is the element
+    # line resolving a tag its own bracket just deleted.
+    for spec in gated:
+        bad = sorted(
+            {k for d in spec.dependencies()
+             if (k := builder_scoped_kind(d)) is not None}
+        )
+        if bad:
+            raise BridgeError(
+                f"{type(spec).__name__} needs a builder-ndf bracket "
+                f"(model basic -ndm {ndm} -ndf "
+                f"{element_builder_ndf(type(spec).__name__, ndm)}), and that "
+                f"bracket destroys the {', '.join(bad)} declaration it "
+                f"references — the element would resolve a dead tag and "
+                f"OpenSees would only warn. Per ADR 0099 INV-3, drop the "
+                f"dependency (attach damping with ops.damping on a region "
+                f"instead of the element's damp= argument) or model this "
+                f"block with an ungated element."
+            )
+
+    scoped = sorted({k for p in primitives
+                     if (k := builder_scoped_kind(p)) is not None})
+    if not scoped:
+        return
+
+    fix = (
+        "Per ADR 0099 INV-1 every such declaration must follow the LAST "
+        "model line in the deck. The flat (unpartitioned, non-split) and "
+        "the default partitioned emit paths hoist their gated element "
+        "blocks above them; the remaining paths do not yet."
+    )
+    if path not in _HOISTING_PATHS:
+        raise BridgeError(
+            f"emit path {path!r} would declare {', '.join(scoped)} before a "
+            f"builder-ndf bracket opened for "
+            f"{type(gated[0]).__name__}, and the bracket destroys those "
+            f"declarations. {fix} Emit this model on the flat path, or "
+            f"remove the gated element / the declaration."
+        )
+
+    if stage_records:
+        element_owner_stage, _ = compute_stage_ownership(
+            tuple(stage_records), list(elements), fem,
+        )
+        staged = [g for g in gated if id(g) in element_owner_stage]
+        if staged:
+            raise BridgeError(
+                f"{type(staged[0]).__name__} is stage-activated, so its "
+                f"builder-ndf bracket emits INSIDE the stage block — after "
+                f"the global {', '.join(scoped)} declaration(s), and (for "
+                f"any stage past the first) after a pattern and a completed "
+                f"analyze. The bracket destroys those declarations. {fix} "
+                f"Activate this element's physical group globally instead "
+                f"of inside a stage."
+            )
+
+
+def validate_builder_scope_replay(
+    elements: "Sequence[Any]",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+    scoped_present: bool,
+    stage_owned_tags: "frozenset[int]" = frozenset(),
+    already_gated: bool = False,
+) -> None:
+    """Replay-side sibling of :func:`validate_builder_scope_ordering`.
+
+    ADR 0099 S4b.  The forward validator works over ``Element`` specs and
+    ``dependencies()``; replay carries deck RECORDS (a type token, a tag,
+    a flat arg tail), so the same two unfixable-by-ordering cases have to
+    be recognised differently.  Both are reachable only from a PRE-S1
+    archive — the bridge refuses to write either today — so this is
+    legacy-data defence, not a live path.
+
+    Raises
+    ------
+    BridgeError
+        INV-3 — a gated element record references a builder-scoped
+        declaration through its arg tail (``quad ... -damp N``).  Its own
+        bracket destroys that declaration, so no ordering satisfies both:
+        hoisted, the element resolves a tag not yet declared; unhoisted,
+        the bracket purges it after the fact.
+        INV-4 — a stage-owned gated element in an archive that also
+        carries builder-scoped declarations.  Its bracket emits INSIDE
+        the stage block, after the global declarations and (past the
+        first stage) after a completed ``analyze``; there is no earlier
+        position to hoist to.
+    """
+    from .._element_capabilities import (
+        builder_scoped_kind_for_arg,
+        element_builder_ndf,
+    )
+
+    # Gatedness is a property of the TOKEN at a fixed
+    # (ndm, envelope_ndf) — resolve it once per distinct token, never
+    # per element.  A deck carries a handful of tokens and can carry
+    # millions of elements, and this guard runs on every replayed deck.
+    # ``already_gated`` lets a caller that has ALREADY partitioned (the
+    # ADR 0099 hoist in ``_replay_into``) hand the gated list straight
+    # in, so the token pass is not paid twice on the same deck.
+    if already_gated:
+        gated = list(elements)
+    else:
+        gated_tokens = {
+            tok for tok in {rec.type_token for rec in elements}
+            if needs_builder_ndf_bracket_for_token(
+                tok, ndm=ndm, envelope_ndf=envelope_ndf,
+            )
+        }
+        if not gated_tokens:
+            return
+        gated = [rec for rec in elements if rec.type_token in gated_tokens]
+    if not gated:
+        return
+
+    for rec in gated:
+        # ``rec.args`` bare, not ``getattr(rec, "args", ())``: an
+        # args-less record is a broken contract, and defaulting to ()
+        # would SKIP the INV-3 scan silently — the one outcome this
+        # guard exists to prevent.  Matches the bare ``rec.tag`` below.
+        bad = sorted({
+            k for a in rec.args
+            if (k := builder_scoped_kind_for_arg(a)) is not None
+        })
+        if bad:
+            raise BridgeError(
+                f"replayed element {rec.type_token!r} (tag "
+                f"{int(rec.tag)}) needs a builder-ndf bracket "
+                f"(model basic -ndm {ndm} -ndf "
+                f"{element_builder_ndf(rec.type_token, ndm)}), and that "
+                f"bracket destroys the {', '.join(bad)} declaration its "
+                f"own arg tail references. Per ADR 0099 INV-3 no ordering "
+                f"of the deck can satisfy both. This archive predates the "
+                f"emit-time INV-3 guard; re-author the model attaching "
+                f"damping with ops.damping on a region instead of the "
+                f"element's damp= argument, or use an ungated element."
+            )
+
+    if stage_owned_tags and scoped_present:
+        staged = [rec for rec in gated if int(rec.tag) in stage_owned_tags]
+        if staged:
+            raise BridgeError(
+                f"replayed element {staged[0].type_token!r} (tag "
+                f"{int(staged[0].tag)}) is stage-owned, so its "
+                f"builder-ndf bracket emits INSIDE the stage block — "
+                f"after the global builder-scoped declarations, and (for "
+                f"any stage past the first) after a pattern and a "
+                f"completed analyze. The bracket destroys them and there "
+                f"is no earlier position to hoist to. Per ADR 0099 INV-4 "
+                f"this deck is refused rather than emitted wrong; "
+                f"activate this element's physical group globally."
+            )
+
+
 def open_builder_ndf_bracket(
     emitter: "Emitter", spec: "Element", *, ndm: int, envelope_ndf: int,
 ) -> bool:
@@ -2134,16 +2397,26 @@ def open_builder_ndf_bracket(
     bracket each gated element block: ``model basic -ndf 2`` before,
     envelope restore after (:func:`close_builder_ndf_bracket`).
 
+    It DOES, however, delete the Tcl model builder, whose destructor purges
+    the process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration``
+    / ``damping`` registries — see ADR 0099 and
+    :func:`validate_builder_scope_ordering`.  Callers must emit every such
+    declaration AFTER the last bracket line.
+
     Returns True when a bracket line was emitted (caller must close).
     No-op (False) when the spec's parser carries no gate or the envelope
     already matches.
     """
     from .._element_capabilities import element_builder_ndf
 
-    need = element_builder_ndf(type(spec).__name__, ndm)
-    if need is None or int(need) == int(envelope_ndf):
+    if not needs_builder_ndf_bracket(
+        spec, ndm=ndm, envelope_ndf=envelope_ndf,
+    ):
         return False
-    emitter.model(ndm=int(ndm), ndf=int(need))
+    emitter.model(
+        ndm=int(ndm),
+        ndf=int(element_builder_ndf(type(spec).__name__, ndm)),  # type: ignore[arg-type]
+    )
     return True
 
 
@@ -4104,8 +4377,20 @@ def _emit_element_level_record(
     emitted_canonical = False
 
     if record.components:
+        # ``None`` = "the question does not apply here", which the
+        # translator distinguishes from a checked-and-incapable ``False``
+        # so it does not warn about something it cannot know or that is
+        # already fine.  Two such cases: no element plan to check against
+        # (legacy direct callers / ModelData's fem-eid-verbatim recorder
+        # rendering), and a 3-D model, whose ``stresses`` response carries
+        # σ_zz already — the plane-strain promotion is a 2-D affair.
+        sigma_zz_capable = (
+            None if (fem_eid_to_ops_tag is None or decl.ndm != 2)
+            else fem_eid_to_ops_tag.all_sigma_zz_capable(elem_ids)
+        )
         tokens = response_tokens(  # type: ignore[operator]
             record.category, record.components, record_name=record.name,
+            sigma_zz_capable=sigma_zz_capable,
         )
         if tokens is not None:
             file_path = _recorder_file_path(
@@ -6764,11 +7049,25 @@ class FemToOpsTagMap:
     sentinel; it is filtered out at construction exactly as the old
     comprehension's ``if eid != MISSING_FEM_ELEMENT_ID`` guard did, so it
     never becomes a key.
+
+    The map also carries the plan's σ_zz capability (``sigma_zz_blocks``):
+    :meth:`from_plan` is the only place in the emit pipeline where an
+    element's ops tags and its typed spec (element class + ``plane_type``
+    + material) are both in hand, and the recorder fan-out — the consumer
+    that needs the answer — already receives this map.  The blocks alias
+    the very tag arrays built for the map itself, so carrying them costs
+    no extra allocation.
     """
 
-    __slots__ = ("_eids", "_tags", "_order", "_sorted_eids", "_sorted_tags")
+    __slots__ = (
+        "_eids", "_tags", "_order", "_sorted_eids", "_sorted_tags",
+        "_sigma_zz_blocks", "_sigma_zz_tags",
+    )
 
-    def __init__(self, eids: "np.ndarray", tags: "np.ndarray") -> None:
+    def __init__(
+        self, eids: "np.ndarray", tags: "np.ndarray",
+        sigma_zz_blocks: "Iterable[np.ndarray]" = (),
+    ) -> None:
         # ``eids`` / ``tags`` are parallel int64 arrays in PLAN order
         # (so ``items`` reproduces the old dict's insertion order). We
         # also keep a sorted view for O(log N) point membership.
@@ -6778,6 +7077,13 @@ class FemToOpsTagMap:
         self._order = order
         self._sorted_eids = eids[order]
         self._sorted_tags = tags[order]
+        # Per-spec ops-tag blocks for the σ_zz-capable specs; concatenated
+        # + sorted lazily on the first query so a model nobody records
+        # σ_zz on never pays for them.
+        self._sigma_zz_blocks: "tuple[np.ndarray, ...]" = tuple(
+            sigma_zz_blocks
+        )
+        self._sigma_zz_tags: "np.ndarray | None" = None
 
     @classmethod
     def from_pairs(
@@ -6809,9 +7115,16 @@ class FemToOpsTagMap:
         Concatenates each spec's ``(eids, tag_start + arange)`` in plan
         order, dropping node-pair sentinel rows. Identical key/value set
         to the old ``{eid: tag}`` comprehension, in the same order.
+
+        Each σ_zz-capable spec's tag block is retained by reference (it is
+        already built for the map) so the recorder fan-out can gate the
+        plane-strain stress promotion — see :meth:`all_sigma_zz_capable`.
         """
+        from .._element_capabilities import element_records_stress_zz
+
         eid_blocks: "list[np.ndarray]" = []
         tag_blocks: "list[np.ndarray]" = []
+        sigma_zz_blocks: "list[np.ndarray]" = []
         for _spec, sub in plan:
             n = len(sub)
             if n == 0:
@@ -6830,10 +7143,32 @@ class FemToOpsTagMap:
             if eids.shape[0]:
                 eid_blocks.append(eids)
                 tag_blocks.append(tags)
+                if element_records_stress_zz(_spec):
+                    sigma_zz_blocks.append(tags)
         if not eid_blocks:
             empty = np.empty((0,), dtype=np.int64)
             return cls(empty, empty)
-        return cls(np.concatenate(eid_blocks), np.concatenate(tag_blocks))
+        return cls(
+            np.concatenate(eid_blocks), np.concatenate(tag_blocks),
+            sigma_zz_blocks,
+        )
+
+    def all_sigma_zz_capable(self, ops_tags: "Iterable[int]") -> bool:
+        """True when every tag in ``ops_tags`` can record a real σ_zz.
+
+        Empty ``ops_tags`` answers ``False`` — there is nothing to promote
+        for, and the un-promoted token is always the safe choice.
+        """
+        if not self._sigma_zz_blocks:
+            return False        # no capable spec at all — O(1) for 3-D models
+        want = np.asarray(tuple(ops_tags), dtype=np.int64)
+        if want.size == 0:
+            return False
+        if self._sigma_zz_tags is None:
+            self._sigma_zz_tags = np.unique(
+                np.concatenate(self._sigma_zz_blocks)
+            )
+        return bool(np.isin(want, self._sigma_zz_tags).all())
 
     def __len__(self) -> int:
         return int(self._eids.shape[0])
