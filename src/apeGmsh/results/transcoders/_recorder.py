@@ -58,6 +58,7 @@ from ...opensees._response_catalog import (
     unflatten,
     unflatten_nodal,
 )
+from ...opensees._recorder_translate import stress_zz_keyword
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
     emit_logical,
@@ -903,6 +904,13 @@ def _record_catalog_token(rec: "ResolvedRecorderRecord") -> str | None:
     / ``transverse_shear`` / ``membrane_strain`` / ``curvature`` /
     ``transverse_shear_strain``) — they share catalog tokens with
     their conjugate continuum families.
+
+    Must make the SAME plane-strain σ_zz promotion the emit side made
+    (``apeGmsh.results.spec._emit._gauss_record_ops_keyword``), off the
+    same ``sigma_zz_capable`` field on the record — the token names the
+    catalog family the ``.out`` columns were written in, so reading a
+    promoted 4-component file under the 3-component ``stress`` token
+    finds no layout at that width.
     """
     keywords: set[str] = set()
     for comp in rec.components:
@@ -918,6 +926,8 @@ def _record_catalog_token(rec: "ResolvedRecorderRecord") -> str | None:
             f"(one per ops.eleResponse keyword)."
         )
     keyword = next(iter(keywords))
+    if keyword == "stresses" and "stress_zz" in rec.components:
+        keyword = stress_zz_keyword(getattr(rec, "sigma_zz_capable", None))
     return catalog_token_for_keyword(keyword)
 
 

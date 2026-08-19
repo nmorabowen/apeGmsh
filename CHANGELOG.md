@@ -22,6 +22,44 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — every recording route promotes `stress_zz`, not just the deck
+
+The plane-strain σ_zz promotion now covers all three routes that resolve
+a Gauss response token, so a `stress_zz` request means the same thing
+wherever you record from:
+
+- the bridge's `ops.recorder.declare(gauss=…)` deck (already shipped);
+- **`DomainCapture`** — the live in-process route, which queries
+  `ops.eleResponse` directly and therefore has its own resolution. It
+  used to drop a requested `stress_zz` on the floor, which is exactly
+  the silent no-op the feature exists to remove;
+- **the `.out` route** — both halves. `results/spec/_emit.py` writes the
+  promoted token, and the transcoder's read-side token derivation makes
+  the *same* promotion, because the token names the catalog family the
+  columns were written in: reading a 4-component file under the
+  3-component `stress` token finds no layout at that width.
+
+All three go through one shared decision
+(`_recorder_translate._stress_zz_tokens` / `stress_zz_keyword`), so they
+cannot drift into writing one shape and decoding another. The read site
+uses the silent variant — the emit side already said its piece.
+
+Capability comes from the same predicate everywhere. `DomainCapture`
+resolves it from the bridge's typed element primitives at spec
+resolution, mirroring the emit-side gate. `ResolvedRecorderSpec` — which
+carries no bridge back-reference — takes `sigma_zz_capable` from the
+caller, exactly as it already takes `element_class_name`; unset means
+unknown and keeps today's token silently.
+
+**Known sharp edge:** a promoted 12-column file is genuinely ambiguous
+between `LadrunoLST` and `BezierTri6` (both 3 GP × 4 components), so the
+`.out` transcoder needs `element_class_name` and raises `Ambiguous
+catalog match` without it. It does not auto-resolve: the only auto-hint
+in the tree, `DomainCaptureSpec._lookup_class_hint_for_pgs`, reads an
+`_elem_assignments` attribute the `apeSees` bridge does not have, so it
+returns `None` for every model. `DomainCapture` itself is unaffected (it
+reads `ops.eleType` from the live domain).
+
 ### FIXED — `.ladruno` Gauss stress/strain on every Ladruno plane element
 
 `LadrunoCST` / `LadrunoLST` / `LadrunoQuad` recorded with the plain

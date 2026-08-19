@@ -193,3 +193,152 @@ def test_plane_strain_stress_zz_is_recorded_not_estimated(tmp_path) -> None:
         vm[plastic], _von_mises(sxx, syy, sxy, estimate)[plastic],
         rtol=1e-6,
     )
+
+
+def _live_sigma_zz(live, ops_tags) -> np.ndarray:
+    """σ_zz straight off the element response, GP by GP — the oracle the
+    two recorded routes below are checked against."""
+    out: list[float] = []
+    for eid in ops_tags:
+        v = np.asarray(
+            live.eleResponse(int(eid), "stressPlaneStrain"), dtype=np.float64,
+        )
+        out.extend(v[3::4])
+    return np.asarray(out)
+
+
+def _ops_tags(live) -> list[int]:
+    tags = live.getEleTags()
+    if isinstance(tags, int):
+        tags = [tags]
+    return sorted(int(t) for t in tags)
+
+
+def test_domain_capture_records_the_real_stress_zz(tmp_path) -> None:
+    """The live in-process route promotes too.
+
+    DomainCapture queries ``ops.eleResponse`` directly rather than going
+    through a recorder file, so it is a wholly separate token resolution
+    — and it used to drop a requested ``stress_zz`` on the floor.
+    """
+    from apeGmsh.results.capture.spec import DomainCaptureSpec
+
+    from tests.conftest import _open_model_from_h5
+
+    fem = _mesh()
+    ops = _bridge(fem, str(tmp_path / "unused.ladruno"), str(tmp_path))
+
+    cs = DomainCaptureSpec(opensees=ops)
+    cs.gauss(
+        components=("stress_xx", "stress_yy", "stress_xy", "stress_zz"),
+        pg="Body", name="body",
+    )
+    assert cs.resolve(fem).records[0].sigma_zz_capable is True
+
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    assert emitter.analyze(steps=N_STEPS) == 0
+    live = emitter.ops
+
+    out = tmp_path / "cap.h5"
+    with ops.domain_capture(cs, path=str(out), ops=live) as cap:
+        cap.begin_stage("static", kind="static")
+        cap.step(t=float(live.getTime()))
+        capturer = cap._gauss_capturers[0]
+        assert capturer._ops_keyword == STRESS_PLANE_STRAIN_RESPONSE
+        # Promotion must not push the elements off the catalog: a
+        # skipped element is a silently missing element.
+        assert capturer.skipped_elements == []
+        cap.end_stage()
+
+    with Results.from_native(
+        out, fem=fem, model=_open_model_from_h5(out),
+    ) as r:
+        stage = r.stage(r.stages[0].id)
+        assert "stress_zz" in stage.elements.gauss.available_components()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            szz = stage.elements.gauss.get(component="stress_zz").values[-1]
+        assert not [
+            w for w in caught
+            if issubclass(w.category, OutOfPlaneRecoveryWarning)
+        ]
+
+    # In-process capture goes through no text file, so it must agree
+    # with the element response exactly.
+    np.testing.assert_array_equal(szz, _live_sigma_zz(live, _ops_tags(live)))
+
+
+def test_out_recorder_round_trips_the_promoted_response(tmp_path) -> None:
+    """``.out`` emit → run → transcode → read, on the promoted response.
+
+    Width 12 is shared by ``LadrunoLST`` and ``BezierTri6``, so the
+    transcoder needs ``element_class_name`` to pick the layout; this run
+    supplies it and checks the σ_zz column landed in the right slot.
+    """
+    import numpy as np
+
+    from apeGmsh.results.spec._emit import emit_logical
+    from apeGmsh.results.spec._resolved import (
+        ResolvedRecorderRecord,
+        ResolvedRecorderSpec,
+    )
+    from apeGmsh.results.transcoders import RecorderTranscoder
+
+    from tests.conftest import _open_model_from_h5
+
+    fem = _mesh()
+    ops = _bridge(fem, str(tmp_path / "unused.ladruno"), str(tmp_path))
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    live = emitter.ops
+    tags = _ops_tags(live)
+
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedRecorderRecord(
+            category="gauss", name="body",
+            components=("stress_xx", "stress_yy", "stress_xy", "stress_zz"),
+            dt=None, n_steps=None,
+            element_ids=np.asarray(tags, dtype=np.int64),
+            element_class_name="LadrunoLST",
+            sigma_zz_capable=True,
+        ),),
+    )
+    logical = list(emit_logical(spec.records[0], output_dir=str(tmp_path)))[0]
+    assert logical.response_tokens == (STRESS_PLANE_STRAIN_RESPONSE,)
+
+    live.recorder(
+        "Element", "-file", logical.file_path, "-time",
+        "-ele", *logical.target_ids, *logical.response_tokens,
+    )
+    assert emitter.analyze(steps=N_STEPS) == 0
+    live.remove("recorders")
+
+    model_h5 = tmp_path / "model.h5"
+    ops.h5(str(model_h5))
+    model = _open_model_from_h5(model_h5)
+    cached = tmp_path / "run.h5"
+    RecorderTranscoder(
+        spec, tmp_path, cached, fem, model_h5_src=model_h5,
+    ).run()
+
+    with Results.from_native(cached, fem=fem, model=model) as r:
+        assert "stress_zz" in r.elements.gauss.available_components()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            szz = r.elements.gauss.get(component="stress_zz").values[-1]
+            sxx = r.elements.gauss.get(component="stress_xx").values[-1]
+            syy = r.elements.gauss.get(component="stress_yy").values[-1]
+        assert not [
+            w for w in caught
+            if issubclass(w.category, OutOfPlaneRecoveryWarning)
+        ]
+
+    # Right slot: the column tracks the element response, to the text
+    # file's ~6 significant digits and no worse.
+    ref = _live_sigma_zz(live, tags)
+    np.testing.assert_allclose(szz, ref, rtol=1e-5, atol=0.0)
+    # ...and it is the recorded σ_zz, not the nu-estimate.
+    departure = np.abs(szz - NU * (sxx + syy)) / np.abs(szz)
+    assert departure.max() > 0.1

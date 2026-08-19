@@ -190,6 +190,14 @@ class ResolvedDomainCaptureRecord:
 
     element_class_name: Optional[str] = None
 
+    # Tri-state out-of-plane σ_zz capability for the record's elements
+    # (``category="gauss"``): ``True`` promotes a ``stress_zz`` record to
+    # the 4-component plane-strain stress response, ``False`` keeps the
+    # 3-component one and warns, ``None`` — could not be determined — keeps
+    # it silently.  Resolved from the bridge's typed element primitives;
+    # see :meth:`DomainCaptureSpec._lookup_sigma_zz_capable`.
+    sigma_zz_capable: Optional[bool] = None
+
     n_modes: Optional[int] = None
 
     # ``category="layers"``-only — populated when the resolver has
@@ -692,9 +700,40 @@ class DomainCaptureSpec:
             dt=rec.dt, n_steps=rec.n_steps,
             element_ids=ids_array,
             element_class_name=class_hint,
+            sigma_zz_capable=self._lookup_sigma_zz_capable(rec.pg, ndm=ndm),
             layer_section_metadata=layer_metadata,
             source=rec,
         )
+
+    def _lookup_sigma_zz_capable(
+        self, pgs: tuple[str, ...], *, ndm: int,
+    ) -> "bool | None":
+        """Can every element on ``pgs`` report a real out-of-plane σ_zz?
+
+        The live-capture twin of the emit-side gate
+        (:meth:`apeGmsh.opensees._internal.build.FemToOpsTagMap.all_sigma_zz_capable`):
+        same predicate, same all-or-nothing rule over the record's targets,
+        same tri-state.  ``None`` means "cannot tell, do not promote and do
+        not complain" — a 3-D model (whose ``stresses`` carries σ_zz
+        already), no attached bridge, an unnamed target set (``ids=`` /
+        ``label=`` / ``selection=``, which no ``Element`` primitive can be
+        matched to by PG), or a PG with no registered element.
+        """
+        if ndm != 2 or not pgs or self._opensees is None:
+            return None
+        from ...opensees._element_capabilities import (
+            element_records_stress_zz,
+        )
+        from ...opensees._internal.types import Element
+
+        wanted = set(pgs)
+        specs = [
+            p for p in getattr(self._opensees, "_primitives", ())
+            if isinstance(p, Element) and getattr(p, "pg", None) in wanted
+        ]
+        if not specs or {s.pg for s in specs} != wanted:
+            return None      # a named PG carries no element — cannot tell
+        return all(element_records_stress_zz(s) for s in specs)
 
     def _lookup_class_hint_for_pgs(
         self, pgs: tuple[str, ...],

@@ -271,6 +271,17 @@ def element_record_response_tokens(
     return (keyword,)
 
 
+def stress_zz_keyword(sigma_zz_capable: bool | None) -> str:
+    """The ops response keyword a ``stress_zz`` gauss record resolves to.
+
+    The mapping half of :func:`_stress_zz_tokens`, without the warning —
+    for READ sites (the ``.out`` transcoder) that must land on the same
+    catalog family the emit side wrote, but would only be duplicating a
+    complaint the emit side already made.
+    """
+    return STRESS_PLANE_STRAIN_RESPONSE if sigma_zz_capable else "stresses"
+
+
 def _stress_zz_tokens(
     record_name: str | None, sigma_zz_capable: bool | None,
 ) -> tuple[str, ...]:
@@ -289,8 +300,9 @@ def _stress_zz_tokens(
     built on it, where the un-promoted token at least lets
     :mod:`apeGmsh.results._plane_recovery` reconstruct σzz from ν.
     """
+    keyword = stress_zz_keyword(sigma_zz_capable)
     if sigma_zz_capable:
-        return (STRESS_PLANE_STRAIN_RESPONSE,)
+        return (keyword,)
     if sigma_zz_capable is False:
         rec_label = f"record {record_name!r}" if record_name else "record"
         warnings.warn(
@@ -306,4 +318,4 @@ def _stress_zz_tokens(
             f"{sorted(SIGMA_ZZ_MATERIAL_CLASSES)}.",
             StressZZNotRecordedWarning, stacklevel=4,
         )
-    return ("stresses",)
+    return (keyword,)
