@@ -22,7 +22,9 @@ from apeGmsh.results.transcoders._recorder import (
     _record_catalog_token,
 )
 from apeGmsh.opensees._response_catalog import (
+    RESPONSE_CATALOG,
     IntRule,
+    catalog_token_for_keyword,
     flatten,
     lookup,
 )
@@ -194,6 +196,98 @@ class TestLayoutSniff:
     def test_unknown_class_hint_raises(self) -> None:
         with pytest.raises(ValueError, match="No catalog entry"):
             _identify_layout("stress", flat_size=6, class_hint="NotAClass")
+
+
+# =====================================================================
+# stress_plane_strain — the 4-component σ_zz response
+# =====================================================================
+#
+# A plane-strain deck asking for stress_zz gets its recorder line
+# promoted from ``stresses`` to ``stressesPlaneStrain``, which writes
+# FOUR components per Gauss point instead of three. Under the plain
+# ``stress`` token that block was decoded by flat size alone and a 3-GP
+# element's 12 columns collided exactly with FourNodeQuad's 4 × 3 — so
+# every value landed on the wrong Gauss point AND the wrong component,
+# silently. A distinct catalog token is what removes the collision.
+
+class TestPlaneStrainLayoutSniff:
+    def test_both_keyword_spellings_map_to_their_own_token(self) -> None:
+        # NOT "stress" — that is the whole point of the separate token.
+        assert catalog_token_for_keyword("stressesPlaneStrain") == (
+            "stress_plane_strain"
+        )
+        assert catalog_token_for_keyword("stressPlaneStrain") == (
+            "stress_plane_strain"
+        )
+        assert catalog_token_for_keyword("stresses") == "stress"
+
+    def test_twelve_columns_no_longer_sniffs_as_a_four_gp_quad(self) -> None:
+        """The mis-decode, pinned.
+
+        A promoted 3-GP triangle writes 3 × 4 = 12 columns. Under
+        ``stress`` that is FourNodeQuad's 4 × 3 = 12 and used to come
+        back as a 4-GP, 3-component layout with no error at all.
+        """
+        # The collision that motivated the separate token is real: a
+        # genuine FourNodeQuad ``stresses`` record IS 12 columns of 3.
+        quad, cls, _rule = _identify_layout("stress", flat_size=12)
+        assert cls == "FourNodeQuad"
+        assert (quad.n_gauss_points, quad.n_components_per_gp) == (4, 3)
+
+        # Under its own token the same width cannot be that layout.
+        with pytest.raises(ValueError, match="Ambiguous") as excinfo:
+            _identify_layout("stress_plane_strain", flat_size=12)
+        assert "FourNodeQuad" not in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        ("class_hint", "first_gp"),
+        # The two 3-GP candidates differ in GP ORDER, which is exactly
+        # why the 12-column sniff must not pick one silently.
+        [("LadrunoLST", (2.0 / 3.0, 1.0 / 6.0)),
+         ("BezierTri6", (1.0 / 6.0, 1.0 / 6.0))],
+    )
+    def test_twelve_columns_resolve_with_a_class_hint(
+        self, class_hint: str, first_gp: tuple[float, float],
+    ) -> None:
+        layout, cls, _rule = _identify_layout(
+            "stress_plane_strain", flat_size=12, class_hint=class_hint,
+        )
+        assert cls == class_hint
+        assert (layout.n_gauss_points, layout.n_components_per_gp) == (3, 4)
+        assert layout.component_layout == (
+            "stress_xx", "stress_yy", "stress_xy", "stress_zz",
+        )
+        np.testing.assert_allclose(layout.natural_coords[0], first_gp)
+
+    @pytest.mark.parametrize(
+        ("flat_size", "n_gp", "classes"),
+        [(4, 1, ("Tri31", "LadrunoCST")),
+         (16, 4, ("FourNodeQuad", "LadrunoQuad"))],
+    )
+    def test_the_unambiguous_widths_decode(
+        self, flat_size: int, n_gp: int, classes: tuple[str, ...],
+    ) -> None:
+        # 16 columns had no ``stress`` entry at all, so a promoted
+        # FourNodeQuad used to raise instead of decoding.
+        layout, cls, _rule = _identify_layout(
+            "stress_plane_strain", flat_size=flat_size,
+        )
+        assert cls in classes          # shape-equivalent twins
+        assert (layout.n_gauss_points, layout.n_components_per_gp) == (n_gp, 4)
+
+    @pytest.mark.parametrize("class_name", ["SixNodeTri", "LadrunoUP"])
+    def test_classes_without_the_fork_branch_are_not_catalogued(
+        self, class_name: str,
+    ) -> None:
+        """Verified against the fork: neither implements the branch.
+
+        A lookup for them must MISS — inventing a layout would put the
+        catalog back in the business of guessing.
+        """
+        assert not [
+            key for key in RESPONSE_CATALOG
+            if key[0] == class_name and key[2] == "stress_plane_strain"
+        ]
 
 
 # =====================================================================

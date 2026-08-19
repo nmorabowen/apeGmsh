@@ -112,6 +112,16 @@ PLASTIC_STRAIN_2D: tuple[str, ...] = (
     "plastic_strain_xx", "plastic_strain_yy", "plastic_strain_xy",
 )
 
+# Plane-strain stress INCLUDING the out-of-plane σ_zz — what the fork's
+# ``stressPlaneStrain`` element response returns, four values per Gauss
+# point. ⚠ σ_zz comes LAST, not in tensor-index order: the fork tags
+# ``sigma11, sigma22, sigma12, sigma33`` so the first three columns stay
+# byte-compatible with the 3-component ``stresses`` response and σ_zz is
+# appended. Do not "fix" this into (xx, yy, zz, xy).
+STRESS_PLANE_STRAIN: tuple[str, ...] = (
+    "stress_xx", "stress_yy", "stress_xy", "stress_zz",
+)
+
 # Shell stress resultants — 8 components per surface Gauss point that
 # OpenSees shell elements return from ``ops.eleResponse(eid, "stresses")``
 # via ``section->getStressResultant()``. Order matches OpenSees source

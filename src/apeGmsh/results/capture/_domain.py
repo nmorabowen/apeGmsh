@@ -132,6 +132,7 @@ from ...opensees._response_catalog import (
     unflatten,
     unflatten_nodal,
 )
+from ...opensees._recorder_translate import _stress_zz_tokens
 from .._shell_geometry import shell_quaternion
 
 # Re-exports under their original underscore-prefixed names so the
@@ -286,6 +287,15 @@ def _gauss_record_tokens(record: "ResolvedDomainCaptureRecord") -> tuple[str, st
     Mixing within one keyword is OK: a shell record with components
     ``("membrane_force_xx", "bending_moment_yy", "transverse_shear_xz")``
     routes through a single ``ops.eleResponse(eid, "stresses")`` call.
+
+    A ``stress_zz`` record over plane-strain elements that can report the
+    material's σ33 is promoted to the 4-component superset response, the
+    same record-level promotion the file-recorder route makes at emit —
+    see :func:`apeGmsh.opensees._recorder_translate._stress_zz_tokens`,
+    which is shared so the two routes cannot disagree about what is
+    capable or about what to say when it is not.  The record carries the
+    tri-state answer from spec resolution (``None`` = could not be
+    determined → today's 3-component response, silently).
     """
     keywords: set[str] = set()
     for comp in record.components:
@@ -301,6 +311,10 @@ def _gauss_record_tokens(record: "ResolvedDomainCaptureRecord") -> tuple[str, st
             f"(one per ops.eleResponse keyword)."
         )
     keyword = next(iter(keywords))
+    if keyword == "stresses" and "stress_zz" in record.components:
+        keyword = _stress_zz_tokens(
+            record.name, getattr(record, "sigma_zz_capable", None),
+        )[0]
     catalog_token = catalog_token_for_keyword(keyword)
     if catalog_token is None:
         return None

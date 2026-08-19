@@ -53,6 +53,7 @@ from .._vocabulary import (
     STRAIN_2D,
     STRESS,
     STRESS_2D,
+    STRESS_PLANE_STRAIN,
 )
 
 
@@ -125,6 +126,10 @@ ELE_TAG_LadrunoBrick20 = 33018
 ELE_TAG_LadrunoQuad = 33007
 # Ladruno-fork 3-node constant-strain triangle (live from ladruno:SRC/classTags.h).
 ELE_TAG_LadrunoCST = 33008
+# Ladruno-fork 6-node linear-strain triangle (live from ladruno:SRC/classTags.h,
+# ADR 70 P3). The same 33016 is ND_TAG_LogStrain2D in the material registry —
+# tag bands are per-registry, this is the ELE_TAG one.
+ELE_TAG_LadrunoLST = 33016
 # Shells
 ELE_TAG_ShellMITC4 = 53
 ELE_TAG_ShellMITC9 = 54
@@ -864,6 +869,34 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_FourNodeQuad,
     ),
+    # ── stress_plane_strain — the 4-component σ_zz response ───────────
+    # The fork's ``stressPlaneStrain`` / ``stressesPlaneStrain`` element
+    # response returns FOUR values per Gauss point (σ_zz appended, see
+    # STRESS_PLANE_STRAIN) instead of the three ``stresses`` gives.
+    #
+    # It gets its OWN catalog token rather than widening ``stress``,
+    # because the transcoder identifies a layout by (token, flat size)
+    # alone: a promoted 3-GP element writes 3 × 4 = 12 columns, which
+    # under ``stress`` collides exactly with FourNodeQuad's 4 × 3 = 12
+    # and was silently decoded as 4 GPs of 3 components — every value
+    # landing on the wrong Gauss point AND the wrong component. Under a
+    # distinct token there is no such collision.
+    #
+    # Registered for the SIX classes that actually implement the branch,
+    # verified against the fork source (grep ``stressPlaneStrain`` over
+    # SRC): FourNodeQuad.cpp:1396, Tri31.cpp:1260, BezierTri6.cpp:1552,
+    # LadrunoQuad.cpp:1522, LadrunoCST.cpp:773, LadrunoLST.cpp:874.
+    # NOT SixNodeTri and NOT LadrunoUP — they have no such branch, so a
+    # lookup for them must miss rather than mis-decode. GP count and
+    # natural coords are each class's own ``stress`` entry unchanged;
+    # only the component list widens.
+    ("FourNodeQuad", IntRule.Quad_GL_2, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+            coord_system="isoparametric",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_FourNodeQuad,
+        ),
 
     # ── LadrunoQuad (4-node plane, 4 GPs Quad_GL_2) ──────────────────
     # Ladruno-fork unified plane quad (tag 33007). ``stresses``/``strains``
@@ -884,6 +917,16 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_LadrunoQuad,
     ),
+    # LadrunoQuad.cpp:1522 — see the stress_plane_strain note on
+    # FourNodeQuad. Same 4 GPs; the ``ssp`` single-point formulation
+    # mirrors the centroid onto all four blocks here too.
+    ("LadrunoQuad", IntRule.Quad_GL_2, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+            coord_system="isoparametric",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_LadrunoQuad,
+        ),
 
     # ── Tri31 (3-node triangle, 1 GP Triangle_GL_1) ──────────────────
     # C++ class: Tri31 (Tcl element name: ``tri31``).
@@ -900,6 +943,14 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_Tri31,
     ),
+    # Tri31.cpp:1260 — see the stress_plane_strain note on FourNodeQuad.
+    ("Tri31", IntRule.Triangle_GL_1, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+            coord_system="barycentric_tri",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_Tri31,
+        ),
 
     # ── LadrunoCST (3-node CST, 1 GP Triangle_GL_1) ──────────────────
     # Ladruno-fork constant-strain triangle (tag 33008). Strain is constant
@@ -918,6 +969,44 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_LadrunoCST,
     ),
+    # LadrunoCST.cpp:773 — see the stress_plane_strain note on
+    # FourNodeQuad. One centroid GP, so a 4-column block.
+    ("LadrunoCST", IntRule.Triangle_GL_1, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+            coord_system="barycentric_tri",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_LadrunoCST,
+        ),
+
+    # ── LadrunoLST (6-node linear-strain triangle, 3 GPs Triangle_GL_2) ─
+    # Ladruno-fork T6 (tag 33016, ADR 70 P3). ``stress``/``strain`` return
+    # Vector(3 * numgp) = 3 comp × 3 GPs, and the element's own 3-point
+    # interior rule (LadrunoLST.cpp:68–76) lists (2/3, 1/6), (1/6, 2/3),
+    # (1/6, 1/6) — the SixNodeTri anchor order, so ``_TRI_GL_2_COORDS``
+    # applies unpermuted (unlike the BezierTri6 sibling).
+    ("LadrunoLST", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_LadrunoLST,
+    ),
+    ("LadrunoLST", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_LadrunoLST,
+    ),
+    # LadrunoLST.cpp:874 — see the stress_plane_strain note on
+    # FourNodeQuad. 3 GPs × 4 comp = the 12-column block that used to be
+    # mis-decoded as a 4-GP FourNodeQuad.
+    ("LadrunoLST", IntRule.Triangle_GL_2, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=3, natural_coords=_TRI_GL_2_COORDS,
+            coord_system="barycentric_tri",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_LadrunoLST,
+        ),
 
     # ── SixNodeTri (6-node quadratic triangle, 3 GPs Triangle_GL_2) ──
     # C++ class: SixNodeTri (Tcl element name: ``tri6n``).
@@ -998,6 +1087,28 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_BezierTri6,
     ),
+    # BezierTri6.cpp:1552 — see the stress_plane_strain note on
+    # FourNodeQuad. Mirrored under BOTH rules exactly like this class's
+    # ``stress`` entries above, since MPCO brackets it as Custom.
+    # NOTE its GP order is the permuted _TRI_GL_2_COORDS_BEZIER, so a
+    # 12-column plane-strain block is genuinely ambiguous between
+    # BezierTri6 and LadrunoLST — ``_identify_layout`` raises and asks
+    # for a ``class_hint``, exactly as it already does for the 9-column
+    # ``stress`` block these two classes also share.
+    ("BezierTri6", IntRule.Triangle_GL_2, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+            coord_system="barycentric_tri",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_BezierTri6,
+        ),
+    ("BezierTri6", IntRule.Custom, "stress_plane_strain"):
+        _continuum_layout(
+            n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+            coord_system="barycentric_tri",
+            component_names=STRESS_PLANE_STRAIN,
+            class_tag=ELE_TAG_BezierTri6,
+        ),
 
     # ── SSPquad (4-node, 1 GP Quad_GL_1) ─────────────────────────────
     # C++ class: SSPquad. Stabilized single-point quad; setResponse
@@ -2162,6 +2273,13 @@ _NODAL_FORCE_PREFIX_TO_KEYWORD: dict[str, str] = {
 _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
     "stresses": "stress",
     "strains": "strain",
+    # 4-component plane-strain stress (σ_zz appended). BOTH spellings:
+    # the fork's setResponse accepts the plural and the canonical
+    # singular, and a deck may carry either. Its own token, NOT
+    # ``stress`` — see the stress_plane_strain block in RESPONSE_CATALOG
+    # for why widening ``stress`` silently mis-decodes 12-column blocks.
+    "stressesPlaneStrain": "stress_plane_strain",
+    "stressPlaneStrain": "stress_plane_strain",
     "axialForce": "axial_force",
     "damage": "damage",
     "equivalentPlasticStrain": "equivalent_plastic_strain",

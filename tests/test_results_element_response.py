@@ -640,6 +640,12 @@ def test_catalog_coverage_v1() -> None:
         ("Tri31", IntRule.Triangle_GL_1, "strain"),
         ("LadrunoCST", IntRule.Triangle_GL_1, "stress"),
         ("LadrunoCST", IntRule.Triangle_GL_1, "strain"),
+        # LadrunoLST (Ladruno fork T6, 3 GPs) — the SixNodeTri rule and
+        # GP order, unpermuted. NO Custom mirror: the .ladruno path names
+        # its anonymous C1..Cn columns by class + width, not by the
+        # bracket rule (which is 0 there).
+        ("LadrunoLST", IntRule.Triangle_GL_2, "stress"),
+        ("LadrunoLST", IntRule.Triangle_GL_2, "strain"),
         # SixNodeTri (6-node quadratic triangle, 3 GPs) — registered
         # under BOTH the canonical Triangle_GL_2 rule (used by live
         # capture / .out transcoder) AND IntRule.Custom (used by MPCO
@@ -658,6 +664,18 @@ def test_catalog_coverage_v1() -> None:
         ("BezierTri6", IntRule.Triangle_GL_2, "strain"),
         ("BezierTri6", IntRule.Custom, "stress"),
         ("BezierTri6", IntRule.Custom, "strain"),
+        # stress_plane_strain — the fork's 4-component response (σ_zz
+        # appended). Exactly the six classes implementing the
+        # ``stressPlaneStrain`` branch in the fork source; NOT SixNodeTri
+        # and NOT LadrunoUP, which have no such branch. BezierTri6 is
+        # mirrored under Custom like its ``stress`` rows.
+        ("FourNodeQuad", IntRule.Quad_GL_2, "stress_plane_strain"),
+        ("LadrunoQuad", IntRule.Quad_GL_2, "stress_plane_strain"),
+        ("Tri31", IntRule.Triangle_GL_1, "stress_plane_strain"),
+        ("LadrunoCST", IntRule.Triangle_GL_1, "stress_plane_strain"),
+        ("LadrunoLST", IntRule.Triangle_GL_2, "stress_plane_strain"),
+        ("BezierTri6", IntRule.Triangle_GL_2, "stress_plane_strain"),
+        ("BezierTri6", IntRule.Custom, "stress_plane_strain"),
         ("SSPquad", IntRule.Quad_GL_1, "stress"),
         ("SSPquad", IntRule.Quad_GL_1, "strain"),
         ("EightNodeQuad", IntRule.Quad_GL_3, "stress"),

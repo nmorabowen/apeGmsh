@@ -152,6 +152,15 @@ class ResolvedRecorderRecord:
     # bracket key) get class info directly and do not consume this.
     element_class_name: Optional[str] = None
 
+    # Tri-state out-of-plane σ_zz capability for this record's elements
+    # (``category="gauss"``): ``True`` promotes a ``stress_zz`` record to
+    # the 4-component plane-strain stress response, ``False`` keeps the
+    # 3-component one and warns, ``None`` — unknown — keeps it silently.
+    # Caller-supplied on this route, exactly like ``element_class_name``:
+    # a ResolvedRecorderSpec carries no bridge back-reference to derive
+    # element class + plane_type + material from.
+    sigma_zz_capable: Optional[bool] = None
+
     # Modal-only
     n_modes: Optional[int] = None
 

@@ -21,7 +21,30 @@ through these tables.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Optional
+
+from ._element_capabilities import (
+    SIGMA_ZZ_ELEMENT_CLASSES,
+    SIGMA_ZZ_MATERIAL_CLASSES,
+    STRESS_PLANE_STRAIN_RESPONSE,
+)
+
+
+class StressZZNotRecordedWarning(UserWarning):
+    """A ``stress_zz`` gauss record could not be promoted to the fork's
+    4-component plane-strain stress response.
+
+    Raised at emit time by :func:`element_record_response_tokens` when the
+    record's elements or their materials do not expose the out-of-plane
+    σ33 (see
+    :func:`~apeGmsh.opensees._element_capabilities.element_records_stress_zz`).
+    The recorder still writes the 3 in-plane components and the read side
+    reconstructs σzz from Poisson's ratio, so this is a precision warning,
+    not a failure — but at plastic Gauss points that elastic estimate is
+    wrong by tens of percent, and this is the only place the user hears
+    about it.
+    """
 
 
 # =====================================================================
@@ -184,6 +207,7 @@ def element_record_response_tokens(
     components: tuple[str, ...],
     *,
     record_name: str | None = None,
+    sigma_zz_capable: bool | None = None,
 ) -> Optional[tuple[str, ...]]:
     """Resolve the ``recorder Element`` response phrase for a record.
 
@@ -192,6 +216,14 @@ def element_record_response_tokens(
     that OpenSees parses as a multi-word response phrase. Returns
     ``None`` when no components route through the category's
     topology (caller skips silently).
+
+    ``sigma_zz_capable`` reports whether every element the record targets
+    can emit a real out-of-plane σzz (see
+    :func:`~apeGmsh.opensees._element_capabilities.element_records_stress_zz`):
+    ``True`` promotes a ``stress_zz``-bearing gauss record onto the
+    4-component superset response, ``False`` keeps the 3-component one and
+    warns, and ``None`` — the caller has no element plan to check against —
+    keeps it silently.
 
     Raises ``ValueError`` if components mix work-conjugate families
     (stress + strain in one gauss record, global + local frame in one
@@ -228,8 +260,62 @@ def element_record_response_tokens(
             "(one per ops keyword)."
         )
     keyword = next(iter(keywords))
+    if keyword == "stresses" and category == "gauss" and (
+        "stress_zz" in components
+    ):
+        return _stress_zz_tokens(record_name, sigma_zz_capable)
     # The line_stations keyword "section.force" is OpenSees-emitted as
     # two tokens ("section" "force"); same for ``section.deformation``.
     if "." in keyword:
         return tuple(keyword.split("."))
+    return (keyword,)
+
+
+def stress_zz_keyword(sigma_zz_capable: bool | None) -> str:
+    """The ops response keyword a ``stress_zz`` gauss record resolves to.
+
+    The mapping half of :func:`_stress_zz_tokens`, without the warning —
+    for READ sites (the ``.out`` transcoder) that must land on the same
+    catalog family the emit side wrote, but would only be duplicating a
+    complaint the emit side already made.
+    """
+    return STRESS_PLANE_STRAIN_RESPONSE if sigma_zz_capable else "stresses"
+
+
+def _stress_zz_tokens(
+    record_name: str | None, sigma_zz_capable: bool | None,
+) -> tuple[str, ...]:
+    """Record-level superset promotion for a ``stress_zz`` gauss record.
+
+    ``stress_zz`` routes onto the plain ``stresses`` token, which carries
+    only the three in-plane components — so requesting it is otherwise a
+    silent no-op.  The fork's ``stressesPlaneStrain`` is a strict superset
+    (σxx, σyy, σxy, σzz per Gauss point), so ``stress_xx`` / ``_yy`` /
+    ``_xy`` declared in the SAME record ride along unchanged and the
+    promotion stays record-level.
+
+    Promotion is gated because ``NDMaterial::getStressZZ()`` returns NaN
+    unless the material overrides it: recording the superset on an
+    incapable element writes an all-NaN column that poisons every invariant
+    built on it, where the un-promoted token at least lets
+    :mod:`apeGmsh.results._plane_recovery` reconstruct σzz from ν.
+    """
+    keyword = stress_zz_keyword(sigma_zz_capable)
+    if sigma_zz_capable:
+        return (keyword,)
+    if sigma_zz_capable is False:
+        rec_label = f"record {record_name!r}" if record_name else "record"
+        warnings.warn(
+            f"{rec_label} requests 'stress_zz', but not every element it "
+            f"targets can report the out-of-plane stress: recording "
+            f"{STRESS_PLANE_STRAIN_RESPONSE!r} there would write NaN. The "
+            f"3-component 'stresses' response is recorded instead and "
+            f"stress_zz is reconstructed at read time as nu*(sxx+syy), "
+            f"which is exact only while the material is elastic. The "
+            f"out-of-plane stress is reported by "
+            f"{sorted(SIGMA_ZZ_ELEMENT_CLASSES)} under "
+            f"plane_type='PlaneStrain' with one of "
+            f"{sorted(SIGMA_ZZ_MATERIAL_CLASSES)}.",
+            StressZZNotRecordedWarning, stacklevel=4,
+        )
     return (keyword,)

@@ -292,6 +292,40 @@ def _warn_unrecovered(
     )
 
 
+def _warn_nan_recorded(
+    model: Any, stored_zz: np.ndarray, *, prefix: str,
+) -> None:
+    """Warn that a *recorded* ``{prefix}_zz`` column carries NaN entries.
+
+    Distinct from :func:`_warn_unrecovered`, which reports a model this
+    module cannot parse.  Here the model parses fine and the element DID
+    report the out-of-plane component — the material simply does not
+    expose it (``NDMaterial::getStressZZ`` returns ``quiet_NaN`` unless the
+    material overrides it), so those samples silently fall back to the
+    ν-estimate.  Naming that cause is what tells the user to change the
+    material rather than to force ``plane=`` / ``nu=`` on the read.
+    """
+    n_nan = int((~np.isfinite(stored_zz)).sum())
+    key = (_cache_key(model), prefix, "nan_recorded", n_nan)
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+
+    zz = f"{prefix}_zz"
+    warnings.warn(
+        f"Recorded {zz} is NaN at {n_nan} of {stored_zz.size} sample(s): the "
+        f"element reported the out-of-plane component but its material does "
+        f"not expose it (OpenSees NDMaterial::getStressZZ returns NaN unless "
+        f"the material overrides it). Those samples fall back to the elastic "
+        f"estimate, which is exact only while the material is elastic: at "
+        f"plastic integration points it can be wrong by tens of percent, and "
+        f"every derived scalar built on the 3-D tensor (von Mises, principal "
+        f"stresses, mean stress) inherits that error. Use a material that "
+        f"exposes the out-of-plane component if you need it there.",
+        OutOfPlaneRecoveryWarning, stacklevel=3,
+    )
+
+
 def inject_out_of_plane(
     columns: dict[str, np.ndarray], element_index: np.ndarray, *,
     prefix: str, model: Any,
@@ -317,6 +351,7 @@ def inject_out_of_plane(
             return False      # fully recorded real σ_zz → use verbatim
         # else: partially recorded (NaN sentinel where the material could
         # not supply it) — fall through and fill only the NaN entries.
+        _warn_nan_recorded(model, stored_zz, prefix=prefix)
     xx = columns.get(f"{prefix}_xx")
     yy = columns.get(f"{prefix}_yy")
     if xx is None or yy is None:
