@@ -37,9 +37,15 @@ def contact_surface_args(
     """Args **after** the surface tag for one `contactSurface` call.
 
     ``kind`` is ``"master"`` / ``"slave"`` / ``"slave-segments"``. The faceted
-    forms (master / slave-segments) take ``nps`` (per-facet node count, 3=tri,
-    4=quad) followed by the flat node connectivity; ``slave`` takes the node
-    tags directly.
+    forms (master / slave-segments) take ``nps`` (per-facet node count, 2=2D
+    line segment, 3=tri, 4=quad) followed by the flat node connectivity;
+    ``slave`` takes the node tags directly.
+
+    ``nps=2`` is the fork's 2D lane, whose flat list must be **chained
+    head-to-tail** (``n0 n1  n1 n2  n2 n3``); the unchained shorthand is
+    silently legal fork-side and declares a holed surface. That contract is
+    enforced upstream, on ``ContactRecord`` itself, not here — this builder
+    only checks the stride.
     """
     nodes = [int(n) for n in node_tags]
     if not nodes:
@@ -58,9 +64,10 @@ def contact_surface_args(
 
 
 def _check_nps(nps: int, n_nodes: int) -> None:
-    if nps not in (3, 4):
+    if nps not in (2, 3, 4):
         raise ValueError(
             f"contactSurface faceted surface: nps (nodes-per-facet) must be "
+            f"2 (2D line segment), "
             f"3 (tri) or 4 (quad), got {nps} — higher-order surfaces must be "
             f"dropped to corner facets before emit")
     if n_nodes % nps != 0:
@@ -101,7 +108,8 @@ def contact_args(
     edge_soft: float | bool | None = None,
     edge_alm: bool = False,
     edge_aug_tol: float | None = None,
-    outward: Sequence[float] | None = None,
+    outward: Sequence[float] | str | None = None,
+    ndm: int = 3,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
 
@@ -126,6 +134,14 @@ def contact_args(
     ``-edgeTauMax`` / ``-edgeConsistentTan`` / ``-edgeSoft [SOFSCL]`` /
     ``-edgeAlm`` / ``-edgeAugTol``); ``edge_soft=True`` emits a bare
     ``-edgeSoft``. The edge knobs are dropped when ``edge_edge`` is False.
+
+    ``ndm`` sets the ``-outward`` ARITY — two components in a 2D deck, three
+    in 3D. The fork derives the surface's dimension from its nodes'
+    ``getCrds().Size()`` and then checks the trailing token, so a stray
+    ``oz`` on a 2D surface kills the deck at parse; it is threaded in from
+    the build layer (never inferred here) per the ``emit_geom_transfs``
+    house rule. ``outward="winding"`` emits the fork's declared-winding
+    keyword instead of a vector (2D NTS only).
     """
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
@@ -229,12 +245,57 @@ def contact_args(
             args += ["-edgeAugTol", float(edge_aug_tol)]
 
     if outward is not None:
-        if len(outward) != 3:
-            raise ValueError(
-                f"contact -outward: need (ox, oy, oz), got {outward!r}")
-        args += ["-outward", *(float(x) for x in outward)]
+        args += ["-outward", *_outward_tokens(outward, int(ndm))]
 
     return args
+
+
+def _outward_tokens(outward, ndm: int) -> list[float | str]:
+    """The tokens after ``-outward``, at the arity the fork's 2D/3D
+    dimension oracle demands.
+
+    **The arity is not cosmetic.** The fork picks it by peeking the
+    referenced nodes' ``getCrds().Size()``, then checks the trailing token
+    — so a stray ``oz`` on a 2D surface is not ignored, it fails that
+    check and the deck dies at parse. Two components in 2D, three in 3D,
+    and never a choice.
+
+    The ``"winding"`` sentinel emits the keyword instead of any vector: the
+    side is declared by the master chain's own head-to-tail winding, which
+    is why it is 2D-only (the 3D lane has no chain).
+    """
+    if isinstance(outward, str):
+        if outward != "winding":
+            raise ValueError(
+                f"contact -outward: expected a direction vector or the "
+                f"sentinel 'winding', got {outward!r}")
+        if ndm != 2:
+            raise ValueError(
+                f"contact -outward winding: declared-winding orientation is "
+                f"the fork's 2D NTS lane only (the 3D lane orients per facet "
+                f"from connectivity and has no master chain to wind), but the "
+                f"model is ndm={ndm}.")
+        return ["winding"]
+
+    vec = [float(x) for x in outward]
+    if ndm == 2:
+        if len(vec) not in (2, 3):
+            raise ValueError(
+                f"contact -outward: need (ox, oy) in a 2D model, got "
+                f"{outward!r}")
+        if len(vec) == 3 and vec[2] != 0.0:
+            raise ValueError(
+                f"contact -outward: the model is 2D but oz={vec[2]!r} is "
+                f"non-zero — a 2D outward lies in the plane. The fork takes "
+                f"the 2-component form only on a 2D surface and rejects the "
+                f"3-component one, so oz cannot be carried anywhere; "
+                f"dropping it silently would emit a direction the caller "
+                f"never asked for.")
+        return vec[:2]
+    if len(vec) != 3:
+        raise ValueError(
+            f"contact -outward: need (ox, oy, oz), got {outward!r}")
+    return vec
 
 
 def contact_plane_args(

@@ -1487,7 +1487,7 @@ class BuiltModel:
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
                 (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                self.ndf,
+                self.ndf, self.ndm,
             )
 
         # 4a. Materials / sections / time series / analysis chain
@@ -1603,6 +1603,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            ndm=self.ndm,
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1617,7 +1618,7 @@ class BuiltModel:
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
         emit_contact_planes(emitter, self.fem, tags)
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093 D5). Per pair: the mixed-ndf
@@ -1876,7 +1877,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
             # Elements owned by this module.
             self._emit_element_subset(
@@ -1904,6 +1905,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            ndm=self.ndm,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -1914,7 +1916,7 @@ class BuiltModel:
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
         emit_contact_planes(emitter, self.fem, tags)
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093 D5) — same position as the
@@ -2136,7 +2138,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
 
             # 3. Owned elements.
@@ -2237,6 +2239,7 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
+                    ndm=self.ndm,
                 )
 
             # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
@@ -2928,7 +2931,7 @@ class BuiltModel:
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf,
+                        self.ndf, self.ndm,
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated;
@@ -3009,6 +3012,7 @@ class BuiltModel:
                         foreign_node_ndf=int(self.ndf),
                         inferred_ndf=inferred_ndf,
                         tags=tags,
+                        ndm=self.ndm,
                         claimed_ids=stage_claimed_constraint_ids,
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         ghost_sp_ops=ghost_sp_ops,
@@ -3597,7 +3601,7 @@ class BuiltModel:
                                     float(xyz[1]),
                                     float(xyz[2]),
                                 ),
-                                self.ndf,
+                                self.ndf, self.ndm,
                             )
                         # Per-rank element fan-out across this stage's
                         # specs — plan pre-bucketed by owner rank, so
@@ -3668,6 +3672,7 @@ class BuiltModel:
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
+                                ndm=self.ndm,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_sp_ops=stage_ghost_sp_ops,
                                 stiffness_resolver=(
@@ -4986,6 +4991,26 @@ class BuiltModel:
                 "unstaged, or serial (non-partitioned / flat=True)."
             )
 
+        # 2D contact under MPI: parallel / DDM 2D contact is explicitly
+        # OUT OF SCOPE fork-side (fork ADR-85), so the ownership resolver's
+        # generic `record.master_nps` reshape would produce a plan the
+        # engine cannot honour. Refuse by name here, before any emission —
+        # same idiom as the `soft=` INV-3 refusal above.
+        for idx, rec in enumerate(contacts, start=1):
+            if int(getattr(rec, "master_nps", 0)) != 2:
+                continue
+            label = f"#{idx}" + (
+                f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+            )
+            raise BridgeError(
+                f"apeSees: g.constraints.contact interaction {label} is a "
+                f"2D line-segment contact (master_nps=2), and 2D contact is "
+                f"not supported under partitioned (MPI) emit — parallel / "
+                f"DDM 2D contact is explicitly out of scope in the fork's "
+                f"own ADR-85. Emit the 2D contact model serial "
+                f"(non-partitioned / flat=True)."
+            )
+
         # The mesh's element connectivity, if this FEM snapshot exposes
         # it (real FEMData iterates ElementGroup objects; hand-rolled
         # test stubs may not) — the facet -> backing-solid input that
@@ -5199,14 +5224,15 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
             if kind == "contact":
-                emit_contacts(emitter, self.fem, tags, records=(rec,))
+                emit_contacts(
+                    emitter, self.fem, tags, ndm=self.ndm, records=(rec,))
             else:
                 emit_contact_planes(emitter, self.fem, tags, records=(rec,))
 
@@ -5647,14 +5673,14 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
             _emit_interface_record(
-                emitter, rec, interface_tag_plan[id(rec)],
+                emitter, rec, interface_tag_plan[id(rec)], self.ndm,
             )
 
     def _emit_rayleigh(

@@ -186,11 +186,13 @@ def test_mixed_ndf_flat_deck_phantom_equaldof_materials_zerolength(tmp_path):
         assert int(tok[4]) in phantoms
 
     # …and the per-pair block is ordered phantom → equalDOF → mats → element.
+    # ndm=2 ⇒ the phantom line carries TWO coordinates: a trailing z
+    # desynchronises the parser's optional-argument scan and swallows the
+    # ``-ndf 2`` that the whole mixed-ndf bridge depends on.
     for rec in recs:
         i_node = lines.index(f"node {int(rec.phantom_node)} "
                              f"{float(rec.phantom_coords[0])!r} "
-                             f"{float(rec.phantom_coords[1])!r} "
-                             f"{float(rec.phantom_coords[2])!r} -ndf 2")
+                             f"{float(rec.phantom_coords[1])!r} -ndf 2")
         assert lines[i_node - 1] == "# RockLiner"
         assert lines[i_node + 1].startswith("equalDOF ")
         assert lines[i_node + 2].startswith("uniaxialMaterial ENT ")

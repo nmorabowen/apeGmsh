@@ -147,6 +147,201 @@ def _drop_to_corner_facets(faces: np.ndarray) -> tuple[np.ndarray, int]:
             f"surfaces are not yet supported.")
     return faces[:, :nps], nps
 
+
+# Line-segment full node count → corner-node count, for the fork's 2D
+# contact lane (`-master 2` / `-slave-segments 2`, a 2-node segment being
+# the 2D analogue of the 3D tri/quad facet). A deliberate SIBLING of
+# _SURFACE_CORNER_NPS, never a merged table: the two key spaces overlap
+# (a width of `3` means tri6 → tri3 there and line3 → line2 here), so one
+# shared table would silently remap every 3D tri3 master — the worst
+# possible failure, tri3 being the commonest 3D facet. Dispatch is by
+# model dimension, which keeps the spaces disjoint by construction rather
+# than by a parameter someone can pass wrong.
+_LINE_CORNER_NPS: dict[int, int] = {2: 2, 3: 2}
+
+
+def _drop_to_corner_segments(segs: np.ndarray) -> tuple[np.ndarray, int]:
+    """Reduce a (n_segments, full_npe) line-connectivity array to its
+    corner segments, returning ``(corner_segments, 2)``.
+
+    ``line3 → line2`` is the exact analogue of the existing ``tri6 →
+    tri3`` drop (gmsh orders corner nodes first, so the corner segment is
+    the leading columns); refusing it instead would make quadratic 2D
+    meshes undeclarable.
+    """
+    full = int(segs.shape[1])
+    nps = _LINE_CORNER_NPS.get(full)
+    if nps is None:
+        raise ValueError(
+            f"contact: the 2D surface is meshed with {full}-node line "
+            f"elements, which is not a supported line2 (2) or line3 (3) "
+            f"segment. The fork 2D contact lane takes 2-node segments; a "
+            f"line3 master drops to its two corner nodes.")
+    return segs[:, :nps], nps
+
+
+def _stack_line_blocks(blocks, label, role) -> np.ndarray:
+    """Stack per-entity line-element connectivity into one rectangular
+    array, refusing a mixed ``line2``/``line3`` width.
+
+    Mirrors ``PartsRegistry._collect_surface_faces``'s "Mixed surface
+    element types not supported" — a mixed width has no single stride, so
+    the flat pair list would be misread.
+    """
+    npe: int | None = None
+    rows: list[np.ndarray] = []
+    for width, conn in blocks:
+        if npe is None:
+            npe = int(width)
+        elif npe != int(width):
+            raise ValueError(
+                f"contact: {role} label {label!r} mixes {npe}-node and "
+                f"{int(width)}-node line elements across its entities — "
+                f"mixed line element types are not supported in 2D contact "
+                f"segment extraction. Mesh the whole curve at one element "
+                f"order.")
+        rows.append(np.asarray(conn, dtype=int).reshape(-1, npe))
+    if not rows:
+        return np.empty((0, 0), dtype=int)
+    return np.vstack(rows)
+
+
+def _normalise_outward(outward):
+    """``None`` / the ``"winding"`` sentinel / a 2-or-3-vector as a tuple.
+
+    The sentinel must survive ``tuple()`` — ``tuple("winding")`` is seven
+    one-character strings, a silent corruption rather than an error.
+    """
+    if outward is None or isinstance(outward, str):
+        return outward
+    return tuple(outward)
+
+
+#: The fork's own flush gate, restated: it aborts when the centroid datum
+#: is shorter than ``1e-6 * Lref`` with ``Lref`` the master's MIN initial
+#: segment length (``LadrunoContactHandler.cpp:482``, ``:1165-1178``).
+#: apeGmsh refuses on exactly that condition — a looser threshold would
+#: refuse decks the fork accepts, which is a worse failure than the one
+#: being prevented.
+_FLUSH_CENTROID_FLOOR = 1.0e-6
+
+
+def _contact_label(defn) -> str:
+    """The refusal prefix for one contact def — its name if it has one,
+    else its master label (the ``interface{label}`` convention of
+    :func:`edge_frames`)."""
+    return f" {defn.name!r}" if defn.name else f" {defn.master_label!r}"
+
+
+def _refuse_flush_without_orientation(
+    defn, master_faces, slave_nodes, xyz,
+) -> None:
+    """Refuse a FLUSH 2D interface that declares no side.
+
+    The fork's 2D NTS lane orients from one interface-level centroid vote
+    (slave-surface centroid − master-surface centroid). On a flush
+    interface — the masonry joint, the footing seated on soil, every
+    zero-gap deck this lane exists for — those centroids coincide, the
+    vote's magnitude gate fails, and ``handle()`` aborts by name rather
+    than guessing. That abort is loud but late: it costs a full build and
+    solve launch, and it names a Tcl surface tag rather than the two
+    labels the user wrote.
+
+    So refuse here, on the same condition, naming both surfaces and the
+    call to add. apeGmsh still derives NO direction — the point of the
+    ADR 0073 "never auto-derive a global outward" policy — it only
+    refuses earlier and more legibly.
+    """
+    rows = np.asarray(master_faces, dtype=np.int64).reshape(-1, 2)
+    m_pts = np.asarray(
+        [xyz[int(t)][:2] for t in sorted({int(t) for t in rows.ravel()})],
+        dtype=float)
+    s_pts = np.asarray(
+        [xyz[int(t)][:2] for t in sorted({int(t) for t in slave_nodes})],
+        dtype=float)
+    if m_pts.size == 0 or s_pts.size == 0:
+        return
+    seg_len = np.linalg.norm(
+        np.asarray([xyz[int(b)][:2] - xyz[int(a)][:2] for a, b in rows],
+                   dtype=float), axis=1)
+    l_ref = float(seg_len.min())
+    datum = float(np.linalg.norm(s_pts.mean(axis=0) - m_pts.mean(axis=0)))
+    if datum > _FLUSH_CENTROID_FLOOR * l_ref:
+        return
+
+    raise ValueError(
+        f"contact{_contact_label(defn)}: master {defn.master_label!r} and "
+        f"slave {defn.slave_label!r} are FLUSH — their reference-configuration "
+        f"centroids are separated by {datum:.3g}, below the fork's own "
+        f"magnitude floor {_FLUSH_CENTROID_FLOOR:g} x Lref "
+        f"({_FLUSH_CENTROID_FLOOR * l_ref:.3g}, Lref = the shortest master "
+        f"segment). The fork's 2D lane orients from that centroid datum, so "
+        f"the outward side is genuinely ambiguous and handle() ABORTS "
+        f"instead of guessing — apeGmsh never auto-derives it either. "
+        f"Declare the side:\n"
+        f"    g.constraints.contact({defn.master_label!r}, "
+        f"{defn.slave_label!r}, ..., outward=(ox, oy))\n"
+        f"        the in-plane direction from the master TOWARD the slave; "
+        f"or\n"
+        f"    g.constraints.contact({defn.master_label!r}, "
+        f"{defn.slave_label!r}, ..., outward='winding')\n"
+        f"        which declares the side through the master chain's own "
+        f"winding (exact per segment, so it also orients curved and closed "
+        f"masters) — needs a fork build carrying `-outward winding`. "
+        f"A flush interface is the normal 2D case, not an edge case.")
+
+
+def _refuse_contact_entity_dim(entities, label, *, model_dim, role) -> None:
+    """The contact dimension gate — the single branch point of the 2D lane.
+
+    In a 2D model a contact master is the meshed interface **curve** (a
+    dim-1 PG); in a 3D model it is a dim-2 face PG (or a dim-3 volume,
+    whose boundary faces are used). Without this gate a 2D model that
+    names its dim-2 plane PG — the natural mistake — hands the continuum's
+    tri3/quad4 elements to ``_collect_surface_faces``, which returns them
+    as "facets"; ``_drop_to_corner_facets`` reports nps=3/4 and a
+    structurally valid ``ContactRecord`` gets built out of SOLID elements,
+    uncaught all the way to emit.
+
+    The 3D **slave** is deliberately NOT gated: ``_collect_node_set`` is
+    dimension-agnostic there today and retrofitting it would move the 3D
+    battery.
+    """
+    dims = sorted({int(d) for d, _ in entities})
+    if model_dim == 2:
+        allowed = (1,) if role == "master" else (0, 1)
+        bad = [d for d in dims if d not in allowed]
+        if not bad:
+            return
+        if role == "master":
+            raise ValueError(
+                f"contact: the model is 2D and master label {label!r} "
+                f"resolves to entities of dimension {bad} — a 2D contact "
+                f"master must be the meshed interface CURVE (a dim-1 "
+                f"physical group), not the plane it bounds. Naming the "
+                f"dim-2 plane collects the continuum's own tri/quad "
+                f"elements as contact facets, which builds a contact out "
+                f"of SOLID elements. Declare the physical group on the "
+                f"boundary curve.")
+        raise ValueError(
+            f"contact: the model is 2D and slave label {label!r} resolves "
+            f"to entities of dimension {bad} — a 2D contact slave must be "
+            f"the meshed interface CURVE (dim-1) or a point set (dim-0). "
+            f"A dim-2 slave physical group collects every INTERIOR node of "
+            f"the body, not the interface.")
+    if role != "master":
+        return
+    bad = [d for d in dims if d not in (2, 3)]
+    if bad:
+        raise ValueError(
+            f"contact: the model is {model_dim}D and master label "
+            f"{label!r} resolves to entities of dimension {bad} — a 3D "
+            f"contact master must be a dim-2 face physical group (or a "
+            f"dim-3 volume, whose boundary faces are used). A dim-1 curve "
+            f"has no surface facets at all; the 2D segment lane is "
+            f"reachable only in a 2D model.")
+
+
 # Kuhn-decomposition tables — re-exported aliases for backward compat.
 #
 # The canonical definitions live in
@@ -420,13 +615,21 @@ class ConstraintsComposite:
             Edge-edge commit-cycle augmented Lagrangian (``-edgeAlm``).
         edge_aug_tol : float, optional
             Edge-edge ALM tolerance (``-edgeAugTol``).
-        outward : (float, float, float), optional
+        outward : (float, float, float) | (float, float) | "winding", optional
             ``None`` (default) → no ``-outward`` is emitted; the fork derives a
             correct per-facet normal (right for separated bodies and curved /
             closed / solid masters). Set an explicit direction ONLY for an
             initially-coincident (zero-gap) FLAT contact, where the fork's
             per-pair sign reference is in-plane and ambiguous. A single global
             outward is wrong on a non-flat master. See :class:`ContactDef`.
+
+            **In a 2D model** this is a 2-vector ``(ox, oy)``, and a flush
+            interface REQUIRES one (or ``"winding"``) — the fork's 2D lanes
+            orient from an interface-level centroid vote that is ambiguous
+            there and aborts. ``outward="winding"`` (2D NTS only) declares the
+            side through the master chain's own winding instead of a
+            direction, so it also orients curved and closed masters; it needs
+            a fork build carrying ``-outward winding``.
         master_entities, slave_entities : list of (dim, tag), optional
             Restrict each side to specific Gmsh entities.
         name : str, optional
@@ -451,7 +654,7 @@ class ConstraintsComposite:
             eps_n=eps_n, eps_t=eps_t,
             cohesion=cohesion, tau_max=tau_max,
             aug_tol=aug_tol, max_aug=max_aug, ngp=ngp,
-            tie=tie, outward=tuple(outward) if outward is not None else None,
+            tie=tie, outward=_normalise_outward(outward),
             soft=soft, visc=visc,
             consistent_tan=consistent_tan, geom_tan=geom_tan,
             cell=cell,
@@ -475,29 +678,64 @@ class ConstraintsComposite:
         outward note below). ``node_tags`` / ``node_coords`` are accepted for
         signature parity with the sibling resolvers. Serial-only (the fork
         contact subsystem is not parallel).
+
+        **The model dimension is read once, here, and threaded** — it is the
+        single branch point of the 2D lane, mirroring
+        :meth:`resolve_interfaces`. In a 2D model the master is a dim-1
+        curve, collected as line segments and CHAINED head-to-tail into the
+        fork's stride-2 pair list; in a 3D model nothing below changes.
         """
         records: list[ContactRecord] = []
         if not self.contact_defs:
             self.contact_records = records
             return records
 
+        import gmsh
+        model_dim = int(gmsh.model.getDimension())
+
         parts = getattr(self._parent, "parts", None)
         if parts is None:
             raise RuntimeError(
                 "contact: g.parts is unavailable to collect surface faces.")
+
+        if model_dim == 2:
+            domain_tags, domain_conn = self._collect_domain_elements(
+                verb="contact")
+            xyz = {
+                int(t): np.asarray(c, dtype=float)
+                for t, c in zip(np.asarray(node_tags, dtype=int).ravel(),
+                                np.asarray(node_coords, dtype=float))
+            }
 
         for defn in self.contact_defs:
             m_ents = (defn.master_entities
                       or self._entities_for_label(defn.master_label))
             s_ents = (defn.slave_entities
                       or self._entities_for_label(defn.slave_label))
+            _refuse_contact_entity_dim(
+                m_ents, defn.master_label, model_dim=model_dim, role="master")
 
-            master_faces = parts._collect_surface_faces(m_ents)
-            if master_faces.size == 0:
-                raise ValueError(
-                    f"contact: master label {defn.master_label!r} resolved to "
-                    f"entities but carries no surface mesh faces (is it meshed?).")
-            master_faces, master_nps = _drop_to_corner_facets(master_faces)
+            if model_dim == 2:
+                if defn.formulation != "nts":
+                    raise NotImplementedError(
+                        f"contact: the model is 2D and interaction "
+                        f"{defn.name or defn.master_label!r} declares "
+                        f"formulation={defn.formulation!r} — the 2D "
+                        f"mortar / `-slave-segments` lane is not adopted "
+                        f"yet. Use formulation='nts' in 2D.")
+                _refuse_contact_entity_dim(
+                    s_ents, defn.slave_label,
+                    model_dim=model_dim, role="slave")
+                master_faces, master_nps = self._chain_2d_segments(
+                    m_ents, defn.master_label, xyz, domain_tags, domain_conn,
+                    role="master")
+            else:
+                master_faces = parts._collect_surface_faces(m_ents)
+                if master_faces.size == 0:
+                    raise ValueError(
+                        f"contact: master label {defn.master_label!r} resolved to "
+                        f"entities but carries no surface mesh faces (is it meshed?).")
+                master_faces, master_nps = _drop_to_corner_facets(master_faces)
 
             if defn.formulation == "nts":
                 slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
@@ -520,8 +758,59 @@ class ConstraintsComposite:
             # (→ inward, wrong contact) facets opposed to it; omitting it lets
             # the kernel use its correct per-pair (slave − segment-centroid)
             # sign reference. So never auto-derive a global outward here.
-            outward = (tuple(float(x) for x in defn.outward)
-                       if defn.outward is not None else None)
+            #
+            # 2D CARVE-OUT. The paragraph above settles 3D and does not reach
+            # 2D, where the fork orients from ONE interface-level centroid
+            # vote and aborts when it is ambiguous — flush interfaces (the
+            # workhorse 2D case) and strongly curved / closed masters. The 2D
+            # answer is `outward="winding"`: apeGmsh still derives no VECTOR
+            # (the reasoning above is not overturned, it is out of scope) —
+            # the side is declared through the master chain's ORIENTATION,
+            # which the chained walk fixed against each segment's own
+            # material. That is exact per segment, so it carries the cases a
+            # single direction structurally cannot. The price is that the
+            # fork's centroid vote is then bypassed, which is why the
+            # wrong-side guard below exists.
+            outward = _normalise_outward(defn.outward)
+            if isinstance(outward, str) and model_dim != 2:
+                raise ValueError(
+                    f"contact: interaction "
+                    f"{defn.name or defn.master_label!r} declares "
+                    f"outward='winding', but the model is {model_dim}D. "
+                    f"Declared-winding orientation is the fork's 2D NTS lane "
+                    f"only — a 3D master is a facet SET with no head-to-tail "
+                    f"chain to wind, and the 3D kernel already derives a "
+                    f"correct per-facet normal from connectivity. Drop "
+                    f"outward= in 3D, or pass an explicit (ox, oy, oz) for a "
+                    f"coincident flat interface.")
+            if outward is not None and not isinstance(outward, str):
+                outward = tuple(float(x) for x in outward)
+                if model_dim == 2 and len(outward) == 3 \
+                        and outward[2] != 0.0:
+                    raise ValueError(
+                        f"contact: interaction "
+                        f"{defn.name or defn.master_label!r} declares "
+                        f"outward={outward!r} with a non-zero oz, but the "
+                        f"model is 2D — a 2D outward lies in the plane. The "
+                        f"fork takes only the 2-component form on a 2D "
+                        f"surface (the 3-component 3D form is rejected "
+                        f"there), so oz has nowhere to go. Pass "
+                        f"outward=(ox, oy).")
+
+            if model_dim == 2:
+                # The two orientation guards apeGmsh owes a 2D deck: refuse
+                # the flush interface the fork cannot orient, and refuse the
+                # master that faces away from the slave — the check declared
+                # winding switches off fork-side.
+                if outward is None:
+                    _refuse_flush_without_orientation(
+                        defn, master_faces, slave_nodes, xyz)
+                from apeGmsh._kernel.geometry._boundary_chain import (
+                    refuse_wrong_side_master,
+                )
+                refuse_wrong_side_master(
+                    master_faces, xyz, slave_nodes,
+                    _contact_label(defn), verb="contact")
 
             records.append(ContactRecord(
                 kind="contact", name=defn.name,
@@ -841,7 +1130,64 @@ class ConstraintsComposite:
         return np.asarray(rows, dtype=int)
 
     @staticmethod
-    def _collect_domain_elements() -> tuple[list[int], list[np.ndarray]]:
+    def _collect_master_segments(entities, label, *, role="master") -> np.ndarray:
+        """The 2D contact surface's line elements, as ``(n, npe)`` tags.
+
+        The 2D sibling of ``PartsRegistry._collect_surface_faces``: a
+        rectangular connectivity block per entity, refusing a mixed
+        ``line2``/``line3`` width. ``line3`` is dropped to its corners by
+        :func:`_drop_to_corner_segments`, not here.
+        """
+        import gmsh
+        blocks: list[tuple[int, Any]] = []
+        for dim, tag in entities:
+            etypes, _, enodes = gmsh.model.mesh.getElements(int(dim), int(tag))
+            for etype, conn in zip(etypes, enodes):
+                if len(conn) == 0:
+                    continue
+                _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(
+                    int(etype))
+                blocks.append((int(npe), conn))
+        segs = _stack_line_blocks(blocks, label, role)
+        if segs.size == 0:
+            raise ValueError(
+                f"contact: {role} label {label!r} resolved to entities but "
+                f"carries no line elements (is the interface curve meshed?).")
+        return segs
+
+    @staticmethod
+    def _chain_2d_segments(
+        entities, label, xyz, domain_tags, domain_conn, *, role,
+    ) -> tuple[np.ndarray, int]:
+        """A 2D contact surface as the fork's CHAINED stride-2 pair list.
+
+        Gathers the curve's line elements, drops ``line3`` to its corners,
+        fixes each segment's outward normal against its owning continuum
+        element (the same :func:`edge_frames` the interface lane uses), and
+        walks the directed segments into one head-to-tail chain. Returns
+        ``(chained (n, 2) connectivity, 2)``.
+        """
+        from apeGmsh._kernel.geometry._boundary_chain import (
+            chain_edges, edge_frames,
+        )
+        segs = ConstraintsComposite._collect_master_segments(
+            entities, label, role=role)
+        segs, nps = _drop_to_corner_segments(segs)
+        m_set = {int(t) for t in segs.ravel()}
+        missing = sorted(m_set - xyz.keys())
+        if missing:
+            raise ValueError(
+                f"contact: {role} label {label!r} references node(s) "
+                f"{missing[:20]} that are not in the model node pool.")
+        text = f" {label!r}"
+        data = edge_frames(
+            segs, m_set, xyz, domain_tags, domain_conn, text, verb="contact")
+        return chain_edges(data, xyz, text, verb="contact"), nps
+
+    @staticmethod
+    def _collect_domain_elements(
+        *, verb: str = "interface",
+    ) -> tuple[list[int], list[np.ndarray]]:
         """Every 2D (top-dimension) element in the model: tags + connectivity.
 
         Deliberately the *domain* elements only — never the boundary
@@ -861,7 +1207,7 @@ class ConstraintsComposite:
             conn.extend(rows)
         if not tags:
             raise ValueError(
-                "interface: the model carries no 2D elements — the "
+                f"{verb}: the model carries no 2D elements — the "
                 "outward normal (ADR 0093 D2) and the backing element "
                 "(INV-5) are both derived from the continuum elements "
                 "adjacent to the master face.")

@@ -432,6 +432,46 @@ class EmbedTieRecord(ConstraintRecord):
     }
 
 
+def _assert_chained_pairs(faces, nps, side: str) -> None:
+    """Refuse a 2D (``nps == 2``) surface that is not one chained run.
+
+    No-op for 3D strides — a tri/quad facet list carries no chaining
+    contract. See :meth:`ContactRecord.__post_init__` for why this is a
+    validator rather than a stored flag.
+    """
+    if faces is None or int(nps) != 2:
+        return
+    arr = np.asarray(faces, dtype=np.int64).reshape(-1, 2)
+    if arr.shape[0] == 0:
+        raise ValueError(
+            f"contact: the {side} surface has nps=2 but carries no "
+            f"segments.")
+    breaks = [
+        (k, int(arr[k, 1]), int(arr[k + 1, 0]))
+        for k in range(arr.shape[0] - 1)
+        if int(arr[k, 1]) != int(arr[k + 1, 0])
+    ]
+    if breaks:
+        raise ValueError(
+            f"contact: the 2D {side} surface is not chained head-to-tail — "
+            f"segment {breaks[0][0]} ends at node {breaks[0][1]} but "
+            f"segment {breaks[0][0] + 1} starts at node {breaks[0][2]} "
+            f"({len(breaks)} break(s) in {arr.shape[0]} segments). "
+            f"`-{'master' if side == 'master' else 'slave-segments'} 2` "
+            f"takes a flat stride-2 pair list chained head-to-tail "
+            f"(n0 n1  n1 n2  n2 n3 — SIX tags for three segments); the "
+            f"unchained shorthand is silently legal fork-side and declares "
+            f"a HOLED surface that converges to a wrong answer.")
+    tags, counts = np.unique(arr.reshape(-1), return_counts=True)
+    over = [int(t) for t, c in zip(tags, counts) if int(c) > 2]
+    if over:
+        raise ValueError(
+            f"contact: the 2D {side} surface reuses node(s) {over[:20]} "
+            f"more than twice — a chained run visits an interior node "
+            f"exactly twice and an endpoint once, so a third use means "
+            f"the surface branches or doubles back.")
+
+
 @dataclass
 class ContactRecord(ConstraintRecord):
     """One resolved fork contact interaction (`contactSurface` + `contact`).
@@ -458,14 +498,23 @@ class ContactRecord(ConstraintRecord):
         ``"nts"`` (node-to-segment) or ``"mortar"`` (segment-to-segment ALM).
     master_faces, master_nps
         The master surface's flat face connectivity ``(n_faces, nps)`` and the
-        per-facet node count ``nps`` (3=tri, 4=quad).
+        per-facet node count ``nps`` (2=2D line segment, 3=tri, 4=quad).
+        ``nps`` is the **sole discriminator** of the interaction's dimension
+        (see :attr:`ndm`), and at ``nps == 2`` the rows must be one run
+        CHAINED head-to-tail — enforced in :meth:`__post_init__`.
     slave_nodes
         NTS slave node tags (``None`` for mortar).
     slave_faces, slave_nps
         Mortar slave faceted connectivity + stride (``None``/0 for NTS).
     outward
         Unit outward normal ``(ox, oy, oz)`` toward the slave half-space, or
-        ``None`` (let the fork auto-derive).
+        ``None`` (let the fork auto-derive), or the string ``"winding"`` —
+        the fork's declared-winding sentinel, which orients from the master
+        chain's own head-to-tail winding instead of any direction (2D NTS
+        only). A 2D direction is stored Z-PADDED here, ``(ox, oy, 0.0)``:
+        the third component is genuinely zero, so every consumer
+        (persistence, compose's rotation, emit) keeps one shape and the
+        emitter drops the ``oz`` back off for the fork's 2-component form.
     kn, kt, mu
         NTS penalty (normal/tangential) + friction.
     eps_n, eps_t, cohesion, tau_max, aug_tol, max_aug, ngp, tie
@@ -538,6 +587,42 @@ class ContactRecord(ConstraintRecord):
         "tag_fields_array": ("master_faces", "slave_nodes", "slave_faces"),
         "name_fields": ("name",),
     }
+
+    def __post_init__(self) -> None:
+        """Enforce the 2D chained stride-2 invariant on construction.
+
+        ``nps == 2`` is a 2D line-segment surface, and the fork reads
+        ``-master 2`` / ``-slave-segments 2`` as a flat pair list chained
+        head-to-tail — ``n0 n1  n1 n2  n2 n3`` for three segments, six
+        tags. The unchained shorthand ``n0 n1 n2 n3`` is **silently
+        legal** fork-side (``LadrunoContactHandler.cpp:1214`` skips a node
+        used once) and declares a HOLED surface that converges to a wrong
+        answer, so the fork's own chain-integrity scan structurally cannot
+        refuse it.
+
+        This is that scan restated one layer earlier — deliberately a
+        VALIDATOR rather than a ``chained=True`` flag: a boolean is a
+        claim, and if the chaining code has a bug the flag only makes the
+        lie tidier. Because ``ContactRecord`` is a dataclass, the check
+        fires at every construction site for free: resolve
+        (``ConstraintsComposite.resolve_contacts``), h5 decode
+        (``_femdata_h5_io._decode_contact``) and compose's
+        ``dataclasses.replace`` rewrite (``_compose._rewrite_record``).
+        """
+        _assert_chained_pairs(self.master_faces, self.master_nps, "master")
+        _assert_chained_pairs(self.slave_faces, self.slave_nps, "slave")
+
+    @property
+    def ndm(self) -> int:
+        """The interaction's spatial dimension, DERIVED from ``master_nps``.
+
+        ``master_nps == 2`` (a line segment) is 2D; ``3``/``4`` (tri/quad
+        facets) is 3D. ``master_nps`` is the **sole source of truth** —
+        this is a read-only convenience, deliberately not a stored field,
+        because a second copy of the dimension is a second thing that can
+        disagree with the connectivity it describes.
+        """
+        return 2 if int(self.master_nps) == 2 else 3
 
 
 @dataclass

@@ -182,19 +182,27 @@ class PyEmitter:
     ) -> None:
         # Fast path for the dominant deck band — mirrors the
         # TclEmitter's: plain-int tag + plain-float coords render via a
-        # single f-string, byte-identical to the generic path.
+        # single f-string, byte-identical to the generic path.  The
+        # 2-coord arm is the 2-D deck band (the build layer trims to
+        # ``ndm`` coordinates).
         if ndf is None:
-            if tag.__class__ is int and len(coords) == 3:
-                x, y, z = coords
-                if (
-                    x.__class__ is float
-                    and y.__class__ is float
-                    and z.__class__ is float
-                ):
-                    self._lines.append(
-                        f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
-                    )
-                    return
+            if tag.__class__ is int:
+                if len(coords) == 3:
+                    x, y, z = coords
+                    if (
+                        x.__class__ is float
+                        and y.__class__ is float
+                        and z.__class__ is float
+                    ):
+                        self._lines.append(
+                            f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
+                        )
+                        return
+                elif len(coords) == 2:
+                    x, y = coords
+                    if x.__class__ is float and y.__class__ is float:
+                        self._lines.append(f"ops.node({tag}, {x!r}, {y!r})")
+                        return
             self._lines.append(_ops_call("node", tag, *coords))
         else:
             # Per-node ``-ndf`` override for mixed-ndf models (e.g. 6-DOF

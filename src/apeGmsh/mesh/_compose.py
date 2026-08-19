@@ -962,6 +962,12 @@ def _transform_contact_geometry(
     if rotate is not None:
         for fname in ("outward", "normal"):
             vec = getattr(rec, fname, None)
+            # ``outward="winding"`` carries no vector to rotate: the side is
+            # declared by the master chain's winding, and the chain's node
+            # coords rotate with the module, so the declaration is
+            # rotation-invariant by construction.
+            if isinstance(vec, str):
+                continue
             if vec is not None:
                 rotated = _apply_geometric_transform(
                     np.asarray([vec], dtype=np.float64),

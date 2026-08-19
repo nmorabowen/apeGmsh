@@ -1035,6 +1035,21 @@ class ContactDef(ConstraintDef):
         outward is wrong on a non-flat master (it skips perpendicular facets
         and inverts opposed ones), so only set it for an effectively flat
         interface.
+
+        **2D (``ndm=2``) models** take a 2-vector ``(ox, oy)`` — it is
+        z-padded to ``(ox, oy, 0.0)`` on the record and the emitter drops the
+        third component back off, because the fork REJECTS the 3-component
+        form on a 2D surface. And 2D is where an explicit direction is
+        usually needed at all: the fork's 2D lanes orient from an
+        interface-level centroid vote that is genuinely ambiguous on a FLUSH
+        interface (the masonry joint, the footing on soil) and aborts there.
+
+        ``outward="winding"`` (2D NTS only) declares the side through the
+        master chain's own winding instead of a vector — the fork's
+        ``-outward winding``. Exact per segment, so it orients curved and
+        closed masters that no single direction can, and no direction is
+        auto-derived by apeGmsh. It needs a fork build carrying the mode;
+        older builds refuse the keyword at parse.
     master_entities, slave_entities
         Restrict each side to specific Gmsh entities (default = whole label).
     soft
@@ -1184,17 +1199,45 @@ class ContactDef(ConstraintDef):
                     "ContactDef: tie=True (mesh-tie bond) is mutually "
                     "exclusive with friction (mu/cohesion/tau_max)."
                 )
-        if self.outward is not None:
-            if len(self.outward) != 3:
+        if isinstance(self.outward, str):
+            # The declared-winding sentinel (fork `-outward winding`), the
+            # `kn="auto"` idiom applied to orientation: no vector is passed
+            # at all — the side is declared through the master chain's
+            # winding, which is exact per segment and so works on curved
+            # and closed masters a single direction cannot orient.
+            if self.outward != "winding":
                 raise ValueError(
-                    f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
-                    f"{self.outward!r}"
+                    f"ContactDef: outward must be a direction vector or the "
+                    f"sentinel 'winding', got {self.outward!r}"
+                )
+            if self.formulation != "nts":
+                raise ValueError(
+                    f"ContactDef: outward='winding' is NTS-only — the fork "
+                    f"shipped declared-winding orientation on the NTS lane "
+                    f"only, and its 2D mortar lane has no chain scan to rest "
+                    f"it on, so a flush mortar interface still needs an "
+                    f"explicit outward=(ox, oy). Got "
+                    f"formulation={self.formulation!r}."
+                )
+        elif self.outward is not None:
+            if len(self.outward) not in (2, 3):
+                raise ValueError(
+                    f"ContactDef: outward must be a 2-vector (ox, oy) in a 2D "
+                    f"model or a 3-vector (ox, oy, oz), got {self.outward!r}"
                 )
             if not any(abs(float(x)) > 0.0 for x in self.outward):
                 raise ValueError(
                     f"ContactDef: outward must be a non-zero direction, got "
                     f"all-zero {self.outward!r}"
                 )
+            # Z-PAD, never reshape: a 2D direction genuinely HAS oz = 0, so
+            # the record, the (3,) H5 slot and compose's rotation (a z=0
+            # vector rotates correctly under any in-plane rotation) all stay
+            # one shape. The emitter drops the third component back off in a
+            # 2D deck — the fork rejects the 3-component form on a 2D
+            # surface — which is the only place the arity differs.
+            vec = tuple(float(x) for x in self.outward)
+            self.outward = vec if len(vec) == 3 else vec + (0.0,)
         # A mortar mesh-tie (tie=True) bonds a COINCIDENT, coplanar interface —
         # so the fork's per-pair sign reference (slave − segment-centroid) lies
         # in the surface plane and gate H2 (LadrunoContactProjection.h) silently

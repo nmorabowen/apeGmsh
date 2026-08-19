@@ -131,8 +131,15 @@ def test_tcl_regex_matches_emitter_format() -> None:
     assert FOREIGN_NODE_DECL_RE_TCL.match("node 4 1.0 2.0 3.0 -ndf 6")
     # Indented (inside a partition_open block).
     assert FOREIGN_NODE_DECL_RE_TCL.match("    node 4 1.0 2.0 3.0 -ndf 6")
-    # Native decl (no -ndf) must NOT match.
+    # 2-D deck: TWO coordinates (the build layer trims to ndm, or the
+    # trailing 0.0 swallows the -ndf).  This MUST still be recognised as
+    # a foreign decl — an unmatched one is not an error here, it just
+    # silently re-classifies as ordinary content and moves the diff.
+    assert FOREIGN_NODE_DECL_RE_TCL.match("node 4 1.0 2.0 -ndf 2")
+    assert FOREIGN_NODE_DECL_RE_TCL.match("    node 4 1.0 2.0 -ndf 2")
+    # Native decls (no -ndf) must NOT match, in either dimension.
     assert not FOREIGN_NODE_DECL_RE_TCL.match("node 4 1.0 2.0 3.0")
+    assert not FOREIGN_NODE_DECL_RE_TCL.match("node 4 1.0 2.0")
     # Other commands must NOT match.
     assert not FOREIGN_NODE_DECL_RE_TCL.match("rigidLink beam 2 4")
 
@@ -153,7 +160,13 @@ def test_py_regex_matches_emitter_format() -> None:
     assert FOREIGN_NODE_DECL_RE_PY.match(
         'ops.node(4, 1.0, 2.0, 3.0, "-ndf", 6)'
     )
-    # Native decl must NOT match.
+    # 2-D deck: TWO coordinates — see the Tcl counterpart above.
+    assert FOREIGN_NODE_DECL_RE_PY.match("ops.node(4, 1.0, 2.0, '-ndf', 2)")
+    assert FOREIGN_NODE_DECL_RE_PY.match(
+        "    ops.node(4, 1.0, 2.0, '-ndf', 2)"
+    )
+    # Native decls must NOT match, in either dimension.
     assert not FOREIGN_NODE_DECL_RE_PY.match("ops.node(4, 1.0, 2.0, 3.0)")
+    assert not FOREIGN_NODE_DECL_RE_PY.match("ops.node(4, 1.0, 2.0)")
     # Other ops calls must NOT match.
     assert not FOREIGN_NODE_DECL_RE_PY.match("ops.rigidLink('beam', 2, 4)")

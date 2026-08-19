@@ -374,6 +374,8 @@ def _replay_into(
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
+    from .build import node_coords_for_ndm
+
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
 
@@ -392,13 +394,15 @@ def _replay_into(
         # (_replay_staged_into), not in the global prefix — skip here.
         if int(tag) in skip_node_tags:
             continue
+        # ``ndm`` coordinates only — a trailing 0.0 in a 2-D deck
+        # swallows the following ``-ndf K`` (node_coords_for_ndm).
+        # The replay path has to do this itself: it never touches
+        # build.py's node-emit helpers.
+        cs = node_coords_for_ndm(coords, ndm)
         if node_ndf is None:
-            emitter.node(int(tag), *(float(c) for c in coords))
+            emitter.node(int(tag), *cs)
         else:
-            emitter.node(
-                int(tag), *(float(c) for c in coords),
-                ndf=int(node_ndf),
-            )
+            emitter.node(int(tag), *cs, ndf=int(node_ndf))
 
     # 3. Materials — uniaxial first, then nD.  ADR 0011 schema mirrors
     # this group nesting; the emitter doesn't enforce order, but the
@@ -803,7 +807,7 @@ def _replay_staged_into(
     _ndf = int(replay_kwargs["ndf"])
     # ADR 0065 v2 B3: the stage emit helpers (initial_stress /
     # activate_absorbing) now take a FemToOpsTagMap.
-    from .build import FemToOpsTagMap
+    from .build import FemToOpsTagMap, node_coords_for_ndm
 
     fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
         (int(r.fem_eid), int(r.tag)) for r in elements if int(r.fem_eid) >= 0
@@ -824,12 +828,11 @@ def _replay_staged_into(
             if ent is None:
                 continue
             coords, nndf = ent
+            cs = node_coords_for_ndm(coords, _ndm)
             if nndf is None:
-                emitter.node(int(nid), *(float(c) for c in coords))
+                emitter.node(int(nid), *cs)
             else:
-                emitter.node(
-                    int(nid), *(float(c) for c in coords), ndf=int(nndf),
-                )
+                emitter.node(int(nid), *cs, ndf=int(nndf))
         # owned elements (look up the rehydrated record by ops tag).
         _replay_elements_bracketed(
             emitter,
