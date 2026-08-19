@@ -20,6 +20,8 @@ from typing import Any
 
 from apeGmsh._types import DimTag  # noqa: F401  — re-exported by OpenSees.py
 
+from ._internal.types import BeamIntegration, Damping, GeomTransf, TimeSeries
+
 
 # ---------------------------------------------------------------------------
 # Gmsh element type -> (corner_node_count, topological_dim)
@@ -854,6 +856,67 @@ def element_builder_ndf(
                 f"{token!r} (have {sorted(need)})"
             ) from None
     return need
+
+
+# ---------------------------------------------------------------------------
+# Builder-scoped declarations -- what a bracket DESTROYS (ADR 0099 INV-2)
+# ---------------------------------------------------------------------------
+
+#: Primitive families whose OpenSees declaration is destroyed by a
+#: ``model BasicBuilder`` re-issue -- the other half of the
+#: :data:`_BUILDER_NDF_GATED` audit.  ``specifyModelBuilder`` (fork
+#: ``SRC/modelbuilder/tcl/myCommands.cpp:85``) deletes the old builder
+#: before constructing the new one, and ``~TclModelBuilder()`` (fork
+#: ``SRC/modelbuilder/tcl/TclModelBuilder.cpp:681``) purges a set of
+#: *process-global* registries on the way out.  The ``Domain`` is a
+#: file-static that is reused, so nodes and elements survive -- which is
+#: exactly why :func:`open_builder_ndf_bracket`'s "does not wipe the
+#: domain" premise read as safe and hid this.
+#:
+#: Measured on Ladruno build ``25a0647f``, one probe deck per row:
+#:
+#:   * **survive** -- ``node``, ``uniaxialMaterial``, ``nDMaterial``,
+#:     ``section``, and the analysis chain (their ``clearAll`` calls are
+#:     commented out in the destructor, or they are not builder-owned).
+#:   * **destroyed** -- ``timeSeries``, ``geomTransf``,
+#:     ``beamIntegration``, ``damping``.  ``damping`` is the dangerous
+#:     one: ``region -damp`` WARNS and continues rather than erroring,
+#:     so the deck runs and reports an undamped answer.
+#:
+#: The destructor also clears ``frictionModel`` / ``limitCurve`` /
+#: ``damageModel`` / ``hystereticBackbone``; none of the four is
+#: reachable from apeGmsh today (no primitive, no namespace, no
+#: ``Emitter`` Protocol method).  Whoever wires friction bearings adds
+#: them here.
+#: Primitive base -> the OpenSees declaration keyword it emits, so a
+#: diagnostic can name ``geomTransf`` rather than the concrete class
+#: ``Linear`` (which is also a TimeSeries spelling).
+_BUILDER_SCOPED_KINDS: "tuple[tuple[type, str], ...]" = (
+    (TimeSeries,      "timeSeries"),
+    (GeomTransf,      "geomTransf"),
+    (BeamIntegration, "beamIntegration"),
+    (Damping,         "damping"),
+)
+
+_BUILDER_SCOPED_BASES: "tuple[type, ...]" = tuple(
+    base for base, _kw in _BUILDER_SCOPED_KINDS
+)
+
+
+def is_builder_scoped(prim: object) -> bool:
+    """True iff ``prim``'s declaration dies at the next ``model`` re-issue.
+
+    See :data:`_BUILDER_SCOPED_KINDS` for the fork audit behind the set.
+    """
+    return isinstance(prim, _BUILDER_SCOPED_BASES)
+
+
+def builder_scoped_kind(prim: object) -> "str | None":
+    """The OpenSees keyword ``prim`` declares, if it is builder-scoped."""
+    for base, keyword in _BUILDER_SCOPED_KINDS:
+        if isinstance(prim, base):
+            return keyword
+    return None
 
 
 # ---------------------------------------------------------------------------

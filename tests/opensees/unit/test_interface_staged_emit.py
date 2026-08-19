@@ -341,7 +341,7 @@ def test_mixed_ndf_full_unit_in_the_stage_block_golden(tmp_path):
     # the real continuum master, jNode the phantom (INV-1).
     assert block[i:i + 6] == [
         "# RockLiner",
-        "node 101 1.0 1.0 0.0 -ndf 2",
+        "node 101 1.0 1.0 -ndf 2",          # ndm=2: no padded z
         "equalDOF 5 101 1 2",
         "uniaxialMaterial ENT 1 250000.0",
         "uniaxialMaterial ElasticPP 2 25000.0 0.0025",
@@ -483,7 +483,7 @@ def test_partitioned_plus_staged_emits_the_unit_in_the_owner_stage_block(
     # The whole unit sits inside the owner (rank 0) bracket, with the
     # foreign slave's ghost decl preceding it.
     assert i_open < i_unit < i_zl < i_close
-    assert "node 5 2.0 1.0 0.0" in block[i_open:i_unit]
+    assert "node 5 2.0 1.0" in block[i_open:i_unit]   # ndm=2: no padded z
     # Nothing interface-shaped in the base pass or the ground stage.
     base = lines[:lines.index("# === Stage: ground ===")]
     assert not [ln for ln in base if ln.startswith("uniaxialMaterial ENT ")]

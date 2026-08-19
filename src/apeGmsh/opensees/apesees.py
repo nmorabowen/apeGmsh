@@ -80,6 +80,8 @@ from ._internal.build import (
     primary_owner_map,
     runtime_rank_from_partition_record,
     topological_order,
+    needs_builder_ndf_bracket,
+    validate_builder_scope_ordering,
     validate_node_ndf_element_compat,
     validate_absorbing_quad_geometry,
     validate_body_force_double_count,
@@ -98,6 +100,7 @@ from ._internal.build import (
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
+from ._element_capabilities import is_builder_scoped
 from ._internal.tag_resolution import (
     set_current_fem_element_id,
     set_element_nodes,
@@ -1345,6 +1348,32 @@ class BuiltModel:
             else:
                 pre_element.append(p)
 
+        # ADR 0099 (INV-1 / INV-3 / INV-4): a gated element's ndf bracket
+        # re-issues ``model BasicBuilder``, which deletes the Tcl model
+        # builder and purges the process-global timeSeries / geomTransf /
+        # beamIntegration / damping registries.  Only the flat path hoists
+        # its gated element blocks above those declarations; every other
+        # path would emit a deck that dies late — or, for damping, runs to
+        # convergence and reports an undamped answer.  Fail loud here,
+        # before any primitive is emitted, on every path.
+        if split:
+            _scope_path = "split"
+        elif is_partitioned(self.fem) and getattr(
+            emitter, "supports_partitions", True,
+        ):
+            _scope_path = "partitioned"
+        else:
+            _scope_path = "flat"
+        validate_builder_scope_ordering(
+            elements,
+            ordered,
+            self.fem,
+            ndm=self.ndm,
+            envelope_ndf=self.ndf,
+            path=_scope_path,
+            stage_records=self.stage_records,
+        )
+
         # ADR 0043 slice 1.1: split (mode A) dispatch.  Routed before
         # the partitioned branch so the split guards (which fail loud
         # on partitioned / staged / initial_stress / non-composed
@@ -1490,10 +1519,10 @@ class BuiltModel:
                 self.ndf,
             )
 
-        # 4a. Materials / sections / time series / analysis chain
-        # (excluding patterns + recorders).  Phase SSI-2.A: skip
-        # analysis-chain primitives when stages are declared — each
-        # stage re-emits its own chain below.
+        # 4a. Materials / sections / analysis chain (excluding patterns
+        # + recorders).  Phase SSI-2.A: skip analysis-chain primitives
+        # when stages are declared — each stage re-emits its own chain
+        # below.
         # ADR 0092 S5 open item: when the user declared an ``analysis``
         # directive, the constraint-handler auto-emit must land BEFORE
         # it — OpenSees constructs the analysis object AT the
@@ -1502,8 +1531,20 @@ class BuiltModel:
         # plausible-wrong converged answer).  Hoist the auto-emit here
         # and skip the step-7c site.  Decks with no user ``analysis``
         # primitive keep the step-7c position byte-identically.
-        chain_auto_emitted = False
+        #
+        # ADR 0099 INV-1: this pass emits only the declarations that
+        # SURVIVE a ``model BasicBuilder`` re-issue.  The builder-scoped
+        # ones (timeSeries / geomTransf / beamIntegration / damping) are
+        # held back to step 4b, below the hoisted gated element blocks,
+        # so the LAST ``model`` line in the deck precedes every one of
+        # them.  Topo order is preserved within each pass.
+        pre_survives: list[Primitive] = []
+        pre_scoped:   list[Primitive] = []
         for p in pre_element:
+            (pre_scoped if is_builder_scoped(p) else pre_survives).append(p)
+
+        chain_auto_emitted = False
+        for p in pre_survives:
             if staged and _is_analysis_chain_primitive(p):
                 continue
             if not chain_auto_emitted and isinstance(p, Analysis):
@@ -1513,18 +1554,7 @@ class BuiltModel:
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
-        # 5. GeomTransf fan-out.
-        overrides = emit_transform_specs(
-            transforms=transforms,
-            elements=elements,
-            emitter=emitter,
-            fem=self.fem,
-            tags=tags,
-            spec_to_own_tag=self.tag_for,
-            ndm=self.ndm,
-        )
-
-        # 6. Elements.  Phase SSI-2.B: pre-allocate ALL element tags
+        # 5. Elements.  Phase SSI-2.B: pre-allocate ALL element tags
         # upfront (across global + stage-bound elements) so the
         # fem_eid → ops_tag map is complete before any per-stage
         # emit runs.  Then emit only globally-owned elements here;
@@ -1533,6 +1563,10 @@ class BuiltModel:
         # Phase SSI-2.E: in the staged case the allocation already
         # happened earlier in this method (so V6 could resolve
         # explicit ``elements=`` targets); reuse the prior plan.
+        # ADR 0099: allocation moved above the transform fan-out so the
+        # hoisted gated pass has a plan.  TagAllocator is per-kind, so
+        # the element / geomTransf counters are unaffected by the move —
+        # the staged branch above has always allocated here.
         if element_plan is None:
             element_plan = allocate_element_tags(elements, self.fem, tags)
             # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
@@ -1542,9 +1576,13 @@ class BuiltModel:
                 "internal: fem_eid_to_ops_tag not populated — element_plan "
                 "allocation must set the map before emit continues."
             )
-        for spec, sub in element_plan:
-            if id(spec) in element_owner_stage:
-                continue  # stage-bound — emit inside the stage block.
+
+        def _emit_element_block(
+            spec: Element,
+            sub: "ElementPlanRows",
+            overrides: "dict[tuple[int, int], int] | None",
+        ) -> None:
+            """Emit one element spec's fan-out, bracketed if its parser gates."""
             transf_spec = _build_element_transf(spec)
             # Builder-ndf bracket for gated upstream parsers (quad/tri6n)
             # under a mixed-ndf envelope — see open_builder_ndf_bracket.
@@ -1582,6 +1620,48 @@ class BuiltModel:
             if bracketed:
                 close_builder_ndf_bracket(
                     emitter, ndm=self.ndm, envelope_ndf=self.ndf)
+
+        # 5a. ADR 0099 INV-1 — the gated element blocks, hoisted into one
+        # contiguous bracketed run ABOVE every builder-scoped declaration.
+        # A gated parser takes an nDMaterial and nothing else (INV-3
+        # guards that at emit entry), and nDMaterial survives the model
+        # re-issue, so nothing these blocks need has been held back.
+        # ``overrides`` is None here: no gated class is transform-bearing.
+        global_plan = [
+            (spec, sub) for spec, sub in element_plan
+            if id(spec) not in element_owner_stage
+        ]
+        gated_plan = [
+            (spec, sub) for spec, sub in global_plan
+            if needs_builder_ndf_bracket(
+                spec, ndm=self.ndm, envelope_ndf=self.ndf)
+        ]
+        for spec, sub in gated_plan:
+            _emit_element_block(spec, sub, None)
+
+        # 5b. Builder-scoped declarations.  Safe from here down: the flat
+        # path emits no further ``model`` line.
+        for p in pre_scoped:
+            tag = self.tag_for[id(p)]
+            p._emit(emitter, tag)
+
+        # 6. GeomTransf fan-out (builder-scoped — same reasoning as 5b).
+        overrides = emit_transform_specs(
+            transforms=transforms,
+            elements=elements,
+            emitter=emitter,
+            fem=self.fem,
+            tags=tags,
+            spec_to_own_tag=self.tag_for,
+            ndm=self.ndm,
+        )
+
+        # 6b. The ungated elements, in plan order.
+        gated_ids = {id(spec) for spec, _ in gated_plan}
+        for spec, sub in global_plan:
+            if id(spec) in gated_ids:
+                continue
+            _emit_element_block(spec, sub, overrides)
 
         # 7. Fixes / masses / regions.
         # ADR 0051: g.loads no longer auto-emit — loads reach the deck

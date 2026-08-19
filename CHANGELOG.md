@@ -2,6 +2,61 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### FIXED — a `node` line now carries exactly `ndm` coordinates (2-D `-ndf` / `-mass` were silently dropped)
+
+The broker stores every node as ``(x, y, z)`` and the emitters wrote all
+three, so a 2-D deck emitted ``node 1 0.0 0.0 0.0 -ndf 2``.  OpenSees
+reads ``ndm`` coordinates and then scans what follows for optional
+flags, so the padding desynchronised that scan and the flag was never
+consumed — measured on Ladruno ``25a0647f``: the node silently kept the
+envelope ndf, and ``-mass`` produced *"incorrect number of nodal mass
+terms"*.
+
+The dropped ``-ndf`` was the dangerous half.  ADR 0032/0033 per-node ndf
+was **inert in every 2-D deck**: a gated continuum element (``tri6n`` /
+``LadrunoLST`` / ``quad``) still parsed, because the builder-ndf bracket
+satisfies the parser gate, but ``setDomain`` then bailed on the wrong
+node ndf without setting the element's domain pointer and the deck died
+at analysis with ``FATAL FE_Element::FE_Element() - element has no
+domain``.  That is the second half of what blocked the mixed-ndf
+lined-tunnel / SSI shape; ADR 0099 was the first.
+
+``TclEmitter`` / ``PyEmitter`` / ``LiveOpsEmitter`` / ``RecordingEmitter``
+now trim node coordinates to the ``ndm`` they learn from ``model()``
+(``trim_coords_to_ndm`` in ``emitter/base.py``).  3-D decks are
+byte-identical — the trim is the identity on a 3-tuple — and ``H5Emitter``
+still archives the full ``(x, y, z)``.  The foreign-node-decl recognisers
+in ``tests/opensees/_helpers/partition_diff.py`` accept 1–3 coordinates
+instead of exactly 3.
+
+### FIXED — the builder-ndf bracket destroyed every declaration above it (ADR 0099)
+
+``open_builder_ndf_bracket`` wraps a gated element block (``quad`` /
+``tri6n`` / ``LadrunoQuad`` / ``LadrunoCST`` / ``LadrunoLST`` /
+``LadrunoUP``) in a ``model BasicBuilder`` re-issue.  That re-issue
+deletes the Tcl model builder, and its destructor purges the
+process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration`` /
+``damping`` registries (fork ``TclModelBuilder.cpp:681``).  apeGmsh
+emitted all four ABOVE the bracket, so any model combining a gated
+continuum element, a frame element (which forces the mixed-ndf
+envelope) and a load pattern emitted a deck that died at ``pattern
+Plain`` — the standard lined-tunnel / SSI shape.  ``damping`` was worse
+than the rest: ``region -damp`` only warns, so such a deck ran to
+convergence and reported an **undamped** answer.
+
+The flat emit path now hoists its gated element blocks above every
+builder-scoped declaration, so the last ``model`` line in the deck
+precedes all of them (INV-1); gated parsers only ever need an
+``nDMaterial``, which survives the re-issue.  A new
+``validate_builder_scope_ordering`` fails loud where that is not yet
+possible: the split, partitioned and H5-replay paths (INV-4), a
+stage-activated gated element whose bracket fires mid-deck (INV-4), and
+``quad(damp=...)``, which is self-wiping (INV-3).  Those decks
+previously emitted and either died late or ran wrong.
+
+``repros/repro4_builder_scoped_wipe.py`` is the executable survival
+table, measured against the fork binary.
+
 ### FIXED — ``Pardiso`` / ``Mumps`` always emit ``-matrixType`` (incl. 0)
 
 ``Pardiso(matrix_type="unsymmetric")`` mapped to code ``0`` then

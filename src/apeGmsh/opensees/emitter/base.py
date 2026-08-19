@@ -723,6 +723,40 @@ class Emitter(Protocol):
         ...
 
 
+def trim_coords_to_ndm(
+    coords: "tuple[float, ...]", ndm: "int | None",
+) -> "tuple[float, ...]":
+    """Drop the padding coordinates beyond the model's ``ndm``.
+
+    The broker carries every node as ``(x, y, z)``, but OpenSees reads
+    exactly ``ndm`` coordinates off a ``node`` line and then scans what
+    follows for optional flags.  A padded third coordinate in a 2-D model
+    desynchronises that scan, so the flags are silently never consumed —
+    measured on Ladruno ``25a0647f``::
+
+        model BasicBuilder -ndm 2 -ndf 3
+        node 1 0.0 0.0 0.0 -ndf 2   ;# -> ndf 3, override DROPPED, no warning
+        node 2 1.0 0.0     -ndf 2   ;# -> ndf 2
+        node 5 4.0 0.0 0.0 -mass 1.0 1.0
+                                    ;# -> "incorrect number of nodal mass terms"
+
+    A dropped ``-ndf`` is the worse half: the node keeps the envelope ndf,
+    a gated continuum element still PARSES (the builder-ndf bracket
+    satisfies the parser gate), but ``setDomain`` then bails on the wrong
+    node ndf without setting the element's domain pointer and the deck
+    dies at analysis with ``FE_Element::FE_Element() - element has no
+    domain``.  Emitting ``ndm`` coordinates puts the flags where OpenSees
+    expects them.
+
+    3-D decks are unaffected (the slice is the identity on a 3-tuple).
+    ``ndm`` is ``None`` until ``model()`` has been called — direct emitter
+    use in tests — and then the coordinates pass through untouched.
+    """
+    if ndm is None or len(coords) <= ndm:
+        return coords
+    return coords[:ndm]
+
+
 def _build_embedded_flag_args(
     stiffness: float,
     stiffness_p: float | None,

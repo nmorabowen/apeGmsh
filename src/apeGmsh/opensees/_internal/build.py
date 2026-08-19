@@ -122,6 +122,8 @@ __all__ = [
     "emit_element_spec_partitioned",
     "open_builder_ndf_bracket",
     "close_builder_ndf_bracket",
+    "needs_builder_ndf_bracket",
+    "validate_builder_scope_ordering",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
@@ -2082,6 +2084,125 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def needs_builder_ndf_bracket(
+    spec: "Element", *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """True iff ``spec``'s upstream parser needs a builder-ndf bracket here.
+
+    The single definition of the bracket condition, shared by
+    :func:`open_builder_ndf_bracket` (which emits it), the ADR 0099 hoist
+    in ``_emit_flat`` (which orders around it), and
+    :func:`validate_builder_scope_ordering` (which guards it).
+    """
+    from .._element_capabilities import element_builder_ndf
+
+    need = element_builder_ndf(type(spec).__name__, ndm)
+    return need is not None and int(need) != int(envelope_ndf)
+
+
+def validate_builder_scope_ordering(
+    elements: "Sequence[Element]",
+    primitives: "Iterable[Primitive]",
+    fem: "FEMData",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+    path: str,
+    stage_records: "Sequence[StageRecord]" = (),
+) -> None:
+    """Fail loud when a builder-ndf bracket would destroy a declaration.
+
+    ADR 0099.  A gated element block is wrapped in a ``model basic -ndf K``
+    re-issue + envelope restore (:func:`open_builder_ndf_bracket`), and that
+    re-issue DELETES the Tcl model builder — whose destructor purges the
+    process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration`` /
+    ``damping`` registries on the way out (fork
+    ``SRC/modelbuilder/tcl/TclModelBuilder.cpp:681``; the audit lives in
+    :data:`.._element_capabilities._BUILDER_SCOPED_KINDS`).
+
+    Only the flat path hoists its gated element blocks above those
+    declarations (INV-1).  Everywhere else the deck would die late — or,
+    for ``damping``, run to convergence and report an **undamped** answer,
+    because ``region -damp`` only warns.
+
+    Raises
+    ------
+    BridgeError
+        INV-3 — a gated element directly depends on a builder-scoped
+        primitive (``quad(damp=...)``), so no ordering can save it: the
+        element's own bracket destroys the declaration it references.
+        INV-4 — a gated element brackets on an emit path that cannot
+        satisfy INV-1 (``split`` / ``partitioned`` / stage-activated).
+    """
+    from .._element_capabilities import (
+        builder_scoped_kind,
+        element_builder_ndf,
+    )
+
+    gated = [
+        e for e in elements
+        if needs_builder_ndf_bracket(e, ndm=ndm, envelope_ndf=envelope_ndf)
+    ]
+    if not gated:
+        return
+
+    # INV-3 — direct dependencies only: the failure mode is the element
+    # line resolving a tag its own bracket just deleted.
+    for spec in gated:
+        bad = sorted(
+            {k for d in spec.dependencies()
+             if (k := builder_scoped_kind(d)) is not None}
+        )
+        if bad:
+            raise BridgeError(
+                f"{type(spec).__name__} needs a builder-ndf bracket "
+                f"(model basic -ndm {ndm} -ndf "
+                f"{element_builder_ndf(type(spec).__name__, ndm)}), and that "
+                f"bracket destroys the {', '.join(bad)} declaration it "
+                f"references — the element would resolve a dead tag and "
+                f"OpenSees would only warn. Per ADR 0099 INV-3, drop the "
+                f"dependency (attach damping with ops.damping on a region "
+                f"instead of the element's damp= argument) or model this "
+                f"block with an ungated element."
+            )
+
+    scoped = sorted({k for p in primitives
+                     if (k := builder_scoped_kind(p)) is not None})
+    if not scoped:
+        return
+
+    fix = (
+        "Per ADR 0099 INV-1 every such declaration must follow the LAST "
+        "model line in the deck. The flat (unpartitioned, non-split) emit "
+        "path hoists its gated element blocks above them; the other paths "
+        "do not yet."
+    )
+    if path != "flat":
+        raise BridgeError(
+            f"emit path {path!r} would declare {', '.join(scoped)} before a "
+            f"builder-ndf bracket opened for "
+            f"{type(gated[0]).__name__}, and the bracket destroys those "
+            f"declarations. {fix} Emit this model on the flat path, or "
+            f"remove the gated element / the declaration."
+        )
+
+    if stage_records:
+        element_owner_stage, _ = compute_stage_ownership(
+            tuple(stage_records), list(elements), fem,
+        )
+        staged = [g for g in gated if id(g) in element_owner_stage]
+        if staged:
+            raise BridgeError(
+                f"{type(staged[0]).__name__} is stage-activated, so its "
+                f"builder-ndf bracket emits INSIDE the stage block — after "
+                f"the global {', '.join(scoped)} declaration(s), and (for "
+                f"any stage past the first) after a pattern and a completed "
+                f"analyze. The bracket destroys those declarations. {fix} "
+                f"Activate this element's physical group globally instead "
+                f"of inside a stage."
+            )
+
+
 def open_builder_ndf_bracket(
     emitter: "Emitter", spec: "Element", *, ndm: int, envelope_ndf: int,
 ) -> bool:
@@ -2096,16 +2217,26 @@ def open_builder_ndf_bracket(
     bracket each gated element block: ``model basic -ndf 2`` before,
     envelope restore after (:func:`close_builder_ndf_bracket`).
 
+    It DOES, however, delete the Tcl model builder, whose destructor purges
+    the process-global ``timeSeries`` / ``geomTransf`` / ``beamIntegration``
+    / ``damping`` registries — see ADR 0099 and
+    :func:`validate_builder_scope_ordering`.  Callers must emit every such
+    declaration AFTER the last bracket line.
+
     Returns True when a bracket line was emitted (caller must close).
     No-op (False) when the spec's parser carries no gate or the envelope
     already matches.
     """
     from .._element_capabilities import element_builder_ndf
 
-    need = element_builder_ndf(type(spec).__name__, ndm)
-    if need is None or int(need) == int(envelope_ndf):
+    if not needs_builder_ndf_bracket(
+        spec, ndm=ndm, envelope_ndf=envelope_ndf,
+    ):
         return False
-    emitter.model(ndm=int(ndm), ndf=int(need))
+    emitter.model(
+        ndm=int(ndm),
+        ndf=int(element_builder_ndf(type(spec).__name__, ndm)),  # type: ignore[arg-type]
+    )
     return True
 
 
