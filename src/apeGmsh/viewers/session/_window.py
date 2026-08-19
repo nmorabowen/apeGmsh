@@ -1,12 +1,12 @@
 """SessionWindow — the Qt client of a ``ResultsSession``.
 
-ADR 0098 S2 + Amendment 1 (S3). COMPOSES the existing
+ADR 0098 S2 + Amendment 3 (S3). COMPOSES the existing
 :class:`ResultsWindow` shell (verified director-free, generic mount
 points) — it does not build a new window. What it adds is the
 projection: the outline (panes + model composition, left), the
-mesh-view inspector page (right), the :class:`SessionPaneHost` as the
-**central widget**, and an inert scrubber placeholder (the time link
-is S4-3).
+mesh-view inspector page (right), **one dock panel per pane** in the
+middle (:class:`SessionPaneHost`), and an inert scrubber placeholder
+(the time link is S4-3).
 
 **The shell builds no central interactor on this path** (Amendment 1
 A1.1). Every GL context in the window belongs to a pane, which is what
@@ -30,26 +30,29 @@ identity: scope ``'ResultsSession'``, schema numbering restarted at
 1. It is a subclass (not an instance patch) because
 ``ResultsWindow.__init__`` restores the stored layout before any
 caller could re-point it. The dock objectNames are reused verbatim
-inside the new scope — criterion 11 constrains the four RETIRED
-names, and separate scopes share no state. The pane host adds no dock,
-so ``_LAYOUT_SCHEMA_VERSION`` stays 1 (A1.5); the splitter ratios ride
-their own ``panes/*`` keys in the same scope. At S6 the flip decides
+inside the new scope — criterion 11 constrains the RETIRED names, and
+separate scopes share no state.
+
+**Who owns the arrangement (A3.3).** The session is authoritative for
+which panes EXIST; the saved window state is advisory for where they
+sit. Nothing in ``QSettings`` may create or destroy a pane, so the pane
+docks are built from ``session.panes`` first and each one then CLAIMS
+its own saved entry (``QMainWindow.restoreDockWidget``) — a pane the
+file never saw keeps its default placement, an entry naming a pane this
+session does not have is claimed by nobody and dropped, and neither is
+an error and neither prompts. Amendment 3 changed the dock set
+structurally, so ``_LAYOUT_SCHEMA_VERSION`` goes 1 → 2 and v1 state is
+discarded whole rather than half-applied. At S6 the flip decides
 whether this window adopts the old scope.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Callable, Optional
 
 from .._failures import register_error_handler, unregister_error_handler
 from ..ui._results_window import ResultsWindow
-from ._host import (
-    LAYOUT_KEY,
-    LAYOUT_SCHEMA_VERSION,
-    SCHEMA_KEY,
-    SessionPaneHost,
-)
+from ._host import SessionPaneHost
 from ._inspector import (
     MeshInspectorPage,
     PanePlaceholderPage,
@@ -71,10 +74,15 @@ class SessionResultsWindow(ResultsWindow):
     scope (plan decision 8). Layout machinery, docks, menus, focus
     mode: inherited unchanged."""
 
-    # Fresh scope, fresh numbering: v1 is the S2 composition. Bumps
-    # here follow this window's own dock changes, not the old
-    # window's v7 history. Amendment 1 adds no dock, so it stays 1.
-    _LAYOUT_SCHEMA_VERSION = 1
+    # Fresh scope, fresh numbering: v1 is the S2 composition + the
+    # Amendment 1 splitter centre (which added no dock). Bumps here
+    # follow this window's own dock changes, not the old window's v7
+    # history.
+    # v2 (ADR 0098 Amendment 3, A3.5): the panes left the central widget
+    # for one ``dock_session_pane_<id>`` panel EACH, plus the zero-pane
+    # card's ``dock_session_panes_empty`` — a structural dock-set change,
+    # so v1 state must not half-apply.
+    _LAYOUT_SCHEMA_VERSION = 2
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         #: Called after ``reset_layout`` restores the 0088 D1 dock set,
@@ -139,15 +147,19 @@ class SessionWindow:
         self._outline: Optional[SessionOutline] = None
         self._host: Optional[SessionPaneHost] = None
 
+        # The panes are docks of the SHELL's window, seated right of
+        # the outline — ADR 0088 D1's partition with the middle column
+        # made of dock panels (A3.2), never of a central widget.
         self._host = SessionPaneHost(
             session,
+            dock_host=self._shell.window,
+            anchor_dock=self._shell.outline_dock,
             backend_factory=backend_factory,
             defer_fn=defer_fn,
             on_active_changed=self._on_active_changed,
             on_panes_changed=self._on_panes_changed,
             on_geometry_changed=self._on_geometry_changed,
         )
-        self._shell.set_central_widget(self._host)
         # The toolbar acts on ONE object: whichever pane is active.
         self._shell.set_plotter_provider(self._active_plotter)
 
@@ -178,7 +190,7 @@ class SessionWindow:
             ).widget,
         )
 
-        # §7's one control. Bottom dock, under the tiled panes, because
+        # §7's one control. Bottom dock, under the pane docks, because
         # while the link is on it drives every one of them.
         self._scrubber = SessionScrubber(session, defer_fn=defer_fn)
         self._shell.set_bottom_widget(self._scrubber.widget)
@@ -199,7 +211,7 @@ class SessionWindow:
         # reach them — one palette, one convention, N panes.
         self._shell.navigation_hook = self._host.apply_navigation
 
-        self._restore_pane_layout()
+        self._restore_pane_arrangement()
 
         # Surface swallowed reconciler failures on the status bar
         # (ADR 0084 D4 — never silent).
@@ -218,9 +230,10 @@ class SessionWindow:
 
     @property
     def host(self) -> SessionPaneHost:
-        """The tiled centre (Amendment 1). Tests address panes through
-        it — ``host.frame(pane_id)`` / ``host.pane_frames`` — never
-        through per-pane objectNames (caution 8)."""
+        """The pane docks (Amendment 3). Tests address panes through
+        it — ``host.frame(pane_id)`` / ``host.dock(pane_id)`` /
+        ``host.pane_frames`` — never by digging objectNames out of the
+        window (caution 8)."""
         return self._host
 
     @property
@@ -243,11 +256,35 @@ class SessionWindow:
 
     def show(self, *, blocking: bool = True) -> Optional[int]:
         """Present the window; run the Qt loop when ``blocking``."""
+        # `resizeDocks` only lands once the layout is live, so the extents
+        # requested during construction never applied. Queue them for the
+        # first turn of the loop, on both the blocking and non-blocking
+        # path (Amendment 3).
+        from qtpy.QtCore import QTimer
+
+        QTimer.singleShot(0, self._apply_dock_extents)
         if blocking:
             return self._shell.exec()
         _LIVE_WINDOWS.append(self)
         self._shell.present()
         return None
+
+    def _apply_dock_extents(self, second_pass: bool = False) -> None:
+        """Size the dock columns once the window is up (see :meth:`show`).
+
+        Runs twice, one event-loop turn apart: the Left chain (outline +
+        panes) settles on the first pass and the Right one (inspector)
+        only on the second. Back-to-back calls inside one turn move
+        nothing — measured.
+        """
+        from qtpy.QtCore import QTimer
+
+        try:
+            self._shell.apply_dock_extents(self._host.pane_docks)
+        except Exception:
+            return
+        if not second_pass:
+            QTimer.singleShot(0, lambda: self._apply_dock_extents(True))
 
     def close(self) -> None:
         try:
@@ -391,43 +428,32 @@ class SessionWindow:
                     pass
         self._host.request_reconcile()
 
-    # -- layout persistence (A1.5) --------------------------------------
+    # -- layout persistence (A3.3) --------------------------------------
 
     def _on_reset_layout(self) -> None:
         """View → Reset layout: the 0088 D1 dock set (the shell's job,
-        already done) **and** ``T(N)`` with equal ratios."""
-        self._host.reset_tiling()
+        already done) **and** the panes back to default placement — the
+        row, in ``session.panes`` order, floating panes re-docked.
 
-    def _restore_pane_layout(self) -> None:
-        """Apply the stored ratios, or equal ones — silently.
-
-        Chrome, not session state: a mismatched ``n``, a bad version or
-        corrupt JSON falls back to equal ratios with no notice and no
-        raise (``_restore_layout``'s existing behaviour). Before S5 the
-        stored ratios are nearly inert — a fresh session boots at N = 1,
-        so the ``n`` guard rejects most restores; their real consumers
-        are the S5 snapshot restore and same-shape scripted sessions.
+        Then the extents, on the same two-pass schedule as the boot
+        path: the dock set the shell restored predates the panes, so
+        re-seating them alone lands every pane on its A1.4 minimum
+        width with the middle column half empty — measured.
         """
-        settings = self._shell._layout_settings()  # noqa: SLF001
-        try:
-            if int(settings.value(SCHEMA_KEY, 0)) != LAYOUT_SCHEMA_VERSION:
-                return
-            raw = settings.value(LAYOUT_KEY)
-            if not raw:
-                return
-            self._host.apply_ratios(json.loads(str(raw)))
-        except (TypeError, ValueError):
-            return
+        self._host.reset_placement()
+        self._apply_dock_extents()
 
-    def _save_pane_layout(self) -> None:
-        settings = self._shell._layout_settings()  # noqa: SLF001
-        try:
-            settings.setValue(SCHEMA_KEY, LAYOUT_SCHEMA_VERSION)
-            settings.setValue(
-                LAYOUT_KEY, json.dumps(self._host.layout_ratios()),
-            )
-        except Exception:
-            pass
+    def _restore_pane_arrangement(self) -> None:
+        """Settle what the saved arrangement does NOT get a vote on.
+
+        The placement half of A3.3 is already done by here: every pane
+        dock claimed its own saved entry as the host created it, and a
+        pane the file never saw kept its default placement. What a
+        restore must not decide is the zero-pane CARD — the session is
+        authoritative for existence (A3.3.1), so the card is on exactly
+        when the session has no panes, whatever the file remembers.
+        """
+        self._host.sync_docks()
 
     # -- internals -----------------------------------------------------
 
@@ -445,7 +471,10 @@ class SessionWindow:
         if self._closed:
             return
         self._closed = True
-        self._save_pane_layout()
+        # The pane arrangement is already saved: the shell's own close
+        # wrapper runs ``saveState`` BEFORE this callback, which is the
+        # only moment the pane docks are still in the window (A3.3.2 —
+        # the objectNames are what the state addresses them by).
         unregister_error_handler(self._error_handler)
         # Before the host: a live animation timer would keep writing
         # the session into panes that are being torn down.

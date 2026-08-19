@@ -20,7 +20,7 @@ the mesh reconciler serves mesh views only.
 The Qt pane client lives here as a further projection:
 :class:`SessionReconciler` (session diff → backend ops → one
 coalesced render), :class:`MeshPane` (injectable backend),
-:class:`SessionPaneHost` (the Amendment 1 tiled centre) with its
+:class:`SessionPaneHost` (the Amendment 3 pane docks) with their
 :class:`SessionPaneFrame`\\ s, the outline / inspector widgets, and
 :func:`show_session` — the ``ResultsSession.show`` entry. The
 Qt-touching names are exported LAZILY (PEP 562): ``realize`` /
@@ -63,9 +63,8 @@ _QT_EXPORTS = {
     "STYLE_BUTTONS": "._frame",
     "SessionPaneHost": "._host",
     "SessionPaneHostEmpty": "._host",
+    "pane_dock_name": "._host",
     "required_extent": "._host",
-    "tile_columns": "._host",
-    "tile_shape": "._host",
     "SessionScrubber": "._scrubber",
     "SessionResultsWindow": "._window",
     "SessionWindow": "._window",
@@ -116,6 +115,7 @@ __all__ = [
     "SessionWindow",
     "default_backend_factory",
     "gauss_pairs",
+    "pane_dock_name",
     "realize_pane",
     "realize_plot",
     "recorded_components",
@@ -125,6 +125,4 @@ __all__ = [
     "resolve_scope",
     "select_all",
     "show_session",
-    "tile_columns",
-    "tile_shape",
 ]

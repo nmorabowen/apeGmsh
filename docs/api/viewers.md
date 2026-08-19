@@ -15,7 +15,7 @@ results session window for post-processing.
 
 `results.viewer()` opens the post-solve window. Since ADR 0098 it is
 sugar for `results.session().show()`: the document is a
-**`ResultsSession`** — tiled mesh and plot panes, each pane carrying
+**`ResultsSession`** — docked mesh and plot panes, each pane carrying
 result *slots* — and the window is one client that projects it. A
 script can build or read the same object with no window at all, and
 what the window saves is that object.

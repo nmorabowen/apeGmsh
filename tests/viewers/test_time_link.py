@@ -328,10 +328,15 @@ def test_c42_playback_realizes_only_the_panes_that_moved(
 
     The discriminating pane is a MODE-POSED one. §7 freezes it under
     the link — ``effective_instant`` is ``None`` for it whatever the
-    scrubber does — so a frame that costs the static pane a realize
+    scrubber does — so a frame that costs the static pane a repaint
     must cost the mode pane nothing. Counting only panes that DO move
     would pass with the gate ripped out (every tick changes every one
     of them), which is exactly what the mutation pass caught.
+
+    ADR 0098 A4.2 restates the unit: a moving pane costs a REPAINT, and
+    after the first frame that repaint is a cheap re-step rather than a
+    realize. Both are counted here — the criterion is about which panes
+    pay, and A4's own claim is about what they pay.
     """
     import apeGmsh.viewers.session._reconciler as reconciler_mod
 
@@ -340,13 +345,22 @@ def test_c42_playback_realizes_only_the_panes_that_moved(
     frozen_view = session.add_view()
     frozen_view.deform = Deform(field="displacement", mode=1)
     qapp.processEvents()
+
     assert session.effective_instant(frozen_view) is None
 
     real = reconciler_mod.realize_pane
+    real_restep = reconciler_mod.restep_pane
     calls: list = []
+    slow: list = []
     monkeypatch.setattr(
         reconciler_mod, "realize_pane",
-        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+        lambda s, p, b: (calls.append(p.id), slow.append(p.id),
+                         real(s, p, b))[2],
+    )
+    monkeypatch.setattr(
+        reconciler_mod, "restep_pane",
+        lambda s, p, r, b: (calls.append(p.id),
+                            real_restep(s, p, r, b))[1],
     )
 
     # The session boots with time=None, so every commit below moves it.
@@ -358,8 +372,15 @@ def test_c42_playback_realizes_only_the_panes_that_moved(
 
     assert calls.count(static_view.id) == frames
     assert calls.count(frozen_view.id) == 0, (
-        f"the frozen pane realized {calls.count(frozen_view.id)} time(s) "
+        f"the frozen pane repainted {calls.count(frozen_view.id)} time(s) "
         f"for a scrubber it does not follow"
+    )
+    # A4.2: the first frame may realize (the cursor's stage arrives with
+    # it); every frame after it re-steps. A build that re-realized per
+    # frame would show ``frames`` here and is what this amendment fixes.
+    assert len(slow) <= 1, (
+        f"playback re-realized {len(slow)} time(s); A4.2 says a "
+        f"cursor-only frame re-steps"
     )
 
     # And a re-commit of the SAME instant costs nothing anywhere —

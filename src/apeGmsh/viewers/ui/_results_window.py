@@ -93,7 +93,9 @@ class ResultsWindow:
     # full-width BELOW the scrubber. Retired objectNames — NEVER to be
     # reused for different content (a stale saved geometry would
     # half-apply): ``dock_results_diagram``, ``dock_results_geometry``,
-    # ``dock_results_details``, ``dock_color_map_editor``.
+    # ``dock_results_details``, ``dock_color_map_editor``,
+    # ``dock_results_panes`` (ADR 0098 Amendment 3 retired the
+    # single-panel pane host for one dock PER PANE).
     _LAYOUT_SCHEMA_VERSION = 7
 
     # objectNames of the five built-in docks — exposed so extension
@@ -690,6 +692,71 @@ class ResultsWindow:
             dock,
         )
 
+    def apply_dock_extents(self, pane_docks=()) -> None:
+        """Size the dock columns to LayoutMetrics. Idempotent, re-callable.
+
+        ``QMainWindow.resizeDocks`` only bites once the window's layout is
+        live, so calling it during construction is a request, not a
+        result — the session window calls this again after the first show.
+
+        ``pane_docks`` is the ADR 0098 Amendment 3 middle column, in
+        left-to-right order; they share whatever the two side columns
+        leave. Empty for the old window, which has a central viewport
+        instead.
+
+        NOTE the local ``QtCore`` import: ``_build_layout`` imports Qt
+        locally, so anything factored out of it loses the name, and a bare
+        ``except`` would turn the resulting ``NameError`` into a silent
+        no-op. That pairing cost two rounds of measurement once already.
+        """
+        from qtpy import QtCore
+
+        win = self._vw.window
+        panes = [d for d in pane_docks if d is not None]
+        side = [d for d in (self._dock_left, *panes, self._dock_inspector)
+                if d is not None]
+        if panes:
+            # The panes take everything the two side columns don't, split
+            # evenly — that is the default placement. A user who dragged
+            # a separator gets their own widths back from the restored
+            # dock state, which lands before this ever runs.
+            share = max(
+                LAYOUT.pane_min_width,
+                (win.width() - LAYOUT.outline_initial_width
+                 - LAYOUT.right_initial_width) // len(panes),
+            )
+            widths = ([LAYOUT.outline_initial_width]
+                      + [share] * len(panes)
+                      + [LAYOUT.right_initial_width])
+        else:
+            widths = [LAYOUT.outline_initial_width,
+                      LAYOUT.right_initial_width][:len(side)]
+        # ONE call covering every column. It has to run TWICE, with an
+        # event-loop turn BETWEEN the passes — docks in different areas
+        # (outline/panes are Left, inspector is Right) only settle on the
+        # second pass, and back-to-back calls in one turn do nothing. The
+        # caller owns that scheduling (see SessionWindow._apply_dock_extents).
+        # The inspector's content genuinely needs its design width (the
+        # slot rows and their Add buttons measure ~375 px); without a floor
+        # the two-pass settle leaves it at ~352 and clips them. This is a
+        # content minimum, not a preference.
+        if self._dock_inspector is not None:
+            self._dock_inspector.setMinimumWidth(LAYOUT.right_initial_width)
+        win.resizeDocks(side, widths[:len(side)], QtCore.Qt.Horizontal)
+        if self._dock_bottom is not None:
+            # The scrubber is a slim strip, and `resizeDocks(..., Vertical)`
+            # does NOT move it (measured: it sat at 730 px through every
+            # variant). A ceiling does. Twice the design height leaves room
+            # to drag without letting it eat the panes.
+            self._dock_bottom.setMaximumHeight(
+                LAYOUT.scrubber_initial_height * 2)
+
+    @property
+    def outline_dock(self):
+        """The Outline dock — the ADR 0098 Amendment 3 pane docks split
+        it to sit in the middle column."""
+        return self._dock_left
+
     def _make_dock(
         self,
         title: str,
@@ -786,6 +853,11 @@ class ResultsWindow:
         Skips restoration if the stored schema version doesn't match the
         current build — applying a v1 state to a v2 layout produces
         broken arrangements (e.g. tabified docks getting un-tabbed).
+
+        Docks mounted AFTER this runs — the ADR 0098 Amendment 3 pane
+        docks, which the session builds from its own pane list — claim
+        their entry out of the same state with
+        ``QMainWindow.restoreDockWidget``.
         """
         win = self._vw.window
         s = self._layout_settings()

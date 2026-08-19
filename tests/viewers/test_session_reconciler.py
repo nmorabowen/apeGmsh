@@ -390,3 +390,235 @@ def test_dispose_detaches_from_the_session(rig):
     view.contour = Contour("stress_xx")
     drain()
     assert set(backend.layers) == before
+
+
+# =====================================================================
+# ADR 0098 A4 — the cursor fast path, and the parity that licenses it
+# =====================================================================
+
+
+def _snapshot(rec, backend) -> dict:
+    """Every layer of the CURRENT realization, as comparable arrays,
+    keyed by its STABLE key.
+
+    Keyed by ``layer.key``, never the backend's ``layer_id``: a full
+    realize builds a fresh diagram which mints a fresh id, and the S1
+    contract already says the id is an emission detail while the key is
+    the identity. Comparing ids would fail on every parity check for a
+    reason that has nothing to do with the picture.
+
+    Points AND field values: the fast path moves both (a pose moves
+    points, ``update_to_step`` moves scalars), so a snapshot of one
+    would license half the claim.
+    """
+    out: dict = {}
+    realized = rec.realized
+    for entry in (realized.layers if realized else ()):
+        layer = backend.layers.get(entry.layer_id)
+        if layer is None:
+            continue
+        pts = getattr(layer, "points", None)
+        fields = {
+            f.name: np.asarray(f.values).copy()
+            for f in (getattr(layer, "fields", None) or ())
+        }
+        out[entry.key] = (
+            None if pts is None else np.asarray(pts.coords).copy(),
+            fields,
+        )
+    return out
+
+
+def _assert_same(fast: dict, slow: dict, step: int) -> None:
+    assert set(fast) == set(slow), (
+        f"step {step}: the fast path emitted a different LAYER SET "
+        f"({sorted(set(fast) ^ set(slow))})"
+    )
+    for layer_id, (fpts, ffields) in fast.items():
+        spts, sfields = slow[layer_id]
+        if fpts is None or spts is None:
+            assert (fpts is None) == (spts is None), layer_id
+        else:
+            np.testing.assert_allclose(
+                fpts, spts, atol=1e-9,
+                err_msg=f"step {step}: {layer_id} points diverged",
+            )
+        assert set(ffields) == set(sfields), (
+            f"step {step}: {layer_id} field set diverged"
+        )
+        for name, fvals in ffields.items():
+            np.testing.assert_allclose(
+                fvals, sfields[name], atol=1e-9,
+                err_msg=f"step {step}: {layer_id}.{name} diverged",
+            )
+
+
+def _parity_body(rig) -> None:
+    """Scrub with the fast path, then force a full realize at the SAME
+    instant, and require the two pictures to be identical.
+
+    This is A4.3.1, and it is the whole licence for the fast path: a
+    re-step that drew anything other than what a realize draws is a
+    stale picture, which is the failure class the one-shot contract
+    existed to prevent.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    drain()
+
+    for step in (1, 2, 0, 2):
+        session.time = Instant(STAGE, step)
+        drain()
+        fast = _snapshot(rec, backend)
+
+        rec.schedule_forced()          # same instant, the SLOW path
+        drain()
+        _assert_same(fast, _snapshot(rec, backend), step)
+
+
+def test_a4_restep_paints_what_a_full_realize_paints(rig):
+    """Criterion A4.3.1 — parity."""
+    _parity_body(rig)
+
+
+def test_a4_parity_oracle_bites_a_broken_restep(rig, monkeypatch):
+    """The oracle above is worth exactly as much as its ability to fail.
+
+    Stub the re-step to a no-op — the picture then keeps the previous
+    step's points and scalars while the session says otherwise, which
+    is precisely the stale picture A4 must not ship. The parity body
+    must catch it.
+    """
+    monkeypatch.setattr(
+        reconciler_mod, "restep_pane",
+        lambda session, view, realized, backend: realized,
+    )
+    with pytest.raises(AssertionError):
+        _parity_body(rig)
+
+
+def test_a4_a_step_costs_no_realize_and_exactly_one_render(rig, monkeypatch):
+    """A4.3.2 / A4.3.3 — the cost claim.
+
+    A cursor-only tick calls ``realize_pane`` ZERO times and renders
+    exactly once. The render count is the ADR 0084 discipline the
+    session inherited; A4 must not turn one gesture into two frames.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    before = backend.render_count
+    session.time = Instant(STAGE, 1)
+    drain()
+
+    assert calls == [], "a cursor-only tick re-realized the pane"
+    assert backend.render_count == before + 1, (
+        "one gesture must still be one render"
+    )
+
+
+def test_a4_a_theme_change_still_costs_a_full_realize(rig, monkeypatch):
+    """A4.3.2's other half, and criterion 12's.
+
+    The palette is not session state, so ``schedule_forced`` is the
+    only signal a repaint is owed — the fast path must not swallow it.
+    """
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+    rec.schedule_forced()
+    drain()
+    assert calls == [view.id]
+
+
+def test_a4_a_structural_change_still_takes_the_slow_path(rig, monkeypatch):
+    """Only the CURSOR half of the signature licenses a re-step.
+
+    A slot fill at a fixed instant must re-realize — the layer SET
+    changes, and nothing in the fast path can add or remove a layer.
+    """
+    session, view, backend, rec, drain = rig
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+    view.contour = Contour("displacement_z")
+    drain()
+    assert calls == [view.id]
+
+
+def test_a4_scalar_bars_do_not_churn_across_a_scrub(rig):
+    """A4.3.4 — the bars are neither removed nor re-added.
+
+    The contour's scale comes from the store's whole-history limits and
+    is fixed at attach, so tearing the bar down per step was never
+    buying correctness — and a bar that flickers on every frame of a
+    drag is what the user would see.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    session.time = Instant(STAGE, 0)
+    drain()
+    before = dict(backend.scalar_bars)
+    assert before, "the contour registered no bar to begin with"
+
+    for step in (1, 2):
+        session.time = Instant(STAGE, step)
+        drain()
+        assert dict(backend.scalar_bars) == before, (
+            f"the scalar bars churned at step {step}"
+        )
+
+
+def test_a4_pick_targets_follow_the_pose(rig):
+    """A4.3.5 — ``realized.targets`` is what ``PanePick`` reads.
+
+    A re-step that moved the picture but not the targets would leave a
+    click addressing where a node USED to be.
+    """
+    from apeGmsh.results.session import Instant, MeshStyle
+
+    session, view, backend, rec, drain = rig
+    view.style = MeshStyle(mesh=True, outlines=True, nodes=True, gauss=False)
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+
+    session.time = Instant(STAGE, 2)
+    drain()
+
+    targets = rec.realized.targets.nodes
+    assert targets is not None and targets.rows is not None
+    scene_pts = np.asarray(rec.realized.restep.scene.grid.points)
+    np.testing.assert_allclose(
+        targets.coords, scene_pts[targets.rows], atol=1e-9,
+        err_msg="pick targets did not follow the re-stepped pose",
+    )

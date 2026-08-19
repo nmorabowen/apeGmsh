@@ -587,3 +587,150 @@ def test_unrealized_state_refuses_loudly(
     mutate(view)
     with pytest.raises(NotImplementedError, match=match):
         realize_pane(session, view, backend)
+
+
+# =====================================================================
+# ADR 0098 A4.1 Bug B — ONE visual store per Results, not per realize
+# =====================================================================
+
+
+def test_realize_shares_one_visual_store_per_results(session_results, backend):
+    """Realize used to construct a ``VisualDataStore`` per CALL.
+
+    That store caches full-time slabs so scrubbing reads RAM instead of
+    HDF5 — a per-call store is therefore a cache that is empty on every
+    frame and dies with it, and since ``ContourDiagram.attach`` pre-warms
+    it, every flush paid a full ``(T, N)`` read and threw it away. The
+    old viewer's rule is one store per ``Results``; this pins it.
+    """
+    from apeGmsh.viewers.session._realize import visual_store_for
+
+    session, view = _session_view(session_results)
+    view.contour = Contour("displacement_z")
+
+    first = realize_pane(session, view, backend)
+    second = realize_pane(session, view, backend)
+
+    stores = {
+        id(d._visual_store)  # noqa: SLF001
+        for d in (*first.diagrams, *second.diagrams)
+        if getattr(d, "_visual_store", None) is not None
+    }
+    assert len(stores) == 1, "a realize handed its diagrams a fresh store"
+    assert stores == {id(visual_store_for(session_results))}
+
+
+def test_a_second_results_gets_its_own_store(session_results, backend):
+    """Weak-keyed per ``Results``: two documents never share a cache."""
+    from apeGmsh.viewers.session._realize import visual_store_for
+
+    class _Other:
+        pass
+
+    other = _Other()
+    assert visual_store_for(session_results) is visual_store_for(
+        session_results,
+    )
+    assert visual_store_for(other) is not visual_store_for(session_results)
+
+
+def test_the_store_does_not_outlive_its_results(backend):
+    """The registry is weak-keyed, so a dropped ``Results`` takes its
+    cached slabs with it — this is a cache, not a leak."""
+    import gc
+
+    from apeGmsh.viewers.session._realize import _STORES, visual_store_for
+
+    class _Doomed:
+        pass
+
+    def _mine() -> int:
+        # Count only OUR key: other tests' Results are weak keys too and
+        # may be collected at any point, so a total count is not a test.
+        return sum(1 for k in list(_STORES.keys()) if isinstance(k, _Doomed))
+
+    doomed = _Doomed()
+    visual_store_for(doomed)
+    assert _mine() == 1
+
+    del doomed
+    gc.collect()
+    assert _mine() == 0, "the store outlived its Results"
+
+
+# =====================================================================
+# ADR 0098 A4.2 — the row maps realize records for a cursor re-step
+# =====================================================================
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
+def test_recorded_rows_reproduce_the_emitted_layers(
+    session_results, backend, scoped,
+):
+    """A re-step re-points these layers as ``source_points[rows]``.
+
+    If the rows do not reproduce the layer realize actually emitted,
+    the fast path draws a different picture from the slow one — so
+    pin the identity here, where it is cheap, rather than discovering
+    it as a parity failure later.
+    """
+    session, view = _session_view(session_results)
+    view.style = MeshStyle(mesh=True, outlines=True, nodes=True, gauss=False)
+    if scoped:
+        view.scope = Scope("physical_groups", ("Body",))
+
+    realized = realize_pane(session, view, backend)
+    rs = realized.restep
+    assert rs is not None, "realize recorded no re-step context"
+    by_key = {layer.key: layer for layer in realized.layers}
+
+    scene_pts = np.asarray(rs.scene.grid.points)
+    grid_pts = np.asarray(rs.grid.points)
+
+    # The scoped grid is a COPY; its rows must map back onto the scene.
+    if scoped:
+        assert rs.substrate_rows is not None
+        np.testing.assert_allclose(
+            grid_pts, scene_pts[rs.substrate_rows], atol=1e-9,
+        )
+    else:
+        assert rs.substrate_rows is None
+        assert rs.grid is rs.scene.grid
+
+    outlines = by_key[f"{view.id}:outlines"]
+    assert outlines.rows is not None, "no outline row map"
+    np.testing.assert_allclose(
+        np.asarray(outlines.layer.points.coords),
+        grid_pts[outlines.rows],
+        atol=1e-9,
+        err_msg="outline rows do not reproduce the emitted outline",
+    )
+
+    nodes = by_key[f"{view.id}:nodes"]
+    assert nodes.rows is not None, "no node row map"
+    np.testing.assert_allclose(
+        np.asarray(nodes.layer.points.coords),
+        scene_pts[nodes.rows],
+        atol=1e-9,
+        err_msg="node rows do not reproduce the emitted node cloud",
+    )
+
+
+def test_the_outline_row_tag_never_survives_the_extraction(
+    session_results, backend,
+):
+    """The row map rides a point-data tag through two extraction hops.
+
+    Unscoped, the grid it is written onto IS ``scene.grid`` — a leaked
+    tag would then be copied by every later extraction and ride into
+    layer arrays. It is deleted in a ``finally``; this is the guard.
+    """
+    from apeGmsh.viewers.session._realize import _OUTLINE_ROWS
+
+    session, view = _session_view(session_results)
+    view.style = MeshStyle(mesh=True, outlines=True, nodes=False, gauss=False)
+    realized = realize_pane(session, view, backend)
+
+    rs = realized.restep
+    assert _OUTLINE_ROWS not in rs.scene.grid.point_data
+    assert _OUTLINE_ROWS not in rs.grid.point_data
