@@ -372,10 +372,19 @@ def refuse_wrong_side_master(
 
     It fires only on *confidently opposite*: a strict majority of
     segments whose nearest slave node lies more than
-    :data:`_WRONG_SIDE_REACH` × that segment's length behind it.  That is
-    the far side of the beam, the wrong edge of the block — the actual
-    user error — and not a seeded initial penetration, which the fork's
-    own narrow phase could not arm past that reach anyway.
+    :data:`_WRONG_SIDE_REACH` × that segment's length behind it.  The
+    headline case is the far side of the beam, the wrong edge of the
+    block.
+
+    That threshold scales with the segment, so on a FINE master mesh an
+    over-seeded initial overlap reaches it too — and the refusal is still
+    right, because the fork's own narrow phase stops arming a pair past
+    roughly the same reach, so such a deck would not transmit either way.
+    The message therefore names both causes rather than diagnosing a
+    wrong-side master outright: at this distance the two are not
+    distinguishable from the geometry alone, and telling a user to
+    re-name a boundary that is in fact correct would send them the wrong
+    way.
 
     ``chain`` is :func:`chain_edges`' output, so each row's normal is
     ``perp(t)`` by construction (the invariant pinned by
@@ -415,10 +424,17 @@ def refuse_wrong_side_master(
         f"segments FACE AWAY from the slave — segment ({a}, {b}) has its "
         f"nearest slave node {abs(gap):.6g} BEHIND it (more than "
         f"{_WRONG_SIDE_REACH:g}x its own length {length:.6g}), i.e. on the "
-        f"master's material side, where a contact can never arm. This is "
-        f"the far-side / wrong-edge mistake: the named master boundary is "
-        f"not the one that meets the slave. Name the boundary curve that "
-        f"faces the slave body. (apeGmsh owns this check because the "
+        f"master's material side, where a contact can never arm. Two "
+        f"causes look identical at this distance, so check both: either "
+        f"the named master boundary is not the one that meets the slave "
+        f"(the far-side / wrong-edge mistake — name the boundary curve "
+        f"that faces the slave body), or the initial overlap seeded "
+        f"between the bodies is too large for this mesh, in which case "
+        f"reduce it below {_WRONG_SIDE_REACH:g}x the master segment "
+        f"length ({_WRONG_SIDE_REACH * length:.6g} here) or coarsen the "
+        f"master — the fork's narrow phase stops arming a pair past that "
+        f"reach too, so the deck would not transmit either way. (apeGmsh "
+        f"owns this check because the "
         f"declared-winding orientation it emits BYPASSES the fork's own "
         f"centroid vote — bypassed, the deck would converge on the wrong "
         f"boundary instead of aborting.)")
@@ -457,10 +473,18 @@ def _directed_runs(
 
     while len(used) < n:
         seed = next(e for e in range(n) if e not in used)
+        # `seen` mirrors `cycle_nodes` purely for O(1) membership: the
+        # list is kept because the cycle's start is its min() and the
+        # walk below needs a deterministic one, but scanning the list
+        # each step made a finely-meshed ring quadratic — and a ring is
+        # exactly what wants many segments (a coarse one transmits
+        # nothing, ADR-85 F1).
         cycle_nodes: list[int] = []
+        seen: set[int] = set()
         node = directed[seed][0]
-        while node not in cycle_nodes:
+        while node not in seen:
             cycle_nodes.append(node)
+            seen.add(node)
             node = directed[starts_at[node]][1]
         start = min(cycle_nodes)
         run = []
