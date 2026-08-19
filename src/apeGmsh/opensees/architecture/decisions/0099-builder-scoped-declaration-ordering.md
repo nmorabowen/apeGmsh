@@ -238,6 +238,56 @@ That case needs a **replay of the builder-scoped declarations at bracket
 close**, which is a different mechanism with its own tag-identity questions.
 Future work, not a rider on this ADR.
 
+### How the two deferred paths should actually be fixed (measured, S4)
+
+Recorded because the obvious reading of the paragraph above — that split and
+partitioned are the same problem as staged — is **wrong**, and it cost a
+round of design before an adversarial probe measured it.
+
+- **Partitioned is the EASY case, not a sibling of split.** Default
+  partitioned emit is **one file** with `if {[getPID] == K}` brace guards;
+  the builder-scoped declarations sit global, *outside* every guard. A brace
+  is not a file boundary, so the S2 hoist replicates directly: one extra
+  rank-guard block carrying that rank's gated elements and their nodes,
+  placed above the declarations. Measured exact against the flat reference on
+  both ranks. Note also that the damage is **rank-local** — a rank owning no
+  gated element never executes the bracket and runs fine today, so the
+  current failure is non-deterministic in `np`. Only `per_rank=True` produces
+  the file-per-rank layout that resembles split.
+
+- **Split IS hoistable — you move the `source` line, not the nodes.** The
+  claim that hoisting a gated element would drag its nodes out of its
+  fragment is false: hoisting the gated module's `source` statement above the
+  declarations carries the nodes along *inside* the fragment, which stays
+  byte-identical. Measured: loads clean, matches the flat reference to 12
+  digits. The genuine boundary is narrower — it fails only when a **single
+  module** carries both a gated element and a builder-scoped-dependent
+  element, and even then that module can emit as **two ordered fragments**
+  (`A_gated` / `A_rest`), a shape ADR 0061's `per_rank` writer already
+  produces. So this is layout reuse, not new machinery.
+
+- **Do NOT make the bracket self-healing.** The tempting unification —
+  `close_builder_ndf_bracket` re-declaring what it destroyed — is
+  **rejected on measurement**. Re-declaring a tag that was *not* purged
+  hard-errors for all four kinds (`MapOfTaggedObjects::addComponent - …
+  similar tag exists`), and `ops.model()` under openseespy purges nothing, so
+  on `build('live')` the **second** heal collides — while split and
+  partitioned always carry M ≥ 2 brackets. It would fail on live for exactly
+  the model class it exists to fix, and it converts a deck-ordering property
+  into a backend-conditional one. If a heal is ever wanted for the staged
+  case, scope it there alone, gate it on the deck backends, and gate it on a
+  bracket having actually fired — never as a property of the bracket itself.
+  Even in staged, hoist every gated element that is not stage-activated first;
+  only truly stage-activated ones need the replay.
+
+The replay mechanism itself is **sound where it is needed** (measured): an
+element built before a purge keeps working — `FourNodeQuad` stores
+`(*damping).getCopy()` per integration point, so a damped quad stays damped
+across a purge (0.0239 vs 0.0535 undamped, identical to 6 s.f. before and
+after) — a `timeSeries` already bound to a `pattern` is a private copy that
+re-declaration neither orphans nor mutates, and 100 declare/bracket/replay
+cycles are bit-identical.
+
 Note what that leaves, once S4 lands. S1's write-time refusal is narrower
 than it first reads: it refuses split and partitioned outright, but refuses
 a staged model only when a gated element is **stage-OWNED**
