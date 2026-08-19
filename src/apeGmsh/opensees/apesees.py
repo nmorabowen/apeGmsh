@@ -2831,7 +2831,7 @@ class BuiltModel:
         pre_scoped: list[Primitive] = [
             p for p in pre_element if is_builder_scoped(p)
         ]
-        hoist_by_rank: "dict[int, list[tuple[Element, Any]]]" = {}
+        hoist_by_rank: "dict[int, list[tuple[Element, ElementPlanRows]]]" = {}
         hoisted_spec_ids: set[int] = set()
         hoisted_nodes_by_rank: dict[int, set[int]] = {}
         if pre_scoped:
@@ -2843,10 +2843,11 @@ class BuiltModel:
             ]
             for _idx, _part in enumerate(partitions):
                 _rank = runtime_rank_from_partition_record(_part, _idx)
-                rows = [
-                    (spec, sub) for spec in gated_specs
-                    if (sub := plan_by_rank[id(spec)].get(_rank, []))
-                ]
+                rows: "list[tuple[Element, ElementPlanRows]]" = []
+                for spec in gated_specs:
+                    sub = plan_by_rank[id(spec)].get(_rank)
+                    if sub is not None and len(sub):
+                        rows.append((spec, sub))
                 if rows:
                     hoist_by_rank[_rank] = rows
             if hoist_by_rank:
@@ -2913,13 +2914,13 @@ class BuiltModel:
         # fan-out has not run yet by construction.
         for idx, part in enumerate(partitions):
             rank = runtime_rank_from_partition_record(part, idx)
-            rows = hoist_by_rank.get(rank)
-            if not rows:
+            gated_rows = hoist_by_rank.get(rank)
+            if not gated_rows:
                 continue
             needed = {
                 int(n)
-                for _spec, sub in rows
-                for (_eid, node_tags, _tag) in sub
+                for _spec, _sub in gated_rows
+                for (_eid, node_tags, _tag) in _sub
                 for n in node_tags
             }
             emitted_nodes: set[int] = set()
@@ -2940,12 +2941,12 @@ class BuiltModel:
                         self.ndf,
                     )
                     emitted_nodes.add(nid)
-                for ele_spec, sub in rows:
+                for ele_spec, ele_rows in gated_rows:
                     emit_element_spec_partitioned(
                         spec=ele_spec,
                         emitter=emitter,
                         fem=self.fem,
-                        pre_allocated=sub,
+                        pre_allocated=ele_rows,
                         base_resolver=base_resolver,
                         transf_tag_for_element=None,
                         partition_rank=rank,
@@ -3144,7 +3145,7 @@ class BuiltModel:
                 # emitted here; foreign-side declarations for cross-
                 # partition MP constraints happen in the constraint
                 # pass below (INV-2).
-                _hoisted = hoisted_nodes_by_rank.get(rank, frozenset())
+                _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
                 for nid in sorted(int(n) for n in part.node_ids):
                     # Phase SSI-2.C: stage-bound nodes emit inside
                     # their stage's block, not in the global pre-stage
