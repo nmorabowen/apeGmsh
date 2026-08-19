@@ -65,6 +65,7 @@ inside that kind).
 """
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -92,6 +93,32 @@ if TYPE_CHECKING:
 # this fraction of the model diagonal when Deform.scale is None.
 _DEFORM_FRACTION = 0.12
 
+#: ONE :class:`VisualDataStore` per ``Results`` — the old viewer's
+#: ownership rule (``_visual_store.py``: "one Results -> one director ->
+#: one store"), which the session path lost.
+#:
+#: Realize used to construct a store per CALL. The store caches
+#: full-time slabs precisely so scrubbing reads RAM instead of HDF5, so
+#: a per-call store is a cache that is empty on every frame and dies
+#: with it — and because ``ContourDiagram.attach`` pre-warms it, every
+#: flush paid a full ``(T, N)`` read and threw it away. N panes meant N
+#: copies of the same slab (ADR 0098 A4.1 Bug B).
+#:
+#: Weak keys so the cache dies with the ``Results`` it describes; the
+#: existing ``APEGMSH_VIEWER_CACHE_BYTES`` LRU still bounds each entry.
+_STORES: "weakref.WeakKeyDictionary[Any, VisualDataStore]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def visual_store_for(results: Any) -> VisualDataStore:
+    """The one store for ``results``, created on first use."""
+    store = _STORES.get(results)
+    if store is None:
+        store = VisualDataStore()
+        _STORES[results] = store
+    return store
+
 
 # =====================================================================
 # Result records — the S2 diff surface
@@ -110,6 +137,13 @@ class RealizedLayer:
     key: str
     layer_id: str
     handle: Any
+    #: The emitted layer, and (for layers realize owns rather than a
+    #: diagram) the rows of its SOURCE point array it was built from.
+    #: A cursor-only re-step re-points the layer from those rows
+    #: instead of rebuilding it (A4.2). ``rows=None`` means "all rows,
+    #: in order".
+    layer: Any = None
+    rows: "Optional[np.ndarray]" = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -124,6 +158,9 @@ class NodeTargets:
 
     ids: "np.ndarray"          # (n,) int64 FEM node ids
     coords: "np.ndarray"       # (n, 3) posed world coords
+    #: Rows of ``scene.grid.points`` the coords were read from, so a
+    #: re-step can re-read them at the new pose (A4.2).
+    rows: "Optional[np.ndarray]" = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -139,6 +176,11 @@ class GaussTargets:
     element_ids: "np.ndarray"  # (n,) int64
     gp_indices: "np.ndarray"   # (n,) int64
     coords: "np.ndarray"       # (n, 3) posed world coords
+    #: The slab's natural coords. With ``element_ids`` these are what
+    #: ``compute_global_coords_from_arrays`` needs to re-place the
+    #: cloud at a new pose — the same two arrays ``GaussPointDiagram``
+    #: keeps for its own ``sync_substrate_points`` (A4.2).
+    natural_coords: "Optional[np.ndarray]" = None
 
 
 @dataclass(frozen=True, eq=False)
@@ -160,6 +202,31 @@ class PaneTargets:
 
     nodes: Optional[NodeTargets] = None
     gauss: Optional[GaussTargets] = None
+
+
+@dataclass(frozen=True, eq=False)
+class PaneRestep:
+    """What a cursor-only re-step needs and would otherwise rebuild.
+
+    ADR 0098 A4.2. Everything here is a realize local that used to be
+    dropped on the floor: the scene whose points the pose mutates, the
+    view's ONE cell set as an extracted grid, and the rows that map the
+    second back onto the first.
+
+    ``substrate_rows`` is ``None`` for an unscoped view — there the
+    scoped grid IS ``scene.grid`` and no gather is needed.
+    ``PaneRestep`` being absent from a ``RealizedPane`` is how realize
+    says "I could not record enough; re-realize instead".
+    """
+
+    scene: Any
+    view_data: Any
+    grid: Any
+    substrate_rows: "Optional[np.ndarray]" = None
+    #: The `gauss` SLOT's diagram when it occupies. The button's pick
+    #: targets are read off ITS cloud (INV-MESH-4), so a re-step must
+    #: read the same object rather than re-deriving a probe cloud.
+    gauss_occupant: Any = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +253,177 @@ class RealizedPane:
     diagrams: tuple[Any, ...]
     legend_controller: Optional[LegendController]
     targets: PaneTargets = PaneTargets()
+    #: A4.2 — what a cursor-only flush needs to re-step this pane in
+    #: place. ``None`` means the fast path must refuse.
+    restep: Optional[PaneRestep] = None
+
+
+#: Layer roles realize OWNS — the ones a re-step has to move itself.
+#: Every other key belongs to a slot diagram, which
+#: ``sync_substrate_points`` already moved.
+_REALIZE_OWNED_ROLES = ("substrate", "outlines", "nodes", "gauss", "selection")
+
+
+def can_restep(realized: "Optional[RealizedPane]", view: "MeshView") -> bool:
+    """Whether ``realized`` can be re-stepped in place (A4.4).
+
+    Refusing is free: the caller falls back to a full realize, which is
+    today's cost and today's behaviour. It refuses when realize could
+    not record a row map it would need, and when a slot re-fits its LUT
+    to the DISPLAYED values per step — reproducing that means
+    re-registering the scalar bar, which the fast path does not do.
+    ``contour`` is deliberately not such a kind: its scale comes from
+    the store's whole-history limits and is fixed at attach.
+    """
+    if realized is None or realized.restep is None:
+        return False
+    for diagram in realized.diagrams:
+        spec = getattr(diagram, "spec", None)
+        if spec is None:
+            return False
+        if (
+            getattr(spec, "kind", None) in _DEFAULT_LUT_KINDS
+            and getattr(spec.style, "clim", None) is None
+        ):
+            return False
+    if view.deform is None:
+        # Nothing geometric moves, so no row map is needed at all.
+        return True
+    rs = realized.restep
+    if rs.grid is not rs.scene.grid and rs.substrate_rows is None:
+        # A scoped grid whose source rows were not recorded cannot be
+        # re-pointed from the posed scene.
+        return False
+    for entry in realized.layers:
+        role = entry.key.split(":", 1)[-1]
+        if role == "outlines" and entry.rows is None:
+            return False
+        if role == "nodes" and entry.rows is None:
+            return False
+    return True
+
+
+def restep_pane(
+    session: "ResultsSession",
+    view: "MeshView",
+    realized: "RealizedPane",
+    backend: Any,
+) -> "RealizedPane":
+    """Move ONE already-realized pane to a new instant, in place (A4.2).
+
+    The cursor moved and nothing else did, so nothing is torn down and
+    nothing is rebuilt: the diagrams take the new step through
+    ``update_to_step`` (the call ``RealizedPane.diagrams`` was added
+    for), the pose is recomposed onto the scene, and the layers realize
+    owns are re-pointed from the row maps it recorded. Same
+    step-then-deform order as the slot loop in ``_realize_mesh``, so
+    the picture is the one a full realize would have produced — which
+    the parity oracle asserts rather than assumes.
+
+    Raises on anything unexpected; the caller reports and falls back to
+    a full realize in the same flush, because a HALF re-stepped pane is
+    the stale-picture failure this amendment exists to avoid.
+    """
+    from dataclasses import replace
+
+    results = _require_results(session)
+    rs = realized.restep
+    if rs is None:
+        raise RuntimeError("realize recorded no re-step context")
+    stage_id, step = _resolve_instant(session, view, results)
+    posed = view.deform is not None
+
+    if posed:
+        _apply_pose(view, results, rs.scene, stage_id, step)
+    for diagram in realized.diagrams:
+        diagram.update_to_step(step)
+        if posed:
+            diagram.sync_substrate_points(rs.scene.grid.points, rs.scene)
+
+    if not posed:
+        # The geometry did not move, so every layer realize owns and
+        # every pick target is still exactly right at this instant.
+        return realized
+
+    scene_pts = np.asarray(rs.scene.grid.points)
+    if rs.substrate_rows is not None:
+        # The scoped grid is an extracted COPY; follow the posed scene.
+        rs.grid.points = scene_pts[rs.substrate_rows]
+    grid_pts = np.asarray(rs.grid.points)
+
+    targets = _restep_targets(realized.targets, rs, scene_pts)
+
+    layers: list[RealizedLayer] = []
+    for entry in realized.layers:
+        role = entry.key.split(":", 1)[-1]
+        if role not in _REALIZE_OWNED_ROLES or entry.layer is None:
+            layers.append(entry)          # a diagram owns it; already moved
+            continue
+        if role == "substrate":
+            layer = replace(entry.layer, points=PointSet(grid_pts))
+        elif role == "outlines":
+            layer = replace(
+                entry.layer, points=PointSet(grid_pts[entry.rows]),
+            )
+        elif role == "nodes" and targets.nodes is not None:
+            layer = _nodes_layer(view.id, targets.nodes)
+        elif role == "gauss" and targets.gauss is not None:
+            layer = _gauss_layer(view.id, targets.gauss)
+        elif role == "selection":
+            layer = _selection_layer(view.id, session.selection, targets)
+        else:
+            layers.append(entry)
+            continue
+        if layer is None:
+            layers.append(entry)
+            continue
+        backend.update_layer(entry.handle, layer)
+        layers.append(replace(entry, layer=layer))
+
+    return replace(realized, layers=tuple(layers), targets=targets)
+
+
+def _restep_targets(
+    targets: "PaneTargets", rs: "PaneRestep", scene_pts: "np.ndarray",
+) -> "PaneTargets":
+    """The §8 pick targets at the new pose.
+
+    They must move with the picture or a click addresses where a point
+    USED to be — ``PanePick`` and the window both read them off
+    ``reconciler.realized``.
+    """
+    nodes = targets.nodes
+    if nodes is not None and nodes.rows is not None:
+        nodes = NodeTargets(
+            ids=nodes.ids, coords=scene_pts[nodes.rows], rows=nodes.rows,
+        )
+    gauss = targets.gauss
+    if gauss is not None:
+        if rs.gauss_occupant is not None:
+            # The slot drew this cloud and its own sync just posed it —
+            # read it back so the targets cannot diverge from it.
+            gauss = _gauss_targets_of(rs.gauss_occupant) or gauss
+        elif gauss.natural_coords is not None:
+            from apeGmsh.results._gauss_world_coords import (
+                compute_global_coords_from_arrays,
+            )
+
+            coords = np.asarray(
+                compute_global_coords_from_arrays(
+                    gauss.element_ids,
+                    gauss.natural_coords,
+                    rs.view_data,
+                    node_coords_override=scene_pts,
+                ),
+                dtype=np.float64,
+            )
+            gauss = GaussTargets(
+                element_ids=gauss.element_ids,
+                gp_indices=gauss.gp_indices,
+                coords=coords,
+                natural_coords=gauss.natural_coords,
+            )
+    return PaneTargets(nodes=nodes, gauss=gauss)
 
 
 # =====================================================================
@@ -300,7 +538,7 @@ def _realize_mesh(
     layers: list[RealizedLayer] = []
     diagrams: list[Any] = []
     slot_diagrams: dict[str, Any] = {}
-    store = VisualDataStore()
+    store = visual_store_for(results)
 
     # Resolve every occupied slot to its kind + spec first: the
     # substrate decision below needs the kinds, and routing a slot
@@ -324,7 +562,7 @@ def _realize_mesh(
     # nothing opaque and coincident occupies a slot — generalized from
     # ``Diagram.occludes_substrate`` (contour and sand both do).
     occluded = any(kind_id in OCCLUDING_KINDS for _c, kind_id, _s in resolved)
-    grid = _scoped_grid(scene, scoped)
+    grid, substrate_rows = _scoped_grid(scene, scoped)
     if not occluded:
         substrate = _substrate_layer(view.id, grid, view.style.mesh)
         handle = backend.add_layer(substrate)
@@ -332,6 +570,7 @@ def _realize_mesh(
             key=f"{view.id}:substrate",
             layer_id=substrate.layer_id,
             handle=handle,
+            layer=substrate,
         ))
 
     for category, kind_id, spec in resolved:
@@ -375,12 +614,14 @@ def _realize_mesh(
         view, scene, grid, scoped, view_data, results, stage_id,
         slot_diagrams,
     )
-    for role, layer in style_layers:
+    for role, layer, rows in style_layers:
         handle = backend.add_layer(layer)
         layers.append(RealizedLayer(
             key=f"{view.id}:{role}",
             layer_id=layer.layer_id,
             handle=handle,
+            layer=layer,
+            rows=rows,
         ))
 
     # §8 — the selection, on THIS pane's pose and cell set. Emitted
@@ -392,6 +633,7 @@ def _realize_mesh(
             key=f"{view.id}:selection",
             layer_id=highlight.layer_id,
             handle=handle,
+            layer=highlight,
         ))
 
     bar_keys, legend_controller = _realize_legends(
@@ -405,6 +647,13 @@ def _realize_mesh(
         diagrams=tuple(diagrams),
         legend_controller=legend_controller,
         targets=targets,
+        restep=PaneRestep(
+            scene=scene,
+            view_data=view_data,
+            grid=grid,
+            substrate_rows=substrate_rows,
+            gauss_occupant=slot_diagrams.get("gauss"),
+        ),
     )
 
 
@@ -682,7 +931,9 @@ def _scoped_grid(scene: "FEMSceneData", scoped: "ScopedSet") -> Any:
     """
     grid = scene.grid
     if scoped.is_unscoped:
-        return grid
+        # The cell set IS the whole mesh: no extraction, no gather, and
+        # the grid the layers read is the one the pose mutates.
+        return grid, None
     cells = np.fromiter(
         (
             scene.element_id_to_cell.get(int(e), -1)
@@ -697,7 +948,15 @@ def _scoped_grid(scene: "FEMSceneData", scoped: "ScopedSet") -> Any:
             "The view's scope selects no cell of the analysis mesh "
             "— nothing to draw."
         )
-    return grid.extract_cells(cells)
+    sub_grid = grid.extract_cells(cells)
+    # ``extract_cells`` stamps the source point rows; they are what
+    # lets a re-step re-point this COPY from the posed scene grid
+    # instead of extracting again (A4.2). Absent (older VTK, an
+    # extraction that dropped it) -> no re-step for this pane.
+    rows = sub_grid.point_data.get("vtkOriginalPointIds")
+    return sub_grid, (
+        None if rows is None else np.asarray(rows, dtype=np.int64)
+    )
 
 
 def _palette() -> Any:
@@ -775,7 +1034,7 @@ def _style_and_targets(
     results: "Results",
     stage_id: str,
     slot_diagrams: "dict[str, Any]",
-) -> "tuple[list[tuple[str, Any]], PaneTargets]":
+) -> "tuple[list[tuple[str, Any, Any]], PaneTargets]":
     """``(role, layer)`` for every ON style button that draws its own
     layer, plus the §8 pick targets those buttons put on screen.
 
@@ -783,17 +1042,17 @@ def _style_and_targets(
     Gauss are: their glyph clouds ARE the pick targets, so the
     addresses and the layer come off ONE computation of each cloud.
     """
-    out: list[tuple[str, Any]] = []
+    out: list[tuple[str, Any, Any]] = []
     nodes = gauss = None
     style = view.style
     if style.outlines:
-        layer = _outlines_layer(view.id, grid)
+        layer, rows = _outlines_layer(view.id, grid)
         if layer is not None:
-            out.append(("outlines", layer))
+            out.append(("outlines", layer, rows))
     if style.nodes:
         nodes = _node_targets(scene, scoped)
         if nodes is not None:
-            out.append(("nodes", _nodes_layer(view.id, nodes)))
+            out.append(("nodes", _nodes_layer(view.id, nodes), nodes.rows))
     if style.gauss:
         # "They must not draw two clouds" (INV-MESH-4): when the `gauss`
         # SLOT is occupied it already paints these points, with values
@@ -814,17 +1073,32 @@ def _style_and_targets(
                 posed=view.deform is not None,
             )
             if gauss is not None:
-                out.append(("gauss", _gauss_layer(view.id, gauss)))
+                out.append(("gauss", _gauss_layer(view.id, gauss), None))
     return out, PaneTargets(nodes=nodes, gauss=gauss)
 
 
-def _outlines_layer(pane_id: str, grid: Any) -> "Optional[MeshLayer]":
+#: Point-data tag used to carry grid rows through the two extraction
+#: hops the outline takes. Same device as the backend's
+#: ``_OUTLINE_ROW_ARRAY`` (ADR 0089 D4) — one tag on the GRID survives
+#: both ``_extract_surface_fast`` and ``extract_feature_edges``, so the
+#: edges come back knowing which grid point each of them came from.
+_OUTLINE_ROWS = "_apegmsh_outline_rows"
+
+
+def _outlines_layer(
+    pane_id: str, grid: Any,
+) -> "tuple[Optional[MeshLayer], Optional[np.ndarray]]":
     """Element / feature boundaries of the cell set (ADR 0089 D1).
 
-    ``None`` when the cell set has no such edges — a 1-D beam model
-    whose surface is already lines. An empty layer would be an actor
-    that draws nothing; the missing key is what tells a client the
-    button had nothing to draw.
+    Returns ``(layer, rows)`` where ``rows`` maps each outline point
+    back to its row in ``grid`` — what a re-step scatters the posed
+    points onto, exactly as the old viewer's DEFORM pump does through
+    ``rs.outline_rows``.
+
+    ``(None, None)`` when the cell set has no such edges — a 1-D beam
+    model whose surface is already lines. An empty layer would be an
+    actor that draws nothing; the missing key is what tells a client
+    the button had nothing to draw.
     """
     from ..scene.mesh_scene import _extract_surface_fast
     from ..scene_ir import CellBlocks
@@ -834,21 +1108,35 @@ def _outlines_layer(pane_id: str, grid: Any) -> "Optional[MeshLayer]":
         # FastMode): the conservative path allocates a point-to-cell
         # hash at ~96 B per point, which is ~466 MB at 607k points —
         # and this now runs once per pane, per flush.
-        surface = _extract_surface_fast(grid)
-        edges = surface.extract_feature_edges(
-            feature_angle=_outline_feature_angle(),
-            boundary_edges=True,
-            feature_edges=True,
-            manifold_edges=False,
-            non_manifold_edges=False,
+        grid.point_data[_OUTLINE_ROWS] = np.arange(
+            grid.n_points, dtype=np.int64,
         )
+        try:
+            surface = _extract_surface_fast(grid)
+            edges = surface.extract_feature_edges(
+                feature_angle=_outline_feature_angle(),
+                boundary_edges=True,
+                feature_edges=True,
+                manifold_edges=False,
+                non_manifold_edges=False,
+            )
+        finally:
+            # The tag served the extraction only. Leaving it on would
+            # put a stray array on the SCENE grid (unscoped: this grid
+            # IS scene.grid) that every later extraction would copy.
+            try:
+                del grid.point_data[_OUTLINE_ROWS]
+            except KeyError:
+                pass
     except Exception:
-        return None
+        return None, None
     if edges is None or edges.n_points == 0 or edges.n_lines == 0:
-        return None
+        return None, None
     conn = _two_point_lines(edges)
     if conn is None:
-        return None
+        return None, None
+    rows = edges.point_data.get(_OUTLINE_ROWS)
+    rows = None if rows is None else np.asarray(rows, dtype=np.int64).copy()
     palette = _palette()
     color = getattr(palette, "outline_color", None) or "#1a1a1a"
     return MeshLayer(
@@ -859,7 +1147,7 @@ def _outlines_layer(pane_id: str, grid: Any) -> "Optional[MeshLayer]":
         wireframe=True,
         line_width=2.0,
         pickable=False,
-    )
+    ), rows
 
 
 def _two_point_lines(edges: Any) -> "Optional[np.ndarray]":
@@ -916,7 +1204,9 @@ def _node_targets(
         rows = rows[rows >= 0]
     if rows.size == 0:
         return None
-    return NodeTargets(ids=node_ids[rows], coords=points[rows])
+    return NodeTargets(
+        ids=node_ids[rows], coords=points[rows], rows=rows,
+    )
 
 
 def _nodes_layer(pane_id: str, targets: "NodeTargets") -> "MeshLayer":
@@ -1009,6 +1299,7 @@ def _gauss_targets(
         element_ids=element_index,
         gp_indices=gp_index_within_element(element_index),
         coords=coords,
+        natural_coords=np.asarray(slab.natural_coords, dtype=np.float64),
     )
 
 

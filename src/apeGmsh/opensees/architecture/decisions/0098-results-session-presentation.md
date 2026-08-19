@@ -1492,3 +1492,193 @@ turns the resulting `NameError` into a silent no-op.
 | MDI subwindows | Still rejected on A1's original UX grounds; docks are not MDI and give tabbing and persistence for free |
 | Leave it broken and document it | The window is the product; a 640×480 cluster painted over the docks is not a viewer |
 
+## Amendment 4 (2026-08-19) — a time change stops rebuilding the pane
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog and
+the rejected-alternatives table all stand. Amendments 1–3 are untouched,
+and this one never reaches the IR: no session record changes, `realize()`
+still exists and still produces exactly what it produced.
+
+This amendment **lifts the one-shot restriction** `_reconciler.py` froze
+in S2 — "update-in-place by key is deliberately NOT the v1 protocol" —
+for exactly one case: the instant moved and nothing else did. That
+restriction was the right call with no evidence; there is evidence now.
+
+### A4.1 Evidence — measured on the bench, with a harness that stays
+
+`internal_docs/profiling/results_session/profile_session.py` drives a
+deterministic gesture workload against `ssi_frame_wall`,
+`c001_baseline_small`. Every number below is from it, `--no-profile`
+(cProfile inflates wall clock ~1.4x):
+
+| gesture | mean ms | p50 | p95 |
+|---|---:|---:|---:|
+| **scrub** | **405** | 401 | 425 |
+| pane add+close | 336 | 332 | 359 |
+| slot fill/clear | 166 | 118 | 285 |
+| scope flip | 57 | 27 | 173 |
+| camera orbit | 18 | 16 | 37 |
+
+The scrubber defaults to 30 fps — 33 ms. Scrub is **12x over budget**,
+and it is not the GPU: VTK `Render` is 7 ms/step and an orbit is 18 ms.
+
+Pane count is not the driver either. One pane is already most of it:
+
+| panes | scrub mean ms |
+|---|---:|
+| 1 (contour + deform + clip) | 284 |
+| 2 (+ line diagram) | 399 |
+| 3 (+ history plot) | 408 |
+
+The plot pane costs **9 ms** — `PlotReconciler`'s cheap cursor path
+working exactly as designed, and the existence proof for this amendment.
+
+Attribution, 10 steps on one pane with a Gauss contour:
+
+| | cum s | ncalls | |
+|---|---:|---:|---|
+| `_reconciler._flush` | 3.86 | 20 | the pump |
+| ↳ `realize_pane` / `_realize_mesh` | 3.27 | 10 | once per step — correct |
+| ↳↳ `extrapolate_gauss_slab_to_nodes` | 2.43 | **20** | twice per step |
+| ↳↳↳ `extrapolate_gauss_slab_per_element` | 1.61 | 20 | 164 020 `np.broadcast_to` |
+| `_contour.attach` | 1.60 | 10 | a full re-attach every step |
+| `_contour.update_to_step` | 1.25 | 10 | |
+| `_reconciler._teardown` | 0.47 | 10 | |
+| VTK `Render` | 0.74 | 80 | 7 ms/step |
+
+**Two of the three causes are plain bugs, not design.**
+
+**Bug A — the Gauss accumulator is dead on every unscoped view.**
+`_specs._scope_ids` returns `None` for an unscoped view, meaning *all
+elements*. `_contour._build_gauss_state` reads that `None` as *nothing to
+build* and returns early. So the default whole-mesh pane gets no
+`GaussToNodeAccumulator` — the per-element Python loop above — and no
+`_gauss_gp_mask`, which makes `_visual_gauss_step_subslab` bail on the
+same guard and re-read HDF5 every step instead of using the RAM slab.
+Both halves of the optimisation that commit was written to deliver are
+inert on the common path. `tests/test_gauss_extrapolation.py` covers the
+accumulator in isolation; nothing asserted that a contour ever builds
+one. **This is in `viewers/diagrams/_contour.py`, shared with the old
+viewer — an unscoped Gauss contour is slow there too.**
+
+**Bug B — a fresh `VisualDataStore` per flush.** `_realize_mesh`
+constructs one, so a cache whose stated purpose is 30 fps scrubbing from
+RAM is empty on every step and dies with the call — and because
+`ContourDiagram.attach` pre-warms it, every flush pays a full
+`(T, N_gp)` HDF5 read and throws it away. The old viewer owns exactly one
+on the director for the whole session. N panes currently mean N stores of
+the same slab.
+
+**Cause C — the design.** `_pane_signature` is one flat tuple with the
+instant inside it, so any step change fails equality; `_flush` then tears
+down every layer and scalar bar and re-realizes, which rebuilds
+`build_fem_scene`, `ViewerData.from_fem`, the scoped grid, and a
+brand-new diagram per slot whose `attach()` redoes submesh extraction,
+`isin` and the accumulator build — *before* calling `update_to_step`.
+
+### A4.2 Decision
+
+**The pane signature splits in two, and a cursor-only change re-steps
+instead of re-realizing.**
+
+    signature = (structure, cursor)
+    structure = everything the picture is built FROM
+    cursor    = session.effective_instant(pane)
+
+* `structure` equal, `cursor` moved **within one stage**, not forced, and
+  the pane re-steppable → drive `update_to_step` through
+  `RealizedPane.diagrams`, re-pose in place, re-point the realize-owned
+  layers from row maps realize recorded, refresh the pick targets.
+  No teardown, no `realize_pane`, no actor churn.
+* Anything else → today's one-shot path, unchanged.
+
+This is not a new idea in this codebase. It is what `PlotReconciler`
+already does for plots (`_chart.py`), what the old viewer's `pump_step`
+did for every diagram, and what `RealizedPane.diagrams` was added to
+allow — `_reconciler.py` names this exact fix as owed work.
+
+`deform` stays in `structure`: a scale change is rare and a full realize
+is the conservative answer. The selection term stays in `structure` too,
+so the S4-1 selection-repaint defect stays fixed.
+
+### A4.3 The invariants the fast path must preserve
+
+Each one names the oracle that holds it. A fast path without these is a
+stale-picture generator, which is precisely what the one-shot rule was
+protecting against.
+
+1. **Parity.** The layers the fast path leaves behind are identical to
+   what a forced full realize produces at the same instant. Oracle: scrub
+   several steps, snapshot every layer's points and fields, then
+   `schedule_forced()` at the same instant and compare. The oracle is
+   itself mutation-tested — stub the re-step to a no-op and the parity
+   body must fail.
+2. **Criterion 12 both halves.** A step-only tick calls `realize_pane`
+   **zero** times; a theme change still costs every pane a full realize
+   (`_forced` bypasses the fast branch entirely).
+3. **One render per gesture.** Structural, not asserted: both branches
+   fall through to the single existing `render()` call.
+4. **No scalar-bar churn.** `backend.scalar_bars` is identical before and
+   after a scrub — the contour's clim comes from the store's
+   whole-history limits and is fixed at attach, so tearing bars down per
+   step was never buying correctness.
+5. **Pick targets stay pose-current.** `realized.targets` is what
+   `PanePick` and the window read; after a scrub with a pose it must
+   equal the posed coordinates.
+
+### A4.4 When the fast path refuses
+
+Refusing is free — it costs today's time and today's behaviour. It
+refuses when:
+
+* realize could not record a row map for a layer it owns;
+* the **stage** changed (the cached arrays are a function of the stage —
+  the same limit `PlotReconciler._same_stage` already enforces);
+* the flush is `_forced` (theme / density);
+* an occupied slot's kind re-fits its LUT to the displayed values per
+  step (`gauss_marker`, `vector_glyph`, `principal_glyph`, `sand`, with
+  no explicit `clim`) — reproducing that means re-registering the bar,
+  which this amendment does not take on. `contour` is deliberately not in
+  that set, so the hot case is unaffected;
+* the re-step raises — it reports and **falls through to the full realize
+  in the same flush**, never leaving a half-stepped picture.
+
+### A4.5 Consequences
+
+- `_reconciler.py`'s "update-in-place is not the v1 protocol" docstring is
+  restated: it is the protocol for a cursor-only change and nothing else.
+- **Bug A's fix changes the old viewer too**, and for the better — it is
+  the same `ContourDiagram`. It is covered by a bit-identical parity test
+  against the fallback path rather than by assertion.
+- **Bug B's fix holds cached slabs for the life of the `Results`**, which
+  is the old viewer's behaviour; the `APEGMSH_VIEWER_CACHE_BYTES` LRU
+  already exists for the models where that matters.
+- `NodeTargets` / `GaussTargets` gain the row maps realize already
+  computes and discarded; `RealizedPane` gains one `restep` carrier. All
+  additive.
+- **Achieved** (same bench, same harness): one pane **294 -> 18 ms**,
+  three panes **405 -> 74 ms** — 16x and 5.5x, under the 33 ms budget.
+  The Gauss and nodal cases converge at 18 ms because with no re-attach
+  per step the extrapolation is paid once and never again. The
+  structural gestures are deliberately unchanged (`slot` 148, `scope`
+  60, `pane` 325): they take the full path, as A4.2 says they should.
+- One visible consequence of ordering the store warm-up before the clim:
+  a Gauss contour on the session path now carries the WHOLE-HISTORY
+  colour scale rather than one fitted to step 0. That is what the old
+  viewer does and what S1-A P10 intended, and it is what makes a scrub
+  comparable frame to frame — but it does change how an existing pane
+  looks, and a single step reads flatter against the wider scale.
+- The profiling harness is part of the deliverable, not scaffolding:
+  `internal_docs/profiling/results_session/` keeps the workload and the
+  measured trajectory so the next regression is caught by a number rather
+  than by feel.
+
+### A4.6 Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Fix only Bugs A and B | Gets ~294 → ~90-120 ms. Real, cheap, and still 3x over budget: the per-step teardown-and-rebuild is the floor |
+| Cache `realize_pane` on the signature | Memoizes the wrong thing — the output is layers already pushed to a backend, and the cost is the rebuild, not the diffing |
+| Move the whole pane onto the old `ResultsDirector` | Reinstates the director the session was designed to remove (§1); the parts worth having are the store and `update_to_step`, and both are reachable without it |
+| Throttle the scrubber to what the renderer can do | Hides the defect and makes playback lie about time |
+| One shared diagram set across panes | Panes are independent by construction (criterion 11); sharing them re-creates the coupling N panes exist to avoid |
