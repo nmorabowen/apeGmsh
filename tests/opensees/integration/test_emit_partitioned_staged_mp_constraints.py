@@ -292,7 +292,7 @@ def test_constraint_only_stage_emits_embedded(tmp_path) -> None:
     ), f"stage 2 rank 0 lost the stage-claimed embed: {rank0}"
     # The constrained node lives on rank 1 — rank 0 must ghost-declare it
     # BEFORE the element that references it (ADR 0027 INV-2 ordering).
-    ghost = rank0.index("node 5 0.5 0.5 0.0")
+    ghost = rank0.index("node 5 0.5 0.5")   # ndm=2: no padded z
     ele = next(
         i for i, ln in enumerate(rank0)
         if ln.startswith("element ASDEmbeddedNodeElement")
@@ -397,7 +397,7 @@ def test_constraint_only_stage_emits_tied_contact(tmp_path) -> None:
         f"both tied-contact slaves must emit on the host rank; got {rank0}"
     )
     # Both slaves live on rank 1 → ghost-declared on the host rank.
-    assert "node 5 0.5 0.5 0.0" in rank0 and "node 6 2.0 2.0 0.0" in rank0
+    assert "node 5 0.5 0.5" in rank0 and "node 6 2.0 2.0" in rank0
 
 
 # ===========================================================================

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Sequence
 
-from .base import StrategySpec
+from .base import StrategySpec, trim_coords_to_ndm
 
 
 __all__ = ["PyEmitter"]
@@ -170,9 +170,14 @@ class PyEmitter:
 
     # -- Model ---------------------------------------------------------------
 
+    #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
+    #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
+    _model_ndm: "int | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
         # openseespy.model takes positional + flag-style args:
         # ops.model('basic', '-ndm', 3, '-ndf', 6).
+        self._model_ndm = ndm
         self._lines.append(
             _ops_call("model", "basic", "-ndm", ndm, "-ndf", ndf)
         )
@@ -180,21 +185,30 @@ class PyEmitter:
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        # A padded coordinate would swallow the -ndf flag below (and
+        # -mass) in a 2-D deck — see trim_coords_to_ndm.
+        coords = trim_coords_to_ndm(coords, self._model_ndm)
         # Fast path for the dominant deck band — mirrors the
         # TclEmitter's: plain-int tag + plain-float coords render via a
         # single f-string, byte-identical to the generic path.
         if ndf is None:
-            if tag.__class__ is int and len(coords) == 3:
-                x, y, z = coords
-                if (
-                    x.__class__ is float
-                    and y.__class__ is float
-                    and z.__class__ is float
-                ):
-                    self._lines.append(
-                        f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
-                    )
-                    return
+            if tag.__class__ is int:
+                if len(coords) == 3:
+                    x, y, z = coords
+                    if (
+                        x.__class__ is float
+                        and y.__class__ is float
+                        and z.__class__ is float
+                    ):
+                        self._lines.append(
+                            f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
+                        )
+                        return
+                elif len(coords) == 2:
+                    x, y = coords
+                    if x.__class__ is float and y.__class__ is float:
+                        self._lines.append(f"ops.node({tag}, {x!r}, {y!r})")
+                        return
             self._lines.append(_ops_call("node", tag, *coords))
         else:
             # Per-node ``-ndf`` override for mixed-ndf models (e.g. 6-DOF

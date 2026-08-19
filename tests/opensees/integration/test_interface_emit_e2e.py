@@ -187,10 +187,11 @@ def test_mixed_ndf_flat_deck_phantom_equaldof_materials_zerolength(tmp_path):
 
     # …and the per-pair block is ordered phantom → equalDOF → mats → element.
     for rec in recs:
+        # ndm=2 deck: the emitter trims the broker's padded z, which
+        # would otherwise swallow the -ndf flag.
         i_node = lines.index(f"node {int(rec.phantom_node)} "
                              f"{float(rec.phantom_coords[0])!r} "
-                             f"{float(rec.phantom_coords[1])!r} "
-                             f"{float(rec.phantom_coords[2])!r} -ndf 2")
+                             f"{float(rec.phantom_coords[1])!r} -ndf 2")
         assert lines[i_node - 1] == "# RockLiner"
         assert lines[i_node + 1].startswith("equalDOF ")
         assert lines[i_node + 2].startswith("uniaxialMaterial ENT ")

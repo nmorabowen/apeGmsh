@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
+from .base import trim_coords_to_ndm
+
 if TYPE_CHECKING:
     from .base import StrategySpec
 
@@ -28,12 +30,18 @@ class RecordingEmitter:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     # -- Model -----------------------------------------------------------
+    #: Mirrors the concrete emitters so a parity sweep compares like
+    #: with like — see ``trim_coords_to_ndm``.
+    _model_ndm: "int | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
+        self._model_ndm = ndm
         self.calls.append(("model", (), {"ndm": ndm, "ndf": ndf}))
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        coords = trim_coords_to_ndm(coords, self._model_ndm)
         kwargs: dict[str, Any] = {}
         if ndf is not None:
             kwargs["ndf"] = ndf

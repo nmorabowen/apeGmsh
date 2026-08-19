@@ -29,7 +29,7 @@ from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
 )
 
-from .base import StrategySpec
+from .base import StrategySpec, trim_coords_to_ndm
 
 
 __all__ = ["PartitionSpan", "TclEmitter"]
@@ -484,27 +484,41 @@ class TclEmitter:
 
     # -- Model ---------------------------------------------------------------
 
+    #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
+    #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
+    _model_ndm: "int | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
+        self._model_ndm = ndm
         self._lines.append(f"model BasicBuilder -ndm {ndm} -ndf {ndf}")
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        # A padded coordinate would swallow the -ndf flag below (and
+        # -mass) in a 2-D deck — see trim_coords_to_ndm.
+        coords = trim_coords_to_ndm(coords, self._model_ndm)
         # Fast path for the dominant deck band (one line per mesh
         # node): plain-int tag + plain-float coords render via a single
         # f-string. ``{x!r}`` on an exact float is exactly what _join
         # emits, so the output is byte-identical; anything else falls
         # through to the generic path.
         if ndf is None:
-            if tag.__class__ is int and len(coords) == 3:
-                x, y, z = coords
-                if (
-                    x.__class__ is float
-                    and y.__class__ is float
-                    and z.__class__ is float
-                ):
-                    self._lines.append(f"node {tag} {x!r} {y!r} {z!r}")
-                    return
+            if tag.__class__ is int:
+                if len(coords) == 3:
+                    x, y, z = coords
+                    if (
+                        x.__class__ is float
+                        and y.__class__ is float
+                        and z.__class__ is float
+                    ):
+                        self._lines.append(f"node {tag} {x!r} {y!r} {z!r}")
+                        return
+                elif len(coords) == 2:
+                    x, y = coords
+                    if x.__class__ is float and y.__class__ is float:
+                        self._lines.append(f"node {tag} {x!r} {y!r}")
+                        return
             self._lines.append(_join("node", tag, *coords))
         else:
             # Per-node ``-ndf`` override (used for 6-DOF phantom nodes in
