@@ -3545,6 +3545,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-capture-route-resolves-element_class_name-again" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8442,6 +8453,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)
       
     </span>
   </a>
@@ -13360,6 +13382,40 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5">FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)<a class="headerlink" href="#fixed-partitioned-emit-hoists-its-gated-element-blocks-too-adr-0099-s5" title="Permanent link">&para;</a></h3>
+<p>ADR 0099 S2 fixed the flat path and made every other path fail loud
+(INV-4).  Partitioned emit is now fixed rather than refused, because it
+is not the hard case it read as: the default partitioned deck is ONE
+file with <code>if {[getPID] == K}</code> <strong>brace</strong> guards and the builder-scoped
+declarations global, outside every guard.  A brace is not a file
+boundary, so the flat hoist replicates directly — one extra rank-guard
+block per rank that owns a gated element, carrying the nodes those
+elements need and then the bracketed blocks, placed above the
+declarations.</p>
+<p>The damage this removes was <strong>rank-local</strong>, which is what made it
+dangerous: a rank owning no gated element never executes the bracket and
+ran fine, so the same model passed on 2 ranks and died on 4.  Measured
+on Ladruno <code>25a0647f</code> with a mixed-ndf 2-rank deck run once per rank —
+before, rank 0 died at <code>pattern Plain</code> (<code>getTimeSeries … none found
+with tag: 1</code>) while rank 1 completed; with no pattern, rank 0 instead
+ran to the end reporting an <strong>undamped</strong> answer, because <code>region
+-damp</code> only warns.  After, both ranks build every object and match the
+flat reference to every printed digit.</p>
+<p>The hoist is gated on BOTH conditions it needs — at least one
+rank-OWNED gated element, and at least one builder-scoped declaration to
+lose — so every other partitioned deck is byte-identical to before
+(verified on three variants).  Element tags are untouched:
+<code>allocate_element_tags</code> moves above the pre-element pass so the
+hoisted pass has a plan, and <code>TagAllocator</code> is per-kind.</p>
+<p><code>per_rank=True</code> (ADR 0061) keeps the refusal: it slices each rank
+guard into its own FILE, which is the <code>split</code> problem — the fragment's
+<code>source</code> line has to move, not its element lines.  It is applied
+around <code>BuiltModel.emit</code>, so it reaches the INV-4 gate as an emitter
+attribute (<code>per_rank_fragments</code>) and carries its own path token.
+Stage-OWNED gated elements are still refused on both paths.</p>
+<p><code>repros/repro4_builder_scoped_wipe.py</code> gains two arms that run decks
+on the binary rather than only reading them: <code>--partitioned</code> (this
+slice, once per rank) and <code>--h5</code> (the S4a replay, owed since S4c).</p>
 <h3 id="fixed-the-capture-route-resolves-element_class_name-again">FIXED — the capture route resolves <code>element_class_name</code> again<a class="headerlink" href="#fixed-the-capture-route-resolves-element_class_name-again" title="Permanent link">&para;</a></h3>
 <p><code>DomainCaptureSpec._lookup_class_hint_for_pgs</code> read
 <code>self._opensees._elem_assignments</code>, an attribute of the legacy
