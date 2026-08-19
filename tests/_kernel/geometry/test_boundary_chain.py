@@ -21,7 +21,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh._kernel.geometry._boundary_chain import chain_edges, edge_frames
+from apeGmsh._kernel.geometry._boundary_chain import (
+    chain_edges, domain_frames, edge_frames,
+)
 
 
 class _Patch:
@@ -41,14 +43,19 @@ class _Patch:
         self.elem_tags.append(int(tag))
         self.elem_nodes.append([int(n) for n in nodes])
 
-    def chain(self, edges=None, verb="contact", label=""):
+    def chain(self, edges=None, verb="contact", label="", role="master",
+              frames=None):
         rows = np.asarray(edges if edges is not None else self.edges, dtype=int)
         m_set = {int(t) for t in rows.ravel()}
         data = edge_frames(
             rows, m_set, self.coords, self.elem_tags, self.elem_nodes,
-            label, verb=verb,
+            label, verb=verb, role=role, frames=frames,
         )
-        return chain_edges(data, self.coords, label, verb=verb)
+        return chain_edges(data, self.coords, label, verb=verb, role=role)
+
+    def frames(self, label="", verb="contact", role="master"):
+        return domain_frames(self.elem_tags, self.elem_nodes, self.coords,
+                             label, verb=verb, role=role)
 
 
 def _strip(n_seg: int = 3) -> _Patch:
@@ -403,3 +410,151 @@ def test_wrong_side_guard_tolerates_a_seeded_initial_penetration():
 
 def test_wrong_side_guard_is_a_no_op_without_slaves():
     assert _guard(_strip(3), []) is None
+
+
+# =====================================================================
+# role= — the 2D mortar lane walks the SLAVE side through the same code
+# =====================================================================
+#
+# `-slave-segments 2` reuses this walk, so every refusal has to name the
+# surface the user actually mis-declared. A message saying "master" on a
+# slave chain points the reader at the wrong curve, and a green suite that
+# only pins ONE of the twenty substituted strings would not notice a
+# partial revert.
+
+
+def _slave_msg(build) -> str:
+    """The rendered refusal of *build* under ``role="slave"``."""
+    with pytest.raises((ValueError, NotImplementedError)) as exc:
+        build()
+    return str(exc.value)
+
+
+def test_edge_frames_slave_refusals_never_say_master():
+    """Every ``edge_frames`` refusal reachable from a bare patch."""
+    # no line elements at all
+    empty = _strip(2)
+    assert "the slave label carries no boundary line elements" in _slave_msg(
+        lambda: empty.chain(edges=np.empty((0, 2), dtype=int), role="slave"))
+
+    # a duplicated edge
+    dup = _strip(2)
+    msg = _slave_msg(lambda: dup.chain(dup.edges + [(1, 2)], role="slave"))
+    assert "slave boundary edge" in msg
+    assert "Deduplicate the slave entities" in msg
+
+    # an INTERIOR edge (material on both sides)
+    interior = _Patch()
+    interior.node(1, 0.0, 0.0)
+    interior.node(2, 1.0, 0.0)
+    interior.node(11, 0.0, 1.0)
+    interior.node(12, 1.0, 1.0)
+    interior.node(21, 0.0, -1.0)
+    interior.node(22, 1.0, -1.0)
+    interior.elem(100, [1, 2, 12, 11])
+    interior.elem(101, [1, 2, 22, 21])
+    interior.edges.append((1, 2))
+    msg = _slave_msg(lambda: interior.chain(role="slave"))
+    assert "slave boundary edge" in msg
+    assert "The slave must be a free boundary" in msg
+
+    # an edge with NO backing element
+    unbacked = _strip(2)
+    unbacked.node(90, 5.0, 0.0)
+    unbacked.node(91, 6.0, 0.0)
+    msg = _slave_msg(
+        lambda: unbacked.chain(unbacked.edges + [(90, 91)], role="slave"))
+    assert "slave boundary edge" in msg
+    assert "is the slave a boundary curve of the" in msg
+
+    for m in (_slave_msg(lambda: empty.chain(
+                  edges=np.empty((0, 2), dtype=int), role="slave")),):
+        assert "master" not in m
+
+
+def test_chain_edges_slave_refusals_never_say_master():
+    """The three ``chain_edges`` refusals, which nothing pinned before."""
+    # BRANCHING
+    branch = _strip(2)
+    branch.node(50, 1.0, -1.0)
+    branch.node(51, 1.5, -1.0)
+    branch.node(52, 1.5, 0.0)
+    branch.elem(200, [2, 50, 51, 52])
+    branch.edges.append((2, 50))
+    msg = _slave_msg(lambda: branch.chain(role="slave"))
+    assert "slave node(s)" in msg and "the slave BRANCHES there" in msg
+    assert "master" not in msg
+
+    # DISJOINT runs
+    disjoint = _Patch()
+    for i in range(6):
+        disjoint.node(1 + i, float(i), 0.0)
+        disjoint.node(11 + i, float(i), 1.0)
+    for i in (0, 1, 3, 4):
+        disjoint.elem(100 + i, [1 + i, 2 + i, 12 + i, 11 + i])
+        disjoint.edges.append((1 + i, 2 + i))
+    msg = _slave_msg(lambda: disjoint.chain(role="slave"))
+    assert "the slave's 4 boundary segments" in msg
+    assert "declare a HOLED slave" in msg
+    assert "master" not in msg
+
+    # the DIRECTED CLASH (two segments with the continuum on opposite sides)
+    clash = _Patch()
+    clash.node(1, 0.0, 0.0)
+    clash.node(2, 1.0, 0.0)
+    clash.node(3, 2.0, 0.0)
+    clash.node(11, 0.0, 1.0)
+    clash.node(12, 1.0, 1.0)
+    clash.node(21, 1.0, -1.0)
+    clash.node(22, 2.0, -1.0)
+    clash.elem(100, [1, 2, 12, 11])       # material ABOVE segment (1,2)
+    clash.elem(101, [2, 3, 22, 21])       # material BELOW segment (2,3)
+    clash.edges.extend([(1, 2), (2, 3)])
+    msg = _slave_msg(lambda: clash.chain(role="slave"))
+    assert "slave node 2 is the" in msg
+    assert "Split the slave at that node" in msg
+    assert "master" not in msg
+
+
+def test_role_defaults_to_master_so_the_interface_lane_is_untouched():
+    """The default keeps the ADR 0093 text byte-identical — the same
+    reason ``verb`` has a default."""
+    p = _strip(2)
+    with pytest.raises(ValueError, match=r"^interface: master boundary edge"):
+        p.chain(p.edges + [(1, 2)], verb="interface")
+
+
+# =====================================================================
+# DomainFrames — the whole-domain scratch, shared across surfaces
+# =====================================================================
+
+def test_shared_frames_give_the_same_chain_as_a_per_call_build():
+    """Passing the cache must not change a single row: the 2D mortar lane
+    builds it once and walks two surfaces with it."""
+    p = _strip(4)
+    solo = p.chain()
+    shared = p.chain(frames=p.frames())
+    np.testing.assert_array_equal(solo, shared)
+
+
+def test_shared_frames_still_refuse_an_unbacked_edge():
+    """The narrowed adjacency must keep a key for every surface node, so a
+    node no element touches still draws the named refusal rather than a
+    KeyError."""
+    p = _strip(2)
+    p.node(90, 5.0, 0.0)
+    p.node(91, 6.0, 0.0)
+    with pytest.raises(ValueError, match="no adjacent 2D domain element"):
+        p.chain(p.edges + [(90, 91)], frames=p.frames())
+
+
+def test_domain_frames_refusals_match_the_inline_build():
+    """The extraction is code motion: same checks, same messages."""
+    p = _Patch()
+    p.node(1, 0.0, 0.0)
+    with pytest.raises(ValueError, match="no 2D domain elements were"):
+        domain_frames([], [], p.coords, " 'x'", verb="contact")
+    with pytest.raises(ValueError, match="disagree in length"):
+        domain_frames([1, 2], [[1]], p.coords, " 'x'", verb="contact")
+    with pytest.raises(ValueError, match="not in the model node pool"):
+        domain_frames([1], [[1, 999]], p.coords, " 'x'", verb="contact")

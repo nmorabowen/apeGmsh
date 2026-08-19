@@ -92,6 +92,7 @@ def contact_args(
     max_aug: int | None = None,
     ngp: int | None = None,
     tie: bool = False,
+    thickness: float | None = None,
     soft: float | bool | None = None,
     visc: float | None = None,
     consistent_tan: bool = False,
@@ -120,6 +121,18 @@ def contact_args(
     numbers, so friction emits all three (kt/mu default 0.0). Mortar emits
     ``-mortar -epsN …`` + the friction-cone / augmentation flags.
 
+    ``thickness`` emits the mortar-only ``-thickness h`` (the 2D plane-model
+    out-of-plane thickness; the fork default is 1.0). Together with
+    ``outward="winding"`` it is REFUSED by name on the NTS lane rather than
+    dropped — the fork's parser refuses both there, and both can reach this
+    builder on a path that never passed ``ContactDef`` (an h5 decode, a
+    compose rewrite, a hand-built ``ContactRecord``), where a silent drop
+    would lose a knob the caller set with no diagnostic anywhere. The value
+    is emitted verbatim: every scaling it implies (``epsN``/``epsT``/
+    ``-visc``/the friction clamps/the tie stiffness — and the deliberate
+    NON-scaling of an ``-epsN auto``) happens once, fork-side, at the 2D
+    injection site.
+
     The extension modifiers (``-soft``/``-visc``/``-consistanttan``/
     ``-geomtan``) are parsed by the fork's order-independent option loop, so
     they emit after the formulation block (and before ``-outward``).
@@ -143,6 +156,34 @@ def contact_args(
     house rule. ``outward="winding"`` emits the fork's declared-winding
     keyword instead of a vector (2D NTS only).
     """
+    # The two LANE-EXCLUSIVE knobs the fork's parser refuses by name. They
+    # are checked HERE, not dropped in the branch that does not want them,
+    # because dropping is silent: a record can reach emit without ever
+    # passing ContactDef (an h5 decode, a compose rewrite, a hand-built
+    # ContactRecord) and would lose a knob the caller set with no
+    # diagnostic anywhere.
+    if thickness is not None and formulation != "mortar":
+        raise ValueError(
+            f"contact: thickness={thickness!r} is a MORTAR-only option "
+            f"(the fork parser refuses `-thickness` without `-mortar` — "
+            f"the NTS penalty kn is force per unit LENGTH of gap, never "
+            f"a pressure), but formulation={formulation!r}.")
+    if outward == "winding" and formulation != "nts":
+        # ADR-85 F1 shipped `-outward winding` on the NTS lane ONLY: the
+        # fork's 2D mortar lane has no chain-integrity scan to rest the
+        # one-connected-chain invariant on, and refuses the keyword by
+        # name. ContactDef refuses this at declaration; this is the
+        # record-side twin, so the rule holds on every path into emit
+        # (the 3D-winding rule is already gated three deep).
+        raise ValueError(
+            f"contact: outward='winding' is an NTS-lane option — the "
+            f"fork shipped declared-winding orientation on the NTS lane "
+            f"only (its 2D mortar lane has no chain-integrity scan to "
+            f"rest winding's one-connected-chain invariant on) and "
+            f"refuses the keyword by name — but "
+            f"formulation={formulation!r}. A flush mortar interface "
+            f"needs an explicit outward=(ox, oy).")
+
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
     if formulation == "nts":
@@ -186,6 +227,12 @@ def contact_args(
             args += ["-maxAug", int(max_aug)]
         if ngp is not None:
             args += ["-ngp", int(ngp)]
+        # -thickness <h>: one double, so a following flag is safe. The fork
+        # guide's 2D form lists it just before -tie; the option loop is
+        # order-independent, but matching the documented order keeps a
+        # generated deck readable against the guide.
+        if thickness is not None:
+            args += ["-thickness", float(thickness)]
         if tie:
             args.append("-tie")
     else:

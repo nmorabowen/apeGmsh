@@ -1023,6 +1023,35 @@ class ContactDef(ConstraintDef):
         Gauss order.
     tie
         Permanent mesh-tie bond (mortar only; mutually exclusive with friction).
+    thickness
+        **2D mortar only** — the plane-model out-of-plane thickness ``h``
+        (fork ``-thickness``, default 1.0). The mortar lane's interval
+        integrals produce force **per unit thickness**, so the fork applies
+        ``h`` ONCE, at its 2D injection site, to ``eps_n`` / ``eps_t`` /
+        ``visc`` / the friction clamps (``cohesion`` / ``tau_max``) and the
+        tie stiffness. Three conventions live here and must not be
+        conflated:
+
+        1. The **element** thickness (``ops.element.FourNodeQuad(thickness=…)``)
+           is baked into the element's own stiffness; contact never re-reads
+           or re-derives it.
+        2. ``thickness=h`` scales the **explicit** per-unit-thickness
+           penalties listed above — apeGmsh only emits ``-thickness h``; the
+           scaling itself is entirely fork-side.
+        3. ``eps_n="auto"`` is **NOT** h-scaled: it resolves from the owning
+           element's ``getInitialStiff()``, which already absorbs the
+           element's thickness, so re-scaling it by ``h`` would be an h²
+           error (regression-gated fork-side). ``eps_t`` INHERITS that
+           provenance when it is ``"auto"`` (or when friction defaults it
+           from ``eps_n``), so the pair moves together: both h-scale under
+           an explicit ``eps_n``, neither h-scales under an auto one.
+
+        The NTS lane has no ``-thickness`` at all (``kn`` is force per unit
+        length of gap, never a pressure) and the fork's parser refuses the
+        flag there; a 3D mortar deck's thickness lives in its elements and
+        the fork FATALs on ``-thickness`` at ``handle()``. Both are refused
+        here instead — the second at resolve time, where the model dimension
+        is known.
     outward
         Optional single outward direction. ``None`` (default) → emit no
         ``-outward``; the fork derives a correct PER-FACET normal from
@@ -1139,6 +1168,9 @@ class ContactDef(ConstraintDef):
     max_aug: int | None = None
     ngp: int | None = None
     tie: bool = False
+    #: 2D mortar plane-model thickness (fork `-thickness`); None ⇒ the fork
+    #: default 1.0. Mortar-only and 2D-only — see the class docstring.
+    thickness: float | None = None
     outward: tuple | None = None
     # Extension modifiers (ADR 0073). explicit-only: soft/visc; solver-coupled:
     # consistent_tan/geom_tan; broad-phase tuning: cell.
@@ -1184,6 +1216,21 @@ class ContactDef(ConstraintDef):
                 raise ValueError(
                     "ContactDef: tie=True requires formulation='mortar' (a "
                     "permanent mesh-tie bond is a mortar feature)."
+                )
+            # `-thickness` is a -mortar-only option fork-side (its parser
+            # refuses it on the NTS lane by name): the NTS penalty kn is a
+            # force per unit length of gap, never a pressure, and `kn="auto"`
+            # already absorbs the element thickness through
+            # getInitialStiff(). Refuse here rather than emit a command the
+            # fork aborts.
+            if self.thickness is not None:
+                raise ValueError(
+                    "ContactDef: thickness is a mortar-only option (the "
+                    "fork's NTS penalty kn is force per unit LENGTH of gap, "
+                    "never a pressure, so there is no per-unit-thickness "
+                    "density to scale — the NTS lane has no -thickness at "
+                    "all). Use formulation='mortar', or drop thickness and "
+                    "size kn for the real out-of-plane thickness."
                 )
         else:  # mortar
             present = [f for f in self._NTS_ONLY
@@ -1280,6 +1327,10 @@ class ContactDef(ConstraintDef):
         _check_positive(self.max_aug, "max_aug", "ContactDef", integer=True)
         _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef",
                         integer=True)
+        # The fork refuses h <= 0 at parse ("need h > 0"); zero is NOT an
+        # off-sentinel here (the default is 1.0), so no allow_zero.
+        _check_positive(self.thickness, "thickness (2D mortar plane-model "
+                        "thickness h)", "ContactDef")
         self._validate_extensions()
 
     def _validate_extensions(self) -> None:

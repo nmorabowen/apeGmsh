@@ -538,7 +538,8 @@ node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom node
 # Fork contact (ADR 0073) — face-to-face NTS/mortar; resolves to fem.elements.contacts:
 contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
     eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None,
-    tie=False, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False,
+    tie=False, thickness=None,                    # thickness = 2D MORTAR plane-model h (-thickness); NTS + 3D refused
+    outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False,
     cell=None,                                    # broad-phase spatial-hash cell scale (-cell), both formulations
     edge_edge=False, edge_kn=None, edge_band=None,  # perpendicular edge-edge fallback (-edgeedge) — MORTAR-ONLY
     edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None,

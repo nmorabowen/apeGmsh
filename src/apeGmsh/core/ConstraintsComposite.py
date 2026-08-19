@@ -234,23 +234,40 @@ def _contact_label(defn) -> str:
 
 
 def _refuse_flush_without_orientation(
-    defn, master_faces, slave_nodes, xyz,
+    defn, master_faces, slave_nodes, xyz, *, lref_segments=None,
 ) -> None:
     """Refuse a FLUSH 2D interface that declares no side.
 
-    The fork's 2D NTS lane orients from one interface-level centroid vote
-    (slave-surface centroid − master-surface centroid). On a flush
-    interface — the masonry joint, the footing seated on soil, every
-    zero-gap deck this lane exists for — those centroids coincide, the
-    vote's magnitude gate fails, and ``handle()`` aborts by name rather
-    than guessing. That abort is loud but late: it costs a full build and
-    solve launch, and it names a Tcl surface tag rather than the two
-    labels the user wrote.
+    The fork's 2D NTS **and mortar** lanes both orient from one
+    interface-level centroid vote (slave-surface centroid − master-surface
+    centroid) — ``ladruno2DOrientationVote`` is shared by the two call
+    sites. On a flush interface — the masonry joint, the footing seated on
+    soil, every zero-gap deck this lane exists for — those centroids
+    coincide, the vote's magnitude gate fails, and ``handle()`` aborts by
+    name rather than guessing. That abort is loud but late: it costs a
+    full build and solve launch, and it names a Tcl surface tag rather
+    than the two labels the user wrote.
 
     So refuse here, on the same condition, naming both surfaces and the
     call to add. apeGmsh still derives NO direction — the point of the
     ADR 0073 "never auto-derive a global outward" policy — it only
     refuses earlier and more legibly.
+
+``slave_nodes`` is the tag set the centroid datum is computed from;
+    ``lref_segments`` is a SECOND segment block folded into ``Lref``, and
+    it is named for that job rather than for the surface it comes from
+    because that is all it does here. The mortar lane passes its
+    ``-slave-segments`` chain: the fork's 2D mortar site takes the min
+    initial segment length over **both** surfaces, since its interval clip
+    projects the slave endpoints too, so a slave meshed finer than the
+    master lowers the floor. Reproducing that matters in one direction — a
+    master-only ``Lref`` would be too LARGE and would refuse decks the fork
+    accepts. ``None`` (the NTS lane, whose slave is a bare node set with no
+    segments at all) leaves ``Lref`` master-only.
+
+    The remedy the message offers is lane-dependent: ``outward="winding"``
+    is the fork's NTS-lane mode, so a mortar interface is offered the
+    explicit vector alone (see :class:`ContactDef`).
     """
     rows = np.asarray(master_faces, dtype=np.int64).reshape(-1, 2)
     m_pts = np.asarray(
@@ -261,38 +278,58 @@ def _refuse_flush_without_orientation(
         dtype=float)
     if m_pts.size == 0 or s_pts.size == 0:
         return
+    lref_blocks = [rows]
+    if lref_segments is not None:
+        lref_blocks.append(
+            np.asarray(lref_segments, dtype=np.int64).reshape(-1, 2))
     seg_len = np.linalg.norm(
-        np.asarray([xyz[int(b)][:2] - xyz[int(a)][:2] for a, b in rows],
+        np.asarray([xyz[int(b)][:2] - xyz[int(a)][:2]
+                    for block in lref_blocks for a, b in block],
                    dtype=float), axis=1)
     l_ref = float(seg_len.min())
     datum = float(np.linalg.norm(s_pts.mean(axis=0) - m_pts.mean(axis=0)))
     if datum > _FLUSH_CENTROID_FLOOR * l_ref:
         return
 
+    which = ("the shortest master segment" if lref_segments is None
+             else "the shortest segment of EITHER surface — the 2D mortar "
+                  "clip projects the slave endpoints too")
+    remedy = (
+        f"    g.constraints.contact({defn.master_label!r}, "
+        f"{defn.slave_label!r}, ..., outward=(ox, oy))\n"
+        f"        the in-plane direction from the master TOWARD the slave")
+    if defn.formulation == "nts":
+        remedy += (
+            f"; or\n"
+            f"    g.constraints.contact({defn.master_label!r}, "
+            f"{defn.slave_label!r}, ..., outward='winding')\n"
+            f"        which declares the side through the master chain's own "
+            f"winding (exact per segment, so it also orients curved and "
+            f"closed masters) — needs a fork build carrying "
+            f"`-outward winding`. ")
+    else:
+        remedy += (
+            f". outward='winding' is NOT available on this lane: the fork "
+            f"shipped declared winding on the NTS lane only, because its 2D "
+            f"mortar lane has no chain-integrity scan to rest winding's "
+            f"one-connected-chain invariant on — so a flush MORTAR "
+            f"interface always needs the explicit vector. ")
     raise ValueError(
         f"contact{_contact_label(defn)}: master {defn.master_label!r} and "
         f"slave {defn.slave_label!r} are FLUSH — their reference-configuration "
         f"centroids are separated by {datum:.3g}, below the fork's own "
         f"magnitude floor {_FLUSH_CENTROID_FLOOR:g} x Lref "
-        f"({_FLUSH_CENTROID_FLOOR * l_ref:.3g}, Lref = the shortest master "
-        f"segment). The fork's 2D lane orients from that centroid datum, so "
+        f"({_FLUSH_CENTROID_FLOOR * l_ref:.3g}, Lref = {which}). "
+        f"The fork's 2D lane orients from that centroid datum, so "
         f"the outward side is genuinely ambiguous and handle() ABORTS "
         f"instead of guessing — apeGmsh never auto-derives it either. "
         f"Declare the side:\n"
-        f"    g.constraints.contact({defn.master_label!r}, "
-        f"{defn.slave_label!r}, ..., outward=(ox, oy))\n"
-        f"        the in-plane direction from the master TOWARD the slave; "
-        f"or\n"
-        f"    g.constraints.contact({defn.master_label!r}, "
-        f"{defn.slave_label!r}, ..., outward='winding')\n"
-        f"        which declares the side through the master chain's own "
-        f"winding (exact per segment, so it also orients curved and closed "
-        f"masters) — needs a fork build carrying `-outward winding`. "
+        f"{remedy}"
         f"A flush interface is the normal 2D case, not an edge case.")
 
 
 def _refuse_contact_entity_dim(
-    entities, label, *, model_dim, role, verb="contact",
+    entities, label, *, model_dim, role, verb="contact", formulation="nts",
 ) -> None:
     """The contact dimension gate — the single branch point of the 2D lane.
 
@@ -313,10 +350,18 @@ def _refuse_contact_entity_dim(
     ``g.constraints.contact_plane`` reuses the gate with ``role="slave"``
     only — a rigid plane has no master mesh — so its 2D slave gets the same
     dim ≤ 1 rule and its 3D behaviour is untouched.
+
+    ``formulation`` narrows the 2D **slave** rule, which is the one place
+    the two lanes genuinely differ: an NTS slave is a node set, so a dim-0
+    point group is legitimate, while a mortar slave is
+    ``-slave-segments 2`` and needs SEGMENTS to chain. It is threaded here
+    rather than checked separately at the call site so the 2D dimension
+    rules stay in one function with one message family.
     """
     dims = sorted({int(d) for d, _ in entities})
     if model_dim == 2:
-        allowed = (1,) if role == "master" else (0, 1)
+        allowed = ((1,) if role == "master" or formulation == "mortar"
+                   else (0, 1))
         bad = [d for d in dims if d not in allowed]
         if not bad:
             return
@@ -330,10 +375,16 @@ def _refuse_contact_entity_dim(
                 f"elements as contact facets, which builds a contact out "
                 f"of SOLID elements. Declare the physical group on the "
                 f"boundary curve.")
+        shape = ("the meshed interface CURVE (dim-1) — a 2D MORTAR slave "
+                 "is `-slave-segments 2`, a chained segment surface, and a "
+                 "point set has no segments to chain (dim-0 is the NTS "
+                 "lane's slave shape, not this one)"
+                 if formulation == "mortar" else
+                 "the meshed interface CURVE (dim-1) or a point set (dim-0)")
         raise ValueError(
             f"{verb}: the model is 2D and slave label {label!r} resolves "
             f"to entities of dimension {bad} — a 2D contact slave must be "
-            f"the meshed interface CURVE (dim-1) or a point set (dim-0). "
+            f"{shape}. "
             f"A dim-2 slave physical group collects every INTERIOR node of "
             f"the body, not the interface.")
     if role != "master":
@@ -577,7 +628,7 @@ class ConstraintsComposite:
         eps_n=None, eps_t=None,
         cohesion=None, tau_max=None,
         aug_tol=None, max_aug=None, ngp=None,
-        tie=False, outward=None,
+        tie=False, thickness=None, outward=None,
         soft=None, visc=None, consistent_tan=False, geom_tan=False,
         cell=None,
         edge_edge=False, edge_kn=None, edge_band=None,
@@ -610,6 +661,22 @@ class ConstraintsComposite:
             Mortar Uzawa tolerance / max augmentations / slave-facet Gauss order.
         tie : bool
             Permanent mesh-tie bond (mortar only; excludes friction).
+        thickness : float, optional
+            **2D mortar only** — the plane-model out-of-plane thickness ``h``
+            (``-thickness``; fork default 1.0). The mortar lane's interval
+            integrals produce force per unit thickness, so the fork applies
+            ``h`` once, at its 2D injection site, to ``eps_n``/``eps_t``/
+            ``visc``/``cohesion``/``tau_max`` and the tie stiffness. Keep the
+            three thickness conventions apart: the ELEMENT thickness
+            (``ops.element.FourNodeQuad(thickness=…)``) is baked into element
+            stiffness and contact never re-reads it; this ``h`` scales the
+            EXPLICIT penalties above; and ``eps_n="auto"`` is deliberately NOT
+            h-scaled (it already absorbs the element thickness through
+            ``getInitialStiff()``, so re-scaling would be an h² error). An
+            ``eps_t="auto"`` (or an eps_t defaulted from eps_n under
+            friction) inherits ``eps_n``'s provenance, so it h-scales only
+            when ``eps_n`` is explicit. The NTS lane has no ``-thickness``
+            at all, and a 3D model is refused by name here.
         soft : float | bool, optional
             Explicit-only Courant-stable SOFT penalty (``-soft``): ``True`` ⇒
             the fork default SOFSCL (0.10); a float ⇒ an explicit SOFSCL. Needs
@@ -685,7 +752,8 @@ class ConstraintsComposite:
             eps_n=eps_n, eps_t=eps_t,
             cohesion=cohesion, tau_max=tau_max,
             aug_tol=aug_tol, max_aug=max_aug, ngp=ngp,
-            tie=tie, outward=_normalise_outward(outward),
+            tie=tie, thickness=thickness,
+            outward=_normalise_outward(outward),
             soft=soft, visc=visc,
             consistent_tan=consistent_tan, geom_tan=geom_tan,
             cell=cell,
@@ -729,6 +797,13 @@ class ConstraintsComposite:
             raise RuntimeError(
                 "contact: g.parts is unavailable to collect surface faces.")
 
+        # The whole-domain scratch every 2D chain walk needs. Built LAZILY
+        # on the first surface (so its refusals still carry that
+        # interaction's label, byte-identical to the per-call build) and
+        # then shared: without it each surface pays its own Python-level
+        # pass over every domain element, and the mortar lane walks two
+        # surfaces per contact.
+        frames = None
         if model_dim == 2:
             domain_tags, domain_conn = self._collect_domain_elements(
                 verb="contact")
@@ -746,20 +821,32 @@ class ConstraintsComposite:
             _refuse_contact_entity_dim(
                 m_ents, defn.master_label, model_dim=model_dim, role="master")
 
+            if model_dim != 2 and defn.thickness is not None:
+                raise ValueError(
+                    f"contact: interaction "
+                    f"{defn.name or defn.master_label!r} declares "
+                    f"thickness={defn.thickness!r}, but the model is "
+                    f"{model_dim}D. `-thickness` is the 2D plane-model "
+                    f"out-of-plane thickness; a 3D mortar deck's thickness "
+                    f"lives in its ELEMENTS, and the fork FATALs on a 3D "
+                    f"pair carrying it. Drop thickness=.")
+
             if model_dim == 2:
-                if defn.formulation != "nts":
-                    raise NotImplementedError(
-                        f"contact: the model is 2D and interaction "
-                        f"{defn.name or defn.master_label!r} declares "
-                        f"formulation={defn.formulation!r} — the 2D "
-                        f"mortar / `-slave-segments` lane is not adopted "
-                        f"yet. Use formulation='nts' in 2D.")
                 _refuse_contact_entity_dim(
                     s_ents, defn.slave_label,
-                    model_dim=model_dim, role="slave")
+                    model_dim=model_dim, role="slave",
+                    formulation=defn.formulation)
+                if frames is None:
+                    from apeGmsh._kernel.geometry._boundary_chain import (
+                        domain_frames,
+                    )
+                    frames = domain_frames(
+                        domain_tags, domain_conn, xyz,
+                        f" {defn.master_label!r}", verb="contact",
+                        role="master")
                 master_faces, master_nps = self._chain_2d_segments(
                     m_ents, defn.master_label, xyz, domain_tags, domain_conn,
-                    role="master")
+                    role="master", frames=frames)
             else:
                 master_faces = parts._collect_surface_faces(m_ents)
                 if master_faces.size == 0:
@@ -771,6 +858,19 @@ class ConstraintsComposite:
             if defn.formulation == "nts":
                 slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
                 slave_faces, slave_nps = None, 0
+            elif model_dim == 2:
+                # 2D mortar — the slave is `-slave-segments 2`, the SAME
+                # chained stride-2 pair list as the master and with the same
+                # hole hazard, so it goes through the same walk (an unchained
+                # slave listing is silently legal fork-side too). Its
+                # direction is not load-bearing — the fork's orientation vote
+                # reads sigma off the MASTER segments and uses the slave tags
+                # only for the centroid datum — but winding it against its own
+                # material costs nothing and keeps one code path.
+                slave_faces, slave_nps = self._chain_2d_segments(
+                    s_ents, defn.slave_label, xyz, domain_tags, domain_conn,
+                    role="slave", frames=frames)
+                slave_nodes = None
             else:  # mortar — faceted slave
                 slave_faces = parts._collect_surface_faces(s_ents)
                 if slave_faces.size == 0:
@@ -829,18 +929,34 @@ class ConstraintsComposite:
                         f"outward=(ox, oy).")
 
             if model_dim == 2:
-                # The two orientation guards apeGmsh owes a 2D deck: refuse
-                # the flush interface the fork cannot orient, and refuse the
-                # master that faces away from the slave — the check declared
-                # winding switches off fork-side.
+                # The two orientation guards apeGmsh owes a 2D deck, on
+                # BOTH lanes: refuse the flush interface the fork cannot
+                # orient, and refuse the master that faces away from the
+                # slave — which nothing fork-side refuses (its vote only
+                # picks a SIGN, and declared winding bypasses the vote
+                # outright).
+                #
+                # Both take the slave as NODE TAGS, which the NTS lane has
+                # directly and the mortar lane carries inside its own chain
+                # (deduplicated — the fork's own vote dedups the
+                # `-slave-segments` list for exactly this reason: every
+                # interior chain vertex appears twice, and a
+                # duplicate-weighted centroid can cross the magnitude floor).
+                if slave_nodes is not None:
+                    slave_tags = slave_nodes
+                else:
+                    slave_tags = sorted(
+                        {int(t) for t in
+                         np.asarray(slave_faces, dtype=np.int64).ravel()})
                 if outward is None:
                     _refuse_flush_without_orientation(
-                        defn, master_faces, slave_nodes, xyz)
+                        defn, master_faces, slave_tags, xyz,
+                        lref_segments=slave_faces)
                 from apeGmsh._kernel.geometry._boundary_chain import (
                     refuse_wrong_side_master,
                 )
                 refuse_wrong_side_master(
-                    master_faces, xyz, slave_nodes,
+                    master_faces, xyz, slave_tags,
                     _contact_label(defn), verb="contact")
 
             records.append(ContactRecord(
@@ -854,7 +970,7 @@ class ConstraintsComposite:
                 eps_n=defn.eps_n, eps_t=defn.eps_t,
                 cohesion=defn.cohesion, tau_max=defn.tau_max,
                 aug_tol=defn.aug_tol, max_aug=defn.max_aug, ngp=defn.ngp,
-                tie=defn.tie,
+                tie=defn.tie, thickness=defn.thickness,
                 soft=defn.soft, visc=defn.visc,
                 consistent_tan=defn.consistent_tan, geom_tan=defn.geom_tan,
                 cell=defn.cell,
@@ -1212,6 +1328,7 @@ class ConstraintsComposite:
     @staticmethod
     def _chain_2d_segments(
         entities, label, xyz, domain_tags, domain_conn, *, role,
+        frames=None,
     ) -> tuple[np.ndarray, int]:
         """A 2D contact surface as the fork's CHAINED stride-2 pair list.
 
@@ -1220,6 +1337,13 @@ class ConstraintsComposite:
         element (the same :func:`edge_frames` the interface lane uses), and
         walks the directed segments into one head-to-tail chain. Returns
         ``(chained (n, 2) connectivity, 2)``.
+
+        ``frames`` is the shared :class:`DomainFrames` scratch. Every call
+        over one mesh derives the same per-element centroids and node
+        adjacency, and the mortar lane makes two calls per contact (master
+        chain + slave chain) on top of one per contact already — so the
+        caller builds it once and hands it down rather than paying a
+        whole-domain pass per surface.
         """
         from apeGmsh._kernel.geometry._boundary_chain import (
             chain_edges, edge_frames,
@@ -1235,8 +1359,10 @@ class ConstraintsComposite:
                 f"{missing[:20]} that are not in the model node pool.")
         text = f" {label!r}"
         data = edge_frames(
-            segs, m_set, xyz, domain_tags, domain_conn, text, verb="contact")
-        return chain_edges(data, xyz, text, verb="contact"), nps
+            segs, m_set, xyz, domain_tags, domain_conn, text,
+            verb="contact", role=role, frames=frames)
+        return (chain_edges(data, xyz, text, verb="contact", role=role),
+                nps)
 
     @staticmethod
     def _collect_domain_elements(

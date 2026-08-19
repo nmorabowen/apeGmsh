@@ -2,10 +2,10 @@
 
 > ## STATUS — most of this brief is now HISTORY (2026-08-19)
 >
-> The adoption shipped: apeGmsh **#1048** and fork **#764**. Read this
-> header before believing anything below it — the body was written when
-> apeGmsh could reach none of the lane, and §2's refusal table in
-> particular now describes code that no longer refuses.
+> The adoption shipped: apeGmsh **#1048** and fork **#764**, plus **S4**
+> (below). Read this header before believing anything below it — the body
+> was written when apeGmsh could reach none of the lane, and §2's refusal
+> table in particular now describes code that no longer refuses.
 >
 > **Working today.** 2-D NTS contact with friction, end to end: a chained
 > stride-2 master surface built from a meshed dim-1 PG, 2-component
@@ -14,12 +14,38 @@
 > deck solves on the fork with equilibrium closing at machine precision,
 > and winding returns bit-identical results to an explicit vector.
 >
-> **Not adopted yet.** 2-D **mortar** — refused by name; the fork's 2-D
-> mortar lane has no chain-integrity scan, so winding does not rest on
-> anything there and flush mortar interfaces still need an explicit
-> `outward=`. **Docs** — `guide_constraints.md` still has no 2-D section.
-> **Results** — `Results/` reads no contact data at all. Parallel/DDM 2-D
-> contact is out of scope fork-side and is refused by name on both lanes.
+> **S4 shipped too — 2-D mortar, tie and `-thickness`.** `-slave-segments
+> 2` reuses the master's chain walk and the same stride-2 record
+> validator, so a holed slave listing (silently legal fork-side, exactly
+> like a holed master) is unreachable by construction on both sides;
+> `thickness=h` emits the mortar-only `-thickness`, refused by name on the
+> NTS lane and in a 3-D model. Acceptance, measured on fork build
+> `e7555f2c9` (T4): a flush 2-D mortar **tie** deck closes equilibrium at
+> machine precision (residual 0 to 2.3e-10 on a 1e6 load), and a
+> compression deck pins all three thickness conventions at once —
+> no `-thickness` is bit-identical to `-thickness 1.0`; halving `h`
+> against an EXPLICIT `-epsN` doubles the interface penetration part
+> exactly (4.013e-06 both times, so `h` is applied ONCE, not squared); and
+> `-epsN auto` under `h = 1.0` vs `h = 0.5` is **bit-identical**
+> (5.244762212098e-05) — auto is never h-scaled.
+>
+> **Not adopted yet.** **Docs** — `guide_constraints.md` still has no 2-D
+> section (S5). **Results** — `Results/` reads no contact data at all
+> (S6). Parallel/DDM 2-D contact is out of scope fork-side and is refused
+> by name on both lanes.
+>
+> **The F1 asymmetry, carried not papered over.** `outward="winding"` is
+> **NTS-only**. The fork shipped declared winding on the NTS lane alone
+> because its 2-D mortar lane has no chain-integrity scan to rest
+> winding's one-connected-chain invariant on, so a flush **mortar**
+> interface — the workhorse 2-D case — still requires an explicit
+> `outward=(ox, oy)`. `ContactDef` refuses the combination at
+> declaration, and the flush refusal offers a mortar caller the vector
+> alone, saying why. Two consequences follow that are easy to forget: a
+> curved or closed **mortar** master stays undeclarable (only winding
+> orients those), and the wrong-side master guard is apeGmsh's on BOTH
+> lanes — the fork's centroid vote only picks a SIGN, so a far-side master
+> resolves happily against a boundary the slave never reaches.
 >
 > **Three facts to carry, not re-derive.**
 > 1. *Winding sign.* Every emitted segment satisfies
@@ -251,7 +277,8 @@ the *holed* four-tag form is never produced.
 **S3 — NTS with friction, and the flush rule.** The `outward` policy
 carve-out, with a named error on an ambiguous flush interface.
 
-**S4 — mortar, tie, `-thickness`.** Note the two independent thickness
+**S4 — mortar, tie, `-thickness`.** SHIPPED; see the status header for
+what was measured. Note the two independent thickness
 conventions: element thickness is baked into element stiffness and contact
 never re-reads it; mortar `-thickness h` scales `epsN`/`epsT`/`-visc`/the
 friction clamps/tie stiffness once at injection; and **`-epsN auto` is not

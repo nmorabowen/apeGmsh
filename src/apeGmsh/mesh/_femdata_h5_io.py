@@ -380,10 +380,22 @@ __all__ = [
 #: the 2.25.0 edge-edge block — a 2.29.x file simply lacks it and
 #: decodes to the vector-or-None it always meant.
 #:
+#: v2.31.0 (August 2026, 2D mortar — the `-slave-segments` lane): additive
+#: — adds the ``thickness`` (float64) column to
+#: ``contact_payload_dtype``.  It carries the fork's 2D mortar
+#: plane-model out-of-plane thickness ``h`` (``contact … -mortar …
+#: -thickness h``); NaN decodes to ``None``, which IS the fork default
+#: 1.0, so a 2.30.x file that lacks the column reads back as the h = 1
+#: it always meant — presence-probed on read like ``cell`` (2.23.0).
+#: **No layout change** on the ``slave_nps`` side: 2.30.0 already widened
+#: the ``master_nps`` / ``slave_nps`` value domain to ``{2, 3, 4}``, so a
+#: 2D mortar record's ``slave_nps=2`` needed no further bump.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.30.x and 2.31.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.30.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.31.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -2036,6 +2048,7 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
         np.uint8(1 if rec.edge_alm else 0),
         _f(rec.edge_aug_tol),
         o_mode,
+        _f(rec.thickness),
         rec.name or "",
     )
 
@@ -3789,6 +3802,10 @@ def _decode_contact(row: Any, cls: type) -> Any:
         max_aug=_i("max_aug"),
         ngp=_i("ngp"),
         tie=int(p["tie"]) == 1,
+        # thickness added in neutral 2.31.0 — presence-probe so an in-window
+        # 2.30.x file (no column) decodes thickness=None, i.e. the fork
+        # default h = 1.0, which is exactly what it meant.
+        thickness=(_f("thickness") if "thickness" in p.dtype.names else None),
         soft=soft,
         visc=_f("visc"),
         consistent_tan=int(p["consistent_tan"]) == 1,

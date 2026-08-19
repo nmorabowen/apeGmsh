@@ -430,3 +430,41 @@ def test_encode_rejects_bad_master_stride():
     with pytest.raises(ValueError, match="master flat length"):
         _encode_contact(_rec(
             master_faces=np.array([1, 2, 3, 4, 5]), master_nps=3))
+
+
+def test_decode_presence_probes_thickness_and_degrades_to_none():
+    """The 2.30.x-degradation half of the ``thickness`` column (2.31.0).
+
+    ``None`` IS the fork default h = 1.0, so a file that predates the
+    column reads back as the h = 1 it always meant. The twin of
+    ``test_decode_presence_probes_outward_mode_and_degrades_to_none``; the
+    else-branch of the probe was otherwise unexercised, so a later edit to
+    an unconditional ``p["thickness"]`` — or a fallback flipped to 1.0,
+    which would emit a spurious ``-thickness 1.0`` on every reloaded 2D
+    mortar record — would pass the whole suite."""
+    from numpy.lib import recfunctions as rfn
+
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    from apeGmsh.mesh._femdata_h5_io import _decode_contact, _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    rec = ContactRecord(
+        kind="contact", formulation="mortar",
+        master_faces=np.array([[1, 2], [2, 3]]), master_nps=2,
+        slave_faces=np.array([[10, 11], [11, 12]]), slave_nps=2,
+        eps_n="auto", outward=(1.0, 0.0, 0.0), thickness=0.25,
+    )
+    full = np.zeros((1,), dtype=contact_payload_dtype())
+    full[0] = _encode_contact(rec)
+    # the column IS there and carries the value
+    row = np.zeros((1,), dtype=[("payload", full.dtype)])
+    row["payload"] = full
+    assert _decode_contact(row[0], ContactRecord).thickness == 0.25
+
+    trimmed = rfn.drop_fields(full, ["thickness"])
+    assert "thickness" not in trimmed.dtype.names
+    row = np.zeros((1,), dtype=[("payload", trimmed.dtype)])
+    row["payload"] = trimmed
+    got = _decode_contact(row[0], ContactRecord)
+    assert got.thickness is None          # ⇒ the fork default h = 1.0
+    assert got.slave_nps == 2 and got.eps_n == "auto"

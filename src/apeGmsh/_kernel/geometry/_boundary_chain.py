@@ -33,6 +33,7 @@ from numpy import ndarray
 from ..resolvers._constraint_resolver._geom import _SpatialIndex
 
 __all__ = [
+    "DomainFrames", "domain_frames",
     "EdgeData", "edge_frames", "chain_edges", "refuse_wrong_side_master",
 ]
 
@@ -52,7 +53,7 @@ _ZERO_TOL = 1e-12
 _WRONG_SIDE_REACH = 2.0
 
 
-def _duplicate_edge_consequence(verb: str) -> str:
+def _duplicate_edge_consequence(verb: str, role: str = "master") -> str:
     """Why a duplicated boundary edge is refused, per calling lane.
 
     The refusal itself is lane-independent (one stretch of boundary,
@@ -61,13 +62,85 @@ def _duplicate_edge_consequence(verb: str) -> str:
     the same segment to the kernel twice.
     """
     if verb == "contact":
-        return ("a duplicated segment would declare that stretch of the "
-                "master to the contact kernel twice.")
+        return (f"a duplicated segment would declare that stretch of the "
+                f"{role} to the contact kernel twice.")
     return ("a duplicated edge would double that stretch's tributary "
             "share.")
 
 
 # ── per-edge outward frames ─────────────────────────────────────────
+
+class DomainFrames:
+    """The whole-domain scratch :func:`edge_frames` needs, computed once.
+
+    ``elem_tags`` / ``elem_nodes`` are the domain elements parsed to int
+    arrays, ``centroids[i]`` element ``i``'s centroid, and
+    ``node_elems[t]`` the element indices incident on node ``t`` (absent
+    for a node no element touches).
+
+    It exists because building it is the expensive half of
+    :func:`edge_frames` — one Python-level pass over EVERY top-dimension
+    element, with a numpy allocation per element — while depending on
+    nothing but the mesh.  Two calls over the same mesh recompute it
+    identically, and the 2D mortar lane makes two per contact (master
+    chain + slave chain), so the caller builds it once and passes it in.
+    The lists in ``node_elems`` are SHARED across the ``EdgeData`` objects
+    derived from it; every consumer reads them (``edge_frames``' owner
+    intersection, the interface resolver's backing pick) and none mutates.
+    """
+
+    __slots__ = ("elem_tags", "elem_nodes", "centroids", "node_elems")
+
+    def __init__(self, elem_tags, elem_nodes, centroids, node_elems) -> None:
+        self.elem_tags = elem_tags
+        self.elem_nodes = elem_nodes
+        self.centroids = centroids
+        self.node_elems = node_elems
+
+
+def domain_frames(
+    domain_elem_tags: Sequence[int],
+    domain_elem_nodes: Sequence[Sequence[int]],
+    xyz: dict[int, ndarray],
+    label: str,
+    *,
+    verb: str = "interface",
+    role: str = "master",
+) -> DomainFrames:
+    """Parse the domain elements once: centroids + node adjacency.
+
+    Lifted verbatim out of :func:`edge_frames` (same checks, same order,
+    same messages) so it can be computed once per resolve instead of once
+    per surface.  ``label`` / ``verb`` / ``role`` only prefix the refusals.
+    """
+    elem_tags = [int(t) for t in domain_elem_tags]
+    elem_nodes = [np.asarray(n, dtype=int).ravel() for n in domain_elem_nodes]
+    if len(elem_tags) != len(elem_nodes):
+        raise ValueError(
+            f"{verb}{label}: domain_elem_tags ({len(elem_tags)}) and "
+            f"domain_elem_nodes ({len(elem_nodes)}) disagree in length.")
+    if not elem_tags:
+        raise ValueError(
+            f"{verb}{label}: no 2D domain elements were supplied — "
+            f"the outward sign (ADR 0093 D2) and the backing element "
+            f"(INV-5) are both derived from them.")
+
+    node_elems: dict[int, list[int]] = {}
+    centroids = np.empty((len(elem_tags), 3), dtype=float)
+    for i, conn in enumerate(elem_nodes):
+        try:
+            pts = np.array([xyz[int(k)] for k in conn], dtype=float)
+        except KeyError as exc:
+            raise ValueError(
+                f"{verb}{label}: domain element {elem_tags[i]} "
+                f"references node {exc.args[0]}, which is not in the "
+                f"model node pool.") from exc
+        centroids[i] = pts.mean(axis=0)
+        for k in conn:
+            node_elems.setdefault(int(k), []).append(i)
+
+    return DomainFrames(elem_tags, elem_nodes, centroids, node_elems)
+
 
 class EdgeData:
     """The master polyline's per-edge geometry, indexed for reuse.
@@ -103,6 +176,8 @@ def edge_frames(
     label: str,
     *,
     verb: str = "interface",
+    role: str = "master",
+    frames: "DomainFrames | None" = None,
 ) -> EdgeData:
     """Per-edge outward normals + lengths + the domain adjacency map.
 
@@ -110,61 +185,56 @@ def edge_frames(
     default the rendered text is byte-identical to the pre-extraction
     resolver's, which is what makes the ADR 0093 suite the proof of
     behaviour preservation.
+
+    ``role`` names the surface in those refusals.  It exists because the
+    2D mortar lane runs this walk on the SLAVE side too
+    (``-slave-segments``), where every message saying "master" would point
+    the reader at the wrong curve; the default keeps the interface lane's
+    text byte-identical for the same reason ``verb`` does.
+
+    ``frames`` is the whole-domain scratch (:class:`DomainFrames`).  Pass
+    one when several surfaces share a mesh — the 2D mortar lane builds two
+    chains per contact — to skip its per-element pass; ``None`` builds it
+    here, which is what keeps the interface lane on the original path.
     """
     edges = np.asarray(master_edges, dtype=int).reshape(-1, 2)
     if edges.size == 0:
         raise ValueError(
-            f"{verb}{label}: the master label carries no boundary "
+            f"{verb}{label}: the {role} label carries no boundary "
             f"line elements — the outward normal and the tributary "
-            f"length are both derived from them (is the master a meshed "
+            f"length are both derived from them (is the {role} a meshed "
             f"curve?).")
     stray = sorted({int(t) for t in edges.ravel()} - m_set)
     if stray:
         raise ValueError(
-            f"{verb}{label}: master boundary edge(s) reference "
-            f"node(s) {stray[:20]} that are not in the master node set.")
+            f"{verb}{label}: {role} boundary edge(s) reference "
+            f"node(s) {stray[:20]} that are not in the {role} node set.")
     seen: dict[frozenset, int] = {}
     for e, (a, b) in enumerate(edges):
         key = frozenset((int(a), int(b)))
         if len(key) == 1:
             raise ValueError(
-                f"{verb}{label}: master boundary edge {e} is "
+                f"{verb}{label}: {role} boundary edge {e} is "
                 f"degenerate (both endpoints are node {int(a)}).")
         if key in seen:
             raise ValueError(
-                f"{verb}{label}: master boundary edge "
+                f"{verb}{label}: {role} boundary edge "
                 f"({int(a)}, {int(b)}) appears twice (rows {seen[key]} "
-                f"and {e}) — {_duplicate_edge_consequence(verb)} "
-                f"Deduplicate the master entities.")
+                f"and {e}) — {_duplicate_edge_consequence(verb, role)} "
+                f"Deduplicate the {role} entities.")
         seen[key] = e
 
-    elem_tags = [int(t) for t in domain_elem_tags]
-    elem_nodes = [np.asarray(n, dtype=int).ravel() for n in domain_elem_nodes]
-    if len(elem_tags) != len(elem_nodes):
-        raise ValueError(
-            f"{verb}{label}: domain_elem_tags ({len(elem_tags)}) and "
-            f"domain_elem_nodes ({len(elem_nodes)}) disagree in length.")
-    if not elem_tags:
-        raise ValueError(
-            f"{verb}{label}: no 2D domain elements were supplied — "
-            f"the outward sign (ADR 0093 D2) and the backing element "
-            f"(INV-5) are both derived from them.")
-
-    adj: dict[int, list[int]] = {t: [] for t in m_set}
-    centroids = np.empty((len(elem_tags), 3), dtype=float)
-    for i, conn in enumerate(elem_nodes):
-        try:
-            pts = np.array([xyz[int(k)] for k in conn], dtype=float)
-        except KeyError as exc:
-            raise ValueError(
-                f"{verb}{label}: domain element {elem_tags[i]} "
-                f"references node {exc.args[0]}, which is not in the "
-                f"model node pool.") from exc
-        centroids[i] = pts.mean(axis=0)
-        for k in conn:
-            bucket = adj.get(int(k))
-            if bucket is not None:
-                bucket.append(i)
+    if frames is None:
+        frames = domain_frames(
+            domain_elem_tags, domain_elem_nodes, xyz, label,
+            verb=verb, role=role)
+    elem_tags = frames.elem_tags
+    centroids = frames.centroids
+    # Narrow the global map to this surface's nodes, keeping a key for
+    # every one of them (a node no element touches maps to the empty list
+    # and draws the "no adjacent 2D domain element" refusal below, exactly
+    # as the per-call build did).
+    adj = {t: frames.node_elems.get(t, []) for t in m_set}
 
     normals: list[ndarray] = []
     lengths: list[float] = []
@@ -176,13 +246,13 @@ def edge_frames(
         length = float(np.linalg.norm(tan))
         if length <= _ZERO_TOL:
             raise ValueError(
-                f"{verb}{label}: master boundary edge ({a}, {b}) has "
+                f"{verb}{label}: {role} boundary edge ({a}, {b}) has "
                 f"zero length.")
         if abs(float(tan[2])) > 1e-9 * length:
             raise NotImplementedError(
-                f"{verb}{label}: master boundary edge ({a}, {b}) is "
+                f"{verb}{label}: {role} boundary edge ({a}, {b}) is "
                 f"out of the z=const plane (dz={float(tan[2])!r}). Only "
-                f"in-plane 2D line masters are implemented — ADR 0093 "
+                f"in-plane 2D line {role}s are implemented — ADR 0093 "
                 f"D2.")
         # In-plane normal candidate; the sign is decided below, never by
         # the edge's node ordering (a mesh's winding is not a contract).
@@ -191,18 +261,18 @@ def edge_frames(
         owners = sorted(set(adj[a]) & set(adj[b]))
         if not owners:
             raise ValueError(
-                f"{verb}{label}: master boundary edge ({a}, {b}) has "
+                f"{verb}{label}: {role} boundary edge ({a}, {b}) has "
                 f"no adjacent 2D domain element. The outward sign is "
                 f"fixed against the adjacent element's centroid "
-                f"(ADR 0093 D2) — is the master a boundary curve of the "
+                f"(ADR 0093 D2) — is the {role} a boundary curve of the "
                 f"meshed continuum?")
         if len(owners) > 1:
             raise ValueError(
-                f"{verb}{label}: master boundary edge ({a}, {b}) is "
+                f"{verb}{label}: {role} boundary edge ({a}, {b}) is "
                 f"shared by {len(owners)} 2D domain elements "
                 f"{[elem_tags[i] for i in owners]} — it is an INTERIOR "
                 f"edge with material on both sides, so it has no "
-                f"outward direction. The master must be a free boundary "
+                f"outward direction. The {role} must be a free boundary "
                 f"of the continuum.")
         centroid = centroids[owners[0]]
         mid = 0.5 * (pa + pb)
@@ -211,7 +281,7 @@ def edge_frames(
         if abs(d) <= _ZERO_TOL * max(1.0, float(np.linalg.norm(arm))):
             raise ValueError(
                 f"{verb}{label}: cannot sign the outward normal of "
-                f"master edge ({a}, {b}) — its owning element "
+                f"{role} edge ({a}, {b}) — its owning element "
                 f"{elem_tags[owners[0]]} has its centroid on the edge "
                 f"line (a degenerate / inverted element?).")
         if d < 0.0:
@@ -234,6 +304,7 @@ def chain_edges(
     label: str,
     *,
     verb: str = "contact",
+    role: str = "master",
 ) -> ndarray:
     """Order + direct the boundary edges into ONE head-to-tail chain.
 
@@ -271,6 +342,9 @@ def chain_edges(
     out-of-plane edges, an unbacked or interior edge, a centroid on the
     edge line) is inherited from :func:`edge_frames`.
 
+    ``role`` names the surface in the refusals below, for the 2D mortar
+    lane's ``-slave-segments`` side (see :func:`edge_frames`).
+
     Open chains, single segments and **closed loops** are all supported
     - the fork wrap is explicitly legal
     (``LadrunoContactHandler.cpp:1219``).  A closed loop starts at the
@@ -285,9 +359,9 @@ def chain_edges(
     branching = sorted(t for t, es in data.node_edges.items() if len(es) > 2)
     if branching:
         raise ValueError(
-            f"{verb}{label}: master node(s) {branching[:20]} carry "
+            f"{verb}{label}: {role} node(s) {branching[:20]} carry "
             f"{[len(data.node_edges[t]) for t in branching[:20]]} boundary "
-            f"segments each - the master BRANCHES there, and a branching "
+            f"segments each - the {role} BRANCHES there, and a branching "
             f"surface has no single head-to-tail chain. Declare one "
             f"contact() per branch.")
 
@@ -311,13 +385,13 @@ def chain_edges(
         if clash is not None:
             node, other, which = clash
             raise ValueError(
-                f"{verb}{label}: master node {node} is the {which} of both "
+                f"{verb}{label}: {role} node {node} is the {which} of both "
                 f"segment {tuple(int(x) for x in edges[other])} and segment "
                 f"{tuple(int(x) for x in edges[e])} once each segment is "
                 f"wound against its own material - the boundary either "
                 f"doubles back there, or the two segments have the "
                 f"continuum on OPPOSITE sides, so there is no consistent "
-                f"traversal through it. Split the master at that node into "
+                f"traversal through it. Split the {role} at that node into "
                 f"separate contact() calls. (Same physical situation the "
                 f"interface lane's cancelling / reentrant node-normal "
                 f"refusals detect, ADR 0093 D2.)")
@@ -330,12 +404,12 @@ def chain_edges(
             (int(directed[r[0]][0]), int(directed[r[-1]][1])) for r in runs
         ]
         raise ValueError(
-            f"{verb}{label}: the master's {len(edges)} boundary segments "
+            f"{verb}{label}: the {role}'s {len(edges)} boundary segments "
             f"form {len(runs)} DISJOINT runs, spanning {span[:20]} "
             f"(start, end) - they cannot be listed as one chained "
             f"stride-2 pair list. A disjoint listing is silently legal "
             f"fork-side (LadrunoContactHandler.cpp:1214 skips a node used "
-            f"once), so emitting it would declare a HOLED master that "
+            f"once), so emitting it would declare a HOLED {role} that "
             f"converges to a wrong answer. Declare one contact() per "
             f"connected stretch.")
 
@@ -352,16 +426,19 @@ def refuse_wrong_side_master(
 ) -> None:
     """Refuse a master whose boundary confidently FACES AWAY from the slave.
 
-    The check apeGmsh has to own.  Fork-side, a master named on the wrong
-    side of the body is caught by the interface-level centroid vote
-    (``LadrunoContactHandler.cpp:440-523``) — but ``-outward winding``
-    bypasses that vote by construction, and a bypassed vote catches
-    nothing: the deck runs, converges, balances, and resolves the contact
-    against a boundary that never meets the slave.  apeGmsh switches the
-    vote off, so apeGmsh owes the deck the check.
+    The check apeGmsh has to own, on BOTH 2D lanes.  Nothing fork-side
+    refuses it: the interface-level centroid vote
+    (``LadrunoContactHandler.cpp:440-523``) only picks a per-interface
+    SIGN, so on a far-side master it resolves happily — unanimously — and
+    orients a contact against a boundary the slave never reaches; and
+    ``-outward winding`` (2D NTS) bypasses the vote by construction, which
+    removes even the split/degenerate refusals that might have fired by
+    accident.  Either way the deck runs, converges, balances, and
+    transmits nothing.  apeGmsh generates the master chain, so apeGmsh
+    owes the deck the check.
 
-    Deliberately WEAKER than the vote it replaces, because the two cases
-    the vote refuses wrongly are exactly the two winding exists to
+    Deliberately WEAKER than the vote it stands in for, because the two
+    cases that vote refuses wrongly are exactly the two winding exists to
     unlock:
 
     * **flush** interfaces give ``dot ≈ 0``, not negative — the guard is
@@ -434,10 +511,13 @@ def refuse_wrong_side_master(
         f"length ({_WRONG_SIDE_REACH * length:.6g} here) or coarsen the "
         f"master — the fork's narrow phase stops arming a pair past that "
         f"reach too, so the deck would not transmit either way. (apeGmsh "
-        f"owns this check because the "
-        f"declared-winding orientation it emits BYPASSES the fork's own "
-        f"centroid vote — bypassed, the deck would converge on the wrong "
-        f"boundary instead of aborting.)")
+        f"owns this check because nothing fork-side refuses it: the "
+        f"orientation vote only picks a SIGN and resolves happily against "
+        f"a boundary that never meets the slave, and the "
+        f"declared-winding orientation apeGmsh emits on the NTS lane "
+        f"BYPASSES the fork's own centroid vote outright — either way the "
+        f"deck would converge on the wrong boundary instead of "
+        f"aborting.)")
 
 
 def _directed_runs(

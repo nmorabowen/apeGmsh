@@ -1061,3 +1061,117 @@ def test_emit_carries_edge_edge_modifiers():
                 "-edgeKt", "-edgeCohesion", "-edgeTauMax",
                 "-edgeConsistentTan", "-edgeSoft", "-edgeAlm", "-edgeAugTol"):
         assert tok in cargs, tok
+
+
+# --------------------------------------------------------------------------
+# `-thickness` — the 2D mortar plane-model thickness (fork ADR-85 T3)
+# --------------------------------------------------------------------------
+def test_mortar_thickness_emits_before_tie():
+    """The fork's option loop is order-independent, but the 2D guide lists
+    ``-thickness`` just before ``-tie``; matching it keeps a generated deck
+    readable against the guide."""
+    a = contact_args(1, 2, "mortar", eps_n="auto", thickness=0.25, tie=True,
+                     outward=(1.0, 0.0), ndm=2)
+    assert a.index("-thickness") < a.index("-tie")
+    assert a[a.index("-thickness") + 1] == 0.25
+
+
+def test_mortar_thickness_on_the_nts_lane_is_refused_not_dropped():
+    """The fork parser refuses ``-thickness`` without ``-mortar`` (kn is
+    force per unit LENGTH of gap, never a pressure).
+
+    ``ContactDef`` refuses the combination at declaration, but a record can
+    reach this builder without passing through a def — an h5 decode, a
+    compose rewrite, a hand-built ``ContactRecord`` — and DROPPING the value
+    there would lose a knob the caller set with no diagnostic anywhere."""
+    with pytest.raises(ValueError, match="MORTAR-only"):
+        contact_args(1, 2, "nts", kn=1.0e6, thickness=0.25)
+
+
+def test_outward_winding_on_the_mortar_lane_is_refused_at_emit():
+    """The record-side twin of ``ContactDef``'s F1 refusal: winding is
+    NTS-only fork-side, so a mortar record carrying it must not reach a
+    deck the fork refuses at parse. (The 3D-winding rule is already gated
+    at the def, the resolver AND ``_outward_tokens``; this closes the same
+    hole for the mortar rule.)"""
+    with pytest.raises(ValueError, match="NTS-lane option"):
+        contact_args(1, 2, "mortar", eps_n="auto", outward="winding", ndm=2)
+
+
+def test_outward_winding_still_emits_on_the_nts_lane():
+    a = contact_args(1, 2, "nts", kn="auto", outward="winding", ndm=2)
+    assert a[-2:] == ["-outward", "winding"]
+
+
+def test_record_refuses_a_slave_stride_that_disagrees_on_dimension():
+    """nps=2 is a 2D line segment and 3/4 are 3D facets, so the two strides
+    must land on the same side of that line. Nothing else checks it: the h5
+    encoder/decoder validate each stride in isolation and ``emit_contacts``
+    reads only ``master_nps`` against ``ndm``."""
+    with pytest.raises(ValueError, match="disagree on DIMENSION"):
+        _mortar_2d_rec(slave_faces=np.array([[10, 11, 12]]), slave_nps=3)
+    with pytest.raises(ValueError, match="disagree on DIMENSION"):
+        _mortar_rec(master_faces=np.array([[1, 2, 3]]), master_nps=3,
+                    slave_faces=np.array([[10, 11], [11, 12]]), slave_nps=2)
+
+
+def test_mortar_without_thickness_emits_nothing():
+    a = contact_args(1, 2, "mortar", eps_n="auto")
+    assert "-thickness" not in a          # ⇒ the fork default h = 1.0
+
+
+def test_def_thickness_is_mortar_only():
+    with pytest.raises(ValueError, match="thickness is a mortar-only"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=1.0e6, thickness=0.5)
+
+
+def test_def_thickness_must_be_positive():
+    # The fork refuses h <= 0 at parse ("need h > 0"); 0 is not an off
+    # sentinel here — the default is 1.0.
+    for bad in (0.0, -0.5):
+        with pytest.raises(ValueError, match="thickness"):
+            ContactDef(master_label="m", slave_label="s",
+                       formulation="mortar", eps_n="auto", thickness=bad)
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n="auto", thickness=0.5)
+
+
+def _mortar_2d_rec(**over):
+    """A 2D mortar record: BOTH surfaces are chained stride-2 pair lists."""
+    base = dict(
+        kind="contact", formulation="mortar",
+        master_faces=np.array([[1, 2], [2, 3], [3, 4]]), master_nps=2,
+        slave_faces=np.array([[10, 11], [11, 12], [12, 13]]), slave_nps=2,
+        eps_n="auto", outward=(1.0, 0.0, 0.0),
+    )
+    base.update(over)
+    return ContactRecord(**base)
+
+
+def test_emit_2d_mortar_slave_is_six_tags_for_three_segments():
+    em = RecordingEmitter()
+    emit_contacts(em, _Fem([_mortar_2d_rec()]), TagAllocator(), ndm=2)
+    surfaces = [c for c in em.calls if c[0] == "contact_surface"]
+    master, slave = surfaces[0][1], surfaces[1][1]
+    assert master[1] == "-master" and master[2] == 2
+    assert list(master[3:]) == [1, 2, 2, 3, 3, 4]
+    assert slave[1] == "-slave-segments" and slave[2] == 2
+    # chained, not the silently-legal holed shorthand [10, 11, 12, 13]
+    assert list(slave[3:]) == [10, 11, 11, 12, 12, 13]
+
+
+def test_emit_2d_mortar_carries_thickness_and_a_2component_outward():
+    em = RecordingEmitter()
+    emit_contacts(em, _Fem([_mortar_2d_rec(thickness=0.5)]),
+                  TagAllocator(), ndm=2)
+    cargs = list([c for c in em.calls if c[0] == "contact"][0][1])
+    assert cargs[cargs.index("-thickness") + 1] == 0.5
+    assert cargs[cargs.index("-outward"):] == ["-outward", 1.0, 0.0]
+
+
+def test_record_refuses_an_unchained_2d_mortar_slave():
+    """The holed slave listing is silently legal fork-side too, so the
+    stride-2 chain validator covers ``slave_faces`` as well as the master."""
+    with pytest.raises(ValueError, match="2D slave surface is not chained"):
+        _mortar_2d_rec(slave_faces=np.array([[10, 11], [12, 13]]))
