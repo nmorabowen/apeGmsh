@@ -22,6 +22,38 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the capture route resolves `element_class_name` again
+
+`DomainCaptureSpec._lookup_class_hint_for_pgs` read
+`self._opensees._elem_assignments`, an attribute of the legacy
+`g.opensees` composite removed in Phase 8. The `apeSees` bridge carries
+none, so the guarded `getattr` yielded `{}` and the lookup always
+answered `None` — every resolved record left `element_class_name` unset,
+silently. It now walks the bridge's typed `Element` primitives (the
+source the σ_zz capability gate already uses) via the shared
+`cpp_class_name_for_pgs`; an explicit `element_class_name=` still wins,
+and PGs spanning two element classes still answer `None`.
+
+That hint is what `_identify_layout` needs to separate two catalog
+entries sharing a flat column width — `LadrunoLST` and `BezierTri6` are
+both 3 GP × 4 components under `stress_plane_strain` (and both 3 × 3
+under `stress`), with different Gauss orderings — so without it such a
+record raised `Ambiguous catalog match`.
+
+Same commit: `_resolve_layer_section_metadata` dereferenced
+`_sections` / `_elem_assignments` with no guard, so resolving any
+`layers` record against a bridge raised
+`AttributeError: 'apeSees' object has no attribute '_sections'`. It now
+answers "no layered-section metadata", matching what it already returned
+with no bridge attached. Porting that lookup onto the bridge's `Section`
+primitives is a layered-shell change and is deliberately left out.
+
+Note the `.out` / `RecorderDeclaration` route is unchanged: its
+`element_class_name` is carried on the record but no reader consumes it
+(the H5 declaration bracket does not archive it), and `.out` reads go
+through a hand-built `ResolvedRecorderSpec` with no bridge to resolve
+from. Auto-populating it there would have changed nothing observable.
+
 ### ADDED — every recording route promotes `stress_zz`, not just the deck
 
 The plane-strain σ_zz promotion now covers all three routes that resolve

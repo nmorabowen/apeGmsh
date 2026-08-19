@@ -1003,3 +1003,39 @@ def element_records_stress_zz(spec: Any) -> bool:
     return type(getattr(spec, "material", None)).__name__ in (
         SIGMA_ZZ_MATERIAL_CLASSES
     )
+
+
+def cpp_class_name_for_pgs(
+    bridge: Any, pgs: "tuple[str, ...] | None",
+) -> "str | None":
+    """The single C++ element class covering ``pgs``, or ``None``.
+
+    Walks ``bridge._primitives`` for ``Element`` instances whose ``pg``
+    is in ``pgs`` and maps each through :data:`_ELEM_REGISTRY`.  Returns
+    ``None`` when there is no bridge, no PG was named, or the PGs span
+    more than one class — the ``.out`` transcoder needs exactly one.
+
+    Feeds ``element_class_name`` on both read routes.  ``_identify_layout``
+    cannot separate two catalog entries that share a flat column width
+    (``LadrunoLST`` and ``BezierTri6`` are both 3 GP x 4 components under
+    ``stress_plane_strain``, and both 3 GP x 3 under ``stress``), so
+    without this hint such a record raises ``Ambiguous catalog match``
+    and the user has to name the class by hand.
+    """
+    if not pgs or bridge is None:
+        return None
+    from ._internal.types import Element
+
+    wanted = set(pgs)
+    names: set[str] = set()
+    for prim in getattr(bridge, "_primitives", ()):
+        if not isinstance(prim, Element):
+            continue
+        if getattr(prim, "pg", None) not in wanted:
+            continue
+        ops_type = type(prim).__name__
+        spec = _ELEM_REGISTRY.get(ops_type)
+        names.add(spec.cpp_class_name or ops_type if spec else ops_type)
+    if len(names) == 1:
+        return next(iter(names))
+    return None

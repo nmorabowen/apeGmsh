@@ -740,45 +740,54 @@ class DomainCaptureSpec:
     ) -> str | None:
         """Resolve PG names to a single C++ element class name.
 
-        Walks the attached bridge's ``_elem_assignments`` and
-        ``_ELEM_REGISTRY``; returns ``None`` if there's no bridge, no
-        PGs were named, or multiple element classes are involved.
+        Walks the attached bridge's ``Element`` primitives — the same
+        source :meth:`_lookup_sigma_zz_capable` uses — and maps each
+        primitive's type through ``_ELEM_REGISTRY`` to its C++ class.
+        Returns ``None`` if there's no bridge, no PGs were named, or the
+        PGs span more than one element class (the ``.out`` transcoder
+        needs a single class to disambiguate a layout).
+
+        This used to read ``self._opensees._elem_assignments``, which
+        belonged to the legacy ``g.opensees`` composite removed in
+        Phase 8. The bridge has no such attribute, so the guarded
+        ``getattr`` returned ``{}`` and this always answered ``None`` —
+        silently leaving ``element_class_name`` unset and pushing the
+        cost onto :func:`_identify_layout`, which then cannot separate
+        two classes sharing a flat width (``LadrunoLST`` vs
+        ``BezierTri6`` at 3 GP × 4 comp, and the 9-column ``stress``
+        block those same two share).
         """
-        if not pgs or self._opensees is None:
-            return None
-        elem_assignments = getattr(
-            self._opensees, "_elem_assignments", None,
-        ) or {}
-        if not elem_assignments:
-            return None
-        from ...opensees._element_capabilities import _ELEM_REGISTRY
-        names: set[str] = set()
-        for pg_name in pgs:
-            asgn = elem_assignments.get(pg_name)
-            if asgn is None:
-                continue
-            ops_type = asgn.get("ops_type")
-            if ops_type is None:
-                continue
-            spec = _ELEM_REGISTRY.get(ops_type)
-            if spec is None:
-                continue
-            names.add(spec.cpp_class_name or ops_type)
-        if len(names) == 1:
-            return next(iter(names))
-        return None
+        from ...opensees._element_capabilities import cpp_class_name_for_pgs
+
+        return cpp_class_name_for_pgs(self._opensees, pgs)
 
     def _resolve_layer_section_metadata(
         self,
         fem: "FEMData",
         element_ids: ndarray,
     ) -> Optional[LayerSectionMetadata]:
-        """Build LayerSectionMetadata from the OpenSees back-reference."""
+        """Build LayerSectionMetadata from the OpenSees back-reference.
+
+        ``_sections`` / ``_elem_assignments`` belonged to the legacy
+        ``g.opensees`` composite removed in Phase 8; the ``apeSees``
+        bridge carries neither, so these dereferences raised
+        ``AttributeError`` on any bridge-attached spec with a ``layers``
+        record. Answer ``None`` — "no layered-section metadata" — which
+        is what this already returns when no bridge is attached at all,
+        rather than crashing the whole resolve.
+
+        Porting the lookup onto the bridge's ``Section`` primitives (the
+        way :meth:`_lookup_class_hint_for_pgs` was ported onto its
+        ``Element`` ones) is the real fix; it is a layered-shell change,
+        not a σ_zz one, so it is deliberately left out of this commit.
+        """
         if self._opensees is None:
             return None
 
-        sections_registry = self._opensees._sections
-        elem_assignments = self._opensees._elem_assignments
+        sections_registry = getattr(self._opensees, "_sections", None)
+        elem_assignments = getattr(self._opensees, "_elem_assignments", None)
+        if not sections_registry or not elem_assignments:
+            return None
 
         pg_to_layered_section: dict[str, str] = {}
         for pg_name, assign in elem_assignments.items():
