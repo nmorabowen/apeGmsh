@@ -295,6 +295,48 @@ def test_2d_contact_under_partitioning_is_refused_by_name(tmp_path):
     assert "out of scope" in msg
 
 
+def test_2d_contact_plane_under_partitioning_is_refused_by_name(tmp_path):
+    """The rigid-plane lane needs its own gate, not the loop above.
+
+    ``ContactPlaneRecord`` carries no ``master_nps``, so the discriminator
+    that refuses a 2D ``contact`` does not exist here — the dimension has
+    to come from the model. Before this gate a 2D rigid plane fell
+    straight through into the generic ownership path, silently, while the
+    fork puts parallel / DDM 2D contact out of scope for BOTH lanes.
+    """
+    with apeGmsh(model_name="cplane2d_part", verbose=False) as g:
+        sq = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(2, sq)], n=4)
+        g.mesh.generation.generate(2)
+        g.physical.add(2, [sq], name="block")
+        # The slave is the bottom EDGE, not the surface: the 2D gate
+        # refuses a dim-2 slave because it would collect every interior
+        # node of the body rather than the interface.
+        bottom = next(
+            abs(t) for d, t in gmsh.model.getBoundary([(2, sq)], oriented=False)
+            if abs(gmsh.model.getBoundingBox(1, abs(t))[1]) < 1e-6
+            and abs(gmsh.model.getBoundingBox(1, abs(t))[4]) < 1e-6
+        )
+        g.physical.add(1, [bottom], name="foot")
+        g.constraints.contact_plane(
+            "foot", normal=(0.0, 1.0), point=(0.0, 0.0), kn=1.0e7)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+
+    assert len(fem.partitions) == 2
+
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    ops.element.FourNodeQuad(pg="block", thickness=THICKNESS, material=mat)
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "plane.tcl"))
+    msg = str(exc.value)
+    assert "contact_plane" in msg
+    assert "out of scope" in msg
+
+
 # =====================================================================
 # Orientation (slice B)
 # =====================================================================

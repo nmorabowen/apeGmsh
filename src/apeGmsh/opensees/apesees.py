@@ -5250,6 +5250,27 @@ class BuiltModel:
                 f"(non-partitioned / flat=True)."
             )
 
+        # The rigid-plane lane needs its OWN gate, not an extension of the
+        # loop above: `ContactPlaneRecord` carries no `master_nps`, so the
+        # 2D discriminator that works for `contact` does not exist here and
+        # the dimension has to come from the model. Without this a 2D
+        # `contact_plane` fell straight through into the generic ownership
+        # path — the exact silent kind of pass-through the refusal above is
+        # there to prevent, and the same fork scope applies to both lanes.
+        if planes and int(self.ndm) == 2:
+            idx, rec = 1, planes[0]
+            label = f"#{idx}" + (
+                f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+            )
+            raise BridgeError(
+                f"apeSees: g.constraints.contact_plane interaction {label} "
+                f"is in a 2D model (ndm=2), and 2D contact is not supported "
+                f"under partitioned (MPI) emit — parallel / DDM 2D contact "
+                f"is explicitly out of scope in the fork's own ADR-85, for "
+                f"the rigid-plane lane as much as the NTS one. Emit the 2D "
+                f"model serial (non-partitioned / flat=True)."
+            )
+
         # The mesh's element connectivity, if this FEM snapshot exposes
         # it (real FEMData iterates ElementGroup objects; hand-rolled
         # test stubs may not) — the facet -> backing-solid input that
