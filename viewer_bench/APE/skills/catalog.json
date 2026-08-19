@@ -1,0 +1,10 @@
+{
+  "schema": 2,
+  "policy": "github-canonical",
+  "note": "Empty template stub. Run python APE/skills/harvest.py to populate from your own machine.",
+  "scanned_roots": [],
+  "count": 0,
+  "unique_ids": 0,
+  "skills": [],
+  "preferred": []
+}

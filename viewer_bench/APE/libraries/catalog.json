@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "note": "Empty template stub. Run python APE/libraries/harvest.py to populate on-disk status from your own machine.",
+  "github_root_portable": "<github>/",
+  "github_root_resolved": null,
+  "count": 0,
+  "on_disk": 0,
+  "libraries": []
+}
