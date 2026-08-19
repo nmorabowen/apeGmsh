@@ -409,6 +409,11 @@
    "group": "results"
   },
   {
+   "id": "results.session",
+   "label": "ResultsSession",
+   "group": "results"
+  },
+  {
    "id": "results.capture",
    "label": "DomainCapture",
    "group": "results"
@@ -506,6 +511,11 @@
   {
    "id": "viewer.results",
    "label": "results viewer",
+   "group": "viewers"
+  },
+  {
+   "id": "viewer.session",
+   "label": "session window",
    "group": "viewers"
   },
   {
@@ -3809,6 +3819,23 @@
    "methods": [
     "viz.vtkexport.VTKExport"
    ]
+  },
+  {
+   "from": "results",
+   "to": "results.session",
+   "methods": [
+    "Results.session",
+    "Results.viewer",
+    "results.viewer"
+   ]
+  },
+  {
+   "from": "results.session",
+   "to": "viewer.session",
+   "methods": [
+    "Results.viewer",
+    "results.viewer"
+   ]
   }
  ],
  "methods": [
@@ -6895,43 +6922,52 @@
    "id": "Results.viewer",
    "label": "viewer",
    "composite": "viewer.results",
-   "signature": "viewer(*, blocking=True, title=None, restore_session='prompt', save_session=True, cuts=None, model_h5=None) -> ResultsViewer | subprocess.Popen | None",
-   "summary": "Open the post-solve results viewer. blocking=True constructs ResultsViewer(self, ...).show() in-process and blocks; blocking=False spawns `python -m apeGmsh.viewers <path>` (requires on-disk Results) and closes the parent reader so a capture rerun can recreate the .h5. Returns None if APEGMSH_SKIP_VIEWER is set. cuts= renders SectionCutDefs as Layers (requires model_h5=).",
+   "signature": "viewer(*, blocking=None, title=None, restore_session='prompt', save_session=True) -> ResultsSession | subprocess.Popen | WebViewer | None",
+   "summary": "Open the post-solve results window. ADR 0098 S6a flipped it onto the session: blocking builds a ResultsSession (results.session()), restores/saves <results>.viewer-session.json around it, calls session.show() in-process and RETURNS THE SESSION once the window closes. blocking=False spawns `python -m apeGmsh.viewers <path>` (requires on-disk Results, carries the open policy in argv) and closes the parent reader so a capture rerun can recreate the .h5. A notebook with in-memory Results falls back to show_web(). Returns None if APEGMSH_SKIP_VIEWER is set. cuts= is retired — a cut plane is clip state on a view.",
    "file": "src/apeGmsh/results/Results.py:397",
    "flow": [
     {
      "node": "results",
-     "action": "if APEGMSH_SKIP_VIEWER env set → return None",
+     "action": "if APEGMSH_SKIP_VIEWER env set → return None (before any disk read)",
      "passes": "(none)",
      "to": "external"
     },
     {
      "node": "results",
-     "action": "blocking=False → _spawn_viewer_subprocess(title) launches `python -m apeGmsh.viewers <path>` then self.close()",
+     "action": "blocking=False → _spawn_viewer_subprocess(title, restore_session, save_session) launches `python -m apeGmsh.viewers <path>` then self.close()",
      "passes": "path:str, subprocess.Popen",
-     "to": "viewer.results"
+     "to": "external"
     },
     {
      "node": "results",
-     "action": "blocking=True → import ResultsViewer",
-     "passes": "self:Results, cuts, model_h5",
-     "to": "viewer.results"
+     "action": "blocking=True → _show_session_window: boot_session(self, restore, save, confirm) reads <results>.viewer-session.json (v13 → notice + .legacy rename-aside; refusal → notice + auto-save disarmed)",
+     "passes": "SessionBoot(session, save_path, notices)",
+     "to": "results.session"
     },
     {
-     "node": "viewer.results",
-     "action": "ResultsViewer(self, title, restore_session, save_session, cuts, model_h5).show() blocks until window close",
-     "passes": "ResultsViewer",
+     "node": "results.session",
+     "action": "ResultsSession.show(blocking=True) → viewers.session.show_session builds the SessionWindow and runs the Qt loop until close",
+     "passes": "ResultsSession",
+     "to": "viewer.session"
+    },
+    {
+     "node": "results",
+     "action": "save_on_close(boot) writes the snapshot atomically if auto-save is armed; the session IR survives widget disposal",
+     "passes": "ResultsSession",
      "to": "external"
     }
    ],
-   "inputs": "blocking, title, restore_session, save_session, cuts (SectionCutDefs), model_h5",
-   "outputs": "ResultsViewer (blocking) | subprocess.Popen (non-blocking) | None (skip env)",
+   "inputs": "blocking, title, restore_session, save_session",
+   "outputs": "ResultsSession (blocking) | subprocess.Popen (non-blocking) | WebViewer (notebook in-memory) | None (skip env)",
    "reads": [
-    "src/apeGmsh/viewers/results_viewer.py:ResultsViewer",
+    "src/apeGmsh/results/session/_boot.py:boot_session",
+    "src/apeGmsh/viewers/session/_window.py:SessionWindow",
+    "<results>.viewer-session.json (restore_session)",
     "Results._path"
    ],
    "writes": [
-    "<results>.viewer-session.json on close (if save_session)",
+    "<results>.viewer-session.json on close (if save_session and not disarmed)",
+    "<results>.viewer-session.json.legacy (v13 rename-aside, never overwritten)",
     "closes parent reader on non-blocking spawn"
    ],
    "_cluster": "H_res_core"
@@ -12069,7 +12105,7 @@
    "id": "apegmsh.exports",
    "label": "top-level exports",
    "composite": "apegmsh",
-   "signature": "from apeGmsh import apeGmsh, Part, FEMData, Results, Selection, ModelViewer, MeshViewer, ResultsViewer, preview, workdir, ... (see __all__)",
+   "signature": "from apeGmsh import apeGmsh, Part, FEMData, Results, Selection, ModelViewer, MeshViewer, preview, workdir, ... (see __all__; ResultsViewer de-published at ADR 0098 S6a)",
    "summary": "Package facade — apeGmsh/__init__.py re-exports the public classes/functions (apeGmsh session, Part/PartsRegistry/Instance, ConstraintsComposite, FEMData/MeshInfo, mesh algorithm enums, MshLoader, Results, Numberer, Selection/SelectionComposite, the three viewers + SelectionPicker alias, Constraints module, settings/theme_editor, preview, workdir) and computes __version__ + prints the import banner (suppress with APEGMSH_QUIET=1).",
    "file": "src/apeGmsh/__init__.py:163",
    "flow": [
@@ -26560,7 +26596,7 @@
    "label": "viewers.__main__",
    "composite": "viewer.results",
    "signature": "python -m apeGmsh.viewers <path> [--title TITLE]  -> exit code int",
-   "summary": "CLI entry that opens a Results file in the post-solve viewer as a standalone subprocess (used by Results.viewer(blocking=False) so the viewer survives a notebook/kernel crash). Picks Results.from_mpco for .mpco else Results.from_native, then calls results.viewer(blocking=True, title=).",
+   "summary": "CLI entry that opens a Results file in the post-solve viewer as a standalone subprocess (used by Results.viewer(blocking=False) so the viewer survives a notebook/kernel crash). Picks Results.from_mpco for .mpco else Results.from_native, then calls results.viewer(blocking=True, title=, restore_session=, save_session=) — which since ADR 0098 S6a opens a ResultsSession window.",
    "file": "src/apeGmsh/viewers/__main__.py:24",
    "flow": [
     {
@@ -26577,8 +26613,8 @@
     },
     {
      "node": "viewer.results",
-     "action": "results.viewer(blocking=True, title=) launches the ResultsViewer Qt loop and blocks until the window closes; returns exit code 0",
-     "passes": "Results -> ResultsViewer (viewer internals out of scope)",
+     "action": "results.viewer(blocking=True, title=, restore_session=, save_session=) opens the ResultsSession window and blocks until it closes; returns exit code 0",
+     "passes": "Results -> ResultsSession (window internals out of scope)",
      "to": "viewer"
     }
    ],
@@ -29930,36 +29966,54 @@
    "id": "results.viewer",
    "label": "viewer",
    "composite": "results",
-   "signature": "Results.viewer(*, blocking=True, title=None, restore_session='prompt', save_session=True, cuts=None, model_h5=None) -> ResultsViewer | subprocess.Popen | None",
-   "summary": "Public ResultsViewer open entry. Blocking: constructs ResultsViewer(self, ...).show() in-process and runs the Qt loop until close. Non-blocking: spawns `python -m apeGmsh.viewers <path>` and closes the parent reader. Returns None under APEGMSH_SKIP_VIEWER.",
+   "signature": "Results.viewer(*, blocking=None, title=None, restore_session='prompt', save_session=True) -> ResultsSession | subprocess.Popen | WebViewer | None",
+   "summary": "Public results-window entry. ADR 0098 S6a: blocking boots a ResultsSession through boot_session (restore/legacy-gate policy), shows it with session.show(), saves on close, and returns the session. Non-blocking spawns `python -m apeGmsh.viewers <path>` and closes the parent reader. Returns None under APEGMSH_SKIP_VIEWER.",
    "file": "src/apeGmsh/results/Results.py:397",
    "flow": [
     {
      "node": "results",
-     "action": "if APEGMSH_SKIP_VIEWER return None; if not blocking spawn subprocess and self.close()",
-     "passes": "<results path>",
-     "to": "viewer.results"
+     "action": "if APEGMSH_SKIP_VIEWER env set → return None (before any disk read)",
+     "passes": "(none)",
+     "to": "external"
     },
     {
      "node": "results",
-     "action": "blocking: construct ResultsViewer(self, title, restore_session, save_session, cuts, model_h5).show()",
-     "passes": "<Results, cuts, model_h5>",
-     "to": "viewer.results"
+     "action": "blocking=False → _spawn_viewer_subprocess(title, restore_session, save_session) launches `python -m apeGmsh.viewers <path>` then self.close()",
+     "passes": "path:str, subprocess.Popen",
+     "to": "external"
     },
     {
-     "node": "viewer.results",
-     "action": "ResultsViewer.show() pins a live ref, logs session.open, calls _show_impl",
-     "passes": "<ResultsViewer>",
-     "to": "viewer.results"
+     "node": "results",
+     "action": "blocking=True → _show_session_window: boot_session(self, restore, save, confirm) reads <results>.viewer-session.json (v13 → notice + .legacy rename-aside; refusal → notice + auto-save disarmed)",
+     "passes": "SessionBoot(session, save_path, notices)",
+     "to": "results.session"
+    },
+    {
+     "node": "results.session",
+     "action": "ResultsSession.show(blocking=True) → viewers.session.show_session builds the SessionWindow and runs the Qt loop until close",
+     "passes": "ResultsSession",
+     "to": "viewer.session"
+    },
+    {
+     "node": "results",
+     "action": "save_on_close(boot) writes the snapshot atomically if auto-save is armed; the session IR survives widget disposal",
+     "passes": "ResultsSession",
+     "to": "external"
     }
    ],
-   "inputs": "blocking/title/session/cuts/model_h5 options; Results with a bound FEMData",
-   "outputs": "ResultsViewer (blocking) | subprocess.Popen (non-blocking) | None (skip)",
+   "inputs": "blocking/title/restore_session/save_session options; Results with a bound FEMData",
+   "outputs": "ResultsSession (blocking) | subprocess.Popen (non-blocking) | WebViewer (notebook in-memory) | None (skip)",
    "reads": [
-    "Results._path",
-    "APEGMSH_SKIP_VIEWER env"
+    "src/apeGmsh/results/session/_boot.py:boot_session",
+    "src/apeGmsh/viewers/session/_window.py:SessionWindow",
+    "<results>.viewer-session.json (restore_session)",
+    "Results._path"
    ],
-   "writes": [],
+   "writes": [
+    "<results>.viewer-session.json on close (if save_session and not disarmed)",
+    "<results>.viewer-session.json.legacy (v13 rename-aside, never overwritten)",
+    "closes parent reader on non-blocking spawn"
+   ],
    "_cluster": "I_res_io"
   },
   {

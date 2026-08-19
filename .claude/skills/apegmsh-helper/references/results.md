@@ -113,9 +113,9 @@ lin.assert_clean()           # opt-in: raises LineageError if warnings non-empty
   string in `lineage.warnings`, not an exception.
 - `Lineage` is a dataclass:
   `Lineage(fem_hash: str = "", model_hash: Optional[str] = None, results_hash: Optional[str] = None, warnings: tuple[str, ...] = ())`
-  (`src/apeGmsh/opensees/_internal/lineage.py:114`).
+  (`src/apeGmsh/opensees/_internal/lineage.py:117`).
 - `LineageError` (subclass of `ValueError`,
-  `src/apeGmsh/opensees/_internal/lineage.py:102`) is raised **only**
+  `src/apeGmsh/opensees/_internal/lineage.py:105`) is raised **only**
   by the explicit `lineage.assert_clean()` opt-in check.
 
 Re-bind a fresh-session FEMData (to recover labels/Parts the embedded
@@ -164,7 +164,7 @@ slab = results.nodes.get(pg="Body", component="displacement_x")      # verified:
 slab.values, slab.time, slab.node_ids
 ```
 
-`nodes.get` signature (`_composites.py:851`) — all selectors keyword-only:
+`nodes.get` signature (`_composites.py:883`) — all selectors keyword-only:
 
 ```
 get(*, pg=None, label=None, selection=None, ids=None,
@@ -266,7 +266,7 @@ r.stage("dynamic").nodes.definitions             # carried across derivation
 ### Static matplotlib (`[plot]` extra)
 
 ```python
-results.plot.contour("displacement_z", step=-1)          # ResultsPlot.contour, _plot.py:151
+results.plot.contour("displacement_z", step=-1)          # ResultsPlot.contour, _plot.py:159
 results.plot.deformed(step=-1, scale=50, component="stress_xx")
 results.plot.history(node=412, component="displacement_x")
 ```
@@ -281,9 +281,13 @@ Qt viewers are for **humans who asked to look**. After a solve, an
 agent's check is `results.assess()` (§3b / `assess.md`), not a
 window.
 
+`viewer()` is sugar for `results.session().show()`: the window projects
+a **`ResultsSession`** — tiled mesh and plot panes, result slots per
+pane.
+
 ```python
 def viewer(self, *, blocking=None, title=None,
-           restore_session="prompt", save_session=True, cuts=None)
+           restore_session="prompt", save_session=True)
 ```
 
 - The **default is `blocking=None` (auto)**: `True` (in-process Qt) in
@@ -293,21 +297,39 @@ def viewer(self, *, blocking=None, title=None,
   prints one `[viewer]` line.
 - An **explicit** `blocking=True` still runs the VTK+Qt event loop
   in-process and **native-crashes a Jupyter / VS Code kernel**.
+- **Returns differ by path, on purpose**: blocking returns the
+  `ResultsSession` (still live after the window closes — query it,
+  `render()` off it, `snapshot()` it); `blocking=False` returns the
+  `subprocess.Popen`; the notebook in-memory fallback returns the
+  `WebViewer`.
 - `viewer(blocking=False)` always spawns a subprocess; needs a Results
   opened from disk, raises `RuntimeError` for in-memory.
-- `viewer()` already calls `.show()` — never chain
-  `results.viewer().show()` (opens two windows).
-- `viewer(cuts=...)` is **ignored** on the `blocking=False` subprocess
-  path (live `SectionCutDef` objects don't survive the argv hop).
+- `viewer()` already shows the window — never chain
+  `results.viewer().show()`; that would open a second one on the
+  returned session.
+- `save_session=True` (default) writes `<results>.viewer-session.json`
+  on close; `restore_session` is `True` / `False` / `"prompt"`
+  (default). A session file that cannot be read never blocks the
+  window: it is announced, the default picture boots, and auto-save is
+  disarmed for that window so the file survives. A v13 file from the
+  retired window is renamed to `…​.viewer-session.json.legacy`, never
+  overwritten.
+- `cuts=` is **retired** (ADR 0098 §1). A cut plane is clip state on a
+  view: build defs with `apeGmsh.cuts`, then
+  `results.session()` → `view.add_clip(normal, offset=…)`.
 - `APEGMSH_SKIP_VIEWER=1` makes the viewer call return `None` — lets a
-  cell survive `jupyter nbconvert --execute` / CI.
-- **File → Open Results…** (#757) opens another results file in the running
-  viewer, with a format-aware follow-up prompt for the model archive when the
-  format needs one (`.mpco` → `model_h5=`; `.ladruno` is self-sufficient).
+  cell survive `jupyter nbconvert --execute` / CI. Checked before
+  anything touches disk, so a skipped call never renames a session file.
 - Higher-order solids (tet10/20/27, tri6, quad8/9, prism15, Bézier fork
-  elements) now **render in the results viewer** (#763) — drawn as their
-  linear corner cell (mid-side nodes dropped); previously a quadratic /
-  fork-coded mesh emitted 0 cells and left the viewport blank.
+  elements) render as their linear corner cell (mid-side nodes dropped).
+- **Not in the session window:** there is no **File** menu — no *Open
+  results…*, *Save screenshot…*, *Export animation…* or *Preferences…*
+  entry (screenshot survives as a toolbar action on the active pane;
+  `apeGmsh.viewers.settings()` is the preferences door). Also absent:
+  the draggable / right-click colour-scale chrome, the probe overlay,
+  the threshold UI, and the outline's eye-cascade. Scales are per-pane
+  and caused by slots — `INV-LEGEND-1..5` — but the legend interactor
+  is not installed; `view.set_legend_hidden(field)` is the gesture.
 
 ### Headless animation export — `results.export_animation(...)` (#755)
 
@@ -319,51 +341,59 @@ results.export_animation("run.mp4", fps=30, step_stride=2,
 
 Renders the time history to **`.mp4`** (H.264 — needs the
 `apegmsh[animation]` extra) or **`.gif`** (Pillow, no extra); the path
-suffix picks the format. It builds the full results viewer off-screen, so
-deformation/contours/camera are pixel-identical to the interactive viewer
-(the window flashes briefly — the OpenGL context needs a realized surface —
-but no blocking event loop runs). `step_stride=N` captures every N-th step
-plus the last; `deform=None` (default) renders undeformed; `setup=` takes a
+suffix picks the format. It builds its own off-screen window on the
+private diagram stack — which is why `setup=` hands you a `director` —
+so it is not a projection of a `ResultsSession` (the window flashes
+briefly: the OpenGL context needs a realized surface, but no blocking
+event loop runs). `step_stride=N` captures every N-th step plus the
+last; `deform=None` (default) renders undeformed; `setup=` takes a
 `callback(plotter, director)` invoked after the scene builds and before
-capture (the escape hatch for contours / section cuts / camera work). The
-same export lives on the viewer GUI as a button.
-`# src/apeGmsh/results/Results.py:1030`
+capture (the escape hatch for contours / section cuts / camera work).
+It is script-only — the session window has no File menu and no export
+path. `# src/apeGmsh/results/Results.py:1452`
 
-### Concurrent geometries — `director.geometries` (ADR 0058)
+### Per-pane state — the `MeshView` (ADR 0098 §3–§7)
 
-A **Geometry is now a scene instance**, not just a deformation preset: every
-Geometry with `visible=True` renders **concurrently** at its own deform state,
-spatial offset, and stage pin. Mostly a GUI feature, but the same actions are
-scriptable on the open viewer's director (`viewer.director.geometries`, a
-`GeometryManager`) — only valid **after** the viewer window is open.
+The picture belongs to the pane. A session is tiled panes; each mesh
+pane is a `MeshView` carrying its own **scope** (ONE composition axis —
+`physical_groups` / `materials` / `element_types` — plus the names
+checked on it, never a boolean `concrete AND hex`), **pose**
+(`view.deform`, a field + scale; a pose, not a slot, and it causes no
+legend), **time** (`view.time`, an `Instant(stage, step)`), style, clips
+and slots. Comparing two states is two panes — a second deform state is
+not a second scene instance.
 
 ```python
-gm = viewer.director.geometries          # GeometryManager (src/apeGmsh/viewers/diagrams/_geometries.py)
-g2 = gm.add(name="Stage B", make_active=True)            # also: outline "+" button
-gm.set_offset(g2.id, (20.0, 0.0, 0.0))                   # side-by-side; never baked into coords (picking stays valid)
-gm.set_stage_pin(g2.id, stage_id)                        # read deform from a pinned stage; None = follow active
-gm.set_visible(g2.id, True)                              # eye icon; hidden geoms are gate-hidden
-gm.set_deformation(field="displacement", scale=2.0)      # per-geometry deform field + scale
-gm.add_reference_ghost(g2.id)                            # dimmed deform-OFF wireframe (GHOST_OPACITY=0.3)
-viewer.director.duplicate_geometry(g2.id)                # clone + REBUILD every diagram (not runtime overrides)
+from apeGmsh.results.session import Contour, Deform, Instant, Scope
+
+s = results.session()                             # the document, no window
+v = s.panes[0]                                    # the booted empty mesh view
+v.scope = Scope("physical_groups", ("wall",))     # one axis + names
+v.deform = Deform("displacement", 50.0)           # pose (Deform(mode=3) = mode pose)
+v.contour = Contour("stress_von_mises")           # fills the contour slot
+v.time = Instant("dynamic", 12)                   # this pane's instant
+v.add_clip((1.0, 0.0, 0.0), offset=2.5)           # section plane, view-owned
+
+s.add_view()                                      # a second pane
+s.time_linked = False                             # each pane scrubs alone
+s.render("wall.png", v.id)                        # a still, no Qt
 ```
 
-- **GUI-equivalent:** "+" in the Outline header (add), eye icon (visible),
-  GeometrySettingsPanel fields/combo (offset, stage pin, deform), right-click
-  row (reference ghost, duplicate). Inline F2 renames (`gm.rename`).
-- **Single global time cursor** — all geometries share the step index; staged
-  comparison is "global step + per-geometry stage pin", not per-geometry cursors.
-- **Deform-follow is mandatory** — every diagram tracks the deformed substrate
-  (the old `deformed_shape` diagram kind was retired; the undeformed reference is
-  the reference-ghost preset). Loading a legacy session drops a `deformed_shape`
-  spec with a log line (S4 migration).
-- **Duplicate** copies deform state + offset + stage pin and rebuilds diagrams
-  from their `DiagramSpec`; live color-map edits / manual hides / probes are NOT
-  copied.
-- **Session schema is v7** (`SESSION_SCHEMA_VERSION = 7`,
-  `viewers/diagrams/_session.py`) — adds per-geometry `stage_id`; older sessions
-  load with sensible defaults (`stage_id=None`, `offset=(0,0,0)`, active-only
-  visibility).
+- **Slots are a closed catalog of seven** — `contour`, `vector`,
+  `gauss`, `line`, `sand`, `loads`, `reactions`. At most one occupant
+  per category per pane; different categories stack; filling an occupied
+  slot **replaces** the occupant and `None` clears it. `v.slots` reads
+  the occupied ones. A new category is an ADR 0098 amendment, not a
+  subclass.
+- **Legends are derived, never set** — `v.legends()` is a function of
+  the occupied colour-mapped slots (`contour` / `vector` / `gauss` /
+  `sand`); two slots on the same quantity share one scale
+  (`INV-LEGEND-1..5`). Deform on with every slot empty draws no scale.
+- **Snapshot is v1** — `SNAPSHOT_VERSION = 1`, `kind:
+  "apegmsh.results.session"` (`results/session/_snapshot.py`).
+  `s.snapshot()` returns the dict, `s.save_snapshot()` writes it;
+  `restore_snapshot` refuses an unknown slot category. A v13 file from
+  the retired window is renamed `.legacy`, never restored.
 
 ## 6. Web / Jupyter viewers (ADR 0042 R-C — newest)
 
@@ -372,9 +402,9 @@ trame-vuetify; `ipywidgets` for the inline controls).
 
 ```python
 def show_web(self, *, stage=None, show=True, controls=True,
-             render_mode="client")            # Results.py:1137
+             render_mode="client")            # Results.py:1559
 def serve_web(self, *, stage=None, render_mode="client", port=None,
-              open_browser=True, title="apeGmsh", **start_kwargs)   # Results.py:1186
+              open_browser=True, title="apeGmsh", **start_kwargs)   # Results.py:1608
 ```
 
 ```python
@@ -421,9 +451,12 @@ OpenSees solve runs. `n_steps<1` / `n_elements<1` raise `ValueError`.
   `RuntimeError("WebViewer requires a Results with bound FEMData ...")`.
   Construct with `fem=` or call `results.bind(fem)` first.
 - It is **view-only** at construction: it renders the substrate plus
-  whatever diagrams the director already holds. `show_web`/`serve_web`
-  do **not** add a deformed/contour layer for you — add one via
-  `wv.director.registry.add(...)` before `show()`.
+  whatever diagrams the director already holds, and `show_web` /
+  `serve_web` add **no** deformed/contour layer for you. `wv.director`
+  is implementation of this hatch, not an authoring surface — no
+  compatibility promise, and a picture built through it cannot enter a
+  session snapshot, be pinned, or be rendered by the MCP `render` verb
+  (ADR 0098 Amendment 2). A picture you can keep is a `ResultsSession`.
 - `show(controls=True)` degrades **gracefully** if `ipywidgets` is
   missing (returns the bare view); `WebViewer.controls()` instead
   **raises** `RuntimeError` pointing at the `[viewer]` extra.

@@ -420,15 +420,12 @@ def test_the_file_on_disk_is_the_same_oracle(snap_results, tmp_path):
 
 
 def test_the_default_path_lands_beside_the_results_file(snap_results):
-    """And it is NOT the path today's window still owns."""
+    """On the name the retired window used, adopted at the S6a flip."""
     built = _built_session(snap_results)
 
     written = built.save_snapshot()
 
-    assert written.name.endswith(".h5.session.json")
+    assert written.name.endswith(".h5.viewer-session.json")
     assert written.parent == Path(snap_results._path).parent
-    assert not written.with_name(
-        written.name.replace(".session.json", ".viewer-session.json"),
-    ).exists()
     restored = load_snapshot(written, results=snap_results)
     assert _scene(restored.session, "mesh-1") == _scene(built, "mesh-1")

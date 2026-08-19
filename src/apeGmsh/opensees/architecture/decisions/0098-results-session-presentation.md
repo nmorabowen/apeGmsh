@@ -1212,3 +1212,114 @@ down. Three new glyphs and four Appendix A rows are owed before the
 style buttons can ship. And N live GL contexts is N times the driver
 surface — the probe says it works today on both oracles; the probe is
 also what will say when it stops.
+
+---
+
+## Amendment 2 (2026-08-18) — the six slotless kinds (S6c)
+
+Append-only. §1–§11, Amendment 1, INV-MESH-1…4, INV-LEGEND-1…5, the
+slot catalog and the rejected-alternatives table all stay. This
+amendment discharges the Consequences clause that says S6 does not
+complete until each shipped kind with no slot has a recorded
+disposition.
+
+### A2.1 The six
+
+Six diagram kinds ship today with no §4 slot. §4 named them and
+refused them an eighth slot; it did not say what becomes of the code.
+
+| Kind id | Class | Registered at | Dedicated tests |
+|---|---|---|---|
+| `fiber_section` | `FiberSectionDiagram` | `diagrams/_fiber_section.py:61,68` | `test_fiber_diagram.py` |
+| `layer_stack` | `LayerStackDiagram` | `diagrams/_layer_stack.py:59,66` | `test_layer_diagram.py` |
+| `isochrone_map` | `IsochroneMapDiagram` | `diagrams/_isochrone_map.py:80,88` | `test_isochrone_diagrams.py`, `test_isochrone_math.py` |
+| `isochrone_profile` | `IsochroneProfileDiagram` | `diagrams/_isochrone_profile.py:53,61` | (same) |
+| `isochrone_strobe` | `IsochroneStrobeDiagram` | `diagrams/_isochrone_strobe.py:64,72` | (same) |
+| `spring_force` | `SpringForceDiagram` | `diagrams/_spring_force.py:60,66` | `test_spring_force.py` |
+
+### A2.2 Decision — internal survival behind the `show_web` hatch
+
+All six survive as internal implementation of the `show_web` hatch.
+None is retired. None widens the slot catalog. The catalog stays
+closed at seven.
+
+**The catalog was already argued.** §4 rejected an eighth slot and
+the alternatives table rejected it again. A slot for any of the six
+is a §4 widening argued on evidence at the same review bar as a new
+slot — not a side effect of the S6 sweep.
+
+**Retirement would be unargued deletion.** Each of the six is
+working, tested code with no replacement in the session ontology and
+no recorded complaint. Deleting it at S6 would be the sweep making a
+product decision this ADR declined to make.
+
+**Survival is near-free.** The kind registry auto-populates on any
+import under `apeGmsh.viewers.diagrams` (`diagrams/_kinds.py:21-27`),
+and the hatch keeps a live handle: `WebViewer.director`
+(`viewers/web_viewer.py:160`) → `registry.add`
+(`diagrams/_registry.py:290`). S6a and S6b keep the six alive by
+doing nothing to them; the sweep's import-guard allowlist has to name
+the hatch modules regardless, for `render.py`'s tokens and
+`studio/_verbs._yield_setup`.
+
+### A2.3 What the disposition costs — stated, not softened
+
+**They lose their authoring UI.** They are reachable today from the
+Qt Add-Diagram dialog. After the S6a flip `viewer()` opens the
+session window, which has no Add-Diagram dialog, so the only way to
+construct one is Python against the `show_web()` director handle — an
+internal surface with no compatibility promise (Consequences: the
+director "survives past S6 as an implementation detail of that
+hatch").
+
+**They were never published, so de-publication costs no page.** Zero
+occurrences of the five diagram kinds in `docs/` or in the `apegmsh`
+skill (the `spring_force` hits are the results component
+`spring_force_0`, not the kind). S6d has nothing to rewrite for them.
+
+**They cannot enter a session.** The §4 catalog is closed and
+`restore_snapshot` refuses an unknown slot category, so a picture
+made through the hatch is not snapshot state, not pinnable by
+`results_pin`, and not renderable by the MCP `render` verb. A hatch
+picture is a notebook artifact and nothing else.
+
+### A2.4 Consequences for the sweep
+
+- The five dedicated test files above are **not** retired by S6b.
+  They cover code that survives, and S1 does not re-cover them —
+  no slot renders any of the six.
+- **Corrected during S6b:** those five files are not the whole survivor
+  set. Six more tests of these kinds live inside files that are
+  otherwise per-kind retirements, and a sweep trusting the list above
+  would have deleted them with their hosts:
+  `test_diagram_deform_follow.py` (`test_fiber_cloud_follows_deformation`,
+  `test_layer_stack_follows_deformation`,
+  `test_spring_force_follows_deformation`),
+  `test_diagram_recorder_frame.py` (`test_fiber_cloud_uses_recorder_roll`,
+  `test_fiber_recorder_z_axes_empty_for_non_ladruno`) and
+  `test_no_data_error.py` (`test_spring_force_raises_nodata_when_no_springs`).
+  S6b keeps those three files whole rather than splitting them: the
+  surviving fraction makes deletion unsafe and the retired fraction
+  costs nothing to keep.
+- **The mechanism this amendment rests on is now itself tested.**
+  `tests/viewers/test_diagram_hatch_survival.py` pins that a bare
+  package import registers all six, that one still constructs through
+  the real `DiagramRegistry` — the call `WebViewer.director.registry.add`
+  makes — and that none of them acquired a §4 slot. Until S6b there was
+  no `test_web_viewer.py` and no direct coverage of the hatch at all,
+  so A2.2's "survival is near-free" was an untested claim.
+- The S6b import guard allowlists the hatch modules. That allowlist
+  is the mechanism this disposition rides, so mutation-test it
+  against a **near-miss** (a wrong module name in the allowlist),
+  not only against an absent one.
+
+### A2.5 Expiry
+
+This disposition is bound to the hatch and does not outlive it.
+
+1. **The web-client ADR retires `show_web` or the director.** All six
+   then need a fresh disposition, recorded in *that* ADR before it
+   merges. This amendment does not carry them across it.
+2. **Any one of the six is asked for in the session window.** That is
+   a §4 slot-widening amendment here, argued on the evidence, at the
+   same review bar as a new slot — not a reopening of this amendment.

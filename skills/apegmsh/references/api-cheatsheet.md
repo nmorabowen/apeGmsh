@@ -233,10 +233,11 @@ the selection into a label/PG without raw tags:
 
 ## `g.mesh` — meshing
 
-`g.mesh.viewer(**kw)` and `g.mesh.results_viewer(...)` are flat entry
-points. Everything else lives in sub-composites: `generation`,
-`sizing`, `field`, `structured`, `editing`, `queries`, `partitioning`,
-`recipe`.
+`g.mesh.viewer(**kw)`, `g.mesh.render(...)` and `g.mesh.preview(...)`
+are the flat entry points (there is no `g.mesh.results_viewer` — the
+post-solve door is `results.viewer()`, see `results.md`). Everything
+else lives in sub-composites: `generation`, `sizing`, `field`,
+`structured`, `editing`, `queries`, `partitioning`, `recipe`.
 
 ### `g.mesh.generation` — (`_Generation`)
 

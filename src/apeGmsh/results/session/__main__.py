@@ -6,9 +6,10 @@ stays out of the caller's kernel (the ADR 0094 S5 discipline, applied to
 the new ontology).
 
 Its own entry rather than a subcommand of ``python -m apeGmsh.viewers``
-because that module flips at S6 and this door outlives the flip.
+because that module flipped at ADR 0098 S6a and this door outlives
+the flip.
 
-    python -m apeGmsh.results.session render out.h5.session.json shot.png
+    python -m apeGmsh.results.session render out.h5.viewer-session.json shot.png
     python -m apeGmsh.results.session render snap.json shot.png --pane mesh-2
 
 The broker comes from ``--results`` or, failing that, from the
@@ -84,7 +85,9 @@ def _main_render(argv: Sequence[str]) -> int:
             "snapshot (ADR 0098 S5c)."
         ),
     )
-    parser.add_argument("snapshot", help="A <results>.session.json file.")
+    parser.add_argument(
+        "snapshot", help="A <results>.viewer-session.json file.",
+    )
     parser.add_argument("output", help="Output PNG.")
     parser.add_argument(
         "--pane",
@@ -173,7 +176,8 @@ def main(argv: "Optional[Sequence[str]]" = None) -> int:
         return _main_render(argv_list[1:])
     print(
         "usage: python -m apeGmsh.results.session render "
-        "SNAPSHOT.session.json OUTPUT.png [--pane ID] [--results PATH]",
+        "SNAPSHOT.viewer-session.json OUTPUT.png [--pane ID] "
+        "[--results PATH]",
         file=sys.stderr,
     )
     return 2

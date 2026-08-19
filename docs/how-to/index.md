@@ -46,7 +46,9 @@ task, not just the ones with a tidy page yet.
 ## Results
 
 - **[Read a node's displacement and reactions](read-results.md)** — pull nodal results back by physical-group name.
-- **[Plot a deformed shape or contour](../concepts/results.md)** — render results with the notebook-safe `show_web` viewer.
+- **[Plot a deformed shape or contour](render-a-still.md)** — fill a slot, set the pose, `render()` a still off `results.session()` with no Qt.
+- **[Arrange panes, slots and time in code](../api/results-session.md)** — the `ResultsSession` document `results.viewer()` opens: panes, the seven-slot catalog, legends, snapshots.
+- **[View results in a notebook](../concepts/results.md)** — the kernel-safe `show_web` viewer.
 - **[Get results via MPCO (STKO)](results-mpco.md)** — record to `.mpco` and read with `Results.from_mpco(model_h5=...)`.
 - **[Choose how to get results](choose-results-strategy.md)** — the run × read decision: in-process vs export, and `from_native` / `from_recorders` / `from_mpco`.
 - **[Drive Studio / MCP habitat](studio-habitat.md)** — spawn MCP + Qt host, project root, file ownership, poll contract, cold start.

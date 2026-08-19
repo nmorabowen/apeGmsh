@@ -43,11 +43,24 @@ class _StubResults:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.viewer_calls: list[tuple[Any, ...]] = []
+        self.viewer_policy: list[tuple[Any, bool]] = []
         self.render_calls: list[tuple[Any, dict]] = []
         self.pack_calls: list[tuple[Any, dict]] = []
 
-    def viewer(self, *, blocking: bool = True, title=None):
+    def viewer(
+        self,
+        *,
+        blocking: bool = True,
+        title=None,
+        restore_session: "bool | str" = "prompt",
+        save_session: bool = True,
+    ):
+        # ADR 0098 S6a: the child carries the parent's open policy
+        # across the argv hop. ``viewer_calls`` keeps its old shape so
+        # the dispatch assertions below are untouched; the policy has
+        # its own list, asserted in tests/viewers/test_viewer_flip.py.
         self.viewer_calls.append((blocking, title))
+        self.viewer_policy.append((restore_session, save_session))
         return None
 
     def render(self, path, **kwargs):

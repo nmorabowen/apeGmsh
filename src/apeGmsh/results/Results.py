@@ -1191,11 +1191,32 @@ class Results:
         no slots, no legends). Configure it (slots, deform, time), then
         ``s.render("a.png")`` for a still; the Qt client (``s.show()``)
         arrives at S2 and ``viewer()`` flips onto it at S6.
+
+        **Persisted section cuts boot as view clips** (ADR 0098 S6b).
+        The retired ``section_cut`` diagram kind took its auto-load
+        contract with it, but not the contract itself: cuts persisted
+        under ``/opensees/cuts/`` come back on the booted view as
+        clips. Only the ones that translate honestly do — a cut that
+        named a strict subset of the model's elements, or that carries
+        a bounding polygon, cuts LESS than a view clip does, so it is
+        skipped with one ``[session]`` line rather than silently
+        widening what disappears from the screen. Reading the cuts can
+        never fail this call: a bad zone is a line, not a traceback.
         """
         from .session import ResultsSession
+        from .session._cuts import attach_persisted_cuts
 
         s = ResultsSession(results=self)
-        s.add_view()
+        view = s.add_view()
+        try:
+            notices = attach_persisted_cuts(self, view)
+        except Exception as exc:  # noqa: BLE001 - the session always boots
+            notices = (
+                f"persisted section cuts could not be loaded as view "
+                f"clips: {type(exc).__name__}: {exc}",
+            )
+        for notice in notices:
+            print(f"[session] {notice}")
         return s
 
     def viewer(
@@ -1205,9 +1226,21 @@ class Results:
         title: Optional[str] = None,
         restore_session: "bool | str" = "prompt",
         save_session: bool = True,
-        cuts: "Optional[Any]" = None,
     ):
-        """Open the post-solve results viewer.
+        """Open the post-solve results window on a ``ResultsSession``.
+
+        Sugar for :meth:`session` + ``show()`` (ADR 0098 §1, flipped at
+        S6a). The one-liner is unchanged; what it opens is not. A
+        :class:`~apeGmsh.results.session.ResultsSession` is the
+        document — tiled mesh and plot panes, each with the closed §4
+        slot catalog — and the window is a client that projects it. The
+        retired Geometry / Composition / Diagram window is gone from
+        this door. Everything the window does, a script can do to the
+        same object::
+
+            s = results.session()   # the document, no window
+            s.render("a.png")       # a still, no Qt
+            results.viewer()        # the human one-liner
 
         Parameters
         ----------
@@ -1218,9 +1251,9 @@ class Results:
             kernel. An in-memory Results in a notebook cannot spawn a
             subprocess and falls back to :meth:`show_web`. Either
             notebook path announces itself with one line.
-            ``True`` — open the viewer in-process and block
-            the calling thread until the window closes. Matches the
-            signature of :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
+            ``True`` — open the window in-process and block the calling
+            thread until it closes. Matches the signature of
+            :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
             ``False`` — spawn a subprocess via
             ``python -m apeGmsh.viewers <path>`` so the notebook /
             kernel can keep running. Requires that the Results was
@@ -1229,37 +1262,49 @@ class Results:
         title
             Optional window title; defaults to ``"Results — <filename>"``.
         restore_session
-            How to handle a previously-saved session JSON next to the
-            results file. ``True`` restores silently, ``False`` ignores,
-            ``"prompt"`` (default) opens a yes/no dialog if a matching
-            session exists. No effect for in-memory Results.
+            What to do with a session snapshot saved beside the results
+            file. ``True`` restores silently, ``False`` ignores it,
+            ``"prompt"`` (default) asks. No effect for in-memory
+            Results, which have no file to sit beside.
         save_session
-            If ``True`` (default), the active set of diagrams + scrubber
-            position is saved to ``<results>.viewer-session.json`` when
-            the window closes. ``False`` disables auto-save.
-        cuts
-            Optional sequence of :class:`apeGmsh.cuts.SectionCutDef`
-            instances to render as Layers at boot. Each cut becomes a
-            new ``SectionCutDiagram`` in the active geometry's
-            ``"Section cuts"`` composition (created if absent).
-            Subprocess launches (``blocking=False``) currently ignore
-            this argument; build cuts programmatically via
-            ``director.add_section_cut`` on the spawned viewer once it
-            exposes IPC.
+            If ``True`` (default), the session — panes, slots, pose,
+            time link, selection — is written to
+            ``<results>.viewer-session.json`` when the window closes.
+            ``False`` disables auto-save. Auto-save also disarms itself
+            for a window that could not read an existing file there, so
+            the unreadable file survives (INV-SESSION-OPEN, see
+            ``apeGmsh.results.session._boot``).
 
         Returns
         -------
-        ResultsViewer
-            The viewer instance after the window closes (blocking).
+        ResultsSession
+            The session the window projected, **after** the window
+            closes (blocking). Still live: query it, render stills off
+            it, snapshot it.
         subprocess.Popen
-            The spawned process handle (non-blocking).
+            The spawned process handle (non-blocking). Deliberately not
+            unified with the blocking return — a session in this
+            process is not what the child window is showing.
         WebViewer
             The :meth:`show_web` handle (auto mode, in-memory Results
-            in a notebook).
+            in a notebook). The web client is a later client of the
+            same session; until it lands this hatch keeps today's path.
         None
             If ``APEGMSH_SKIP_VIEWER`` is set in the environment. This
             lets the same cell run under ``jupyter nbconvert --execute``
             or in CI without spawning a GUI window.
+
+        Notes
+        -----
+        The v13 ``<results>.viewer-session.json`` written by the retired
+        window is not restorable (ADR 0098 Consequences). The first
+        flipped open says so in one line and renames it aside to
+        ``.legacy`` — never overwriting it, and never overwriting an
+        aside that is already there.
+
+        ``cuts=`` is retired with the diagram ontology (§1): a cut plane
+        is clip state on a view. Build cuts with :mod:`apeGmsh.cuts` and
+        add them as clips — ``results.session()`` then ``view.add_clip``.
         """
         import os
         if os.environ.get("APEGMSH_SKIP_VIEWER"):
@@ -1284,7 +1329,11 @@ class Results:
                 )
                 blocking = False
         if not blocking:
-            handle = self._spawn_viewer_subprocess(title=title)
+            handle = self._spawn_viewer_subprocess(
+                title=title,
+                restore_session=restore_session,
+                save_session=save_session,
+            )
             # The subprocess opens its own NativeReader against the
             # path; the parent kernel's reader is no longer needed for
             # rendering. Close it here so the user can re-run a capture
@@ -1300,14 +1349,49 @@ class Results:
             except Exception:
                 pass
             return handle
-        from ..viewers.results_viewer import ResultsViewer
-        return ResultsViewer(
-            self,
+        return self._show_session_window(
             title=title,
             restore_session=restore_session,
             save_session=save_session,
-            cuts=cuts,
-        ).show()
+        )
+
+    def _show_session_window(
+        self,
+        *,
+        title: Optional[str],
+        restore_session: "bool | str",
+        save_session: bool,
+    ):
+        """The blocking half of :meth:`viewer` — boot, show, save.
+
+        Split out so the S6a open policy has one body whether it is
+        reached from ``viewer()`` or from the ``python -m
+        apeGmsh.viewers`` child, and so a test can drive the policy
+        without going through the notebook / subprocess branching
+        above.
+
+        Save-on-close needs no Qt hook: ``show(blocking=True)`` returns
+        once the window has closed, and closing disposes WIDGETS — the
+        session IR is untouched — so writing here writes what was on
+        screen.
+        """
+        from .session._boot import announce, boot_session, save_on_close
+
+        confirm = None
+        if restore_session == "prompt":
+            from ..viewers.session._restore_prompt import confirm_restore
+            confirm = confirm_restore
+
+        boot = boot_session(
+            self,
+            restore=restore_session,
+            save=save_session,
+            confirm=confirm,
+        )
+        announce(boot)
+        boot.session.show(blocking=True, title=title)
+        save_on_close(boot)
+        return boot.session
 
     def render(
         self,
@@ -1683,6 +1767,8 @@ class Results:
         title: Optional[str],
         python_exe: Optional[str] = None,
         defs_path: "Optional[Path]" = None,
+        restore_session: "bool | str" = "prompt",
+        save_session: bool = True,
     ) -> list[str]:
         """Build the argv for ``python -m apeGmsh.viewers``.
 
@@ -1693,6 +1779,14 @@ class Results:
         child's ``__main__.py`` exits(2) on ``.mpco`` paths without
         that flag.  Emits ``--defs`` iff ``defs_path`` is supplied
         (custom scalar definitions, ADR 0076).
+
+        ``--restore-session`` / ``--no-save-session`` carry the S6a
+        open policy across the argv hop. Before the flip they did not
+        exist and the child silently used the defaults, so
+        ``viewer(blocking=False, save_session=False)`` saved anyway —
+        a documented promise the subprocess path did not keep. Only
+        the non-default values are emitted, so the common argv is
+        unchanged.
         """
         import sys
         if self._path is None:
@@ -1713,18 +1807,23 @@ class Results:
             args.extend(["--model-h5", str(self._model_path)])
         if defs_path is not None:
             args.extend(["--defs", str(defs_path)])
+        if restore_session != "prompt":
+            args.extend([
+                "--restore-session",
+                {True: "yes", False: "no"}[bool(restore_session)],
+            ])
+        if not save_session:
+            args.append("--no-save-session")
         return args
 
     def _spawn_viewer_subprocess(
         self,
         *,
         title: Optional[str],
+        restore_session: "bool | str" = "prompt",
+        save_session: bool = True,
     ):
         """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen.
-
-        ``cuts=`` is *not* forwarded (live ``SectionCutDef`` objects
-        don't survive an argv hop; that needs real IPC — separate
-        future work, see ``viewer()`` docstring).
 
         A daemon thread monitors the child's exit code and surfaces
         non-zero exits to stderr (see :func:`_monitor_subprocess`).
@@ -1738,7 +1837,12 @@ class Results:
         defs_path: "Optional[Path]" = None
         if self._definitions_payload():
             defs_path = self.save_definitions()
-        args = self._build_viewer_argv(title=title, defs_path=defs_path)
+        args = self._build_viewer_argv(
+            title=title,
+            defs_path=defs_path,
+            restore_session=restore_session,
+            save_session=save_session,
+        )
         handle = subprocess.Popen(args)
         _start_subprocess_monitor(handle, args)
         return handle
