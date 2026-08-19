@@ -483,22 +483,6 @@ def _replay_into(
     # skip the hoist, and this deck keeps the line order it had — an O(1)
     # test on four already-materialised sequences, before touching the
     # element list at all.
-    if deck_ordering:
-        # ADR 0099 INV-3 (S4b) — a rehydrated gated element whose arg
-        # tail references a builder-scoped declaration cannot be saved by
-        # ordering, hoisted or not.  Only a PRE-S1 archive can carry one
-        # (the bridge refuses to write it); refuse the deck rather than
-        # emit one that aborts 30k lines later at the element line.
-        # Checked whether or not the hoist below fires: the conflict is
-        # the element's own bracket, not the deck order.
-        from .build import validate_builder_scope_replay
-
-        validate_builder_scope_replay(
-            _kept, ndm=int(ndm), envelope_ndf=int(ndf),
-            scoped_present=bool(
-                transforms or beam_integrations or time_series or dampings
-            ),
-        )
     if deck_ordering and (
         transforms or beam_integrations or time_series or dampings
     ):
@@ -518,6 +502,23 @@ def _replay_into(
             _ungated = [
                 r for r in _kept if r.type_token not in _gated_tokens
             ]
+            # ADR 0099 INV-3 (S4b) — a rehydrated gated element whose arg
+            # tail references a builder-scoped declaration cannot be saved
+            # by ordering, hoisted or not.  Only a PRE-S1 archive can carry
+            # one; refuse rather than emit a deck that aborts at the
+            # element line.  Scanned over the ALREADY-PARTITIONED gated
+            # list, inside the vacuity branch: with no scoped declaration
+            # present a dangling ``-damp`` tag is a corrupt archive that
+            # already fails loud at load (measured: OpenSees warns and
+            # aborts at the element line), so the guard would buy nothing
+            # there while costing a full per-element arg scan — measured
+            # +13.8-22.3% on a gated-but-unscoped 200k-element replay.
+            from .build import validate_builder_scope_replay
+
+            validate_builder_scope_replay(
+                _gated, ndm=int(ndm), envelope_ndf=int(ndf),
+                scoped_present=True, already_gated=True,
+            )
     if _gated:
         _replay_elements_bracketed(
             emitter, _gated, ndm=int(ndm), envelope_ndf=int(ndf),

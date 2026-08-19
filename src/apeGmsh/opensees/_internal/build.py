@@ -2233,6 +2233,7 @@ def validate_builder_scope_replay(
     envelope_ndf: int,
     scoped_present: bool,
     stage_owned_tags: "frozenset[int]" = frozenset(),
+    already_gated: bool = False,
 ) -> None:
     """Replay-side sibling of :func:`validate_builder_scope_ordering`.
 
@@ -2266,19 +2267,31 @@ def validate_builder_scope_replay(
     # (ndm, envelope_ndf) — resolve it once per distinct token, never
     # per element.  A deck carries a handful of tokens and can carry
     # millions of elements, and this guard runs on every replayed deck.
-    gated_tokens = {
-        tok for tok in {rec.type_token for rec in elements}
-        if needs_builder_ndf_bracket_for_token(
-            tok, ndm=ndm, envelope_ndf=envelope_ndf,
-        )
-    }
-    if not gated_tokens:
+    # ``already_gated`` lets a caller that has ALREADY partitioned (the
+    # ADR 0099 hoist in ``_replay_into``) hand the gated list straight
+    # in, so the token pass is not paid twice on the same deck.
+    if already_gated:
+        gated = list(elements)
+    else:
+        gated_tokens = {
+            tok for tok in {rec.type_token for rec in elements}
+            if needs_builder_ndf_bracket_for_token(
+                tok, ndm=ndm, envelope_ndf=envelope_ndf,
+            )
+        }
+        if not gated_tokens:
+            return
+        gated = [rec for rec in elements if rec.type_token in gated_tokens]
+    if not gated:
         return
-    gated = [rec for rec in elements if rec.type_token in gated_tokens]
 
     for rec in gated:
+        # ``rec.args`` bare, not ``getattr(rec, "args", ())``: an
+        # args-less record is a broken contract, and defaulting to ()
+        # would SKIP the INV-3 scan silently — the one outcome this
+        # guard exists to prevent.  Matches the bare ``rec.tag`` below.
         bad = sorted({
-            k for a in getattr(rec, "args", ())
+            k for a in rec.args
             if (k := builder_scoped_kind_for_arg(a)) is not None
         })
         if bad:

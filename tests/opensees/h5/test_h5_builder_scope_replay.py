@@ -489,21 +489,32 @@ def test_inv3_legacy_damp_record_is_refused() -> None:
         )
 
 
-def test_inv3_is_checked_even_when_nothing_would_hoist() -> None:
-    """The INV-3 conflict is the element's OWN bracket, not deck order.
+def test_inv3_is_not_checked_when_no_declaration_exists_at_all() -> None:
+    """A dangling ``-damp`` with NO damping record is not our problem.
 
-    So it must be caught even when the vacuous-case early-out skips the
-    hoist — i.e. with no builder-scoped DECLARATION records present, only
-    the dangling reference in the arg tail.
+    Deliberate, and a reversal of this test's first form.  An adversarial
+    probe measured the guard costing **+13.8-22.3%** on a gated-but-
+    unscoped 200k-element replay, because it scanned every gated
+    element's arg tail before the vacuity early-out.  That price bought
+    nothing: an archive referencing ``-damp 1`` with no ``damping 1``
+    record is corrupt, and the deck it produces already fails loud at
+    load — OpenSees warns ``damping not found`` and aborts at the
+    element line (measured on the binary).
+
+    So the scan now rides INSIDE the branch that already knows a
+    builder-scoped declaration exists. The case INV-3 exists for — a
+    real declaration the element's own bracket would destroy — is
+    unaffected and still refuses.
     """
     from apeGmsh.opensees._internal.compose import _replay_into
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
-    with pytest.raises(Exception, match="INV-3"):
-        _replay_into(
-            RecordingEmitter(), ndm=2, ndf=3,
-            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0, "-damp", 1)),),
-        )
+    em = RecordingEmitter()
+    _replay_into(
+        em, ndm=2, ndf=3,
+        elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0, "-damp", 1)),),
+    )
+    assert any(name == "element" for name, _a, _k in em.calls)
 
 
 def test_inv3_ignores_the_flag_on_an_UNGATED_element() -> None:

@@ -81,9 +81,21 @@ line-order problem at all; it lands mid-history.
 returns it from `dependencies()` (`solid.py:408-411`), and emits `-damp $tag`
 (`solid.py:431`). So `quad(damp=…)` under a mixed-ndf envelope declares its
 damping, **destroys it with its own bracket**, and then references the dead
-tag. Because the `damping` lookup only warns, the deck runs and reports a
-**silently undamped** answer. The other five gated classes depend only on an
-`NDMaterial`, which survives — `quad` is the sole self-wiping member today.
+tag. The other five gated classes depend only on an `NDMaterial`, which
+survives — `quad` is the sole self-wiping member today.
+
+> **Correction (S4, measured).** This paragraph originally said the deck
+> "runs and reports a **silently undamped** answer", on the strength of the
+> warn-only row in the survival table above. That is wrong, and it was the
+> strongest-sounding justification for INV-3, so it matters. Re-measured on
+> the binary, `element quad 101 … -damp 5` against a purged tag **aborts**:
+> `WARNING damping not found` / `FourNodeQuad element: 101` / `while
+> executing "element quad …"`. The warn-only property belongs to the
+> *lookup*, not to element construction — and `damping`'s *add* hard-errors
+> too (`MapOfTaggedObjects::addComponent - … similar tag exists`). INV-3
+> still stands, but on the honest ground that no ordering can satisfy it and
+> the alternative is a deck that dies at the element line, not one that lies
+> about damping.
 
 ### What RevA hits, and why the reported fix is not enough
 
@@ -226,16 +238,28 @@ That case needs a **replay of the builder-scoped declarations at bracket
 close**, which is a different mechanism with its own tag-identity questions.
 Future work, not a rider on this ADR.
 
-Note what that leaves, once S4 lands: because S1 refuses split / partitioned
-/ staged **at write time**, the only archive a post-S1 apeGmsh can produce
-carrying a gated element *and* a builder-scoped declaration is a **flat**
-one — and flat replay is exactly what S4 fixes. S4 therefore covers 100% of
-post-S1 archives, and its two refusals exist for **pre-S1 data only**.
+Note what that leaves, once S4 lands. S1's write-time refusal is narrower
+than it first reads: it refuses split and partitioned outright, but refuses
+a staged model only when a gated element is **stage-OWNED**
+(`build.py`, `staged = [g for g in gated if id(g) in element_owner_stage]`)
+— a staged model whose gated element is activated **globally** writes to h5
+without complaint. So the post-S1 archive set carrying a gated element *and*
+a builder-scoped declaration is **flat archives plus globally-activated
+staged ones**, not flat alone.
+
+S4 still covers all of them, but for a mechanical reason rather than by
+elimination: `_replay_staged_into` delegates its global prefix to
+`_replay_into`, so the S4a hoist fires there too. *Measured* — such an
+archive replays with zero INV-1 offenders (`element quad` above
+`geomTransf`) and runs clean on the binary. The two S4b refusals remain
+**pre-S1 defence**: today's bridge still cannot write a stage-OWNED gated
+element or a `quad ... -damp`.
 
 ## Consequences
 
 - **Decks that previously emitted and silently ran wrong now raise.** The
-  affected class is split / partitioned / staged emit, with a gated element,
+  affected class is split or partitioned emit, or staged emit with a
+  **stage-owned** gated element (a globally-activated one is not refused),
   plus any builder-scoped declaration. This is a **deliberate breaking
   change**, and it is strictly better than the status quo: those decks either
   died 30k lines downstream pointing at the wrong command, or — in the
@@ -252,7 +276,9 @@ post-S1 archives, and its two refusals exist for **pre-S1 data only**.
   intended hoist. `build('h5')` is byte-unchanged by construction.
 - `quad(damp=…)` under a mixed-ndf envelope becomes an emit-time error
   (INV-3). It is not a regression: that combination has never produced a
-  damped model, it produced an undamped one without saying so.
+  damped model. It dies at the element line (measured — see the correction
+  above; it does NOT run undamped), so this trades a failure 30k lines
+  downstream for one at emit.
 - The bracket itself is untouched. `_BUILDER_NDF_GATED` stays as it is, the
   fork gate it encodes stays as it is, and nothing about mixed-ndf authoring
   changes. Only where the four builder-scoped kinds land relative to the last
