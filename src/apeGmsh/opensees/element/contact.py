@@ -297,7 +297,9 @@ def contact_args(
     return args
 
 
-def _outward_tokens(outward, ndm: int) -> list[float | str]:
+def _outward_tokens(
+    outward: Sequence[float] | str, ndm: int,
+) -> list[float | str]:
     """The tokens after ``-outward``, at the arity the fork's 2D/3D
     dimension oracle demands.
 
@@ -324,7 +326,11 @@ def _outward_tokens(outward, ndm: int) -> list[float | str]:
                 f"model is ndm={ndm}.")
         return ["winding"]
 
-    vec = [float(x) for x in outward]
+    # Widened to the return type on construction: `list` is INVARIANT, so a
+    # `list[float]` is not a `list[float | str]` and both returns below would
+    # be type errors against a signature that has to admit the "winding"
+    # keyword.
+    vec: list[float | str] = [float(x) for x in outward]
     if ndm == 2:
         if len(vec) not in (2, 3):
             raise ValueError(
