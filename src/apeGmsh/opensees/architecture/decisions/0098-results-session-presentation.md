@@ -1682,3 +1682,149 @@ refuses when:
 | Move the whole pane onto the old `ResultsDirector` | Reinstates the director the session was designed to remove (§1); the parts worth having are the store and `update_to_step`, and both are reachable without it |
 | Throttle the scrubber to what the renderer can do | Hides the defect and makes playback lie about time |
 | One shared diagram set across panes | Panes are independent by construction (criterion 11); sharing them re-creates the coupling N panes exist to avoid |
+
+## Amendment 5 (2026-08-19) — the colour scale is direct-manipulable again
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog and
+the rejected-alternatives table all stand. Amendments 1–4 are untouched.
+
+Unlike Amendment 4, **this one does reach the IR**: §5 keeps legend
+*existence* derived, and adds a place for legend *placement* to live.
+
+### A5.1 Evidence — the gesture was never carried into the session window
+
+Dragging and resizing a colour scale is ADR 0081 L2, and it works: the
+gesture lives in `viewers/core/_legend_interactor.py`, deliberately in
+the interactor event stream at priority 12 rather than in a
+`vtkScalarBarWidget` (which could never receive a click under the pick
+engine at priority 10). `pyvista_qt.add_scalar_bar` still says so:
+`interactive=False` is load-bearing, and "drag and resize live in the
+controller's own interactor instead."
+
+`install_legend_interactor` has **exactly one caller in the codebase** —
+`viewers/results_viewer.py:4317`, the old window. S6a flipped `viewer()`
+to `session().show()`, so every user now lands in a window that never
+installs it. This was not blanket neglect: the session pane does wire
+navigation (`session/_pane.py::apply_pane_navigation`) and picking
+(`session/_pick.PanePick`). The legend gesture was simply not in the set
+that was ported.
+
+Measured against the bench (`ssi_frame_wall`, `c001_baseline_small`, one
+pane, `Contour("stress_zz")`, viewport 1866x729):
+
+| question | result |
+|---|---|
+| Does `install_legend_interactor` attach to a pane's interactor? | **yes** — `LedgerBackend.__getattr__` forwards `.plotter` |
+| Does a synthesized press-move-release move the bar? | **yes** — anchor `(0.823, 0.393)` to `(0.758, 0.229)` |
+| Does the moved anchor survive a full realize? | **no** |
+
+So the gesture is not broken and the plumbing is not missing. One call
+is missing — and that call alone would still not be a fix.
+
+### A5.2 Why installing it is not the fix
+
+The same probe forced a full realize (a `deform` change, i.e. what any
+slot edit does) and read the controller back:
+
+* the pane's `legend_controller` is a **different object** — every full
+  realize runs `_realize_legends`, which does `LegendController(backend)`
+  unconditionally (`viewers/session/_realize.py:1493`);
+* the anchor came back as `(0.943, 0.394)` — **neither the dragged
+  position nor the position before the drag.** The new controller lays
+  out from scratch, so a dragged bar does not merely snap back, it jumps
+  to a third place;
+* a resize would be reverted for a second, independent reason:
+  `_realize_legends` seeds `font_scale` from `style.scalar_bar_scale`, so
+  the style record overwrites the gesture on every realize.
+
+And there is nowhere to persist any of it. §5 defines legends as derived,
+and the only per-legend state the view or the snapshot carries is
+`legend_hidden` per field (`results/session/_snapshot.py:208`), so a
+placement would not survive save/restore either.
+
+Three layers, one finding — the same shape as Amendment 3's pane host,
+where installing the obvious fix in isolation made things worse.
+
+### A5.3 Decision — placement is session state, existence stays derived
+
+1. **`MeshView` gains per-field legend placement**, beside
+   `legend_hidden`: for a field, an optional
+   `(anchor, extent, font_scale)`. Absent means "laid out automatically",
+   which is today's behaviour and stays the default.
+2. **`_realize_legends` seeds the controller from that record**, not from
+   `style.scalar_bar_scale`, whenever a placement exists for the field.
+   The style value remains the seed when it does not.
+3. **The pane installs the legend interactor**, bound to the controller
+   the reconciler just adopted, and re-binds it whenever realize swaps
+   the controller. Re-binding on swap is required, not optional: the
+   controller object is not stable across a realize (A5.2).
+4. **The interactor's mutators write back to the session view.**
+   `set_anchor` / `set_font_scale` / `redock` already funnel every gesture
+   through the controller (ADR 0081 L2); the controller notifies, and the
+   pane records the result on the view. A dragged bar is session state,
+   so it survives realize, theme changes and snapshot/restore.
+5. **The snapshot carries placement** under the same rule `legend_hidden`
+   already uses: a placement for a field this view no longer causes a
+   legend for is **dropped loudly on restore**, never resurrected.
+
+`redock` clears the record for that field, which is what returns a bar to
+the automatic stack.
+
+### A5.4 What this deliberately does not change
+
+* **Legends stay derived.** `legends = f(occupied colour-mapped slots)`
+  is unchanged; INV-LEGEND-1 (a scale belongs to a painted field) is
+  unchanged. Only *where a legend sits* becomes remembered state. You
+  still cannot author a legend that no slot causes.
+* **The automatic layout stays the default and stays authoritative for
+  anything unplaced.** ADR 0081 Part 3 sizes a legend from its text; a
+  resize drives `font_scale` and lets the box follow, which is why a bar
+  can never be dragged to a size its labels do not fit. That property is
+  preserved by storing `font_scale` rather than a pixel box.
+* **`interactive=False` stays.** Nothing here revives the
+  `vtkScalarBarWidget`; the priority-12 interactor remains the mechanism.
+
+### A5.5 The two sibling gestures, named not solved
+
+`install_clip_gizmo_interactor` and `install_scope_gizmo_interactor` have
+the identical single-caller problem — both are called only from
+`results_viewer.py`, so the clip-plane and scope gizmos are also
+unreachable in the session window. They are **not** in this amendment:
+the clip gizmo writes to `ViewClip`, which the session record already
+owns, so it is a wiring job without A5.3's state question. Recorded here
+so the set is known to be three, and so the next person does not
+rediscover it one gizmo at a time.
+
+### A5.6 Acceptance criteria
+
+1. With a contour slot filled, the pane installs a legend interactor;
+   a headless/offscreen backend installs none and does not raise.
+2. A synthesized press-move-release over the bar changes the view's
+   recorded placement for that field — not just the controller's.
+3. After a full realize (slot edit, scope flip, theme change), the bar is
+   still where it was dropped. **Mutation test:** removing the re-bind in
+   A5.3(3) must fail this, and removing the seed in A5.3(2) must fail it
+   differently — the bar jumps to a fresh layout, as measured in A5.2.
+4. A resize survives a realize, and cannot be driven below the size the
+   labels fit.
+5. `redock` clears the record and the bar rejoins the automatic stack.
+6. Snapshot round-trip preserves placement; a placement for a field with
+   no live legend is dropped with the same loud notice `legend_hidden`
+   uses, and never resurrects.
+7. A pane with no legend, and a legend hidden via `set_legend_hidden`,
+   install and record nothing.
+8. Two panes, each with its own bar: dragging one must not move the
+   other. Legend placement is per view, not per session.
+9. Criterion 12 still holds — installing the interactor must not cost a
+   realize, and a drag must not trigger one.
+
+### A5.7 Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Just call `install_legend_interactor` in the pane | Measured: the drag lands, then the next realize throws it away and the bar jumps to a third position (A5.2). A gesture that visibly un-does itself is worse than one that is absent |
+| Make `_realize_legends` reuse one controller per pane | Attractive, and it would fix the object churn — but the controller is bound to layer handles that realize legitimately replaces. Reuse means teaching it to re-bind, which is the same work as re-seeding with none of the persistence |
+| Store a pixel box instead of `font_scale` | Breaks ADR 0081 Part 3's fit guarantee: a box that does not derive from the text can be dragged smaller than its labels |
+| Put placement in `MeshStyle` next to `scalar_bar_scale` | Style is per slot; a legend can be shared by a contour and a Gauss slot of the same field (§5). Placement keyed by field, on the view, is the only key that matches what a legend *is* |
+| Revive `interactive=True` | The reason it never worked is unchanged: the widget observes at priority 0.5, the pick engine aborts LMB at 10 |
+| Leave it to the old viewer | S6a made `session().show()` the only window a user gets; "use the retired viewer for this" is not an answer |
