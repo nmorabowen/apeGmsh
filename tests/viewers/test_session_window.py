@@ -39,8 +39,14 @@ def test_session_window_has_its_own_settings_scope():
 
 def test_session_window_schema_numbering_restarts_at_1():
     """A fresh scope numbers from 1 — bumps follow THIS window's dock
-    changes, not the old window's v7 history."""
-    assert SessionResultsWindow._LAYOUT_SCHEMA_VERSION == 1
+    changes, not the old window's v7 history.
+
+    v1 was the S2 composition; ADR 0098 Amendment 3 (A3.5) moved the
+    panes out of the central widget into one dock EACH, which is a
+    structural dock-set change, so it is v2 and v1 state is discarded
+    whole rather than half-applied.
+    """
+    assert SessionResultsWindow._LAYOUT_SCHEMA_VERSION == 2
 
 
 def test_old_window_scope_and_schema_untouched():

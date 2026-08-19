@@ -3,9 +3,11 @@
 **Status:** Accepted (2026-08-16) — design ratified in the owner
 workshop the same day; record revised the same day after adversarial
 review. Implementation is under way: S0, S1-A, S1-B and S2 have
-merged. Qt layout of the pane host — *Open question 1* — is
+merged. Qt layout of the pane host — *Open question 1* — was
 **resolved in Amendment 1** (2026-08-17), the gate the implementation
-plan puts before S3.
+plan puts before S3, and **re-decided in Amendment 3** (2026-08-19):
+the central-widget host does not survive its own first show, so the
+panes are dock panels.
 
 Supersedes the **product ontology** of [ADR 0058](0058-concurrent-geometries.md)
 (a `Geometry` as the Results scene instance) and its
@@ -1323,3 +1325,170 @@ This disposition is bound to the hatch and does not outlive it.
 2. **Any one of the six is asked for in the session window.** That is
    a §4 slot-widening amendment here, argued on the evidence, at the
    same review bar as a new slot — not a reopening of this amendment.
+
+## Amendment 3 (2026-08-19) — the panes are dock panels
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog and
+the rejected-alternatives table all stand. Amendment 2 is untouched.
+
+This amendment **reverses Amendment 1's A1.1 decision** — one
+`SessionPaneHost` as the window's central widget — and replaces it with
+one dock panel per pane. It is **UI, not IR**, exactly as A1 was: no
+session record changes, `ResultsSession` / `MeshView` / `PlotView` /
+`realize()` and the snapshot are untouched, and layout stays window
+chrome in `QSettings`, never in the session.
+
+A1 is reversed on a fact A1 did not have: **the central-widget
+arrangement does not work, and cannot be made to work by sizing it.**
+
+### A3.1 Evidence — measured on a real model, not a fixture
+
+Found by opening the `viewer_bench/ssi_frame_wall` bench against a live
+run — three panes: a clipped stress contour, a frame moment diagram, a
+history plot. Every number below is from that window.
+
+**The pane host is never actually the central widget.**
+`SessionWindow.__init__` mounts it (`viewers/session/_window.py:150`) and
+it *is* seated; the instant the window is first shown, `centralWidget()`
+returns `None`. Traced with an instrumented `QMainWindow`:
+`setCentralWidget` is called exactly **once**, with the host, and
+`takeCentralWidget` is called **never**. The host object stays alive and
+still parented to the window, so it paints at its untouched **640×480**
+default *on top of* the docks, while the two side docks split the whole
+width (**1254 + 1253** px of 2560). The floating 640×480 pane cluster
+users see is that orphan.
+
+**The obvious repair crashes.** Occupying the centre from construction
+with a placeholder — so `_build_layout` arranges the docks around a real
+centre and `set_central_widget` merely replaces it — makes the host truly
+central, and the first show then dies:
+
+```
+Windows fatal exception: access violation
+  viewer_window.py:1322 in present   ->  showMaximized()
+```
+
+and identically on a plain `window.show()`. Reverted.
+
+**The crash is specific to being the central widget.** It is not multiple
+GL contexts and it is not size:
+
+| Configuration | Result |
+|---|---|
+| host as central widget | access violation on first show |
+| host orphaned (shipped behaviour) | survives — the 640×480 bug |
+| host resized to 1800×900 while orphaned | survives |
+| second pane added, re-tiled, resized again | survives |
+| host inside one `QDockWidget` | survives show, float, resize to 1400×800 |
+| **one dock per pane, 3 panes** | **survives show, float, resize, re-dock, tabify** |
+
+Three timer-based repairs of the central-widget path were tried and all
+reverted: a `singleShot(0)` re-seat after show, a deferred `resizeDocks`,
+and the placeholder centre. The first two measure perfectly on a
+fixed-size `show()` and wreck the real *maximized* window; the third
+crashes. **A Qt layout fix must be verified on the path the user runs —
+maximized, real window — not on a fixed-size `show()`.** That mistake was
+made twice during this investigation and reported as success once.
+
+### A3.2 Decision
+
+**Each pane is its own `QDockWidget`** — movable, floatable, closable —
+placed with `splitDockWidget` at creation. The window keeps ADR 0088 D1's
+partition (outline left, panes in the middle, inspector right, scrubber
+bottom), but the middle is dock panels, not a central viewport.
+
+What this buys beyond not crashing: a pane can be dragged out, floated,
+resized on its own, tabbed onto another pane and restored — all from Qt,
+none of it hand-written. A1.2's `T(N)` exists to answer "where does pane
+N go" with no user input; Qt's dock layout answers the same question and
+then lets the user override it, which is what a viewer should do.
+
+**A1.2's tiling law, `layout_ratios` / `apply_ratios` / `reset_tiling`
+and the splitter host retire with it.** A1.3's pane frame survives
+unchanged — it becomes the dock's widget. A1.4's floors survive as dock
+minimum sizes. A1.5's active-pane rule survives, expressed as dock focus.
+
+### A3.3 Persistence — who owns the arrangement
+
+Two systems now describe the panes, and they must not fight.
+
+**The session is authoritative for existence; the saved arrangement is
+advisory for placement.** Concretely:
+
+1. `ResultsSession.panes` decides which panes exist. Nothing in
+   `QSettings` may create or destroy a pane.
+2. Each pane dock carries a stable `objectName` derived from the pane id,
+   so `saveState` / `restoreState` can address it.
+3. On restore, a saved entry naming a pane that no longer exists is
+   **dropped**; a pane with no saved entry takes **default placement**.
+   Neither is an error and neither prompts.
+
+Qt implements exactly this, but only through
+`QMainWindow.restoreDockWidget`, not through a second `restoreState`:
+the window restores its state before any pane dock exists, each pane
+dock is then seated at default placement and claims its own entry out
+of the pending state. Re-applying the whole state after the fact was
+tried and measured — it leaves the entire Left area, outline included,
+unplaced at negative coordinates.
+
+This keeps §1's law intact — layout is chrome, the snapshot is the
+document — and makes the mismatch case (a session snapshot restored
+beside a stale window layout) decidable instead of undefined.
+
+### A3.4 Geometry lessons that are contract, not folklore
+
+All three were measured, and all three are silent when wrong:
+
+- **`resizeDocks` across dock areas needs two passes, one event-loop turn
+  apart.** The Left chain (outline, panes) settles on the first pass and
+  the Right one (inspector) only on the second; two calls inside one turn
+  move nothing.
+- **`resizeDocks(..., Vertical)` does not move the scrubber.** It sat at
+  730 px through every variant. A maximum-height ceiling does.
+- **The inspector needs a width floor.** Its slot rows and Add buttons
+  measure ~375 px; without `setMinimumWidth` the settle leaves it at ~352
+  and clips them.
+- **A dock derives its minimum from its widget.** A 240 x 200 pane frame
+  makes its dock measure 240 x 224 with no `setMinimum*` call on the dock
+  at all — so A1.4's floors reach the dock through the FRAME, and
+  restating them on the dock can only ever *lower* the real floor (it
+  took the height from 224 back to 200). The floors stay on the frame.
+- **View -> Reset layout has to re-apply the extents.** The default dock
+  state the shell restores predates the panes, so re-seating them alone
+  lands every pane on its A1.4 minimum with the middle column half empty
+  (measured: 240 + 301 px of 1871). The same two-pass schedule as the
+  boot path fixes it.
+
+And one trap that cost two measurement rounds: `ResultsWindow._build_layout`
+imports `QtCore` **locally**, so code factored out of it loses the name —
+and the `resizeDocks` block sits inside `except Exception: pass`, which
+turns the resulting `NameError` into a silent no-op.
+
+### A3.5 Consequences
+
+- `SessionResultsWindow._LAYOUT_SCHEMA_VERSION` goes **1 → 2**: the dock
+  set changed structurally, so v1 state must not half-apply. The retired
+  objectName discipline applies — `dock_results_panes`, the intermediate
+  single-panel spike, must not be reused for different content.
+- `tests/viewers/test_pane_host.py` encodes the central-widget contract
+  (`centralWidget() is window.host`) and the `T(N)` splitter geometry; it
+  is rewritten with this amendment, not patched around.
+  `test_session_window_schema_numbering_restarts_at_1` asserts schema 1
+  and moves to 2.
+- The S3 acceptance criteria that name splitters or `T(N)` are restated
+  against dock placement. The criteria about *what a pane draws* are
+  untouched — this amendment never reaches the IR.
+- ADR 0088 D1's "viewport keeps ≥ 50 % of the width" survives as a
+  property of the panes' dock column and is now measurable: on a 2560 px
+  window the panes hold 1870 px against outline 253 and inspector 380.
+
+### A3.6 Alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Keep the central widget, fix the sizing | Not a sizing bug — the centre is dropped on first show, and forcing it in crashes |
+| One dock holding the splitter host | A movable *container*, not movable views; buys nothing over the centre except not crashing |
+| One render window with N viewports | Would dodge multi-context GL entirely, but the evidence says multi-context is not the fault (two panes resize fine) — a rewrite of the pane host and the backend seam for a problem we do not have |
+| MDI subwindows | Still rejected on A1's original UX grounds; docks are not MDI and give tabbing and persistence for free |
+| Leave it broken and document it | The window is the product; a 640×480 cluster painted over the docks is not a viewer |
+

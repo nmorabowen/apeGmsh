@@ -1,13 +1,18 @@
-"""ADR 0098 Amendment 1 (S3) — the pane host on real GL (``[qt]`` lane).
+"""ADR 0098 Amendment 3 (S3) — the pane docks on real GL (``[qt]`` lane).
 
 ``test_pane_host_probe.py`` proves the geometry on a SYNTHETIC window
 of four bare ``QtInteractor``\\ s. This file is criterion 18: the same
 properties on the real :class:`SessionWindow` with four mesh panes,
 each carrying a realized session picture — four distinct renderers,
 independent cameras, one scalar bar per pane, a non-flat per-pane
-screenshot, actors surviving a splitter drag, a clean teardown, and
-the lifecycle the tiling law forces: **a live pane reparented between
-splitters at 4 → 5, keeping its camera pose and a non-flat frame.**
+screenshot, actors surviving a dock resize, a clean teardown, and the
+lifecycle A3.1's evidence table names: **a live pane floated, resized,
+re-docked and tabified, keeping its camera pose and a non-flat frame.**
+
+Amendment 3 retired ``T(N)``, so the 4 → 5 re-tile that used to force a
+reparent no longer happens. Floating a pane out and dropping it back
+does the same thing to the platform window and is the gesture a user
+actually performs, so that is what this drives.
 
 Criterion 19 is ADR §11's S3 verify line (two views, different slots
 and scopes) and criterion 20 is the toolbar acting on the active pane
@@ -158,11 +163,15 @@ def test_c18_each_pane_screenshots_itself(live_window):
         assert img.std() > 0, "pane rendered a flat frame"
 
 
-def test_c18_panes_survive_a_splitter_drag(live_window):
-    app, window, _session = live_window
-    window.host.root_splitter.setSizes([900, 300])
-    app.processEvents()
-    window.host.column_splitters[0].setSizes([700, 100])
+def test_c18_panes_survive_a_dock_resize(live_window):
+    """The separator drag, restated against dock placement (A3.5)."""
+    from qtpy import QtCore
+
+    app, window, session = live_window
+    docks = list(window.host.pane_docks)
+    window.shell.window.resizeDocks(
+        docks, [520, 260, 260, 260][:len(docks)], QtCore.Qt.Horizontal,
+    )
     app.processEvents()
     for plotter in _plotters(window):
         plotter.render()
@@ -170,45 +179,70 @@ def test_c18_panes_survive_a_splitter_drag(live_window):
     counts = [
         p.renderer.GetActors().GetNumberOfItems() for p in _plotters(window)
     ]
-    assert all(c >= 1 for c in counts), f"lost actors on drag: {counts}"
+    assert all(c >= 1 for c in counts), f"lost actors on resize: {counts}"
+    assert [d.objectName() for d in window.host.pane_docks] == [
+        f"dock_session_pane_{p.id}" for p in session.panes
+    ]
 
 
-def test_c18_live_pane_survives_the_4_to_5_reparent(live_window):
-    """The one lifecycle event the tiling law mandates and no other
-    test exercises on the REAL window.
+def test_c18_live_pane_survives_float_resize_redock_tabify(live_window):
+    """The lifecycle A3.1's evidence table claims, on the REAL window.
 
-    ``T(N)`` re-tiles at every column-count change, which MOVES a live
-    pane between splitters. Reparenting a GL-native widget destroys and
-    recreates its platform window — the classic VTK black-pane class.
-    The pane must come through as the same object, still holding its
-    actors, its camera pose, and a non-flat frame.
+    Floating a dock out and dropping it back REPARENTS its widget, and
+    reparenting a GL-native widget destroys and recreates its platform
+    window — the classic VTK black-pane class. The pane must come
+    through every step as the same object, still holding its actors,
+    its camera pose, and a non-flat frame. That is the amendment's
+    whole promise: a pane you can pull out, size on its own, put back,
+    and tab onto its neighbour.
     """
     app, window, session = live_window
-    victim_id = session.panes[2].id  # moves from column 0 to column 2
+    victim_id = session.panes[2].id
     frame = window.host.frame(victim_id)
+    dock = window.host.dock(victim_id)
     plotter = frame.plotter
     plotter.camera.position = (7.0, 5.0, 3.0)
     plotter.render()
     app.processEvents()
     before_cam = tuple(plotter.camera.position)
     before_actors = plotter.renderer.GetActors().GetNumberOfItems()
-    before_columns = len(window.host.column_splitters)
 
-    session.add_view()  # 4 -> 5: a third column appears
-    app.processEvents()
-    for f in window.host.pane_frames:
-        f.pane.reconciler.flush_now()
-    plotter.render()
-    app.processEvents()
+    def _still_whole(step: str) -> None:
+        for f in window.host.pane_frames:
+            f.pane.reconciler.flush_now()
+        plotter.render()
+        app.processEvents()
+        assert window.host.frame(victim_id) is frame, f"rebuilt at {step}"
+        assert window.host.dock(victim_id) is dock, f"dock rebuilt at {step}"
+        assert frame.plotter is plotter
+        assert frame.parent() is not None
+        assert plotter.renderer.GetActors().GetNumberOfItems() == (
+            before_actors), f"lost actors at {step}"
+        assert tuple(plotter.camera.position) == before_cam, (
+            f"camera lost at {step}")
+        img = np.asarray(plotter.screenshot(return_img=True))
+        assert img.std() > 0, f"flat/black frame at {step}"
 
-    assert len(window.host.column_splitters) == before_columns + 1
-    assert window.host.frame(victim_id) is frame, "pane rebuilt, not moved"
-    assert frame.plotter is plotter
-    assert frame.parent() is not None
-    assert plotter.renderer.GetActors().GetNumberOfItems() == before_actors
-    assert tuple(plotter.camera.position) == before_cam, "camera lost"
-    img = np.asarray(plotter.screenshot(return_img=True))
-    assert img.std() > 0, "reparented pane paints a flat/black frame"
+    dock.setFloating(True)
+    app.processEvents()
+    _still_whole("floated")
+
+    dock.resize(900, 600)
+    app.processEvents()
+    assert (dock.width(), dock.height()) == (900, 600)
+    _still_whole("resized")
+
+    dock.setFloating(False)
+    app.processEvents()
+    assert not dock.isFloating()
+    _still_whole("re-docked")
+
+    neighbour = window.host.dock(session.panes[0].id)
+    window.shell.window.tabifyDockWidget(neighbour, dock)
+    window.host.set_active(victim_id)
+    app.processEvents()
+    assert dock in window.shell.window.tabifiedDockWidgets(neighbour)
+    _still_whole("tabified")
 
 
 def test_c18_teardown_leaves_no_live_interactor(qt_results, tmp_path,
@@ -257,14 +291,19 @@ def test_c18_teardown_leaves_no_live_interactor(qt_results, tmp_path,
     assert window.shell.plotter is None
 
 
-def test_c18_a_closed_pane_closes_its_context(live_window):
-    """The same rule mid-session: the header's close glyph must take
-    the pane's GL context with it, not just its widget."""
+@pytest.mark.parametrize("route", ["frame-glyph", "dock-button"])
+def test_c18_a_closed_pane_closes_its_context(live_window, route):
+    """The same rule mid-session, on BOTH close affordances: A3.2 made
+    the pane docks closable, so the dock's own button has to take the
+    pane's GL context with it exactly as the header's glyph does."""
     app, window, session = live_window
     victim = session.panes[3].id
     plotter = window.host.frame(victim).plotter
 
-    window.host.frame(victim).close_button.click()
+    if route == "frame-glyph":
+        window.host.frame(victim).close_button.click()
+    else:
+        window.host.dock(victim).close()
     app.processEvents()
 
     assert victim not in [p.id for p in session.panes]
