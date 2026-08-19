@@ -126,6 +126,43 @@ def small_results(g, tmp_path: Path):
 
 
 @pytest.mark.qt
+def test_display_dock_is_not_a_blank_panel(small_results):
+    """ADR 0087 INV-2 — honest empty state.
+
+    The shell builds the "Display" dock unconditionally and the View
+    menu can summon it. S6a shipped a window that never mounted
+    anything into it, so opening it showed a blank panel; INV-2 says a
+    panel with nothing to show carries exactly one muted hint line.
+    Asserts the host has a widget AND that it is disabled (muted) —
+    mounting an enabled empty container would satisfy a naive
+    "is not None" and still violate the invariant.
+    """
+    pytest.importorskip("pytestqt", reason="needs pytest-qt")
+    pytest.importorskip("pyvistaqt")
+    QtWidgets = pytest.importorskip("qtpy.QtWidgets")
+    qapp = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    from apeGmsh.viewers.session import SessionWindow
+
+    window = SessionWindow(small_results.session(), title="inv2-smoke")
+    try:
+        qapp.processEvents()
+        host = window.shell._session_host  # noqa: SLF001
+        mounted = host.layout().itemAt(0)
+
+        assert mounted is not None, (
+            "Display dock is empty — View → Display opens a blank "
+            "panel (ADR 0087 INV-2)."
+        )
+        label = mounted.widget()
+        assert label.text().strip(), "the hint line is empty"
+        assert not label.isEnabled(), "the hint must be muted, not live"
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.qt
 def test_session_window_composes_shell_and_runs_the_add_loop(
     small_results,
 ):

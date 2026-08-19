@@ -3,8 +3,9 @@
 This page explains how the results system is engineered beneath the
 `Results` API — the three-broker chain that pairs numbers with the model
 they came from, the reader protocol behind the constructors, the
-recorder-spec seam and transcoder on the write side, and the seams that
-keep the viewer's renderer and pickers replaceable.
+recorder-spec seam and transcoder on the write side, the seams that
+keep the viewer's renderer and pickers replaceable, and the session
+value the window projects.
 
 The [concepts page](../concepts/results.md) covers what a `Results`
 object does; this one covers why it is shaped that way. It is written
@@ -214,19 +215,67 @@ dimensional 0/1/2/3/4 filter, and a serialized `SelectionLog` of
 per-gesture operations giving undo, redo, and replay across all three
 viewers.
 
-Above the seams, two later contracts govern the parts that churned
-hardest and are worth knowing at that altitude only. ADR 0056 fixes
-*when the picture changes*: every piece of view state has exactly one
-owner, derived state is recomputed by a reconciler rather than stored,
-and every gesture funnels through one dispatcher whose four primitives
-(STEP / DEFORM / GATE / RENDER) coalesce into a single render per
-event. ADR 0058 made a Geometry a *scene instance* — each owns its own
-substrate copy with per-geometry deformation, so side-by-side deformed
-vs. reference or stage-vs-stage views are ordinary concurrent
-geometries, with deformation fan-out running through one universal
-per-diagram hook. Anything more specific than that (dock layouts,
-panel widgets, dialog flows) is implementation, not architecture, and
-is deliberately not documented here.
+Above the seams, ADR 0056 fixes *when the picture changes*: every piece
+of view state has exactly one owner, derived state is recomputed by a
+reconciler rather than stored, and every gesture funnels through one
+dispatcher whose four primitives (STEP / DEFORM / GATE / RENDER)
+coalesce into a single render per event. Anything more specific than
+that (dock layouts, panel widgets, dialog flows) is implementation, not
+architecture, and is deliberately not documented here.
+
+## The session is the document
+
+What the window shows is a value, and the window is one of its clients.
+`ResultsSession` (ADR 0098) is that value: `Results` answers "what did
+the solver write?", and the session answers "what is on screen, at
+which time, with which pictures, with which pick?". `results.session()`
+constructs one with no window at all; `results.viewer()` is sugar for
+`session().show()`. VTK actors, docks and widgets are not truth —
+tessellation is a projection — so a script and the Qt app write the
+*same* object, and `session.render(path, pane)` draws a still of it
+without a Qt event loop. The presentation library is Qt- and VTK-free
+by construction (a purity test enforces it); realizing a pane into
+scene IR is a separate viewers-side client.
+
+A session is panes, one time link, and one selection. A `MeshView`
+pane draws the **analysis mesh** — there is no BRep in Results — and
+owns its scope (one composition axis, physical groups *or* materials
+*or* element types, plus the names checked on it, never a boolean
+`concrete AND hex`), its pose, its instant, its four style buttons, its
+section clips and its result slots. A `PlotView` pane resolves its
+series to arrays and needs no render backend at all: its client draws
+the numbers. Per-pane time is what replaced a single global cursor —
+`session.time_linked` gives every pane one `(stage, step)` instant, and
+unlinking lets a pane sit at its own — so comparing two states of one
+model is two panes, not two scene instances of one substrate.
+Selection stays ADR 0045's one store, narrowed here to nodes *or*
+Gauss with the kind following the last writer.
+
+**Slots are a closed catalog.** Seven categories — contour, vector,
+gauss, line, sand, loads, reactions — at most one occupant per category
+per pane; different categories stack, and filling an occupied slot
+*replaces* its occupant. Closure is the load-bearing part: it bounds
+what a picture can be, so a snapshot has a finite grammar and a restore
+can refuse an unknown category outright. An eighth slot is an amendment
+to the ADR, argued on evidence, never a subclass someone adds. Deform
+sits deliberately outside the catalog — a pose, not a picture.
+
+**Legends are derived, never stored.** A scale is caused by an occupied
+colour-mapped slot and belongs to the pane (INV-LEGEND-1, INV-LEGEND-5):
+filling one creates the scale, clearing it destroys the scale, and two
+slots naming the same quantity share a single scale. Hiding a scale is
+view chrome and touches neither the slot nor the picture
+(INV-LEGEND-3). A warped mesh with every slot empty therefore carries
+no scale at all — the causation the older per-diagram
+`(geometry, component)` register/unregister contract could not state.
+
+Because the session is a plain value, serialising it is unremarkable:
+the snapshot writes panes, slots, pose, the time link and every pane's
+own instant, plus the one selection — nothing derived, nothing about a
+window. That is what lets a third author exist. Python and the Qt app
+write the session; the Studio MCP only *reads* snapshots and realizes
+them into stills, pins and reports, so an agent can show what a human
+arranged without ever opening Qt.
 
 The through-line of the whole system is the same move made four times:
 freeze a contract at the boundary — the recorder spec, the reader

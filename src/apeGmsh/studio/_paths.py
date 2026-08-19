@@ -201,7 +201,8 @@ def pin_session_snapshot_path(pin_id: str, root: Path | None = None) -> Path:
     Where ``results_pin(session_snapshot=)`` copies the ADR 0098 session
     snapshot it was handed (S5b). A copy, not just a hash, for the same
     reason Amendment 5 copies ``assess.json``: the live
-    ``<results>.session.json`` is rewritten every time the human saves,
+    ``<results>.viewer-session.json`` is rewritten every time the
+    human saves,
     so a stamp alone would pin content that no longer exists.
 
     The file is named for the ledger's ``session_snapshot`` key, not

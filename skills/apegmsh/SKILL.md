@@ -361,7 +361,9 @@ signatures) lives in the references.
   inferred from element classes + `ops.ndf` for element-less nodes (ADR
   0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
   `g.model.fuse`, `g.initialize`) → sub-composite forms; `apeGmshViewer` →
-  `results.show_web()` / `ResultsViewer`.
+  `results.viewer()` / `results.session()`. `ResultsViewer` is **not** an
+  export of `apeGmsh` or `apeGmsh.viewers` — importing it from either
+  raises `ImportError`; the post-solve document is a `ResultsSession`.
 - **Sidecar modules** (separate imports, NOT session composites):
   `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
   `ops.run_remote`), `from apeGmsh.sensitivity import Sensitivity` (FD
@@ -370,8 +372,8 @@ signatures) lives in the references.
   `generate()`; `.apegmsh/selection.json` + `names.json` + `runs.jsonl`;
   `--status` inspects them, ADR 0095). Details in `api-cheatsheet.md`.
 - **Schema constants** live in `fem-broker.md` (neutral + bridge zones, ADR
-  0023) and the viewer session schema in `results.md` — they drift, so read the
-  number from there, not from memory.
+  0023) and the results session-snapshot version in `results.md` — they
+  drift, so read the number from there, not from memory.
 
 Before claiming a method or signature exists, call MCP `lookup(symbol)`
 or run `python -m apeGmsh.studio.lookup SYMBOL` (ADR 0096). If that

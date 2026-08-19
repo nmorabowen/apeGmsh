@@ -260,27 +260,35 @@ validating — a pin line has no `script` / `phase` / `ok` and is
 correctly refused by the run schema.
 
 `render(session=…)` draws one pane of a saved ADR 0098 session snapshot
-(`<results>.session.json`) instead of a results file. Its content is the
-slot catalog the human arranged, not a view token, so `view` /
+(`<results>.viewer-session.json`) instead of a results file. Its content
+is the slot catalog the human arranged, not a view token, so `view` /
 `component` / `step` / `deform` / `pack` are refused with it
 (`INVALID_ARGS`) rather than ignored; `camera` and `output` still apply.
-An old `<results>.viewer-session.json` is refused and **never renamed** —
-the rename-aside belongs to the interactive flow. The same still is
-available from the command line:
+
+A session written by the **retired** viewer is refused and **never
+renamed** — the rename-aside belongs to the interactive flow. Note the
+refusal is by the file's *payload shape*, not its name: the new session
+adopted `<results>.viewer-session.json` at ADR 0098 S6a, so the name
+alone no longer tells the two apart. A v13 payload carries an integer
+`schema_version` and no `kind`; a live one carries
+`kind: "apegmsh.results.session"`.
+
+The same still is available from the command line:
 
 ```
-python -m apeGmsh.results.session render <snapshot>.session.json shot.png
+python -m apeGmsh.results.session render <results>.viewer-session.json shot.png
 ```
 
 `results_pin(session_snapshot=…)` pins the ADR 0098 presentation session
-(`<results>.session.json`). Unlike `model_h5` / `results`, which are
-recorded by path and hash only, that file is **copied** into
+(`<results>.viewer-session.json`). Unlike `model_h5` / `results`, which
+are recorded by path and hash only, that file is **copied** into
 `.apegmsh/pins/<pin-id>/session_snapshot.json`: the live snapshot is
 rewritten every time the human saves, so a hash alone would pin content
 that is already gone. The ledger key is `session_snapshot` because
 `session` already means the run's session name. A file that is not a
-session snapshot — the retired `<results>.viewer-session.json` is the
-near-miss — is refused (`INVALID_ARGS`).
+session snapshot is refused (`INVALID_ARGS`) — and the discriminating
+case is a v13 payload sitting at exactly that adopted path, not a file
+with an obviously different name.
 
 ## Trust boundary
 

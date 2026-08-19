@@ -77,6 +77,140 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
+
+The last S6 slice. Documentation stops describing the retired Geometry /
+Composition / Diagram ontology, and — the part the plan did not
+anticipate — the session finally gets a door.
+
+**There was no way in.** `ResultsSession` had no API page, no `mkdocs.yml`
+nav entry, and nothing in `docs/how-to/**`, `docs/tutorials/**` or
+`examples/**` that called `results.session()`. `docs/how-to/index.md`
+still routed "plot a deformed shape or contour" at the old concepts
+page. Six slices built a model no reader could reach. Now:
+
+- **`docs/api/results-session.md`** — the session as the document:
+  panes, the closed seven-slot catalog, why deform is pose and not a
+  slot, and the legend law. (Named `results-session` because
+  `api/session.md` is the *builder* session — two different things.)
+- **`docs/how-to/render-a-still.md`** — the scripted path end to end:
+  `results.session()`, fill a slot, set the pose, `render()` a PNG with
+  no Qt in the loop. Every fence was executed before it shipped.
+
+**A whole-tree audit, not just the pages ADR 0098 touched** — and that
+was the right call: several BROKEN claims sat outside them, and the
+worst had nothing to do with this ADR. Those are spun out separately
+rather than smuggled in here.
+
+**Fixed, from ADR 0098's own fallout:** adopting
+`<results>.viewer-session.json` at S6a left the *old* name in eight
+places in shipped code — three in `python -m apeGmsh.results.session
+render --help`, two in the Studio MCP tool descriptions, plus studio
+docstrings and `docs/how-to/studio-habitat.md`. The MCP text was the
+worst of it: it told an agent that `.viewer-session.json` is "the old,
+refused" file when that is now the live name. The refusal is by
+**payload shape, never by filename** — the two are no longer
+distinguishable by name — and every site now says so.
+
+**Also corrected:** `export_animation`'s claim that its frames are
+"pixel-identical to the interactive viewer". True before the flip; false
+after, because it builds the retired diagram-stack window offscreen
+while the interactive one is now the session window.
+
+**Retired from the skill:** the `director.geometries` section (which
+carried a warning and then taught `viewer.director` anyway — an
+`AttributeError` since S6a), a session-schema number that was wrong
+twice over (the retired path is 13, the live snapshot is version 1 with
+`kind: "apegmsh.results.session"`), and `wv.director.registry.add(...)`
+as an authoring surface — it is `show_web`-hatch implementation with no
+compatibility promise, and nothing built through it can enter a
+snapshot, a pin, or an MCP render. `docs/design/results.md` gains a
+"the session is the document" section; it previously described
+concurrent geometries as current architecture and never mentioned
+`ResultsSession` at all.
+
+`MeshView.add_clip` / `remove_clip` gained docstrings — public API that
+the new page needed and the source did not carry. The seven slot
+properties keep theirs on the `property(doc=…)` factory; they cannot
+appear in generated docs because griffe is static and never sees a
+factory-built property, so the page names them in prose instead.
+
+### CHANGED — ADR 0098 §11 S6b: the retirement sweep
+
+The Geometry / Composition / Diagram ontology stops being a tested
+public surface. 49 test files retire (`tests/viewers/` 176 → 128), and
+an import guard replaces them as the thing that keeps it retired.
+
+**S6 is de-publication, not deletion**, and this sweep found out how
+literally that is true: only **two** source modules are actually dead
+(`viewers/_session_apply.py`, `viewers/ui/_time_history.py`). Everything
+else is still reachable, because `Results.export_animation` runs
+`ResultsViewer.show(run_loop=False)` → `_realize_headless`, which builds
+the **full** Qt window and merely hides the docks. Deleting those two
+needs surgery inside that hatch-live file for no behaviour change, so it
+is deferred to the slice that slims the export.
+
+**`tests/viewers/test_diagrams_import_guard.py`** is the new gate: a
+27-module allowlist, ratcheted **both** ways — a new importer must be
+argued for, and an entry that stops importing must be pruned. It
+resolves relative imports, because inside `viewers/` nearly every real
+hit is `from ..diagrams import …` and a guard modelled naively on the
+`assess` one would have seen almost nothing and passed forever. Its
+docstring is honest about what it proves: eleven of those entries are
+alive only because of that fat headless window, so this is a ratchet
+against new importers, not evidence of a small surface.
+
+**Three sweep decisions departed from the plan, each because executing
+it literally would have deleted live coverage.**
+
+*`test_animation.py` was deleted and then restored.*
+`Results.export_animation` is a public, documented API (0095 INV-11),
+not an implementation detail, and those 12 tests were its only coverage.
+The rule that settled the rest of the sweep: a surviving **public
+surface** keeps its tests; a surviving **implementation detail behind a
+hatch** does not — which is what ADR 0098 already says about the
+director.
+
+*Deleting the director and registry suites left `show_web` with no
+coverage at all* — and ADR 0098 Amendment 2 rests the survival of the
+six slotless kinds on precisely that hatch, with no `test_web_viewer.py`
+anywhere. `tests/viewers/test_diagram_hatch_survival.py` is the
+load-bearing replacement: all six kinds registered by a bare package
+import, one constructing through the real `DiagramRegistry`, the §4
+catalog still closed at seven, and a near-miss snapshot refusal.
+
+*Mixed files are kept whole rather than split.* Eleven files span the
+retired and the surviving; splitting them risks silently dropping a
+survivor's coverage for a maintenance-only gain, and every test in them
+still passes. **Amendment 2 §A2.4 is corrected** accordingly — its
+"five dedicated test files survive" list missed six more survivor-kind
+tests living inside per-kind files, which a sweep trusting it would have
+deleted with their hosts.
+
+**Persisted section cuts now boot as view clips.** ADR 0098 keeps the
+h5 auto-load contract while retiring the `section_cut` picture, so
+`Results.session()` reads persisted cuts and attaches them as clips on
+the booted view (`results/session/_cuts.py`), preferring a bound
+`OpenSeesModel` handle over the file exactly as the retired director
+did. A `ViewClip` cuts the **whole view**, while a `SectionCutDef` cut
+only the elements it named — so a cut that names a subset of the model,
+or carries a bounding polygon, is **skipped with a notice** rather than
+silently widened into something that hides more than the original cut
+did. A cuts zone that cannot be read is a line, never a failed boot.
+
+**Three S6a defects fixed.** The **"Display" dock no longer opens
+blank** — the shell created it unconditionally and the View menu could
+summon it, but the session window mounted nothing, which is an ADR 0087
+INV-2 violation; it now carries one muted hint line. `docs/api/viewers.md`
+no longer points at `Preferences → Labels` as a path from a window that
+has no Preferences entry. The skill no longer claims Export animation is
+a button on the viewer GUI.
+
+The disposition of every file and every orphaned behaviour —  including
+the ones deliberately **not** ported (the File menu, the legend
+interactor's drag/right-click chrome, the probe overlay, threshold) —
+is recorded in `internal_docs/s6b_honesty_table.md`.
+
 ### CHANGED — ADR 0098 §11 S6a: `viewer()` opens a `ResultsSession`
 
 `results.viewer()` is the same one-liner and opens a different window.

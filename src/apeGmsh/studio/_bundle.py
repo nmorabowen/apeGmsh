@@ -110,7 +110,7 @@ def results_pin(
     ``session_snapshot`` is the ADR 0098 presentation session (S5b) — the
     picture a human arranged, so an agent can draw a still of it later
     (§11 S5). That one IS copied into the pin folder, per the Amendment-5
-    lifecycle: the live ``<results>.session.json`` is rewritten on every
+    lifecycle: the live ``<results>.viewer-session.json`` is rewritten on every
     save, so a hash alone would pin content that is already gone.
     """
     base = Path.cwd() if root is None else Path(root)
