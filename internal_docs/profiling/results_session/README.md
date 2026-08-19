@@ -50,7 +50,7 @@ group, `pane` adds and closes a view.
 snakeviz internal_docs/profiling/results_session/replay.prof   # Icicle view
 ```
 
-## Baseline — ssi_frame_wall / c001_baseline_small, 2026-08-19
+## Baseline (PRE-Amendment 4) — ssi_frame_wall / c001_baseline_small
 
 `--repeat 12 --no-profile`, 3 panes (contour+deform+clip / line diagram /
 history plot), on the Amendment 3 dock panes:
@@ -156,3 +156,92 @@ fixed for playback to feel like playback.
 Unmeasured, deliberately: `pane` at 336 ms is dominated by creating a
 fresh `QtInteractor` (GL context) per added view, which is the same cost
 boot pays. It is a real number but it is not a per-frame cost.
+
+## Re-measured after Amendment 4 — 2026-08-19
+
+Merged main (`d931e78f`), 3 panes, `--repeat 10 --no-profile`. **The
+`scope` row above was wrong, not merely noisy** — see below.
+
+| gesture | mean ms | p50 | p95 | was |
+|---|---:|---:|---:|---:|
+| scrub  |  76 |  76 |  80 | 405 |
+| orbit  |  16 |  17 |  29 |  18 |
+| slot   | 152 | 128 | 253 | 166 |
+| scope  | **170** | 166 | 236 | 57 *(wrong)* |
+| pane   | 342 | 342 | 366 | 336 |
+
+### The harness was timing refusals as if they were work
+
+Only `soil` and `raft` carry a `stress_zz` Gauss contour. The other seven
+physical groups — the frame families and the `soil_base` / `soil_sides`
+boundary skin the bench deliberately gives no results — make the slot
+refuse. The pump catches that, reports it through `viewers._failures`,
+and keeps the viewport alive, exactly as designed. But the gesture still
+returned a duration, so **seven of every nine `scope` iterations were
+timing the cost of failing.** That is what produced the old table's
+`mean 57 / p50 27 / p95 159`: a bimodal mix of refusals and real work,
+reported as one number.
+
+The real cost of a scope change is **170 ms — 2.9x what the baseline
+claimed**, which moves `scope` from the second-cheapest gesture to the
+second most expensive.
+
+`_timed` now returns a `Sample` that knows whether the pump reported a
+failure during it. Failed iterations are excluded from the statistics and
+named underneath, and `gesture_scope` probes each group once and times
+only those that actually re-scope. **Mutation-tested**: disabling the
+capture reproduces the old contaminated numbers (`59 / 27 / 160`), so the
+detection is load-bearing rather than decorative.
+
+The general rule this earns: *a gesture that throws still produces a
+timing.* Any harness driving a surface whose whole design is to survive
+failure has to ask whether the work happened, not just how long the call
+took.
+
+### Where the 76 ms goes
+
+Pane count, scrub only:
+
+| session | scrub ms | marginal |
+|---|---:|---:|
+| 1 pane — contour + deform + clip | 17.7 | — |
+| 2 panes — + line diagram | 50.3 | +32.6 |
+| 3 panes — + history plot | 76.3 | +26.0 |
+
+There is no large fixed per-frame overhead to find; the cost is per pane
+and depends on what the pane draws. Note the plot pane: **+9 ms before
+A4, +26 ms after.** It did not get slower — everything around it got
+faster, and what it always paid is now most of a frame.
+
+cProfile over 10 steps, 3 panes (cumulative s):
+
+| | cum s | ncalls | per step |
+|---|---:|---:|---:|
+| `_flush` | 0.699 | 40 | the pump |
+| ↳ `restep_pane` (two mesh panes) | 0.640 | 20 | 32 ms |
+| ↳↳ **`_line_force.sync_substrate_points`** | **0.412** | 10 | **41 ms** |
+| ↳↳↳ `_beam_geometry.compute_local_axes` | 0.254 | 4 920 | **492 calls/step** |
+| ↳↳↳ `_beam_geometry.station_position` | 0.046 | 24 600 | 2 460 calls/step |
+| **matplotlib `tight_layout`** | **0.295** | 10 | **29 ms** |
+| `_apply_pose` | 0.143 | 20 | |
+| `read_nodal_vector_field` | 0.135 | 20 | |
+| VTK `Render` | 0.086 | 33 | **2.6 ms** |
+
+**GL is 3% of a frame.** Two Python costs are 70 of the 76 ms:
+
+1. **The line diagram recomputes every element's local axes on every
+   frame** — `compute_local_axes` 492 times a step, one per beam element,
+   plus 2 460 `station_position` calls. Same defect class as the Gauss
+   extrapolation A4 hoisted out of the per-frame path: a per-element
+   Python loop where a batched array op belongs. Local axes are a
+   function of the undeformed geometry and the pose; a re-step should
+   transform cached axes, not rebuild them from scratch. Worth ~41 ms.
+2. **The plot pane runs matplotlib `tight_layout` on every scrub step** —
+   `get_tightbbox` over every tick label and spine (~98 `get_window_extent`
+   calls a step) for a cursor move that cannot change the layout. S4-2's
+   cheap-cursor path slides the playhead over cached arrays and then pays
+   a full layout solve anyway. Freezing the layout engine during a
+   cursor-only update is worth ~29 ms.
+
+Fix both and a three-pane scrub is plausibly under the 33 ms budget for
+the first time — not per pane, per frame.
