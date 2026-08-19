@@ -1,5 +1,49 @@
 # apeGmsh ← Ladruno 2-D contact: adoption brief (fork ADR-85)
 
+> ## STATUS — most of this brief is now HISTORY (2026-08-19)
+>
+> The adoption shipped: apeGmsh **#1048** and fork **#764**. Read this
+> header before believing anything below it — the body was written when
+> apeGmsh could reach none of the lane, and §2's refusal table in
+> particular now describes code that no longer refuses.
+>
+> **Working today.** 2-D NTS contact with friction, end to end: a chained
+> stride-2 master surface built from a meshed dim-1 PG, 2-component
+> `-outward`, `outward="winding"` (fork `-outward winding`, NTS only),
+> and the rigid analytical plane. Acceptance: an apeGmsh 2-D two-body
+> deck solves on the fork with equilibrium closing at machine precision,
+> and winding returns bit-identical results to an explicit vector.
+>
+> **Not adopted yet.** 2-D **mortar** — refused by name; the fork's 2-D
+> mortar lane has no chain-integrity scan, so winding does not rest on
+> anything there and flush mortar interfaces still need an explicit
+> `outward=`. **Docs** — `guide_constraints.md` still has no 2-D section.
+> **Results** — `Results/` reads no contact data at all. Parallel/DDM 2-D
+> contact is out of scope fork-side and is refused by name on both lanes.
+>
+> **Three facts to carry, not re-derive.**
+> 1. *Winding sign.* Every emitted segment satisfies
+>    `dot(perp(t), normals[e]) == +1` — the slave lies to the LEFT of
+>    chain travel. This shipped **inverted** first and was caught by
+>    reading it, not by tests: 48 new tests passed over it because they
+>    all checked structure and none checked which side the slave was on.
+>    Pinned by `test_winding_puts_the_slave_on_the_left`.
+> 2. *Coarse closed loops transmit exactly zero.* Fork-measured on a unit
+>    n-gon: n ≤ 8 inert, n ≥ 9 exact. Disclosed and pinned fork-side, not
+>    fixed. Say "closed loops work **if adequately refined**".
+> 3. *A zero initial gap does not arm the NTS lane.* A body whose only
+>    restraint is the contact then has a rigid-body mode and diverges
+>    (measured increment norm 1.0e+12); seed a small overlap. The
+>    **rigid-plane lane does not need this** — it arms from a zero gap.
+>
+> **Hazard left standing.** Two mechanisms now trim node coordinates:
+> main's emitter-side `trim_coords_to_ndm` (ADR 0099, authoritative, runs
+> last) and this work's build-layer `node_coords_for_ndm`. One invariant,
+> two enforcement points — reconcile deliberately, not as merge fallout.
+>
+> §5's slice plan and `contact_2d_fork_asks.md` §B are both superseded by
+> what actually shipped; S5 retires them.
+
 The Ladruno fork closed its 2-D contact lane on 2026-08-18 (`e7555f2c9`,
 "close the 2D contact lane — T0–T4 shipped"). Every 2-D lane is live: rigid
 plane, NTS penalty with friction, mortar/ALM with friction and tie, and the
