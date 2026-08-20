@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from qtpy import QtWidgets
 
+from ._legend_bind import PaneLegendBinding
 from ._pick import PanePick
 from ._reconciler import SessionReconciler
 
@@ -194,6 +195,20 @@ class MeshPane(QtWidgets.QWidget):
                 session, backend.picking(),
                 lambda: self._reconciler.realized,
             )
+        # A5.3(3) — drag and resize on the colour scale. Bound per
+        # flush, not once: realize builds a new LegendController every
+        # time, so an interactor installed here would observe a dead
+        # one after the first slot edit.
+        self._legends = PaneLegendBinding(backend, self._reconciler)
+        # Adopt a boot flush that has ALREADY happened. The reconciler
+        # schedules its own, and an immediate ``defer_fn`` runs it
+        # inside the constructor above — before the listener existed,
+        # so nothing would bind its controller and the pane would wait
+        # for a flush that only a session edit brings. Under a QTimer
+        # defer this is a no-op (realized is still None).
+        self._legends.bind(
+            getattr(self._reconciler.realized, "legend_controller", None)
+        )
 
     # -- surface -------------------------------------------------------
 
@@ -267,6 +282,7 @@ class MeshPane(QtWidgets.QWidget):
         about to close.
         """
         self._reconciler.dispose()
+        self._legends.dispose()
         if self._pick is not None:
             self._pick.dispose()
         if self._surface is not None:
@@ -287,6 +303,13 @@ class MeshPane(QtWidgets.QWidget):
         Later flushes never reframe — an update is not a reason to move
         the camera (the backend's own update path holds the same rule).
         """
+        # Re-bind FIRST and unconditionally: the camera guard below
+        # returns early on most flushes, and a legend whose controller
+        # was swapped by that flush must not keep the old binding.
+        self._legends.bind(
+            getattr(realized, "legend_controller", None)
+            if realized is not None else None
+        )
         if self._camera_fit or realized is None or not realized.layers:
             return
         try:

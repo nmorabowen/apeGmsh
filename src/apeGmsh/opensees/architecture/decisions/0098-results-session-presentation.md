@@ -1748,9 +1748,25 @@ where installing the obvious fix in isolation made things worse.
 ### A5.3 Decision — placement is session state, existence stays derived
 
 1. **`MeshView` gains per-field legend placement**, beside
-   `legend_hidden`: for a field, an optional
-   `(anchor, extent, font_scale)`. Absent means "laid out automatically",
-   which is today's behaviour and stays the default.
+   `legend_hidden`: for a field, an optional `(anchor, font_scale)`.
+   Absent means "laid out automatically", which is today's behaviour
+   and stays the default.
+
+   **Not `extent`.** The draft of this amendment said
+   `(anchor, extent, font_scale)`, which contradicts A5.4 one paragraph
+   later: `extent` is *resolved* by the layout from the legend's text
+   and its font scale, so storing it would be storing a pixel box under
+   another name — the thing A5.7 rejects. Corrected during
+   implementation.
+
+   **And not a field of `Legend`.** `Legend` records go into the
+   reconciler's structure signature (`_pane_signature` includes
+   `pane.legends()`), so a placement carried there would make every
+   mouse-move of a drag compare unequal and cost a full realize — the
+   opposite of criterion 9, and about 150 ms per frame on the bench.
+   Realize reads placement through `view.legend_placement(field)`
+   instead. This is a constraint on the design, not an implementation
+   detail: any future per-legend state has the same choice to make.
 2. **`_realize_legends` seeds the controller from that record**, not from
    `style.scalar_bar_scale`, whenever a placement exists for the field.
    The style value remains the seed when it does not.

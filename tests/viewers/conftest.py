@@ -130,6 +130,7 @@ class RecordingBackend:
         self.moved_bars: list[str] = []
         self.clip_planes: tuple = ()            # ADR 0083 set_clip_planes
         self.viewport: tuple[int, int] = (1280, 800)
+        self.renders = 0
 
     def add_layer(self, layer: Any) -> _Handle:
         self.layers[layer.layer_id] = layer
@@ -182,7 +183,7 @@ class RecordingBackend:
         pass
 
     def render(self) -> None:
-        pass
+        self.renders += 1
 
     def screenshot(self, path: Any) -> None:
         pass

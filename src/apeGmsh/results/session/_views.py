@@ -213,6 +213,36 @@ class Legend:
     hidden: bool = False
 
 
+@dataclass(frozen=True)
+class LegendPlacement:
+    """Where the user dragged one colour scale (ADR 0098 A5.3).
+
+    ``anchor`` is the lower-left corner in normalized viewport
+    coordinates — the frame ``LegendController`` already uses — and
+    ``font_scale`` is the size. Size is a font scale rather than a pixel
+    box because ADR 0081 Part 3 derives a legend's box from its text: a
+    stored box could be restored smaller than its own labels, which is
+    exactly the guarantee the resize gesture preserves by driving
+    ``font_scale`` and letting the box follow. ``None`` means the scale
+    was dragged but never resized.
+
+    Deliberately NOT a field of :class:`Legend`. ``Legend`` records go
+    into the reconciler's structure signature (`_pane_signature`), so a
+    placement carried there would make every mouse-move of a drag
+    compare unequal and cost a full realize — A5.6 criterion 9. Realize
+    reads placement through :meth:`MeshView.legend_placement` instead.
+    """
+
+    anchor: tuple[float, float]
+    font_scale: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        x, y = self.anchor
+        object.__setattr__(self, "anchor", (float(x), float(y)))
+        if self.font_scale is not None:
+            object.__setattr__(self, "font_scale", float(self.font_scale))
+
+
 PICK_TARGETS = ("nodes", "gauss")
 
 #: Legend derivation walks colour-mapped categories in §4 row order so
@@ -276,6 +306,7 @@ class MeshView:
         self._pick_target = "nodes"
         self._slots: dict[str, Slot] = {}
         self._legend_hidden: dict[str, bool] = {}
+        self._legend_placement: dict[str, LegendPlacement] = {}
         self._clips: list[ViewClip] = []
         self._clip_ids = itertools.count(1)
 
@@ -445,7 +476,8 @@ class MeshView:
             self._slots[category] = record
         # Legend chrome lives only as long as its legend (INV-LEGEND-2:
         # turning the slot off destroys the legend) — prune hidden
-        # flags for fields no longer caused by any occupied slot.
+        # flags and hand placement for fields no longer caused by any
+        # occupied slot.
         live = {
             f for f in (
                 slot_field(c, r) for c, r in self._slots.items()
@@ -453,6 +485,9 @@ class MeshView:
         }
         self._legend_hidden = {
             f: h for f, h in self._legend_hidden.items() if f in live
+        }
+        self._legend_placement = {
+            f: p for f, p in self._legend_placement.items() if f in live
         }
         self._changed()
 
@@ -495,6 +530,60 @@ class MeshView:
         if self._legend_hidden.get(field, False) == hidden:
             return
         self._legend_hidden[field] = hidden
+        self._changed()
+
+    def legend_placement(self, field: str) -> Optional[LegendPlacement]:
+        """Where this view's scale for ``field`` was dragged, or ``None``
+        for the automatic stack (ADR 0098 A5.3). Realize reads this to
+        seed the controller."""
+        return self._legend_placement.get(field)
+
+    def legend_placements(self) -> "dict[str, LegendPlacement]":
+        """Every hand placement on this view, keyed by field. A copy —
+        the caller must not mutate the view's record."""
+        return dict(self._legend_placement)
+
+    def set_legend_placement(
+        self,
+        field: str,
+        anchor: "tuple[float, float]",
+        font_scale: Optional[float] = None,
+    ) -> None:
+        """Record that one scale was placed by hand (ADR 0098 A5.3).
+
+        Refuses a field no occupied colour-mapped slot causes, the same
+        rule :meth:`set_legend_hidden` enforces — placement is state
+        ABOUT a legend, and a legend that does not exist cannot have
+        any.
+
+        This records; it does not repaint. The gesture that calls it has
+        already moved the live bar through the controller, and the
+        record is what makes the move survive the next realize, a theme
+        change and a snapshot. Placement is deliberately absent from the
+        reconciler's structure signature (see :class:`LegendPlacement`),
+        so a set here costs no realize — which also means a purely
+        programmatic call on a live window takes effect at the next
+        realize rather than immediately.
+        """
+        live = {legend.field for legend in self.legends()}
+        if field not in live:
+            raise ValueError(
+                f"No legend for field {field!r} on this view — legends "
+                f"exist only for occupied colour-mapped slots (have: "
+                f"{sorted(live)})."
+            )
+        placement = LegendPlacement(anchor=anchor, font_scale=font_scale)
+        if self._legend_placement.get(field) == placement:
+            return
+        self._legend_placement[field] = placement
+        self._changed()
+
+    def clear_legend_placement(self, field: str) -> None:
+        """Return one scale to the automatic stack — what ``redock``
+        records. Unknown or unplaced fields are a no-op, so a redock of
+        an already-docked legend costs nothing."""
+        if self._legend_placement.pop(field, None) is None:
+            return
         self._changed()
 
     # -- clips (§3, 0083 machinery view-owned) -------------------------

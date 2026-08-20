@@ -1507,6 +1507,15 @@ def _realize_legends(
             continue
         style = diagram.spec.style
         key = ("", legend.field)
+        # A5.3(2) — a hand placement outranks the style's scale. The
+        # style seeds size only while the scale still sits in the
+        # automatic stack; once dragged, the view's record is what the
+        # bar is rebuilt from, or every realize would revert the
+        # gesture (A5.2).
+        placement = view.legend_placement(legend.field)
+        font_scale = getattr(style, "scalar_bar_scale", None)
+        if placement is not None and placement.font_scale is not None:
+            font_scale = placement.font_scale
         controller.register(
             key,
             handle.layer_id,
@@ -1516,9 +1525,14 @@ def _realize_legends(
             vertical=_default_vertical(
                 getattr(style, "scalar_bar_vertical", None)
             ),
-            font_scale=getattr(style, "scalar_bar_scale", None),
+            font_scale=font_scale,
             visible=not legend.hidden,
         )
+        if placement is not None:
+            # ``set_anchor`` is what undocks an entry (slot -> None), so
+            # it is the placement seed as well as the drag mutator; the
+            # layout then honours the anchor instead of a stack slot.
+            controller.set_anchor(key, placement.anchor)
         if not legend.hidden:
             bar_keys.append(key_str(key))
     return tuple(bar_keys), controller
