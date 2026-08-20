@@ -119,6 +119,15 @@ class LegendInteractor:
         bottom-left, the same origin the normalized viewport uses.
         Later legends are tested first so the one drawn on top wins.
         """
+        # The extents about to be tested must describe THIS viewport;
+        # see ``LegendController.ensure_current``. No-op unless the
+        # viewport actually moved.
+        ensure = getattr(self._legends, "ensure_current", None)
+        if ensure is not None:
+            try:
+                ensure()
+            except Exception:
+                pass
         vw, vh = self._legends.viewport_px()
         nx, ny = float(x) / vw, float(y) / vh
         hx, hy = HANDLE_PX / vw, HANDLE_PX / vh

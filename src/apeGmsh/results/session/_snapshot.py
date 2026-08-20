@@ -12,6 +12,13 @@ one-stage-at-a-time scrubber, which is a WIDGET choice: ``Instant`` is
 ``(stage, step)`` under either traversal — so S5b's contract can
 publish without paying a second version bump.
 
+Amendment 5 adds one OPTIONAL pane key, ``legend_placement``, and does
+not bump the version either: a v1 file without it restores to the
+automatic legend stack (the pre-amendment behaviour, and the default),
+and a reader that does not know the key ignores it. Additive and
+compatible in both directions is the bar for staying at 1; anything
+that changed the meaning of an existing key would not clear it.
+
 Two failure families, deliberately not alike (plan decision 15):
 
 * **Schema / ontology violations refuse loudly.** An unknown slot
@@ -208,6 +215,19 @@ def _dump_mesh_view(view: MeshView) -> dict:
         "legend_hidden": [
             legend.field for legend in view.legends() if legend.hidden
         ],
+        # A5.3(5) — where the user dragged each scale. Same derivation
+        # rule as the flags above: keyed by a field this view actually
+        # causes a legend for. ``font_scale`` may be null (dragged but
+        # never resized); size is a scale, not a box, so a restored bar
+        # can never be smaller than its own labels (ADR 0081 Part 3).
+        "legend_placement": {
+            field: {
+                "anchor": list(placement.anchor),
+                "font_scale": placement.font_scale,
+            }
+            for field, placement in sorted(view.legend_placements().items())
+            if field in {legend.field for legend in view.legends()}
+        },
         "clips": [
             {
                 "plane_id": clip.plane_id,
@@ -402,6 +422,38 @@ def _restore_mesh_view(raw: dict, notices: list[str]) -> MeshView:
             )
             continue
         view.set_legend_hidden(field, True)
+
+    for field, payload in _require_dict(
+        raw.get("legend_placement") or {},
+        f"pane {pane_id!r} legend_placement",
+    ).items():
+        if field not in live:
+            # Same degrade as the flags above, and the same reason a
+            # placement must never resurrect a legend: existence is
+            # derived from the slots (§5), placement only describes one
+            # that already exists (A5.3(5)).
+            notices.append(
+                f"Pane {pane_id!r}: dropped a legend placement for "
+                f"field {field!r} — no occupied colour-mapped slot on "
+                f"this view causes that legend (ADR 0098 §5)."
+            )
+            continue
+        entry = _require_dict(
+            payload, f"pane {pane_id!r} legend_placement[{field!r}]",
+        )
+        anchor = entry.get("anchor") or ()
+        if len(anchor) != 2:
+            notices.append(
+                f"Pane {pane_id!r}: dropped a legend placement for "
+                f"field {field!r} — anchor must be [x, y], got "
+                f"{anchor!r}."
+            )
+            continue
+        view.set_legend_placement(
+            field, (float(anchor[0]), float(anchor[1])),
+            None if entry.get("font_scale") is None
+            else float(entry["font_scale"]),
+        )
 
     clips = []
     for raw_clip in raw.get("clips") or ():

@@ -42,6 +42,7 @@ from ._realize import (
     RealizedPane,
     realize_pane,
     recorded_components,
+    recorded_line_components,
 )
 from ._reconciler import LedgerBackend, SessionReconciler
 from ._scope import ScopedSet, resolve_scope
@@ -119,6 +120,7 @@ __all__ = [
     "realize_pane",
     "realize_plot",
     "recorded_components",
+    "recorded_line_components",
     "render_still",
     "required_extent",
     "resolve_pane",

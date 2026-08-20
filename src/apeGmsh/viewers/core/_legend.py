@@ -299,6 +299,9 @@ class LegendController:
         #: controller built outside a director, i.e. in unit tests.
         self.dispatcher: Any = None
         self._resize_tag: Any = None
+        #: Viewport the current layout was resolved against, so a stale
+        #: one can be detected without depending on a resize EVENT.
+        self._laid_out_px: "Optional[tuple[int, int]]" = None
 
     @property
     def default_font_scale(self) -> float:
@@ -482,6 +485,7 @@ class LegendController:
         second row/column rather than sliding off screen.
         """
         vw, vh = self.viewport_px()
+        self._laid_out_px = (vw, vh)
         mx, my = MARGIN_PX / vw, MARGIN_PX / vh
         gx, gy = GUTTER_PX / vw, GUTTER_PX / vh
 
@@ -492,7 +496,14 @@ class LegendController:
         for entry in visible:
             m = measure(entry, self._scale_of(entry))
             w_px, h_px = box_px(entry, m)
-            w, h = min(w_px / vw, 1.0 - 2 * mx), min(h_px / vh, 1.0 - 2 * my)
+            # ``max(.., 0)``: on a viewport smaller than its own
+            # margins ``1 - 2m`` goes NEGATIVE, and the clamp then
+            # hands back a negative extent — a box whose far edge is
+            # before its near one, which no hit test can ever match.
+            # Reached in practice by a pane laid out before its first
+            # resize (~30 px tall).
+            w = min(w_px / vw, max(1.0 - 2 * mx, 0.0))
+            h = min(h_px / vh, max(1.0 - 2 * my, 0.0))
             entry.extent = (w, h)
             if entry.slot is None:
                 entry.anchor = self._contain(entry.anchor, (w, h), mx, my)
@@ -718,6 +729,39 @@ class LegendController:
         breaks the fit guarantee. :func:`install_resize_hook` calls this.
         """
         self._reconcile_and_fire()
+
+    def ensure_current(self) -> bool:
+        """Re-layout if the viewport moved since the last one.
+
+        Belt to :func:`install_resize_hook`'s braces, and the one that
+        actually holds. A legend's box is derived from pixel metrics,
+        so it is only valid for the viewport it was measured against —
+        but every EVENT that announces a resize is unreliable here:
+        VTK's ``ConfigureEvent`` does not fire for a programmatic or
+        offscreen resize, and Qt's ``resizeEvent`` arrives *before* the
+        VTK render window has taken the new size, so a re-layout driven
+        from it re-measures against the OLD one.
+
+        Measured consequence when nothing catches it: a pane realized
+        at its construction size keeps a box computed against a ~30 px
+        viewport — the drawn bar is wrong AND the hit test reads the
+        same extent, so the drag misses a scale the user can plainly
+        see. Checking the viewport at the point of use has no such
+        ordering to get wrong.
+
+        Returns whether a re-layout ran. Cheap when nothing moved: one
+        tuple compare.
+        """
+        if self._backend is None:
+            return False
+        try:
+            current = self.viewport_px()
+        except Exception:
+            return False
+        if current == self._laid_out_px:
+            return False
+        self._reconcile_and_fire()
+        return True
 
     def install_resize_hook(self) -> bool:
         """Re-layout whenever the render window is resized.

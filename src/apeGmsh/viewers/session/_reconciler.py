@@ -198,6 +198,15 @@ class SessionReconciler:
         return self._realized
 
     @property
+    def view(self) -> Optional[Any]:
+        """The ``MeshView`` this reconciler currently paints, or ``None``.
+
+        Resolved on every read rather than cached, for the reason
+        ``_resolve_pane`` exists: a bound pane whose view is gone must
+        answer ``None``, not the view it used to have."""
+        return self._resolve_pane()
+
+    @property
     def pane_id(self) -> Optional[str]:
         return self._pane_id
 

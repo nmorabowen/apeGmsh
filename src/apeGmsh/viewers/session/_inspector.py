@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional
 from qtpy import QtWidgets
 
 from .._failures import safe_slot
-from ._realize import recorded_components
+from ._realize import recorded_components, recorded_line_components
 from ._specs import _AXIS_SUFFIXES, _TENSOR_SUFFIXES
 
 #: §4 line slot, v1 component vocabulary — the force half of the
@@ -137,6 +137,8 @@ class MeshInspectorPage:
         self._view = view
         self._syncing = False
         self._nodal, self._gauss = self._recorded_components()
+        self._line = recorded_line_components(
+            self._session, self._view)
         self._patterns = self._load_patterns()
 
         self.widget = QtWidgets.QWidget()
@@ -263,10 +265,11 @@ class MeshInspectorPage:
         )
         gauss_tokens = sorted(self._gauss)
         sand_tokens = sorted(self._nodal)
-        line_tokens = [
-            t for t in _LINE_COMPONENTS
-            if t in self._nodal or t in self._gauss
-        ]
+        # Filtered against the line_stations family, NOT nodal/gauss:
+        # a line component never appears in either, so the old test was
+        # always false and the row offered nothing. _LINE_COMPONENTS
+        # supplies the display ORDER; what is recorded supplies the set.
+        line_tokens = [t for t in _LINE_COMPONENTS if t in self._line]
 
         rows = [
             self._quantity_row(

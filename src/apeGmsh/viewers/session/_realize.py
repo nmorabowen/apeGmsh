@@ -861,6 +861,35 @@ def recorded_components(
     )
 
 
+def recorded_line_components(
+    session: "ResultsSession", view: "MeshView",
+) -> "set[str]":
+    """The ``line_stations`` columns the view's instant records.
+
+    A sibling of :func:`recorded_components` rather than a third member
+    of its tuple, which three call sites unpack today.
+
+    The line slot reads a family of its own — `axial_force`,
+    `bending_moment_*`, `torsion`, the quantities only a *sectioned*
+    beam produces — and until this existed nothing sourced it. The
+    inspector filtered its Line row against the nodal and Gauss sets,
+    where a line component can never appear, so the row offered nothing
+    and its Add button was permanently dead while `view.line = Line(...)`
+    from a script drew the diagram perfectly well. Same §7 instant law
+    as its sibling, and the same empty-on-anything-missing rule: a
+    disabled control, never an error.
+    """
+    results = session.results
+    if results is None:
+        return set()
+    try:
+        stage_id, _step = _resolve_instant(session, view, results)
+        components = results.inspect.components(stage=stage_id)
+    except Exception:
+        return set()
+    return set(components.get("line_stations", ()))
+
+
 def _mode_stage_id(results: "Results", mode: Optional[int]) -> str:
     available: list[int] = []
     for stage in results.stages:
@@ -1507,6 +1536,15 @@ def _realize_legends(
             continue
         style = diagram.spec.style
         key = ("", legend.field)
+        # A5.3(2) — a hand placement outranks the style's scale. The
+        # style seeds size only while the scale still sits in the
+        # automatic stack; once dragged, the view's record is what the
+        # bar is rebuilt from, or every realize would revert the
+        # gesture (A5.2).
+        placement = view.legend_placement(legend.field)
+        font_scale = getattr(style, "scalar_bar_scale", None)
+        if placement is not None and placement.font_scale is not None:
+            font_scale = placement.font_scale
         controller.register(
             key,
             handle.layer_id,
@@ -1516,9 +1554,14 @@ def _realize_legends(
             vertical=_default_vertical(
                 getattr(style, "scalar_bar_vertical", None)
             ),
-            font_scale=getattr(style, "scalar_bar_scale", None),
+            font_scale=font_scale,
             visible=not legend.hidden,
         )
+        if placement is not None:
+            # ``set_anchor`` is what undocks an entry (slot -> None), so
+            # it is the placement seed as well as the drag mutator; the
+            # layout then honours the anchor instead of a stack slot.
+            controller.set_anchor(key, placement.anchor)
         if not legend.hidden:
             bar_keys.append(key_str(key))
     return tuple(bar_keys), controller
@@ -1544,4 +1587,5 @@ def _layer_lutspec(diagram: Any) -> Any:
 __all__ = [
     "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
     "RealizedPane", "realize_pane", "recorded_components",
+    "recorded_line_components",
 ]
