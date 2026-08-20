@@ -3545,6 +3545,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8464,6 +8475,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)
       
     </span>
   </a>
@@ -13404,6 +13426,42 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5">ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)<a class="headerlink" href="#added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.contact</code> / <code>contact_plane</code> were documented <strong>nowhere</strong> —
+<code>guide_constraints.md</code> reached them only as the redirect target of the
+deprecated <code>mortar()</code> alias, and the skill cheatsheet carried the signatures
+with no 2D content at all. S5 writes that section.</p>
+<p><code>internal_docs/guide_constraints.md</code> gains <strong>Level 5 — Contact</strong>: the two
+formulations, <code>contact_plane</code>, where records land (<code>fem.elements.contacts</code> /
+<code>contact_planes</code>, serial-only, live-session-only, fork-run-only), and then the
+2D lane — the meshed dim-1 PG, the chained stride-2 pair list made
+hole-proof by construction, orientation (<code>outward=(ox, oy)</code> vs
+<code>outward="winding"</code>, and the <strong>F1 asymmetry</strong>: winding is NTS-only, so a flush
+mortar interface always needs the vector and a curved/closed mortar master
+stays undeclarable), the <strong>three thickness conventions</strong>, the 2D rigid plane,
+and the <code>ndf == ndm</code> / no-partitioning gates. The <strong>curved-master facet-sizing
+warning</strong> — which lived only in the internal, history-flagged
+<code>contact_2d_adoption.md</code> §4 — lands here, under <em>Meshing the interface</em>,
+alongside the three other mesh-side prerequisites (seed an NTS overlap;
+restrain the free body transversally; refine a closed loop or it transmits
+exactly zero); <code>guide_meshing.md</code> §5 gains a pointer to it, since "follow the
+elastic mesh" is the wrong move exactly there.</p>
+<p><code>skills/apegmsh/references/api-cheatsheet.md</code> (canonical; <code>.claude/skills/</code>
+re-derived via <code>scripts/sync_skill.py</code>) gains a <strong>2D contact</strong> paragraph and 2D
+annotations on <code>outward=</code> / <code>contact_plane</code>, and its stale source-map footer is
+corrected (<code>ConstraintsComposite.py:298 → :624</code> for <code>contact</code>, <code>:497 → :989</code>
+for <code>contact_plane</code>, <code>:1835 → :2865</code> for <code>mortar</code>, plus <code>_boundary_chain.py</code>).
+On the published surface, <code>docs/concepts/constraints.md</code> gains <em>Contact in a
+plane model</em> (and <code>contact_plane</code>, previously unmentioned there), and
+<code>docs/concepts/backend-capabilities.md</code> names <code>contactPlane</code> and the
+serial-only / no-parallel-2D scope.</p>
+<p>Every snippet was run: the NTS, mortar-with-<code>-thickness</code> and rigid-plane
+declarations emit the decks quoted verbatim in the guide, and the two-square
+NTS deck was solved on fork build <code>e7555f2c9</code> — with a <code>1e-4</code> seeded overlap it
+converges and the summed normal contact force closes on the applied <code>1.0e5</code> to
+five significant figures, while the same deck with a <strong>zero</strong> initial gap
+diverges to <code>inf</code> at the first step and transmits <code>0.0</code>. Kernel behaviour is
+linked to the fork's <code>LadrunoContact2D_guide.md</code>, never restated.</p>
 <h3 id="added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4">ADDED — 2-D mortar contact: <code>-slave-segments 2</code>, tie, and <code>-thickness</code> (fork ADR-85, adoption S4)<a class="headerlink" href="#added-2-d-mortar-contact-slave-segments-2-tie-and-thickness-fork-adr-85-adoption-s4" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.contact(..., formulation="mortar")</code> works in a 2-D model.
 It was refused by name until now — the fork's 2-D mortar lane shipped in
