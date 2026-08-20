@@ -298,3 +298,76 @@ def test_dispose_releases_the_dispatcher_seat(pane):
     controller = _controller(widget)
     widget.dispose()
     assert controller.dispatcher is None
+
+
+# ----------------------------------------------------------------------
+# The inspector's Line row had no vocabulary at all
+# ----------------------------------------------------------------------
+
+@pytest.fixture
+def results_with_lines(g, tmp_path: Path):
+    """A stage that records the ``line_stations`` family.
+
+    The geometry is irrelevant here — what is under test is the
+    component VOCABULARY the inspector reads, which comes straight off
+    the file's families. Reusing the box keeps the fixture to the one
+    thing that matters: a stage carrying line stations as well as nodes.
+    """
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
+    g.physical.add_volume("box", name="Box")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    elem_ids = np.concatenate(
+        [np.asarray(gr.ids, dtype=np.int64) for gr in fem.elements]
+    )[:4]
+    disp = np.zeros((2, node_ids.size))
+    moment = np.zeros((2, elem_ids.size, 2))
+    moment[1, :, 0] = elem_ids * 1.0
+
+    path = tmp_path / "line_stations.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name=STAGE, kind="static", stage_id=STAGE,
+            time=np.array([0.0, 1.0]),
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"displacement_z": disp},
+        )
+        w.write_line_stations_group(
+            sid, "partition_0", "group_0",
+            class_tag=1, int_rule=0,
+            element_index=elem_ids,
+            station_natural_coord=np.array([0.0, 1.0]),
+            components={"bending_moment_z": moment},
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def test_line_components_come_from_the_line_stations_family(
+    results_with_lines,
+):
+    """Regression. ``recorded_components`` returns (nodal, gauss), and
+    the inspector filtered ``_LINE_COMPONENTS`` against those two — a
+    line component appears in neither, so the test was always false,
+    the Line row offered nothing, and its Add button was permanently
+    dead. Meanwhile ``view.line = Line(...)`` from a script drew the
+    diagram perfectly well, which is why no test caught it."""
+    from apeGmsh.viewers.session._realize import (
+        recorded_components, recorded_line_components,
+    )
+
+    session = results_with_lines.session()
+    view = session.panes[0]
+    nodal, gauss = recorded_components(session, view)
+    line = recorded_line_components(session, view)
+
+    assert line, "the fixture records line stations"
+    # The bug, stated as a law: these families are disjoint, so the old
+    # nodal/gauss filter could never match a line component.
+    assert not (line & (nodal | gauss))

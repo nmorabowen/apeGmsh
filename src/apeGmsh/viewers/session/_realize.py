@@ -861,6 +861,35 @@ def recorded_components(
     )
 
 
+def recorded_line_components(
+    session: "ResultsSession", view: "MeshView",
+) -> "set[str]":
+    """The ``line_stations`` columns the view's instant records.
+
+    A sibling of :func:`recorded_components` rather than a third member
+    of its tuple, which three call sites unpack today.
+
+    The line slot reads a family of its own — `axial_force`,
+    `bending_moment_*`, `torsion`, the quantities only a *sectioned*
+    beam produces — and until this existed nothing sourced it. The
+    inspector filtered its Line row against the nodal and Gauss sets,
+    where a line component can never appear, so the row offered nothing
+    and its Add button was permanently dead while `view.line = Line(...)`
+    from a script drew the diagram perfectly well. Same §7 instant law
+    as its sibling, and the same empty-on-anything-missing rule: a
+    disabled control, never an error.
+    """
+    results = session.results
+    if results is None:
+        return set()
+    try:
+        stage_id, _step = _resolve_instant(session, view, results)
+        components = results.inspect.components(stage=stage_id)
+    except Exception:
+        return set()
+    return set(components.get("line_stations", ()))
+
+
 def _mode_stage_id(results: "Results", mode: Optional[int]) -> str:
     available: list[int] = []
     for stage in results.stages:
@@ -1558,4 +1587,5 @@ def _layer_lutspec(diagram: Any) -> Any:
 __all__ = [
     "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
     "RealizedPane", "realize_pane", "recorded_components",
+    "recorded_line_components",
 ]
