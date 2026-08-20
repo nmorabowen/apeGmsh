@@ -539,7 +539,9 @@ node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom node
 contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
     eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None,
     tie=False, thickness=None,                    # thickness = 2D MORTAR plane-model h (-thickness); NTS + 3D refused
-    outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False,
+    outward=None,                                 # 3D (ox,oy,oz) | 2D (ox,oy) — REQUIRED on a FLUSH 2D interface;
+                                                  # outward="winding" = declare the side by chain travel (2D NTS ONLY)
+    soft=None, visc=None, consistent_tan=False, geom_tan=False,
     cell=None,                                    # broad-phase spatial-hash cell scale (-cell), both formulations
     edge_edge=False, edge_kn=None, edge_band=None,  # perpendicular edge-edge fallback (-edgeedge) — MORTAR-ONLY
     edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None,
@@ -547,6 +549,8 @@ contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
     master_entities=None, slave_entities=None, name=None)
 contact_plane(slave, *, normal, point, kn, visc=None, soft=None,   # rigid analytical plane (fork contactPlane)
     slave_entities=None, name=None)               # frictionless, no master mesh; kn REQUIRED (no "auto")
+#   2D: normal/point are 2-vectors, slave is the meshed dim-1 boundary PG (a dim-2 PG is refused);
+#   z-padded and emitted as the fork's permanently-valid 9-arg form. Only lane keeping ndf >= ndm.
 
 # Coincident-pair interface springs (ADR 0093) — stock OpenSees zeroLength, no fork needed;
 # resolves to fem.elements.interfaces. Bare master/slave (NOT master_label/slave_label):
@@ -636,7 +640,40 @@ delegating to `contact(formulation="mortar", tie=True)` (emits
 the neutral `model.h5` (`/contacts`, base schema 2.21.0; `cell` 2.23.0,
 edge-edge fields 2.25.0); contact planes to `/contact_planes` (2.24.0); embed
 ties to `/embed_ties` (2.22.0).
-`# src/apeGmsh/core/ConstraintsComposite.py:298 (contact), :497 (contact_plane), :1835 (mortar); EmbedmentsComposite.py:129 (embed)`
+
+**2D contact (fork ADR-85 adoption).** All three lanes work in a plane model;
+the fork routes on node COORDINATES (apeGmsh emits exactly `ndm` per node), not
+on interpreter `ndm`. A 2D contact surface is a meshed **dim-1 PG** — naming the
+dim-2 plane PG is refused by name (it would collect the continuum's own
+elements). `-master 2` / `-slave-segments 2` take a flat **stride-2 pair list
+chained head-to-tail** (3 segments = SIX tags); the 4-tag shorthand is silently
+legal fork-side and declares a HOLED surface, so apeGmsh walks the chain from
+the meshed PG's edge connectivity on both sides — unreachable by construction.
+**Orientation:** the fork's 2D lanes take one interface-level centroid vote,
+ambiguous when the surfaces are FLUSH — which in 2D is the workhorse case
+(masonry joint, footing on soil), so apeGmsh refuses it by name. Fix with
+`outward=(ox, oy)` (both formulations) or `outward="winding"` (**NTS only** —
+the fork's 2D mortar lane runs no chain-integrity scan, so a flush MORTAR
+interface always needs the vector and a curved/closed MORTAR master stays
+undeclarable). Winding means *the slave lies to the LEFT of chain travel*; it
+is the only thing that orients a curved or closed master. A **wrong-side**
+master (facing away from its slave) is refused by apeGmsh on BOTH lanes — the
+fork's vote picks only a sign, so nothing downstream would catch it.
+**`thickness=h`** is mortar-only and scales the EXPLICIT `eps_n`/`eps_t`/`visc`/
+`cohesion`/`tau_max`/tie stiffness **once**; `eps_n="auto"` is deliberately NOT
+h-scaled (it already absorbs the element thickness via `getInitialStiff()`), and
+an `"auto"`/friction-defaulted `eps_t` inherits `eps_n`'s provenance. Element
+thickness is a third, separate thing — baked into element stiffness, never
+re-read by contact. **Gates:** `ndf == ndm` exactly on NTS/mortar/tie
+(`ndf >= ndm` on the rigid plane only); parallel/DDM 2D contact is out of scope
+fork-side and refused by name on all three lanes. **Deck gotchas:** a zero
+initial gap does NOT arm the NTS lane (seed a small overlap; the rigid plane
+DOES arm from zero); 2D contact is normal-only, so restrain the free body
+transversally; and size a curved or closed master's facets from the expected
+penetration / the loop's extent, not from the elastic mesh (a coarse closed loop
+converges, balances, and transmits exactly zero). Kernel authority: the fork's
+`Ladruno_implementation/LadrunoContact2D_guide.md`.
+`# src/apeGmsh/core/ConstraintsComposite.py:624 (contact), :989 (contact_plane), :2865 (mortar); EmbedmentsComposite.py:129 (embed); _kernel/geometry/_boundary_chain.py (2D chain + winding)`
 
 **Interface springs (ADR 0093) — the only NON-BOND in `g.constraints`.**
 `interface()` emits one **stock-OpenSees** `zeroLength` per coincident

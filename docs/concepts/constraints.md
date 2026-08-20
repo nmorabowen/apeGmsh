@@ -242,6 +242,76 @@ One historical note, since older material mentions it: `g.constraints.mortar()`
 still exists but is a deprecated alias that delegates to
 `contact(formulation="mortar", tie=True)` and warns. Call `contact()` directly.
 
+One more lane has no master mesh at all. `g.constraints.contact_plane` puts the
+slave surface against a fixed infinite rigid plane given by a `normal` and a
+`point`, frictionless, with a `kn` you must supply — there is no `"auto"` here.
+It is the cheapest real contact in the library, and the only one that does not
+demand `ndf == ndm`, so a shell can sit on a floor.
+
+### Contact in a plane model
+
+Everything above holds in 2D, but the shape of a contact surface changes and so
+does the way you orient it. The fork decides a surface's dimension by reading
+its nodes' coordinates rather than the interpreter's `ndm`, and apeGmsh writes
+exactly `ndm` coordinates per node, so a plane model reaches the 2D lanes
+without being told. What changes is what you name: a 2D contact surface is the
+meshed *boundary curve* — a dim-1 physical group — and not the dim-2 body.
+Naming the body is refused rather than quietly turned into a contact between
+solid elements.
+
+Underneath, the fork's 2D surface is a flat list of node pairs chained
+head-to-tail, so three segments need six tags rather than four. The four-tag
+shorthand is legal to the parser and declares two disjoint segments with a hole
+between them — a deck that converges, balances its reactions, and transmits the
+load through the wrong distribution. apeGmsh builds that chain from the
+physical group's own edge connectivity, on both sides, so the holed form cannot
+be produced. That is the main reason to route a plane contact through the
+library rather than write the deck by hand.
+
+Orientation is where 2D genuinely differs. In 3D the kernel derives a correct
+normal per facet, which is why apeGmsh never guesses a global one there. The 2D
+lanes instead take a single interface-level sign from a centroid vote, and that
+vote is ambiguous the moment the two surfaces are coincident — which in 2D is
+the ordinary case rather than the exception: the masonry joint, the footing
+seated on soil, every zero-gap interface. A flush declaration is refused by
+name, and there are two ways to answer it. `outward=(ox, oy)` names a direction
+toward the slave's allowed half-space and works on both formulations.
+`outward="winding"` instead declares the side through the master chain's own
+travel — the slave lies to the left of it — which is the only thing that can
+orient a curved or closed master, since no single direction can. Winding is
+available on the NTS formulation only: the mortar lane runs no chain-integrity
+scan for it to rest on, so a flush mortar interface always takes the vector and
+a curved mortar master cannot be declared at all. What neither side will do is
+guess — a master surface facing *away* from its slave is refused too, because
+the fork's vote picks a sign and never asks whether this was the face you meant.
+
+The remaining 2D-only parameter is `thickness`, worth stating precisely because
+a plane model carries an out-of-plane thickness in three unrelated places. The
+element's own thickness is baked into element stiffness and contact never
+re-reads it. The mortar `thickness=h` scales the *explicit* penalties and the
+tie stiffness once, at the fork's injection site; it is mortar-only, refused on
+NTS and in 3D. And `eps_n="auto"` is deliberately left alone — it already
+absorbs the element thickness through the element's initial stiffness, so
+scaling it again would be a squared error.
+
+Three properties of the model decide whether a plane contact transmits anything
+at all, and none of them is visible in the declaration. A zero initial gap does
+not arm the NTS lane, so seed a small overlap — the rigid plane arms from zero
+and needs none. 2D contact carries the normal direction only, so a body whose
+only other support is the interface keeps a free transverse mode, and when that
+mode is excited Newton drifts while the solver reports a misleading warning
+about the interface geometry. And the facets of a curved or closed master must
+be sized from the expected penetration, or from the loop's own extent, rather
+than from the elastic mesh around them: drive them from the same size parameter
+and refining the model makes the contact *worse*, while a coarse closed ring
+converges, balances, and transmits exactly zero. Parallel 2D contact does not
+exist — it is out of scope in the fork, and refused by name here the moment the
+model is partitioned. Kernel behaviour beyond all this — the vertex policy, the
+radial end-cap, the units table — belongs to the fork's own
+`LadrunoContact2D_guide.md`.
+
+### Unilateral interface springs
+
 Between a bond and full contact sits a third thing, and the model that paid for
 it is a tunnel liner in squeezing rock. `g.constraints.interface(...)` puts one
 spring per coincident node pair across a 2D continuum boundary — unilateral in

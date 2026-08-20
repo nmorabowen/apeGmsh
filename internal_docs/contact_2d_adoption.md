@@ -29,10 +29,18 @@
 > `-epsN auto` under `h = 1.0` vs `h = 0.5` is **bit-identical**
 > (5.244762212098e-05) — auto is never h-scaled.
 >
-> **Not adopted yet.** **Docs** — `guide_constraints.md` still has no 2-D
-> section (S5). **Results** — `Results/` reads no contact data at all
-> (S6). Parallel/DDM 2-D contact is out of scope fork-side and is refused
-> by name on both lanes.
+> **S5 shipped — the docs.** `guide_constraints.md` gained **Level 5 —
+> Contact** (the whole verb, 3-D and 2-D: it was documented nowhere
+> before, not even in 3-D), the skill cheatsheet gained a 2-D contact
+> section and a corrected source-map footer, and
+> `docs/concepts/constraints.md` / `backend-capabilities.md` were
+> reconciled. §4's curved-master facet-sizing warning now lives in the
+> guide's *Meshing the interface* list rather than only on this
+> history-flagged page, with a pointer from `guide_meshing.md` §5.
+>
+> **Not adopted yet.** **Results** — `Results/` reads no contact data at
+> all (S6). Parallel/DDM 2-D contact is out of scope fork-side and is
+> refused by name on both lanes.
 >
 > **The F1 asymmetry, carried not papered over.** `outward="winding"` is
 > **NTS-only**. The fork shipped declared winding on the NTS lane alone
@@ -286,8 +294,12 @@ h-scaled** (it already absorbs element thickness via `getInitialStiff()` —
 re-scaling is an h² error, regression-gated fork-side). NTS has no
 `-thickness` at all.
 
-**S5 — docs.** `guide_constraints.md` gains its 2-D section; the
-curved-master warning (§4) lands wherever contact meshing guidance lives.
+**S5 — docs.** SHIPPED; see the status header. `guide_constraints.md`
+gained Level 5, and the curved-master warning (§4) landed in its *Meshing
+the interface* list — the judgement call being that the reader who needs
+that warning is the one declaring a curved master, not the one tuning
+mesh sizes, so it sits with the contact verb and `guide_meshing.md` §5
+only signposts it.
 
 Refuse 2-D under partitioning by name throughout — out of scope fork-side.
 

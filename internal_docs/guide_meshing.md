@@ -615,6 +615,13 @@ g.mesh.field.set_background(t)
 g.mesh.generation.generate(3)
 ```
 
+**One place where following the elastic mesh is the wrong move:** the facets of
+a *curved* or *closed* contact master. Their length has to track the expected
+penetration (or the loop's own extent), not the surrounding mesh — driving them
+from the same size parameter means refining the model makes the contact worse,
+not better. Size the interface curve separately; the full rule is in
+`guide_constraints.md` §3, Level 5 → *Meshing the interface*.
+
 
 ## 6. Structured meshing: transfinite and recombination
 
