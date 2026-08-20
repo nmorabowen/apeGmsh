@@ -460,7 +460,17 @@ def contact_payload_dtype() -> np.dtype:
     float column (decoded via round). The edge-edge fallback columns (ADR-57
     E2–E7, additive in neutral 2.25.0) mirror these: ``edge_kn`` uses
     ``edge_kn_mode`` (auto/None/numeric) and ``edge_soft`` uses
-    ``edge_soft_mode`` (None/bare/numeric). Stored in a dedicated ``/contacts`` group
+    ``edge_soft_mode`` (None/bare/numeric). ``thickness`` (the 2D mortar
+    plane-model out-of-plane thickness, additive in neutral 2.31.0) is a
+    plain NaN-sentinel float — NaN decodes to ``None``, which IS the fork
+    default 1.0, so a file that predates the column reads back as the
+    h = 1 it always meant. ``outward_mode`` (additive in
+    neutral 2.30.0) is the same idiom for orientation — 0 none / 1 the
+    vector in ``outward`` / 2 the fork's declared-winding sentinel, which
+    carries no vector at all. A 2D ``outward`` is Z-PADDED into the same
+    ``(3,)`` slot rather than reshaped: a 2D direction genuinely has
+    z = 0, so nothing downstream (the ``[:3]`` truncations, compose's
+    rotation) needs a 2D branch. Stored in a dedicated ``/contacts`` group
     (its own group, like ``/reinforce_ties`` — not under ``/constraints/``,
     whose subset-match reader dispatch would mis-route it; and contacts resolve
     to ``fem.elements.contacts``, a serial-only subsystem).
@@ -468,7 +478,7 @@ def contact_payload_dtype() -> np.dtype:
     return np.dtype([
         ("formulation", _utf8()),            # "nts" | "mortar"
         ("master_faces", _vlen(np.int64)),   # flat nps·n_faces (corner conn)
-        ("master_nps", np.int64),            # 3 (tri) | 4 (quad)
+        ("master_nps", np.int64),            # 2 (2D seg) | 3 (tri) | 4 (quad)
         ("slave_nodes", _vlen(np.int64)),    # NTS node set (empty ⇒ has=0)
         ("has_slave_nodes", np.uint8),       # 0 ⇒ slave_nodes is None (mortar)
         ("slave_faces", _vlen(np.int64)),    # mortar faceted slave (flat)
@@ -510,6 +520,24 @@ def contact_payload_dtype() -> np.dtype:
         ("edge_soft_mode", np.uint8),        # 0 None/off | 1 bare True | 2 num
         ("edge_alm", np.uint8),              # 0/1
         ("edge_aug_tol", np.float64),        # edge ALM tol (NaN ⇒ None)
+        # Orientation mode (2D contact; neutral schema 2.30.0). A separate
+        # column, NOT an extra `has_outward` state: has_outward decodes as
+        # `int(...) == 1`, so a 2 would silently decode to None and the
+        # winding declaration would VANISH. Winding therefore writes
+        # has_outward=0 + outward=(NaN,NaN,NaN) as well, so a reader that
+        # predates this column degrades to "no outward" — which makes the
+        # fork run its own centroid vote and abort loudly, rather than run
+        # a mis-oriented contact.
+        ("outward_mode", np.uint8),          # 0 none | 1 vector | 2 winding
+        # 2D mortar plane-model thickness h (neutral 2.31.0); NaN ⇒ None ⇒
+        # the fork default 1.0. Presence-probed on read like `cell` (2.23.0).
+        # APPENDED, not inserted next to `tie` where it belongs
+        # semantically: `_encode_contact` writes an un-keyed POSITIONAL
+        # tuple, so dtype order and tuple order are coupled by index alone
+        # with nothing to catch a drift. Every prior additive column landed
+        # here for the same reason — keeping the coupling monotonic means a
+        # version-to-version field index only ever grows.
+        ("thickness", np.float64),
         ("name", _utf8()),                   # declaration name ("" ⇒ None)
     ])
 
@@ -593,11 +621,17 @@ def contact_plane_payload_dtype() -> np.dtype:
     ``soft_mode`` (0 ⇒ None/off, 1 ⇒ bare ``-soft`` default SOFSCL, 2 ⇒
     numeric). Stored in a dedicated ``/contact_planes`` group (its own group,
     like ``/contacts`` — serial-only, resolves to ``fem.elements.contact_planes``).
+
+    A 2D plane is Z-PADDED into the same ``(3,)`` slots rather than reshaped —
+    the ``outward`` decision of :func:`contact_payload_dtype`. A 2D normal
+    genuinely has nz = 0, so the layout, the value domain and the reader are
+    all unchanged and this lane needs **no schema bump**: a record written
+    before 2D was reachable and one written after are the same bytes.
     """
     return np.dtype([
         ("slave_nodes", _vlen(np.int64)),    # contactSurface -slave set
-        ("normal", np.float64, (3,)),        # plane outward normal
-        ("point", np.float64, (3,)),         # a point on the plane
+        ("normal", np.float64, (3,)),        # plane outward normal (2D: z-pad)
+        ("point", np.float64, (3,)),         # a point on the plane (2D: z-pad)
         ("kn", np.float64),                  # normal penalty (numeric)
         ("visc", np.float64),                # viscous μ_c (NaN ⇒ None)
         ("soft", np.float64),                # SOFSCL value (mode 2)

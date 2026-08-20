@@ -37,9 +37,15 @@ def contact_surface_args(
     """Args **after** the surface tag for one `contactSurface` call.
 
     ``kind`` is ``"master"`` / ``"slave"`` / ``"slave-segments"``. The faceted
-    forms (master / slave-segments) take ``nps`` (per-facet node count, 3=tri,
-    4=quad) followed by the flat node connectivity; ``slave`` takes the node
-    tags directly.
+    forms (master / slave-segments) take ``nps`` (per-facet node count, 2=2D
+    line segment, 3=tri, 4=quad) followed by the flat node connectivity;
+    ``slave`` takes the node tags directly.
+
+    ``nps=2`` is the fork's 2D lane, whose flat list must be **chained
+    head-to-tail** (``n0 n1  n1 n2  n2 n3``); the unchained shorthand is
+    silently legal fork-side and declares a holed surface. That contract is
+    enforced upstream, on ``ContactRecord`` itself, not here — this builder
+    only checks the stride.
     """
     nodes = [int(n) for n in node_tags]
     if not nodes:
@@ -58,9 +64,10 @@ def contact_surface_args(
 
 
 def _check_nps(nps: int, n_nodes: int) -> None:
-    if nps not in (3, 4):
+    if nps not in (2, 3, 4):
         raise ValueError(
             f"contactSurface faceted surface: nps (nodes-per-facet) must be "
+            f"2 (2D line segment), "
             f"3 (tri) or 4 (quad), got {nps} — higher-order surfaces must be "
             f"dropped to corner facets before emit")
     if n_nodes % nps != 0:
@@ -85,6 +92,7 @@ def contact_args(
     max_aug: int | None = None,
     ngp: int | None = None,
     tie: bool = False,
+    thickness: float | None = None,
     soft: float | bool | None = None,
     visc: float | None = None,
     consistent_tan: bool = False,
@@ -101,7 +109,8 @@ def contact_args(
     edge_soft: float | bool | None = None,
     edge_alm: bool = False,
     edge_aug_tol: float | None = None,
-    outward: Sequence[float] | None = None,
+    outward: Sequence[float] | str | None = None,
+    ndm: int = 3,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
 
@@ -111,6 +120,18 @@ def contact_args(
     NTS emits ``kn [kt mu]`` (or ``auto``); the fork parser reads either 1 or 3
     numbers, so friction emits all three (kt/mu default 0.0). Mortar emits
     ``-mortar -epsN …`` + the friction-cone / augmentation flags.
+
+    ``thickness`` emits the mortar-only ``-thickness h`` (the 2D plane-model
+    out-of-plane thickness; the fork default is 1.0). Together with
+    ``outward="winding"`` it is REFUSED by name on the NTS lane rather than
+    dropped — the fork's parser refuses both there, and both can reach this
+    builder on a path that never passed ``ContactDef`` (an h5 decode, a
+    compose rewrite, a hand-built ``ContactRecord``), where a silent drop
+    would lose a knob the caller set with no diagnostic anywhere. The value
+    is emitted verbatim: every scaling it implies (``epsN``/``epsT``/
+    ``-visc``/the friction clamps/the tie stiffness — and the deliberate
+    NON-scaling of an ``-epsN auto``) happens once, fork-side, at the 2D
+    injection site.
 
     The extension modifiers (``-soft``/``-visc``/``-consistanttan``/
     ``-geomtan``) are parsed by the fork's order-independent option loop, so
@@ -126,7 +147,43 @@ def contact_args(
     ``-edgeTauMax`` / ``-edgeConsistentTan`` / ``-edgeSoft [SOFSCL]`` /
     ``-edgeAlm`` / ``-edgeAugTol``); ``edge_soft=True`` emits a bare
     ``-edgeSoft``. The edge knobs are dropped when ``edge_edge`` is False.
+
+    ``ndm`` sets the ``-outward`` ARITY — two components in a 2D deck, three
+    in 3D. The fork derives the surface's dimension from its nodes'
+    ``getCrds().Size()`` and then checks the trailing token, so a stray
+    ``oz`` on a 2D surface kills the deck at parse; it is threaded in from
+    the build layer (never inferred here) per the ``emit_geom_transfs``
+    house rule. ``outward="winding"`` emits the fork's declared-winding
+    keyword instead of a vector (2D NTS only).
     """
+    # The two LANE-EXCLUSIVE knobs the fork's parser refuses by name. They
+    # are checked HERE, not dropped in the branch that does not want them,
+    # because dropping is silent: a record can reach emit without ever
+    # passing ContactDef (an h5 decode, a compose rewrite, a hand-built
+    # ContactRecord) and would lose a knob the caller set with no
+    # diagnostic anywhere.
+    if thickness is not None and formulation != "mortar":
+        raise ValueError(
+            f"contact: thickness={thickness!r} is a MORTAR-only option "
+            f"(the fork parser refuses `-thickness` without `-mortar` — "
+            f"the NTS penalty kn is force per unit LENGTH of gap, never "
+            f"a pressure), but formulation={formulation!r}.")
+    if outward == "winding" and formulation != "nts":
+        # ADR-85 F1 shipped `-outward winding` on the NTS lane ONLY: the
+        # fork's 2D mortar lane has no chain-integrity scan to rest the
+        # one-connected-chain invariant on, and refuses the keyword by
+        # name. ContactDef refuses this at declaration; this is the
+        # record-side twin, so the rule holds on every path into emit
+        # (the 3D-winding rule is already gated three deep).
+        raise ValueError(
+            f"contact: outward='winding' is an NTS-lane option — the "
+            f"fork shipped declared-winding orientation on the NTS lane "
+            f"only (its 2D mortar lane has no chain-integrity scan to "
+            f"rest winding's one-connected-chain invariant on) and "
+            f"refuses the keyword by name — but "
+            f"formulation={formulation!r}. A flush mortar interface "
+            f"needs an explicit outward=(ox, oy).")
+
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
     if formulation == "nts":
@@ -170,6 +227,12 @@ def contact_args(
             args += ["-maxAug", int(max_aug)]
         if ngp is not None:
             args += ["-ngp", int(ngp)]
+        # -thickness <h>: one double, so a following flag is safe. The fork
+        # guide's 2D form lists it just before -tie; the option loop is
+        # order-independent, but matching the documented order keeps a
+        # generated deck readable against the guide.
+        if thickness is not None:
+            args += ["-thickness", float(thickness)]
         if tie:
             args.append("-tie")
     else:
@@ -229,12 +292,63 @@ def contact_args(
             args += ["-edgeAugTol", float(edge_aug_tol)]
 
     if outward is not None:
-        if len(outward) != 3:
-            raise ValueError(
-                f"contact -outward: need (ox, oy, oz), got {outward!r}")
-        args += ["-outward", *(float(x) for x in outward)]
+        args += ["-outward", *_outward_tokens(outward, int(ndm))]
 
     return args
+
+
+def _outward_tokens(
+    outward: Sequence[float] | str, ndm: int,
+) -> list[float | str]:
+    """The tokens after ``-outward``, at the arity the fork's 2D/3D
+    dimension oracle demands.
+
+    **The arity is not cosmetic.** The fork picks it by peeking the
+    referenced nodes' ``getCrds().Size()``, then checks the trailing token
+    — so a stray ``oz`` on a 2D surface is not ignored, it fails that
+    check and the deck dies at parse. Two components in 2D, three in 3D,
+    and never a choice.
+
+    The ``"winding"`` sentinel emits the keyword instead of any vector: the
+    side is declared by the master chain's own head-to-tail winding, which
+    is why it is 2D-only (the 3D lane has no chain).
+    """
+    if isinstance(outward, str):
+        if outward != "winding":
+            raise ValueError(
+                f"contact -outward: expected a direction vector or the "
+                f"sentinel 'winding', got {outward!r}")
+        if ndm != 2:
+            raise ValueError(
+                f"contact -outward winding: declared-winding orientation is "
+                f"the fork's 2D NTS lane only (the 3D lane orients per facet "
+                f"from connectivity and has no master chain to wind), but the "
+                f"model is ndm={ndm}.")
+        return ["winding"]
+
+    # Widened to the return type on construction: `list` is INVARIANT, so a
+    # `list[float]` is not a `list[float | str]` and both returns below would
+    # be type errors against a signature that has to admit the "winding"
+    # keyword.
+    vec: list[float | str] = [float(x) for x in outward]
+    if ndm == 2:
+        if len(vec) not in (2, 3):
+            raise ValueError(
+                f"contact -outward: need (ox, oy) in a 2D model, got "
+                f"{outward!r}")
+        if len(vec) == 3 and vec[2] != 0.0:
+            raise ValueError(
+                f"contact -outward: the model is 2D but oz={vec[2]!r} is "
+                f"non-zero — a 2D outward lies in the plane. The fork takes "
+                f"the 2-component form only on a 2D surface and rejects the "
+                f"3-component one, so oz cannot be carried anywhere; "
+                f"dropping it silently would emit a direction the caller "
+                f"never asked for.")
+        return vec[:2]
+    if len(vec) != 3:
+        raise ValueError(
+            f"contact -outward: need (ox, oy, oz), got {outward!r}")
+    return vec
 
 
 def contact_plane_args(
@@ -258,13 +372,29 @@ def contact_plane_args(
     master. `kn` is a plain value (no ``"auto"``). The optional `-visc` /
     `-soft` modifiers mirror the `contact` extension knobs (`-soft` peeks-and-
     unreads its SOFSCL, so it is safe before / after `-visc`).
+
+    **2D: z-pad, never a second grammar.** A 2-component `normal`/`point` is
+    accepted and padded with an explicit ``0.0``. The fork also has a shorter
+    5-number 2D layout (``nx ny px py kn``), but the zero-padded 9-arg form is
+    permanently valid on a 2D slave surface — fork T0 gated exactly that as a
+    back-compat falsifier row — so apeGmsh keeps ONE emitted grammar. The
+    padding is not a fiction: a 2D plane's normal genuinely has nz = 0, and the
+    fork *refuses* a non-zero nz/pz on a 2D surface rather than dropping it.
+    (Unlike ``-outward``, the arity here is not forced: this lane's parser
+    counts the leading numbers instead of peeking the node dimension, so both
+    forms parse and no trailing-token check can trip.)
     """
     n = tuple(float(x) for x in normal)
     p = tuple(float(x) for x in point)
-    if len(n) != 3 or len(p) != 3:
+    if len(n) not in (2, 3) or len(p) not in (2, 3):
         raise ValueError(
-            f"contactPlane: normal/point must be 3-vectors, got "
+            f"contactPlane: normal/point must be 3-vectors (or 2-vectors in a "
+            f"2D model, z-padded here), got "
             f"normal={normal!r}, point={point!r}")
+    if len(n) == 2:
+        n += (0.0,)
+    if len(p) == 2:
+        p += (0.0,)
     args: list[int | float | str] = [
         int(slave_tag), n[0], n[1], n[2], p[0], p[1], p[2], float(kn),
     ]

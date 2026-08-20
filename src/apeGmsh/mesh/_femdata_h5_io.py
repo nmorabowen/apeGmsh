@@ -362,10 +362,40 @@ __all__ = [
 #: two-version reader window, readers tolerate 2.28.x and 2.29.x; a 2.28.x
 #: file simply has no ``/interfaces`` group (absence ⇒ no interfaces).
 #:
+#: v2.30.0 (August 2026, 2D contact — the wound chain): **no layout
+#: change**; the VALUE DOMAIN of ``master_nps`` / ``slave_nps`` in
+#: ``contact_payload_dtype`` widens from ``{3, 4}`` (tri / quad facets)
+#: to ``{2, 3, 4}``, where ``2`` is the fork's 2D line-segment surface
+#: (``contactSurface -master 2``, a flat stride-2 pair list chained
+#: head-to-tail).  The bump exists precisely BECAUSE the layout did not
+#: move: a 2.29.0 reader handed a ``master_nps=2`` row raises "corrupted
+#: contact: master flat length N is not a multiple of master_nps=2" —
+#: loud, but MISNAMED, blaming the data for a reader that is simply too
+#: old.  With the bump ``validate_zone_version`` refuses first, with the
+#: right cause and an upgrade path; the bump IS the refusal.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.29.x and 2.30.x.
+#: The same minor carries one ADDITIVE column,
+#: ``contact_payload_dtype``'s ``outward_mode`` (0 none / 1 vector / 2
+#: the fork's declared-winding sentinel), presence-probed on read like
+#: the 2.25.0 edge-edge block — a 2.29.x file simply lacks it and
+#: decodes to the vector-or-None it always meant.
+#:
+#: v2.31.0 (August 2026, 2D mortar — the `-slave-segments` lane): additive
+#: — adds the ``thickness`` (float64) column to
+#: ``contact_payload_dtype``.  It carries the fork's 2D mortar
+#: plane-model out-of-plane thickness ``h`` (``contact … -mortar …
+#: -thickness h``); NaN decodes to ``None``, which IS the fork default
+#: 1.0, so a 2.30.x file that lacks the column reads back as the h = 1
+#: it always meant — presence-probed on read like ``cell`` (2.23.0).
+#: **No layout change** on the ``slave_nps`` side: 2.30.0 already widened
+#: the ``master_nps`` / ``slave_nps`` value domain to ``{2, 3, 4}``, so a
+#: 2D mortar record's ``slave_nps=2`` needed no further bump.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.30.x and 2.31.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.29.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.31.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1898,10 +1928,10 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
     m_nps = int(rec.master_nps)
     if master.size == 0:
         raise ValueError("contact: master_faces is empty.")
-    if m_nps not in (3, 4) or master.size % m_nps != 0:
+    if m_nps not in (2, 3, 4) or master.size % m_nps != 0:
         raise ValueError(
             f"contact: master flat length {master.size} is not a multiple of "
-            f"master_nps={m_nps} (expected 3 or 4).")
+            f"master_nps={m_nps} (expected 2, 3 or 4).")
 
     # Slave side: exactly one of node-set (NTS) / faceted (mortar).
     if rec.formulation == "nts":
@@ -1918,22 +1948,44 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
             raise ValueError("contact (mortar): slave_faces is None.")
         slave_faces = np.asarray(rec.slave_faces, dtype=np.int64).reshape(-1)
         s_nps = int(rec.slave_nps)
-        if slave_faces.size == 0 or s_nps not in (3, 4) \
+        if slave_faces.size == 0 or s_nps not in (2, 3, 4) \
                 or slave_faces.size % s_nps != 0:
             raise ValueError(
                 f"contact (mortar): slave flat length {slave_faces.size} is "
-                f"not a multiple of slave_nps={s_nps} (expected 3 or 4).")
+                f"not a multiple of slave_nps={s_nps} (expected 2, 3 or 4).")
         has_sf = np.uint8(1)
         slave_nodes = np.empty(0, dtype=np.int64)
         has_sn = np.uint8(0)
 
+    # Orientation: None / a direction vector / the declared-winding
+    # sentinel. Winding writes has_outward=0 and a NaN vector DELIBERATELY
+    # — a reader too old for `outward_mode` then decodes "no outward",
+    # which makes the fork run its own centroid vote and abort loudly on
+    # the flush deck, instead of running a silently mis-oriented one. A 2D
+    # vector is z-padded into the same (3,) slot (z = 0 is the truth, not
+    # a filler), so no consumer needs a 2D branch.
     if rec.outward is None:
         outward = (nan, nan, nan)
         has_o = np.uint8(0)
+        o_mode = np.uint8(0)
+    elif isinstance(rec.outward, str):
+        if rec.outward != "winding":
+            raise ValueError(
+                f"contact: outward must be a direction vector or the "
+                f"sentinel 'winding', got {rec.outward!r}")
+        outward = (nan, nan, nan)
+        has_o = np.uint8(0)
+        o_mode = np.uint8(2)
     else:
-        outward = tuple(
-            float(x) for x in np.asarray(rec.outward, dtype=np.float64).reshape(-1)[:3])
+        vec = [float(x) for x in
+               np.asarray(rec.outward, dtype=np.float64).reshape(-1)]
+        if len(vec) not in (2, 3):
+            raise ValueError(
+                f"contact: outward has {len(vec)} components — expected a "
+                f"2D (ox, oy) or 3D (ox, oy, oz) direction.")
+        outward = tuple(vec) if len(vec) == 3 else (vec[0], vec[1], 0.0)
         has_o = np.uint8(1)
+        o_mode = np.uint8(1)
 
     kn_v, kn_mode = _auto_or_pos_mode(rec.kn)
     eps_n_v, eps_n_mode = _auto_or_pos_mode(rec.eps_n)
@@ -1995,6 +2047,8 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
         edge_soft_v, np.uint8(edge_soft_mode),
         np.uint8(1 if rec.edge_alm else 0),
         _f(rec.edge_aug_tol),
+        o_mode,
+        _f(rec.thickness),
         rec.name or "",
     )
 
@@ -3653,7 +3707,7 @@ def _decode_contact(row: Any, cls: type) -> Any:
     formulation = _str(p["formulation"])
     master_nps = int(p["master_nps"])
     master = np.asarray(p["master_faces"], dtype=np.int64).reshape(-1)
-    if master_nps not in (3, 4) or master.size % master_nps != 0:
+    if master_nps not in (2, 3, 4) or master.size % master_nps != 0:
         raise ValueError(
             f"corrupted contact: master flat length {master.size} is not a "
             f"multiple of master_nps={master_nps}.")
@@ -3667,7 +3721,7 @@ def _decode_contact(row: Any, cls: type) -> Any:
     slave_nps = int(p["slave_nps"])
     if has_sf:
         sf = np.asarray(p["slave_faces"], dtype=np.int64).reshape(-1)
-        if slave_nps not in (3, 4) or sf.size % slave_nps != 0:
+        if slave_nps not in (2, 3, 4) or sf.size % slave_nps != 0:
             raise ValueError(
                 f"corrupted contact: mortar slave flat length {sf.size} is not "
                 f"a multiple of slave_nps={slave_nps}.")
@@ -3676,10 +3730,19 @@ def _decode_contact(row: Any, cls: type) -> Any:
         slave_faces = None
         slave_nps = 0
 
+    # Orientation. `outward_mode` (neutral 2.30.0) is presence-probed: a
+    # file that predates it has only has_outward, and mode 2 (declared
+    # winding) is deliberately encoded with has_outward=0, so such a
+    # reader degrades to "no outward" — the fork then runs its own
+    # centroid vote and ABORTS on the flush deck rather than running it
+    # mis-oriented. Never fold winding into has_outward: the decode below
+    # is `== 1`, so a 2 would decode to None and vanish silently.
     has_o = int(p["has_outward"]) == 1
     outward = (tuple(float(x) for x in
                      np.asarray(p["outward"], dtype=np.float64).reshape(-1)[:3])
                if has_o else None)
+    if "outward_mode" in p.dtype.names and int(p["outward_mode"]) == 2:
+        outward = "winding"
 
     soft_mode = int(p["soft_mode"])
     if soft_mode == 0:
@@ -3739,6 +3802,10 @@ def _decode_contact(row: Any, cls: type) -> Any:
         max_aug=_i("max_aug"),
         ngp=_i("ngp"),
         tie=int(p["tie"]) == 1,
+        # thickness added in neutral 2.31.0 — presence-probe so an in-window
+        # 2.30.x file (no column) decodes thickness=None, i.e. the fork
+        # default h = 1.0, which is exactly what it meant.
+        thickness=(_f("thickness") if "thickness" in p.dtype.names else None),
         soft=soft,
         visc=_f("visc"),
         consistent_tan=int(p["consistent_tan"]) == 1,

@@ -1351,17 +1351,31 @@ class BuiltModel:
         # ADR 0099 (INV-1 / INV-3 / INV-4): a gated element's ndf bracket
         # re-issues ``model BasicBuilder``, which deletes the Tcl model
         # builder and purges the process-global timeSeries / geomTransf /
-        # beamIntegration / damping registries.  Only the flat path hoists
-        # its gated element blocks above those declarations; every other
-        # path would emit a deck that dies late — or, for damping, runs to
-        # convergence and reports an undamped answer.  Fail loud here,
-        # before any primitive is emitted, on every path.
+        # beamIntegration / damping registries.  The flat (S2) and default
+        # partitioned (S5) paths hoist their gated element blocks above
+        # those declarations; the remaining paths would emit a deck that
+        # dies late — or, for damping, runs to convergence and reports an
+        # undamped answer.  Fail loud here, before any primitive is
+        # emitted, on every path.
+        #
+        # ``per_rank`` (ADR 0061) slices the partitioned fan-out into
+        # file-per-rank fragments, which puts a FILE boundary where the
+        # single-file deck has only a brace — the fix there is to move the
+        # fragment's ``source`` line, the same mechanism ``split`` needs,
+        # so it keeps the refusal and carries its own path token.  It is
+        # invisible to the emit call (``tcl`` applies it after / around
+        # this), hence the emitter attribute — the same seam
+        # ``supports_partitions`` uses.
         if split:
             _scope_path = "split"
         elif is_partitioned(self.fem) and getattr(
             emitter, "supports_partitions", True,
         ):
-            _scope_path = "partitioned"
+            _scope_path = (
+                "partitioned per_rank"
+                if getattr(emitter, "per_rank_fragments", False)
+                else "partitioned"
+            )
         else:
             _scope_path = "flat"
         validate_builder_scope_ordering(
@@ -1516,7 +1530,7 @@ class BuiltModel:
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
                 (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                self.ndf,
+                self.ndf, self.ndm,
             )
 
         # 4a. Materials / sections / analysis chain (excluding patterns
@@ -1683,6 +1697,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            ndm=self.ndm,
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1697,7 +1712,7 @@ class BuiltModel:
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
         emit_contact_planes(emitter, self.fem, tags)
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093 D5). Per pair: the mixed-ndf
@@ -1956,7 +1971,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
             # Elements owned by this module.
             self._emit_element_subset(
@@ -1984,6 +1999,7 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+            ndm=self.ndm,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -1994,7 +2010,7 @@ class BuiltModel:
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
         emit_contact_planes(emitter, self.fem, tags)
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093 D5) — same position as the
@@ -2216,7 +2232,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
 
             # 3. Owned elements.
@@ -2317,6 +2333,7 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
+                    ndm=self.ndm,
                 )
 
             # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
@@ -2750,6 +2767,102 @@ class BuiltModel:
             node_owner_stage=node_owner_stage,
         )
 
+        # Pre-allocate element tags ONCE per element across all PGs
+        # (ADR 0027 §"Tag determinism"). Per-rank fan-out then looks
+        # tags up rather than re-allocating, so cross-rank tag identity
+        # holds for every element (the rank-K block uses the same
+        # element tag as the owning rank's block).
+        # Phase SSI-2.E: in the staged case the allocation already
+        # happened earlier in this method (so V6 could resolve
+        # ``s.remove_element`` explicit ``elements=`` targets); reuse
+        # the prior plan.
+        # ADR 0099 S5: allocation (and the per-rank bucketing that reads
+        # it) moved above the pre-element pass so the hoisted gated pass
+        # below has a plan.  TagAllocator is per-kind, so the element /
+        # geomTransf counters are unaffected by the move — the staged
+        # branch above has always allocated here.  Same move ``_emit_flat``
+        # made for S2.
+        if early_element_plan is not None:
+            element_plan = early_element_plan
+            if early_fem_eid_to_ops_tag is None:
+                raise BridgeError(
+                    "internal: early_fem_eid_to_ops_tag not set when "
+                    "early_element_plan is set — staged path must populate both."
+                )
+            fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
+        else:
+            element_plan = allocate_element_tags(elements, self.fem, tags)
+            # Global fem-eid → ops-tag map; used by the initial_stress
+            # per-rank ``addToParameter`` fan-out to translate the user's
+            # FEM element selection into OpenSees element tags (Phase
+            # SSI-1).  ADR 0065 v2 B3: columnar tag map off the plan
+            # (no per-element boxed dict).
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
+
+        # Rank-independent lookups, hoisted out of the per-rank loop —
+        # each is O(model), so rebuilding them per rank made the whole
+        # pass O(model × ranks) (measured: dominant emit cost at
+        # production rank counts).
+        node_idx_lookup = {
+            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
+        }
+        plan_by_rank = {
+            id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
+            for spec, sub in element_plan
+        }
+
+        # -- 1'. ADR 0099 S5 (INV-1) — plan the hoisted gated pass. -------
+        # A gated element block is wrapped in a ``model BasicBuilder``
+        # re-issue (:func:`open_builder_ndf_bracket`), and that re-issue
+        # purges the process-global timeSeries / geomTransf /
+        # beamIntegration / damping registries.  Default partitioned emit
+        # is ONE file with ``if {[getPID] == K}`` BRACE guards and those
+        # declarations global, outside every guard — a brace is not a file
+        # boundary, so the ``_emit_flat`` hoist replicates directly: one
+        # extra rank-guard block per rank carrying that rank's gated
+        # elements and the nodes they need, placed above the declarations.
+        #
+        # The damage this fixes is RANK-LOCAL: a rank owning no gated
+        # element never executes the bracket and runs fine, so the
+        # pre-S5 failure is non-deterministic in ``np`` — the same model
+        # passes on 2 ranks and dies on 4.
+        #
+        # Both gates matter.  With no builder-scoped declaration INV-1
+        # holds vacuously, and with no OWNED gated row no bracket ever
+        # fires; in either case hoisting is pure churn, so the deck keeps
+        # the line order it had, byte for byte.
+        pre_scoped: list[Primitive] = [
+            p for p in pre_element if is_builder_scoped(p)
+        ]
+        hoist_by_rank: "dict[int, list[tuple[Element, ElementPlanRows]]]" = {}
+        hoisted_spec_ids: set[int] = set()
+        hoisted_nodes_by_rank: dict[int, set[int]] = {}
+        if pre_scoped:
+            gated_specs = [
+                spec for spec, _sub in element_plan
+                if not (staged and id(spec) in element_owner_stage)
+                and needs_builder_ndf_bracket(
+                    spec, ndm=self.ndm, envelope_ndf=self.ndf)
+            ]
+            for _idx, _part in enumerate(partitions):
+                _rank = runtime_rank_from_partition_record(_part, _idx)
+                rows: "list[tuple[Element, ElementPlanRows]]" = []
+                for spec in gated_specs:
+                    sub = plan_by_rank[id(spec)].get(_rank)
+                    if sub is not None and len(sub):
+                        rows.append((spec, sub))
+                if rows:
+                    hoist_by_rank[_rank] = rows
+            if hoist_by_rank:
+                hoisted_spec_ids = {id(spec) for spec in gated_specs}
+        if not hoist_by_rank:
+            # No hoist: the pre-element pass stays one topo-ordered loop.
+            pre_scoped = []
+        pre_survives: list[Primitive] = (
+            [p for p in pre_element if not is_builder_scoped(p)]
+            if pre_scoped else list(pre_element)
+        )
+
         # -- 1. Pre-element global primitives. ----------------------------
         # Phase SSI-2.C: skip analysis-chain primitives when staged —
         # each stage re-emits its own chain inside its stage block.
@@ -2762,10 +2875,17 @@ class BuiltModel:
         # plausible-wrong answer).  Hoist them here when a user
         # ``Analysis`` primitive exists and skip the step-3 site; decks
         # without one keep the step-3 position byte-identically.
+        # ADR 0099 S5 (INV-1): this pass emits only the declarations that
+        # SURVIVE a ``model BasicBuilder`` re-issue.  The builder-scoped
+        # ones are held back to step 1c, below the hoisted gated rank
+        # blocks, so the LAST ``model`` line in the deck precedes every
+        # one of them.  Topo order is preserved within each pass, and
+        # ``pre_scoped`` is empty (so this IS ``pre_element``) whenever
+        # the hoist is off.
         suppress_chain_auto = bool(getattr(
             emitter, "suppress_analysis_chain_auto_emit", False))
         chain_auto_emitted = False
-        for p in pre_element:
+        for p in pre_survives:
             if staged and _is_analysis_chain_primitive(p):
                 continue
             if (not chain_auto_emitted and not suppress_chain_auto
@@ -2777,6 +2897,74 @@ class BuiltModel:
                 self._maybe_auto_emit_parallel_system(
                     emitter, pre_element)
                 chain_auto_emitted = True
+            tag = self.tag_for[id(p)]
+            p._emit(emitter, tag)
+
+        # -- 1b. ADR 0099 S5 (INV-1) — the hoisted gated rank blocks. -----
+        # One extra ``if {[getPID] == K}`` guard per rank that OWNS a
+        # gated element, carrying the nodes those elements need and then
+        # the bracketed element blocks.  Ranks owning none get NO block:
+        # an empty guard is dead weight in Tcl and a syntax error in the
+        # Python emitter.
+        #
+        # Every node line here is one the per-rank pass below would have
+        # emitted anyway — same source, same node-id order, same skips —
+        # so the hoist MOVES lines and never adds or drops one.  A gated
+        # parser takes an nDMaterial and nothing else (INV-3 guards that
+        # at emit entry), and nDMaterial survives the re-issue, so nothing
+        # these blocks need has been held back.  ``transf_tag_for_element``
+        # is None: no gated class is transform-bearing, and the geomTransf
+        # fan-out has not run yet by construction.
+        for idx, part in enumerate(partitions):
+            rank = runtime_rank_from_partition_record(part, idx)
+            gated_rows = hoist_by_rank.get(rank)
+            if not gated_rows:
+                continue
+            needed = {
+                int(n)
+                for _spec, _sub in gated_rows
+                for (_eid, node_tags, _tag) in _sub
+                for n in node_tags
+            }
+            emitted_nodes: set[int] = set()
+            emitter.partition_open(rank)
+            try:
+                for nid in sorted(int(n) for n in part.node_ids):
+                    if nid not in needed:
+                        continue
+                    if staged and nid in node_owner_stage:
+                        continue
+                    node_idx = node_idx_lookup.get(nid)
+                    if node_idx is None:
+                        continue
+                    xyz = self.fem.nodes.coords[node_idx]
+                    _emit_node_with_inferred_ndf(
+                        emitter, inferred_ndf, int(nid),
+                        (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                        self.ndf, self.ndm,
+                    )
+                    emitted_nodes.add(nid)
+                for ele_spec, ele_rows in gated_rows:
+                    emit_element_spec_partitioned(
+                        spec=ele_spec,
+                        emitter=emitter,
+                        fem=self.fem,
+                        pre_allocated=ele_rows,
+                        base_resolver=base_resolver,
+                        transf_tag_for_element=None,
+                        partition_rank=rank,
+                        element_owner=element_owner,
+                        ndm=self.ndm,
+                        envelope_ndf=self.ndf,
+                    )
+            finally:
+                emitter.partition_close()
+            hoisted_nodes_by_rank[rank] = emitted_nodes
+
+        # -- 1c. Builder-scoped declarations.  Safe from here down: the
+        # partitioned path emits no further ``model`` line outside a
+        # stage block (a stage-OWNED gated element is refused by INV-4).
+        for p in pre_scoped:
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -2794,32 +2982,6 @@ class BuiltModel:
             spec_to_own_tag=self.tag_for,
             ndm=self.ndm,
         )
-
-        # Pre-allocate element tags ONCE per element across all PGs
-        # (ADR 0027 §"Tag determinism"). Per-rank fan-out then looks
-        # tags up rather than re-allocating, so cross-rank tag identity
-        # holds for every element (the rank-K block uses the same
-        # element tag as the owning rank's block).
-        # Phase SSI-2.E: in the staged case the allocation already
-        # happened earlier in this method (so V6 could resolve
-        # ``s.remove_element`` explicit ``elements=`` targets); reuse
-        # the prior plan.
-        if early_element_plan is not None:
-            element_plan = early_element_plan
-            if early_fem_eid_to_ops_tag is None:
-                raise BridgeError(
-                    "internal: early_fem_eid_to_ops_tag not set when "
-                    "early_element_plan is set — staged path must populate both."
-                )
-            fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
-        else:
-            element_plan = allocate_element_tags(elements, self.fem, tags)
-            # Global fem-eid → ops-tag map; used by the initial_stress
-            # per-rank ``addToParameter`` fan-out to translate the user's
-            # FEM element selection into OpenSees element tags (Phase
-            # SSI-1).  ADR 0065 v2 B3: columnar tag map off the plan
-            # (no per-element boxed dict).
-            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
         # ADR 0093 S8 / ADR 0027 §"Tag determinism": every interface
         # record's material + element tags are allocated HERE, in flat
@@ -2920,17 +3082,9 @@ class BuiltModel:
             self._claimed_constraint_ids()
         )
 
-        # Rank-independent lookups, hoisted out of the per-rank loop —
-        # each is O(model), so rebuilding them per rank made the whole
-        # pass O(model × ranks) (measured: dominant emit cost at
-        # production rank counts).
-        node_idx_lookup = {
-            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
-        }
-        plan_by_rank = {
-            id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
-            for spec, sub in element_plan
-        }
+        # ``node_idx_lookup`` / ``plan_by_rank`` — the other two
+        # rank-independent lookups — are built above step 1, where the
+        # ADR 0099 S5 hoist needs them.
         # ``ghost_sp_ops`` is the rank-independent
         # {node: [("fix", dofs), ...]} view the foreign-node declarations
         # need (ADR 0027 INV-2) — a ghost is not owned by the declaring
@@ -2994,12 +3148,17 @@ class BuiltModel:
                 # emitted here; foreign-side declarations for cross-
                 # partition MP constraints happen in the constraint
                 # pass below (INV-2).
+                _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
                 for nid in sorted(int(n) for n in part.node_ids):
                     # Phase SSI-2.C: stage-bound nodes emit inside
                     # their stage's block, not in the global pre-stage
                     # per-rank pass.  S2 (ADR 0033): per-node ndf via
                     # broker.
                     if staged and nid in node_owner_stage:
+                        continue
+                    # ADR 0099 S5: already emitted in this rank's
+                    # hoisted gated block (step 1b).
+                    if nid in _hoisted:
                         continue
                     node_idx = node_idx_lookup.get(nid)
                     if node_idx is None:
@@ -3008,7 +3167,7 @@ class BuiltModel:
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf,
+                        self.ndf, self.ndm,
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated;
@@ -3018,6 +3177,9 @@ class BuiltModel:
                 # their stage's block.
                 for ele_spec, _pre_alloc in element_plan:
                     if staged and id(ele_spec) in element_owner_stage:
+                        continue
+                    # ADR 0099 S5: gated specs emitted in step 1b.
+                    if id(ele_spec) in hoisted_spec_ids:
                         continue
                     emit_element_spec_partitioned(
                         spec=ele_spec,
@@ -3089,6 +3251,7 @@ class BuiltModel:
                         foreign_node_ndf=int(self.ndf),
                         inferred_ndf=inferred_ndf,
                         tags=tags,
+                        ndm=self.ndm,
                         claimed_ids=stage_claimed_constraint_ids,
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         ghost_sp_ops=ghost_sp_ops,
@@ -3677,7 +3840,7 @@ class BuiltModel:
                                     float(xyz[1]),
                                     float(xyz[2]),
                                 ),
-                                self.ndf,
+                                self.ndf, self.ndm,
                             )
                         # Per-rank element fan-out across this stage's
                         # specs — plan pre-bucketed by owner rank, so
@@ -3748,6 +3911,7 @@ class BuiltModel:
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
+                                ndm=self.ndm,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_sp_ops=stage_ghost_sp_ops,
                                 stiffness_resolver=(
@@ -5066,6 +5230,47 @@ class BuiltModel:
                 "unstaged, or serial (non-partitioned / flat=True)."
             )
 
+        # 2D contact under MPI: parallel / DDM 2D contact is explicitly
+        # OUT OF SCOPE fork-side (fork ADR-85), so the ownership resolver's
+        # generic `record.master_nps` reshape would produce a plan the
+        # engine cannot honour. Refuse by name here, before any emission —
+        # same idiom as the `soft=` INV-3 refusal above.
+        for idx, rec in enumerate(contacts, start=1):
+            if int(getattr(rec, "master_nps", 0)) != 2:
+                continue
+            label = f"#{idx}" + (
+                f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+            )
+            raise BridgeError(
+                f"apeSees: g.constraints.contact interaction {label} is a "
+                f"2D line-segment contact (master_nps=2), and 2D contact is "
+                f"not supported under partitioned (MPI) emit — parallel / "
+                f"DDM 2D contact is explicitly out of scope in the fork's "
+                f"own ADR-85. Emit the 2D contact model serial "
+                f"(non-partitioned / flat=True)."
+            )
+
+        # The rigid-plane lane needs its OWN gate, not an extension of the
+        # loop above: `ContactPlaneRecord` carries no `master_nps`, so the
+        # 2D discriminator that works for `contact` does not exist here and
+        # the dimension has to come from the model. Without this a 2D
+        # `contact_plane` fell straight through into the generic ownership
+        # path — the exact silent kind of pass-through the refusal above is
+        # there to prevent, and the same fork scope applies to both lanes.
+        if planes and int(self.ndm) == 2:
+            idx, rec = 1, planes[0]
+            label = f"#{idx}" + (
+                f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+            )
+            raise BridgeError(
+                f"apeSees: g.constraints.contact_plane interaction {label} "
+                f"is in a 2D model (ndm=2), and 2D contact is not supported "
+                f"under partitioned (MPI) emit — parallel / DDM 2D contact "
+                f"is explicitly out of scope in the fork's own ADR-85, for "
+                f"the rigid-plane lane as much as the NTS one. Emit the 2D "
+                f"model serial (non-partitioned / flat=True)."
+            )
+
         # The mesh's element connectivity, if this FEM snapshot exposes
         # it (real FEMData iterates ElementGroup objects; hand-rolled
         # test stubs may not) — the facet -> backing-solid input that
@@ -5279,14 +5484,15 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
             if kind == "contact":
-                emit_contacts(emitter, self.fem, tags, records=(rec,))
+                emit_contacts(
+                    emitter, self.fem, tags, ndm=self.ndm, records=(rec,))
             else:
                 emit_contact_planes(emitter, self.fem, tags, records=(rec,))
 
@@ -5727,14 +5933,14 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
+                    self.ndf, self.ndm,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
             _emit_interface_record(
-                emitter, rec, interface_tag_plan[id(rec)],
+                emitter, rec, interface_tag_plan[id(rec)], self.ndm,
             )
 
     def _emit_rayleigh(
@@ -9400,6 +9606,11 @@ class apeSees:
         bm = self.build()
         emitter = TclEmitter()
         emitter._emit_progress = bool(progress)
+        # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
+        # (live fragment routing under ``stream``, post-hoc span slicing
+        # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
+        # it on the emitter — the same seam ``supports_partitions`` uses.
+        emitter.per_rank_fragments = bool(per_rank)  # type: ignore[attr-defined]
         if flat:
             # Force the single-domain emit for a partition-carrying fem
             # (e.g. a composed model auto-partitioned one-rank-per-module,

@@ -77,6 +77,126 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — 2-D mortar contact: `-slave-segments 2`, tie, and `-thickness` (fork ADR-85, adoption S4)
+
+`g.constraints.contact(..., formulation="mortar")` works in a 2-D model.
+It was refused by name until now — the fork's 2-D mortar lane shipped in
+ADR-85 T3, apeGmsh could only reach the NTS one.
+
+The slave surface is the fork's `-slave-segments 2`, a flat stride-2 pair
+list chained head-to-tail, and it carries the same hazard the master does:
+the shorthand `10 11 12 13` is *silently legal* fork-side and declares a
+**holed** surface that converges to a wrong answer. So the slave goes
+through the same chain walk as the master (`_boundary_chain.edge_frames` +
+`chain_edges`, each segment wound against its own continuum element) and
+the same `ContactRecord` stride-2 validator, which already covered
+`slave_faces`. The hole is unreachable by construction on both sides. The
+walk's refusals grew a `role=` noun so a mis-declared *slave* curve is no
+longer reported as a "master" one; the interface lane's text is unchanged.
+
+`thickness=h` emits the mortar-only `-thickness h` (the 2-D plane-model
+out-of-plane thickness; the fork default is 1.0). Three conventions have
+to stay apart, and apeGmsh scales nothing itself — it emits the token and
+the fork applies `h` once, at its 2-D injection site:
+
+* the **element** thickness (`ops.element.FourNodeQuad(thickness=…)`) is
+  baked into element stiffness and contact never re-reads it;
+* `thickness=h` scales the EXPLICIT `eps_n` / `eps_t` / `visc` /
+  `cohesion` / `tau_max` and the tie stiffness;
+* `eps_n="auto"` is **not** h-scaled — it already absorbs the element's
+  thickness via `getInitialStiff()`, so re-scaling would be an h² error.
+
+Measured on fork build `e7555f2c9`: no `-thickness` is bit-identical to
+`-thickness 1.0`; halving `h` against an explicit `-epsN` doubles the
+interface penetration part exactly (4.013e-06 both times — applied once,
+not squared); and `-epsN auto` at `h = 1.0` vs `h = 0.5` is bit-identical
+(5.244762212098e-05). A flush 2-D mortar **tie** deck closes equilibrium
+at machine precision. `thickness=` on the NTS lane is refused at
+declaration (the fork parser refuses `-thickness` without `-mortar`) and
+in a 3-D model at resolve (a 3-D mortar deck's thickness lives in its
+elements; the fork FATALs at `handle()`).
+
+**`outward="winding"` stays NTS-only** — the F1 asymmetry, carried rather
+than papered over. The fork shipped declared winding on the NTS lane alone
+because its 2-D mortar lane has no chain-integrity scan to rest winding's
+one-connected-chain invariant on, so a flush **mortar** interface still
+requires an explicit `outward=(ox, oy)`; the flush refusal now offers a
+mortar caller the vector alone and says why. Its `Lref` also widened to
+the shortest segment of *either* surface on the mortar lane, matching the
+fork's own mortar floor (whose interval clip projects the slave endpoints
+too) — a master-only `Lref` would be too large and would refuse decks the
+fork accepts. The wrong-side-master guard now documents itself honestly as
+apeGmsh's on both lanes: the fork's centroid vote only picks a sign, so a
+far-side master resolves happily against a boundary the slave never
+reaches.
+
+Neutral schema 2.31.0 — additive `thickness` column on
+`contact_payload_dtype`, presence-probed on read, NaN ⇒ `None` ⇒ the fork
+default 1.0, so a 2.30.x file reads back as the `h = 1` it always meant.
+Parallel/DDM 2-D contact stays refused by name on both lanes (out of scope
+fork-side); the existing `master_nps == 2` emit gate already covers mortar.
+
+Review follow-ups, all in this slice. Both lane-exclusive knobs are now
+refused at the EMIT layer too, not just at `ContactDef`: a `ContactRecord`
+can reach `contact_args` without ever passing a def (an h5 decode, a
+compose rewrite, a hand-built record), and there `thickness` on the NTS
+lane was silently dropped while `outward="winding"` on the mortar lane
+went straight into a deck the fork refuses at parse — the 3-D winding rule
+was already gated three deep, the mortar one had a single gate. The 2-D
+mortar slave's dim-1 rule moved into `_refuse_contact_entity_dim` (via a
+new `formulation=`) instead of sitting beside it as a second gate, which
+is what that function's docstring means by "the single branch point of the
+2D lane". `ContactRecord.__post_init__` now refuses a slave stride that
+disagrees with the master's on dimension (nps 2 vs 3/4) — the h5 encoder
+and decoder each validated one side in isolation and `emit_contacts`
+checks only `master_nps` against `ndm`, so a 2-D master paired with tri
+slave facets reached the fork's own declaration guard. And the
+whole-domain scratch `edge_frames` recomputes — one Python-level pass over
+every domain element with a numpy allocation each — is hoisted into a
+shared `DomainFrames`, built once per resolve instead of once per surface
+(the mortar lane walks two surfaces per contact, on top of one per contact
+already).
+
+### FIXED — partitioned emit hoists its gated element blocks too (ADR 0099 S5)
+
+ADR 0099 S2 fixed the flat path and made every other path fail loud
+(INV-4).  Partitioned emit is now fixed rather than refused, because it
+is not the hard case it read as: the default partitioned deck is ONE
+file with ``if {[getPID] == K}`` **brace** guards and the builder-scoped
+declarations global, outside every guard.  A brace is not a file
+boundary, so the flat hoist replicates directly — one extra rank-guard
+block per rank that owns a gated element, carrying the nodes those
+elements need and then the bracketed blocks, placed above the
+declarations.
+
+The damage this removes was **rank-local**, which is what made it
+dangerous: a rank owning no gated element never executes the bracket and
+ran fine, so the same model passed on 2 ranks and died on 4.  Measured
+on Ladruno ``25a0647f`` with a mixed-ndf 2-rank deck run once per rank —
+before, rank 0 died at ``pattern Plain`` (``getTimeSeries … none found
+with tag: 1``) while rank 1 completed; with no pattern, rank 0 instead
+ran to the end reporting an **undamped** answer, because ``region
+-damp`` only warns.  After, both ranks build every object and match the
+flat reference to every printed digit.
+
+The hoist is gated on BOTH conditions it needs — at least one
+rank-OWNED gated element, and at least one builder-scoped declaration to
+lose — so every other partitioned deck is byte-identical to before
+(verified on three variants).  Element tags are untouched:
+``allocate_element_tags`` moves above the pre-element pass so the
+hoisted pass has a plan, and ``TagAllocator`` is per-kind.
+
+``per_rank=True`` (ADR 0061) keeps the refusal: it slices each rank
+guard into its own FILE, which is the ``split`` problem — the fragment's
+``source`` line has to move, not its element lines.  It is applied
+around ``BuiltModel.emit``, so it reaches the INV-4 gate as an emitter
+attribute (``per_rank_fragments``) and carries its own path token.
+Stage-OWNED gated elements are still refused on both paths.
+
+``repros/repro4_builder_scoped_wipe.py`` gains two arms that run decks
+on the binary rather than only reading them: ``--partitioned`` (this
+slice, once per rank) and ``--h5`` (the S4a replay, owed since S4c).
+
 ### FIXED — the capture route resolves `element_class_name` again
 
 `DomainCaptureSpec._lookup_class_hint_for_pgs` read

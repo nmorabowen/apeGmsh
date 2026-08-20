@@ -1023,6 +1023,35 @@ class ContactDef(ConstraintDef):
         Gauss order.
     tie
         Permanent mesh-tie bond (mortar only; mutually exclusive with friction).
+    thickness
+        **2D mortar only** — the plane-model out-of-plane thickness ``h``
+        (fork ``-thickness``, default 1.0). The mortar lane's interval
+        integrals produce force **per unit thickness**, so the fork applies
+        ``h`` ONCE, at its 2D injection site, to ``eps_n`` / ``eps_t`` /
+        ``visc`` / the friction clamps (``cohesion`` / ``tau_max``) and the
+        tie stiffness. Three conventions live here and must not be
+        conflated:
+
+        1. The **element** thickness (``ops.element.FourNodeQuad(thickness=…)``)
+           is baked into the element's own stiffness; contact never re-reads
+           or re-derives it.
+        2. ``thickness=h`` scales the **explicit** per-unit-thickness
+           penalties listed above — apeGmsh only emits ``-thickness h``; the
+           scaling itself is entirely fork-side.
+        3. ``eps_n="auto"`` is **NOT** h-scaled: it resolves from the owning
+           element's ``getInitialStiff()``, which already absorbs the
+           element's thickness, so re-scaling it by ``h`` would be an h²
+           error (regression-gated fork-side). ``eps_t`` INHERITS that
+           provenance when it is ``"auto"`` (or when friction defaults it
+           from ``eps_n``), so the pair moves together: both h-scale under
+           an explicit ``eps_n``, neither h-scales under an auto one.
+
+        The NTS lane has no ``-thickness`` at all (``kn`` is force per unit
+        length of gap, never a pressure) and the fork's parser refuses the
+        flag there; a 3D mortar deck's thickness lives in its elements and
+        the fork FATALs on ``-thickness`` at ``handle()``. Both are refused
+        here instead — the second at resolve time, where the model dimension
+        is known.
     outward
         Optional single outward direction. ``None`` (default) → emit no
         ``-outward``; the fork derives a correct PER-FACET normal from
@@ -1035,6 +1064,21 @@ class ContactDef(ConstraintDef):
         outward is wrong on a non-flat master (it skips perpendicular facets
         and inverts opposed ones), so only set it for an effectively flat
         interface.
+
+        **2D (``ndm=2``) models** take a 2-vector ``(ox, oy)`` — it is
+        z-padded to ``(ox, oy, 0.0)`` on the record and the emitter drops the
+        third component back off, because the fork REJECTS the 3-component
+        form on a 2D surface. And 2D is where an explicit direction is
+        usually needed at all: the fork's 2D lanes orient from an
+        interface-level centroid vote that is genuinely ambiguous on a FLUSH
+        interface (the masonry joint, the footing on soil) and aborts there.
+
+        ``outward="winding"`` (2D NTS only) declares the side through the
+        master chain's own winding instead of a vector — the fork's
+        ``-outward winding``. Exact per segment, so it orients curved and
+        closed masters that no single direction can, and no direction is
+        auto-derived by apeGmsh. It needs a fork build carrying the mode;
+        older builds refuse the keyword at parse.
     master_entities, slave_entities
         Restrict each side to specific Gmsh entities (default = whole label).
     soft
@@ -1124,6 +1168,9 @@ class ContactDef(ConstraintDef):
     max_aug: int | None = None
     ngp: int | None = None
     tie: bool = False
+    #: 2D mortar plane-model thickness (fork `-thickness`); None ⇒ the fork
+    #: default 1.0. Mortar-only and 2D-only — see the class docstring.
+    thickness: float | None = None
     outward: tuple | None = None
     # Extension modifiers (ADR 0073). explicit-only: soft/visc; solver-coupled:
     # consistent_tan/geom_tan; broad-phase tuning: cell.
@@ -1170,6 +1217,21 @@ class ContactDef(ConstraintDef):
                     "ContactDef: tie=True requires formulation='mortar' (a "
                     "permanent mesh-tie bond is a mortar feature)."
                 )
+            # `-thickness` is a -mortar-only option fork-side (its parser
+            # refuses it on the NTS lane by name): the NTS penalty kn is a
+            # force per unit length of gap, never a pressure, and `kn="auto"`
+            # already absorbs the element thickness through
+            # getInitialStiff(). Refuse here rather than emit a command the
+            # fork aborts.
+            if self.thickness is not None:
+                raise ValueError(
+                    "ContactDef: thickness is a mortar-only option (the "
+                    "fork's NTS penalty kn is force per unit LENGTH of gap, "
+                    "never a pressure, so there is no per-unit-thickness "
+                    "density to scale — the NTS lane has no -thickness at "
+                    "all). Use formulation='mortar', or drop thickness and "
+                    "size kn for the real out-of-plane thickness."
+                )
         else:  # mortar
             present = [f for f in self._NTS_ONLY
                        if getattr(self, f) is not None]
@@ -1184,17 +1246,45 @@ class ContactDef(ConstraintDef):
                     "ContactDef: tie=True (mesh-tie bond) is mutually "
                     "exclusive with friction (mu/cohesion/tau_max)."
                 )
-        if self.outward is not None:
-            if len(self.outward) != 3:
+        if isinstance(self.outward, str):
+            # The declared-winding sentinel (fork `-outward winding`), the
+            # `kn="auto"` idiom applied to orientation: no vector is passed
+            # at all — the side is declared through the master chain's
+            # winding, which is exact per segment and so works on curved
+            # and closed masters a single direction cannot orient.
+            if self.outward != "winding":
                 raise ValueError(
-                    f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
-                    f"{self.outward!r}"
+                    f"ContactDef: outward must be a direction vector or the "
+                    f"sentinel 'winding', got {self.outward!r}"
+                )
+            if self.formulation != "nts":
+                raise ValueError(
+                    f"ContactDef: outward='winding' is NTS-only — the fork "
+                    f"shipped declared-winding orientation on the NTS lane "
+                    f"only, and its 2D mortar lane has no chain scan to rest "
+                    f"it on, so a flush mortar interface still needs an "
+                    f"explicit outward=(ox, oy). Got "
+                    f"formulation={self.formulation!r}."
+                )
+        elif self.outward is not None:
+            if len(self.outward) not in (2, 3):
+                raise ValueError(
+                    f"ContactDef: outward must be a 2-vector (ox, oy) in a 2D "
+                    f"model or a 3-vector (ox, oy, oz), got {self.outward!r}"
                 )
             if not any(abs(float(x)) > 0.0 for x in self.outward):
                 raise ValueError(
                     f"ContactDef: outward must be a non-zero direction, got "
                     f"all-zero {self.outward!r}"
                 )
+            # Z-PAD, never reshape: a 2D direction genuinely HAS oz = 0, so
+            # the record, the (3,) H5 slot and compose's rotation (a z=0
+            # vector rotates correctly under any in-plane rotation) all stay
+            # one shape. The emitter drops the third component back off in a
+            # 2D deck — the fork rejects the 3-component form on a 2D
+            # surface — which is the only place the arity differs.
+            vec = tuple(float(x) for x in self.outward)
+            self.outward = vec if len(vec) == 3 else vec + (0.0,)
         # A mortar mesh-tie (tie=True) bonds a COINCIDENT, coplanar interface —
         # so the fork's per-pair sign reference (slave − segment-centroid) lies
         # in the surface plane and gate H2 (LadrunoContactProjection.h) silently
@@ -1237,6 +1327,10 @@ class ContactDef(ConstraintDef):
         _check_positive(self.max_aug, "max_aug", "ContactDef", integer=True)
         _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef",
                         integer=True)
+        # The fork refuses h <= 0 at parse ("need h > 0"); zero is NOT an
+        # off-sentinel here (the default is 1.0), so no allow_zero.
+        _check_positive(self.thickness, "thickness (2D mortar plane-model "
+                        "thickness h)", "ContactDef")
         self._validate_extensions()
 
     def _validate_extensions(self) -> None:
@@ -1439,10 +1533,12 @@ class ContactPlaneDef(ConstraintDef):
     ----------
     slave_label : str
         The meshed surface PG / part label whose nodes contact the plane.
-    normal : (float, float, float)
-        The plane's outward unit normal (toward the slave / open side).
-    point : (float, float, float)
-        Any point on the plane.
+    normal : (float, float, float) | (float, float)
+        The plane's outward unit normal (toward the slave / open side). **In a
+        2D model** it is the 2-vector ``(nx, ny)``, Z-PADDED here to
+        ``(nx, ny, 0.0)`` — see the note below.
+    point : (float, float, float) | (float, float)
+        Any point on the plane; ``(px, py)`` in a 2D model, z-padded likewise.
     kn : float
         Normal penalty stiffness (**required**; the fork reads it as a plain
         value — there is no ``"auto"`` sizing on ``contactPlane``).
@@ -1472,11 +1568,25 @@ class ContactPlaneDef(ConstraintDef):
     def __post_init__(self) -> None:
         if not self.slave_label:
             raise ValueError("ContactPlaneDef: slave_label is required.")
+        # Z-PAD, never reshape — the ContactDef.outward decision applied to
+        # the plane's geometry. A 2D plane's normal genuinely HAS nz = 0 and
+        # its point pz = 0, so the record, the (3,) H5 slots and compose's
+        # rotation (a z=0 vector rotates correctly under any in-plane
+        # rotation) all stay one shape, and the emitted line stays the one
+        # permanently-valid zero-padded 9-arg form. Unlike ``-outward`` there
+        # is no arity to drop back off at emit.
         for nm, v in (("normal", self.normal), ("point", self.point)):
-            if v is None or len(tuple(v)) != 3:
+            if v is None or len(tuple(v)) not in (2, 3):
                 raise ValueError(
-                    f"ContactPlaneDef: {nm} must be a 3-vector, got {v!r}.")
-        n = tuple(float(x) for x in self.normal)
+                    f"ContactPlaneDef: {nm} must be a 3-vector (or a 2-vector "
+                    f"in a 2D model), got {v!r}.")
+        self.normal = tuple(float(x) for x in self.normal)
+        self.point = tuple(float(x) for x in self.point)
+        if len(self.normal) == 2:
+            self.normal += (0.0,)
+        if len(self.point) == 2:
+            self.point += (0.0,)
+        n = self.normal
         if sum(c * c for c in n) == 0.0:
             raise ValueError("ContactPlaneDef: normal must be non-zero.")
         if self.kn is None:

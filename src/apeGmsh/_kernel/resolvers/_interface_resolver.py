@@ -33,6 +33,8 @@ from apeGmsh._kernel.records._constraints import (
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
 
+from apeGmsh._kernel.geometry._boundary_chain import EdgeData, edge_frames
+
 from ._constraint_resolver._geom import _SpatialIndex
 
 __all__ = ["resolve_interface_records"]
@@ -171,9 +173,10 @@ def resolve_interface_records(
 
     pairs = _pair_coincident(m_set, s_set, xyz, tolerance, label)
 
-    edge_data = _edge_frames(
+    edge_data = edge_frames(
         master_edges, m_set, xyz,
         domain_elem_tags, domain_elem_nodes, label,
+        verb="interface",
     )
     normals = _node_normals(edge_data, label)
     ell = _tributary_lengths(edge_data)
@@ -294,159 +297,9 @@ def _pair_coincident(
     return pairs
 
 
-# ── per-edge outward frames ─────────────────────────────────────────
-
-class _EdgeData:
-    """The master polyline's per-edge geometry, indexed for reuse.
-
-    ``normals[e]`` is edge ``e``'s **outward** in-plane unit normal
-    (signed against its owning domain element's centroid),
-    ``lengths[e]`` its length, ``node_edges[t]`` the edges incident on
-    master node ``t``, and ``adj[t]`` the domain-element indices
-    incident on it (with ``elem_tags`` / ``centroids`` alongside).
-    """
-
-    __slots__ = ("edges", "normals", "lengths", "node_edges",
-                 "adj", "elem_tags", "centroids", "total_length")
-
-    def __init__(self, edges, normals, lengths, node_edges,
-                 adj, elem_tags, centroids) -> None:
-        self.edges = edges
-        self.normals = normals
-        self.lengths = lengths
-        self.node_edges = node_edges
-        self.adj = adj
-        self.elem_tags = elem_tags
-        self.centroids = centroids
-        self.total_length = float(sum(lengths))
 
 
-def _edge_frames(
-    master_edges,
-    m_set: set[int],
-    xyz: dict[int, ndarray],
-    domain_elem_tags: Sequence[int],
-    domain_elem_nodes: Sequence[Sequence[int]],
-    label: str,
-) -> _EdgeData:
-    """Per-edge outward normals + lengths + the domain adjacency map."""
-    edges = np.asarray(master_edges, dtype=int).reshape(-1, 2)
-    if edges.size == 0:
-        raise ValueError(
-            f"interface{label}: the master label carries no boundary "
-            f"line elements — the outward normal and the tributary "
-            f"length are both derived from them (is the master a meshed "
-            f"curve?).")
-    stray = sorted({int(t) for t in edges.ravel()} - m_set)
-    if stray:
-        raise ValueError(
-            f"interface{label}: master boundary edge(s) reference "
-            f"node(s) {stray[:20]} that are not in the master node set.")
-    seen: dict[frozenset, int] = {}
-    for e, (a, b) in enumerate(edges):
-        key = frozenset((int(a), int(b)))
-        if len(key) == 1:
-            raise ValueError(
-                f"interface{label}: master boundary edge {e} is "
-                f"degenerate (both endpoints are node {int(a)}).")
-        if key in seen:
-            raise ValueError(
-                f"interface{label}: master boundary edge "
-                f"({int(a)}, {int(b)}) appears twice (rows {seen[key]} "
-                f"and {e}) — a duplicated edge would double that "
-                f"stretch's tributary share. Deduplicate the master "
-                f"entities.")
-        seen[key] = e
-
-    elem_tags = [int(t) for t in domain_elem_tags]
-    elem_nodes = [np.asarray(n, dtype=int).ravel() for n in domain_elem_nodes]
-    if len(elem_tags) != len(elem_nodes):
-        raise ValueError(
-            f"interface{label}: domain_elem_tags ({len(elem_tags)}) and "
-            f"domain_elem_nodes ({len(elem_nodes)}) disagree in length.")
-    if not elem_tags:
-        raise ValueError(
-            f"interface{label}: no 2D domain elements were supplied — "
-            f"the outward sign (ADR 0093 D2) and the backing element "
-            f"(INV-5) are both derived from them.")
-
-    adj: dict[int, list[int]] = {t: [] for t in m_set}
-    centroids = np.empty((len(elem_tags), 3), dtype=float)
-    for i, conn in enumerate(elem_nodes):
-        try:
-            pts = np.array([xyz[int(k)] for k in conn], dtype=float)
-        except KeyError as exc:
-            raise ValueError(
-                f"interface{label}: domain element {elem_tags[i]} "
-                f"references node {exc.args[0]}, which is not in the "
-                f"model node pool.") from exc
-        centroids[i] = pts.mean(axis=0)
-        for k in conn:
-            bucket = adj.get(int(k))
-            if bucket is not None:
-                bucket.append(i)
-
-    normals: list[ndarray] = []
-    lengths: list[float] = []
-    node_edges: dict[int, list[int]] = {t: [] for t in m_set}
-    for e, (a, b) in enumerate(edges):
-        a, b = int(a), int(b)
-        pa, pb = xyz[a], xyz[b]
-        tan = pb - pa
-        length = float(np.linalg.norm(tan))
-        if length <= _ZERO_TOL:
-            raise ValueError(
-                f"interface{label}: master boundary edge ({a}, {b}) has "
-                f"zero length.")
-        if abs(float(tan[2])) > 1e-9 * length:
-            raise NotImplementedError(
-                f"interface{label}: master boundary edge ({a}, {b}) is "
-                f"out of the z=const plane (dz={float(tan[2])!r}). Only "
-                f"in-plane 2D line masters are implemented — ADR 0093 "
-                f"D2.")
-        # In-plane normal candidate; the sign is decided below, never by
-        # the edge's node ordering (a mesh's winding is not a contract).
-        n = np.array([tan[1], -tan[0]], dtype=float) / length
-
-        owners = sorted(set(adj[a]) & set(adj[b]))
-        if not owners:
-            raise ValueError(
-                f"interface{label}: master boundary edge ({a}, {b}) has "
-                f"no adjacent 2D domain element. The outward sign is "
-                f"fixed against the adjacent element's centroid "
-                f"(ADR 0093 D2) — is the master a boundary curve of the "
-                f"meshed continuum?")
-        if len(owners) > 1:
-            raise ValueError(
-                f"interface{label}: master boundary edge ({a}, {b}) is "
-                f"shared by {len(owners)} 2D domain elements "
-                f"{[elem_tags[i] for i in owners]} — it is an INTERIOR "
-                f"edge with material on both sides, so it has no "
-                f"outward direction. The master must be a free boundary "
-                f"of the continuum.")
-        centroid = centroids[owners[0]]
-        mid = 0.5 * (pa + pb)
-        arm = mid - centroid
-        d = float(np.dot(n, arm[:2]))
-        if abs(d) <= _ZERO_TOL * max(1.0, float(np.linalg.norm(arm))):
-            raise ValueError(
-                f"interface{label}: cannot sign the outward normal of "
-                f"master edge ({a}, {b}) — its owning element "
-                f"{elem_tags[owners[0]]} has its centroid on the edge "
-                f"line (a degenerate / inverted element?).")
-        if d < 0.0:
-            n = -n
-
-        normals.append(n)
-        lengths.append(length)
-        node_edges[a].append(e)
-        node_edges[b].append(e)
-
-    return _EdgeData(edges, normals, lengths, node_edges,
-                     adj, elem_tags, centroids)
-
-
-def _node_normals(data: _EdgeData, label: str) -> dict[int, ndarray]:
+def _node_normals(data: EdgeData, label: str) -> dict[int, ndarray]:
     """Per-master-node outward unit normal (D2).
 
     The normalized average of the node's adjacent edge normals — which
@@ -490,7 +343,7 @@ def _node_normals(data: _EdgeData, label: str) -> dict[int, ndarray]:
 
 # ── tributary (D3 / INV-3) ──────────────────────────────────────────
 
-def _tributary_lengths(data: _EdgeData) -> dict[int, float]:
+def _tributary_lengths(data: EdgeData) -> dict[int, float]:
     """``ell_trib`` per master node — the ``0.5 * edge_length``
     accumulation of the load resolver's ``resolve_line_tributary``,
     which gives an interior node the two half-shares and a polyline
@@ -506,7 +359,7 @@ def _tributary_lengths(data: _EdgeData) -> dict[int, float]:
 def _assert_tributary_closure(
     pairs: list[tuple[int, int]],
     ell: dict[int, float],
-    data: _EdgeData,
+    data: EdgeData,
     thickness: float,
     label: str,
 ) -> None:
@@ -553,7 +406,7 @@ def _backing_element(
     master: int,
     normal: ndarray,
     node_xyz: ndarray,
-    data: _EdgeData,
+    data: EdgeData,
     label: str,
 ) -> int:
     """The domain element the pair's outward normal points AWAY from.

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-19T00:17:57Z",
+  "generated": "2026-08-19T20:01:06Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -316,7 +316,7 @@
     },
     "g.constraints.contact": {
       "symbol": "g.constraints.contact",
-      "signature": "contact(master, slave, *, formulation='nts', kn=None, kt=None, mu=None, eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None, tie=False, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False, cell=None, edge_edge=False, edge_kn=None, edge_band=None, edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None, edge_consistent_tan=False, edge_soft=None, edge_alm=False, edge_aug_tol=None, master_entities=None, slave_entities=None, name=None) -> 'ContactDef'",
+      "signature": "contact(master, slave, *, formulation='nts', kn=None, kt=None, mu=None, eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None, tie=False, thickness=None, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False, cell=None, edge_edge=False, edge_kn=None, edge_band=None, edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None, edge_consistent_tan=False, edge_soft=None, edge_alm=False, edge_aug_tol=None, master_entities=None, slave_entities=None, name=None) -> 'ContactDef'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Declare a face-to-face contact between two meshed surfaces"
     },
