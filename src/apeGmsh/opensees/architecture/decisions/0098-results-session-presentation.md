@@ -1807,7 +1807,10 @@ the identical single-caller problem — both are called only from
 `results_viewer.py`, so the clip-plane and scope gizmos are also
 unreachable in the session window. They are **not** in this amendment:
 the clip gizmo writes to `ViewClip`, which the session record already
-owns, so it is a wiring job without A5.3's state question. Recorded here
+owns, so it is a wiring job without A5.3's state question.
+**Corrected by A6.6 — this was wrong.** The session emits no gizmo
+actors at all, so there is nothing for an interactor to grab; it is
+closer in size to this amendment than to a call. Recorded here
 so the set is known to be three, and so the next person does not
 rediscover it one gizmo at a time.
 
@@ -1844,3 +1847,170 @@ rediscover it one gizmo at a time.
 | Put placement in `MeshStyle` next to `scalar_bar_scale` | Style is per slot; a legend can be shared by a contour and a Gauss slot of the same field (§5). Placement keyed by field, on the view, is the only key that matches what a legend *is* |
 | Revive `interactive=True` | The reason it never worked is unchanged: the widget observes at priority 0.5, the pick engine aborts LMB at 10 |
 | Leave it to the old viewer | S6a made `session().show()` the only window a user gets; "use the retired viewer for this" is not an answer |
+
+## Amendment 6 (2026-08-20) — gates for the defects the bench keeps finding
+
+Append-only. §1–§11, the invariants, the slot catalog and the
+rejected-alternatives table all stand. Amendments 1–5 are untouched.
+This amendment adds no picture behaviour: it adds **laws about
+reachability** and the gates that enforce them, plus two defects those
+gates found while being written.
+
+### A6.1 Evidence — one defect, four costumes
+
+Every viewer defect found in the week the bench came online sat at the
+same seam:
+
+| defect | works from Python | reachable from the UI |
+|---|---|---|
+| legend drag / resize | n/a — gesture | never wired (A5) |
+| inspector Line row | yes, tested | dead since it shipped |
+| picker offers dead components | yes | offers what refuses |
+| clip gizmo, scope gizmo | yes | never wired |
+
+**The session IR is thoroughly tested; the widget a human reaches it
+through is not.** `view.line = Line("bending_moment_z")` has tests and
+works. The Add button beside it could never work, because the row
+filtered its candidates against the nodal and Gauss sets and a line
+component lives in neither. Both were true for months under 2333 green
+tests and a green acceptance gate — the gate asked "can the data be
+drawn", never "can a person ask for it".
+
+Three properties made this class invisible rather than unlucky:
+
+* **The pump's loud-refusal design only fires on an attempt.** A dead
+  button attempts nothing, so it logs nothing, and silence reads as
+  health. The same design that made the `scope` refusals visible hides
+  a control that never runs.
+* **S6a ported two of five capabilities and nothing recorded the gap.**
+  `results_viewer.py` installs navigation, picking, the legend gesture,
+  the clip gizmo and the scope gizmo. The session pane took the first
+  two. There was no artifact anywhere listing what the old window could
+  do, so nobody could tell what the new one was missing. That is a
+  completeness failure, not a testing one.
+* **§4 and §5 are written in IR terms.** Nothing in this ADR said the
+  inspector must be able to author every slot the data supports. Nobody
+  violated the spec; the spec was silent. A6.3 ends that.
+
+The discovery rate is the fixture working, not the code decaying: the
+bench is days old, and before it nobody opened a realistic model in
+this window. This amendment is about converting "a human finds it" into
+"CI finds it".
+
+### A6.2 G1 — no capability goes missing quietly
+
+`tests/viewers/test_session_capability_parity.py` walks
+`results_viewer.py` for `install_*` calls. Every one must be declared:
+**ported** (naming the session counterpart *and* the test that proves
+it), **retired** (why), or **missing** (owner). Adding a capability to
+the old viewer without declaring it fails; so does declaring one that
+no longer exists, because a stale inventory reads as coverage.
+
+Mutation-tested: dropping an entry reproduces the S6a state and fails
+with the missing name.
+
+"Ported" demands a `tested_by` on purpose. "The code exists" is exactly
+the claim that let three gestures ship unreachable.
+
+### A6.3 G2 — the picker law
+
+**If the data supports a slot, the inspector must be able to author
+it.** A new law, and the one this ADR was missing.
+
+`tests/viewers/test_inspector_picker_law.py` is parametrized over the
+§4 catalog against a fixture recording nodes, Gauss *and* line
+stations, so a slot added later inherits the law rather than needing
+someone to remember it. It asserts on the **Add button**, not on the
+`can_add` argument: the button is the affordance, and a row that
+computes `can_add=True` while leaving the button disabled is the same
+unreachable slot. A companion test asserts the converse — a row must
+not offer a quantity its family does not record.
+
+Mutation-tested: restoring the Line bug fails it, naming the row.
+
+### A6.4 Two defects G3 found on the way
+
+Driving a real interactor — even before it could be a gate — found
+both of these, and both are fixed with offscreen gates that run in
+every lane:
+
+* **The legend layout was never brought current.** It is resolved from
+  pixel font metrics, so it is valid only for the viewport it was
+  measured against. Measured: a pane realized at construction size kept
+  a box computed against a **~30 px** viewport; the hit test reads the
+  same extent, so the drag missed a bar plainly on screen. Every resize
+  EVENT is unreliable here — VTK's `ConfigureEvent` does not fire for a
+  programmatic resize, and Qt's `resizeEvent` lands *before* the render
+  window has taken the new size, so a re-layout driven from it
+  re-measures against the old one. `LegendController.ensure_current()`
+  checks at the point of USE instead, and the hit test calls it. One
+  tuple compare when nothing moved.
+* **A negative extent.** `min(h_px/vh, 1 - 2*my)` goes negative once the
+  viewport is smaller than its own margins, handing back a box whose
+  far edge precedes its near one — which no hit test can match. Clamped.
+
+### A6.5 G3 is deferred, and says so out loud
+
+The real-gesture test is **not** a gate yet. It lives at
+`tests/viewers/manual_legend_gesture.py`, named `manual_*` so pytest
+does not collect it.
+
+It needs a SHOWN pane: an unmapped render window never takes a real
+size, so the layout is legitimately degenerate. A shown pane plus the
+rest of the qt lane takes an access violation on a Windows/GPU host —
+the multi-context fragility `_pane.py::dispose` already warns about.
+Measured in one process: alone, passes; with
+`test_viewport_presentation.py`, passes once the teardown releases the
+context hard (hide, dispose, deleteLater, pump) and HANGS without that;
+across the whole lane, access violation. Locally the lane is no oracle
+either — every other GL test skips there, so this would be the only
+real context in the process.
+
+It is not left as a permanent skip because **a skipped test reads as
+coverage**, which is the exact illusion this amendment exists to
+remove. Proving it in CI (Linux/Mesa, where the lane actually runs) is
+owed — carefully, because a hung job burns a runner rather than failing
+fast.
+
+Its teardown raises a question worth its own look: `MeshPane.dispose()`
+alone was not enough to release the context, and only hide +
+deleteLater + pumping was. If `dispose()` is insufficient, every pane
+close leaks a context, which is Amendment 1 caution 1 in a new place.
+
+### A6.6 Still owed
+
+* **G4 — the picker's vocabulary is scope-blind.** `recorded_components`
+  answers with the whole stage's set regardless of the pane's scope, so
+  the inspector offers `stress_zz` on a pane scoped to shells that
+  recorded none, and the refusal arrives only after the user picks it.
+  Measured: an identical six-component list under `soil+raft`,
+  `slabs+wall` and `columns+beams`, while only the solids carry Gauss
+  stress. **Behaviour**: filter the tokens to what the scoped elements
+  record, and when none survive disable the row with a reason — which
+  is §4's existing inapplicable-is-disabled law applied one level
+  deeper, not a second convention. **Cost**: doing this properly needs a
+  reader-level capability — "which components does this level record
+  for this element set" — resolved by intersecting each group's
+  `_element_index` rather than by probing slabs per component per
+  refresh. That is a data/ change, which is why it is not in this
+  amendment.
+* **R1 — the clip and scope gizmos.** A5.5 called this "a wiring job
+  without A5.3's state question". **That was wrong, and this corrects
+  it**: the session path emits no gizmo actors at all. `ViewClip` carries
+  `gizmo_visible`, but realize never draws one, so there is nothing for
+  an interactor to grab. `install_clip_gizmo_interactor(backend,
+  controller, gizmos)` wants a clip-planes controller and a gizmo actor
+  set, and the session owns neither. Restoring these means realize
+  emitting gizmo geometry and something owning it — closer in size to
+  Amendment 5 than to a call.
+* **R2 — the bench records no shell stresses**, so `slabs` and `wall`
+  cannot be contoured at all. The fixture exists to cover the
+  multi-family case and currently does not, which is also why G2 needs
+  a synthetic fixture rather than the bench.
+
+### A6.7 What these gates do not catch
+
+Nothing here catches "the picture is wrong but plausible". They catch
+**unreachable** and **inconsistent**, which is this week's entire class.
+Visual correctness still rests on a person opening the window; the
+bench is what made that cheap, and it should stay a human step.
