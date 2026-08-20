@@ -291,6 +291,12 @@ class MeshPane(QtWidgets.QWidget):
             except Exception:
                 pass
 
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802 — Qt API
+        """A legend's box is derived from pixel metrics, so a resize
+        invalidates it (A6 G3)."""
+        super().resizeEvent(event)
+        self._legends.on_viewport_resized()
+
     def closeEvent(self, event: Any) -> None:  # noqa: N802 — Qt API
         self.dispose()
         super().closeEvent(event)

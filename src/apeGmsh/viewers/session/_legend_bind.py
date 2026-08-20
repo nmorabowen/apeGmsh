@@ -64,6 +64,52 @@ class PaneLegendBinding:
         # returns None and the pane simply has no gesture (A5.6-1).
         self._interactor = install_legend_interactor(self._backend, controller)
         controller.dispatcher = self
+        # A6 G3 - re-layout when the render window is resized. The
+        # layout resolves a legend's box from pixel font metrics, so it
+        # is a function of the viewport; computed once at attach it is
+        # stale the moment the pane is sized, and a pane realized
+        # before its first real resize keeps a box measured against a
+        # ~30 px viewport. That is not only ugly: the hit test reads
+        # the same extent, so the gesture misses a bar the user can
+        # plainly see. Called only from diagrams/_registry.py until
+        # now - the old path - which is why the session window never
+        # had it.
+        try:
+            controller.install_resize_hook()
+        except Exception:
+            pass
+        # ...and re-layout ONCE right now. The hook only covers resizes
+        # from here on, and the box this controller was just built with
+        # was measured during realize — before the pane was necessarily
+        # at its real size. Without this the first paint keeps the
+        # stale box until something else happens to resize the window.
+        try:
+            controller.refresh()
+        except Exception:
+            pass
+
+    def on_viewport_resized(self) -> None:
+        """Re-layout after the pane changed size.
+
+        Driven from ``MeshPane.resizeEvent`` rather than left to
+        ``install_resize_hook`` alone: that hook observes VTK's
+        ``ConfigureEvent``, which does not reliably fire for a Qt-driven
+        resize (measured — a pane resized and shown keeps a box
+        measured against its ~30 px construction size, and the hit test
+        then misses a bar the user can see). Qt's own resize event is
+        the signal that always arrives; the VTK hook stays for resizes
+        Qt does not mediate.
+        """
+        controller = self._controller
+        if controller is None:
+            return
+        try:
+            # ensure_current, not refresh: a live window drag fires
+            # resizeEvent continuously, and only the ticks where the
+            # render window actually took a new size need a re-layout.
+            controller.ensure_current()
+        except Exception:
+            pass
 
     def _detach(self) -> None:
         if self._interactor is not None:

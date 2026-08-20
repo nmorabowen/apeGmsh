@@ -371,3 +371,52 @@ def test_line_components_come_from_the_line_stations_family(
     # The bug, stated as a law: these families are disjoint, so the old
     # nodal/gauss filter could never match a line component.
     assert not (line & (nodal | gauss))
+
+
+# ----------------------------------------------------------------------
+# A6 G3 — the layout is only valid for the viewport it was measured on
+# ----------------------------------------------------------------------
+
+def test_a_stale_layout_is_detected_and_corrected(pane):
+    """A legend's box is derived from pixel font metrics, so it is
+    valid only for the viewport it was resolved against — and every
+    resize EVENT is unreliable: VTK's ``ConfigureEvent`` does not fire
+    for a programmatic resize, and Qt's ``resizeEvent`` lands BEFORE
+    the render window has taken the new size, so a re-layout driven
+    from it re-measures against the old one.
+
+    So the layout is brought current at the point of use. Measured
+    consequence without it: a pane realized at construction size kept a
+    box computed against a ~30 px viewport, and the hit test then
+    missed a bar plainly on screen."""
+    _session, _view, widget, _backend = pane
+    controller = _controller(widget)
+
+    controller.ensure_current()
+    assert controller.ensure_current() is False, (
+        "a current layout must not re-run — this is called from the "
+        "hit test, i.e. potentially per mouse-move."
+    )
+
+    controller._laid_out_px = (31, 29)      # the state the bug leaves
+    assert controller.ensure_current() is True
+    assert controller.viewport_px() == controller._laid_out_px
+
+
+def test_a_viewport_smaller_than_its_margins_yields_no_negative_box(pane):
+    """``min(h_px/vh, 1 - 2*my)`` goes NEGATIVE once the viewport is
+    smaller than its own margins, handing back a box whose far edge
+    precedes its near one — which no hit test can ever match. Found at
+    a 30 px viewport, so it is reachable, not theoretical."""
+    _session, _view, widget, backend = pane
+    controller = _controller(widget)
+
+    backend.viewport = (24, 18)             # smaller than 2 * MARGIN_PX
+    controller.ensure_current()
+
+    for entry in controller.entries():
+        w, h = entry.extent
+        assert w >= 0.0 and h >= 0.0, (
+            f"{entry.key} has a negative extent {(w, h)} at "
+            f"{controller.viewport_px()}"
+        )
