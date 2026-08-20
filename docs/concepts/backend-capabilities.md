@@ -109,7 +109,11 @@ are unaffected and run on any build.
   `equationConstraint` (EQ_Constraint, ADR 0068). Fork-only **for the live
   run**. On stock, use `enforce="penalty"` with a tuned `stiffness` — see
   [Tie non-matching meshes](../how-to/tie-meshes.md).
-- **Contact.** `g.constraints.contact(...)` → `contactSurface` / `contact`.
+- **Contact.** `g.constraints.contact(...)` → `contactSurface` / `contact`, and
+  `g.constraints.contact_plane(...)` → `contactPlane` (rigid analytical plane).
+  Both lanes work in 2D as well as 3D, and both are **serial only** — parallel
+  2D contact is out of scope in the fork and refused by name once the model is
+  partitioned.
 - **`LadrunoProjection`** constraint handler, and the
   `ladrunoProjectionTieForce` query.
 

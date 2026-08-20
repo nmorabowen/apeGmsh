@@ -19,7 +19,7 @@ g.begin()
 
 ## Tasks on this page
 
-- [Tie co-located nodes (equal_dof)](#level-1-node-to-node) · [Couple a master to a node group](#level-2-node-to-group) · [Bridge beam-to-solid DOFs (node_to_surface)](#level-2b-mixed-dof-coupling) · [Tie non-matching surfaces](#level-3-surface-coupling) · [Surface-to-surface tie / mortar](#level-4-surface-to-surface) · [Consume constraints in a solver](#5-consuming-constraints-in-a-solver) · [Inspect what you declared](#6-introspection) · [Stage-bind a constraint (SSI)](#65-stage-binding-constraints-in-apesees-ssi-workflows)
+- [Tie co-located nodes (equal_dof)](#level-1-node-to-node) · [Couple a master to a node group](#level-2-node-to-group) · [Bridge beam-to-solid DOFs (node_to_surface)](#level-2b-mixed-dof-coupling) · [Tie non-matching surfaces](#level-3-surface-coupling) · [Surface-to-surface tie / mortar](#level-4-surface-to-surface) · [Let an interface open and slide (contact)](#level-5-contact-fork) · [Declare contact in a 2D model](#contact-in-a-2d-model) · [Consume constraints in a solver](#5-consuming-constraints-in-a-solver) · [Inspect what you declared](#6-introspection) · [Stage-bind a constraint (SSI)](#65-stage-binding-constraints-in-apesees-ssi-workflows)
 
 
 ## 1. The two-stage pipeline: define, then resolve
@@ -404,6 +404,239 @@ did not exist — use **`tie(method="mortar")`** in Level 3 above. That one
 ships (ADR 0086), handles quadratic facets, and emits equation constraints.
 
 
+### Level 5 — Contact (fork)
+
+Everything above is a **bond**: the slave follows the master in tension as in
+compression, from the first step to the last. `contact` is the one verb in the
+composite that can *let go* and *slide* — a face-to-face interaction with a
+gap, a normal penalty and Coulomb friction, emitted through the Ladruno fork's
+contact subsystem (`contactSurface` + `contact`, enforced by the
+`LadrunoContact` handler):
+
+```python
+g.constraints.contact(
+    "rock_face", "liner_face",
+    formulation="nts", kn="auto", kt=5.0e5, mu=0.3,
+)
+```
+
+Two formulations. `"nts"` is node-to-segment penalty: the slave is a bare node
+set, each node projected onto the master facet that owns it. `"mortar"` is
+segment-to-segment augmented Lagrange: both sides are faceted and the interface
+is integrated over the facet overlaps — the accuracy lane for non-matching
+meshes. `tie=True` (mortar only) freezes the pair into a permanent
+*contact-tie*; for a plain permanent bond prefer `tie(method="mortar",
+enforce="equation")` from Level 3, for the reasons under **`mortar`** above.
+
+Contact does not land on the MP-constraint channels. It resolves *additively*
+onto `fem.elements.contacts` (and `fem.elements.contact_planes`) — a separate
+**serial-only** subsystem emitted by `emit_contacts`. It needs a live gmsh
+session, so declaring one on a `from_h5` / composed session raises; and the
+deck emits on any build but **runs only on the fork**.
+
+**`contact_plane`** — a rigid analytical plane, with no master mesh at all.
+The slave contacts a fixed infinite plane given by a `normal` and a `point`,
+frictionless, with a **required** `kn` (there is no `"auto"` on this lane):
+
+```python
+g.constraints.contact_plane(
+    "footing", normal=(0.0, 1.0), point=(0.0, 0.0), kn=1.0e7,
+)
+```
+
+Reach for it for a rigid floor, wall or foundation where the counter-body
+needn't be meshed. It is also the only contact lane that keeps the fork's
+`ndf >= ndm` rather than demanding `ndf == ndm`, so a 6-DOF shell can sit on
+one; the NTS/mortar/tie lanes cannot.
+
+
+#### Contact in a 2D model
+
+The fork routes contact on the **node coordinates** of the referenced surface,
+not on interpreter `ndm` state, and apeGmsh emits exactly `ndm` coordinates per
+node — so a plane model reaches the fork's 2D lanes automatically. What changes
+is the shape of a surface, and the way it is oriented.
+
+**A 2D contact surface is a meshed dim-1 physical group** — the boundary
+*curve* of the body, not the body. Naming the dim-2 plane PG is the natural
+mistake and is refused by name: it would collect the continuum's own tri3 /
+quad4 elements and build a structurally valid record out of solid elements.
+
+```python
+import gmsh
+
+def _edge_at_x(surface, x, tol=1e-6):
+    """The boundary curve of `surface` lying wholly at this x."""
+    for _, tag in gmsh.model.getBoundary([(2, surface)], oriented=False):
+        lo_x, _, _, hi_x, _, _ = gmsh.model.getBoundingBox(1, abs(tag))
+        if abs(lo_x - x) < tol and abs(hi_x - x) < tol:
+            return abs(tag)
+    raise LookupError(f"surface {surface} has no boundary curve at x={x}")
+
+left  = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+right = g.model.geometry.add_rectangle(1, 0, 0, 1, 1)
+g.model.sync()
+g.mesh.structured.set_transfinite([(2, left), (2, right)], n=4)
+g.mesh.generation.generate(2)
+
+g.physical.add(2, [left],  name="rock")                        # the bodies
+g.physical.add(2, [right], name="liner")
+g.physical.add(1, [_edge_at_x(left,  1.0)], name="rock_face")  # the interface
+g.physical.add(1, [_edge_at_x(right, 1.0)], name="liner_face")
+
+g.constraints.contact(
+    "rock_face", "liner_face",
+    formulation="nts", kn="auto", kt=5.0e5, mu=0.3,
+    outward=(1.0, 0.0), name="joint",
+)
+fem = g.mesh.queries.get_fem_data(dim=2)
+```
+
+The two rectangles are **not** fragmented, so the two curves at `x = 1` are
+geometrically coincident but distinct entities carrying distinct node sets —
+which is exactly the topology a contact needs, and the opposite of what you
+want for a `tie`.
+
+which emits
+
+```tcl
+contactSurface 1 -master 2 3 12 12 11 11 2
+contactSurface 2 -slave 23 24 8 5
+contact 1 1 2 auto 500000.0 0.3 -outward 1.0 0.0
+```
+
+**Six tags for three segments.** `-master 2` (and, on the mortar lane,
+`-slave-segments 2`) takes a *flat stride-2 pair list chained head-to-tail* —
+`101 102  102 103  103 104`, not `101 102 103 104`. The four-tag shorthand is
+**silently legal** fork-side and declares two disjoint segments with a hole
+where the middle one should be: the deck converges, balances its reactions, and
+transmits the load through the wrong distribution. apeGmsh walks the chain out
+of the meshed PG's own edge connectivity, on both surfaces, so the holed form
+is unreachable by construction — which is the single strongest reason to route
+2D contact through the library rather than hand-writing the deck.
+
+**Orienting the interface — and why it matters more here than in 3D.** The 3D
+kernel computes a correct per-facet normal, so apeGmsh deliberately never
+auto-derives a global `outward` there. The 2D lanes instead take one
+interface-level sign from a centroid vote computed once at `handle()`, and that
+vote is genuinely ambiguous when the two surface centroids coincide. **A flush
+interface is the normal 2D case, not an edge case** — the masonry joint, the
+footing seated on soil, every zero-gap interface — so apeGmsh refuses a flush
+declaration by name and tells you what to add:
+
+- `outward=(ox, oy)` — a 2-component direction toward the slave's allowed
+  half-space. The **only** vector form the 2D lane accepts (a 3-vector with a
+  non-zero `oz` is refused), and it works on **both** formulations.
+- `outward="winding"` — declare the side through the master chain's own
+  traversal instead of a direction: every segment's normal is `perp(t)` of its
+  own tangent, so **the slave lies to the LEFT of chain travel**. Because the
+  sign is per-segment, this is the only thing that can orient a *curved* or
+  *closed* master, which no single direction vector can express. It needs one
+  connected chain, and a fork build carrying `-outward winding`.
+
+`outward="winding"` is **NTS-only**, and that asymmetry is permanent until the
+fork moves. The fork shipped declared winding on the NTS lane alone because its
+2D mortar lane runs no chain-integrity scan, so the one-connected-chain
+invariant winding leans on is not established there. Two consequences worth
+carrying rather than papering over: a flush **mortar** interface — the
+workhorse case — always needs an explicit `outward=(ox, oy)`, and a curved or
+closed **mortar** master stays undeclarable. apeGmsh refuses the combination at
+declaration, and the flush refusal on the mortar lane offers the vector alone,
+saying why.
+
+**Nothing fork-side catches a master pointed the wrong way**, on either lane:
+the centroid vote only picks a *sign*, so a master boundary on the far side of
+the body resolves happily and orients a contact against a boundary the slave
+never reaches. That guard is apeGmsh's, and it runs on both formulations.
+
+**`thickness=` — keep three conventions apart.** A plane model carries an
+out-of-plane thickness in three places, and only one of them is this parameter:
+
+| Where | What it does |
+|---|---|
+| `ops.element.FourNodeQuad(thickness=…)` | Baked into the **element's** own stiffness. Contact never re-reads or re-derives it. |
+| `contact(formulation="mortar", thickness=h)` → `-thickness h` | Scales the **explicit** `eps_n` / `eps_t` / `visc` / `cohesion` / `tau_max` and the tie stiffness — **once**, at the fork's 2D injection site. Fork default 1.0, so omitting it is bit-identical to `thickness=1.0`. |
+| `eps_n="auto"` | **Not** h-scaled: it already absorbs the element thickness through `getInitialStiff()`, so scaling it again would be an h² error. An `eps_t="auto"` — or an `eps_t` defaulted from `eps_n` under friction — inherits `eps_n`'s provenance, and h-scales only when `eps_n` is explicit. |
+
+`-thickness` is **mortar-only**: the NTS lane has no such parameter at all
+(`kn` there is a force per unit length of gap, never a pressure, and
+`kn="auto"` already folds the element's thickness), and a 3D model is refused
+by name. apeGmsh never invents an `h` from the declared element thickness.
+
+```python
+g.constraints.contact("rock_face", "liner_face",
+                      formulation="mortar", eps_n="auto",
+                      outward=(1.0, 0.0), thickness=0.30, name="bed")
+```
+
+```tcl
+contactSurface 1 -master 2 3 12 12 11 11 2
+contactSurface 2 -slave-segments 2 5 24 24 23 23 8
+contact 1 1 2 -mortar -epsN auto -thickness 0.3 -outward 1.0 0.0
+```
+
+**The rigid plane, in 2D.** `normal` and `point` become 2-vectors and the slave
+is a meshed boundary curve (or a point set); apeGmsh z-pads and emits the
+fork's permanently valid zero-padded 9-argument form, so there is only ever one
+grammar to read:
+
+```python
+g.constraints.contact_plane("footing", normal=(0.0, 1.0), point=(0.0, 0.0),
+                            kn=1.0e7, name="ground")
+```
+
+```tcl
+contactSurface 1 -slave 5 6 1 2
+contactPlane 1 1 0.0 1.0 0.0 0.0 0.0 0.0 10000000.0
+```
+
+**Meshing the interface.** Four properties of the mesh decide whether a 2D
+contact deck transmits anything at all, and none of them is visible in the
+declaration:
+
+1. **Seed a small initial overlap on the NTS lane.** A zero initial gap does
+   **not** arm it. Measured on a two-square deck of the shape above, pushed
+   into the interface under load control (fork build `e7555f2c9`): with the
+   bodies exactly coincident the very first Newton step diverges to `inf` and
+   the interface transmits `0.0`; offsetting the slave body `1e-4` into the
+   master, the identical deck converges and the summed normal contact force
+   closes on the applied `1.0e5` to five significant figures. The
+   **rigid-plane lane does not need this** — it arms from a zero gap.
+2. **Restrain the free body transversally.** 2D contact is normal-only, so a
+   body whose only other support is the interface keeps an unrestrained
+   transverse / rotational mode. When that mode is excited Newton drifts (a
+   measured increment norm of 5.3e+11) and the only thing that surfaces is a
+   misleading near-**PERPENDICULAR** warning about the interface geometry —
+   which sends you to inspect the mesh instead of the boundary conditions.
+3. **Size a curved master's facets from the expected penetration, not from the
+   surrounding mesh.** On a faceted arc the NTS narrow phase stops arming a
+   pair once its penetration exceeds roughly *twice* the local facet length, so
+   a deck seeded with a large initial penetration against a fine facet mesh
+   silently disarms the interior of the contact patch and collapses the load
+   onto a rim of surviving nodes. It looks exactly like ordinary discretization
+   error, and it is not. Worse: if the arc's facet length is driven by the same
+   `g.mesh.sizing` parameter as the surrounding elastic mesh — the natural
+   choice, and the one the sizing API makes easiest — **refining the mesh makes
+   it worse**. Drive the interface curve's size separately.
+4. **A closed loop works only if it is adequately refined.** A ring whose
+   facets are coarse relative to its own diameter converges, balances its
+   reactions, and transmits **exactly zero** — fork-measured on a unit regular
+   n-gon at the default cell size: `n <= 8` inert, `n >= 9` exact. The same
+   rule as (3), for a second reason: size a loop's facets from the loop's own
+   extent, never from the elastic mesh around it.
+
+**Gates.** Every node of both surfaces must carry the same coordinate size, and
+on the NTS / mortar / tie lanes the fork requires **`ndf == ndm` exactly** (the
+rigid plane alone keeps `ndf >= ndm`). Every violation is a named abort, never
+a silent DOF shift. **Parallel / DDM 2D contact is out of scope fork-side** and
+is refused by name on all three lanes — `contact` in either formulation, and
+`contact_plane` — as soon as the model is partitioned.
+
+`Ladruno_implementation/LadrunoContact2D_guide.md` in the fork is the authority
+on kernel behaviour: the vertex / corner policy, the D4 radial end-cap, the
+broad-phase `cell` sizing and the full units table live there, not here.
+
+
 ## 4. How constraints land in the broker
 
 After `get_fem_data()`, constraints are split across two composites
@@ -435,9 +668,14 @@ based on what solver commands they produce:
 instead of collocated shape functions, but a record is a record, so the
 three `enforce=` routes and the H5 schema are untouched.
 
-`mortar` is **not** in this table: as a deprecated alias for the fork
-contact-tie it resolves onto `fem.elements.contacts` as a `ContactRecord`,
-a separate serial-only subsystem, not onto the MP-constraint channels.
+**Contact is not in this table at all.** `contact` resolves onto
+`fem.elements.contacts` as a `ContactRecord` and `contact_plane` onto
+`fem.elements.contact_planes` as a `ContactPlaneRecord` — a separate
+serial-only subsystem emitted by `emit_contacts`, not the MP-constraint
+channels. `ContactRecord.master_nps` is the dimension discriminator: 3 or 4
+for a 3D tri/quad facet set, **2** for a 2D chained line segment
+(`ContactRecord.ndm` is derived from it, never stored). `mortar` lands there
+too, as a deprecated alias for the fork contact-tie.
 
 
 ## 5. Consuming constraints in a solver
@@ -548,6 +786,13 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
   phantom nodes must be created in the solver before emitting constraints.
 - **Set `tolerance` carefully** — too tight and no pairs are found; too
   loose and you couple nodes that shouldn't be coupled.
+- **Reach for `contact` only when the interface must open or slide** — it
+  costs the `LadrunoContact` handler (exclusive with any `enforce="equation"`
+  tie), a fork build at run time, and serial emit. Every Level 1–4 verb is a
+  cheaper answer when the bond is permanent.
+- **In 2D, decide the orientation before you mesh** — a flush interface is the
+  normal case and is refused without an `outward`; on the mortar lane the
+  vector is the only option there is.
 
 
 ## See also
@@ -559,6 +804,13 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
   `apeSees` (SSI-2.D extension)
 - [How-to: Tie non-matching meshes](../how-to/tie-meshes.md) — recipe for
   `tie` / `tied_contact` between non-conformal parts
+- `OpenSees/Ladruno_implementation/LadrunoContact2D_guide.md` — the fork's own
+  2D contact user guide: kernel behaviour, the vertex/corner policy, the D4
+  end-cap, the units table. **The authority** for anything Level 5 states
+  about what the solver does.
+- `contact_2d_adoption.md` — the adoption record for the 2D lane (fork ADR-85),
+  including what was measured on which fork build. Read its STATUS header
+  first; the body below it is pre-adoption history.
 
 
 ??? note "For maintainers — source map"
@@ -577,3 +829,7 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
     - `src/apeGmsh/opensees/_internal/build.py` — solver-side emission
       (`emit_mp_constraints` and the partitioned/stage variants)
     - `src/apeGmsh/_kernel/record_sets.py` — `NodeConstraintSet`, `SurfaceConstraintSet`
+    - `src/apeGmsh/_kernel/geometry/_boundary_chain.py` — the 2D master/slave
+      chain walk and the winding sign (Level 5)
+    - `src/apeGmsh/opensees/element/contact.py` — the `contactSurface` /
+      `contact` / `contactPlane` emit grammar

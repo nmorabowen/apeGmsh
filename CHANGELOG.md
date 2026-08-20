@@ -77,6 +77,47 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)
+
+`g.constraints.contact` / `contact_plane` were documented **nowhere** —
+`guide_constraints.md` reached them only as the redirect target of the
+deprecated `mortar()` alias, and the skill cheatsheet carried the signatures
+with no 2D content at all. S5 writes that section.
+
+`internal_docs/guide_constraints.md` gains **Level 5 — Contact**: the two
+formulations, `contact_plane`, where records land (`fem.elements.contacts` /
+`contact_planes`, serial-only, live-session-only, fork-run-only), and then the
+2D lane — the meshed dim-1 PG, the chained stride-2 pair list made
+hole-proof by construction, orientation (`outward=(ox, oy)` vs
+`outward="winding"`, and the **F1 asymmetry**: winding is NTS-only, so a flush
+mortar interface always needs the vector and a curved/closed mortar master
+stays undeclarable), the **three thickness conventions**, the 2D rigid plane,
+and the `ndf == ndm` / no-partitioning gates. The **curved-master facet-sizing
+warning** — which lived only in the internal, history-flagged
+`contact_2d_adoption.md` §4 — lands here, under *Meshing the interface*,
+alongside the three other mesh-side prerequisites (seed an NTS overlap;
+restrain the free body transversally; refine a closed loop or it transmits
+exactly zero); `guide_meshing.md` §5 gains a pointer to it, since "follow the
+elastic mesh" is the wrong move exactly there.
+
+`skills/apegmsh/references/api-cheatsheet.md` (canonical; `.claude/skills/`
+re-derived via `scripts/sync_skill.py`) gains a **2D contact** paragraph and 2D
+annotations on `outward=` / `contact_plane`, and its stale source-map footer is
+corrected (`ConstraintsComposite.py:298 → :624` for `contact`, `:497 → :989`
+for `contact_plane`, `:1835 → :2865` for `mortar`, plus `_boundary_chain.py`).
+On the published surface, `docs/concepts/constraints.md` gains *Contact in a
+plane model* (and `contact_plane`, previously unmentioned there), and
+`docs/concepts/backend-capabilities.md` names `contactPlane` and the
+serial-only / no-parallel-2D scope.
+
+Every snippet was run: the NTS, mortar-with-`-thickness` and rigid-plane
+declarations emit the decks quoted verbatim in the guide, and the two-square
+NTS deck was solved on fork build `e7555f2c9` — with a `1e-4` seeded overlap it
+converges and the summed normal contact force closes on the applied `1.0e5` to
+five significant figures, while the same deck with a **zero** initial gap
+diverges to `inf` at the first step and transmits `0.0`. Kernel behaviour is
+linked to the fork's `LadrunoContact2D_guide.md`, never restated.
+
 ### ADDED — 2-D mortar contact: `-slave-segments 2`, tie, and `-thickness` (fork ADR-85, adoption S4)
 
 `g.constraints.contact(..., formulation="mortar")` works in a 2-D model.
