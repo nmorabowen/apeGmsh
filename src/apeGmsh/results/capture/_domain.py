@@ -1019,24 +1019,43 @@ class DomainCapture:
             )
 
             components: dict[str, ndarray] = {}
-            # Translational
             axes = ("x", "y", "z")
-            for axis_idx in range(min(3, self._ndm)):
-                axis = axes[axis_idx]
-                shape = np.array([
-                    ops.nodeEigenvector(int(nid), mode_idx, axis_idx + 1)
-                    for nid in node_ids
-                ], dtype=np.float64)
-                components[f"displacement_{axis}"] = shape[None, :]
-            # Rotational (only when the model has rotational DOFs)
-            if self._ndf >= 6:
+            n_trans = min(3, self._ndm)
+            want_rotations = self._ndf >= 6
+
+            # ONE call per node, then slice — never a call per (node,
+            # DOF) index.
+            #
+            # Asking `nodeEigenvector(nid, mode, dof)` for dof 4-6 gated
+            # on the model ENVELOPE ndf cannot read a mixed-DOF model at
+            # all: in any solid + frame assembly the envelope is 6 while
+            # the solid nodes carry 3, and OpenSees answers "dofTag? too
+            # large" and raises. Every such model — the whole class this
+            # capture exists for — failed at the first mode.
+            #
+            # A node's own vector is as long as ITS ndf, so slicing it is
+            # correct per node with no envelope guesswork, and a node
+            # with no rotational DOFs contributes 0.0 to a rotation
+            # component that, for it, does not exist.
+            trans = np.zeros((n_trans, node_ids.size), dtype=np.float64)
+            rot = np.zeros((3, node_ids.size), dtype=np.float64)
+            for col, nid in enumerate(node_ids):
+                vec = ops.nodeEigenvector(int(nid), mode_idx)
+                for axis_idx in range(min(n_trans, len(vec))):
+                    trans[axis_idx, col] = vec[axis_idx]
+                if want_rotations and len(vec) >= 6:
+                    for axis_idx in range(3):
+                        rot[axis_idx, col] = vec[3 + axis_idx]
+
+            for axis_idx in range(n_trans):
+                components[f"displacement_{axes[axis_idx]}"] = (
+                    trans[axis_idx][None, :]
+                )
+            if want_rotations:
                 for axis_idx in range(3):
-                    axis = axes[axis_idx]
-                    shape = np.array([
-                        ops.nodeEigenvector(int(nid), mode_idx, axis_idx + 4)
-                        for nid in node_ids
-                    ], dtype=np.float64)
-                    components[f"rotation_{axis}"] = shape[None, :]
+                    components[f"rotation_{axes[axis_idx]}"] = (
+                        rot[axis_idx][None, :]
+                    )
 
             self._writer.write_nodes(
                 sid, "partition_0",

@@ -46,4 +46,4 @@ models:
     src: models/ssi_frame_wall/src
     entry: build.py
     cases: models/ssi_frame_wall/cases
-    canonical_cases: [c001_baseline_small]
+    canonical_cases: [c005_mixed_dof_fixed]

@@ -1,0 +1,18 @@
+{
+  "case": "c004_current_schema",
+  "model": "ssi_frame_wall",
+  "script": "models/ssi_frame_wall/src/build.py",
+  "ran_at": "2026-08-23T16:18:18Z",
+  "duration_s": 9.9,
+  "run_exit": 1,
+  "results": [
+    "results/model.h5",
+    "results/run.h5"
+  ],
+  "logs": [
+    "logs/run.log"
+  ],
+  "deck": "none \u2014 in-process run (see deck/README.md)",
+  "model_sha": "76a0c9fac7be6fe477425bc01a8a28c5acc8715d",
+  "git_dirty": true
+}
