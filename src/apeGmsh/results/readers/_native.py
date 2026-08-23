@@ -11,7 +11,7 @@ reads, fancy h5py indexing) if needed.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -34,6 +34,21 @@ if TYPE_CHECKING:
     import h5py
 
     from ...mesh.FEMData import FEMData
+
+
+#: ``ResultLevel.value`` -> the on-disk category group holding its
+#: per-element data. ONE table: ``available_components`` and
+#: ``available_components_for_elements`` must not drift about which
+#: levels are element-scoped. ``nodes`` and ``springs`` are absent
+#: deliberately — nodes live outside ``elements/``, and native writes
+#: no spring path at all.
+_ELEMENT_CATEGORY = {
+    "elements": _native.GROUP_NODAL_FORCES,
+    "line_stations": _native.GROUP_LINE_STATIONS,
+    "gauss": _native.GROUP_GAUSS_POINTS,
+    "fibers": _native.GROUP_FIBERS,
+    "layers": _native.GROUP_LAYERS,
+}
 
 
 class NativeReader:
@@ -307,6 +322,58 @@ class NativeReader:
             seen.update(self._partition_components(stage_id, pid, level))
         return sorted(seen)
 
+    def available_components_for_elements(
+        self,
+        stage_id: str,
+        level: ResultLevel,
+        element_ids: "np.ndarray | Sequence[int] | None",
+    ) -> list[str]:
+        """Like :meth:`available_components`, but only for ``element_ids``.
+
+        "Recorded on this stage" and "recorded for the elements this
+        pane draws" are different questions, and answering the first
+        when asked the second is how a viewer comes to offer
+        ``stress_zz`` on a pane scoped to shells that never recorded it
+        (ADR 0098 A6.6). Element-level components live per GROUP, and a
+        group is one element-homogeneity bucket, so the answer is: the
+        components of every group whose ``_element_index`` intersects
+        the set.
+
+        Cheap on purpose — one int64 index read per group, never a
+        value slab. The slab readers already read this dataset first
+        for exactly this masking (`read_gauss` &c.); this asks the
+        membership question alone.
+
+        ``element_ids=None`` means "every element", i.e. identical to
+        :meth:`available_components`. Node-level requests are answered
+        the same way, because nodal components are not element-scoped.
+        """
+        if element_ids is None or level.value in ("nodes", "springs"):
+            return self.available_components(stage_id, level)
+        wanted = np.asarray(element_ids, dtype=np.int64)
+        if wanted.size == 0:
+            return []
+        category = _ELEMENT_CATEGORY.get(level.value)
+        if category is None:
+            return []
+        seen: set[str] = set()
+        for pid in self.partitions(stage_id):
+            cat_path = (
+                f"{_native.elements_path(stage_id, pid)}/{category}"[1:]
+            )
+            if cat_path not in self._h5:
+                continue
+            cat_grp = self._h5[cat_path]
+            for group_id in cat_grp.keys():
+                sub = cat_grp[group_id]
+                index = sub.get(_native.DSET_ELEMENT_INDEX)
+                if index is None:
+                    continue
+                if not np.isin(np.asarray(index[...]), wanted).any():
+                    continue
+                seen.update(k for k in sub.keys() if not k.startswith("_"))
+        return sorted(seen)
+
     def _partition_components(
         self, stage_id: str, partition_id: str, level: ResultLevel,
     ) -> set[str]:
@@ -326,14 +393,7 @@ class NativeReader:
             return {k for k in grp.keys() if not k.startswith("_")}
 
         # Element-level: components live under groups inside the category.
-        category_map = {
-            "elements": _native.GROUP_NODAL_FORCES,
-            "line_stations": _native.GROUP_LINE_STATIONS,
-            "gauss": _native.GROUP_GAUSS_POINTS,
-            "fibers": _native.GROUP_FIBERS,
-            "layers": _native.GROUP_LAYERS,
-        }
-        category = category_map.get(level_value)
+        category = _ELEMENT_CATEGORY.get(level_value)
         if category is None:
             return set()
         cat_path = (
