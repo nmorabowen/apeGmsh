@@ -21,6 +21,12 @@ from apeGmsh.doctor import (
 )
 
 
+# A path that looks like it lives in somebody's home directory. The
+# separator class carries BOTH slashes on purpose — a Windows report
+# quotes ``C:\Users\...`` and a POSIX one ``/home/...``.
+HOME_PATH_RE = r"[A-Za-z]:[\\/]+Users[\\/]+|/home/"
+
+
 def _report(*findings: DoctorFinding) -> DoctorReport:
     return DoctorReport(
         python="3.11.0",
@@ -363,16 +369,37 @@ def test_doctor_source_hardcodes_no_user_path():
 
 
 def test_default_report_names_no_user_home(monkeypatch):
-    """With nothing configured, no finding may quote a home directory.
+    """With nothing configured, no finding may quote a SHIPPED home directory.
 
-    D2 legitimately echoes wherever apeGmsh actually resides, so it is
-    exempt — that path is discovered at runtime, not shipped.
+    Paths the doctor discovers at RUNTIME are exempt: D2 echoes wherever
+    apeGmsh actually resides, and D1 echoes ``sys.executable`` /
+    ``sys.prefix``. Reporting those is the report's whole job, and on any
+    machine whose venv lives under the user's home they match the pattern
+    below for reasons that have nothing to do with apeGmsh. Asserting on
+    them turned this into a check on the CI runner's directory layout --
+    it passed only because a hosted runner keeps its Python outside
+    /home, and failed on every developer venv under ~.
+
+    So: erase the runtime-discovered paths from the message first, then
+    assert nothing home-shaped survives. That still catches the thing
+    worth catching -- a user path baked into a message TEMPLATE. Its
+    source-level sibling is ``test_doctor_source_hardcodes_no_user_path``.
     """
     monkeypatch.delenv(doctor_mod._REFERENCE_VENV_ENV, raising=False)
     monkeypatch.delenv(doctor_mod._SHARED_PACKAGES_ENV, raising=False)
+    # Longest first: sys.prefix is a prefix of sys.executable, and
+    # replacing the short one first would leave the tail behind.
+    runtime_paths = sorted(
+        {str(Path(sys.executable)), str(Path(sys.prefix)),
+         str(Path(doctor_mod.__file__).resolve().parents[1])},
+        key=len, reverse=True,
+    )
     for f in (*doctor_mod._check_interpreter(),
               *doctor_mod._check_shared_packages()):
-        assert not re.search(r"[A-Za-z]:[\\/]+Users[\\/]+|/home/", f.message), (
+        redacted = f.message
+        for known in runtime_paths:
+            redacted = redacted.replace(known, "<runtime>")
+        assert not re.search(HOME_PATH_RE, redacted), (
             f"{f.code} quotes a home directory with nothing configured: "
             f"{f.message}"
         )

@@ -160,12 +160,19 @@ testpaths = ["tests"]
 # main checkout, so without this, pytest would silently test the wrong
 # source tree.
 pythonpath = ["src"]
-# importlib import mode keeps test package names independent of any
-# top-level Python module on the path. Required because
-# ``tests/opensees/`` collides with the ``opensees.pyd`` extension
-# shipped by the OpenSees binary install — without importlib mode,
-# pytest would try to import the test package as ``opensees.<module>``
-# and fail. importlib mode is also the modern pytest recommendation.
+# importlib import mode: the modern pytest recommendation, and it keeps
+# test modules out of sys.path.
+#
+# It does NOT make the test package NAMES independent of top-level
+# modules — this comment used to claim it did, and that claim cost the
+# suite 67 failures. pytest >= 8.1 resolves a module's dotted name by
+# walking UP the ``__init__.py`` chain in importlib mode too; the mode
+# governs how the module object is created, not what it is called. What
+# actually keeps ``tests/opensees/`` from being imported as bare
+# ``opensees`` (and shadowing the OpenSees extension for the whole
+# process) is ``tests/__init__.py``, which roots the walk one level
+# higher. Gated by tests/test_import_namespacing.py — read it before
+# deleting that file.
 # ``-m "not qt"`` deselects the real-window Qt lifecycle tests from the
 # default run: mixing pyvistaqt QtInteractor windows with the suite's
 # hundreds of offscreen pv.Plotter constructions (or with another qt
