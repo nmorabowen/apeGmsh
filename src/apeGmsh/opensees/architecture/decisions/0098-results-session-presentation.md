@@ -1979,7 +1979,21 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
 
 ### A6.6 Still owed
 
-* **G4 — the picker's vocabulary is scope-blind.** `recorded_components`
+* **G4 — DONE.** Shipped as `NativeReader.available_components_for_elements`
+  plus scope-aware `recorded_components` /
+  `recorded_line_components`. One `_element_index` read per group, never
+  a value slab: a group's components count only if its index intersects
+  the view's cells, and `_scope.resolve_scope` supplies those cells —
+  the SAME resolver realize uses, so picker and picture cannot disagree
+  about which elements the pane means. Nodal families are untouched
+  (not element-scoped). Deliberately NOT on the reader `Protocol`: the
+  viewer probes with `getattr` and falls back to the unscoped answer,
+  so the ladruno / mpco readers stay untouched and a backend that
+  cannot answer degrades to today's behaviour rather than emptying
+  every picker. Mutation-tested on both halves. The original statement
+  of the defect follows.
+
+* ~~**G4 — the picker's vocabulary is scope-blind.**~~ `recorded_components`
   answers with the whole stage's set regardless of the pane's scope, so
   the inspector offers `stress_zz` on a pane scoped to shells that
   recorded none, and the refusal arrives only after the user picks it.
@@ -2004,7 +2018,14 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
   emitting gizmo geometry and something owning it — closer in size to
   Amendment 5 than to a call.
 * **R2 — the bench records no shell stresses**, so `slabs` and `wall`
-  cannot be contoured at all. The fixture exists to cover the
+  cannot be contoured at all. **And it is now unopenable besides**: the
+  case's `model.h5` carries neutral schema `2.29.0` while the reader
+  requires 2.30-2.31, so `OpenSeesModel.from_h5` refuses it — main's
+  contact work bumped the schema under a fixture whose payload is
+  gitignored and therefore never migrated. The bench must be re-run to
+  be usable at all, which makes the shell-recording decision worth
+  settling first so the re-run happens once. A tracked `run.json` whose
+  artifacts cannot be read is provenance for nothing. The fixture exists to cover the
   multi-family case and currently does not, which is also why G2 needs
   a synthetic fixture rather than the bench.
 

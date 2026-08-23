@@ -835,6 +835,61 @@ def _resolve_instant(
     return instant.stage, instant.step
 
 
+def _scoped_element_ids(
+    session: "ResultsSession", view: "MeshView", results: "Results",
+) -> "Optional[np.ndarray]":
+    """The element ids this view draws, or ``None`` for all of them.
+
+    Reuses ``_scope.resolve_scope`` — the SAME resolver realize uses —
+    so "what the picker offers" and "what the picture can paint" cannot
+    disagree about which cells the pane means (A6.6). Any failure
+    answers ``None``: the unscoped vocabulary is the old behaviour, and
+    a broken scope must not silently empty every picker.
+    """
+    if view.scope is None:
+        return None
+    try:
+        scoped = resolve_scope(view.scope, ViewerData.from_fem(results.fem))
+    except Exception:
+        return None
+    return scoped.element_ids
+
+
+def _components_in_scope(
+    results: "Results",
+    stage_id: str,
+    element_ids: "Optional[np.ndarray]",
+) -> "dict[str, set[str]]":
+    """``{family: components}`` for the elements the view draws.
+
+    Falls back to the whole stage when the reader cannot answer the
+    scoped question — only the native reader implements it today, and a
+    backend that cannot is no reason to empty a picker.
+    """
+    whole = {
+        family: set(cols)
+        for family, cols in results.inspect.components(stage=stage_id).items()
+    }
+    if element_ids is None:
+        return whole
+    reader = getattr(results, "_reader", None)
+    scoped_fn = getattr(reader, "available_components_for_elements", None)
+    if scoped_fn is None:
+        return whole
+    from apeGmsh.results.readers import ResultLevel
+
+    for level in ResultLevel:
+        if level.value not in ("gauss", "line_stations", "elements"):
+            continue          # nodal families are not element-scoped
+        try:
+            whole[level.value] = set(
+                scoped_fn(stage_id, level, element_ids)
+            )
+        except Exception:
+            pass              # keep the unscoped answer for that family
+    return whole
+
+
 def recorded_components(
     session: "ResultsSession", view: "MeshView",
 ) -> "tuple[set[str], set[str]]":
@@ -846,13 +901,24 @@ def recorded_components(
     applies, so a control and the picture it describes cannot disagree
     about which stage they mean. Empty sets when anything is missing —
     a disabled control, never an error.
+
+    **Scope-aware since A6.6.** It answered with the whole stage's set
+    regardless of what the pane draws, so the inspector offered
+    ``stress_zz`` on a view scoped to shells that recorded none and the
+    refusal arrived only after the user picked it — measured as an
+    identical six-component list under ``soil+raft``, ``slabs+wall`` and
+    ``columns+beams`` while only the solids carried Gauss stress. Now
+    the element-level families are asked about the view's OWN cells.
+    Nodal components are not element-scoped and are unchanged.
     """
     results = session.results
     if results is None:
         return set(), set()
     try:
         stage_id, _step = _resolve_instant(session, view, results)
-        components = results.inspect.components(stage=stage_id)
+        components = _components_in_scope(
+            results, stage_id, _scoped_element_ids(session, view, results),
+        )
     except Exception:
         return set(), set()
     return (
@@ -876,15 +942,18 @@ def recorded_line_components(
     where a line component can never appear, so the row offered nothing
     and its Add button was permanently dead while `view.line = Line(...)`
     from a script drew the diagram perfectly well. Same §7 instant law
-    as its sibling, and the same empty-on-anything-missing rule: a
-    disabled control, never an error.
+    as its sibling, the same empty-on-anything-missing rule (a disabled
+    control, never an error), and the same A6.6 scope-awareness — a
+    line diagram is refused on a scope holding no sectioned beam.
     """
     results = session.results
     if results is None:
         return set()
     try:
         stage_id, _step = _resolve_instant(session, view, results)
-        components = results.inspect.components(stage=stage_id)
+        components = _components_in_scope(
+            results, stage_id, _scoped_element_ids(session, view, results),
+        )
     except Exception:
         return set()
     return set(components.get("line_stations", ()))

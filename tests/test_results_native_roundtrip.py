@@ -244,3 +244,64 @@ def test_fibers_roundtrip(tmp_path: Path) -> None:
         np.testing.assert_allclose(slab.area, area)
         np.testing.assert_array_equal(slab.material_tag, mat)
         np.testing.assert_allclose(slab.values, sigma)
+
+
+def test_available_components_for_elements(tmp_path: Path) -> None:
+    """ADR 0098 A6.6 — "recorded on this stage" and "recorded for the
+    elements this pane draws" are different questions.
+
+    Two groups, different components. Asking about elements in one must
+    not report the other's, which is what let a viewer offer a quantity
+    the scoped cells could never paint.
+    """
+    path = tmp_path / "scoped.h5"
+    time = np.array([0.0])
+    nat = np.array([[0.0]], dtype=np.float64)
+    solids = np.array([1, 2], dtype=np.int64)
+    shells = np.array([7, 8], dtype=np.int64)
+
+    with NativeWriter(path) as w:
+        w.open()
+        sid = w.begin_stage(name="s", kind="static", time=time)
+        w.write_gauss_group(
+            sid, "partition_0", "group_0",
+            class_tag=4, int_rule=1,
+            element_index=solids, natural_coords=nat,
+            components={"stress_xx": np.zeros((1, 2, 1))},
+        )
+        w.write_gauss_group(
+            sid, "partition_0", "group_1",
+            class_tag=9, int_rule=1,
+            element_index=shells, natural_coords=nat,
+            components={"membrane_nxx": np.zeros((1, 2, 1))},
+        )
+        w.end_stage()
+
+    with NativeReader(path) as r:
+        level = ResultLevel.GAUSS
+        assert r.available_components(sid, level) == [
+            "membrane_nxx", "stress_xx",
+        ]
+        assert r.available_components_for_elements(
+            sid, level, solids) == ["stress_xx"]
+        assert r.available_components_for_elements(
+            sid, level, shells) == ["membrane_nxx"]
+        # A scope spanning both sees both: the picture paints whichever
+        # half has data, so the picker must offer both.
+        assert r.available_components_for_elements(
+            sid, level, np.concatenate([solids, shells])) == [
+            "membrane_nxx", "stress_xx",
+        ]
+        # None means "every element" — identical to the unscoped answer.
+        assert r.available_components_for_elements(
+            sid, level, None) == r.available_components(sid, level)
+        # An empty scope records nothing, which is not the same as all.
+        assert r.available_components_for_elements(
+            sid, level, np.array([], dtype=np.int64)) == []
+        # An element no group holds.
+        assert r.available_components_for_elements(
+            sid, level, np.array([999], dtype=np.int64)) == []
+        # Nodes are not element-scoped, so the filter cannot narrow them.
+        assert r.available_components_for_elements(
+            sid, ResultLevel.NODES, solids,
+        ) == r.available_components(sid, ResultLevel.NODES)
