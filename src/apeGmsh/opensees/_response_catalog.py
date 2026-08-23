@@ -2449,6 +2449,46 @@ PER_MATERIAL_STRAIN_CLASSES: frozenset[str] = frozenset({
 })
 
 
+# Shell classes whose element-level ``ops.eleResponse(eid, "stresses"
+# / "strains")`` returns a correctly SIZED vector of ZEROS after a
+# converged analysis: ``materialPointers[i]->getStressResultant()``
+# never sees the committed state. The elements themselves are fine —
+# displacements and the ``"forces"`` keyword are correct — only the
+# per-Gauss-point probe is dead. Measured on the Ladruno build
+# (2026-08-23) with a loaded 1-element plate: ShellMITC4 / ShellDKGQ /
+# ShellNLDKGQ all returned max|σ| = 0 where ASDShellQ4 returned
+# 2.0e4 for the identical model and the identical tip displacement.
+# ShellDKGT / ShellNLDKGT are included on the prior measurement
+# recorded in tests/test_results_catalog_shells_real.py, not re-run.
+#
+# The catalog entries stay: MPCO does not use this path (it probes
+# sections directly) and reads these classes correctly. Only the
+# DomainCapture route must refuse them — a slab of zeros contours to
+# one flat colour, which reads as "the wall is unstressed" rather
+# than "nothing was measured".
+# ShellMITC9 is deliberately NOT here: it fails loudly (setResponse
+# declares Vector(72), getResponse stores Vector(84)) and the size
+# check already raises with a hint. This set is for the SILENT ones.
+ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
+    "ShellMITC4",
+    "ShellDKGQ",
+    "ShellNLDKGQ",
+    "ShellDKGT",
+    "ShellNLDKGT",
+})
+
+
+def has_dead_gauss_probe(class_name: str) -> bool:
+    """Whether live ``eleResponse`` gauss capture is known-broken here.
+
+    True for the upstream shells in :data:`ZERO_GAUSS_PROBE_CLASSES`.
+    Callers on the DomainCapture route should skip the element with a
+    reason rather than record its zeros; the MPCO / file-recorder
+    routes are unaffected and should NOT consult this.
+    """
+    return class_name in ZERO_GAUSS_PROBE_CLASSES
+
+
 def needs_per_material_strain(class_name: str, catalog_token: str) -> bool:
     """Whether DomainCapture / recorder emit must use per-Gauss-point queries.
 

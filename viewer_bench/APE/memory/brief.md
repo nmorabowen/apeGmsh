@@ -34,8 +34,8 @@ one source of truth, or the two drift.
 | columns | 0.50 × 0.50 | 3.2 m | `forceBeamColumn`, elastic section |
 | beams | 0.30 × 0.50 | 6.0 m | 3 levels, 2 × 2 bays |
 | grade beams | 0.40 × 0.60 | 6.0 m | z = 0 grillage; the tie's slave set |
-| shear wall | t = 0.25 m | 6 × 9.6 m | `ShellMITC4`, one edge bay |
-| slabs | t = 0.15 m | 12 × 12 m | `ShellMITC4`, 3 levels |
+| shear wall | t = 0.25 m | 6 × 9.6 m | `ASDShellQ4`, one edge bay |
+| slabs | t = 0.15 m | 12 × 12 m | `ASDShellQ4`, 3 levels |
 
 Gravity acts −z, applied as consistent nodal loads on the `dead` case
 (raft volume, slab/wall traction, frame line load). The structure is
@@ -64,7 +64,9 @@ the soil box is fixed at its base and rollered on its sides.
 kN·m·s·t, fully elastic. A 30 × 30 × 15 m soil block with a 14 × 14 × 0.8 m
 raft fragmented into its top surface (conforming, shared nodes), carrying a
 3-storey 2 × 2-bay frame at 6 m bays and 3.2 m storeys: `forceBeamColumn`
-columns/beams/grade-beams, `ShellMITC4` wall and slabs. Solid nodes are
+columns/beams/grade-beams, `ASDShellQ4` wall and slabs (NOT `ShellMITC4`:
+its per-Gauss-point stress probe returns zeros, so the shells would
+record a flat contour — see `ZERO_GAUSS_PROBE_CLASSES`). Solid nodes are
 ndf 3 and frame/shell nodes ndf 6; they meet only through
 `ASDEmbeddedNodeElement` ties on the z = 0 grade-beam grillage. Soil base
 fixed, sides rollered, soil self-weight deliberately off. Gravity ramps

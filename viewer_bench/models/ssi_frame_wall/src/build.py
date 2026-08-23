@@ -6,7 +6,7 @@ every part of the ADR 0098 ``ResultsSession`` surface real data:
     soil block (tet4)  ──  raft (tet4, conforming)
                             │  embedded tie, rotational
                             └─ grade beams ── columns / beams (forceBeamColumn)
-                                            ── shear wall / slabs (ShellMITC4)
+                                            ── shear wall / slabs (ASDShellQ4)
 
 Three element families, two materials, nine physical groups, three
 stages (gravity / modes / dynamic), and captures for every slot in the
@@ -276,9 +276,15 @@ def declare_model(fem, bc: dict):
             pg=name, transf=transf,
             integration=ops.beamIntegration.Lobatto(section=sec, n_ip=5))
 
-    ops.element.ShellMITC4(pg="slabs", section=ops.section.ElasticMembranePlateSection(
+    # ASDShellQ4, not ShellMITC4: the upstream shells return a correctly
+    # sized vector of ZEROS from ops.eleResponse(eid, "stresses"), so a
+    # bench built from them records shell resultants that contour one
+    # flat colour. Measured side by side on a loaded 1-element plate —
+    # identical tip displacement, max|σ| = 0 vs 2.0e4. See
+    # _response_catalog.ZERO_GAUSS_PROBE_CLASSES.
+    ops.element.ASDShellQ4(pg="slabs", section=ops.section.ElasticMembranePlateSection(
         E=E_CONC, nu=NU_CONC, h=T_SLAB, rho=RHO_CONC))
-    ops.element.ShellMITC4(pg="wall", section=ops.section.ElasticMembranePlateSection(
+    ops.element.ASDShellQ4(pg="wall", section=ops.section.ElasticMembranePlateSection(
         E=E_CONC, nu=NU_CONC, h=T_WALL, rho=RHO_CONC))
 
     ops.fix(nodes=bc["base"], dofs=(1, 1, 1))
@@ -309,27 +315,17 @@ def capture_spec(ops, fem, bc: dict) -> DomainCaptureSpec:
     spec.nodes(ids=bc["base"] + bc["sides"], components="reaction_force")
     # the gauss slot (and the contour's unaveraged twin)
     spec.gauss(components="stress", pg=["soil", "raft"])
-    # The SHELLS record NOTHING colour-mappable, and that is a gap in
-    # the library, not a choice here. A ShellMITC4 has no Cauchy stress
-    # tensor: `-stresses` returns its eight RESULTANTS, so the six
-    # `stress_*` components are a solid-only vocabulary. The resultants
-    # ARE the shell-side answer and the capture machinery is written for
-    # them — `_domain._gauss_record_tokens` documents a shell record of
-    # `("membrane_force_xx", "bending_moment_yy", "transverse_shear_xz")`
-    # routing through one `ops.eleResponse(eid, "stresses")` call, and
-    # `_vocabulary.SHELL_STRESS_RESULTANTS` names all eight.
+    # The shell half of the gauss slot. A shell has no Cauchy stress
+    # tensor: `-stresses` returns its eight RESULTANTS, so `stress_*`
+    # is a solid-only vocabulary and this is the shell-side answer.
+    # Its own record, not a second pg on the one above: the two carry
+    # different component sets, and a gauss record is one
+    # `ops.eleResponse` layout.
     #
-    # They are not reachable. `SHELL_STRESS_RESULTANTS` was never wired
-    # into `ALL_CANONICAL`, so `spec.gauss(components=[...])` ACCEPTS
-    # them at declaration and dies at resolve with "Unknown component
-    # 'membrane_force_xx'". `von_mises_shell` is in the spec catalog but
-    # is DERIVED from those resultants, so a record holding only it is
-    # refused too ("no continuum stress/strain components").
-    #
-    # So `slabs` and `wall` stay uncontourable until the vocabulary is
-    # wired. Recorded rather than silently skipped, because a fixture
-    # that quietly omits its own multi-family case is how the viewer
-    # shipped a picker nobody could reach (ADR 0098 A6).
+    # This is what makes the fixture cover the multi-family case the
+    # picker law (ADR 0098 A6.6 G4) is about — `soil+raft` and
+    # `slabs+wall` must now offer DIFFERENT component lists.
+    spec.gauss(components="shell_resultant", pg=["slabs", "wall"])
     # the line slot
     spec.line_stations(
         components=["axial_force", "shear_y", "shear_z",
