@@ -187,6 +187,26 @@ reads each node's whole eigenvector in one call, which is correct for
 mixed ndf and 6× fewer solver calls besides.
 (`src/apeGmsh/results/capture/_domain.py`)
 
+> **This entry was wrong for a while, and how it went wrong is worth
+> more than the fix.** The repair was made in the worktree where this
+> bench was built and **never merged**; the paragraph claiming it was
+> fixed *was* merged, with the bench itself. So `main` carried a
+> document asserting a fix that its code did not contain, and every
+> mixed-DOF model still died at the first mode. It surfaced only when
+> the bench was re-run months later and failed at exactly the line the
+> README said was repaired.
+>
+> Two things to take from it. A findings list copied forward is a
+> claim about code, and claims about code have to be re-checked
+> against the code — a green document is not a green test. And the
+> reason nothing else caught it: the fix shipped with no regression
+> test, so there was nothing to notice its absence. The test now
+> exists (`tests/test_results_domain_capture.py`,
+> `test_capture_modes_reads_a_mixed_dof_model`), and it needed the
+> `_FakeOps` double to be made **strict** first — the double answered
+> `0.0` for a DOF the node does not have, where real openseespy
+> raises, so a lenient double would have passed the buggy code.
+
 **Fixed by ADR 0098 Amendment 3 — the pane host was never the central
 widget, and making it one crashed the window.** These were one finding,
 not two, and that is what made the answer a design change rather than a

@@ -25,7 +25,11 @@ from apeGmsh.results.session import (
     Contour, Deform, Instant, Line, PlotSeries, PlotSource, Scope,
 )
 
-CANONICAL_CASE = "c001_baseline_small"
+#: c001 is unreadable on current apeGmsh — its model.h5 carries
+#: neutral schema 2.29.0 and the reader wants 2.30-2.31. The
+#: payload is gitignored, so a schema bump silently strands
+#: every case that is not re-run.
+CANONICAL_CASE = "c005_mixed_dof_fixed"
 
 
 def main() -> None:

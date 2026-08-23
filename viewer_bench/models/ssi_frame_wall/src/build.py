@@ -309,6 +309,27 @@ def capture_spec(ops, fem, bc: dict) -> DomainCaptureSpec:
     spec.nodes(ids=bc["base"] + bc["sides"], components="reaction_force")
     # the gauss slot (and the contour's unaveraged twin)
     spec.gauss(components="stress", pg=["soil", "raft"])
+    # The SHELLS record NOTHING colour-mappable, and that is a gap in
+    # the library, not a choice here. A ShellMITC4 has no Cauchy stress
+    # tensor: `-stresses` returns its eight RESULTANTS, so the six
+    # `stress_*` components are a solid-only vocabulary. The resultants
+    # ARE the shell-side answer and the capture machinery is written for
+    # them — `_domain._gauss_record_tokens` documents a shell record of
+    # `("membrane_force_xx", "bending_moment_yy", "transverse_shear_xz")`
+    # routing through one `ops.eleResponse(eid, "stresses")` call, and
+    # `_vocabulary.SHELL_STRESS_RESULTANTS` names all eight.
+    #
+    # They are not reachable. `SHELL_STRESS_RESULTANTS` was never wired
+    # into `ALL_CANONICAL`, so `spec.gauss(components=[...])` ACCEPTS
+    # them at declaration and dies at resolve with "Unknown component
+    # 'membrane_force_xx'". `von_mises_shell` is in the spec catalog but
+    # is DERIVED from those resultants, so a record holding only it is
+    # refused too ("no continuum stress/strain components").
+    #
+    # So `slabs` and `wall` stay uncontourable until the vocabulary is
+    # wired. Recorded rather than silently skipped, because a fixture
+    # that quietly omits its own multi-family case is how the viewer
+    # shipped a picker nobody could reach (ADR 0098 A6).
     # the line slot
     spec.line_stations(
         components=["axial_force", "shear_y", "shear_z",

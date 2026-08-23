@@ -43,6 +43,8 @@ class _FakeOps:
         # Mode shapes: {(nid, mode, dof): value}
         self.eigen_vector_table: dict[tuple[int, int, int], float] = {}
         self.eigenvalues: list[float] = []
+        # {nid: ndf} for nodes NARROWER than the model envelope.
+        self.node_ndf: dict[int, int] = {}
         self.reactions_called: int = 0
 
     # Per-step accessors
@@ -71,8 +73,32 @@ class _FakeOps:
     def eigen(self, n_modes: int) -> list[float]:
         return list(self.eigenvalues[:n_modes])
 
-    def nodeEigenvector(self, nid: int, mode: int, dof: int) -> float:
-        return self.eigen_vector_table.get((nid, mode, dof), 0.0)
+    def nodeEigenvector(self, nid: int, mode: int, dof: int = 0):
+        """openseespy's two shapes — and its STRICTNESS.
+
+        Called with a ``dof`` it returns that one entry; called without,
+        the node's whole eigenvector. The strictness is the point: real
+        openseespy RAISES for a dof beyond the node's own ndf ("dofTag?
+        too large"), and a double that answered 0.0 instead would let a
+        caller which asks every node for DOF 4-6 pass a test that the
+        real solver fails. That leniency is exactly how the mixed-DOF
+        defect survived.
+
+        ``node_ndf`` (default 6) makes a node narrower than the model
+        envelope, which is the mixed-DOF case.
+        """
+        ndf = self.node_ndf.get(nid, 6)
+        if dof:
+            if dof > ndf:
+                raise RuntimeError(
+                    f"nodeEigenvector nodeTag? dof? - dofTag? too large: "
+                    f"node {nid} has ndf {ndf}, asked for dof {dof}"
+                )
+            return self.eigen_vector_table.get((nid, mode, dof), 0.0)
+        return [
+            self.eigen_vector_table.get((nid, mode, d), 0.0)
+            for d in range(1, ndf + 1)
+        ]
 
 
 # =====================================================================
@@ -399,6 +425,91 @@ def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
         np.testing.assert_allclose(
             m.nodes.get(component="rotation_z").values, [[0.6]]
         )
+
+
+def test_capture_modes_reads_a_mixed_dof_model(tmp_path: Path) -> None:
+    """A solid + frame assembly must be capturable.
+
+    The envelope ndf is 6 while the solid nodes carry 3, and the old
+    code gated rotational capture on the ENVELOPE and then asked every
+    node for DOF 4-6 by index — so OpenSees answered "dofTag? too
+    large" and raised at the first mode. No mixed-DOF model could
+    record a mode shape at all, which is the whole class this capture
+    exists for.
+
+    Node 1 is a 6-DOF frame node, node 2 a 3-DOF solid node. Node 2
+    contributes 0.0 to the rotation components — for it they do not
+    exist — while node 1 carries its real values.
+    """
+    fem = _MockFem([1, 2])
+    spec = _make_spec(
+        ResolvedDomainCaptureRecord(
+            category="modal", name="m",
+            components=(), dt=None, n_steps=None, n_modes=1,
+        ),
+        snapshot_id=fem.snapshot_id,
+    )
+    fake = _FakeOps()
+    fake.eigenvalues = [50.0]
+    fake.node_ndf = {1: 6, 2: 3}          # the mixed model
+    for dof in range(1, 7):
+        fake.eigen_vector_table[(1, 1, dof)] = float(dof) * 0.1
+    for dof in range(1, 4):
+        fake.eigen_vector_table[(2, 1, dof)] = float(dof) * 0.01
+
+    path = tmp_path / "mixed.h5"
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
+        cap.capture_modes()
+
+    from apeGmsh.results import Results
+    with Results.from_native(
+        path, fem=fem, model=_open_model_from_h5(path),
+    ) as r:
+        m = r.modes[0]
+        np.testing.assert_allclose(
+            m.nodes.get(component="displacement_x").values, [[0.1, 0.01]],
+        )
+        # The 3-DOF node has no rotation; the 6-DOF node keeps its own.
+        np.testing.assert_allclose(
+            m.nodes.get(component="rotation_z").values, [[0.6, 0.0]],
+        )
+
+
+def test_capture_modes_asks_each_node_once_per_mode(tmp_path: Path) -> None:
+    """One whole-vector read per node, not one per (node, DOF).
+
+    The correctness fix and the cost fix are the same change: six
+    indexed calls per node became one. Counting them is what stops a
+    future edit quietly reintroducing the per-DOF loop.
+    """
+    fem = _MockFem([1, 2])
+    spec = _make_spec(
+        ResolvedDomainCaptureRecord(
+            category="modal", name="m",
+            components=(), dt=None, n_steps=None, n_modes=2,
+        ),
+        snapshot_id=fem.snapshot_id,
+    )
+    fake = _FakeOps()
+    fake.eigenvalues = [50.0, 90.0]
+    calls: list[tuple] = []
+    inner = fake.nodeEigenvector
+
+    def counting(nid, mode, dof=0):
+        calls.append((nid, mode, dof))
+        return inner(nid, mode, dof)
+
+    fake.nodeEigenvector = counting        # type: ignore[assignment]
+
+    path = tmp_path / "counted.h5"
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
+        cap.capture_modes()
+
+    assert len(calls) == 4, calls          # 2 nodes x 2 modes
+    assert all(dof == 0 for _n, _m, dof in calls), (
+        "capture_modes must read whole eigenvectors, never DOF indices "
+        "— indexing is what cannot survive a mixed-DOF model."
+    )
 
 
 # =====================================================================
