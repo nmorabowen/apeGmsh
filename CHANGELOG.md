@@ -77,6 +77,40 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### DOCS — `h5-schema.md` registry re-sync + doc-sync ratchet
+
+`src/apeGmsh/opensees/architecture/h5-schema.md` had drifted well
+behind `mesh/_femdata_h5_io.py` / `opensees/emitter/h5.py`: the
+zone-registry "Current" column was frozen at neutral `2.10.0` /
+opensees `2.12.0` (live constants: `2.31.0` / `2.20.0`), the
+neutral-zone history stopped at `2.10.0` even though the
+`NEUTRAL_SCHEMA_VERSION` docstring — the actual canonical log — runs
+21 versions further, `/nodes` and `/elements/{type}` omitted the
+always-written `module_label` dataset (schema 2.9.0) and the optional
+`ndf` (2.7.0) / `provenance` (2.11.0) columns, the top-level tree still
+showed the pre-2.26.1 `/loads/sp/default` single-dataset shape, the
+"Two zones" bullet list named 8 of the ~18 top-level groups
+`write_neutral_zone` actually writes (missing `/mesh_selections`,
+`/partitions`, `/parts`, `/reinforce_ties`, `/embed_ties`,
+`/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`,
+`/composed_from`), and the `/meta/lineage` note credited the stamp to
+"the composer" only when `write_fem_h5` (the broker-only `fem.to_h5()`
+path) stamps `fem_hash` there too. Every number and dataset name below
+was re-read from the code, not carried over from the stale doc.
+
+No schema bump — this is a doc-only re-sync; `NEUTRAL_SCHEMA_VERSION`,
+`SCHEMA_VERSION`, and every other schema constant are unchanged.
+
+Two new ratchet tests in `tests/opensees/h5/test_h5_schema_compat.py`
+close the gap so this can't silently drift again:
+`test_h5_schema_doc_registry_matches_writer_constants` compares the
+doc's zone-registry "Current" cells against the live
+`NEUTRAL_SCHEMA_VERSION` / `SCHEMA_VERSION` constants, and
+`test_h5_schema_doc_names_every_neutral_zone_group` scans
+`write_neutral_zone`'s own source for every group/dataset it creates
+and asserts each is named somewhere in the doc — both fail loud (proven
+by deliberately reverting the doc and re-running before restoring it)
+instead of the doc quietly going stale again.
 ### ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)
 
 Three additive gaps closed at once, all found while an out-of-process
