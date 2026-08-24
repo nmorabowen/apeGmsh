@@ -85,7 +85,7 @@ selections — but it was documented only internally, in
 `opensees/architecture/h5-schema.md`, which is written for people
 changing the emitter rather than people reading its output.
 
-[`docs/design/model-h5-neutral-zone.md`](docs/design/model-h5-neutral-zone.md)
+[`design/model-h5-neutral-zone.md`](design/model-h5-neutral-zone.md)
 publishes it: every group and dataset with exact dtype, shape,
 attributes and optionality; the version rule as the code enforces it
 (semver strings under `/meta/neutral_schema_version`, the backward-only
