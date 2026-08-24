@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-ladrunobuild-can-report-a-stale-hash-and-the-s5-contact-measurement-was-mis-stamped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ladrunoBuild can report a STALE hash, and the S5 contact measurement was mis-stamped
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8560,6 +8571,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-ladrunobuild-can-report-a-stale-hash-and-the-s5-contact-measurement-was-mis-stamped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ladrunoBuild can report a STALE hash, and the S5 contact measurement was mis-stamped
       
     </span>
   </a>
@@ -13558,6 +13580,38 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-ladrunobuild-can-report-a-stale-hash-and-the-s5-contact-measurement-was-mis-stamped">FIXED — <code>ladrunoBuild</code> can report a STALE hash, and the S5 contact measurement was mis-stamped<a class="headerlink" href="#fixed-ladrunobuild-can-report-a-stale-hash-and-the-s5-contact-measurement-was-mis-stamped" title="Permanent link">&para;</a></h3>
+<p>The fork's <code>ladrunoBuild</code> stamp is baked at CMake <strong>configure</strong> time, not at
+compile time. Check out a newer commit into an already-configured build tree,
+rebuild incrementally, and the binary carries the new code while still
+reporting the hash it was configured at. <code>skills/apegmsh/references/ladruno.md</code>
+said the stamp was "the git hash the engine binary was compiled from" and told
+you to fail loud on a mismatch — true as far as it went, but it left the
+dangerous direction undocumented: a mismatch can mean the binary is <strong>newer</strong>
+than its stamp, and a measurement then gets credited to a build that never
+produced it.</p>
+<p>Caught the hard way. A worktree binary reporting <code>e7555f2c9</code> was used to
+measure the adoption-S5 contact figures; probing it with a deliberately
+disjoint 2-D master under <code>-outward winding</code> made it emit ADR-85 <strong>F1</strong>'s own
+named FATAL verbatim — F1 landed in <code>52938956b</code>, well after <code>e7555f2c9</code>. So
+that binary was post-F1 and its stamp was three weeks stale.</p>
+<p>The measurement itself stands: re-run on a freshly <code>rebuild</code>-ed binary whose
+stamp is trustworthy (<code>b17e8bd82</code>, <code>build/</code> wiped so CMake reconfigured), a
+flush two-square NTS deck at zero initial gap still diverges on the first
+Newton step and transmits <code>0.0</code>, and the same deck with a <code>1e-4</code> seeded overlap
+still converges with the summed normal contact force at <code>100005.02</code> against an
+applied <code>1.0e5</code>. Only the attribution was wrong. <code>guide_constraints.md</code> §3
+Level 5 is re-stamped to <code>b17e8bd82</code>, and <code>ladruno.md</code> gains the staleness
+caveat plus the way to identify a suspect binary — probe a <em>behaviour</em> only the
+newer code has, since a named refusal needs no converged run.</p>
+<p>Also verified on that build: <code>outward="winding"</code> and <code>outward=(1.0, 0.0)</code> over
+identical geometry are <strong>byte-for-byte identical</strong> across every slave DOF and
+contact force — the first end-to-end execution of apeGmsh's winding emit
+against a fork binary that implements the keyword.</p>
+<p>Note for whoever revisits S4: its <code>-thickness</code> figures carry a
+<code>e7555f2c9</code> stamp from the same worktree binary and inherit the same
+provenance doubt. The numbers were internally consistent and are not
+re-measured here.</p>
 <h3 id="added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment">ADDED — the <code>model.h5</code> neutral zone is a published contract (ADR 0023 amendment)<a class="headerlink" href="#added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment" title="Permanent link">&para;</a></h3>
 <p>The neutral zone has always been the part of <code>model.h5</code> a non-apeGmsh
 tool can actually use — nodes, elements, physical groups, labels, mesh
