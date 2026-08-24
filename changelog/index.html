@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — S4's three -thickness conventions re-measured on a trustworthy build
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8593,6 +8604,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — S4's three -thickness conventions re-measured on a trustworthy build
       
     </span>
   </a>
@@ -13624,6 +13646,48 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build">CHANGED — S4's three <code>-thickness</code> conventions re-measured on a trustworthy build<a class="headerlink" href="#changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build" title="Permanent link">&para;</a></h3>
+<p>The adoption-S4 figures were credited to fork build <code>e7555f2c9</code>. That stamp was
+wrong — the worktree binary that produced them misreported its own hash (it
+contained ADR-85 <strong>F1</strong>, which landed after <code>e7555f2c9</code>; see the <code>ladrunoBuild</code>
+staleness entry). The numbers were internally consistent, so the earlier
+correction flagged the provenance and left them alone. They are now re-measured
+against <strong><code>b17e8bd82</code></strong>, whose stamp is trustworthy because <code>rebuild</code> wipes
+<code>build/</code> and forces a CMake reconfigure.</p>
+<p><strong>All three conventions hold.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Convention</th>
+<th>Result on <code>b17e8bd82</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>absent ≡ <code>-thickness 1.0</code></td>
+<td>bit-identical — <code>5.051658913343455e-07</code> both</td>
+</tr>
+<tr>
+<td><code>h</code> applied <strong>once</strong>, not squared</td>
+<td>penetration ratio <code>h=0.5 : h=1.0</code> = <strong>2.0</strong></td>
+</tr>
+<tr>
+<td><code>-epsN auto</code> never h-scaled</td>
+<td>bit-identical at <code>h=1.0</code> vs <code>0.5</code> — <code>3.2823219478178336e-06</code> both</td>
+</tr>
+</tbody>
+</table>
+<p>The middle one is worth a note, because a single deck does <em>not</em> return exactly
+2. Sweeping <code>epsN</code> across five decades gives 1.99978 (1e8), 1.99808 (1e9),
+1.99392 (1e10), 1.99995 (1e11), <strong>2.000000018</strong> (1e12). The interface force is
+fixed by equilibrium, so penetration goes as <code>1/(epsN·h)</code> and the ratio tends to
+exactly 2 as the interface stiffens; the sub-1 % wobble at intermediate
+stiffness is elastic coupling in the bodies, not an <code>h²</code> effect — which would
+have shown as <strong>4.0</strong>, and never does at any stiffness.</p>
+<p>Absolute values differ from the originals because the rig differs. What is
+pinned is the law, and each law reproduces. The S4 <strong>tie</strong> equilibrium residual
+(<code>0</code> to <code>2.3e-10</code> on a <code>1e6</code> load) was not re-measured and keeps its original
+provenance caveat.</p>
 <h3 id="fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving">FIXED — <code>DomainCapture</code> queried a different OpenSees module than the bridge was driving<a class="headerlink" href="#fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving" title="Permanent link">&para;</a></h3>
 <p><code>DomainCapture._lazy_ops()</code> resolved its OpenSees module by
 <code>import openseespy.opensees</code>, while a live :class:<code>LiveOpsEmitter</code> imports
