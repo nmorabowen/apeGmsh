@@ -72,6 +72,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from .._pump_set import _compose_substrate_points, read_nodal_vector_field
+from ..core._clip_planes import MAX_ACTIVE_PLANES
 from ..core._legend import LegendController, adopt_controller, key_str
 from ..data import ViewerData
 from ..diagrams._kinds import kind_def
@@ -1588,7 +1589,7 @@ def _pair_isin(
 # =====================================================================
 
 
-def reclip_pane(view: "MeshView", backend: Any) -> None:
+def reclip_pane(view: "MeshView", backend: Any) -> int:
     """Re-cut an already-realized pane in place (ADR 0098 A7 / R1).
 
     The clip analogue of A4's :func:`restep_pane`, and it exists for a
@@ -1620,10 +1621,10 @@ def reclip_pane(view: "MeshView", backend: Any) -> None:
     because a HALF re-cut pane is the stale-picture class ADR 0084
     exists to prevent.
     """
-    _apply_clips(backend, view)
+    return _apply_clips(backend, view)
 
 
-def _apply_clips(backend: Any, view: "MeshView") -> None:
+def _apply_clips(backend: Any, view: "MeshView") -> int:
     """Push this view's ACTIVE section planes onto the backend.
 
     The record's ``offset`` resolves to an origin and ``flipped`` folds
@@ -1631,12 +1632,37 @@ def _apply_clips(backend: Any, view: "MeshView") -> None:
     ``ClipPlane.spec`` does, done here because the session IR owns the
     planes now and the 0083 controller is never constructed on this
     path. Inactive planes are simply absent from the set.
+
+    **Capped at** :data:`MAX_ACTIVE_PLANES`, and this is the one place
+    that can be. §3 puts the cap here on purpose — "a render-time
+    constraint enforced where planes meet a backend, not by the IR" —
+    because it is a property of OpenGL, not of what a view may
+    describe: `gl_ClipDistance` guarantees only six, and past that the
+    driver is FREE TO IGNORE the extras. A seventh active plane
+    therefore does not fail, it draws a model that looks cut and is
+    not — the worst shape of wrong, because nothing anywhere says so.
+
+    Returns how many active planes were dropped, so a caller with a
+    place to say it can. Creation order decides which six survive,
+    matching ``ClipPlaneSetController.add``: the first six to be
+    activated keep cutting, and a seventh is the one that waits.
+
+    The count is a RETURN rather than a log because this runs on every
+    realize and every drag frame — a warning here would fire thirty
+    times a second and teach the reader to ignore it. The UI refuses
+    the seventh activation up front (the inspector's Section planes
+    section), so reaching this cap at all means a script or a restored
+    snapshot did it, and the inspector's note is what surfaces it.
     """
     from ..scene_ir import ClipPlaneSpec
 
     specs = []
+    dropped = 0
     for clip in view.clips:
         if not clip.active:
+            continue
+        if len(specs) >= MAX_ACTIVE_PLANES:
+            dropped += 1
             continue
         n = clip.normal
         origin = tuple(c * float(clip.offset) for c in n)
@@ -1650,6 +1676,7 @@ def _apply_clips(backend: Any, view: "MeshView") -> None:
         # realize failure — only a view that HAS clips would notice.
         if specs:
             raise
+    return dropped
 
 
 # =====================================================================
