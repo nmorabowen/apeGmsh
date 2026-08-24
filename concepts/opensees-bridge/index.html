@@ -3854,6 +3854,11 @@ to be the <em>same model</em>, because they came from the same declarations. The
 <code>model.h5</code> written here carries both the runnable solver zone and the neutral
 zone the viewer reads — the session-side <code>g.save()</code> writes only the latter
 (see <a href="../../how-to/save-reload/">Save &amp; reload a model</a>).</p>
+<p>On large models, close the <code>apeGmsh</code> session <em>before</em> you emit. The emit path
+reads the <code>FEMData</code> snapshot and never calls Gmsh, so a still-open kernel adds
+only overhead to your peak memory. On a 51 M-hex model, closing the session
+dropped memory use by 13 GB before <code>build()</code> even started; on smaller models
+this is a style choice, but past a few million elements it becomes essential.</p>
 <h2 id="recorders-and-reading-back">Recorders, and reading back<a class="headerlink" href="#recorders-and-reading-back" title="Permanent link">&para;</a></h2>
 <p>Output declarations live on the same surface. <code>ops.recorder.&lt;Type&gt;(...)</code>
 declares classic OpenSees recorders that emit with the deck; for in-process
