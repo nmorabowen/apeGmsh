@@ -63,7 +63,7 @@ from typing import Any, Callable, Optional
 from .._failures import report
 from ..core._legend import adopt_controller
 from ._chart import _same_stage
-from ._realize import can_restep, realize_pane, restep_pane
+from ._realize import can_restep, realize_pane, reclip_pane, restep_pane
 
 _Listener = Callable[[Optional[Any]], None]
 
@@ -309,11 +309,23 @@ class SessionReconciler:
         ``(structure, cursor)`` — the criterion-12 gate, and since
         ADR 0098 A4.2 the fast-path gate too.
 
-        ``structure`` is what the picture is BUILT from; ``cursor`` is
-        where in time it is shown. A change to the cursor alone can be
-        re-stepped in place; anything in ``structure`` re-realizes.
-        Same shape as ``PlotReconciler._signature_of``, which has split
-        this way since S4-2.
+        THREE terms since ADR 0098 A7 (R1): ``structure`` is what the
+        picture is BUILT from, ``clips`` is which half-spaces cut it,
+        and ``cursor`` is where in time it is shown. A change to the
+        cursor alone can be re-stepped in place (A4); a change to the
+        clips alone can be re-cut in place; anything in ``structure``
+        re-realizes. (``PlotReconciler._signature_of`` keeps its own
+        two-term split — a plot has no clips.)
+
+        **``clips`` is its own term because leaving it in ``structure``
+        was measured at 240.8 ms per gizmo drag frame** — a full
+        teardown-and-rebuild for a gesture whose budget is 33 ms, i.e.
+        about 4 fps. This is the same trap A5.3 dodged by keeping
+        legend placement OFF the ``Legend`` record: anything in
+        ``structure`` that a DRAG can move costs a realize per frame.
+        Any future direct-manipulation state has the same choice to
+        make, and the answer is the same — give it a term and a writer,
+        not a place in ``structure``.
 
         ``deform`` sits in ``structure`` on purpose: a scale change is
         rare, and a full realize is the conservative answer. So does
@@ -335,11 +347,11 @@ class SessionReconciler:
                 pane.deform,
                 pane.style,
                 pane.overlay,
-                pane.clips,
                 tuple(pane.slots.items()),
                 pane.legends(),
                 self._selection_term(pane),
             ),
+            pane.clips,
             self._session.effective_instant(pane),
         )
 
@@ -411,29 +423,58 @@ class SessionReconciler:
         # STAGE, because the diagrams' cached arrays are a function of
         # the stage — the same limit ``_same_stage`` already enforces
         # for plots. Any doubt falls through to the full path below.
-        restepped = False
-        if (
+        # Both fast paths need the same preconditions: an unforced
+        # flush, a pane, a previous signature to diff against, and a
+        # realized pane to edit in place. A first flush has none of
+        # them and takes the full path, which is today's cost.
+        in_place = (
             not forced
             and pane is not None
             and previous is not _NO_SIGNATURE
             and previous is not None
             and signature is not None
+            and self._realized is not None
             and signature[0] == previous[0]
-            and _same_stage(signature[1], previous[1])
+        )
+        clips_moved = in_place and signature[1] != previous[1]
+        cursor_moved = in_place and signature[2] != previous[2]
+        # A4's limits still gate the CURSOR half only: the diagrams'
+        # cached arrays are a function of the stage, and a pane realize
+        # could not record a row map for cannot be re-pointed. A clip
+        # edit needs neither, because it moves no points.
+        cursor_ok = not cursor_moved or (
+            _same_stage(signature[2], previous[2])
             and can_restep(self._realized, pane)
-        ):
+        )
+
+        handled = False
+        if in_place and cursor_ok:
+            # Re-cut BEFORE re-stepping. Both are in-place edits so the
+            # order does not change the result, but this one is ~1 ms
+            # and cannot fail halfway, so doing it first keeps the
+            # window between "record says cut here" and "backend cuts
+            # here" as short as possible.
             try:
-                self._realized = restep_pane(
-                    self._session, pane, self._realized, self._ledger,
-                )
+                if clips_moved:
+                    reclip_pane(pane, self._ledger)
+                if cursor_moved:
+                    self._realized = restep_pane(
+                        self._session, pane, self._realized, self._ledger,
+                    )
             except Exception as exc:
-                # Never leave a HALF re-stepped pane on screen: report,
-                # then fall through to the full realize in THIS flush.
-                # ``restep_pane`` only updates layers in place, so a
-                # failed one leaves no orphaned handle behind.
-                report("pump.session_restep", exc)
+                # Never leave a HALF re-stepped or HALF re-cut pane on
+                # screen: report, then fall through to the full realize
+                # in THIS flush. Both in-place editors only update what
+                # already exists, so a failed one leaves no orphaned
+                # handle behind.
+                report(
+                    "pump.session_reclip" if clips_moved and not cursor_moved
+                    else "pump.session_restep",
+                    exc,
+                )
             else:
-                restepped = True
+                handled = True
+        restepped = handled
 
         try:
             if not restepped:

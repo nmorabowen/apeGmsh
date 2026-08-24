@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from qtpy import QtWidgets
 
+from ._clip_bind import PaneClipBinding
 from ._legend_bind import PaneLegendBinding
 from ._pick import PanePick
 from ._reconciler import SessionReconciler
@@ -209,6 +210,12 @@ class MeshPane(QtWidgets.QWidget):
         self._legends.bind(
             getattr(self._reconciler.realized, "legend_controller", None)
         )
+        # A7 (R1) — the ADR 0083 section-plane gizmos. Built on the RAW
+        # backend inside the binding (the reconciler's ledger sweeps
+        # everything added through it), and re-seated after every
+        # legend re-bind so the colour bar keeps winning an overlap.
+        self._clips = PaneClipBinding(backend, self._reconciler)
+        self._clips.refresh(self._reconciler.realized)
 
     # -- surface -------------------------------------------------------
 
@@ -226,6 +233,11 @@ class MeshPane(QtWidgets.QWidget):
     @property
     def reconciler(self) -> SessionReconciler:
         return self._reconciler
+
+    @property
+    def clips(self) -> PaneClipBinding:
+        """This pane's ADR 0083 section-plane gizmos (A7 / R1)."""
+        return self._clips
 
     @property
     def pick(self) -> Optional[PanePick]:
@@ -283,6 +295,7 @@ class MeshPane(QtWidgets.QWidget):
         """
         self._reconciler.dispose()
         self._legends.dispose()
+        self._clips.dispose()
         if self._pick is not None:
             self._pick.dispose()
         if self._surface is not None:
@@ -316,6 +329,13 @@ class MeshPane(QtWidgets.QWidget):
             getattr(realized, "legend_controller", None)
             if realized is not None else None
         )
+        # AFTER the legend bind, both times and in this order. The
+        # gizmos reconcile against the view every flush — including a
+        # re-cut frame, which is how a drag's picture follows — and the
+        # re-seat puts our priority-12 observers back BEHIND the
+        # legend's, which that bind may just have re-installed.
+        self._clips.refresh(realized)
+        self._clips.reseat()
         if self._camera_fit or realized is None or not realized.layers:
             return
         try:

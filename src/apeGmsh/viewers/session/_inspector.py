@@ -43,6 +43,16 @@ _LINE_COMPONENTS = (
 
 _DEFORM_FIELDS = ("displacement", "velocity", "acceleration")
 
+#: The Add-plane axis choices (ADR 0098 A7 §4.4). Deliberately the three
+#: world axes and nothing else: "view normal" needs a camera, which the
+#: inspector does not have and should not reach for — the gizmo's rotate
+#: handle is how a plane gets an arbitrary pose.
+_CLIP_AXES = (
+    ("X", (1.0, 0.0, 0.0)),
+    ("Y", (0.0, 1.0, 0.0)),
+    ("Z", (0.0, 0.0, 1.0)),
+)
+
 
 def _token_suffix(token: str) -> str:
     return token.rsplit("_", 1)[-1] if "_" in token else ""
@@ -129,6 +139,127 @@ class _SlotRow:
             self._write(self._make_default())
 
 
+class _ClipRow:
+    """One section plane as an inspector row (ADR 0098 A7 / R1 §4.4).
+
+    ``◈ Plane 1   [x] cut  👁  ⇄  🗑`` with the offset beside it. Every
+    control writes ``MeshView.set_clip`` — the same call the gizmo drag
+    makes — so the row and the handle in the viewport are two editors
+    of one record rather than two copies of it.
+
+    The row is built ONCE per ``plane_id`` and thereafter only synced.
+    That is not an optimisation: a gizmo drag ticks the session on every
+    mouse-move, so a page that rebuilt its rows would destroy and
+    re-create the widget under the user's cursor at drag rate — the
+    focus-flicker hazard ``_outline.py`` documents for pane rows, which
+    is also why the plane list is not outline children.
+    """
+
+    def __init__(
+        self,
+        plane_id: str,
+        on_change: "Callable[[str], None]",
+        on_remove: "Callable[[str], None]",
+    ) -> None:
+        self.plane_id = plane_id
+        self._on_change = on_change
+        self._on_remove = on_remove
+        self._syncing = False
+
+        self.widget = QtWidgets.QWidget()
+        self.widget.setObjectName(f"SessionInspectorClip_{plane_id}")
+        row = QtWidgets.QHBoxLayout(self.widget)
+        row.setContentsMargins(8, 1, 0, 1)
+        row.setSpacing(4)
+
+        self.cut = QtWidgets.QCheckBox()
+        self.cut.setObjectName(f"SessionInspectorClipCut_{plane_id}")
+        self.cut.setToolTip("Cut with this plane (ViewClip.active).")
+        self.cut.toggled.connect(safe_slot(self._changed))
+        row.addWidget(self.cut)
+
+        self.name = QtWidgets.QLabel("")
+        row.addWidget(self.name, stretch=1)
+
+        self.offset = QtWidgets.QDoubleSpinBox()
+        self.offset.setObjectName(f"SessionInspectorClipOffset_{plane_id}")
+        self.offset.setDecimals(3)
+        self.offset.setRange(-1.0e9, 1.0e9)
+        self.offset.setToolTip(
+            "Signed distance from the origin along the plane normal."
+        )
+        self.offset.valueChanged.connect(safe_slot(self._changed))
+        row.addWidget(self.offset)
+
+        self.eye = QtWidgets.QToolButton()
+        self.eye.setObjectName(f"SessionInspectorClipEye_{plane_id}")
+        self.eye.setText("Gizmo")
+        self.eye.setCheckable(True)
+        self.eye.setToolTip("Show this plane's drag handle in the viewport.")
+        self.eye.toggled.connect(safe_slot(self._changed))
+        row.addWidget(self.eye)
+
+        self.flip = QtWidgets.QToolButton()
+        self.flip.setObjectName(f"SessionInspectorClipFlip_{plane_id}")
+        self.flip.setText("Reverse")
+        self.flip.setToolTip("Swap which half of the model survives.")
+        self.flip.clicked.connect(safe_slot(self._flip))
+        row.addWidget(self.flip)
+
+        self.remove = QtWidgets.QToolButton()
+        self.remove.setObjectName(f"SessionInspectorClipRemove_{plane_id}")
+        self.remove.setText("Remove")
+        self.remove.setToolTip("Delete this section plane.")
+        self.remove.clicked.connect(safe_slot(self._remove))
+        row.addWidget(self.remove)
+
+        self._flipped = False
+
+    # -- projection ----------------------------------------------------
+
+    def sync(self, clip: Any, step: float) -> None:
+        """Restate this row from the record. Never writes back."""
+        self._syncing = True
+        try:
+            self._flipped = bool(clip.flipped)
+            self.name.setText(clip.name)
+            self.cut.setChecked(bool(clip.active))
+            self.eye.setChecked(bool(clip.gizmo_visible))
+            self.offset.setSingleStep(step)
+            if self.offset.value() != float(clip.offset):
+                self.offset.setValue(float(clip.offset))
+            self.flip.setText("Reversed" if clip.flipped else "Reverse")
+        finally:
+            self._syncing = False
+
+    def set_offset_range(self, lo: float, hi: float) -> None:
+        self._syncing = True
+        try:
+            self.offset.setRange(lo, hi)
+        finally:
+            self._syncing = False
+
+    # -- gestures ------------------------------------------------------
+
+    def _changed(self, *_args: Any) -> None:
+        if self._syncing:
+            return
+        self._on_change(self.plane_id)
+
+    def _flip(self) -> None:
+        if self._syncing:
+            return
+        self._flipped = not self._flipped
+        self._on_change(self.plane_id)
+
+    def _remove(self) -> None:
+        self._on_remove(self.plane_id)
+
+    @property
+    def flipped(self) -> bool:
+        return self._flipped
+
+
 class MeshInspectorPage:
     """The inspector page for ONE mesh view (§9)."""
 
@@ -153,6 +284,11 @@ class MeshInspectorPage:
         for row in self._build_slot_rows():
             self._rows[row.category] = row
             layout.addWidget(row.widget)
+        # A7 (R1) — §3 clips are view state, not a §4 slot, so the
+        # section sits below the slot rows rather than among them.
+        self._clip_rows: dict[str, _ClipRow] = {}
+        self._clip_bounds: Optional[tuple] = None
+        layout.addWidget(self._build_clips_section())
         layout.addStretch(1)
 
         session.subscribe(self._on_session_tick)
@@ -182,6 +318,7 @@ class MeshInspectorPage:
                 )
             for category, row in self._rows.items():
                 row.sync(view.slots.get(category))
+            self._sync_clips()
             self._sync_time_row()
         finally:
             self._syncing = False
@@ -191,6 +328,10 @@ class MeshInspectorPage:
         occupied slot that emitted no layer is shown as empty /
         "(nothing to draw)" — never as an error."""
         view = self._view
+        # The extent the offset spin-boxes are scaled against — the
+        # SAME bounds the gizmo quad is sized from, so the slider and
+        # the handle always talk about one geometry (0083 Part 1).
+        self._clip_bounds = getattr(realized, "reference_bounds", None)
         if realized is None or realized.pane_id != view.id:
             for row in self._rows.values():
                 row.set_status("")
@@ -371,6 +512,163 @@ class MeshInspectorPage:
         return write
 
     # -- data ----------------------------------------------------------
+
+    # -- section planes (§3 clips, ADR 0083 machinery — never a slot) --
+
+    def _build_clips_section(self) -> QtWidgets.QWidget:
+        """The Section planes section (ADR 0098 A7 / R1 §4.4).
+
+        R1's *reach* half. The gizmo restored the direct-manipulation
+        gesture, but a plane that only ``view.add_clip(...)`` can create
+        is the A6.1 "works from Python, unreachable in the window" row
+        the parity gate exists to end — the old viewer's clip dock has
+        exactly one caller, ``results_viewer.py:975``, so the session
+        window had no way to make a plane at all.
+
+        0087 INV-2 is why the offset controls live on the plane ROWS
+        rather than in a fixed block: with no planes there is no offset
+        field to disable, because there is nothing for it to be about.
+        Empty renders the Add action and nothing else.
+        """
+        box = QtWidgets.QWidget()
+        outer = QtWidgets.QVBoxLayout(box)
+        outer.setContentsMargins(0, 4, 0, 0)
+        outer.setSpacing(2)
+
+        title = QtWidgets.QLabel("Section planes")
+        font = title.font()
+        font.setBold(True)
+        title.setFont(font)
+        outer.addWidget(title)
+
+        self._clip_rows_host = QtWidgets.QWidget()
+        self._clip_rows_layout = QtWidgets.QVBoxLayout(self._clip_rows_host)
+        self._clip_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._clip_rows_layout.setSpacing(1)
+        outer.addWidget(self._clip_rows_host)
+
+        add = QtWidgets.QHBoxLayout()
+        add.setContentsMargins(8, 0, 0, 0)
+        add.setSpacing(4)
+        self._clip_add = QtWidgets.QToolButton()
+        self._clip_add.setObjectName("SessionInspectorClipAdd")
+        self._clip_add.setText("Add plane")
+        self._clip_add.setToolTip(
+            "Cut this pane with a new section plane through the model."
+        )
+        self._clip_add.clicked.connect(safe_slot(self._on_clip_add))
+        add.addWidget(self._clip_add)
+
+        self._clip_axis = QtWidgets.QComboBox()
+        self._clip_axis.setObjectName("SessionInspectorClipAxis")
+        for label, normal in _CLIP_AXES:
+            self._clip_axis.addItem(label, normal)
+        self._clip_axis.setToolTip("Normal of the new plane.")
+        add.addWidget(self._clip_axis)
+        add.addStretch(1)
+        outer.addLayout(add)
+        return box
+
+    def _sync_clips(self) -> None:
+        """Reconcile the plane rows against the record, BY PLANE ID.
+
+        Rows are created and destroyed only when the set of plane ids
+        changes — never on an ordinary edit. A gizmo drag ticks the
+        session on every mouse-move, and rebuilding the rows at that
+        rate would pull the widget out from under the cursor.
+        """
+        clips = self._view.clips
+        live = {clip.plane_id for clip in clips}
+
+        for plane_id in [p for p in self._clip_rows if p not in live]:
+            row = self._clip_rows.pop(plane_id)
+            self._clip_rows_layout.removeWidget(row.widget)
+            row.widget.setParent(None)
+            row.widget.deleteLater()
+
+        step = self._clip_step()
+        for index, clip in enumerate(clips):
+            row = self._clip_rows.get(clip.plane_id)
+            if row is None:
+                row = _ClipRow(
+                    clip.plane_id, self._on_clip_changed, self._on_clip_remove,
+                )
+                self._clip_rows[clip.plane_id] = row
+                self._clip_rows_layout.insertWidget(index, row.widget)
+                lo, hi = self._clip_offset_range()
+                row.set_offset_range(lo, hi)
+            row.sync(clip, step)
+
+        self._clip_rows_host.setVisible(bool(clips))
+
+    def _clip_offset_range(self) -> "tuple[float, float]":
+        """Offset limits from the pane's reference extent.
+
+        A plane can only usefully sit within the model it cuts, and the
+        bounds realize already resolved for the gizmo quad are the same
+        extent. With no realization yet, stay wide open rather than
+        clamp a scripted value the user can see in the record.
+        """
+        bounds = self._clip_bounds
+        if bounds is None:
+            return (-1.0e9, 1.0e9)
+        lo = min(bounds[0], bounds[1], bounds[2])
+        hi = max(bounds[3], bounds[4], bounds[5])
+        span = max(hi - lo, 1.0)
+        return (lo - span, hi + span)
+
+    def _clip_step(self) -> float:
+        bounds = self._clip_bounds
+        if bounds is None:
+            return 0.1
+        span = max(
+            bounds[3] - bounds[0], bounds[4] - bounds[1],
+            bounds[5] - bounds[2], 1.0e-9,
+        )
+        return max(span / 100.0, 1.0e-6)
+
+    def _on_clip_add(self) -> None:
+        """§9: an empty thing is an Add action."""
+        normal = self._clip_axis.currentData()
+        bounds = self._clip_bounds
+        if bounds is None:
+            offset = 0.0
+        else:
+            # Through the middle of the model, so the new plane cuts
+            # something the moment it appears — a plane that lands
+            # outside the mesh reads as "Add did nothing".
+            centre = (
+                (bounds[0] + bounds[3]) / 2.0,
+                (bounds[1] + bounds[4]) / 2.0,
+                (bounds[2] + bounds[5]) / 2.0,
+            )
+            offset = sum(c * n for c, n in zip(centre, normal))
+        self._view.add_clip(normal, offset=offset)
+
+    def _on_clip_changed(self, plane_id: str) -> None:
+        if self._syncing:
+            return
+        row = self._clip_rows.get(plane_id)
+        if row is None:
+            return
+        try:
+            self._view.set_clip(
+                plane_id,
+                active=row.cut.isChecked(),
+                gizmo_visible=row.eye.isChecked(),
+                offset=float(row.offset.value()),
+                flipped=row.flipped,
+            )
+        except KeyError:
+            # The plane went away between the click and the write —
+            # the next sync drops the row.
+            pass
+
+    def _on_clip_remove(self, plane_id: str) -> None:
+        try:
+            self._view.remove_clip(plane_id)
+        except KeyError:
+            pass
 
     def _build_time_row(self) -> QtWidgets.QWidget:
         """§9's "pane time — set it here; the link ignores it".

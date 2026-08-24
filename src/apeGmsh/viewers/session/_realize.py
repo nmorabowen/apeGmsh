@@ -256,6 +256,19 @@ class RealizedPane:
     #: A4.2 — what a cursor-only flush needs to re-step this pane in
     #: place. ``None`` means the fast path must refuse.
     restep: Optional[PaneRestep] = None
+    #: A7 (R1) — ``(xmin, ymin, zmin, xmax, ymax, zmax)`` of this
+    #: pane's cell set in REFERENCE geometry, which is what the ADR
+    #: 0083 clip gizmo sizes its quad and arrow against.
+    #:
+    #: Reference, not the posed shape, and not negotiable: a quad
+    #: derived from deformed points would breathe on every scrub
+    #: frame, so the handle the user is holding would move while the
+    #: plane did not. It is also what makes the gizmo free on the A4
+    #: fast path — a re-step cannot change it, so nothing recomputes.
+    #: SCOPED, because the quad should span what the pane draws rather
+    #: than geometry it does not show. ``None`` when realize could not
+    #: resolve one; the pane then draws no gizmo rather than guessing.
+    reference_bounds: "Optional[tuple[float, float, float, float, float, float]]" = None
 
 
 #: Layer roles realize OWNS — the ones a re-step has to move itself.
@@ -654,6 +667,7 @@ def _realize_mesh(
             substrate_rows=substrate_rows,
             gauss_occupant=slot_diagrams.get("gauss"),
         ),
+        reference_bounds=_reference_bounds(scene, substrate_rows),
     )
 
 
@@ -1055,6 +1069,41 @@ def _scoped_grid(scene: "FEMSceneData", scoped: "ScopedSet") -> Any:
     return sub_grid, (
         None if rows is None else np.asarray(rows, dtype=np.int64)
     )
+
+
+def _reference_bounds(
+    scene: Any, substrate_rows: "Optional[np.ndarray]",
+) -> "Optional[tuple[float, float, float, float, float, float]]":
+    """The pane's cell set, bounded in REFERENCE geometry (A7 / R1).
+
+    Read off ``scene.reference_points`` rather than the (possibly
+    posed) grid, because the ADR 0083 gizmo quad is sized from this: a
+    box that followed the deformation would resize the grab handle on
+    every scrub frame.
+
+    ``substrate_rows`` is the scoped grid's map back into the scene's
+    point rows — exactly the map A4 already records for the re-step —
+    so the scoped case costs one fancy-index and no second extraction.
+    ``None`` for an unscoped view means "every point", which is the
+    same convention ``_scoped_grid`` uses.
+    """
+    try:
+        pts = np.asarray(scene.reference_points, dtype=float)
+        if substrate_rows is not None:
+            pts = pts[substrate_rows]
+        if pts.size == 0:
+            return None
+        lo = pts.min(axis=0)
+        hi = pts.max(axis=0)
+        return (
+            float(lo[0]), float(lo[1]), float(lo[2]),
+            float(hi[0]), float(hi[1]), float(hi[2]),
+        )
+    except Exception:
+        # A backend or scene that cannot answer is not a realize
+        # failure — only a view with a gizmo would notice, and it
+        # degrades to drawing none.
+        return None
 
 
 def _palette() -> Any:
@@ -1539,6 +1588,41 @@ def _pair_isin(
 # =====================================================================
 
 
+def reclip_pane(view: "MeshView", backend: Any) -> None:
+    """Re-cut an already-realized pane in place (ADR 0098 A7 / R1).
+
+    The clip analogue of A4's :func:`restep_pane`, and it exists for a
+    measured reason. ``pane.clips`` used to sit in the reconciler's
+    STRUCTURE term, so every mouse-move of a section-plane gizmo drag
+    tore down and rebuilt every layer, diagram and scalar bar: **240.8
+    ms mean per frame** on the bench (``ssi_frame_wall``,
+    ``c010_clip_gizmo_drag``, one pane), against the scrubber's 33 ms
+    budget and a 17.7 ms scrub on the SAME pane. About 4 fps for a
+    direct-manipulation gesture. A4's fast path could never help: it
+    fires only when the CURSOR term moved alone, so ``can_restep`` was
+    never consulted for a clip edit.
+
+    Nothing is rebuilt because nothing needs to be. A clip edit changes
+    which half-spaces cut the scene — never which actors exist — and
+    :meth:`RenderBackend.set_clip_planes` re-stamps its set onto every
+    live handle (ADR 0083 Part 2), so one call re-cuts the whole pane.
+    Gizmo layers are ``clip_exempt`` and are skipped by that stamp, so
+    a plane cannot slice its own handle.
+
+    Deliberately delegates to :func:`_apply_clips` rather than
+    reimplementing the resolution: ONE writer, so the fast path and a
+    full realize cannot disagree about what ``offset`` and ``flipped``
+    mean. That equivalence is the fast path's whole safety argument and
+    it is gated, not assumed.
+
+    Raises whatever the backend raises; the caller reports and falls
+    back to a full realize in the same flush, exactly as A4.4 requires,
+    because a HALF re-cut pane is the stale-picture class ADR 0084
+    exists to prevent.
+    """
+    _apply_clips(backend, view)
+
+
 def _apply_clips(backend: Any, view: "MeshView") -> None:
     """Push this view's ACTIVE section planes onto the backend.
 
@@ -1655,6 +1739,6 @@ def _layer_lutspec(diagram: Any) -> Any:
 
 __all__ = [
     "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
-    "RealizedPane", "realize_pane", "recorded_components",
+    "RealizedPane", "realize_pane", "reclip_pane", "recorded_components",
     "recorded_line_components",
 ]

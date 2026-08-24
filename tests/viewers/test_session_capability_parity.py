@@ -58,16 +58,40 @@ CAPABILITIES: "dict[str, dict[str, str]]" = {
                 "state, not just the install.",
     },
     "install_clip_gizmo_interactor": {
-        "status": "missing",
-        "why": "ADR 0098 A5.5 / A6 R1 — the clip-plane gizmo is "
-               "unreachable in the session window. It writes to "
-               "ViewClip, which the session record already owns, so "
-               "this is wiring, not a state design.",
+        "status": "ported",
+        "where": "session/_clip_bind.py::PaneClipBinding",
+        "tested_by": "tests/viewers/test_clip_binding.py",
+        "note": "ADR 0098 Amendment 7 — and A5.5 was WRONG that this "
+                "was wiring; A6.6 retracted it and the retraction was "
+                "right. FOUR parts, none of which works alone: "
+                "ViewClipController (the five-member contract over "
+                "MeshView.clips), realize's reference_bounds, this "
+                "binding (built on the RAW backend — the reconciler's "
+                "LedgerBackend sweeps everything added through it — "
+                "and re-seated after every legend re-bind so the "
+                "colour bar keeps winning an overlap), and the "
+                "reclip fast path, without which one drag frame cost "
+                "a full realize at 240.8 ms (now 18.2). Reach is the "
+                "inspector's Section planes section: a plane only "
+                "Python could create would still be A6.1's defect.",
     },
     "install_scope_gizmo_interactor": {
-        "status": "missing",
-        "why": "ADR 0098 A5.5 / A6 R1 — same single-caller gap as the "
-               "clip gizmo.",
+        "status": "retired",
+        "why": "ADR 0098 A7 Q5 — NOT the clip gizmo's twin, which is "
+               "why it took a different disposition. The scope GIZMO "
+               "drives a spatial axis-aligned BBox per geometry "
+               "(core/scope_controller.py) and hides cells by writing "
+               "vtkGhostType through ElementVisibility's LAYER_SCOPE; "
+               "the session's Scope (§3) is a composition AXIS plus "
+               "names — physical groups, materials, element types. "
+               "Same word, unrelated concept. The session IR carries "
+               "no spatial box and no active-geometry notion, so "
+               "there is nothing to adapt: a port means new §3 IR, a "
+               "snapshot field, a resolve-time filter and an "
+               "inspector context — a §3/§4 widening argued at the "
+               "ADR bar, not a slice. A2.2 is the precedent for "
+               "recording a disposition rather than deleting working "
+               "code: the old viewer keeps the gesture.",
     },
 }
 
@@ -158,14 +182,27 @@ def test_a_ported_capability_names_a_module_that_exists(name):
         )
 
 
-def test_the_known_gaps_are_exactly_the_two_gizmos():
-    """A change-detector on purpose. Closing R1 must delete these two
-    entries, and this assertion is what makes that impossible to
-    forget; a NEW 'missing' entry must be a deliberate edit here."""
+def test_no_capability_is_still_missing():
+    """R1 closed the last gap — the inventory is now complete.
+
+    A change-detector on purpose, and it has already earned its keep
+    twice: it failed when the clip gizmo flipped to ported, which is
+    exactly the moment a stale "known gaps" list would otherwise have
+    gone quietly wrong.
+
+    The two entries left this list by different routes, and the
+    difference is the point. The clip gizmo was BUILT (A7). The scope
+    gizmo was RETIRED (A7 Q5) — a disposition is a legitimate way to
+    close a gap, which is why 'retired' must carry a ``why`` a reader
+    can disagree with rather than a status a reader must accept.
+
+    A new 'missing' entry is now a deliberate edit here, and it should
+    be: it means the session window lost something it used to do.
+    """
     missing = sorted(
         n for n, e in CAPABILITIES.items() if e["status"] == "missing"
     )
-    assert missing == [
-        "install_clip_gizmo_interactor",
-        "install_scope_gizmo_interactor",
-    ]
+    assert missing == [], (
+        f"{len(missing)} capability/ies are unaccounted for: {missing}. "
+        f"Either port one, or retire it with a reason."
+    )

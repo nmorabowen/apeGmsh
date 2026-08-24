@@ -622,3 +622,486 @@ def test_a4_pick_targets_follow_the_pose(rig):
         targets.coords, scene_pts[targets.rows], atol=1e-9,
         err_msg="pick targets did not follow the re-stepped pose",
     )
+
+
+# =====================================================================
+# ADR 0098 Amendment 7 (R1) — a clip edit stops rebuilding the pane
+# =====================================================================
+#
+# The A4 block above is the template, deliberately: this is the same
+# claim about a different term. ``pane.clips`` used to live in the
+# STRUCTURE half of the signature, so one mouse-move of a section-plane
+# gizmo drag tore down and rebuilt every layer, diagram and scalar bar —
+# measured at 240.8 ms mean per frame on the bench against the
+# scrubber's 33 ms budget, i.e. about 4 fps, while a scrub on the SAME
+# pane cost 17.7 ms. A4's fast path could never help: it fires only when
+# the CURSOR term moved alone, so ``can_restep`` was never consulted.
+
+
+def _clip_snapshot(rec, backend) -> tuple:
+    """The cut AND the picture — the two halves a re-cut must get right.
+
+    Layers as well as clip specs, because the failure being guarded
+    against is not "the spec list is wrong" but "the spec list is right
+    and the actors did not get it". Asserting only the specs would
+    license the claim without testing it.
+    """
+    return (tuple(backend.clip_planes), _snapshot(rec, backend))
+
+
+def _clip_parity_body(rig) -> None:
+    """Drag a plane with the fast path, then force a full realize with
+    the SAME record, and require the two to be identical.
+
+    A7's analogue of A4.3.1, and the whole licence for ``reclip_pane``:
+    ``_apply_clips`` is the ONE writer, so a divergence here means the
+    fast path invented a second meaning for ``offset`` or ``flipped``.
+    """
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    drain()
+
+    for i, offset in enumerate((0.25, 0.5, -0.25, 0.5)):
+        view.set_clip(clip.plane_id, offset=offset)
+        drain()
+        fast = _clip_snapshot(rec, backend)
+
+        rec.schedule_forced()          # same record, the SLOW path
+        drain()
+        slow = _clip_snapshot(rec, backend)
+
+        assert fast[0] == slow[0], (
+            f"drag {i}: the fast path produced a different CUT "
+            f"({fast[0]} vs {slow[0]})"
+        )
+        _assert_same(fast[1], slow[1], i)
+
+
+def test_a7_reclip_cuts_what_a_full_realize_cuts(rig):
+    """A7 criterion 6 — parity between the fast path and a realize."""
+    _clip_parity_body(rig)
+
+
+def test_a7_parity_oracle_bites_a_broken_reclip(rig, monkeypatch):
+    """The oracle above is worth exactly as much as its ability to fail.
+
+    Stub the re-cut to a no-op: the backend then keeps the PREVIOUS
+    plane's half-space while the record says otherwise — a model cut in
+    the wrong place, which is the stale-picture class this fast path
+    must not ship.
+    """
+    monkeypatch.setattr(
+        reconciler_mod, "reclip_pane", lambda view, backend: None,
+    )
+    with pytest.raises(AssertionError):
+        _clip_parity_body(rig)
+
+
+def test_a7_a_clip_edit_costs_no_realize_and_exactly_one_render(
+    rig, monkeypatch,
+):
+    """A7 criterion 5 — the cost claim, over a whole synthetic drag.
+
+    Twenty frames is not decoration: a gizmo drag is per-FRAME, which is
+    exactly why 240.8 ms each was unusable. Zero realizes and one render
+    per frame is what makes the gesture direct manipulation rather than
+    a slideshow.
+    """
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    before = backend.render_count
+    for i in range(20):
+        view.set_clip(clip.plane_id, offset=0.02 * (i + 1))
+        drain()
+
+    assert calls == [], (
+        f"a drag re-realized the pane {len(calls)} time(s) — this is the "
+        f"240.8 ms/frame defect A7 exists to fix"
+    )
+    assert backend.render_count == before + 20, (
+        "each drag frame must be exactly one render"
+    )
+
+
+def test_a7_every_clip_field_takes_the_fast_path(rig, monkeypatch):
+    """Not just ``offset``. ``active`` changes the spec set, the eye
+    changes gizmo visibility, ``flipped`` swaps the surviving half and
+    ``name`` changes nothing — none of them changes which ACTORS exist,
+    so none of them needs a realize."""
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.1)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    for changes in (
+        {"flipped": True},
+        {"active": False},
+        {"active": True},
+        {"gizmo_visible": False},
+        {"name": "Cutting plane"},
+        {"normal": (0.0, 1.0, 0.0)},
+    ):
+        view.set_clip(clip.plane_id, **changes)
+        drain()
+
+    assert calls == [], f"these clip edits re-realized: {calls}"
+
+
+def test_a7_adding_and_removing_a_clip_needs_no_realize(rig, monkeypatch):
+    """``add_clip`` / ``remove_clip`` move the clips term, not the
+    structure term — the actor set is unchanged either way."""
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    clip = view.add_clip((0.0, 0.0, 1.0), offset=0.3)
+    drain()
+    assert len(backend.clip_planes) == 1, "the new plane did not reach the cut"
+
+    view.remove_clip(clip.plane_id)
+    drain()
+    assert backend.clip_planes == (), "removing the plane did not clear the cut"
+    assert calls == [], f"add/remove re-realized: {calls}"
+
+
+def test_a7_a_structural_change_alongside_a_clip_still_realizes(
+    rig, monkeypatch,
+):
+    """The guard the fast path must not swallow.
+
+    A slot edit in the same tick as a clip edit changes which actors
+    exist, so it takes the full path — and the cut must still be right
+    afterwards, because a realize applies the clips itself.
+    """
+    session, view, backend, rec, drain = rig
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    view.set_clip(clip.plane_id, offset=0.4)
+    view.contour = Contour("displacement_z")      # structural
+    drain()
+
+    assert calls == [view.id], "a slot edit must still cost a full realize"
+    assert len(backend.clip_planes) == 1
+    np.testing.assert_allclose(
+        backend.clip_planes[0].origin, (0.4, 0.0, 0.0), atol=1e-9,
+        err_msg="the full realize lost the clip edit that rode with it",
+    )
+
+
+def test_a7_a_clip_and_a_step_in_one_tick_both_land(rig, monkeypatch):
+    """Both fast paths in one flush: re-cut AND re-step, no realize."""
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+
+    view.set_clip(clip.plane_id, offset=0.35)
+    session.time = Instant(STAGE, 2)
+    drain()
+
+    assert calls == [], "a clip + step tick re-realized the pane"
+    np.testing.assert_allclose(
+        backend.clip_planes[0].origin, (0.35, 0.0, 0.0), atol=1e-9)
+
+    # ...and the picture is the one a realize would have painted.
+    fast = _clip_snapshot(rec, backend)
+    rec.schedule_forced()
+    drain()
+    slow = _clip_snapshot(rec, backend)
+    assert fast[0] == slow[0]
+    _assert_same(fast[1], slow[1], 0)
+
+
+def test_a7_a_forced_flush_still_takes_the_full_path(rig, monkeypatch):
+    """A7 criterion 7. The palette is not session state, so
+    ``schedule_forced`` is the only signal a repaint is owed — the clip
+    fast path must not swallow it any more than A4's does."""
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.add_clip((1.0, 0.0, 0.0), offset=0.2)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+    rec.schedule_forced()
+    drain()
+    assert calls == [view.id], "a forced flush must re-realize"
+
+
+@pytest.mark.allow_pump_failures
+def test_a7_a_raising_reclip_reports_and_falls_back_in_the_same_flush(
+    rig, monkeypatch, pump_failures,
+):
+    """A7 criterion 7's teeth: a half-cut pane is never left on screen.
+
+    ``reclip_pane`` blows up; the flush must report it and complete the
+    edit by the FULL path in the same flush, so the picture the user
+    ends up looking at still matches the record.
+    """
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    drain()
+
+    def boom(view, backend):
+        raise RuntimeError("re-cut exploded")
+
+    monkeypatch.setattr(reconciler_mod, "reclip_pane", boom)
+    view.set_clip(clip.plane_id, offset=0.45)
+    drain()
+
+    names = [name for name, _exc in pump_failures.failures]
+    assert "pump.session_reclip" in names, (
+        f"a failed re-cut must be reported, got {names}"
+    )
+    np.testing.assert_allclose(
+        backend.clip_planes[0].origin, (0.45, 0.0, 0.0), atol=1e-9,
+        err_msg="the fallback realize did not apply the new cut",
+    )
+
+
+def test_a7_two_panes_are_independent(rig, monkeypatch):
+    """A7 criterion 9 — one pane's drag must not re-cut another's."""
+    session, view, backend, rec, drain = rig
+    other = session.add_view(name="second")
+    other.add_clip((0.0, 1.0, 0.0), offset=0.9)
+
+    backend_b = CountingBackend()
+    queue_b: list = []
+    rec_b = SessionReconciler(
+        session, backend_b, pane_id=other.id, defer_fn=queue_b.append,
+    )
+
+    def drain_b() -> None:
+        while queue_b:
+            queue_b.pop(0)()
+
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    drain()
+    drain_b()
+    try:
+        before = tuple(backend_b.clip_planes)
+        for i in range(5):
+            view.set_clip(clip.plane_id, offset=0.1 * (i + 1))
+            drain()
+            drain_b()
+        assert tuple(backend_b.clip_planes) == before, (
+            "dragging pane 1's plane changed pane 2's cut"
+        )
+        assert other.clips[0].offset == pytest.approx(0.9)
+    finally:
+        rec_b.dispose()
+
+
+def test_a7_a_refusing_can_restep_falls_back_to_a_full_realize(
+    rig, monkeypatch,
+):
+    """The A4 guard, gated at last.
+
+    ``can_restep`` refuses when realize could not record what a re-step
+    would need (no row map, or a slot that re-fits its LUT to the
+    DISPLAYED values per step). Nothing asserted that the refusal was
+    HONOURED — every existing fixture happens to be re-steppable, so
+    deleting the guard left the whole suite green while a refusing pane
+    got re-stepped anyway. Found by mutation-testing A7's restructure of
+    this branch; the gap is A4's, the fix belongs with whoever touched
+    the code.
+
+    Note this is not merely "a realize happens": the ``pump_failures``
+    fixture is autouse, so a bypassed guard that limps through
+    ``restep_pane`` and reports would fail here too.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    monkeypatch.setattr(
+        reconciler_mod, "realize_pane",
+        lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+    )
+    monkeypatch.setattr(reconciler_mod, "can_restep", lambda realized, view: False)
+
+    session.time = Instant(STAGE, 2)
+    drain()
+
+    assert calls == [view.id], (
+        "can_restep refused, so the flush must take the FULL path — "
+        "re-stepping a pane realize could not record for is the "
+        "half-moved picture A4.4 refuses"
+    )
+
+
+def test_a7_a_refusing_can_restep_still_re_cuts(rig, monkeypatch):
+    """...and the clip half is independent of that refusal.
+
+    A pane that cannot be re-stepped can still be re-cut: the two fast
+    paths gate on different things, and a clip edit moves no points.
+    The full realize applies the clips itself, so the cut is right
+    either way — this pins that the combination does not lose it.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    clip = view.add_clip((1.0, 0.0, 0.0), offset=0.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+
+    monkeypatch.setattr(reconciler_mod, "can_restep", lambda realized, view: False)
+
+    view.set_clip(clip.plane_id, offset=0.6)
+    session.time = Instant(STAGE, 1)
+    drain()
+
+    np.testing.assert_allclose(
+        backend.clip_planes[0].origin, (0.6, 0.0, 0.0), atol=1e-9,
+        err_msg="the cut was lost when the cursor half refused",
+    )
+
+
+# ---------------------------------------------------------------------
+# A7 — reference_bounds, the gizmo quad's box
+# ---------------------------------------------------------------------
+
+def test_a7_reference_bounds_are_the_undeformed_box(rig):
+    """The gizmo quad is sized from this, so it must NOT follow the pose.
+
+    Deformed bounds would resize the grab handle on every scrub frame:
+    the user would watch the thing they are holding change size while
+    the plane it represents stayed exactly where it was. It is also
+    what makes the gizmo free on A4's fast path — a re-step cannot
+    change a reference box, so nothing recomputes.
+
+    The fixture's displacement is ``node_id + t*1000`` at scale 3, so a
+    posed box is enormous and unmistakable next to the unit cube.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    session.time = Instant(STAGE, 0)
+    drain()
+    undeformed = rec.realized.reference_bounds
+    assert undeformed is not None
+
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 2)
+    drain()
+
+    posed_pts = np.asarray(rec.realized.restep.scene.grid.points)
+    assert posed_pts[:, 2].max() > 100.0, (
+        "precondition — the pose should have moved the mesh a long way"
+    )
+    assert rec.realized.reference_bounds == pytest.approx(undeformed), (
+        "the gizmo box followed the deformation"
+    )
+
+
+def test_a7_reference_bounds_survive_a_scrub_unchanged(rig):
+    """The A4 fast path must not disturb them either."""
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+    first = rec.realized.reference_bounds
+
+    for step in (1, 2, 0):
+        session.time = Instant(STAGE, step)
+        drain()
+        assert rec.realized.reference_bounds == pytest.approx(first)
+
+
+def test_a7_reference_bounds_are_scoped_to_what_the_pane_draws():
+    """A quad spanning geometry the pane does not show is a handle in
+    the wrong place. Unit-level, because the shape under test is the
+    row map — not the mesh.
+    """
+    from apeGmsh.viewers.session._realize import _reference_bounds
+
+    class FakeScene:
+        reference_points = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [9.0, 9.0, 9.0],        # only in the UNSCOPED answer
+        ])
+
+    scene = FakeScene()
+    assert _reference_bounds(scene, None) == pytest.approx(
+        (0.0, 0.0, 0.0, 9.0, 9.0, 9.0))
+    assert _reference_bounds(scene, np.array([0, 1])) == pytest.approx(
+        (0.0, 0.0, 0.0, 1.0, 1.0, 1.0))
+
+
+def test_a7_reference_bounds_refuse_rather_than_guess():
+    """A scene that cannot answer yields ``None`` — the pane then draws
+    no gizmo instead of putting a handle somewhere arbitrary."""
+    from apeGmsh.viewers.session._realize import _reference_bounds
+
+    class Empty:
+        reference_points = np.zeros((0, 3))
+
+    class Broken:
+        @property
+        def reference_points(self):
+            raise RuntimeError("no such thing")
+
+    assert _reference_bounds(Empty(), None) is None
+    assert _reference_bounds(Broken(), None) is None
