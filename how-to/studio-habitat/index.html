@@ -4051,6 +4051,12 @@ no-op ("Up to date"); a failed replay keeps the previous frame
 <td>O_EXCL create / unlink</td>
 </tr>
 <tr>
+<td><code>progress.json</code></td>
+<td>the live solve's stream tee (<code>opensees._run</code>)</td>
+<td>run monitors (poll while busy)</td>
+<td>atomic replace</td>
+</tr>
+<tr>
 <td><code>mcp_calls.jsonl</code></td>
 <td>MCP adapter (side effect)</td>
 <td><code>studio.profile</code></td>
@@ -4077,9 +4083,9 @@ no-op ("Up to date"); a failed replay keeps the previous frame
 </tbody>
 </table>
 <p>Snapshot JSON (<code>selection</code> / <code>names</code> / <code>highlight</code> / <code>host</code> / <code>project</code> /
-<code>assess</code>) is single-writer with atomic replace (INV-16). JSONL ledgers are
-append-best-effort: more than one tool may append (<code>run_until</code> and
-<code>results_pin</code> both write <code>runs.jsonl</code>). Authored chapters go in
+<code>assess</code> / <code>progress</code>) is single-writer with atomic replace (INV-16). JSONL
+ledgers are append-best-effort: more than one tool may append (<code>run_until</code>
+and <code>results_pin</code> both write <code>runs.jsonl</code>). Authored chapters go in
 <code>docs/</code>, never under <code>.apegmsh/</code> (INV-12).</p>
 <p><code>--assess</code> / MCP <code>assess</code> writes <code>.apegmsh/assess.json</code> (target paths,
 findings, skipped checks, figures, and the same markdown text the verb
@@ -4104,6 +4110,17 @@ after each tool call):</p>
   the envelope)</li>
 <li>After <code>render</code> / <code>animate</code>: paths under <code>visors/</code> (prefer <code>--json</code>
   <code>written</code> lists)</li>
+<li><strong>While a solve runs</strong>: <code>progress.json</code> — <code>{i, n, t, done, warnings}</code>
+  refreshed once per <code>APEGMSH_PROGRESS</code> marker (the emitters aim for
+  ~20 per analyze, so this is a slow file, not a firehose). Read it
+  instead of tailing the solver log. It is written <strong>only inside a
+  habitat</strong> (<code>.apegmsh/</code> must already exist — a plain script run
+  elsewhere creates nothing) and <strong>only once the deck emits a
+  marker</strong>, so a deck with no <code>analyze</code> leaves it untouched. The run's
+  last write carries <code>done: true</code> and <code>ok</code>, on failure as well as
+  success. Nothing prunes the file, so treat a <code>progress.json</code> older
+  than the current run as history: gate on mtime freshness, or on
+  <code>busy.busy</code> being true.</li>
 </ul>
 <p><code>status</code> is the cheap aggregate: no replay, no Qt. MCP
 <code>status(mode="brief")</code> is the <strong>default</strong> agent shape (root, last-run
@@ -4131,10 +4148,15 @@ entry script.</p>
 (or the CLI equivalent) before expecting names, picks, or reports.
 That also writes <code>project.json</code> so later <code>run_until(phase=…)</code> calls can
 omit the script path.</p>
-<p><code>status.contract_version</code> is the habitat semver (<code>1.7.0</code> today). Published
+<p><code>status.contract_version</code> is the habitat semver (<code>1.8.0</code> today). Published
 JSON Schema + goldens live in the <code>apeGmsh.studio.schemas</code> package
 (INV-17) so a Workbench-style consumer can validate without importing
-the FEM stack. Paths that fall under the habitat root (<code>script</code>, <code>cwd</code>,
+the FEM stack. Since 1.8.0 the stamp is also written <strong>into</strong>
+<code>names.json</code> and <code>progress.json</code>, so a consumer that only reads files —
+one that cannot or will not make a <code>status</code> call — can still refuse an
+unknown major. Older files simply have no <code>contract_version</code>; absence
+means "pre-1.8.0", not "wrong major". Paths that fall under the habitat
+root (<code>script</code>, <code>cwd</code>,
 and MCP <code>path</code> / <code>output</code> / <code>written</code> / <code>run_until.script</code>) are
 root-relative posix; the <code>root</code> field itself stays absolute as the
 resolve anchor. A <code>project.json</code> entry outside the habitat root is
@@ -4145,6 +4167,13 @@ schemas. A <strong>run</strong> line carries no <code>kind</code> and validates 
 against <code>ledger_pin.schema.json</code>. Discriminate on <code>kind</code> before
 validating — a pin line has no <code>script</code> / <code>phase</code> / <code>ok</code> and is
 correctly refused by the run schema.</p>
+<p>A timed run line also carries <code>started_at</code> (ISO-8601 UTC) and
+<code>duration_s</code> (seconds, monotonic), covering the failed replay as well as
+the successful one. <code>ts</code> stays the moment the line was written — the end
+of the run — so the two are not redundant. Both keys are <strong>omitted</strong>
+rather than written as <code>null</code> when there is no honest value, so a reader
+that finds <code>duration_s</code> can trust it. Lines written before 1.8.0 have
+neither.</p>
 <p><code>render(session=…)</code> draws one pane of a saved ADR 0098 session snapshot
 (<code>&lt;results&gt;.viewer-session.json</code>) instead of a results file. Its content
 is the slot catalog the human arranged, not a view token, so <code>view</code> /

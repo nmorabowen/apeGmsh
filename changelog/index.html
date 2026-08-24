@@ -3545,6 +3545,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8475,6 +8486,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)
       
     </span>
   </a>
@@ -13426,6 +13448,43 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11">ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)<a class="headerlink" href="#added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11" title="Permanent link">&para;</a></h3>
+<p>Three additive gaps closed at once, all found while an out-of-process
+consumer vendored the published goldens. <code>CONTRACT_VERSION</code> goes
+1.7.0 → <strong>1.8.0</strong>; nothing gained a <code>required</code> field, so old readers
+are unaffected (INV-17).</p>
+<p><strong><code>.apegmsh/progress.json</code> — the live solve's step counter.</strong> The
+analyze loop has always emitted <code>APEGMSH_PROGRESS i=.. n=.. t=..</code>, and
+<code>opensees/_run.py</code> has always parsed it for the <code>verbose</code> console
+counter — but another process could only learn how far along a solve
+was by tailing the solver log and reimplementing a private regex. Each
+parsed sample now also atomic-replaces
+<code>{schema, contract_version, deck, log, i, n, t, ts, done, warnings}</code>,
+with a terminal <code>done: true</code> + <code>ok</code> write that fires on a failed exit
+too. Throttle is the marker cadence (~20 samples/run), not a timer.
+The sidecar is <strong>habitat-only</strong>: it writes where <code>.apegmsh/</code> already
+exists and nowhere else, so a plain <code>python model.py</code> grows no dot-dir
+(INV-28), and it swallows its own IO errors — a lost sample must never
+kill a long solve (INV-29). The writer lives in <code>studio/_progress.py</code>;
+<code>opensees/_run.py</code> reaches it through a deferred import, so
+<code>import apeGmsh.opensees</code> gains no eager edge onto the habitat.</p>
+<p><strong>Run ledger lines carry <code>started_at</code> + <code>duration_s</code>.</strong> A run line had
+only <code>ts</code>, written at the end, so "how long did that take" meant
+differencing adjacent lines — wrong when runs are not back-to-back and
+undefined for the first line. Both <code>_exec_hold_open</code> exits are now
+timed with a monotonic clock, so a <em>failed</em> replay also reports how
+long it burned. Untimed lines <strong>omit</strong> the keys rather than writing
+<code>null</code>, so a reader that finds <code>duration_s</code> can trust it.</p>
+<p><strong><code>contract_version</code> is now stamped into files, not just payloads.</strong>
+It lived only on the live <code>status</code> dict, so a consumer reading
+<code>.apegmsh/</code> directly had an INV-17 major gate it could never engage.
+<code>names.json</code> and <code>progress.json</code> now carry the stamp, and <code>validate()</code>
+applies the major check to any payload that has it. Absence means
+"pre-1.8.0", not "wrong major".</p>
+<p>New <code>progress.schema.json</code> + golden; <code>ledger</code> / <code>names</code> schemas gained
+the optional properties; <code>studio-habitat.md</code> documents the file, its
+poll contract, and the staleness rule (nothing prunes it — gate on
+mtime or <code>busy.busy</code>).</p>
 <h3 id="added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5">ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)<a class="headerlink" href="#added-docs-the-contact-section-with-the-2d-lane-as-its-new-half-fork-adr-85-adoption-s5" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.contact</code> / <code>contact_plane</code> were documented <strong>nowhere</strong> —
 <code>guide_constraints.md</code> reached them only as the redirect target of the
