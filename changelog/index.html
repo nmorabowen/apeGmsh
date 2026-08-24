@@ -3545,6 +3545,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#docs-h5-schemamd-registry-re-sync-doc-sync-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DOCS — h5-schema.md registry re-sync + doc-sync ratchet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8486,6 +8497,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-h5-schemamd-registry-re-sync-doc-sync-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DOCS — h5-schema.md registry re-sync + doc-sync ratchet
       
     </span>
   </a>
@@ -13448,6 +13470,37 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="docs-h5-schemamd-registry-re-sync-doc-sync-ratchet">DOCS — <code>h5-schema.md</code> registry re-sync + doc-sync ratchet<a class="headerlink" href="#docs-h5-schemamd-registry-re-sync-doc-sync-ratchet" title="Permanent link">&para;</a></h3>
+<p><code>src/apeGmsh/opensees/architecture/h5-schema.md</code> had drifted well
+behind <code>mesh/_femdata_h5_io.py</code> / <code>opensees/emitter/h5.py</code>: the
+zone-registry "Current" column was frozen at neutral <code>2.10.0</code> /
+opensees <code>2.12.0</code> (live constants: <code>2.31.0</code> / <code>2.20.0</code>), the
+neutral-zone history stopped at <code>2.10.0</code> even though the
+<code>NEUTRAL_SCHEMA_VERSION</code> docstring — the actual canonical log — runs
+21 versions further, <code>/nodes</code> and <code>/elements/{type}</code> omitted the
+always-written <code>module_label</code> dataset (schema 2.9.0) and the optional
+<code>ndf</code> (2.7.0) / <code>provenance</code> (2.11.0) columns, the top-level tree still
+showed the pre-2.26.1 <code>/loads/sp/default</code> single-dataset shape, the
+"Two zones" bullet list named 8 of the ~18 top-level groups
+<code>write_neutral_zone</code> actually writes (missing <code>/mesh_selections</code>,
+<code>/partitions</code>, <code>/parts</code>, <code>/reinforce_ties</code>, <code>/embed_ties</code>,
+<code>/rebar_elements</code>, <code>/contacts</code>, <code>/contact_planes</code>, <code>/interfaces</code>,
+<code>/composed_from</code>), and the <code>/meta/lineage</code> note credited the stamp to
+"the composer" only when <code>write_fem_h5</code> (the broker-only <code>fem.to_h5()</code>
+path) stamps <code>fem_hash</code> there too. Every number and dataset name below
+was re-read from the code, not carried over from the stale doc.</p>
+<p>No schema bump — this is a doc-only re-sync; <code>NEUTRAL_SCHEMA_VERSION</code>,
+<code>SCHEMA_VERSION</code>, and every other schema constant are unchanged.</p>
+<p>Two new ratchet tests in <code>tests/opensees/h5/test_h5_schema_compat.py</code>
+close the gap so this can't silently drift again:
+<code>test_h5_schema_doc_registry_matches_writer_constants</code> compares the
+doc's zone-registry "Current" cells against the live
+<code>NEUTRAL_SCHEMA_VERSION</code> / <code>SCHEMA_VERSION</code> constants, and
+<code>test_h5_schema_doc_names_every_neutral_zone_group</code> scans
+<code>write_neutral_zone</code>'s own source for every group/dataset it creates
+and asserts each is named somewhere in the doc — both fail loud (proven
+by deliberately reverting the doc and re-running before restoring it)
+instead of the doc quietly going stale again.</p>
 <h3 id="added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11">ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)<a class="headerlink" href="#added-studio-contract-180-a-progress-sidecar-run-durations-and-a-version-stamp-on-disk-adr-0095-amendment-11" title="Permanent link">&para;</a></h3>
 <p>Three additive gaps closed at once, all found while an out-of-process
 consumer vendored the published goldens. <code>CONTRACT_VERSION</code> goes
