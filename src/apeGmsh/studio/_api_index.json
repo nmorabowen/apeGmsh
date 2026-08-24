@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-19T20:01:06Z",
+  "generated": "2026-08-24T16:23:00Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3355,6 +3355,12 @@
       "signature": "AMD() -> 'AMD'",
       "skill": "references/opensees-bridge.md",
       "doc": "``numberer AMD`` — approximate minimum degree reduction."
+    },
+    "ops.numberer.LadrunoParallelRCM": {
+      "symbol": "ops.numberer.LadrunoParallelRCM",
+      "signature": "LadrunoParallelRCM() -> 'LadrunoParallelRCM'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "``numberer LadrunoParallelRCM`` — parallel RCM, O(V) merge (**Ladruno fork**)."
     },
     "ops.numberer.ParallelPlain": {
       "symbol": "ops.numberer.ParallelPlain",

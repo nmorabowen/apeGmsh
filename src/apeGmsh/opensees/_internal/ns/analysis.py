@@ -72,7 +72,7 @@ from ...analysis.integrator import (
     Newmark,
     SMSLump,
 )
-from ...analysis.numberer import AMD, RCM, ParallelPlain, ParallelRCM
+from ...analysis.numberer import AMD, RCM, LadrunoParallelRCM, ParallelPlain, ParallelRCM
 from ...analysis.numberer import Plain as NumbererPlain
 from ...analysis.system import (
     BandGeneral,
@@ -237,6 +237,17 @@ class _NumbererNS(_BridgeNamespace):
         will error at runtime.
         """
         return self._bridge._register(ParallelRCM())
+
+    def LadrunoParallelRCM(self) -> LadrunoParallelRCM:
+        """``numberer LadrunoParallelRCM`` — parallel RCM, O(V) merge (**Ladruno fork**).
+
+        Fork-only (ADR-74): drop-in replacement for ``ParallelRCM`` whose
+        first-step numbering setup stays near-linear at large node counts
+        instead of the stock numberer's O(V²) degradation. Emit-only
+        against a stock build or a serial ``OpenSees.exe`` will error at
+        runtime.
+        """
+        return self._bridge._register(LadrunoParallelRCM())
 
 
 # ---------------------------------------------------------------------------
