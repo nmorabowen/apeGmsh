@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-24T16:23:00Z",
+  "generated": "2026-08-24T20:44:22Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3193,6 +3193,30 @@
       "signature": "Newmark(*, gamma: 'float', beta: 'float', form: \"Literal['D', 'V', 'A'] | None\" = None) -> 'Newmark'",
       "skill": "references/opensees-bridge.md",
       "doc": "``integrator Newmark gamma beta [-form D|V|A]`` — implicit transient."
+    },
+    "ops.ladruno_contact_force": {
+      "symbol": "ops.ladruno_contact_force",
+      "signature": "ladruno_contact_force(node: 'int') -> 'float'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Total normal contact-force **magnitude** on an NTS slave node."
+    },
+    "ops.ladruno_contact_info": {
+      "symbol": "ops.ladruno_contact_info",
+      "signature": "ladruno_contact_info() -> \"'ContactInfo'\"",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Engine counters — ``(n_contacts, n_commits, n_reverts,"
+    },
+    "ops.ladruno_mortar_penetration": {
+      "symbol": "ops.ladruno_mortar_penetration",
+      "signature": "ladruno_mortar_penetration() -> 'float'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Max KKT-active normal penetration over all mortar slave nodes"
+    },
+    "ops.ladruno_mortar_tie_residual": {
+      "symbol": "ops.ladruno_mortar_tie_residual",
+      "signature": "ladruno_mortar_tie_residual() -> 'float'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Max weighted relative-displacement bond residual over all mortar"
     },
     "ops.ladruno_projection_tie_force": {
       "symbol": "ops.ladruno_projection_tie_force",

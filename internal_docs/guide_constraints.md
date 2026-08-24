@@ -632,6 +632,55 @@ a silent DOF shift. **Parallel / DDM 2D contact is out of scope fork-side** and
 is refused by name on all three lanes — `contact` in either formulation, and
 `contact_plane` — as soon as the model is partitioned.
 
+#### Reading contact back
+
+**There is no recorder channel for contact.** `LadrunoContact` is a constraint
+handler plus a contact domain, not an `Element`, so it has no element response
+for a recorder to pull — nothing lands in `.ladruno`, nothing lands in
+`model.h5`, and `Results` has no contact fields to expose. Contact is
+**live-query only**, through four `apeSees` methods that each need a prior live
+`analyze()` and a fork build:
+
+| Method | Returns |
+|---|---|
+| `ops.ladruno_contact_force(node)` | Total normal contact-force **magnitude** on an NTS slave node |
+| `ops.ladruno_contact_info()` | `(n_contacts, n_commits, n_reverts, n_mortar_contacts)`, plus `.total_contacts` |
+| `ops.ladruno_mortar_penetration()` | Max KKT-active normal penetration over mortar slaves — a **length** |
+| `ops.ladruno_mortar_tie_residual()` | Max weighted bond residual over mortar **tie** slaves |
+
+```python
+emitter = LiveOpsEmitter(wipe=True)
+ops.build().emit(emitter)
+emitter.analyze(steps=20)
+
+info = emitter.ladruno_contact_info()
+if info.total_contacts:                       # NOT n_contacts — see below
+    f = sum(emitter.ladruno_contact_force(n) for n in slave_nodes)
+```
+
+Four limits, none of which the returned number can signal:
+
+1. **The force query is NTS-only.** It is fed exclusively from the segment /
+   end-cap branch, so a **mortar** or **rigid-plane** slave always reads `0.0`
+   — measured on fork `b17e8bd82`: every slave of a converged 2-D mortar deck
+   reports `0.0` while the same deck's `ladruno_mortar_penetration()` reads
+   `5.05e-07`. Neither of those lanes has a force query at all; recover their
+   forces from reactions or the penalty-depth identity instead.
+2. **It is a magnitude, not a vector.** Near a corner or the D4 end-cap the
+   pair normal is not axis-aligned, so it equals no single global force
+   component.
+3. **Zero is ambiguous**, and the obvious disambiguator is the wrong one.
+   `0.0` means both "not in contact" and "no contact engine at all". Use
+   `info.total_contacts` — **not** `info.n_contacts`, which counts the NTS
+   lane only: a live mortar-only model reports `n_contacts == 0` (measured on
+   `b17e8bd82`; the two counters are disjoint lanes, not a total and a subset).
+4. **A released 3-D pair reports its last-active force forever** — a known,
+   deferred fork defect, reproduced at `f_query = 1000.0` against
+   `f_true = 0.0`. The 2-D lane carries the fix.
+
+If you need a force *history* rather than a final value, there is no recorded
+route: query inside your own stepping loop and accumulate.
+
 `Ladruno_implementation/LadrunoContact2D_guide.md` in the fork is the authority
 on kernel behaviour: the vertex / corner policy, the D4 radial end-cap, the
 broad-phase `cell` sizing and the full units table live there, not here.

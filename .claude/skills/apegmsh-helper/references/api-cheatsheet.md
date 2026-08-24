@@ -673,6 +673,28 @@ transversally; and size a curved or closed master's facets from the expected
 penetration / the loop's extent, not from the elastic mesh (a coarse closed loop
 converges, balances, and transmits exactly zero). Kernel authority: the fork's
 `Ladruno_implementation/LadrunoContact2D_guide.md`.
+
+**Reading contact back — LIVE QUERY ONLY, no recorder channel.** `LadrunoContact`
+is a constraint handler + contact domain, **not** an `Element`, so it has no
+element response: nothing reaches `.ladruno`, `model.h5` or `Results`, and there
+is no recorded force history. Four `apeSees` methods, each needing a prior live
+`analyze()` and a fork build (stock raises by name):
+```
+ops.ladruno_contact_force(node)      -> float   # NTS-only normal-force MAGNITUDE
+ops.ladruno_contact_info()           -> ContactInfo(n_contacts, n_commits,
+                                       #   n_reverts, n_mortar_contacts) + .total_contacts
+ops.ladruno_mortar_penetration()     -> float   # mortar ALM measure — a LENGTH, not a force
+ops.ladruno_mortar_tie_residual()    -> float   # mortar-TIE ALM measure
+```
+Limits the return value cannot signal: the force query is **NTS-only** (a mortar
+or rigid-plane slave always reads `0.0` — those lanes have no force query;
+recover from reactions or the penalty-depth identity); it is a **magnitude, not a
+vector** (near a corner / D4 end-cap it equals no global component); `0.0` means
+both "not in contact" and "no engine", so gate on `info.total_contacts` and
+**not** `info.n_contacts` — the two counters are **disjoint lanes**, so a live
+mortar-only model reads `n_contacts == 0` (measured, fork `b17e8bd82`); and a
+released **3D** pair reports its last-active force forever (known deferred fork
+defect; the 2D lane has the fix).
 `# src/apeGmsh/core/ConstraintsComposite.py:624 (contact), :989 (contact_plane), :2865 (mortar); EmbedmentsComposite.py:129 (embed); _kernel/geometry/_boundary_chain.py (2D chain + winding)`
 
 **Interface springs (ADR 0093) — the only NON-BOND in `g.constraints`.**
