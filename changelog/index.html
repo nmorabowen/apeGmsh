@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8604,6 +8615,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)
       
     </span>
   </a>
@@ -13646,6 +13668,49 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation">CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)<a class="headerlink" href="#changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation" title="Permanent link">&para;</a></h3>
+<p>A 2-D <code>node</code> line must carry exactly <code>ndm</code> coordinates: a padded third
+desynchronises OpenSees' optional-argument scan, so the following <code>-ndf K</code>
+is present and inert and the deck dies later at <code>setDomain</code> with no clue
+pointing back. That rule was enforced <strong>twice</strong> — once in the build layer
+(<code>node_coords_for_ndm</code>) and again, last, at every text/live emitter
+(<code>trim_coords_to_ndm</code>, ADR 0099). The emitter copy always won, so the
+build-layer copy changed no production deck while still costing the <code>ndm</code>
+threading that existed only to feed it.</p>
+<p><strong>With one precondition, now made explicit.</strong> <code>trim_coords_to_ndm</code> reads
+the <code>ndm</code> the emitter learned from <code>model()</code>, and a bare emitter that
+never saw one has <code>ndm = None</code> and trims nothing. Production is safe by
+construction — <code>emitter.model(ndm=, ndf=)</code> is step 1 of <code>apeSees.emit</code>,
+unconditional and ahead of every node — but three interface unit rigs built
+an emitter directly and skipped it, so the build-layer trim was the only
+thing keeping their goldens two-coordinate. Removing it made them emit
+<code>node 101 1.0 0.5 0.0 -ndf 2</code>: the padded third coordinate, stranding the
+<code>-ndf</code>, which is the exact defect ADR 0099 exists to prevent.</p>
+<p>The goldens were right and the rigs were wrong, so <strong>no expected value was
+edited</strong> — the rigs now issue <code>model()</code> first, as production does, and the
+goldens pass unchanged. That is the honest fix; rewriting the expectations
+to match the new output would have buried a real precondition.</p>
+<p><code>node_coords_for_ndm</code> is now <code>node_coords_as_floats</code> and has no <code>ndm</code>
+parameter: the dimension question belongs to whoever writes the line. That
+removed <strong>7 function parameters and 24 argument passes</strong> across <code>build.py</code>,
+<code>compose.py</code> and <code>apesees.py</code>.</p>
+<p>What did <em>not</em> go is the <code>float()</code> coercion, and that distinction is the
+whole reason this is a rename rather than a deletion. The broker hands out
+numpy scalars; <code>TclEmitter</code> renders an unknown numeric via <code>repr</code>; under
+numpy 2.x <code>repr(np.float64(0.0))</code> is the literal string <code>np.float64(0.0)</code>.
+A stray numpy coordinate would emit <code>node 1 np.float64(0.0) np.float64(0.0)</code>
+— and miss the emitter's plain-float fast path on the way. So the build layer
+still guarantees plain floats; it just no longer has an opinion about how many
+of them belong on the line.</p>
+<p>Verified as a no-op before touching the suite: decks, <code>model.h5</code> and the
+H5Emitter sidecar are byte-for-byte identical across a 2-D model at z=0, a 2-D
+model at <strong>z=5</strong> (the only case where the two trims could have disagreed, since
+the emitter trims for the deck while the archive keeps what it is handed), and
+a 3-D model. Six new tests pin the split — coercion here, dimension there —
+including the numpy-repr hazard that keeps the coercion honest.</p>
+<p><strong>Noticed, not fixed:</strong> <code>validate_adaptive_element_endpoints</code>,
+<code>resolve_ndf_overlay</code> and <code>validate_record_ndf_consistency</code> carry an
+<code>ndm</code> parameter that was already dead on main, unrelated to this change.</p>
 <h3 id="changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build">CHANGED — S4's three <code>-thickness</code> conventions re-measured on a trustworthy build<a class="headerlink" href="#changed-s4s-three-thickness-conventions-re-measured-on-a-trustworthy-build" title="Permanent link">&para;</a></h3>
 <p>The adoption-S4 figures were credited to fork build <code>e7555f2c9</code>. That stamp was
 wrong — the worktree binary that produced them misreported its own hash (it
