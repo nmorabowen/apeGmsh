@@ -19,15 +19,32 @@
 > validator, so a holed slave listing (silently legal fork-side, exactly
 > like a holed master) is unreachable by construction on both sides;
 > `thickness=h` emits the mortar-only `-thickness`, refused by name on the
-> NTS lane and in a 3-D model. Acceptance, measured on fork build
-> `e7555f2c9` (T4): a flush 2-D mortar **tie** deck closes equilibrium at
-> machine precision (residual 0 to 2.3e-10 on a 1e6 load), and a
-> compression deck pins all three thickness conventions at once —
-> no `-thickness` is bit-identical to `-thickness 1.0`; halving `h`
-> against an EXPLICIT `-epsN` doubles the interface penetration part
-> exactly (4.013e-06 both times, so `h` is applied ONCE, not squared); and
-> `-epsN auto` under `h = 1.0` vs `h = 0.5` is **bit-identical**
-> (5.244762212098e-05) — auto is never h-scaled.
+> NTS lane and in a 3-D model. Acceptance, originally measured on a
+> worktree binary **reporting** `e7555f2c9` (T4): a flush 2-D mortar
+> **tie** deck closes equilibrium at machine precision (residual 0 to
+> 2.3e-10 on a 1e6 load), and a compression deck pins all three thickness
+> conventions at once — no `-thickness` is bit-identical to `-thickness
+> 1.0`; halving `h` against an EXPLICIT `-epsN` doubles the interface
+> penetration part exactly (4.013e-06 both times, so `h` is applied ONCE,
+> not squared); and `-epsN auto` under `h = 1.0` vs `h = 0.5` is
+> **bit-identical** (5.244762212098e-05) — auto is never h-scaled.
+>
+> **Those three conventions were RE-MEASURED on 2026-08-24** against
+> `b17e8bd82`, a build whose stamp is trustworthy (`rebuild` wipes
+> `build/`, forcing a reconfigure). The original binary misreported its
+> own hash — it contained ADR-85 F1, which landed *after* `e7555f2c9` —
+> so the figures above were credited to a build that never produced them.
+> All three hold:
+>
+> | Convention | Re-measured on `b17e8bd82` |
+> |---|---|
+> | absent ≡ `-thickness 1.0` | bit-identical, `5.051658913343455e-07` both |
+> | `h` applied ONCE, not squared | penetration ratio `h=0.5 : h=1.0` is **2.0**, never 4.0 — across five decades of `epsN` (1e8→1e12): 1.99978, 1.99808, 1.99392, 1.99995, **2.000000018**. The sub-1 % wobble at intermediate stiffness is elastic coupling; the stiff limit is exact. |
+> | `-epsN auto` never h-scaled | bit-identical at `h = 1.0` vs `0.5`, `3.2823219478178336e-06` both |
+>
+> The absolute values differ from the originals because the rig differs;
+> what is pinned is the *law*, and each law reproduces. The **tie**
+> equilibrium residual was not re-measured.
 >
 > **S5 shipped — the docs.** `guide_constraints.md` gained **Level 5 —
 > Contact** (the whole verb, 3-D and 2-D: it was documented nowhere
