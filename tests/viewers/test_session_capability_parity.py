@@ -64,13 +64,17 @@ CAPABILITIES: "dict[str, dict[str, str]]" = {
                "A6.6 retracted that. The session emits no gizmo actors "
                "at all, so there is nothing for an interactor to grab; "
                "realize must draw them and something must own them. "
-               "MEASURED besides: pane.clips is in the STRUCTURE half "
-               "of _pane_signature, so one drag frame is a full "
-               "realize -- 240.8 ms mean on the bench vs 17.7 ms for a "
-               "scrub on the same pane. A4's fast path does not help "
-               "(it is cursor-only). Slice 1 -- ViewClipController -- "
-               "has landed; see internal_docs/design/"
-               "adr0098_r1_gizmo_brief.md.",
+               "TWO of the three pieces have landed: ViewClipController "
+               "(the controller) and the A7 reclip fast path, which "
+               "fixed the drag-frame cost this work MEASURED -- clips "
+               "were in the STRUCTURE half of _pane_signature, so one "
+               "drag frame was a full realize at 240.8 ms; now 18.2 ms, "
+               "at the orbit floor. What is still owed is the actors "
+               "and the binding: the renderer must be added through "
+               "LedgerBackend.inner (or _teardown sweeps it) and the "
+               "interactor re-seated after every legend re-install, or "
+               "it silently wins presses over the colour bar. See "
+               "internal_docs/design/adr0098_r1_gizmo_brief.md.",
     },
     "install_scope_gizmo_interactor": {
         "status": "missing",
