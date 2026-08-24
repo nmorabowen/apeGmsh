@@ -51,6 +51,20 @@ if stamp != expected_hash:           # fail loud, do not measure a mystery build
     raise RuntimeError(f"wrong engine build: {stamp}")
 ```
 
+**The stamp is baked at CMake *configure* time, not at compile time — so it
+can be STALE.** Check out a new commit in an already-configured build tree and
+rebuild incrementally, and the binary contains the new code while
+`ladrunoBuild` still reports the hash it was configured at. Measured
+2026-08-24: a worktree binary reporting `e7555f2c9` demonstrably contained the
+ADR-85 F1 winding lane that only landed in `52938956b`, emitting F1's own named
+FATAL verbatim. So a mismatch does **not** tell you the binary is older than
+the stamp — it may be newer, which is the more dangerous direction, because a
+measurement then gets attributed to a build that never produced it. Treat the
+stamp as trustworthy only after a `build.bat clean` / `rebuild` (both wipe
+`build/`, forcing reconfigure). To identify a suspect binary, probe a
+*behaviour* only the newer code has — a named refusal is ideal, since it needs
+no converged run.
+
 Use it in any harness whose results are attributed to a specific engine
 (A/B comparisons, validation gates, defect probes). Before this command the
 only build identifier was the splash banner's `Ladruno OpenSees build:`
