@@ -803,7 +803,11 @@ ops.tcl("main.tcl", per_rank=True)   # → main.tcl + ranks/rank0_0.tcl, ranks/r
 
 **Streaming emit — `ops.tcl(path, stream=True)` (ADR 0065 Tier 2, #777).**
 Writes the deck through a live file sink instead of accumulating the full
-line buffer, so **peak emit memory stops scaling with deck size**. Output is
+line buffer, so **the deck text stops scaling with deck size** — the line
+buffer becomes O(1). It does **not** make emit constant-memory overall: the
+build-side Python object graph still scales with N (per-rank containers, the
+node-index lookup, the ndf-inference dicts), and past ~50 M hexes that graph
+is what OOM-kills the process — see **ADR 0100**. Output is
 **byte-identical** to the default mode, including under `per_rank=True`
 (fragment files are live-routed as the emitter switches partitions, not
 sliced post-hoc). Everything goes to `.tmp` siblings promoted atomically on
@@ -812,8 +816,28 @@ clean completion — a mid-emit exception never leaves a half-written deck
 fragment does). Not supported with `split=True` (raises `ValueError`).
 
 ```python
-ops.tcl("main.tcl", stream=True, per_rank=True)   # constant-memory partitioned emit
+ops.tcl("main.tcl", stream=True, per_rank=True)   # constant deck-TEXT memory; build-side graph still scales with N (ADR 0100)
 ```
+
+**Close the session before you emit a large model (ADR 0100).** The emit path
+reads the `FEMData` snapshot and never calls Gmsh, so anything the kernel still
+holds is pure overhead on the emit peak. Measured on a 51 M-hex partitioned
+model: leaving the `with` block dropped RSS 31 → 18 GB *before* `build()`
+started, because `gmsh.finalize()` returned ~13 GB. Take the snapshot inside
+the block, emit outside it:
+
+```python
+with apeGmsh(model_name="big") as g:
+    ...
+    fem = g.mesh.queries.get_fem_data(dim=3)   # snapshot INSIDE the session
+
+ops = apeSees(fem)                             # everything below runs with the
+...                                            # Gmsh kernel already finalized
+ops.tcl("model.tcl", per_rank=True, stream=True)
+```
+
+On a small model this is a style preference. Past a few million elements it is
+the difference between fitting on the node and not.
 
 ## Which OpenSees runs — `OpenSeesTarget`
 
