@@ -625,6 +625,12 @@ are **separate statements -- not a fluent chain.** Each `tcl / py / h5
 / run` calls `build()` internally. See the recipe
 [Export a solver script](../how-to/export-script.md).
 
+On large models, close the `apeGmsh` session before you emit. The emit path
+reads the `FEMData` snapshot only and never calls Gmsh, so a still-open
+kernel is pure overhead on the peak: on a 51 M-hex partitioned model,
+closing the session dropped RSS from 31 GB to 18 GB *before* `build()` even
+started (ADR 0100).
+
 ### 6.1 Tcl script -- `ops.tcl(path)`
 
 ```python

@@ -165,6 +165,12 @@ to be the *same model*, because they came from the same declarations. The
 zone the viewer reads — the session-side `g.save()` writes only the latter
 (see [Save & reload a model](../how-to/save-reload.md)).
 
+On large models, close the `apeGmsh` session *before* you emit. The emit path
+reads the `FEMData` snapshot and never calls Gmsh, so a still-open kernel adds
+only overhead to your peak memory. On a 51 M-hex model, closing the session
+dropped memory use by 13 GB before `build()` even started; on smaller models
+this is a style choice, but past a few million elements it becomes essential.
+
 ## Recorders, and reading back
 
 Output declarations live on the same surface. `ops.recorder.<Type>(...)`

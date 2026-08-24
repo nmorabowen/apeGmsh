@@ -13,6 +13,14 @@ dual-mode sink + live per-rank fragment routing + atomic writes) shipped as
 O(1) line-buffer memory. Cumulative measured effect of the v2 plan at the
 103k-hex / 64-rank / staged reference: emit phase-peak 2,291 → 1,039 B/hex.
 
+**Amended by ADR 0100 (2026-08-24).** "Only Decision §3 (live fragment
+routing) gets to constant emit memory" (§Difficulty assessment) is true only
+of the **line buffer**, which is what Tier 2 §3 bounds. It is not true of
+emit as a whole: the build-side object graph still scales with N, and a
+51 M-hex partitioned deck was OOM-killed mid-emit at ~61.3 GB RSS. That
+sentence is the origin of the "constant-memory partitioned emit" claim ADR
+0100 retires. See ADR 0100.
+
 ## Context
 
 Tcl and Python deck emission accumulate the **entire deck as a Python
