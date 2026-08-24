@@ -95,6 +95,57 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)
+
+A 2-D ``node`` line must carry exactly ``ndm`` coordinates: a padded third
+desynchronises OpenSees' optional-argument scan, so the following ``-ndf K``
+is present and inert and the deck dies later at ``setDomain`` with no clue
+pointing back. That rule was enforced **twice** — once in the build layer
+(``node_coords_for_ndm``) and again, last, at every text/live emitter
+(``trim_coords_to_ndm``, ADR 0099). The emitter copy always won, so the
+build-layer copy changed no production deck while still costing the ``ndm``
+threading that existed only to feed it.
+
+**With one precondition, now made explicit.** ``trim_coords_to_ndm`` reads
+the ``ndm`` the emitter learned from ``model()``, and a bare emitter that
+never saw one has ``ndm = None`` and trims nothing. Production is safe by
+construction — ``emitter.model(ndm=, ndf=)`` is step 1 of ``apeSees.emit``,
+unconditional and ahead of every node — but three interface unit rigs built
+an emitter directly and skipped it, so the build-layer trim was the only
+thing keeping their goldens two-coordinate. Removing it made them emit
+``node 101 1.0 0.5 0.0 -ndf 2``: the padded third coordinate, stranding the
+``-ndf``, which is the exact defect ADR 0099 exists to prevent.
+
+The goldens were right and the rigs were wrong, so **no expected value was
+edited** — the rigs now issue ``model()`` first, as production does, and the
+goldens pass unchanged. That is the honest fix; rewriting the expectations
+to match the new output would have buried a real precondition.
+
+``node_coords_for_ndm`` is now ``node_coords_as_floats`` and has no ``ndm``
+parameter: the dimension question belongs to whoever writes the line. That
+removed **7 function parameters and 24 argument passes** across ``build.py``,
+``compose.py`` and ``apesees.py``.
+
+What did *not* go is the ``float()`` coercion, and that distinction is the
+whole reason this is a rename rather than a deletion. The broker hands out
+numpy scalars; ``TclEmitter`` renders an unknown numeric via ``repr``; under
+numpy 2.x ``repr(np.float64(0.0))`` is the literal string ``np.float64(0.0)``.
+A stray numpy coordinate would emit ``node 1 np.float64(0.0) np.float64(0.0)``
+— and miss the emitter's plain-float fast path on the way. So the build layer
+still guarantees plain floats; it just no longer has an opinion about how many
+of them belong on the line.
+
+Verified as a no-op before touching the suite: decks, ``model.h5`` and the
+H5Emitter sidecar are byte-for-byte identical across a 2-D model at z=0, a 2-D
+model at **z=5** (the only case where the two trims could have disagreed, since
+the emitter trims for the deck while the archive keeps what it is handed), and
+a 3-D model. Six new tests pin the split — coercion here, dimension there —
+including the numpy-repr hazard that keeps the coercion honest.
+
+**Noticed, not fixed:** ``validate_adaptive_element_endpoints``,
+``resolve_ndf_overlay`` and ``validate_record_ndf_consistency`` carry an
+``ndm`` parameter that was already dead on main, unrelated to this change.
+
 ### CHANGED — S4's three `-thickness` conventions re-measured on a trustworthy build
 
 The adoption-S4 figures were credited to fork build `e7555f2c9`. That stamp was
