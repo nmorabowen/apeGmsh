@@ -74,6 +74,7 @@ from apeGmsh.opensees.analysis.integrator import (
 from apeGmsh.opensees.analysis.numberer import (
     AMD,
     RCM,
+    LadrunoParallelRCM,
     ParallelPlain,
     ParallelRCM,
 )
@@ -355,6 +356,16 @@ class TestParallelRCM:
         assert ParallelRCM().dependencies() == ()
 
 
+class TestLadrunoParallelRCM:
+    def test_emit(self) -> None:
+        e = RecordingEmitter()
+        LadrunoParallelRCM()._emit(e, tag=1)
+        assert e.calls == [("numberer", ("LadrunoParallelRCM",), {})]
+
+    def test_dependencies_empty(self) -> None:
+        assert LadrunoParallelRCM().dependencies() == ()
+
+
 class TestNumbererNamespace:
     def test_plain(self) -> None:
         ops = _make_ops()
@@ -380,6 +391,11 @@ class TestNumbererNamespace:
         ops = _make_ops()
         n = ops.numberer.ParallelRCM()
         assert isinstance(n, ParallelRCM)
+
+    def test_ladruno_parallel_rcm(self) -> None:
+        ops = _make_ops()
+        n = ops.numberer.LadrunoParallelRCM()
+        assert isinstance(n, LadrunoParallelRCM)
 
 
 # ===========================================================================

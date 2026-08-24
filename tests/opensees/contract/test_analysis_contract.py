@@ -77,6 +77,7 @@ from apeGmsh.opensees.analysis.integrator import (
 from apeGmsh.opensees.analysis.numberer import (
     AMD,
     RCM,
+    LadrunoParallelRCM,
     ParallelPlain,
     ParallelRCM,
 )
@@ -124,6 +125,7 @@ ALL_NUMBERERS: list[type[Numberer]] = [
     AMD,
     ParallelPlain,
     ParallelRCM,
+    LadrunoParallelRCM,
 ]
 
 ALL_SYSTEMS: list[type[LinearSystem]] = [
@@ -212,6 +214,7 @@ _MINIMAL_PARAMS: dict[type[Primitive], dict[str, Any]] = {
     AMD: {},
     ParallelPlain: {},
     ParallelRCM: {},
+    LadrunoParallelRCM: {},
     # system
     BandGeneral: {},
     BandSPD: {},

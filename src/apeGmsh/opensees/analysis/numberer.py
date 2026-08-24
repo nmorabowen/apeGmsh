@@ -18,11 +18,14 @@ OpenSees command shapes::
     numberer AMD
     numberer ParallelPlain
     numberer ParallelRCM
+    numberer LadrunoParallelRCM
 
 Note: the parallel variants (:class:`ParallelPlain`, :class:`ParallelRCM`)
 are only compiled into OpenSees builds with ``_PARALLEL_INTERPRETERS``
 (typically ``OpenSeesMP``). Emitting them and running through a serial
 ``OpenSees.exe`` produces ``WARNING No Numberer type exists``.
+``LadrunoParallelRCM`` additionally requires the Ladruno fork (ADR-74):
+a stock ``OpenSeesMP`` errors the same way.
 """
 from __future__ import annotations
 
@@ -41,6 +44,7 @@ __all__ = [
     "AMD",
     "ParallelPlain",
     "ParallelRCM",
+    "LadrunoParallelRCM",
 ]
 
 
@@ -131,6 +135,32 @@ class ParallelRCM(Numberer):
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
         emitter.numberer("ParallelRCM")
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoParallelRCM — O(V) parallel RCM (Ladruno fork, ADR-74)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoParallelRCM(Numberer):
+    """``numberer LadrunoParallelRCM`` — parallel RCM, O(V) merge (**Ladruno fork**).
+
+    **Fork-only** (Ladruno OpenSees, ADR-74). Drop-in replacement for
+    :class:`ParallelRCM` that replaces the stock ``ParallelNumberer``'s
+    O(V²) linear-scan subgraph merge with an owned dense tag→Vertex*
+    merge, so first-step numbering setup stays near-linear at large node
+    counts instead of degrading quadratically. Only available in OpenSees
+    builds with ``_PARALLEL_INTERPRETERS`` (e.g. ``OpenSeesMP``); emission
+    works on any build, but running against a stock build or a serial
+    ``OpenSees.exe`` raises ``WARNING No Numberer type exists``.
+    """
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.numberer("LadrunoParallelRCM")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
