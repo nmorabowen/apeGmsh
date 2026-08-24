@@ -38,7 +38,7 @@ Seven tiers, ordered by topology:
 | 2b — Mixed   | [`node_to_surface`](#tier-2b-mixed-dof), [`node_to_surface_spring`](#tier-2b-mixed-dof)                   | `NodeToSurfaceRecord`       |
 | 3 — Surface  | [`tie`](#tier-3-node-to-surface), [`distributing_coupling`](#tier-3-node-to-surface), [`embedded`](#tier-3-node-to-surface) | `InterpolationRecord`       |
 | 4 — Contact  | [`tied_contact`](#tier-4-surface-to-surface)                                                              | `SurfaceCouplingRecord`     |
-| 5 — Fork     | `contact`, `mortar` (deprecated alias for `contact(formulation="mortar", tie=True)`)                      | `ContactRecord`             |
+| 5 — Fork     | [`contact`](#tier-5-fork-contact), [`contact_plane`](#tier-5-fork-contact), `mortar` (deprecated alias for `contact(formulation="mortar", tie=True)`) | `ContactRecord`, `ContactPlaneRecord` |
 | 6 — Interface | [`interface`](#tier-6-interface-springs)                                                                 | `InterfaceRecord`           |
 
 Tiers 1 to 4 ultimately express the linear MPC equation
@@ -330,6 +330,35 @@ clearly picked as finer than the other and you want a symmetric
 treatment.
 
 ::: apeGmsh._kernel.defs.constraints.TiedContactDef
+    options:
+      heading_level: 3
+
+## Tier 5 — Fork contact
+
+Every tier above is a permanent bond, active from the first step.
+`g.constraints.contact(master, slave, ...)` is the one that can open,
+close, slide and carry friction — a real contact interaction rather
+than a kinematic constraint, emitted through the Ladruno fork's
+contact subsystem. `"nts"` is node-to-segment penalty; `"mortar"` is
+segment-to-segment augmented Lagrange, the accuracy lane for
+non-matching interfaces.
+
+`g.constraints.contact_plane(slave, ...)` is the same idea with no
+master mesh at all: the slave meets a fixed infinite rigid plane.
+
+Both resolve **additively** onto `fem.elements.contacts` /
+`fem.elements.contact_planes` rather than the MP-constraint channels,
+both are serial-only, and both need a live gmsh session — declaring one
+on a `from_h5` or composed session raises. The deck emits on any build
+but runs only on the fork. Contact has no recorder channel, so results
+come back through the live queries described in
+[the constraints concept page](../concepts/constraints.md#contact).
+
+::: apeGmsh._kernel.defs.constraints.ContactDef
+    options:
+      heading_level: 3
+
+::: apeGmsh._kernel.defs.constraints.ContactPlaneDef
     options:
       heading_level: 3
 
