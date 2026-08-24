@@ -30,7 +30,11 @@ from typing import Any, Callable, Optional
 from qtpy import QtWidgets
 
 from .._failures import safe_slot
-from ._realize import recorded_components, recorded_line_components
+from ._realize import (
+    MAX_ACTIVE_PLANES,
+    recorded_components,
+    recorded_line_components,
+)
 from ._specs import _AXIS_SUFFIXES, _TENSOR_SUFFIXES
 
 #: §4 line slot, v1 component vocabulary — the force half of the
@@ -567,7 +571,24 @@ class MeshInspectorPage:
         add.addWidget(self._clip_axis)
         add.addStretch(1)
         outer.addLayout(add)
+
+        # The cap's voice. Hidden unless it is actually biting — 0087
+        # INV-2 again: a permanent "at most 6" caption is chrome nobody
+        # reads, and then the one time it matters it is invisible.
+        self._clip_note = QtWidgets.QLabel("")
+        self._clip_note.setObjectName("SessionInspectorClipNote")
+        self._clip_note.setWordWrap(True)
+        self._clip_note.setEnabled(False)
+        self._clip_note.setVisible(False)
+        outer.addWidget(self._clip_note)
         return box
+
+    def _active_clip_count(self) -> int:
+        return sum(1 for clip in self._view.clips if clip.active)
+
+    def _set_clip_note(self, text: str) -> None:
+        self._clip_note.setText(text)
+        self._clip_note.setVisible(bool(text))
 
     def _sync_clips(self) -> None:
         """Reconcile the plane rows against the record, BY PLANE ID.
@@ -600,6 +621,27 @@ class MeshInspectorPage:
             row.sync(clip, step)
 
         self._clip_rows_host.setVisible(bool(clips))
+
+        # Advisory, not a refusal: say the cap is reached BEFORE the
+        # user tries the seventh, so the disabled outcome is expected
+        # rather than mysterious. A record that already holds more than
+        # six actives (a script, a restored snapshot) says so instead —
+        # realize is silently drawing only six of them, and this is the
+        # only place a person would ever find that out.
+        active = self._active_clip_count()
+        if active > MAX_ACTIVE_PLANES:
+            self._set_clip_note(
+                f"{active} planes are set to cut, but OpenGL allows "
+                f"{MAX_ACTIVE_PLANES} — only the first "
+                f"{MAX_ACTIVE_PLANES} are cutting. Un-check one."
+            )
+        elif active == MAX_ACTIVE_PLANES:
+            self._set_clip_note(
+                f"{MAX_ACTIVE_PLANES} planes cutting — the OpenGL "
+                f"limit. Un-check one to cut with another."
+            )
+        else:
+            self._set_clip_note("")
 
     def _clip_offset_range(self) -> "tuple[float, float]":
         """Offset limits from the pane's reference extent.
@@ -643,7 +685,19 @@ class MeshInspectorPage:
                 (bounds[2] + bounds[5]) / 2.0,
             )
             offset = sum(c * n for c, n in zip(centre, normal))
-        self._view.add_clip(normal, offset=offset)
+        # Past the cap the plane is created INACTIVE rather than
+        # refused — ``ClipPlaneSetController.add``'s behaviour, and it
+        # is the friendlier half of the same rule: the plane exists,
+        # ready to be swapped in for one of the six, instead of a
+        # button that appears to do nothing.
+        capped = self._active_clip_count() >= MAX_ACTIVE_PLANES
+        self._view.add_clip(normal, offset=offset, active=not capped)
+        if capped:
+            self._set_clip_note(
+                f"Added inactive: {MAX_ACTIVE_PLANES} planes are "
+                f"already cutting (the OpenGL limit). Un-check one, "
+                f"then check this."
+            )
 
     def _on_clip_changed(self, plane_id: str) -> None:
         if self._syncing:
@@ -651,10 +705,24 @@ class MeshInspectorPage:
         row = self._clip_rows.get(plane_id)
         if row is None:
             return
+        active = row.cut.isChecked()
+        if active and not self._may_activate(plane_id):
+            # Refuse the seventh, and SAY so. A silently-ignored
+            # checkbox is the defect this cap exists to prevent, one
+            # layer up: the user would see it ticked and the model
+            # uncut. ``refresh`` restates the row from the record,
+            # which is what un-ticks the box.
+            self._set_clip_note(
+                f"At most {MAX_ACTIVE_PLANES} planes can cut at once "
+                f"(the OpenGL clip-distance limit). Un-check another "
+                f"plane first."
+            )
+            self.refresh()
+            return
         try:
             self._view.set_clip(
                 plane_id,
-                active=row.cut.isChecked(),
+                active=active,
                 gizmo_visible=row.eye.isChecked(),
                 offset=float(row.offset.value()),
                 flipped=row.flipped,
@@ -663,6 +731,19 @@ class MeshInspectorPage:
             # The plane went away between the click and the write —
             # the next sync drops the row.
             pass
+
+    def _may_activate(self, plane_id: str) -> bool:
+        """Whether this plane may start cutting.
+
+        Counts the OTHER actives, so re-writing a plane that is already
+        active (which every offset edit does — the row writes all four
+        fields at once) is never mistaken for a seventh activation.
+        """
+        others = sum(
+            1 for clip in self._view.clips
+            if clip.active and clip.plane_id != plane_id
+        )
+        return others < MAX_ACTIVE_PLANES
 
     def _on_clip_remove(self, plane_id: str) -> None:
         try:

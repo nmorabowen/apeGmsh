@@ -21,7 +21,11 @@ import pytest
 pytest.importorskip("qtpy.QtWidgets")
 
 from apeGmsh.results.session import ResultsSession
-from apeGmsh.viewers.session._inspector import _CLIP_AXES, MeshInspectorPage
+from apeGmsh.viewers.session._inspector import (
+    _CLIP_AXES,
+    MAX_ACTIVE_PLANES,
+    MeshInspectorPage,
+)
 
 
 @pytest.fixture(scope="module")
@@ -281,3 +285,132 @@ def test_syncing_a_row_does_not_write_back(page):
     view._notify = lambda: ticks.append(1)
     p.refresh()
     assert ticks == [], "a projection wrote back to the record"
+
+
+# ---------------------------------------------------------------------
+# The six-active-plane GL cap
+# ---------------------------------------------------------------------
+#
+# `gl_ClipDistance` guarantees six. Past that the driver is FREE to
+# ignore the extras — so a seventh active plane does not fail, it draws
+# a model that looks cut and is not. Render enforces the cap (§3 puts it
+# where planes meet a backend); this section is the half that keeps a
+# person from ever creating the situation without being told.
+
+def _fill_to_cap(p, view, n=MAX_ACTIVE_PLANES):
+    for _ in range(n):
+        p._clip_add.click()
+    assert sum(1 for c in view.clips if c.active) == n
+
+
+def test_no_note_while_the_cap_is_far_away(page):
+    """0087 INV-2: a permanent "at most 6" caption is chrome nobody
+    reads, and then the once it matters it is invisible."""
+    p, view = page
+    p._clip_add.click()
+    assert not p._clip_note.isVisibleTo(p.widget)
+
+
+def test_the_note_appears_when_the_cap_is_reached(page):
+    """Said BEFORE the seventh is tried, so the refusal is expected
+    rather than mysterious."""
+    p, view = page
+    _fill_to_cap(p, view)
+    assert p._clip_note.isVisibleTo(p.widget)
+    assert str(MAX_ACTIVE_PLANES) in p._clip_note.text()
+
+
+def test_a_seventh_plane_is_added_INACTIVE_not_refused(page):
+    """``ClipPlaneSetController.add``'s behaviour, and the friendlier
+    half of the rule: the plane exists, ready to be swapped in for one
+    of the six, rather than a button that appears to do nothing."""
+    p, view = page
+    _fill_to_cap(p, view)
+    p._clip_add.click()
+
+    assert len(view.clips) == MAX_ACTIVE_PLANES + 1, "the plane was refused"
+    assert view.clips[-1].active is False, "a seventh plane is cutting"
+    assert sum(1 for c in view.clips if c.active) == MAX_ACTIVE_PLANES
+    assert p._clip_note.isVisibleTo(p.widget)
+    assert "inactive" in p._clip_note.text().lower()
+
+
+def test_checking_cut_on_a_seventh_plane_is_refused_and_says_so(page):
+    """The defect one layer up: a silently-ignored checkbox would leave
+    the user looking at a ticked box and an uncut model."""
+    p, view = page
+    _fill_to_cap(p, view)
+    p._clip_add.click()
+    spare = view.clips[-1].plane_id
+
+    p._clip_rows[spare].cut.setChecked(True)
+
+    assert view.clips[-1].active is False, "the seventh plane started cutting"
+    assert p._clip_rows[spare].cut.isChecked() is False, (
+        "the checkbox stayed ticked while the record said inactive — "
+        "exactly the lie the cap exists to prevent"
+    )
+    assert p._clip_note.isVisibleTo(p.widget)
+
+
+def test_freeing_a_slot_lets_the_spare_plane_cut(page):
+    """The cap must be a queue, not a wall: un-check one, check the
+    other, and it works."""
+    p, view = page
+    _fill_to_cap(p, view)
+    p._clip_add.click()
+    first, spare = view.clips[0].plane_id, view.clips[-1].plane_id
+
+    p._clip_rows[first].cut.setChecked(False)
+    p._clip_rows[spare].cut.setChecked(True)
+
+    by_id = {c.plane_id: c for c in view.clips}
+    assert by_id[first].active is False
+    assert by_id[spare].active is True
+    assert sum(1 for c in view.clips if c.active) == MAX_ACTIVE_PLANES
+
+
+def test_editing_an_ALREADY_active_plane_at_the_cap_still_works(page):
+    """The trap in the predicate.
+
+    The row writes all four fields at once, so every offset nudge on a
+    plane that is already cutting re-asserts ``active=True``. Counting
+    all actives instead of the OTHERS would read that as a seventh
+    activation and refuse — freezing every control on a pane that has
+    exactly six planes.
+    """
+    p, view = page
+    _fill_to_cap(p, view)
+    first = view.clips[0].plane_id
+
+    p._clip_rows[first].offset.setValue(3.5)
+
+    by_id = {c.plane_id: c for c in view.clips}
+    assert by_id[first].offset == pytest.approx(3.5), (
+        "an offset edit was refused as if it were a seventh activation"
+    )
+    assert by_id[first].active is True
+
+
+def test_a_record_that_already_exceeds_the_cap_says_so(page):
+    """Python and snapshot restore can both author seven actives — §3
+    keeps the cap out of the IR on purpose. Realize then draws only
+    six, and this note is the only place a person would find out.
+    """
+    p, view = page
+    for i in range(MAX_ACTIVE_PLANES + 2):
+        view.add_clip((1.0, 0.0, 0.0), offset=float(i))
+    p.refresh()
+
+    assert sum(1 for c in view.clips if c.active) == MAX_ACTIVE_PLANES + 2
+    assert p._clip_note.isVisibleTo(p.widget)
+    text = p._clip_note.text()
+    assert str(MAX_ACTIVE_PLANES + 2) in text and str(MAX_ACTIVE_PLANES) in text
+
+
+def test_the_note_clears_when_the_pane_drops_back_under_the_cap(page):
+    p, view = page
+    _fill_to_cap(p, view)
+    assert p._clip_note.isVisibleTo(p.widget)
+    p._clip_rows[view.clips[0].plane_id].remove.click()
+    assert not p._clip_note.isVisibleTo(p.widget)

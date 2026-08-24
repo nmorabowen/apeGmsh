@@ -33,6 +33,7 @@ from apeGmsh.results.writers import NativeWriter
 from apeGmsh.viewers.core._legend import controller_for
 from apeGmsh.viewers.session import SessionReconciler
 from apeGmsh.viewers.session import _reconciler as reconciler_mod
+from apeGmsh.viewers.session._realize import MAX_ACTIVE_PLANES
 
 from tests.conftest import _open_model_from_h5
 from tests.viewers.conftest import RecordingBackend
@@ -1105,3 +1106,121 @@ def test_a7_reference_bounds_refuse_rather_than_guess():
 
     assert _reference_bounds(Empty(), None) is None
     assert _reference_bounds(Broken(), None) is None
+
+
+# ---------------------------------------------------------------------
+# The six-active-plane GL cap, at the backend seam
+# ---------------------------------------------------------------------
+#
+# §3 puts this cap "where planes meet a backend, not in the IR", because
+# it is a property of OpenGL rather than of what a view may describe:
+# `gl_ClipDistance` guarantees six, and past that the driver is FREE to
+# ignore the extras. A seventh active plane therefore does not fail — it
+# draws a model that LOOKS cut and is not, which is the worst shape of
+# wrong because nothing anywhere says so.
+
+
+def test_a7_the_cut_never_pushes_more_than_six_planes(rig):
+    """The record may hold seven actives (§3 keeps the cap out of the
+    IR); the BACKEND must never be handed them."""
+    session, view, backend, rec, drain = rig
+    for i in range(MAX_ACTIVE_PLANES + 3):
+        view.add_clip((1.0, 0.0, 0.0), offset=0.1 * i)
+    drain()
+
+    assert sum(1 for c in view.clips if c.active) == MAX_ACTIVE_PLANES + 3
+    assert len(backend.clip_planes) == MAX_ACTIVE_PLANES, (
+        f"{len(backend.clip_planes)} planes reached the driver; past "
+        f"{MAX_ACTIVE_PLANES} it is free to ignore them and the cut lies"
+    )
+
+
+def test_a7_creation_order_decides_which_six_cut(rig):
+    """Matching ``ClipPlaneSetController.add``: the first six to be
+    activated keep cutting and a seventh is the one that waits. An
+    arbitrary six would make the picture depend on dict ordering.
+    """
+    session, view, backend, rec, drain = rig
+    for i in range(MAX_ACTIVE_PLANES + 2):
+        view.add_clip((1.0, 0.0, 0.0), offset=float(i))
+    drain()
+
+    origins = [tuple(round(c, 6) for c in s.origin)
+               for s in backend.clip_planes]
+    assert origins == [(float(i), 0.0, 0.0) for i in range(MAX_ACTIVE_PLANES)]
+
+
+def test_a7_inactive_planes_do_not_consume_a_slot(rig):
+    """The cap counts what CUTS, not what exists. Ten planes with four
+    cutting must all four cut."""
+    session, view, backend, rec, drain = rig
+    for i in range(10):
+        view.add_clip((1.0, 0.0, 0.0), offset=float(i), active=(i % 3 == 0))
+    drain()
+
+    assert sum(1 for c in view.clips if c.active) == 4
+    assert len(backend.clip_planes) == 4
+
+
+def test_a7_the_cap_holds_on_the_reclip_fast_path_too(rig):
+    """Both writers, one rule. ``reclip_pane`` delegates to
+    ``_apply_clips``, so a cap enforced only on the realize path would
+    be a cap the drag route walks straight past.
+    """
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    clips = [view.add_clip((1.0, 0.0, 0.0), offset=float(i))
+             for i in range(MAX_ACTIVE_PLANES + 2)]
+    drain()
+
+    calls: list = []
+    real = reconciler_mod.realize_pane
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            reconciler_mod, "realize_pane",
+            lambda s, p, b: (calls.append(p.id), real(s, p, b))[1],
+        )
+        view.set_clip(clips[0].plane_id, offset=99.0)     # a drag frame
+        drain()
+    finally:
+        monkeypatch.undo()
+
+    assert calls == [], "precondition — this should have been the fast path"
+    assert len(backend.clip_planes) == MAX_ACTIVE_PLANES
+
+
+def test_a7_apply_clips_reports_how_many_it_dropped():
+    """The count is a RETURN, not a log: this runs on every realize and
+    every drag frame, so a warning here would fire thirty times a
+    second and teach the reader to ignore it. The UI is what says it.
+    """
+    from apeGmsh.results.session._views import MeshView
+    from apeGmsh.viewers.session._realize import _apply_clips
+
+    class Sink:
+        def __init__(self):
+            self.specs = ()
+
+        def set_clip_planes(self, specs):
+            self.specs = tuple(specs)
+
+    view = MeshView(pane_id="mesh-1")
+    sink = Sink()
+    assert _apply_clips(sink, view) == 0
+
+    for i in range(MAX_ACTIVE_PLANES):
+        view.add_clip((1.0, 0.0, 0.0), offset=float(i))
+    assert _apply_clips(sink, view) == 0
+    assert len(sink.specs) == MAX_ACTIVE_PLANES
+
+    view.add_clip((1.0, 0.0, 0.0), offset=99.0)
+    assert _apply_clips(sink, view) == 1
+    assert len(sink.specs) == MAX_ACTIVE_PLANES
+
+    view.add_clip((1.0, 0.0, 0.0), offset=98.0, active=False)
+    assert _apply_clips(sink, view) == 1, (
+        "an INACTIVE extra plane is not a dropped one — it was never "
+        "asking to cut"
+    )
