@@ -285,3 +285,61 @@ the invariants, the implementation, and the contract tests
 `tests/opensees/h5/test_h5_schema_compat.py`) were always consistent
 with each other — only this sentence (and downstream texts that quoted
 it) was wrong.
+
+## Amendment — 2026-08-24 — The neutral zone is a published external contract (G1)
+
+Append-only. The window mechanism, the per-zone keys, INV-1–INV-5 and
+the two prior notes above are unchanged; this amendment records that
+one zone's audience grew, and what that costs us.
+
+Until now every reader of a `model.h5` zone was inside this repository.
+The version rule was therefore enforceable by construction:
+`reader_version(zone)` sources the writer's constant, so reader and
+writer literally cannot disagree. The neutral zone no longer has that
+property. An apeWorkbench browser reader (h5wasm + TypeScript, no h5py,
+no apeGmsh import) now implements the layout by hand, from prose.
+
+**A hand-written reader cannot source our constant.** It hard-codes the
+minor it was built against, and its window arithmetic runs on that
+hard-coded value. Two consequences follow, and they are the reason this
+amendment exists:
+
+1. **INV-4 is now load-bearing outside the repo.** A newer file reaching
+   an older external reader is no longer a hypothetical: it is the
+   normal state of affairs the day after any neutral minor bump, until
+   the consumer redeploys. The refusal is the feature. External readers
+   are held to the same "refuse visibly, never guess" rule, which the
+   published page states as a requirement rather than a suggestion.
+
+2. **A layout-perturbing minor is now more expensive than it was.** The
+   2026-05-28 amendment above permits one, at the cost of walking the
+   window forward. With an external consumer that cost is paid in a
+   redeploy of someone else's software, not a test rename. Prefer the
+   additive path; if a restructure is genuinely needed, bump the major,
+   where the refusal is unambiguous to a reader that has never read this
+   ADR.
+
+**Publication does not create a new versioning surface.** The published
+page is a view of `neutral_schema_version` and nothing else — no second
+number, no "published schema version". The `/opensees/` and `/stages/`
+zones, when they are published later, ride their own existing keys under
+the same window; zone versioning already covers them and needs no
+extension.
+
+**Where the contract lives.** Prose cannot be the contract — it drifts
+silently, and the drift surfaces as a downstream bug rather than a red
+test. So the contract is a machine-readable inventory,
+`tests/fixtures/neutral_zone/inventory.py`, and
+`tests/mesh/test_neutral_zone_schema_note.py` enforces it in both
+directions: the emitter's output must match the inventory (emitter
+drift fails), and the published page must match it path-for-path (doc
+drift fails). A committed golden, `tests/fixtures/neutral_zone/box.h5`,
+regenerable from the repo's own API, is what external consumers conform
+against — the same role `tests/fixtures/schema.py` plays for internal
+fixtures.
+
+**Obligation added by this amendment**: a neutral-zone minor bump now
+also updates the inventory, regenerates the golden if the published
+groups moved, and updates `docs/design/model-h5-neutral-zone.md`. The
+drift test makes forgetting the first two impossible and the third
+unlikely; the discipline is stated here so it is not folklore.
