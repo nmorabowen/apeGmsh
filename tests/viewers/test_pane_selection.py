@@ -1219,3 +1219,260 @@ def test_mutation_pane_dispose_without_the_pick_breaks_c14(
 
     with pytest.raises(AssertionError):
         assert picker.installed is False
+
+
+# =====================================================================
+# The cut and the pick agree (ADR 0083 Part 5, session path)
+# =====================================================================
+#
+# `vtkCellPicker` is a geometric ray-cast and knows nothing about mapper
+# clip planes. Without a filter, a click on apparently-empty space
+# returns the node the section plane is hiding — the picture and the
+# pick disagreeing about the same model, which is the inconsistency
+# class A6 exists to catch.
+#
+# The model is two unit boxes spanning x = 0..2, so a plane with normal
+# -X at offset -1 keeps x <= 1 and hides everything to its right.
+
+
+def _keep_left(view):
+    """Cut so only x <= 1 survives, and return the plane."""
+    return view.add_clip((-1.0, 0.0, 0.0), offset=-1.0)
+
+
+def _split_targets(widget, pane_id):
+    """``(visible_rows, hidden_rows)`` of the node targets under the
+    cut above — computed from the coordinates, not from the filter, so
+    the test does not assert the implementation against itself."""
+    nodes = _targets(widget, pane_id).nodes
+    xs = np.asarray(nodes.coords)[:, 0]
+    return np.flatnonzero(xs <= 1.0 + 1e-9), np.flatnonzero(xs > 1.0 + 1e-9)
+
+
+def test_clip_a_click_on_a_hidden_node_selects_nothing(host, qapp):
+    """The defect, stated: the cut hides it, so clicking it is a miss.
+
+    Checked BEFORE any target resolution — the point is behind a plane
+    regardless of what it would have resolved to (the rule
+    ``results_pick.py`` already applies in the old window).
+    """
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    _visible, hidden = _split_targets(widget, view.id)
+    assert hidden.size, "precondition — the model must extend past the cut"
+    _node_id, world = _node_at(widget, view.id, int(hidden[0]))
+
+    _keep_left(view)
+    qapp.processEvents()
+    _picker(widget, view.id).click(world)
+
+    assert session.selection.nodes == (), (
+        "a click behind the section plane selected a node the user "
+        "cannot see"
+    )
+
+
+def test_clip_a_click_on_a_hidden_node_still_CLEARS_like_empty_space(
+    host, qapp,
+):
+    """"A miss" means a miss in both senses. The user clicked where
+    they see nothing, so a plain click deselects — the conventional
+    reading this module already applies to ``hit is None``."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, hidden = _split_targets(widget, view.id)
+    keep_id, keep_world = _node_at(widget, view.id, int(visible[0]))
+    _hidden_id, hidden_world = _node_at(widget, view.id, int(hidden[0]))
+
+    _keep_left(view)
+    qapp.processEvents()
+    picker = _picker(widget, view.id)
+    picker.click(keep_world)
+    assert session.selection.nodes == (keep_id,)
+
+    picker.click(hidden_world)
+    assert session.selection.nodes == ()
+
+
+def test_clip_ctrl_click_on_a_hidden_node_keeps_the_set(host, qapp):
+    """...and Ctrl means "keep what I have", exactly as on real empty
+    space."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, hidden = _split_targets(widget, view.id)
+    keep_id, keep_world = _node_at(widget, view.id, int(visible[0]))
+    _h, hidden_world = _node_at(widget, view.id, int(hidden[0]))
+
+    _keep_left(view)
+    qapp.processEvents()
+    picker = _picker(widget, view.id)
+    picker.click(keep_world)
+    picker.click(hidden_world, ctrl=True)
+
+    assert session.selection.nodes == (keep_id,)
+
+
+def test_clip_a_click_on_a_VISIBLE_node_still_works(host, qapp):
+    """The filter must not swallow ordinary picks. Its failure mode is
+    silently eating clicks, which is worse than the defect it fixes."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, _hidden = _split_targets(widget, view.id)
+    node_id, world = _node_at(widget, view.id, int(visible[0]))
+
+    _keep_left(view)
+    qapp.processEvents()
+    _picker(widget, view.id).click(world)
+
+    assert session.selection.nodes == (node_id,)
+
+
+def test_clip_a_point_ON_the_cut_face_is_pickable(host, qapp):
+    """The tolerance, and why it is imported rather than restated.
+
+    A cut reveals an interior face, and the nodes on it sit exactly in
+    the plane. Rejecting them by floating-point noise would make the
+    one surface a section cut exists to show the one surface you cannot
+    click.
+    """
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    nodes = _targets(widget, view.id).nodes
+    on_plane = np.flatnonzero(np.abs(np.asarray(nodes.coords)[:, 0] - 1.0) < 1e-9)
+    assert on_plane.size, "precondition — the mesh should have nodes at x=1"
+    node_id, world = _node_at(widget, view.id, int(on_plane[0]))
+
+    _keep_left(view)
+    qapp.processEvents()
+    _picker(widget, view.id).click(world)
+
+    assert session.selection.nodes == (node_id,)
+
+
+def test_clip_an_inactive_plane_hides_nothing_from_the_pick(host, qapp):
+    """The pick reads the same resolved set the backend does, so a
+    plane that is not cutting does not filter either."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    _visible, hidden = _split_targets(widget, view.id)
+    node_id, world = _node_at(widget, view.id, int(hidden[0]))
+
+    clip = _keep_left(view)
+    view.set_clip(clip.plane_id, active=False)
+    qapp.processEvents()
+    _picker(widget, view.id).click(world)
+
+    assert session.selection.nodes == (node_id,)
+
+
+def test_clip_flipping_the_plane_flips_which_half_is_pickable(host, qapp):
+    """``flipped`` folds into the normal's sign in the shared resolver,
+    so the pick follows the picture without a second rule."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, hidden = _split_targets(widget, view.id)
+    left_id, left_world = _node_at(widget, view.id, int(visible[0]))
+    right_id, right_world = _node_at(widget, view.id, int(hidden[0]))
+
+    clip = _keep_left(view)
+    view.set_clip(clip.plane_id, flipped=True)      # now x >= 1 survives
+    qapp.processEvents()
+    picker = _picker(widget, view.id)
+
+    picker.click(right_world)
+    assert session.selection.nodes == (right_id,)
+    picker.click(left_world)
+    assert session.selection.nodes == (), (
+        "flipping the plane did not flip which half the pick accepts"
+    )
+    assert left_id != right_id
+
+
+# -- the window --------------------------------------------------------
+
+def test_clip_a_rubber_band_does_not_sweep_up_the_hidden_interior(
+    host, qapp,
+):
+    """The half that matters more than it sounds.
+
+    A click is one wrong node; a band dragged across a cut model would
+    otherwise select the WHOLE hidden interior in one gesture, and
+    nothing on screen would show what had been taken.
+    """
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, hidden = _split_targets(widget, view.id)
+    assert visible.size and hidden.size
+
+    _keep_left(view)
+    qapp.processEvents()
+    # A band over the WHOLE model (x = 0..2 -> 0..2*PX pixels).
+    _picker(widget, view.id).drag((-10.0, -10.0, 3.0 * PX, 3.0 * PX))
+
+    nodes = _targets(widget, view.id).nodes
+    picked = set(session.selection.nodes)
+    expected = {int(i) for i in np.asarray(nodes.ids)[visible]}
+    assert picked == expected, (
+        f"the band took {len(picked - expected)} hidden node(s)"
+    )
+    assert picked, "the band took nothing at all — the filter over-reached"
+
+
+def test_clip_a_band_with_no_cut_still_takes_everything(host, qapp):
+    """Control: with no plane the filter is a no-op."""
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    _picker(widget, view.id).drag((-10.0, -10.0, 3.0 * PX, 3.0 * PX))
+
+    nodes = _targets(widget, view.id).nodes
+    assert set(session.selection.nodes) == {int(i) for i in nodes.ids}
+
+
+def test_clip_the_pick_honours_the_SIX_PLANE_CAP_too(host, qapp):
+    """Coherence has to include the cap, not just the resolution.
+
+    Seven active planes but only six cut, so a filter that honoured all
+    seven would reject clicks in a region the user can plainly see —
+    the same incoherence in the opposite direction. The seventh plane
+    here would hide the node that the six leave visible.
+    """
+    from apeGmsh.viewers.session._realize import MAX_ACTIVE_PLANES
+
+    session, widget = host
+    view = session.panes[0]
+    _nodes_on(view)
+    qapp.processEvents()
+    visible, _hidden = _split_targets(widget, view.id)
+    node_id, world = _node_at(widget, view.id, int(visible[0]))
+
+    # Six harmless planes that cut nothing away from this node...
+    for i in range(MAX_ACTIVE_PLANES):
+        view.add_clip((1.0, 0.0, 0.0), offset=-10.0 - i)
+    # ...then a SEVENTH that would hide it — but never reaches the
+    # driver, so the model on screen still shows it.
+    view.add_clip((-1.0, 0.0, 0.0), offset=float(-world[0]) + 0.5)
+    qapp.processEvents()
+
+    _picker(widget, view.id).click(world)
+    assert session.selection.nodes == (node_id,), (
+        "the pick honoured a seventh plane the driver never got — the "
+        "node is on screen and became unclickable"
+    )
