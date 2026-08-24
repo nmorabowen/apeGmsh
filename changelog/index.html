@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-the-api-reference-had-no-tier-5-and-a-stale-source-map-footer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the API reference had no Tier 5, and a stale source-map footer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8615,6 +8626,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-api-reference-had-no-tier-5-and-a-stale-source-map-footer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the API reference had no Tier 5, and a stale source-map footer
       
     </span>
   </a>
@@ -13668,6 +13690,18 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-the-api-reference-had-no-tier-5-and-a-stale-source-map-footer">FIXED — the API reference had no Tier 5, and a stale source-map footer<a class="headerlink" href="#fixed-the-api-reference-had-no-tier-5-and-a-stale-source-map-footer" title="Permanent link">&para;</a></h3>
+<p><code>docs/api/constraints.md</code> named <strong>Tier 5 — Fork</strong> in its taxonomy table and
+then never defined it: Tiers 1, 2, 2b, 3, 4 and 6 each had a section, Tier 5
+had none, so <code>contact</code> was the one constraint verb with no entry on the
+published API surface and <code>contact_plane</code> appeared nowhere on that page at
+all. Both now render from their <code>ContactDef</code> / <code>ContactPlaneDef</code> docstrings,
+and the taxonomy row links to the section instead of dangling.</p>
+<p>The skill cheatsheet's coupling source-map footer pointed at
+<code>ConstraintsComposite.py:1595</code> / <code>:1878</code>; the live lines are <code>:2121</code> /
+<code>:2404</code>. This is the sibling of the contact footer corrected in #1051 — the
+line numbers were re-derived now rather than carried over from that PR,
+since the file moved again during the S6 work.</p>
 <h3 id="changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation">CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)<a class="headerlink" href="#changed-one-node-coordinate-invariant-one-enforcement-point-adr-0099-reconciliation" title="Permanent link">&para;</a></h3>
 <p>A 2-D <code>node</code> line must carry exactly <code>ndm</code> coordinates: a padded third
 desynchronises OpenSees' optional-argument scan, so the following <code>-ndf K</code>

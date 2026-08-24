@@ -4977,6 +4977,79 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tier-5-fork-contact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 5 — Fork contact
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tier 5 — Fork contact">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ContactDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ContactDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ContactPlaneDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ContactPlaneDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tier-6-interface-springs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7997,6 +8070,79 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tier-5-fork-contact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier 5 — Fork contact
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tier 5 — Fork contact">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ContactDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ContactDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ContactPlaneDef
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ContactPlaneDef">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tier-6-interface-springs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8969,8 +9115,8 @@ the FEM broker:</p>
 </tr>
 <tr>
 <td>5 — Fork</td>
-<td><code>contact</code>, <code>mortar</code> (deprecated alias for <code>contact(formulation="mortar", tie=True)</code>)</td>
-<td><code>ContactRecord</code></td>
+<td><a href="#tier-5-fork-contact"><code>contact</code></a>, <a href="#tier-5-fork-contact"><code>contact_plane</code></a>, <code>mortar</code> (deprecated alias for <code>contact(formulation="mortar", tie=True)</code>)</td>
+<td><code>ContactRecord</code>, <code>ContactPlaneRecord</code></td>
 </tr>
 <tr>
 <td>6 — Interface</td>
@@ -16120,6 +16266,319 @@ cannot satisfy.</p>
 slave_entities : list of (dim, tag)
 dofs : list[int] or None
 tolerance : float</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="tier-5-fork-contact">Tier 5 — Fork contact<a class="headerlink" href="#tier-5-fork-contact" title="Permanent link">&para;</a></h2>
+<p>Every tier above is a permanent bond, active from the first step.
+<code>g.constraints.contact(master, slave, ...)</code> is the one that can open,
+close, slide and carry friction — a real contact interaction rather
+than a kinematic constraint, emitted through the Ladruno fork's
+contact subsystem. <code>"nts"</code> is node-to-segment penalty; <code>"mortar"</code> is
+segment-to-segment augmented Lagrange, the accuracy lane for
+non-matching interfaces.</p>
+<p><code>g.constraints.contact_plane(slave, ...)</code> is the same idea with no
+master mesh at all: the slave meets a fixed infinite rigid plane.</p>
+<p>Both resolve <strong>additively</strong> onto <code>fem.elements.contacts</code> /
+<code>fem.elements.contact_planes</code> rather than the MP-constraint channels,
+both are serial-only, and both need a live gmsh session — declaring one
+on a <code>from_h5</code> or composed session raises. The deck emits on any build
+but runs only on the fork. Contact has no recorder channel, so results
+come back through the live queries described in
+<a href="../../concepts/constraints/#contact">the constraints concept page</a>.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh._kernel.defs.constraints.ContactDef" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">apeGmsh._kernel.defs.constraints.ContactDef</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh._kernel.defs.constraints.ContactDef" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">ContactDef</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">master_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">slave_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">master_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">slave_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">formulation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'nts'</span><span class="p">,</span> <span class="n">kn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kt</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">mu</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">eps_n</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">eps_t</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">cohesion</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tau_max</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">aug_tol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_aug</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ngp</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tie</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">thickness</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">outward</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">soft</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">visc</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">consistent_tan</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">geom_tan</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">cell</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_edge</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">edge_kn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_band</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_mu</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_kt</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_cohesion</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_tau_max</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_consistent_tan</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">edge_soft</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">edge_alm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">edge_aug_tol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="apeGmsh._kernel.defs.constraints.ConstraintDef
+
+
+  
+      dataclass
+  " href="#apeGmsh._kernel.defs.constraints.ConstraintDef">ConstraintDef</a></code></p>
+
+
+
+        <p>Face-to-face contact between two meshed surfaces, emitted as the fork's
+<code>contactSurface</code> + <code>contact</code> pair (node-to-segment or mortar/ALM).</p>
+<p>The geometry-side def captured by <code>g.constraints.contact(...)</code>. The
+master is a faceted surface; the slave is a node set (NTS) or a faceted
+surface (mortar). apeGmsh resolves the face connectivity + (optionally) an
+outward normal from the CAD geometry, then emits <code>contactSurface</code> defs +
+the <code>contact</code> verb + <code>constraints('LadrunoContact')</code>.</p>
+<h5 id="apeGmsh._kernel.defs.constraints.ContactDef--parameters">Parameters<a class="headerlink" href="#apeGmsh._kernel.defs.constraints.ContactDef--parameters" title="Permanent link">&para;</a></h5>
+<p>master_label, slave_label
+    The two surface PG / part labels in contact.
+formulation
+    <code>"nts"</code> (node-to-segment penalty, slave = node set) or <code>"mortar"</code>
+    (segment-to-segment ALM, slave = faceted surface).
+kn, kt, mu
+    NTS normal/tangential penalty + Coulomb friction. <code>kn</code> may be
+    <code>"auto"</code> (sized from the solid). Mortar rejects <code>kn</code>/<code>kt</code>.
+eps_n, eps_t
+    Mortar ALM normal/tangential penalty (<code>"auto"</code> allowed). NTS rejects.
+cohesion, tau_max
+    Mortar friction-cone adhesion intercept + Tresca shear cap.
+aug_tol, max_aug, ngp
+    Mortar Uzawa augmentation tolerance / max augmentations / slave-facet
+    Gauss order.
+tie
+    Permanent mesh-tie bond (mortar only; mutually exclusive with friction).
+thickness
+    <strong>2D mortar only</strong> — the plane-model out-of-plane thickness <code>h</code>
+    (fork <code>-thickness</code>, default 1.0). The mortar lane's interval
+    integrals produce force <strong>per unit thickness</strong>, so the fork applies
+    <code>h</code> ONCE, at its 2D injection site, to <code>eps_n</code> / <code>eps_t</code> /
+    <code>visc</code> / the friction clamps (<code>cohesion</code> / <code>tau_max</code>) and the
+    tie stiffness. Three conventions live here and must not be
+    conflated:</p>
+<div class="language-text highlight"><pre><span></span><code>1. The **element** thickness (``ops.element.FourNodeQuad(thickness=…)``)
+   is baked into the element's own stiffness; contact never re-reads
+   or re-derives it.
+2. ``thickness=h`` scales the **explicit** per-unit-thickness
+   penalties listed above — apeGmsh only emits ``-thickness h``; the
+   scaling itself is entirely fork-side.
+3. ``eps_n="auto"`` is **NOT** h-scaled: it resolves from the owning
+   element's ``getInitialStiff()``, which already absorbs the
+   element's thickness, so re-scaling it by ``h`` would be an h²
+   error (regression-gated fork-side). ``eps_t`` INHERITS that
+   provenance when it is ``"auto"`` (or when friction defaults it
+   from ``eps_n``), so the pair moves together: both h-scale under
+   an explicit ``eps_n``, neither h-scales under an auto one.
+
+The NTS lane has no ``-thickness`` at all (``kn`` is force per unit
+length of gap, never a pressure) and the fork's parser refuses the
+flag there; a 3D mortar deck's thickness lives in its elements and
+the fork FATALs on ``-thickness`` at ``handle()``. Both are refused
+here instead — the second at resolve time, where the model dimension
+is known.
+</code></pre></div>
+<p>outward
+    Optional single outward direction. <code>None</code> (default) → emit no
+    <code>-outward</code>; the fork derives a correct PER-FACET normal from
+    connectivity (the right choice for separated bodies and for curved /
+    closed / solid-part masters). Pass an explicit <code>(ox, oy, oz)</code> ONLY
+    for an initially-COINCIDENT (zero-gap) contact, where the fork's
+    per-pair sign reference (slave − segment-centroid) is in-plane and
+    ambiguous — there the explicit direction pins the sign (matches the
+    fork's "use -outward for just-penetrated starts"). A single global
+    outward is wrong on a non-flat master (it skips perpendicular facets
+    and inverts opposed ones), so only set it for an effectively flat
+    interface.</p>
+<div class="language-text highlight"><pre><span></span><code>**2D (``ndm=2``) models** take a 2-vector ``(ox, oy)`` — it is
+z-padded to ``(ox, oy, 0.0)`` on the record and the emitter drops the
+third component back off, because the fork REJECTS the 3-component
+form on a 2D surface. And 2D is where an explicit direction is
+usually needed at all: the fork's 2D lanes orient from an
+interface-level centroid vote that is genuinely ambiguous on a FLUSH
+interface (the masonry joint, the footing on soil) and aborts there.
+
+``outward="winding"`` (2D NTS only) declares the side through the
+master chain's own winding instead of a vector — the fork's
+``-outward winding``. Exact per segment, so it orients curved and
+closed masters that no single direction can, and no direction is
+auto-derived by apeGmsh. It needs a fork build carrying the mode;
+older builds refuse the keyword at parse.
+</code></pre></div>
+<p>master_entities, slave_entities
+    Restrict each side to specific Gmsh entities (default = whole label).
+soft
+    Explicit-only Courant-stable SOFT penalty (<code>-soft</code>, ADR 0073).
+    <code>True</code> ⇒ the fork default SOFSCL (0.10); a float ⇒ an explicit SOFSCL.
+    Sizes the contact stiffness from the nodal mass + timestep under
+    explicit dynamics so contact never throttles <code>dt_cr</code> (impact /
+    pounding / recontact runs at the structural <code>dt</code>); inert under
+    implicit (which uses the base penalty). NTS = SOFT=1, mortar = SOFT=2.
+    Requires a base penalty (<code>kn</code>/<code>eps_n</code>); mutually exclusive with
+    <code>tie</code>. A SOFSCL above the coupled-stability bound (mortar &gt; 0.25,
+    NTS &gt; 1) warns.
+visc
+    Viscous normal-stabilisation coefficient μ_c (<code>-visc</code>): a
+    velocity-proportional normal damper (<code>p_visc = μ_c·gap_rate</code>) that
+    bleeds chatter / snap-through energy in the pounding / rocking / uplift
+    regime. <code>0</code> ⇒ off (inert in statics, v ≡ 0). Mutually exclusive with
+    <code>tie</code> (a permanent bond has no contact-chatter to damp).
+consistent_tan
+    Opt into the non-symmetric consistent friction tangent
+    (<code>-consistanttan</code>) for true quadratic Newton on frictional contact.
+    REQUIRES a non-symmetric solver (<code>system FullGeneral</code> / <code>UmfPack</code> /
+    <code>BandGeneral</code>) — a symmetric solver silently drops the off-diagonal
+    coupling and corrupts the solve. The default (symmetric) tangent is
+    correct on any solver.
+geom_tan
+    Opt the NTS segment lane into the consistent ∂n/∂u geometric normal
+    tangent (<code>-geomtan</code>) for quadratic Newton on curved / large-sliding
+    interfaces. Symmetric ⇒ solver-safe on any system. <strong>NTS-only</strong> (the
+    fork refuses it on the mortar lane).
+cell
+    Broad-phase cell-size scale (<code>-cell</code>): the spatial-hash bucket size as
+    a fraction of the median segment diagonal (must be &gt; 0; a huge value ⇒ 1
+    bucket ⇒ brute force). A performance-tuning knob; omitted ⇒ the fork
+    default. Applies to both formulations.
+edge_edge
+    Enable the perpendicular <strong>edge-edge</strong> contact fallback (<code>-edgeedge</code>,
+    fork ADR-57 E2): the <code>cos_t→0</code> pairs the face-mortar clip degenerates
+    on get a dedicated segment-to-segment penalty. <strong>Mortar-only</strong> (the fork
+    routes it off the mortar lane); off ⇒ byte-identical. The other
+    <code>edge_*</code> knobs require <code>edge_edge=True</code> (the fork ignores <code>-edge*</code>
+    without <code>-edgeedge</code>).
+edge_kn
+    Edge-edge normal penalty (<code>-edgeKn auto|&lt;val&gt;</code>): <code>"auto"</code> ⇒ sized per
+    master facet (like <code>eps_n="auto"</code>); a value ⇒ fixed; <code>None</code> (default)
+    ⇒ the resolved mortar penalty.
+edge_band
+    Gap activation band <code>d_band</code> for the edge-edge fallback (<code>-edgeBand</code>);
+    <code>None</code> ⇒ sized from the facet edge length at run time.
+edge_mu, edge_kt, edge_cohesion, edge_tau_max
+    Edge-edge Coulomb/Tresca friction (<code>-edgeMu</code>/<code>-edgeKt</code>/
+    <code>-edgeCohesion</code>/<code>-edgeTauMax</code>) — the unified cone
+    <code>min(μN+c, τmax)</code>. All <code>None</code> ⇒ frictionless edge contact.
+edge_consistent_tan
+    Opt the edge-edge friction into the non-symmetric consistent Csl tangent
+    (<code>-edgeConsistentTan</code>). Like <code>consistent_tan</code>, REQUIRES a
+    non-symmetric solver (<code>system FullGeneral</code> / <code>UmfPack</code> /
+    <code>BandGeneral</code>) when edge friction is active — a symmetric solver
+    silently drops the off-diagonal coupling and corrupts the solve.
+edge_soft
+    Explicit-only Courant-stable SOFT penalty on the edge-edge fallback
+    (<code>-edgeSoft [SOFSCL]</code>, fork ADR-57 E5): <code>True</code> ⇒ the fork default
+    SOFSCL (0.10), a float ⇒ an explicit SOFSCL. Under explicit dynamics the
+    edge penalty becomes <code>k_soft = SOFSCL·4·m_eff/dt²</code>; inert under
+    implicit. A SOFSCL &gt; 1 warns (ω·dt = 2√SOFSCL &gt; 2).
+edge_alm
+    Opt the edge-edge fallback into the one-scalar commit-cycle augmented
+    Lagrangian (<code>-edgeAlm</code>, fork ADR-57 E6); off ⇒ the E2 penalty path.
+    Implicit-only.
+edge_aug_tol
+    Edge-edge ALM augmentation tolerance metadata (<code>-edgeAugTol</code>); the
+    held-load proc passes its own tol.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh._kernel.defs.constraints.ContactPlaneDef" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">apeGmsh._kernel.defs.constraints.ContactPlaneDef</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">ContactPlaneDef</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">master_label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span> <span class="n">slave_label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">slave_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">normal</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">visc</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">soft</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="apeGmsh._kernel.defs.constraints.ConstraintDef
+
+
+  
+      dataclass
+  " href="#apeGmsh._kernel.defs.constraints.ConstraintDef">ConstraintDef</a></code></p>
+
+
+
+        <p>Rigid analytical-plane contact (fork <code>contactPlane</code>; ADR 0073).</p>
+<p>A meshed slave surface contacts a fixed, infinite <strong>rigid plane</strong> defined by
+an outward <code>normal</code> and a <code>point</code> on it, with a normal penalty <code>kn</code>.
+The plane is frictionless and fixed (no master mesh) — use it for a rigid
+floor / wall / foundation where the counter-body needn't be meshed. The
+slave nodes are emitted as a <code>contactSurface -slave</code> set; the plane and
+penalty go on the <code>contactPlane</code> verb (resolved by the same
+<code>LadrunoContact</code> handler). Fork-only at run time.</p>
+<h5 id="apeGmsh._kernel.defs.constraints.ContactPlaneDef--parameters">Parameters<a class="headerlink" href="#apeGmsh._kernel.defs.constraints.ContactPlaneDef--parameters" title="Permanent link">&para;</a></h5>
+<p>slave_label : str
+    The meshed surface PG / part label whose nodes contact the plane.
+normal : (float, float, float) | (float, float)
+    The plane's outward unit normal (toward the slave / open side). <strong>In a
+    2D model</strong> it is the 2-vector <code>(nx, ny)</code>, Z-PADDED here to
+    <code>(nx, ny, 0.0)</code> — see the note below.
+point : (float, float, float) | (float, float)
+    Any point on the plane; <code>(px, py)</code> in a 2D model, z-padded likewise.
+kn : float
+    Normal penalty stiffness (<strong>required</strong>; the fork reads it as a plain
+    value — there is no <code>"auto"</code> sizing on <code>contactPlane</code>).
+visc : float, optional
+    Viscous normal-stabilisation coefficient μ_c (<code>-visc</code>).
+soft : float | bool, optional
+    Explicit-only Courant-stable SOFT penalty (<code>-soft</code>): <code>True</code> ⇒ the
+    fork default SOFSCL 0.10, a float ⇒ an explicit SOFSCL.
+slave_entities : list of (dim, tag), optional
+    Restrict the slave to specific Gmsh entities.
+name : str, optional
+    Friendly name (round-trips into the emitted deck comment).</p>
 
 
 
