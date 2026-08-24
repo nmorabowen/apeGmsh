@@ -95,6 +95,52 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — live contact queries: `ladruno_contact_force` and friends (fork ADR-85, adoption S6 thin)
+
+The last adoption slice, in the shape the fork actually supports. S6 was
+scoped as "`Results` reads contact data" — but `LadrunoContact` is a
+constraint handler plus a contact domain, **not** an `Element`, so it has no
+element response and therefore **no recorder channel**. Nothing reaches
+`.ladruno`, `model.h5` or `Results`; there is nothing on disk for a reader to
+read. Contact is live-query-only, so this ships four thin fork-gated bridge
+wrappers instead of a `Results` layer:
+
+```python
+ops.ladruno_contact_force(node)     # NTS-only normal-force MAGNITUDE
+ops.ladruno_contact_info()          # ContactInfo(...) + .total_contacts
+ops.ladruno_mortar_penetration()    # mortar ALM measure — a LENGTH
+ops.ladruno_mortar_tie_residual()   # mortar-TIE ALM measure
+```
+
+Each needs a prior live `analyze()` and a fork build; stock openseespy is
+refused by name rather than dying on a bare `AttributeError`, and the
+no-live-analysis error says explicitly that there is no recorded alternative,
+because that is the first thing anyone asks next.
+
+Four limits are documented on every one of them, because none is visible in
+the returned number: the force query is **NTS-only** (a mortar or rigid-plane
+slave always reads `0.0` — neither lane has a force query at all); it is a
+**magnitude, not a vector** (near a corner or the D4 end-cap it equals no
+single global force component); a released **3-D** pair reports its last-active
+force forever (a known, deferred fork defect — the 2-D lane carries the fix);
+and `0.0` means both "not in contact" and "no contact engine".
+
+That last one has a trap that verification caught. The obvious disambiguator,
+`n_contacts`, is **wrong**: measured on fork `b17e8bd82`, a live mortar-only
+model reports `n_contacts=0, n_mortar_contacts=1` — the two counters are
+**disjoint lanes**, not a total and a subset, so reading `n_contacts == 0` as
+"no engine" misclassifies every mortar-only model. `ContactInfo` therefore
+carries a `total_contacts` property, and that is what the docs tell you to
+gate on.
+
+Verified against fork build `b17e8bd82`, both lanes, apeGmsh driving a live
+2-D deck end to end: on NTS the queries reproduce the Tcl oracle **exactly**
+(`ladruno_contact_force(5) = 19842.895714350583`, summing to `100005.02376775819`
+against an applied `1.0e5`) with the mortar queries reading a clean `0.0`; on
+mortar, every slave's force reads `0.0` as documented while
+`ladruno_mortar_penetration()` returns `5.0517e-07`, matching the same deck's
+Tcl value. 13 new unit / fork-gate tests run on any build.
+
 ### FIXED — `ladrunoBuild` can report a STALE hash, and the S5 contact measurement was mis-stamped
 
 The fork's `ladrunoBuild` stamp is baked at CMake **configure** time, not at

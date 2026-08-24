@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, cast
+from typing import (
+    TYPE_CHECKING, Any, Callable, Literal, NamedTuple, Sequence, cast,
+)
 
 from .base import StrategySpec, trim_coords_to_ndm
 
@@ -90,6 +92,51 @@ _TIE_FORCE_FORK_REQUIRED = (
     "emission via ops.tcl(...) / ops.py(...) works on any build; only the live "
     "query needs the fork."
 )
+
+#: Raised by the :class:`LiveOpsEmitter` contact-query wrappers when the live
+#: build lacks the fork-only ``ladrunoContactForce`` / ``ladrunoContactInfo`` /
+#: ``ladrunoMortarPenetration`` / ``ladrunoMortarTieResidual`` commands (i.e.
+#: stock openseespy). Deck emission works on any build; only the live query
+#: needs the fork.
+_CONTACT_QUERY_FORK_REQUIRED = (
+    "the contact queries (ladrunoContactForce / ladrunoContactInfo / "
+    "ladrunoMortarPenetration / ladrunoMortarTieResidual) require the Ladruno "
+    "fork build of OpenSees — the whole contact subsystem is fork-only. Deck "
+    "emission via ops.tcl(...) / ops.py(...) works on any build; only the live "
+    "query needs the fork."
+)
+
+
+class ContactInfo(NamedTuple):
+    """The fork's ``ladrunoContactInfo`` counters, named.
+
+    Use :attr:`total_contacts` — **not** ``n_contacts`` — to decide whether a
+    contact engine exists. The two counters are disjoint lanes, not a total
+    and a subset: measured on fork ``b17e8bd82``, a pure-mortar model reports
+    ``n_contacts=0, n_mortar_contacts=1``. Reading ``n_contacts == 0`` as "no
+    engine" therefore misclassifies every mortar-only model.
+    """
+
+    #: ``contact`` interactions on the **NTS** lane. Zero on a mortar-only
+    #: model, which is why this alone cannot tell you the engine is absent.
+    n_contacts: int
+    #: Committed contact states so far (one per committed step).
+    n_commits: int
+    #: Reverted contact states so far.
+    n_reverts: int
+    #: ``contact`` interactions on the **mortar** lane. Disjoint from
+    #: :attr:`n_contacts`, not a subset of it.
+    n_mortar_contacts: int
+
+    @property
+    def total_contacts(self) -> int:
+        """Contacts across both lanes — ``0`` iff there is no contact engine.
+
+        This is the disambiguator for the ``0.0`` every other contact query
+        returns for both "nothing happening here" and "no engine at all".
+        """
+        return self.n_contacts + self.n_mortar_contacts
+
 
 #: Element types that exist only in the Ladruno fork build (private ≥33000
 #: class-tag band). Emitting their ``element …`` line works on any build;
@@ -1029,6 +1076,45 @@ class LiveOpsEmitter:
         if fn is None:
             raise RuntimeError(_TIE_FORCE_FORK_REQUIRED)
         return float(fn(int(node), int(dof)))
+
+    def _contact_query(self, name: str) -> Callable[..., Any]:
+        # One gate for all four contact queries: stock openseespy has none of
+        # them, so resolve-or-fail-friendly instead of a bare AttributeError.
+        fn = getattr(self._ops, name, None)
+        if fn is None:
+            raise RuntimeError(_CONTACT_QUERY_FORK_REQUIRED)
+        return cast("Callable[..., Any]", fn)
+
+    def ladruno_contact_force(self, node: int) -> float:
+        # openseespy (Ladruno fork, ADR-39 B3): the total normal contact-force
+        # MAGNITUDE on an NTS slave node -- sum over its active master-segment
+        # pairs of tn = kn*<-gap>+. NTS lane only (it is fed exclusively from
+        # the SEGMENT/end-cap branch); a mortar or rigid-plane slave reads 0.0,
+        # as does a node genuinely out of contact AND a domain with no contact
+        # engine at all. Disambiguate with ladruno_contact_info().
+        return float(self._contact_query("ladrunoContactForce")(int(node)))
+
+    def ladruno_contact_info(self) -> ContactInfo:
+        # openseespy (Ladruno fork, ADR-39): (numContacts, numCommits,
+        # numReverts, numMortarContacts). All zeros when no contact engine
+        # exists, which is what makes it the disambiguator for the 0.0 the
+        # other three queries return.
+        raw = self._contact_query("ladrunoContactInfo")()
+        vals = [int(v) for v in raw]
+        return ContactInfo(vals[0], vals[1], vals[2], vals[3])
+
+    def ladruno_mortar_penetration(self) -> float:
+        # openseespy (Ladruno fork, ADR-41 C2.2): the max KKT-active normal
+        # penetration over all mortar slave nodes. A LENGTH, dimension-blind,
+        # and unaffected by the mortar -thickness. This is the mortar lane's
+        # ALM convergence measure, not a force.
+        return float(self._contact_query("ladrunoMortarPenetration")())
+
+    def ladruno_mortar_tie_residual(self) -> float:
+        # openseespy (Ladruno fork, ADR-41 C4): the max weighted
+        # relative-displacement bond residual over all mortar TIE slave nodes.
+        # The tie's ALM convergence measure; 0.0 with no tie declared.
+        return float(self._contact_query("ladrunoMortarTieResidual")())
 
     def critical_time_step(self) -> float:
         # openseespy (Ladruno fork): ``ops.criticalTimeStep()`` returns the
