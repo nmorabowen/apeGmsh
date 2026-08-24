@@ -180,6 +180,85 @@ def test_failed_exec_appends_error_line(tmp_path: Path, monkeypatch) -> None:
     assert "boom" in rec["error"]
 
 
+# =====================================================================
+# ADR 0095 Amendment 11 — how long did that take
+# =====================================================================
+
+
+def test_a_real_replay_stamps_started_at_and_duration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import time
+
+    script = tmp_path / "box.py"
+    script.write_text(
+        "from apeGmsh import apeGmsh\n"
+        "with apeGmsh(model_name='studio_box') as g:\n"
+        "    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='body')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    wall_before = time.monotonic()
+    result = _exec_hold_open(script, "model")
+    wall_after = time.monotonic()
+    try:
+        rec = last_run(ledger_path(tmp_path))
+        assert rec is not None
+        # ``ts`` is when the line was written (the END of the run), so it
+        # cannot double as a start time — that is why there are two keys.
+        assert rec["started_at"].endswith("Z")
+        assert rec["started_at"] <= rec["ts"]
+        assert 0.0 <= rec["duration_s"] <= (wall_after - wall_before)
+    finally:
+        if result.session is not None and result.session.is_active:
+            result.session.end()
+
+
+def test_a_failed_replay_is_timed_too(tmp_path: Path, monkeypatch) -> None:
+    """The number a human most wants when a replay is slow AND broken."""
+    script = tmp_path / "bad.py"
+    script.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert ReplayRunner().run_until(script, phase="model").ok is False
+
+    rec = last_run(ledger_path(tmp_path))
+    assert rec is not None and rec["ok"] is False
+    assert rec["duration_s"] >= 0.0
+    assert rec["started_at"].endswith("Z")
+
+
+def test_a_skipped_run_writes_no_line_at_all(tmp_path: Path, monkeypatch) -> None:
+    """Why "what duration does a skip report" is not a question.
+
+    The same-hash / same-phase short circuit returns before the ledger
+    is touched, so there is no record to leave un-timed and no honest
+    duration to invent.
+    """
+    script = tmp_path / "box.py"
+    script.write_text(
+        "from apeGmsh import apeGmsh\n"
+        "with apeGmsh(model_name='studio_box') as g:\n"
+        "    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='body')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = ReplayRunner()
+    first = runner.run_until(script, phase="model")
+    try:
+        assert first.ok, first.error
+        second = runner.run_until(script, phase="model")
+        assert second.skipped is True
+
+        rows = read_runs(ledger_path(tmp_path))
+        assert len(rows) == 1
+        assert "duration_s" in rows[0]
+    finally:
+        if first.session is not None and first.session.is_active:
+            first.session.end()
+
+
 def test_last_ledger_line_matches_names_json(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -17,6 +17,7 @@ import gmsh
 
 from apeGmsh._kernel._label_prefix import is_label_pg, strip_prefix
 
+from ._contract import CONTRACT_VERSION
 from ._envelope import NameRecord
 
 NAMES_SCHEMA = 1
@@ -79,7 +80,14 @@ def _element_counts() -> dict[str, int]:
 
 
 def collect_manifest(*, phase: str) -> dict[str, Any]:
-    """Snapshot labels / PGs / counts / bboxes from the live kernel."""
+    """Snapshot labels / PGs / counts / bboxes from the live kernel.
+
+    Carries ``contract_version`` (ADR 0095 Amendment 11): ``names.json``
+    is the file an out-of-process consumer polls first, and until 1.8.0
+    nothing on disk said which contract wrote it — so a consumer's
+    INV-17 major gate could never engage against a file, only against a
+    live ``status`` call it may not be able to make.
+    """
     entities: list[dict[str, Any]] = []
     labels: list[str] = []
     pgs: list[str] = []
@@ -106,6 +114,7 @@ def collect_manifest(*, phase: str) -> dict[str, Any]:
         pgs.extend(rec.physical_groups)
     return {
         "schema": NAMES_SCHEMA,
+        "contract_version": CONTRACT_VERSION,
         "phase": phase,
         "labels": _unique(labels),
         "physical_groups": _unique(pgs),

@@ -174,15 +174,16 @@ Same gate as MCP `run_until`.
 | `host.json` | Qt host (claim / clear) | MCP `status` | atomic replace |
 | `project.json` | successful `run_until` / replay | MCP `status`, `run_until` default | atomic replace |
 | `busy.json` | `run_until` / replay (exclusive) | MCP `status` | O_EXCL create / unlink |
+| `progress.json` | the live solve's stream tee (`opensees._run`) | run monitors (poll while busy) | atomic replace |
 | `mcp_calls.jsonl` | MCP adapter (side effect) | `studio.profile` | append (best-effort) |
 | `visors/` | `render` / `animate` / assess figures | agents / reports | ordinary writes |
 | `assess.json` | `--assess` / MCP `assess` | `emit_report` (via `ReportBundle`) | atomic replace |
 | `pins/<id>/assess.json` | `results_pin` (copies the live snapshot) | `emit_report` when that pin is referenced | atomic replace |
 
 Snapshot JSON (`selection` / `names` / `highlight` / `host` / `project` /
-`assess`) is single-writer with atomic replace (INV-16). JSONL ledgers are
-append-best-effort: more than one tool may append (`run_until` and
-`results_pin` both write `runs.jsonl`). Authored chapters go in
+`assess` / `progress`) is single-writer with atomic replace (INV-16). JSONL
+ledgers are append-best-effort: more than one tool may append (`run_until`
+and `results_pin` both write `runs.jsonl`). Authored chapters go in
 `docs/`, never under `.apegmsh/` (INV-12).
 
 `--assess` / MCP `assess` writes `.apegmsh/assess.json` (target paths,
@@ -210,6 +211,17 @@ after each tool call):
   the envelope)
 - After `render` / `animate`: paths under `visors/` (prefer `--json`
   `written` lists)
+- **While a solve runs**: `progress.json` — `{i, n, t, done, warnings}`
+  refreshed once per `APEGMSH_PROGRESS` marker (the emitters aim for
+  ~20 per analyze, so this is a slow file, not a firehose). Read it
+  instead of tailing the solver log. It is written **only inside a
+  habitat** (`.apegmsh/` must already exist — a plain script run
+  elsewhere creates nothing) and **only once the deck emits a
+  marker**, so a deck with no `analyze` leaves it untouched. The run's
+  last write carries `done: true` and `ok`, on failure as well as
+  success. Nothing prunes the file, so treat a `progress.json` older
+  than the current run as history: gate on mtime freshness, or on
+  `busy.busy` being true.
 
 `status` is the cheap aggregate: no replay, no Qt. MCP
 `status(mode="brief")` is the **default** agent shape (root, last-run
@@ -243,10 +255,15 @@ entry script.
 That also writes `project.json` so later `run_until(phase=…)` calls can
 omit the script path.
 
-`status.contract_version` is the habitat semver (`1.7.0` today). Published
+`status.contract_version` is the habitat semver (`1.8.0` today). Published
 JSON Schema + goldens live in the `apeGmsh.studio.schemas` package
 (INV-17) so a Workbench-style consumer can validate without importing
-the FEM stack. Paths that fall under the habitat root (`script`, `cwd`,
+the FEM stack. Since 1.8.0 the stamp is also written **into**
+`names.json` and `progress.json`, so a consumer that only reads files —
+one that cannot or will not make a `status` call — can still refuse an
+unknown major. Older files simply have no `contract_version`; absence
+means "pre-1.8.0", not "wrong major". Paths that fall under the habitat
+root (`script`, `cwd`,
 and MCP `path` / `output` / `written` / `run_until.script`) are
 root-relative posix; the `root` field itself stays absolute as the
 resolve anchor. A `project.json` entry outside the habitat root is
@@ -258,6 +275,14 @@ schemas. A **run** line carries no `kind` and validates against
 against `ledger_pin.schema.json`. Discriminate on `kind` before
 validating — a pin line has no `script` / `phase` / `ok` and is
 correctly refused by the run schema.
+
+A timed run line also carries `started_at` (ISO-8601 UTC) and
+`duration_s` (seconds, monotonic), covering the failed replay as well as
+the successful one. `ts` stays the moment the line was written — the end
+of the run — so the two are not redundant. Both keys are **omitted**
+rather than written as `null` when there is no honest value, so a reader
+that finds `duration_s` can trust it. Lines written before 1.8.0 have
+neither.
 
 `render(session=…)` draws one pane of a saved ADR 0098 session snapshot
 (`<results>.viewer-session.json`) instead of a results file. Its content
