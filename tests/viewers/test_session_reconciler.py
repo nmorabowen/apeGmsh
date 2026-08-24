@@ -1012,3 +1012,96 @@ def test_a7_a_refusing_can_restep_still_re_cuts(rig, monkeypatch):
         backend.clip_planes[0].origin, (0.6, 0.0, 0.0), atol=1e-9,
         err_msg="the cut was lost when the cursor half refused",
     )
+
+
+# ---------------------------------------------------------------------
+# A7 — reference_bounds, the gizmo quad's box
+# ---------------------------------------------------------------------
+
+def test_a7_reference_bounds_are_the_undeformed_box(rig):
+    """The gizmo quad is sized from this, so it must NOT follow the pose.
+
+    Deformed bounds would resize the grab handle on every scrub frame:
+    the user would watch the thing they are holding change size while
+    the plane it represents stayed exactly where it was. It is also
+    what makes the gizmo free on A4's fast path — a re-step cannot
+    change a reference box, so nothing recomputes.
+
+    The fixture's displacement is ``node_id + t*1000`` at scale 3, so a
+    posed box is enormous and unmistakable next to the unit cube.
+    """
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    session.time = Instant(STAGE, 0)
+    drain()
+    undeformed = rec.realized.reference_bounds
+    assert undeformed is not None
+
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 2)
+    drain()
+
+    posed_pts = np.asarray(rec.realized.restep.scene.grid.points)
+    assert posed_pts[:, 2].max() > 100.0, (
+        "precondition — the pose should have moved the mesh a long way"
+    )
+    assert rec.realized.reference_bounds == pytest.approx(undeformed), (
+        "the gizmo box followed the deformation"
+    )
+
+
+def test_a7_reference_bounds_survive_a_scrub_unchanged(rig):
+    """The A4 fast path must not disturb them either."""
+    from apeGmsh.results.session import Instant
+
+    session, view, backend, rec, drain = rig
+    view.contour = Contour("displacement_z")
+    view.deform = Deform("displacement", 3.0)
+    session.time = Instant(STAGE, 0)
+    drain()
+    first = rec.realized.reference_bounds
+
+    for step in (1, 2, 0):
+        session.time = Instant(STAGE, step)
+        drain()
+        assert rec.realized.reference_bounds == pytest.approx(first)
+
+
+def test_a7_reference_bounds_are_scoped_to_what_the_pane_draws():
+    """A quad spanning geometry the pane does not show is a handle in
+    the wrong place. Unit-level, because the shape under test is the
+    row map — not the mesh.
+    """
+    from apeGmsh.viewers.session._realize import _reference_bounds
+
+    class FakeScene:
+        reference_points = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [9.0, 9.0, 9.0],        # only in the UNSCOPED answer
+        ])
+
+    scene = FakeScene()
+    assert _reference_bounds(scene, None) == pytest.approx(
+        (0.0, 0.0, 0.0, 9.0, 9.0, 9.0))
+    assert _reference_bounds(scene, np.array([0, 1])) == pytest.approx(
+        (0.0, 0.0, 0.0, 1.0, 1.0, 1.0))
+
+
+def test_a7_reference_bounds_refuse_rather_than_guess():
+    """A scene that cannot answer yields ``None`` — the pane then draws
+    no gizmo instead of putting a handle somewhere arbitrary."""
+    from apeGmsh.viewers.session._realize import _reference_bounds
+
+    class Empty:
+        reference_points = np.zeros((0, 3))
+
+    class Broken:
+        @property
+        def reference_points(self):
+            raise RuntimeError("no such thing")
+
+    assert _reference_bounds(Empty(), None) is None
+    assert _reference_bounds(Broken(), None) is None

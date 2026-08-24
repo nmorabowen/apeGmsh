@@ -256,6 +256,19 @@ class RealizedPane:
     #: A4.2 — what a cursor-only flush needs to re-step this pane in
     #: place. ``None`` means the fast path must refuse.
     restep: Optional[PaneRestep] = None
+    #: A7 (R1) — ``(xmin, ymin, zmin, xmax, ymax, zmax)`` of this
+    #: pane's cell set in REFERENCE geometry, which is what the ADR
+    #: 0083 clip gizmo sizes its quad and arrow against.
+    #:
+    #: Reference, not the posed shape, and not negotiable: a quad
+    #: derived from deformed points would breathe on every scrub
+    #: frame, so the handle the user is holding would move while the
+    #: plane did not. It is also what makes the gizmo free on the A4
+    #: fast path — a re-step cannot change it, so nothing recomputes.
+    #: SCOPED, because the quad should span what the pane draws rather
+    #: than geometry it does not show. ``None`` when realize could not
+    #: resolve one; the pane then draws no gizmo rather than guessing.
+    reference_bounds: "Optional[tuple[float, float, float, float, float, float]]" = None
 
 
 #: Layer roles realize OWNS — the ones a re-step has to move itself.
@@ -654,6 +667,7 @@ def _realize_mesh(
             substrate_rows=substrate_rows,
             gauss_occupant=slot_diagrams.get("gauss"),
         ),
+        reference_bounds=_reference_bounds(scene, substrate_rows),
     )
 
 
@@ -1055,6 +1069,41 @@ def _scoped_grid(scene: "FEMSceneData", scoped: "ScopedSet") -> Any:
     return sub_grid, (
         None if rows is None else np.asarray(rows, dtype=np.int64)
     )
+
+
+def _reference_bounds(
+    scene: Any, substrate_rows: "Optional[np.ndarray]",
+) -> "Optional[tuple[float, float, float, float, float, float]]":
+    """The pane's cell set, bounded in REFERENCE geometry (A7 / R1).
+
+    Read off ``scene.reference_points`` rather than the (possibly
+    posed) grid, because the ADR 0083 gizmo quad is sized from this: a
+    box that followed the deformation would resize the grab handle on
+    every scrub frame.
+
+    ``substrate_rows`` is the scoped grid's map back into the scene's
+    point rows — exactly the map A4 already records for the re-step —
+    so the scoped case costs one fancy-index and no second extraction.
+    ``None`` for an unscoped view means "every point", which is the
+    same convention ``_scoped_grid`` uses.
+    """
+    try:
+        pts = np.asarray(scene.reference_points, dtype=float)
+        if substrate_rows is not None:
+            pts = pts[substrate_rows]
+        if pts.size == 0:
+            return None
+        lo = pts.min(axis=0)
+        hi = pts.max(axis=0)
+        return (
+            float(lo[0]), float(lo[1]), float(lo[2]),
+            float(hi[0]), float(hi[1]), float(hi[2]),
+        )
+    except Exception:
+        # A backend or scene that cannot answer is not a realize
+        # failure — only a view with a gizmo would notice, and it
+        # degrades to drawing none.
+        return None
 
 
 def _palette() -> Any:
