@@ -95,6 +95,44 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `ladrunoBuild` can report a STALE hash, and the S5 contact measurement was mis-stamped
+
+The fork's `ladrunoBuild` stamp is baked at CMake **configure** time, not at
+compile time. Check out a newer commit into an already-configured build tree,
+rebuild incrementally, and the binary carries the new code while still
+reporting the hash it was configured at. `skills/apegmsh/references/ladruno.md`
+said the stamp was "the git hash the engine binary was compiled from" and told
+you to fail loud on a mismatch — true as far as it went, but it left the
+dangerous direction undocumented: a mismatch can mean the binary is **newer**
+than its stamp, and a measurement then gets credited to a build that never
+produced it.
+
+Caught the hard way. A worktree binary reporting `e7555f2c9` was used to
+measure the adoption-S5 contact figures; probing it with a deliberately
+disjoint 2-D master under `-outward winding` made it emit ADR-85 **F1**'s own
+named FATAL verbatim — F1 landed in `52938956b`, well after `e7555f2c9`. So
+that binary was post-F1 and its stamp was three weeks stale.
+
+The measurement itself stands: re-run on a freshly `rebuild`-ed binary whose
+stamp is trustworthy (`b17e8bd82`, `build/` wiped so CMake reconfigured), a
+flush two-square NTS deck at zero initial gap still diverges on the first
+Newton step and transmits `0.0`, and the same deck with a `1e-4` seeded overlap
+still converges with the summed normal contact force at `100005.02` against an
+applied `1.0e5`. Only the attribution was wrong. `guide_constraints.md` §3
+Level 5 is re-stamped to `b17e8bd82`, and `ladruno.md` gains the staleness
+caveat plus the way to identify a suspect binary — probe a *behaviour* only the
+newer code has, since a named refusal needs no converged run.
+
+Also verified on that build: `outward="winding"` and `outward=(1.0, 0.0)` over
+identical geometry are **byte-for-byte identical** across every slave DOF and
+contact force — the first end-to-end execution of apeGmsh's winding emit
+against a fork binary that implements the keyword.
+
+Note for whoever revisits S4: its `-thickness` figures carry a
+`e7555f2c9` stamp from the same worktree binary and inherit the same
+provenance doubt. The numbers were internally consistent and are not
+re-measured here.
+
 ### ADDED — the `model.h5` neutral zone is a published contract (ADR 0023 amendment)
 
 The neutral zone has always been the part of `model.h5` a non-apeGmsh

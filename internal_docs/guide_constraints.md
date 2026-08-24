@@ -596,7 +596,7 @@ declaration:
 
 1. **Seed a small initial overlap on the NTS lane.** A zero initial gap does
    **not** arm it. Measured on a two-square deck of the shape above, pushed
-   into the interface under load control (fork build `e7555f2c9`): with the
+   into the interface under load control (fork build `b17e8bd82`): with the
    bodies exactly coincident the very first Newton step diverges to `inf` and
    the interface transmits `0.0`; offsetting the slave body `1e-4` into the
    master, the identical deck converges and the summed normal contact force
