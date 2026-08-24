@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
-from . import _derived, _expr
+from . import _derived, _expr, _shell_thickness
 from ._slabs import (
     ElementSlab,
     FiberSlab,
@@ -1242,12 +1242,14 @@ class GaussResultsComposite(
         self, component: str, sid, eids, time: TimeSlice,
         *, thickness: float | None,
     ) -> GaussSlab:
-        """Compute a shell-resultant derived scalar (needs ``thickness``)."""
-        if thickness is None:
-            raise ValueError(
-                f"'{component}' needs the shell thickness — pass "
-                f"thickness=<t> to results.elements.gauss.get(...)."
-            )
+        """Compute a shell-resultant derived scalar.
+
+        ``thickness`` is resolved from the model's section records when
+        the caller does not give one — per ELEMENT, because a read can
+        span groups of different thickness. An explicit ``thickness=``
+        still wins, and is the escape hatch when the section is one this
+        cannot read.
+        """
         base = _derived.shell_base_components(component)
         stored = set(
             self._r._reader.available_components(sid, ResultLevel.GAUSS)
@@ -1266,9 +1268,14 @@ class GaussResultsComposite(
             for name in base
         }
         columns = {name: slab.values for name, slab in base_slabs.items()}
+        template = base_slabs[base[0]]
+        if thickness is None:
+            thickness = _shell_thickness.thickness_vector(
+                self._r.model, template.element_index,
+            )
         values = _derived.compute_shell(component, columns, thickness=thickness)
         return dataclasses.replace(
-            base_slabs[base[0]], component=component, values=values,
+            template, component=component, values=values,
         )
 
     def _compute_derived(

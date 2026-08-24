@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional
 
+from ...results import _shell_thickness
 from ...results._derived import available_derived, is_shell_derived
 from ..diagrams._base import DiagramSpec
 from ..diagrams._kinds import kind_def
@@ -93,29 +94,32 @@ def resolve_contour_topology(
     ``available_derived`` adds is "and what can be COMPUTED from them",
     which is the actual question.
 
-    **Except the shell scalars, which need an argument.**
-    ``von_mises_shell`` is advertised off the six in-plane resultants,
-    but it recovers σ = N/t ± 6M/t² and so raises without ``thickness=``
-    — measured on the ssi_frame_wall bench, 13 advertised at Gauss level
-    and 12 computable. A slot carries a bare component name and nothing
-    else, so accepting it here would resolve the slot and then fail at
-    read: the ADR 0098 A6 defect one level deeper. It is excluded until
-    the thickness is resolved per ELEMENT from the section record (the
-    model has it, but slabs and wall differ, so a per-call scalar would
-    be wrong). ``available_derived`` itself is left alone — the composite
-    listing and the studio namespace read it as "what this data can
-    produce", where a caller CAN pass ``thickness=``.
+    **The shell scalars need a thickness, and it has to be READABLE.**
+    ``von_mises_shell`` recovers σ = N/t ± 6M/t², and a slot carries a
+    bare component name and nothing else. The read path resolves the
+    thickness per element from the model's section records, so the slot
+    works — but only for a model whose shell sections apeGmsh can read.
+    When it cannot, this refuses here rather than letting the slot
+    resolve and fail at read, which is the ADR 0098 A6 defect one level
+    deeper. ``available_derived`` is deliberately not consulted for this:
+    it answers "what can this data PRODUCE", and its other callers (the
+    Gauss composite, the studio namespace) can pass ``thickness=``
+    themselves.
     """
     nodal, gauss = _recorded(results, stage_id)
     if quantity in nodal:
         return "nodes"
     if quantity in gauss:
         return "gauss"
-    if is_shell_derived(quantity):
+    if is_shell_derived(quantity) and not _shell_thickness.is_resolvable(
+        getattr(results, "model", None),
+    ):
         raise ValueError(
-            f"Contour quantity {quantity!r} is derived from the shell "
-            f"stress resultants and needs the shell thickness, which a "
-            f"slot cannot carry. Read it directly instead: "
+            f"Contour quantity {quantity!r} needs the shell thickness, "
+            f"and none could be read from this model's section records "
+            f"(apeGmsh reads ElasticMembranePlateSection, LayeredShell "
+            f"and LayeredShellFiberSection). Read it directly with an "
+            f"explicit thickness instead: "
             f"results.elements.gauss.get(component={quantity!r}, "
             f"thickness=<t>)."
         )

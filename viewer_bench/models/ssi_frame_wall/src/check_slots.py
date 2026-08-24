@@ -40,6 +40,11 @@ CASES = {
     # below: the contour gate tested only recorded columns, and a
     # derived scalar is computed on read, so it never appeared there.
     "contour_derived": (SOLIDS, Contour("von_mises_stress"), "contour"),
+    # The shell-side derived scalar. Promoted out of the known-gaps
+    # probe: it needs the shell THICKNESS, now resolved per element from
+    # the section record. `slabs` (0.15 m) and `wall` (0.25 m) are in
+    # scope together on purpose — one scalar for both would be wrong.
+    "contour_shell_vm": (SHELLS, Contour("von_mises_shell"), "contour"),
     "vector": (SOLIDS, Vector("displacement"), "vector"),
     "gauss": (SOLIDS, Gauss("von_mises_stress"), "gauss"),
     "line": (FRAME, Line("bending_moment_z"), "line"),
@@ -147,8 +152,6 @@ def main() -> None:
     print("--- known viewer gaps (data exists, slot refuses) ---")
     for label, scope, occupant, attr in (
         ("sand of a gauss field", SOLIDS, Sand("stress_zz"), "sand"),
-        ("contour of von_mises_shell", SHELLS,
-         Contour("von_mises_shell"), "contour"),
     ):
         session = results.session()
         view = session.panes[0]
@@ -223,6 +226,28 @@ def main() -> None:
     except Exception as exc:                       # noqa: BLE001
         failures.append("shared_legend")
         print(f"FAIL shared legend — {type(exc).__name__}: {exc}")
+
+    # A single scalar thickness would apply the slab's 0.15 m to the
+    # 0.25 m wall — a (0.25/0.15)^2 error in the 6M/t^2 term that still
+    # renders. So the gate is: the auto answer must EQUAL the scalar
+    # answer on the slabs and DIFFER from it on the wall.
+    print("--- per-element shell thickness ---")
+    import numpy as np
+    g = results.stage("dynamic").elements.gauss
+    auto = g.get(component="von_mises_shell")
+    forced = g.get(component="von_mises_shell", thickness=0.15)
+    wall_ids = set(results.model.fem.elements.physical.element_ids("wall").tolist())
+    wall = np.isin(auto.element_index, list(wall_ids))
+    slab = ~wall
+    same_on_slabs = np.allclose(auto.values[:, slab], forced.values[:, slab])
+    same_on_wall = np.allclose(auto.values[:, wall], forced.values[:, wall])
+    print(f"  slabs cols={int(slab.sum())} wall cols={int(wall.sum())}")
+    if same_on_slabs and not same_on_wall:
+        print(f"PASS thickness — per element: slabs match t=0.15, wall does not")
+    else:
+        failures.append("shell_thickness")
+        print(f"FAIL thickness — same_on_slabs={same_on_slabs} "
+              f"same_on_wall={same_on_wall}; expected True/False")
 
     print("--- scope axes ---")
     for label, scope in (

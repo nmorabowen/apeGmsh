@@ -484,33 +484,78 @@ class _ShellResultants:
             ]}
 
 
-def test_contour_refuses_the_shell_scalar_that_needs_a_thickness(slot_results):
-    """``von_mises_shell`` is derived but needs ``thickness=``.
+def _plate_model(*, readable: bool):
+    """A model stub whose shell section is (or is not) readable."""
+    from types import SimpleNamespace
 
-    ``available_derived`` DOES advertise it off these six resultants, and
-    that is correct for its other callers — the composite listing and the
-    studio namespace mean "what this data can produce", and a caller
-    there can pass ``thickness=``. A slot cannot: it carries a bare
-    component name and nothing else. So the exclusion lives here, at the
-    layer that makes the promise, not in the shared listing.
+    token = "ElasticMembranePlateSection" if readable else "Fiber"
+    return SimpleNamespace(
+        sections=lambda: (SimpleNamespace(
+            type_token=token, tag=4, params=(25e6, 0.2, 0.15, 2.4),
+        ),),
+        elements=lambda: (SimpleNamespace(
+            type_token="ASDShellQ4", tag=8209, args=(4,), fem_eid=1001,
+        ),),
+    )
 
-    Accepting it would resolve the slot and then fail at read, which is
-    the ADR 0098 A6 defect one level deeper.
+
+class _ShellResultantsWithModel(_ShellResultants):
+    """The same stage, plus a model whose thickness CAN be read."""
+
+    model = _plate_model(readable=True)
+
+
+class _ShellResultantsUnreadableSection(_ShellResultants):
+    """The same stage, but no section apeGmsh knows how to measure."""
+
+    model = _plate_model(readable=False)
+
+
+def test_contour_accepts_the_shell_scalar_when_thickness_is_readable(
+    slot_results,
+):
+    """``von_mises_shell`` needs ``thickness=``, and the read path now
+    resolves it per element from the section record — so the slot works.
+
+    The raw resultants contoured since PR #1054; this is the scalar an
+    engineer actually asks for.
+    """
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    assert resolve_contour_topology(
+        "bending_moment_xx", _ShellResultantsWithModel(), STAGE,
+    ) == "gauss"
+    assert resolve_contour_topology(
+        "von_mises_shell", _ShellResultantsWithModel(), STAGE,
+    ) == "gauss"
+
+
+@pytest.mark.parametrize(
+    "stage_stub, why",
+    [
+        (_ShellResultants, "no model attached at all"),
+        (_ShellResultantsUnreadableSection, "section type apeGmsh cannot read"),
+    ],
+)
+def test_contour_refuses_the_shell_scalar_when_thickness_is_not_readable(
+    slot_results, stage_stub, why,
+):
+    """Refusing HERE beats resolving the slot and failing at read.
+
+    That is the ADR 0098 A6 defect one level deeper — and a thickness
+    guessed instead would be worse still: it scales the stress by
+    (t_wrong/t_right)² and the picture still looks like a picture.
     """
     from apeGmsh.results._derived import available_derived
     from apeGmsh.viewers.session._specs import resolve_contour_topology
 
     resultants = _ShellResultants.inspect.components()["gauss"]
     assert "von_mises_shell" in available_derived(resultants), (
-        "precondition: the shared listing advertises it, which is why "
-        "the gate has to exclude it explicitly"
+        f"precondition ({why}): the shared listing advertises it, which "
+        f"is why the gate has to decide for itself"
     )
-    # The raw resultants contour fine (PR #1054).
-    assert resolve_contour_topology(
-        "bending_moment_xx", _ShellResultants(), STAGE,
-    ) == "gauss"
     with pytest.raises(ValueError, match="needs the shell thickness"):
-        resolve_contour_topology("von_mises_shell", _ShellResultants(), STAGE)
+        resolve_contour_topology("von_mises_shell", stage_stub(), STAGE)
 
 
 def test_every_quantity_the_gate_accepts_computes_from_a_bare_name(
