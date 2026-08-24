@@ -805,10 +805,11 @@ ops.tcl("main.tcl", per_rank=True)   # → main.tcl + ranks/rank0_0.tcl, ranks/r
 Writes the deck through a live file sink instead of accumulating the full
 line buffer, so **the deck text stops scaling with deck size** — the line
 buffer becomes O(1). It does **not** make emit constant-memory overall: the
-build-side Python object graph still scales with N (per-rank containers, the
-node-index lookup, the ndf-inference dicts) — measured at ~1,200 B/hex of
-process RSS, which puts the ceiling near 50 M hexes on a 60 GB node. Past
-that, the object graph is what OOM-kills the emit — see **ADR 0100**. Output is
+build-side Python object graph still scales with N. Measured on a 51 M-hex
+partitioned model at ~1,200 B/hex of process RSS, which puts the ceiling near
+50 M hexes on a 60 GB node; past it, that run was OOM-killed mid-emit. *Which*
+structures own the growth is not settled — **ADR 0100** names the candidates
+and gates the attribution on a measurement. Output is
 **byte-identical** to the default mode, including under `per_rank=True`
 (fragment files are live-routed as the emitter switches partitions, not
 sliced post-hoc). Everything goes to `.tmp` siblings promoted atomically on
