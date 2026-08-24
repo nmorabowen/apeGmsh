@@ -592,13 +592,15 @@ def emit_phases(ops, no_gc: bool, ph: dict, deck_path: str,
 def emit_instrumented(
     ops, ph: dict, deck_path: str, *, stream: bool, per_rank: bool,
     parts: int, sampler: "RssSampler | None", mem: bool, no_gc: bool,
-    snap_dir: str,
+    snap_dir: str, peak_poll_every: int = 2000,
+    peak_snap_grow: float = 1.05,
 ) -> dict:
     """Emit with in-flight hooks. Returns {"hooks": [...], "po_calls": n,
     "po_ranks": k, "snap_paths": {label: path}}.
 
     Hooks (in fired order): pre_build, post_build, ndf_chunks_peak,
-    partition_open#first, partition_open#mid, post_emit, post_write.
+    partition_open#first, partition_open#mid, post_emit, post_write —
+    plus, in --mem mode, a synthetic ``peak_tracked`` hook (see below).
     ndf_chunks_peak fires DURING emit — infer_node_ndf lives inside
     BuiltModel.emit(), not apeSees.build() (measured: build() is +0.0 MB).
 
@@ -612,6 +614,20 @@ def emit_instrumented(
     traced_peak at each hook is the absolute peak since the PREVIOUS hook
     (``reset_peak`` runs after each capture, after the snapshot work, so
     the instrument's own snapshot spike never surfaces in the next hook).
+
+    ``peak_tracked`` — the named hooks alone CANNOT see the true resident
+    peak: measured on staged partitioned runs, the global traced peak
+    lives in the window between partition_open#mid and post_emit (the
+    staged pass, where the R1 twin at apesees ~3527 goes co-resident with
+    the base dict) and no named hook samples it, so the anchor understates
+    the G0a denominator.  Fix: ``_LineBuf.append`` — the one per-line
+    path every emitted line takes, list mode and stream mode alike — is
+    patched with a poll that every ``peak_poll_every`` lines reads
+    traced-current; when it exceeds the last snapshotted value by
+    ``peak_snap_grow``x, a snapshot is taken and dumped (one file,
+    replaced each time, so only the highest survives).  The final peak
+    entry joins ``hooks`` at its chronological position and competes for
+    the anchor like any named hook.
     """
     hooks: "list[dict]" = []
     snap_paths: "dict[str, str]" = {}
@@ -667,6 +683,48 @@ def emit_instrumented(
     if stream:
         emitter.stream_to(deck_path, per_rank=per_rank)
 
+    # -- peak tracking (mem mode): poll traced-current on the per-line
+    # append path; snapshot the running max.  ``_LineBuf`` carries
+    # ``__slots__`` so the patch goes on the CLASS (only our emitter's
+    # buffer exists during the run); restored in the finally below.
+    from apeGmsh.opensees.emitter import tcl as _tcl_mod
+    orig_append = _tcl_mod._LineBuf.append
+    peak_snap_path = os.path.join(snap_dir, "peak_tracked.tm")
+    peak_state: dict = {
+        "count": 0, "last_snap_cur": 0.0, "entry": None, "idx": 0,
+        "snaps": 0, "counter_max": 0,
+    }
+
+    def _peak_poll_append(buf_self, line):
+        peak_state["count"] += 1
+        if peak_state["count"] % peak_poll_every == 0:
+            cur = tracemalloc.get_traced_memory()[0]
+            if cur > peak_state["last_snap_cur"] * peak_snap_grow:
+                rss = (sampler.mark("peak_tracked")
+                       if sampler is not None else None)
+                cur2, peak2 = tracemalloc.get_traced_memory()
+                # Bank the REAL peak-counter reading first...
+                peak_state["counter_max"] = max(
+                    peak_state["counter_max"], peak2)
+                snap = tracemalloc.take_snapshot()
+                snap.dump(peak_snap_path)
+                del snap
+                # ...then reset: the snapshot just taken is the
+                # INSTRUMENT's own tens-of-MB transient (a full trace-
+                # table copy) — without this reset it masquerades as
+                # emit residency in the next hook's traced-peak column
+                # (measured: +50 MB of phantom "excursion" at size 15).
+                tracemalloc.reset_peak()
+                peak_state["last_snap_cur"] = cur2
+                peak_state["snaps"] += 1
+                peak_state["idx"] = len(hooks)
+                peak_state["entry"] = {
+                    "label": "peak_tracked", "rss": rss,
+                    "traced_cur": cur2, "traced_peak": peak2,
+                    "per_term": None, "term_sum": None,
+                }
+        return orig_append(buf_self, line)
+
     # -- hooks 4: wrap the emitter INSTANCE's partition_open.  #mid fires
     # on the ⌊parts/2⌋-th DISTINCT rank — the staged path re-opens
     # partitions, so distinct ranks are counted, and the total call count
@@ -691,6 +749,8 @@ def emit_instrumented(
         gc.disable()
     _ecap.element_class_ndf_ok = _ndf_ok_wrapper
     emitter.partition_open = _po_wrapper
+    if mem:
+        _tcl_mod._LineBuf.append = _peak_poll_append
     try:
         capture("pre_build")
 
@@ -716,6 +776,7 @@ def emit_instrumented(
         # Restore EVERY patch — a leaked monkeypatch poisons the next
         # size in the same process.
         _ecap.element_class_ndf_ok = orig_ndf_ok
+        _tcl_mod._LineBuf.append = orig_append
         try:
             del emitter.partition_open
         except AttributeError:
@@ -723,11 +784,31 @@ def emit_instrumented(
         if no_gc:
             gc.enable()
 
+    # Finalize the tracked peak: attribute its (last, highest) snapshot
+    # and slot the entry into ``hooks`` at its chronological position so
+    # it competes for the anchor.  Runs after the named captures, so the
+    # load's transient allocations pollute nothing.
+    if mem and peak_state["entry"] is not None:
+        entry = peak_state["entry"]
+        try:
+            snap = tracemalloc.Snapshot.load(peak_snap_path)
+            per_term = _attribute_snapshot(snap, terms)
+            del snap
+            entry["per_term"] = per_term
+            entry["term_sum"] = sum(per_term.values())
+            snap_paths["peak_tracked"] = peak_snap_path
+            hooks.insert(min(peak_state["idx"], len(hooks)), entry)
+        except Exception as exc:  # diagnostic aid must not kill the run
+            print(f"  (peak_tracked attribution failed: {exc!r})")
+
     return {
         "hooks": hooks,
         "po_calls": po_calls[0],
         "po_ranks": len(seen_ranks),
         "snap_paths": snap_paths,
+        "peak_snaps": peak_state["snaps"],
+        "peak_polls": peak_state["count"] // max(peak_poll_every, 1),
+        "peak_counter_max": peak_state["counter_max"],
     }
 
 
@@ -769,11 +850,19 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
     unattributed = None
     traced_growth = None
     global_peak = None
+    named_anchor_label = None
+    pt_cur = None
 
     if mem:
         pre_cur = pre["traced_cur"]
         anchor = max(hooks, key=lambda h: h["traced_cur"])
-        global_peak = max(h["traced_peak"] for h in hooks)
+        # Named-hook peaks cover only the intervals since their previous
+        # reset; the poll banks its own counter readings (pre-reset) in
+        # peak_counter_max — the true global peak is the max of both.
+        global_peak = max(
+            max(h["traced_peak"] for h in hooks),
+            result.get("peak_counter_max") or 0,
+        )
 
         print(f"  {'hook':<22} {'traced-cur':>10} {'d-pre':>9} "
               f"{'traced-peak':>11} {'RSS':>9} {'G0a':>6}")
@@ -797,6 +886,35 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         print(f"  anchor hook: {anchor['label']} "
               f"(traced-cur {anchor['traced_cur'] / 1e6:,.1f} MB; "
               f"global traced peak {global_peak / 1e6:,.1f} MB)")
+
+        # Tracked peak vs the best NAMED hook — the named hooks alone
+        # cannot see a peak that lives between them (measured: the
+        # staged pass between partition_open#mid and post_emit).
+        named = [h for h in hooks if h["label"] != "peak_tracked"]
+        best_named = max(named, key=lambda h: h["traced_cur"])
+        named_anchor_label = best_named["label"]
+        pt = by_label.get("peak_tracked")
+        pt_cur = pt["traced_cur"] if pt is not None else None
+        if pt is not None:
+            print(f"  named-hook anchor: {best_named['label']} "
+                  f"({best_named['traced_cur'] / 1e6:,.1f} MB)   "
+                  f"tracked peak: {pt['traced_cur'] / 1e6:,.1f} MB "
+                  f"({result.get('peak_snaps', 0)} peak snapshots)")
+            if pt["traced_cur"] > best_named["traced_cur"] * 1.05:
+                gap = (pt["traced_cur"] / best_named["traced_cur"] - 1.0) * 100
+                print(f"  NOTE: the tracked peak exceeds every named hook "
+                      f"by {gap:.0f}% - the resident peak lives BETWEEN "
+                      f"the named hooks (staged pass); G0a above is "
+                      f"computed there, not at a named hook.")
+            if pt["traced_cur"] < 0.95 * global_peak:
+                short = (global_peak - pt["traced_cur"]) / 1e6
+                print(f"  *** WARNING: tracked peak under-samples the true "
+                      f"traced peak by {short:,.1f} MB (>5%) - the "
+                      f"--peak-poll-every cadence is too coarse for this "
+                      f"model; the G0a denominator is understated. ***")
+        else:
+            print("  (no peak_tracked snapshot fired - emit too small for "
+                  "the poll cadence; anchor is named-hook only)")
         terms_txt = "  ".join(
             f"{t}={per_term_anchor[t] / 1e6:,.1f}MB" for t in TERM_ORDER
         )
@@ -898,6 +1016,9 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "g0a": g0a,
         "g0b": g0b,
         "anchor_hook": anchor["label"] if anchor is not None else None,
+        "named_anchor_hook": named_anchor_label,
+        "peak_tracked_cur_b": pt_cur,
+        "peak_snaps": result.get("peak_snaps", 0),
         "per_term_bytes": per_term_anchor,
         "unattributed_bytes": unattributed,
         "partition_open_calls": result["po_calls"],
@@ -950,6 +1071,13 @@ def main():
                     help="--mem: tracemalloc nframe. 1 cannot attribute "
                          "R3/R6/R7 (their bytes allocate below the owning "
                          "site); default 12.")
+    ap.add_argument("--peak-poll-every", type=int, default=2000,
+                    help="--mem: poll traced-current every N emitted lines "
+                         "for the peak_tracked snapshot (default 2000)")
+    ap.add_argument("--peak-snap-grow", type=float, default=1.05,
+                    help="--mem: re-snapshot the tracked peak when "
+                         "traced-current exceeds the last snapshot by this "
+                         "factor (default 1.05)")
     ap.add_argument("--rss-only", action="store_true",
                     help="sampler on, tracemalloc OFF: phase-resolved RSS "
                          "deltas + B/hex-RSS, uninflated. Pair with a --mem "
@@ -1032,6 +1160,8 @@ def main():
                     per_rank=args.per_rank, parts=args.parts,
                     sampler=sampler, mem=args.mem, no_gc=args.no_gc,
                     snap_dir=snap_dir,
+                    peak_poll_every=args.peak_poll_every,
+                    peak_snap_grow=args.peak_snap_grow,
                 )
             else:
                 emit_phases(ops, args.no_gc, ph, deck,
