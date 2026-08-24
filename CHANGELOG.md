@@ -95,6 +95,21 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the API reference had no Tier 5, and a stale source-map footer
+
+`docs/api/constraints.md` named **Tier 5 — Fork** in its taxonomy table and
+then never defined it: Tiers 1, 2, 2b, 3, 4 and 6 each had a section, Tier 5
+had none, so `contact` was the one constraint verb with no entry on the
+published API surface and `contact_plane` appeared nowhere on that page at
+all. Both now render from their `ContactDef` / `ContactPlaneDef` docstrings,
+and the taxonomy row links to the section instead of dangling.
+
+The skill cheatsheet's coupling source-map footer pointed at
+`ConstraintsComposite.py:1595` / `:1878`; the live lines are `:2121` /
+`:2404`. This is the sibling of the contact footer corrected in #1051 — the
+line numbers were re-derived now rather than carried over from that PR,
+since the file moved again during the S6 work.
+
 ### CHANGED — one node-coordinate invariant, one enforcement point (ADR 0099 reconciliation)
 
 A 2-D ``node`` line must carry exactly ``ndm`` coordinates: a padded third

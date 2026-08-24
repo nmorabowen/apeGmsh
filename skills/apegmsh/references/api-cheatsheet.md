@@ -573,7 +573,7 @@ distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE
 #   Other constraint kinds refuse a decoupled role at declare (ADR 0049 OQ2).
 list_defs() / list_records() / clear()
 ```
-`# src/apeGmsh/core/ConstraintsComposite.py:1595 (kinematic_coupling), :1878 (distributing_coupling)`
+`# src/apeGmsh/core/ConstraintsComposite.py:2121 (kinematic_coupling), :2404 (distributing_coupling)`
 
 **RBE2 vs RBE3.** `kinematic_coupling` (RBE2) rigidly drives the slave set from
 the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`).
