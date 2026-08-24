@@ -187,7 +187,13 @@ ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
 ops.tcl("frame_partitioned.tcl")
 ```
 
-**The dedent above — closing the `with` block before `ops.tcl()` — is load-bearing on large models.** This recipe shows it by accident, but it is not cosmetic. The `fem` snapshot is taken at line 165 inside the block, and the OpenSees emit starts at line 174 *after* the block closes and the Gmsh kernel finalized. On a 51 M-hex partitioned model, this pattern dropped the emit peak from 31 GB to 18 GB *before* `build()` started — the finalize itself is ~13 GB — so on large models you must always take your snapshot, close the session, then emit. See ADR 0100.
+The dedent in that recipe — snapshot inside the `with` block, everything
+from `apeSees(fem)` onward outside it — is **load-bearing on large
+models**, not cosmetic. The emit path reads `FEMData` and never calls
+Gmsh, so a still-open kernel is pure overhead on the emit peak: on a
+51 M-hex partitioned model, leaving the block dropped RSS from 31 GB to
+18 GB *before* `build()` even started, because `gmsh.finalize()` returned
+~13 GB. Take the snapshot, close the session, then emit (ADR 0100).
 
 Run it under OpenSeesMP:
 
