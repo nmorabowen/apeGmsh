@@ -2651,6 +2651,8 @@
       
         
       
+        
+      
     
     
     
@@ -2832,6 +2834,34 @@
     
   
     Results internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/model-h5-neutral-zone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model.h5 neutral zone
   
 
     
@@ -3538,6 +3568,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the model.h5 neutral zone is a published contract (ADR 0023 amendment)
       
     </span>
   </a>
@@ -8497,6 +8538,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the model.h5 neutral zone is a published contract (ADR 0023 amendment)
       
     </span>
   </a>
@@ -13470,6 +13522,34 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment">ADDED — the <code>model.h5</code> neutral zone is a published contract (ADR 0023 amendment)<a class="headerlink" href="#added-the-modelh5-neutral-zone-is-a-published-contract-adr-0023-amendment" title="Permanent link">&para;</a></h3>
+<p>The neutral zone has always been the part of <code>model.h5</code> a non-apeGmsh
+tool can actually use — nodes, elements, physical groups, labels, mesh
+selections — but it was documented only internally, in
+<code>opensees/architecture/h5-schema.md</code>, which is written for people
+changing the emitter rather than people reading its output.</p>
+<p><a href="../design/model-h5-neutral-zone/"><code>design/model-h5-neutral-zone.md</code></a>
+publishes it: every group and dataset with exact dtype, shape,
+attributes and optionality; the version rule as the code enforces it
+(semver strings under <code>/meta/neutral_schema_version</code>, the backward-only
+two-version window, refuse-don't-guess on an unknown version); and the
+index-base contract that a reader most easily gets wrong —
+<code>connectivity</code> holds <strong>node ids</strong>, not row indices, and ids are 1-based
+and need not be contiguous.</p>
+<p>Nothing about the emitter changed. This is publication only: no new
+fields, no version bump.</p>
+<p>The contract is machine-readable and lives in exactly one place,
+<code>tests/fixtures/neutral_zone/inventory.py</code>.
+<code>tests/mesh/test_neutral_zone_schema_note.py</code> holds emitter, inventory
+and page together in both directions — emitter drift and doc drift each
+fail there — against a committed 41 KB golden,
+<code>tests/fixtures/neutral_zone/box.h5</code>, reproducible from
+<code>_generate_fixtures.py</code>. The golden is deliberately built to exercise
+the awkward cases: element ids that do not start at 1, and a physical
+group whose <code>element_ids</code> name elements no <code>/elements/{type}</code> group
+carries.</p>
+<p>The first consumer is an apeWorkbench browser reader (h5wasm, no h5py,
+no apeGmsh import); the golden is the artifact it conforms against.</p>
 <h3 id="docs-h5-schemamd-registry-re-sync-doc-sync-ratchet">DOCS — <code>h5-schema.md</code> registry re-sync + doc-sync ratchet<a class="headerlink" href="#docs-h5-schemamd-registry-re-sync-doc-sync-ratchet" title="Permanent link">&para;</a></h3>
 <p><code>src/apeGmsh/opensees/architecture/h5-schema.md</code> had drifted well
 behind <code>mesh/_femdata_h5_io.py</code> / <code>opensees/emitter/h5.py</code>: the
