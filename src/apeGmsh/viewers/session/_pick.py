@@ -39,6 +39,19 @@ clears — the conventional reading of "click empty space to deselect";
 a Ctrl+click on nothing does nothing, because Ctrl means "keep what I
 have".
 
+**A hit the cut has hidden is a miss** (ADR 0083 Part 5, and now on
+this path too). ``vtkCellPicker`` is a geometric ray-cast that knows
+nothing about mapper clip planes, so without this a click on
+apparently-empty space returns the node the section plane is hiding.
+The rule applies to the window as well: a target the cut has hidden is
+not IN the rubber band, which matters more than it sounds — a band
+dragged over a cut model would otherwise sweep up everything behind
+the cut, invisibly, in one gesture.
+
+Both read :func:`~._realize.resolved_clip_specs`, the same function
+that answers the backend, so the pick and the picture cannot disagree
+about which planes are cutting — cap included.
+
 Resolution rule for a click: the backend's ray answers with the world
 point under the cursor, and the nearest target in 3-D to that point
 wins. Snapping from the RAY (not from the pixel) is what makes
@@ -50,6 +63,9 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 import numpy as np
+
+from ..core._clip_planes import _ON_PLANE_TOL
+from ._realize import resolved_clip_specs
 
 
 class PanePick:
@@ -131,6 +147,13 @@ class PanePick:
         if view is None or targets is None:
             return
         selection = self._session.selection
+        if hit is not None and _is_clipped(view, hit.world):
+            # ADR 0083 Part 5 — the cut has hidden this point, so the
+            # user clicked on nothing they can see. Read as a miss, in
+            # both senses: plain clears, Ctrl keeps. Checked BEFORE any
+            # target resolution, because the point is behind a plane
+            # regardless of what it would have resolved to.
+            hit = None
         if hit is None:
             # Clicked past the model. Plain: deselect. Ctrl: the user
             # asked to keep what they have.
@@ -165,6 +188,10 @@ class PanePick:
         except Exception:
             return
         inside = _inside_box(np.asarray(display), x0, y0, x1, y1)
+        # Same law, applied to the set rather than the ray: a hidden
+        # target is not in the window. Without it one drag over a cut
+        # model selects the whole interior the user cannot see.
+        inside &= _visible_mask(view, targets.coords)
         selection = self._session.selection
         mods = getattr(gesture, "modifiers", None)
         ctrl = bool(mods is not None and mods.ctrl)
@@ -186,6 +213,53 @@ class PanePick:
             selection.add_gauss(pairs)
         else:
             selection.set_gauss(pairs)
+
+
+def _visible_mask(view: Any, coords: Any) -> "np.ndarray":
+    """Boolean mask: which of ``coords`` the cut leaves visible.
+
+    Vectorised because it runs over every target of a window gesture —
+    a 100k-node pane is an ordinary rubber band.
+
+    The tolerance is imported rather than restated for the same reason
+    the plane cap is: a point exactly ON the cut face must not be
+    rejected by floating-point noise, and the two paths must agree on
+    where "on" ends. Two copies of a tolerance drift.
+    """
+    pts = np.asarray(coords, dtype=np.float64)
+    if pts.size == 0:
+        return np.zeros(0, dtype=bool)
+    keep = np.ones(pts.shape[0], dtype=bool)
+    for spec in _specs(view):
+        origin = np.asarray(spec.origin, dtype=np.float64)
+        normal = np.asarray(spec.normal, dtype=np.float64)
+        keep &= ((pts - origin) @ normal) >= -_ON_PLANE_TOL
+    return keep
+
+
+def _is_clipped(view: Any, world: Any) -> bool:
+    """Whether ``world`` sits on the discarded side of any live plane."""
+    try:
+        pt = np.asarray(world, dtype=np.float64).reshape(1, 3)
+    except (TypeError, ValueError):
+        return False
+    specs = _specs(view)
+    if not specs:
+        return False
+    return not bool(_visible_mask(view, pt)[0])
+
+
+def _specs(view: Any) -> tuple:
+    """This view's live half-spaces, or none if they cannot be read.
+
+    A pane that cannot answer must not start rejecting picks — the
+    failure mode of this filter is silently swallowing clicks, which is
+    worse than the defect it fixes.
+    """
+    try:
+        return resolved_clip_specs(view)
+    except Exception:
+        return ()
 
 
 def _nearest(coords: "np.ndarray", world: Any) -> Optional[int]:

@@ -1624,51 +1624,69 @@ def reclip_pane(view: "MeshView", backend: Any) -> int:
     return _apply_clips(backend, view)
 
 
-def _apply_clips(backend: Any, view: "MeshView") -> int:
-    """Push this view's ACTIVE section planes onto the backend.
+def resolved_clip_specs(view: "MeshView") -> tuple:
+    """The half-spaces this view currently cuts with — the ONE answer.
 
-    The record's ``offset`` resolves to an origin and ``flipped`` folds
-    into the normal's sign — the same resolution
-    ``ClipPlane.spec`` does, done here because the session IR owns the
-    planes now and the 0083 controller is never constructed on this
-    path. Inactive planes are simply absent from the set.
+    Extracted so that the picture and the PICK cannot disagree, which
+    is the whole of ADR 0083 Part 5: ``vtkCellPicker`` is a geometric
+    ray-cast and knows nothing about mapper clip planes, so a pick that
+    resolved against a different set than the backend was given would
+    hand back the cell the cut is hiding.
 
-    **Capped at** :data:`MAX_ACTIVE_PLANES`, and this is the one place
-    that can be. §3 puts the cap here on purpose — "a render-time
-    constraint enforced where planes meet a backend, not by the IR" —
-    because it is a property of OpenGL, not of what a view may
-    describe: `gl_ClipDistance` guarantees only six, and past that the
-    driver is FREE TO IGNORE the extras. A seventh active plane
-    therefore does not fail, it draws a model that looks cut and is
-    not — the worst shape of wrong, because nothing anywhere says so.
+    "The same set" has to include the CAP, not just the resolution. Six
+    of seven active planes reach the driver (``MAX_ACTIVE_PLANES``), so
+    a pick filter that honoured all seven would reject clicks in a
+    region the user can plainly see — the same incoherence in the
+    opposite direction. One function, one answer, both callers.
 
-    Returns how many active planes were dropped, so a caller with a
-    place to say it can. Creation order decides which six survive,
-    matching ``ClipPlaneSetController.add``: the first six to be
-    activated keep cutting, and a seventh is the one that waits.
-
-    The count is a RETURN rather than a log because this runs on every
-    realize and every drag frame — a warning here would fire thirty
-    times a second and teach the reader to ignore it. The UI refuses
-    the seventh activation up front (the inspector's Section planes
-    section), so reaching this cap at all means a script or a restored
-    snapshot did it, and the inspector's note is what surfaces it.
+    Resolution matches ``ClipPlane.spec``: ``offset`` becomes an origin
+    along the normal, and ``flipped`` folds into the normal's sign.
+    Inactive planes are absent; creation order decides which survive
+    the cap.
     """
     from ..scene_ir import ClipPlaneSpec
 
     specs = []
-    dropped = 0
     for clip in view.clips:
         if not clip.active:
             continue
         if len(specs) >= MAX_ACTIVE_PLANES:
-            dropped += 1
-            continue
+            break
         n = clip.normal
         origin = tuple(c * float(clip.offset) for c in n)
         if clip.flipped:
             n = (-n[0], -n[1], -n[2])
         specs.append(ClipPlaneSpec(origin=origin, normal=n))
+    return tuple(specs)
+
+
+def _apply_clips(backend: Any, view: "MeshView") -> int:
+    """Push this view's ACTIVE section planes onto the backend.
+
+    Resolution and the cap both live in :func:`resolved_clip_specs`,
+    which the pick path reads too — see there for why that sharing is
+    load-bearing rather than tidy.
+
+    **Capped at** :data:`MAX_ACTIVE_PLANES`, and §3 puts the cap here
+    on purpose — "a render-time constraint enforced where planes meet a
+    backend, not by the IR" — because it is a property of OpenGL, not
+    of what a view may describe: ``gl_ClipDistance`` guarantees only
+    six, and past that the driver is FREE TO IGNORE the extras. A
+    seventh active plane therefore does not fail, it draws a model that
+    looks cut and is not — the worst shape of wrong, because nothing
+    anywhere says so.
+
+    Returns how many active planes were dropped, so a caller with a
+    place to say it can. The count is a RETURN rather than a log
+    because this runs on every realize and every drag frame — a warning
+    here would fire thirty times a second and teach the reader to
+    ignore it. The UI refuses the seventh activation up front (the
+    inspector's Section planes section), so reaching this cap at all
+    means a script or a restored snapshot did it, and the inspector's
+    note is what surfaces it.
+    """
+    specs = resolved_clip_specs(view)
+    dropped = sum(1 for clip in view.clips if clip.active) - len(specs)
     try:
         backend.set_clip_planes(specs)
     except AttributeError:
@@ -1767,5 +1785,6 @@ def _layer_lutspec(diagram: Any) -> Any:
 __all__ = [
     "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
     "RealizedPane", "realize_pane", "reclip_pane", "recorded_components",
+    "resolved_clip_specs",
     "recorded_line_components",
 ]
