@@ -136,7 +136,7 @@ __all__ = [
     "WarnBodyForceDoubleCount",
     "WarnLoadBasisMismatch",
     "infer_node_ndf",
-    "node_coords_for_ndm",
+    "node_coords_as_floats",
     "validate_adaptive_element_endpoints",
     "resolve_ndf_overlay",
     "validate_constraint_master_ndf",
@@ -933,36 +933,28 @@ def validate_record_ndf_consistency(
                 )
 
 
-def node_coords_for_ndm(
-    coords: "Sequence[float]", ndm: int,
-) -> "tuple[float, ...]":
-    """Trim a stored ``(x, y, z)`` triple to the coordinates a
-    ``-ndm <ndm>`` OpenSees model actually consumes on a ``node`` line.
+def node_coords_as_floats(
+    coords: "Sequence[float]",
+) -> "tuple[float, float, float]":
+    """Coerce a stored ``(x, y, z)`` triple to plain Python floats.
 
-    apeGmsh stores every node as a 3-tuple, but ``node`` in a 2-D deck
-    reads exactly TWO coordinates and then scans what follows for
-    optional keywords.  A trailing ``0.0`` desynchronises that scan and
-    the following ``-ndf K`` is **silently swallowed** — measured
-    against the Ladruno build 2026-08-18::
+    **Trimming to ``ndm`` is deliberately NOT done here.** That invariant —
+    a 2-D ``node`` line carries exactly two coordinates, because a padded
+    third desynchronises OpenSees' optional-argument scan and silently
+    swallows the following ``-ndf K`` — is enforced once, at the emitter,
+    by :func:`~apeGmsh.opensees.emitter.base.trim_coords_to_ndm` (ADR 0099).
+    That trim runs last on every text and live emitter, so a second copy
+    here bought nothing and gave one rule two enforcement points.
 
-        model BasicBuilder -ndm 2 -ndf 3
-        node 1 0.0 0.0 0.0 -ndf 2   ->  node ndf 3   (override LOST)
-        node 2 1.0 0.0     -ndf 2   ->  node ndf 2
-
-    The node still lands with ``getCrds().Size() == 2`` either way, so
-    the damage is confined to the per-node ndf: the token is present
-    and inert, and the deck line you would read to diagnose the
-    mismatch is exactly the one that did nothing.
-
-    ``ndm`` is threaded in from the build layer rather than sniffed by
-    the emitter, which is variadic by contract and deliberately knows
-    nothing about model dimension — the same division of labour
-    :func:`emit_transform_specs` uses for the bare 2-D ``geomTransf``
-    form.  ``ndm != 2`` keeps the historical three-coordinate line
-    byte-for-byte, so no 3-D deck moves.
+    What survives is the coercion, and it is load-bearing rather than
+    cosmetic. The broker hands out ``numpy`` scalars, and
+    :class:`~apeGmsh.opensees.emitter.tcl.TclEmitter` renders an unknown
+    numeric via ``repr`` — under numpy 2.x ``repr(np.float64(0.0))`` is
+    ``'np.float64(0.0)'``, so a stray numpy coordinate emits the literal
+    text ``node 1 np.float64(0.0) np.float64(0.0)``. It also misses the
+    emitter's plain-float fast path. Hence: plain floats, always, and the
+    dimension question belongs to whoever writes the line.
     """
-    if int(ndm) == 2:
-        return (float(coords[0]), float(coords[1]))
     return (float(coords[0]), float(coords[1]), float(coords[2]))
 
 
@@ -972,7 +964,6 @@ def _emit_node_with_inferred_ndf(
     tag: int,
     coords: tuple[float, float, float],
     envelope_ndf: int,
-    ndm: int,
 ) -> None:
     """Emit one ``node(tag, *coords)`` call with inference-sourced ndf
     (ADR 0048 — element-class inference is authoritative).
@@ -986,11 +977,11 @@ def _emit_node_with_inferred_ndf(
     it; this keeps homogeneous decks free of redundant ``-ndf`` lines.
 
     ``ndm`` selects how many coordinates go on the line — see
-    :func:`node_coords_for_ndm`.  It is required, not defaulted: a
+    :func:`node_coords_as_floats`.  It is required, not defaulted: a
     caller that forgot it would emit a 2-D deck whose ``-ndf`` tokens
     are all inert, which no test can see from the text.
     """
-    cs = node_coords_for_ndm(coords, ndm)
+    cs = node_coords_as_floats(coords)
     ndf_val = inferred.get(int(tag), int(envelope_ndf))
     if ndf_val == int(envelope_ndf):
         emitter.node(int(tag), *cs)
@@ -4619,7 +4610,6 @@ def emit_mp_constraints(
     *, claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
-    ndm: int = 3,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -4736,7 +4726,7 @@ def emit_mp_constraints(
     #    any constraint references them.  ADR 0022 INV-3.
     # -------------------------------------------------------------------
     if node_constraints is not None:
-        _emit_phantom_nodes(emitter, node_constraints, ndm)
+        _emit_phantom_nodes(emitter, node_constraints)
 
     # -------------------------------------------------------------------
     # 2. Rigid links — ``emitter.rigidLink(kind, master, slave)`` per
@@ -5440,7 +5430,6 @@ def _plan_rank_interfaces(
 def _emit_interface_record(
     emitter: "Emitter", rec: "InterfaceRecord",
     pre_allocated: "tuple[int, int, int]",
-    ndm: int,
 ) -> None:
     """Emit ONE record's atomic unit — phantom ``node`` → nested
     ``equalDOF`` → the two tributary-scaled uniaxials → the
@@ -5459,7 +5448,7 @@ def _emit_interface_record(
     in flat order BEFORE the rank fan-out (ADR 0027 tag determinism).
 
     ``ndm`` sizes the phantom's coordinate list
-    (:func:`node_coords_for_ndm`).  This is the interface lane's own
+    (:func:`node_coords_as_floats`).  This is the interface lane's own
     live bug, not a precaution: the resolver that mints the phantom is
     2-D-ONLY by construction (``_interface_resolver._PHANTOM_NDF = 2``),
     so before this parameter existed EVERY mixed-ndf interface phantom
@@ -5476,8 +5465,8 @@ def _emit_interface_record(
         # :func:`_validate_interface_records`, which every caller runs
         # over the whole pool before the first line is emitted — hence
         # the narrow ignores rather than re-raising here.
-        xyz = node_coords_for_ndm(
-            rec.phantom_coords, ndm,  # type: ignore[arg-type]
+        xyz = node_coords_as_floats(
+            rec.phantom_coords,  # type: ignore[arg-type]
         )
         emitter.node(
             int(rec.phantom_node), *xyz,
@@ -5556,7 +5545,7 @@ def emit_stage_interfaces(
     _register_interface_phantoms(emitter, recs)
     tag_plan = allocate_interface_tags(recs, tags)
     for rec in recs:
-        _emit_interface_record(emitter, rec, tag_plan[id(rec)], ndm)
+        _emit_interface_record(emitter, rec, tag_plan[id(rec)])
 
 
 def emit_interfaces(
@@ -5639,7 +5628,7 @@ def emit_interfaces(
     _register_interface_phantoms(emitter, unclaimed)
     tag_plan = allocate_interface_tags(unclaimed, tags)
     for rec in unclaimed:
-        _emit_interface_record(emitter, rec, tag_plan[id(rec)], ndm)
+        _emit_interface_record(emitter, rec, tag_plan[id(rec)])
 
 
 def emit_rebar_elements(
@@ -5719,7 +5708,7 @@ def emit_rebar_elements(
 
 
 def _emit_phantom_nodes(
-    emitter: "Emitter", node_constraints: Iterable[object], ndm: int,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``node(tag, *xyz, ndf=6)`` for every phantom node.
 
@@ -5738,7 +5727,7 @@ def _emit_phantom_nodes(
     heuristic).  No flag flipping needed here.
 
     **2-D.** The phantom takes ``ndm`` coordinates like every other
-    node line — one rule, no exception (:func:`node_coords_for_ndm`).
+    node line — one rule, no exception (:func:`node_coords_as_floats`).
     The consequence is deliberate and worth naming: under ``ndm == 2``
     the ``-ndf 6`` now actually *lands* instead of being swallowed by
     the parser's optional-argument scan, so a 2-D ``node_to_surface``
@@ -5768,7 +5757,7 @@ def _emit_phantom_nodes(
             # idiom for mixed-ndf models).  ``ndm`` coordinates only,
             # like every other node line: see the 2-D note on
             # :func:`_emit_phantom_nodes`.
-            emitter.node(t, *node_coords_for_ndm(xyz, ndm), ndf=6)
+            emitter.node(t, *node_coords_as_floats(xyz), ndf=6)
 
 
 def _emit_rigid_links(
@@ -7840,7 +7829,6 @@ def emit_stage_mp_constraints(
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
-    ndm: int = 3,
 ) -> None:
     """Emit a stage's MP constraints inside the stage block (flat path).
 
@@ -7872,7 +7860,7 @@ def emit_stage_mp_constraints(
         set_phantom_node_tags(emitter, set(existing) | stage_phantoms)
 
     # Same ordering as emit_mp_constraints (INV-3).
-    _emit_phantom_nodes(emitter, adapter, ndm)
+    _emit_phantom_nodes(emitter, adapter)
     _emit_rigid_links(emitter, adapter)
     _emit_rigid_body_elements(emitter, adapter, tags)
     _emit_equal_dofs(emitter, adapter)
@@ -7923,7 +7911,6 @@ def _emit_foreign_node_declarations(
     inferred_ndf: "dict[int, int]",
     foreign_node_ndf: int | None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None",
-    ndm: int,
 ) -> None:
     """Emit this rank's foreign-node declarations (ADR 0027 INV-2).
 
@@ -7964,7 +7951,7 @@ def _emit_foreign_node_declarations(
     """
     for tag in sorted(plan.referenced_phantoms):
         xyz = phantom_coords[tag]
-        emitter.node(tag, *node_coords_for_ndm(xyz, ndm), ndf=6)
+        emitter.node(tag, *node_coords_as_floats(xyz), ndf=6)
     for tag in sorted(plan.foreign_node_tags):
         xyz = _node_coords_safe(fem, tag)
         # Foreign (ghost) nodes are owned by another rank but DO appear
@@ -7974,7 +7961,7 @@ def _emit_foreign_node_declarations(
         # fallback for nodes inference can't see.
         _emit_node_with_inferred_ndf(
             emitter, inferred_ndf, int(tag),
-            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0), ndm,
+            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
         )
         emit_ghost_sp_ops(
             emitter, int(tag), (ghost_sp_ops or {}).get(int(tag), ()),
@@ -8084,7 +8071,7 @@ def emit_stage_mp_constraints_partitioned(
     # owner's SP constraints.
     _emit_foreign_node_declarations(
         emitter, fem, plan, phantom_coords, inferred_ndf,
-        foreign_node_ndf, ghost_sp_ops, ndm,
+        foreign_node_ndf, ghost_sp_ops,
     )
 
     # Constraint emission — same ordering as the unpartitioned path.
@@ -8215,7 +8202,7 @@ def emit_mp_constraints_partitioned(
     # constraints.
     _emit_foreign_node_declarations(
         emitter, fem, plan, phantom_coords, inferred_ndf,
-        foreign_node_ndf, ghost_sp_ops, ndm,
+        foreign_node_ndf, ghost_sp_ops,
     )
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------

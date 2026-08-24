@@ -408,7 +408,7 @@ def _replay_into(
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
-    from .build import node_coords_for_ndm
+    from .build import node_coords_as_floats
 
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
@@ -429,10 +429,10 @@ def _replay_into(
         if int(tag) in skip_node_tags:
             continue
         # ``ndm`` coordinates only — a trailing 0.0 in a 2-D deck
-        # swallows the following ``-ndf K`` (node_coords_for_ndm).
+        # swallows the following ``-ndf K`` (node_coords_as_floats).
         # The replay path has to do this itself: it never touches
         # build.py's node-emit helpers.
-        cs = node_coords_for_ndm(coords, ndm)
+        cs = node_coords_as_floats(coords)
         if node_ndf is None:
             emitter.node(int(tag), *cs)
         else:
@@ -933,7 +933,7 @@ def _replay_staged_into(
     _ndf = int(replay_kwargs["ndf"])
     # ADR 0065 v2 B3: the stage emit helpers (initial_stress /
     # activate_absorbing) now take a FemToOpsTagMap.
-    from .build import FemToOpsTagMap, node_coords_for_ndm
+    from .build import FemToOpsTagMap, node_coords_as_floats
 
     fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
         (int(r.fem_eid), int(r.tag)) for r in elements if int(r.fem_eid) >= 0
@@ -954,7 +954,7 @@ def _replay_staged_into(
             if ent is None:
                 continue
             coords, nndf = ent
-            cs = node_coords_for_ndm(coords, _ndm)
+            cs = node_coords_as_floats(coords)
             if nndf is None:
                 emitter.node(int(nid), *cs)
             else:

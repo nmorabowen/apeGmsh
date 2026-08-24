@@ -55,9 +55,20 @@
 > guide's *Meshing the interface* list rather than only on this
 > history-flagged page, with a pointer from `guide_meshing.md` §5.
 >
-> **Not adopted yet.** **Results** — `Results/` reads no contact data at
-> all (S6). Parallel/DDM 2-D contact is out of scope fork-side and is
-> refused by name on both lanes.
+> **S6 shipped — but NOT as a `Results` reader.** `LadrunoContact` is a
+> constraint handler plus a contact domain, **not an `Element`**, so it has
+> no element response and therefore **no recorder channel**: nothing
+> reaches `.ladruno`, `model.h5` or `Results`, and there is no recorded
+> force history. Contact is live-query-only, so S6 shipped four fork-gated
+> `apeSees` wrappers instead — `ladruno_contact_force` (NTS-only
+> *magnitude*), `ladruno_contact_info` (+ `.total_contacts`),
+> `ladruno_mortar_penetration`, `ladruno_mortar_tie_residual`.
+> `contact_2d_fork_asks.md` **Ask 3** is the analysis behind that choice
+> and was deliberately not filed; its part (a) — the 3-D
+> stale-released-pair fix — remains worth filing alone.
+>
+> **The adoption is COMPLETE (S0–S6).** Parallel/DDM 2-D contact stays out
+> of scope fork-side and is refused by name on all three lanes.
 >
 > **The F1 asymmetry, carried not papered over.** `outward="winding"` is
 > **NTS-only**. The fork shipped declared winding on the NTS lane alone
@@ -87,10 +98,18 @@
 >    (measured increment norm 1.0e+12); seed a small overlap. The
 >    **rigid-plane lane does not need this** — it arms from a zero gap.
 >
-> **Hazard left standing.** Two mechanisms now trim node coordinates:
-> main's emitter-side `trim_coords_to_ndm` (ADR 0099, authoritative, runs
-> last) and this work's build-layer `node_coords_for_ndm`. One invariant,
-> two enforcement points — reconcile deliberately, not as merge fallout.
+> **Hazard RESOLVED (2026-08-24).** Two mechanisms trimmed node
+> coordinates: main's emitter-side `trim_coords_to_ndm` (ADR 0099,
+> authoritative, runs last) and this work's build-layer
+> `node_coords_for_ndm`. One invariant, two enforcement points. The
+> emitter copy always won, so the build-layer copy is gone:
+> `node_coords_for_ndm` became `node_coords_as_floats` with no `ndm`
+> parameter, unthreading 7 parameters and 24 argument passes. The
+> `float()` coercion stayed — the broker hands out numpy scalars and
+> `TclEmitter` reprs an unknown numeric, which under numpy 2.x would emit
+> the literal text `np.float64(0.0)` into a deck. Proven a no-op: decks,
+> `model.h5` and the H5Emitter sidecar byte-identical across 2-D (z=0 and
+> z=5) and 3-D.
 >
 > §5's slice plan and `contact_2d_fork_asks.md` §B are both superseded by
 > what actually shipped; S5 retires them.

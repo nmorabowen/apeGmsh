@@ -1530,7 +1530,7 @@ class BuiltModel:
             _emit_node_with_inferred_ndf(
                 emitter, inferred_ndf, int(nid),
                 (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                self.ndf, self.ndm,
+                self.ndf,
             )
 
         # 4a. Materials / sections / analysis chain (excluding patterns
@@ -1697,7 +1697,6 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
-            ndm=self.ndm,
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1971,7 +1970,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf, self.ndm,
+                    self.ndf,
                 )
             # Elements owned by this module.
             self._emit_element_subset(
@@ -1999,7 +1998,6 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
-            ndm=self.ndm,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -2232,7 +2230,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf, self.ndm,
+                    self.ndf,
                 )
 
             # 3. Owned elements.
@@ -2333,7 +2331,6 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
-                    ndm=self.ndm,
                 )
 
             # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
@@ -2941,7 +2938,7 @@ class BuiltModel:
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf, self.ndm,
+                        self.ndf,
                     )
                     emitted_nodes.add(nid)
                 for ele_spec, ele_rows in gated_rows:
@@ -3167,7 +3164,7 @@ class BuiltModel:
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf, self.ndm,
+                        self.ndf,
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated;
@@ -3840,7 +3837,7 @@ class BuiltModel:
                                     float(xyz[1]),
                                     float(xyz[2]),
                                 ),
-                                self.ndf, self.ndm,
+                                self.ndf,
                             )
                         # Per-rank element fan-out across this stage's
                         # specs — plan pre-bucketed by owner rank, so
@@ -5484,7 +5481,7 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf, self.ndm,
+                    self.ndf,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
@@ -5933,14 +5930,14 @@ class BuiltModel:
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, nid,
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf, self.ndm,
+                    self.ndf,
                 )
                 emit_ghost_sp_ops(
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
             _emit_interface_record(
-                emitter, rec, interface_tag_plan[id(rec)], self.ndm,
+                emitter, rec, interface_tag_plan[id(rec)],
             )
 
     def _emit_rayleigh(

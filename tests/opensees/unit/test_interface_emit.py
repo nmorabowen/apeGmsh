@@ -91,6 +91,15 @@ def _rec(
 
 def _emit(records, *, ndf=None, envelope=2, ndm=2, emitter=None):
     em = emitter if emitter is not None else RecordingEmitter()
+    if emitter is None:
+        # Production issues ``model`` first (apeSees.emit step 1), and that
+        # is what teaches the emitter its ``ndm`` — hence how many
+        # coordinates a ``node`` line carries (``trim_coords_to_ndm``).
+        # Dropped from ``calls`` afterwards for the same reason ``_golden``
+        # slices off the banner: it is setup, not this pass's output.
+        # (``_golden`` issues it itself for emitters passed in.)
+        em.model(ndm=ndm, ndf=envelope)
+        em.calls.clear()
     if ndf is None:
         ndf = {}
         for r in records:
@@ -105,7 +114,17 @@ def _emit(records, *, ndf=None, envelope=2, ndm=2, emitter=None):
 
 def _golden(records, emitter, **kw):
     """The lines ``emit_interfaces`` ADDED — the Tcl / Py emitters open
-    with a generated-file banner that is not this pass's business."""
+    with a generated-file banner that is not this pass's business.
+
+    ``model`` is issued first because production always does: it is step 1
+    of ``apeSees.emit``, and it is what teaches the emitter its ``ndm`` —
+    and therefore how many coordinates a ``node`` line carries
+    (``trim_coords_to_ndm``, ADR 0099). A bare emitter has ``ndm = None``
+    and trims nothing, so a rig that skips it asserts a deck shape no real
+    deck can have: ``node 101 1.0 0.5 0.0 -ndf 2``, whose padded third
+    coordinate is exactly what strands the ``-ndf`` token.
+    """
+    emitter.model(ndm=kw.get("ndm", 2), ndf=kw.get("envelope", 2))
     before = len(emitter.lines())
     _emit(records, emitter=emitter, **kw)
     return emitter.lines()[before:]
