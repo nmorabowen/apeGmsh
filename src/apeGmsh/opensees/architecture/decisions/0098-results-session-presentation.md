@@ -2008,6 +2008,34 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
   `_element_index` rather than by probing slabs per component per
   refresh. That is a data/ change, which is why it is not in this
   amendment.
+* **The contour slot sees derived scalars — DONE.** Not on the A6.6
+  list, but it is what R2 exposed: with shells finally recording
+  resultants, the one scalar an engineer wants off them is derived, and
+  `resolve_contour_topology` tested only `inspect.components()` — stored
+  columns. Derived scalars are computed on read and never appear there,
+  so the gate refused them while `Gauss("von_mises_stress")` on the same
+  run painted happily. It now also asks `available_derived()` per level.
+  §5's shared legend (a contour and a Gauss slot of one quantity, one
+  legend) is reachable for the first time and gated on the bench.
+  **One derived scalar is excluded, and where the exclusion lives is
+  the interesting part.** `von_mises_shell` recovers σ = N/t ± 6M/t²
+  and raises without `thickness=` — on the bench, 13 advertised at Gauss
+  level and 12 computable. The first attempt withdrew it from
+  `available_derived`, which broke a deliberate test: that listing has
+  two other callers (the Gauss composite, the studio namespace) that
+  read it as "what this data can PRODUCE", and there a caller can pass
+  `thickness=`. The listing was right; the slot is the layer that
+  cannot. A slot carries a bare component name and nothing else, so the
+  exclusion belongs in the gate — which now refuses shell-derived
+  scalars by name and says how to read one directly. **Generalised**:
+  the gate's verdict is tested against whether a bare-name compute
+  actually works, for every scalar the listing advertises, so a future
+  derived family needing an argument cannot slip into a slot.
+  Unblocks per-ELEMENT thickness from the section record as the
+  follow-up (the model has `h`, but slabs and wall differ, 0.15 vs
+  0.25 m, so a per-call scalar would apply one group's thickness to the
+  other). Verified on `c008_derived_contour`, 22/22.
+
 * **R1 — the clip and scope gizmos.** A5.5 called this "a wiring job
   without A5.3's state question". **That was wrong, and this corrects
   it**: the session path emits no gizmo actors at all. `ViewClip` carries

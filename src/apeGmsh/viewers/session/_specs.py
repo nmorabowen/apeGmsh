@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional
 
+from ...results._derived import available_derived, is_shell_derived
 from ..diagrams._base import DiagramSpec
 from ..diagrams._kinds import kind_def
 from ..diagrams._selectors import normalize as normalize_selector
@@ -72,20 +73,62 @@ _AXIS_SUFFIXES = frozenset({"x", "y", "z"})
 def resolve_contour_topology(
     quantity: str, results: "Results", stage_id: str,
 ) -> str:
-    """``"nodes"`` or ``"gauss"`` — where ``quantity`` is recorded.
+    """``"nodes"`` or ``"gauss"`` — where ``quantity`` comes from.
 
-    Loud on a quantity the realized stage does not record at either
+    Loud on a quantity the realized stage cannot produce at either
     level: a still of a slot nobody recorded would be a lie, not an
     empty picture.
+
+    **Derived scalars count as available.** ``von_mises_stress`` and the
+    rest are computed on read from the stored tensor and so never appear
+    in the recorded sets — which used to make this refuse them, while
+    ``Gauss("von_mises_stress")`` on the same run painted happily. ADR
+    0098 §5 asks a contour and a Gauss slot of the same quantity to share
+    one legend, and that is unreachable while the contour cannot accept
+    the quantity at all.
+
+    :func:`available_derived` is the right oracle and the reader's
+    ``available_components`` is not: that lists stored datasets, so it
+    answers the same recorded-only question this already asks. What
+    ``available_derived`` adds is "and what can be COMPUTED from them",
+    which is the actual question.
+
+    **Except the shell scalars, which need an argument.**
+    ``von_mises_shell`` is advertised off the six in-plane resultants,
+    but it recovers σ = N/t ± 6M/t² and so raises without ``thickness=``
+    — measured on the ssi_frame_wall bench, 13 advertised at Gauss level
+    and 12 computable. A slot carries a bare component name and nothing
+    else, so accepting it here would resolve the slot and then fail at
+    read: the ADR 0098 A6 defect one level deeper. It is excluded until
+    the thickness is resolved per ELEMENT from the section record (the
+    model has it, but slabs and wall differ, so a per-call scalar would
+    be wrong). ``available_derived`` itself is left alone — the composite
+    listing and the studio namespace read it as "what this data can
+    produce", where a caller CAN pass ``thickness=``.
     """
     nodal, gauss = _recorded(results, stage_id)
     if quantity in nodal:
         return "nodes"
     if quantity in gauss:
         return "gauss"
+    if is_shell_derived(quantity):
+        raise ValueError(
+            f"Contour quantity {quantity!r} is derived from the shell "
+            f"stress resultants and needs the shell thickness, which a "
+            f"slot cannot carry. Read it directly instead: "
+            f"results.elements.gauss.get(component={quantity!r}, "
+            f"thickness=<t>)."
+        )
+    # Nodes first, matching the recorded lookup above: a quantity
+    # derivable at both levels must route the same way in both passes.
+    if quantity in available_derived(nodal):
+        return "nodes"
+    if quantity in available_derived(gauss):
+        return "gauss"
     raise ValueError(
         f"Contour quantity {quantity!r} is not recorded in stage "
-        f"{stage_id!r} (nodal: {sorted(nodal)}; gauss: {sorted(gauss)}). "
+        f"{stage_id!r}, and cannot be derived from what is "
+        f"(nodal: {sorted(nodal)}; gauss: {sorted(gauss)}). "
         f"Use results.inspect.diagnose({quantity!r}) for the routing "
         f"detail."
     )
