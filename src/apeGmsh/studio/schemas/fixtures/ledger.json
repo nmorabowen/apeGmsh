@@ -18,5 +18,7 @@
   "error": null,
   "root": "/project",
   "cwd": "/project",
-  "trigger": "open"
+  "trigger": "open",
+  "started_at": "2026-08-16T04:59:57Z",
+  "duration_s": 2.847031
 }

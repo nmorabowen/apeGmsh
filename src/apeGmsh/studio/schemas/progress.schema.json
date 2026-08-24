@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apegmsh.local/studio/progress.schema.json",
+  "title": "SolveProgress",
+  "type": "object",
+  "required": ["schema", "i", "n", "done"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "contract_version": { "type": "string" },
+    "deck": { "type": ["string", "null"] },
+    "log": { "type": ["string", "null"] },
+    "i": { "type": "integer" },
+    "n": { "type": "integer" },
+    "t": { "type": ["string", "null"] },
+    "ts": { "type": "string" },
+    "done": { "type": "boolean" },
+    "warnings": { "type": "integer" },
+    "ok": { "type": ["boolean", "null"] }
+  },
+  "additionalProperties": true
+}
