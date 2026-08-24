@@ -36,6 +36,10 @@ CASES = {
     # says nothing about whether `slabs`/`wall` can be painted. This is
     # the shell-side half (ADR 0098 A6.6 R2).
     "contour_shell": (SHELLS, Contour("bending_moment_xx"), "contour"),
+    # A DERIVED gauss scalar. Promoted out of the known-gaps probe
+    # below: the contour gate tested only recorded columns, and a
+    # derived scalar is computed on read, so it never appeared there.
+    "contour_derived": (SOLIDS, Contour("von_mises_stress"), "contour"),
     "vector": (SOLIDS, Vector("displacement"), "vector"),
     "gauss": (SOLIDS, Gauss("von_mises_stress"), "gauss"),
     "line": (FRAME, Line("bending_moment_z"), "line"),
@@ -142,9 +146,9 @@ def main() -> None:
     # not — but they stay visible so a fix is noticed the day it lands.
     print("--- known viewer gaps (data exists, slot refuses) ---")
     for label, scope, occupant, attr in (
-        ("contour of a derived gauss scalar", SOLIDS,
-         Contour("von_mises_stress"), "contour"),
         ("sand of a gauss field", SOLIDS, Sand("stress_zz"), "sand"),
+        ("contour of von_mises_shell", SHELLS,
+         Contour("von_mises_shell"), "contour"),
     ):
         session = results.session()
         view = session.panes[0]
@@ -198,6 +202,27 @@ def main() -> None:
     else:
         print(f"PASS picker — bending_moment_xx spans {spread_m:.3e} "
               f"over {mxx.shape[1]} gauss points")
+
+    # ADR 0098 §5: a contour and a Gauss slot of the SAME quantity share
+    # ONE legend. Unreachable until the contour could accept a derived
+    # scalar at all, so it is gated here rather than assumed.
+    print("--- shared legend (§5) ---")
+    session = results.session()
+    view = session.panes[0]
+    view.scope = SOLIDS
+    view.contour = Contour("von_mises_stress")
+    view.gauss = Gauss("von_mises_stress")
+    try:
+        session.render(str(shots / "shared_legend.png"), view.id)
+        fields = [lg.field for lg in view.legends()]
+        if fields == ["von_mises_stress"]:
+            print(f"PASS shared legend — {fields}")
+        else:
+            failures.append("shared_legend")
+            print(f"FAIL shared legend — expected one entry, got {fields}")
+    except Exception as exc:                       # noqa: BLE001
+        failures.append("shared_legend")
+        print(f"FAIL shared legend — {type(exc).__name__}: {exc}")
 
     print("--- scope axes ---")
     for label, scope in (

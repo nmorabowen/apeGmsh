@@ -395,3 +395,163 @@ def test_loads_ambiguous_default_refuses(slot_results):
     arbitrary subset of the model's loads."""
     with pytest.raises(ValueError, match="load patterns"):
         _realize(slot_results, lambda v: setattr(v, "loads", Loads()))
+
+
+# =====================================================================
+# Derived scalars reach the contour slot (ADR 0098 §5)
+# =====================================================================
+#
+# ``von_mises_stress`` and friends are computed on read from the stored
+# tensor, so they never appear in ``inspect.components()``. The contour
+# gate tested only that set and refused them — while
+# ``Gauss("von_mises_stress")`` on the same run painted happily. §5 asks
+# a contour and a Gauss slot of the SAME quantity to share one legend,
+# which is unreachable while the contour cannot accept the quantity.
+
+
+class _GaussTensorOnly:
+    """A stage that records the Gauss stress tensor and nodal displacement."""
+
+    class inspect:  # noqa: N801 - mimics the Results surface
+        @staticmethod
+        def components(stage=None):
+            return {
+                "nodes": ["displacement_x", "displacement_y", "displacement_z"],
+                "gauss": ["stress_xx", "stress_yy", "stress_zz",
+                          "stress_xy", "stress_yz", "stress_xz"],
+            }
+
+
+class _NodalTensor:
+    """A stage carrying the stress tensor NODALLY (an mpco-style file)."""
+
+    class inspect:  # noqa: N801
+        @staticmethod
+        def components(stage=None):
+            return {
+                "nodes": ["stress_xx", "stress_yy", "stress_xy"],
+                "gauss": [],
+            }
+
+
+@pytest.mark.parametrize(
+    "quantity",
+    ["von_mises_stress", "principal_stress_1", "pressure_hydrostatic",
+     "lode_angle", "max_shear_stress"],
+)
+def test_contour_accepts_a_derived_gauss_scalar(slot_results, quantity):
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    assert resolve_contour_topology(
+        quantity, _GaussTensorOnly(), STAGE,
+    ) == "gauss"
+
+
+def test_contour_routes_a_derived_scalar_to_the_level_that_carries_it(
+    slot_results,
+):
+    """Nodes-first, matching the recorded lookup.
+
+    A derived scalar must not route to ``gauss`` just because that is
+    where derived scalars usually live — it follows the tensor.
+    """
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    assert resolve_contour_topology(
+        "von_mises_stress", _NodalTensor(), STAGE,
+    ) == "nodes"
+
+
+def test_contour_still_refuses_a_quantity_nothing_can_produce(slot_results):
+    """The gate must not become permissive — a still of a slot nobody
+    recorded is a lie, not an empty picture."""
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    with pytest.raises(ValueError, match="cannot be derived"):
+        resolve_contour_topology("damage", _GaussTensorOnly(), STAGE)
+
+
+class _ShellResultants:
+    """A stage recording the six in-plane shell stress resultants."""
+
+    class inspect:  # noqa: N801
+        @staticmethod
+        def components(stage=None):
+            return {"nodes": [], "gauss": [
+                "membrane_force_xx", "membrane_force_yy",
+                "membrane_force_xy", "bending_moment_xx",
+                "bending_moment_yy", "bending_moment_xy",
+            ]}
+
+
+def test_contour_refuses_the_shell_scalar_that_needs_a_thickness(slot_results):
+    """``von_mises_shell`` is derived but needs ``thickness=``.
+
+    ``available_derived`` DOES advertise it off these six resultants, and
+    that is correct for its other callers — the composite listing and the
+    studio namespace mean "what this data can produce", and a caller
+    there can pass ``thickness=``. A slot cannot: it carries a bare
+    component name and nothing else. So the exclusion lives here, at the
+    layer that makes the promise, not in the shared listing.
+
+    Accepting it would resolve the slot and then fail at read, which is
+    the ADR 0098 A6 defect one level deeper.
+    """
+    from apeGmsh.results._derived import available_derived
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    resultants = _ShellResultants.inspect.components()["gauss"]
+    assert "von_mises_shell" in available_derived(resultants), (
+        "precondition: the shared listing advertises it, which is why "
+        "the gate has to exclude it explicitly"
+    )
+    # The raw resultants contour fine (PR #1054).
+    assert resolve_contour_topology(
+        "bending_moment_xx", _ShellResultants(), STAGE,
+    ) == "gauss"
+    with pytest.raises(ValueError, match="needs the shell thickness"):
+        resolve_contour_topology("von_mises_shell", _ShellResultants(), STAGE)
+
+
+def test_every_quantity_the_gate_accepts_computes_from_a_bare_name(
+    slot_results,
+):
+    """The invariant, not just the one instance.
+
+    A slot carries a component name and nothing else, so anything this
+    gate accepts must compute from the stored columns ALONE. Walks every
+    scalar the shared listing advertises for each stored family and
+    checks the gate's verdict against whether a bare-name compute
+    actually works — so a future derived family that needs an argument
+    cannot slip into a slot unnoticed.
+    """
+    import numpy as np
+
+    from apeGmsh.results import _derived
+    from apeGmsh.viewers.session._specs import resolve_contour_topology
+
+    for stage_stub in (_GaussTensorOnly, _NodalTensor, _ShellResultants):
+        components = stage_stub.inspect.components()
+        for level in ("nodes", "gauss"):
+            stored = components[level]
+            if not stored:
+                continue
+            columns = {name: np.full((2, 3), 0.5) for name in stored}
+            for name in _derived.available_derived(stored):
+                try:
+                    _derived.compute(name, columns, ndm=3)
+                except Exception:
+                    computable = False
+                else:
+                    computable = True
+                try:
+                    resolve_contour_topology(name, stage_stub(), STAGE)
+                except ValueError:
+                    accepted = False
+                else:
+                    accepted = True
+                assert accepted == computable, (
+                    f"{name}: gate accepted={accepted} but bare-name "
+                    f"compute={computable} — the gate promises a picture "
+                    f"it cannot draw (or refuses one it could)."
+                )

@@ -271,7 +271,26 @@ is the design, not the symptom it used to be. Re-run on this bench after
 the amendment merged: three panes open, float, re-dock, tabify and close
 without a single Qt or VTK message, and the process exits 0.
 
-**Open — the `contour` and `vector` slots cannot see derived scalars.**
+**Fixed — the `contour` slot sees derived scalars** (case
+`c007_derived_contour`). `resolve_contour_topology` now also asks
+`available_derived()` per level, so `Contour("von_mises_stress")` paints
+and §5's shared legend is reachable — gated by the `contour_derived`
+slot and the `shared legend (§5)` check. Note the prescribed fix below
+was WRONG and was not taken: `available_components()` lists stored
+datasets, so it answers the same recorded-only question. `vector` is
+untouched on purpose — a derived scalar has no axis, and a vector glyph
+of a scalar is meaningless.
+
+**Open — `von_mises_shell` still cannot be contoured.** It is derived
+but not computable from the stored columns alone: it recovers
+σ = N/t ± 6M/t² and needs the shell THICKNESS. The thickness is in the
+model (`ElasticMembranePlateSection` carries `h`) but differs per group
+— slabs 0.15 m, wall 0.25 m — so it must be resolved per ELEMENT, not
+passed per call. `available_derived()` still advertises it, correctly:
+its other callers can pass `thickness=`. The contour GATE excludes it,
+because a slot carries a bare component name and nothing else.
+
+**~~Open~~ (superseded) — the `contour` and `vector` slots cannot see derived scalars.**
 `resolve_contour_topology` tests the quantity against
 `results.inspect.components(stage=…)`, which lists only *recorded*
 columns. Derived scalars (`von_mises_stress`, `principal_stress_*`) and
