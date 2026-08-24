@@ -59,15 +59,24 @@ CAPABILITIES: "dict[str, dict[str, str]]" = {
     },
     "install_clip_gizmo_interactor": {
         "status": "missing",
-        "why": "ADR 0098 A5.5 / A6 R1 — the clip-plane gizmo is "
-               "unreachable in the session window. It writes to "
-               "ViewClip, which the session record already owns, so "
-               "this is wiring, not a state design.",
+        "why": "ADR 0098 A6.6 R1 — the clip-plane gizmo is unreachable "
+               "in the session window. NOT wiring: A5.5 said it was and "
+               "A6.6 retracted that. The session emits no gizmo actors "
+               "at all, so there is nothing for an interactor to grab; "
+               "realize must draw them and something must own them. "
+               "MEASURED besides: pane.clips is in the STRUCTURE half "
+               "of _pane_signature, so one drag frame is a full "
+               "realize -- 240.8 ms mean on the bench vs 17.7 ms for a "
+               "scrub on the same pane. A4's fast path does not help "
+               "(it is cursor-only). Slice 1 -- ViewClipController -- "
+               "has landed; see internal_docs/design/"
+               "adr0098_r1_gizmo_brief.md.",
     },
     "install_scope_gizmo_interactor": {
         "status": "missing",
-        "why": "ADR 0098 A5.5 / A6 R1 — same single-caller gap as the "
-               "clip gizmo.",
+        "why": "ADR 0098 A6.6 R1 — same gap as the clip gizmo, and the "
+               "same retraction applies: no scope gizmo actors are "
+               "emitted on the session path either.",
     },
 }
 

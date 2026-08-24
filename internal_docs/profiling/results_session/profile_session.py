@@ -334,6 +334,27 @@ def gesture_scope(app, window, ctx, repeat):
     return out
 
 
+def gesture_clipdrag(app, window, ctx, repeat):
+    """Slide one clip plane's offset — ONE mouse-move of an ADR 0083
+    gizmo drag (ADR 0098 R1 / S2).
+
+    The gizmo is direct manipulation, so this is a per-FRAME cost, not
+    a per-gesture one: the budget is the scrubber's 33 ms, the same one
+    A4 measured scrub against. ``pane.clips`` sits in the STRUCTURE half
+    of ``_pane_signature``, so every tick here is a full realize — which
+    is the number this gesture exists to put on the record.
+    """
+    view = window.session.panes[0]
+    if not view.clips:
+        return []
+    plane_id = view.clips[0].plane_id
+    return [
+        _timed(app, window, lambda i=i: view.set_clip(
+            plane_id, offset=0.05 * ((i % 8) - 4)))
+        for i in range(repeat)
+    ]
+
+
 def gesture_pane(app, window, ctx, repeat):
     """Add a pane and close it again — Amendment 3's dock create/destroy
     plus a fresh GL context each time."""
@@ -353,6 +374,7 @@ GESTURES = {
     "slot": gesture_slot,
     "scope": gesture_scope,
     "pane": gesture_pane,
+    "clipdrag": gesture_clipdrag,
 }
 
 
