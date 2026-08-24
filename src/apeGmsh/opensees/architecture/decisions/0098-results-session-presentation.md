@@ -2017,7 +2017,37 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
   set, and the session owns neither. Restoring these means realize
   emitting gizmo geometry and something owning it — closer in size to
   Amendment 5 than to a call.
-* **R2 — the bench records no shell stresses**, so `slabs` and `wall`
+* **R2 — DONE.** The eight resultants and their eight conjugate
+  generalized strains now sit in `ALL_CANONICAL` and in the spec's
+  `gauss` category, behind a `shell_resultant` / `shell_deformation`
+  shorthand pair modelled on `section_force` / `section_deformation`
+  and returned unclipped for the same reason — eight components are
+  one `eleResponse` layout, not a tensor that shrinks with `ndm`. That
+  was the whole wiring: the routing tables, the catalog layouts, the
+  read-side derived `von_mises_shell`, and the reader were all already
+  written for these names, which is why the defect could hide — the
+  ONE test that exercised the shell path built a
+  `ResolvedDomainCaptureRecord` by hand and so never crossed the
+  declaration boundary that was broken.
+  **The re-run turned up a second thing the wiring would have
+  shipped.** `ShellMITC4` / `ShellDKGQ` / `ShellNLDKGQ` answer
+  `ops.eleResponse(eid, "stresses")` with a correctly SIZED vector of
+  ZEROS after a converged analysis — measured side by side against
+  `ASDShellQ4` on the same loaded plate, identical tip displacement,
+  max|σ| 0 vs 2.0e4. A slab of zeros survives every layer above it:
+  it reaches the reader, fills the picker, paints a legend, and
+  contours one flat colour that reads as "the wall is unstressed".
+  Those classes are now skipped on the DomainCapture route with a
+  reason (`ZERO_GAUSS_PROBE_CLASSES`); MPCO probes sections directly
+  and is untouched. The bench is `ASDShellQ4` accordingly, and its
+  gate asserts RANGE, not presence.
+  Verified on case `c006_shell_resultants`: `slabs+wall` contour
+  `bending_moment_xx` over 3456 Gauss points spanning 2.5e1, and G4
+  offers the two families **disjoint** vocabularies — solids the six
+  `stress_*`, shells the eight resultants. The bench is now the
+  multi-family fixture A6.6 said it was not.
+
+* ~~**R2 — the bench records no shell stresses**~~, so `slabs` and `wall`
   cannot be contoured at all. **And it is now unopenable besides**: the
   case's `model.h5` carries neutral schema `2.29.0` while the reader
   requires 2.30-2.31, so `OpenSeesModel.from_h5` refuses it — main's

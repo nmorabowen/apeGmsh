@@ -27,10 +27,15 @@ from apeGmsh.results.session import (
 
 SOLIDS = Scope("physical_groups", ("soil", "raft"))
 FRAME = Scope("physical_groups", ("columns", "beams", "grade_beams"))
+SHELLS = Scope("physical_groups", ("slabs", "wall"))
 
 # slot name -> (scope, occupant, attribute)
 CASES = {
     "contour": (SOLIDS, Contour("stress_zz"), "contour"),
+    # A shell has no Cauchy stress tensor, so the solid contour above
+    # says nothing about whether `slabs`/`wall` can be painted. This is
+    # the shell-side half (ADR 0098 A6.6 R2).
+    "contour_shell": (SHELLS, Contour("bending_moment_xx"), "contour"),
     "vector": (SOLIDS, Vector("displacement"), "vector"),
     "gauss": (SOLIDS, Gauss("von_mises_stress"), "gauss"),
     "line": (FRAME, Line("bending_moment_z"), "line"),
@@ -153,6 +158,47 @@ def main() -> None:
         except Exception as exc:                       # noqa: BLE001
             print(f"note: {label} — still refused ({type(exc).__name__})")
 
+    # G4 (A6.6): the picker offers what THIS pane's cells record. Two
+    # scopes over two element families must therefore be offered two
+    # DIFFERENT gauss vocabularies. Before the shell resultants were
+    # wired, `slabs+wall` recorded nothing at gauss level and this
+    # section had nothing to compare.
+    print("--- picker vocabulary is scoped (A6.6 G4) ---")
+    from apeGmsh.viewers.session import recorded_components
+    session = results.session()
+    vocab = {}
+    for label, scope in (("solids", SOLIDS), ("shells", SHELLS)):
+        view = session.panes[0]
+        view.scope = scope
+        vocab[label] = recorded_components(session, view)[1]
+        print(f"  {label:7s} gauss -> {sorted(vocab[label])}")
+    shell_only = {"membrane_force_xx", "bending_moment_xx",
+                  "transverse_shear_xz"}
+    if not shell_only <= vocab["shells"]:
+        failures.append("picker:shells")
+        print("FAIL picker — a shell-scoped pane is not offered the "
+              "resultants it records")
+    elif vocab["solids"] & shell_only or "stress_zz" in vocab["shells"]:
+        failures.append("picker:leak")
+        print("FAIL picker — the two scopes leak each other's vocabulary")
+    else:
+        print("PASS picker — shells and solids offer disjoint gauss sets")
+
+    # ...and the resultants must have RANGE. The upstream shells return a
+    # correctly sized vector of zeros, which reaches the picker, paints a
+    # legend, and contours one flat colour — every check above passes on
+    # a measurement that never happened.
+    mxx = results.stage("dynamic").elements.gauss.get(
+        component="bending_moment_xx").values
+    spread_m = float(mxx.max() - mxx.min())
+    if spread_m <= 0.0:
+        failures.append("picker:flat")
+        print(f"FAIL picker — bending_moment_xx is flat ({spread_m}); the "
+              f"shells are recording zeros, not resultants")
+    else:
+        print(f"PASS picker — bending_moment_xx spans {spread_m:.3e} "
+              f"over {mxx.shape[1]} gauss points")
+
     print("--- scope axes ---")
     for label, scope in (
         ("physical_groups", Scope("physical_groups", ("wall", "slabs"))),
@@ -191,7 +237,7 @@ def main() -> None:
     print()
     if failures:
         raise SystemExit(f"BENCH INCOMPLETE — {len(failures)} failed: {failures}")
-    print(f"all seven slots and every pose fed; stills in {shots}")
+    print(f"every slot and pose fed; stills in {shots}")
 
 
 if __name__ == "__main__":

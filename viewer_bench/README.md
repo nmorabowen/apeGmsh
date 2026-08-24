@@ -40,7 +40,7 @@ into its surface, carrying a three-storey frame with a shear wall and
 floor slabs.
 
 ```
-                    slabs (ShellMITC4)            wall (ShellMITC4)
+                    slabs (ASDShellQ4)            wall (ASDShellQ4)
                     ────────────────┐            ┌──────────
    z = 9.6 ─────────────────────────┼────────────┼──  beams (forceBeamColumn)
    z = 6.4 ─────────────────────────┼────────────┼──
@@ -116,6 +116,7 @@ already zero.
 | `contour` | nodal displacement, and Gauss stress extrapolated to nodes |
 | `vector` | nodal displacement vectors; Gauss principal stresses |
 | `gauss` | `stress` at the tet integration points (soil + raft) |
+| `contour` on shells | the eight `shell_resultant` components at the shell Gauss points (slabs + wall) — a shell has no Cauchy stress tensor, so this is a second, disjoint gauss vocabulary |
 | `line` | `line_stations` — N / V / M / torsion on columns, beams, grade beams |
 | `sand` | any colour-mapped field over the solids |
 | `loads` | the `dead` pattern, imported with `p.from_model("dead")` |

@@ -67,6 +67,8 @@ from ..._vocabulary import (
     NODAL_KINEMATICS,
     PER_ELEMENT_NODAL_FORCES,
     PLASTIC_STRAIN,
+    SHELL_GENERALIZED_STRAINS,
+    SHELL_STRESS_RESULTANTS,
     STRAIN,
     STRESS,
     expand_many,
@@ -114,8 +116,15 @@ _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
     "nodes": frozenset(NODAL_KINEMATICS + NODAL_FORCES) - _CAPTURE_UNSUPPORTED_NODE,
     "elements": frozenset(PER_ELEMENT_NODAL_FORCES),
     "line_stations": frozenset(LINE_DIAGRAMS),
+    # Shell resultants / generalized strains sit at the same topology
+    # level as continuum stress — one ``ops.eleResponse(eid,
+    # "stresses"/"strains")`` per element, decoded by the class's
+    # catalog layout — so they belong to ``gauss``, not a category of
+    # their own. ``von_mises_shell`` rides in via ``DERIVED_SCALARS``.
     "gauss": frozenset(
-        STRESS + STRAIN + PLASTIC_STRAIN + DERIVED_SCALARS + MATERIAL_STATE
+        STRESS + STRAIN + PLASTIC_STRAIN
+        + SHELL_STRESS_RESULTANTS + SHELL_GENERALIZED_STRAINS
+        + DERIVED_SCALARS + MATERIAL_STATE
     ),
     "fibers": frozenset(FIBER + MATERIAL_STATE),
     "layers": frozenset(FIBER + MATERIAL_STATE),
@@ -537,6 +546,7 @@ class DomainCaptureSpec:
             _voc._SHORTHAND_ROTATIONAL,
             _voc._SHORTHAND_TENSOR,
             _voc._SHORTHAND_LINE_STATION,
+            _voc._SHORTHAND_SHELL,
         )
         for table in all_tables:
             for shorthand, expansion in table.items():

@@ -113,6 +113,7 @@ from ...opensees._response_catalog import (
     class_dimension,
     gauss_keyword_for_canonical,
     gauss_routing_for_canonical,
+    has_dead_gauss_probe,
     infer_section_codes,
     is_catalogued,
     is_custom_rule_catalogued,
@@ -873,13 +874,18 @@ class DomainCapture:
             by_reason.setdefault(reason, []).append(eid)
         lines = [
             f"DomainCapture dropped {len(rows)} element(s) from gauss "
-            f"(continuum stress/strain) recording in this stage — their "
-            f"dataset will be empty.",
-            "This class has no RESPONSE_CATALOG layout (fork elements like "
+            f"(stress / strain / shell resultant) recording in this "
+            f"stage — their dataset will be empty. Two causes:",
+            "  • no RESPONSE_CATALOG layout (fork elements like "
             "LadrunoUP are not yet catalogued for gauss capture). For pore "
             "pressure use the node recorder (-dof ndm+1 disp) or the "
             ".ladruno recorder PRESSURE channel; for effective stress, "
             "record via MPCO or the .ladruno recorder.",
+            "  • 'returns zeros': the upstream shells (ShellMITC4, "
+            "ShellDKGQ, ShellNLDKGQ, ShellDKGT, ShellNLDKGT) have a dead "
+            "per-Gauss-point probe — correctly sized, all zeros. Build "
+            "these as ASDShellQ4 / ASDShellT3 for live capture, or record "
+            "them via MPCO, which probes sections directly and is correct.",
             "Skipped breakdown:",
         ]
         for reason, ids in by_reason.items():
@@ -1207,6 +1213,16 @@ class _GaussCapturer:
             int_rule = _class_int_rule(class_name)
             if int_rule is None:
                 skipped.append((eid, f"class {class_name!r} not in catalog"))
+                continue
+            if has_dead_gauss_probe(class_name):
+                # Catalogued, correctly sized — and all zeros. Recording
+                # it would contour the pane one flat colour and read as
+                # a measurement. See ZERO_GAUSS_PROBE_CLASSES.
+                skipped.append((
+                    eid,
+                    f"class {class_name!r} returns zeros from "
+                    f"ops.eleResponse(eid, {self._ops_keyword!r})",
+                ))
                 continue
             if not is_catalogued(class_name, int_rule, self._catalog_token):
                 skipped.append((

@@ -271,6 +271,8 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + PER_ELEMENT_NODAL_FORCES
     + LINE_DIAGRAMS
     + LINE_STATION_DEFORMATIONS
+    + SHELL_STRESS_RESULTANTS
+    + SHELL_GENERALIZED_STRAINS
     + STRESS
     + STRAIN
     + PLASTIC_STRAIN
@@ -339,6 +341,18 @@ _SHORTHAND_LINE_STATION: dict[str, tuple[str, ...]] = {
     "section_deformation": LINE_STATION_DEFORMATIONS,
 }
 
+# Shell stress-resultant shorthands — the surface analogue of the
+# line-station pair above, and returned verbatim for the same reason:
+# a shell's eight resultants are a fixed layout of the ``stresses``
+# response, not a tensor that clips with ``ndm``. ``shell_resultant``
+# is the work-conjugate of ``shell_deformation``, so the two never mix
+# inside one gauss record (they route through different
+# ``ops.eleResponse`` keywords — see ``_gauss_record_tokens``).
+_SHORTHAND_SHELL: dict[str, tuple[str, ...]] = {
+    "shell_resultant": SHELL_STRESS_RESULTANTS,
+    "shell_deformation": SHELL_GENERALIZED_STRAINS,
+}
+
 # Reaction is a single OpenSees recorder token covering both forces
 # and moments; we expose it as one shorthand.
 _SHORTHAND_REACTION: tuple[str, ...] = (
@@ -351,6 +365,7 @@ ALL_SHORTHANDS: frozenset[str] = frozenset(
     + list(_SHORTHAND_ROTATIONAL.keys())
     + list(_SHORTHAND_TENSOR.keys())
     + list(_SHORTHAND_LINE_STATION.keys())
+    + list(_SHORTHAND_SHELL.keys())
     + ["reaction"]
 )
 
@@ -453,6 +468,12 @@ def expand_shorthand(
         # users genuinely want (e.g. asking for ``section_force`` on
         # a 3D model and missing ``torsion``).
         return _SHORTHAND_LINE_STATION[name]
+
+    if name in _SHORTHAND_SHELL:
+        # Not clipped either: the eight resultants are one fixed
+        # response layout, and which subset a given shell class emits
+        # is the catalog's answer, not ``ndm``'s.
+        return _SHORTHAND_SHELL[name]
 
     if name == "reaction":
         forces = _clip_translational(_SHORTHAND_REACTION[:3], ndm)
