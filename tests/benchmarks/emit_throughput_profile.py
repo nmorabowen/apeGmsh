@@ -13,10 +13,23 @@ Two jobs:
    *resident* memory growth to the seven candidate terms R1..R7 of ADR 0100,
    producing gate G0's numbers:
 
-   * G0a = Σ(R1..R4, R6, R7) / (anchor traced-current − pre_build
-     traced-current).  R5 (the BuiltModel ``fem`` pin — the legitimate
-     floor) is reported separately and NEVER counted in the numerator.
-   * G0b = RSS growth / traced growth over pre_build → post_write.
+   * G0a(sampled) = Σ(R1..R4, R6, R7) / (anchor traced-current −
+     pre_build traced-current) — the form the ADR's literal wording
+     describes.  G0a(conservative) divides by the TRUE counter peak,
+     charging every unsampled excursion to unattributed — it is the
+     GATE number, chosen deliberately because it cannot flatter.  A
+     cell with ANY non-zero shortfall (best sampled state below the
+     true counter peak) is DISCARDED — it has no G0a at all: the
+     allocation-driven trigger misses the same instant identically on
+     every run, so a missed peak yields a stable wrong number that
+     looks converged.  The numerator is EXACTLY the ADR's
+     authorised set; CACHE (the broker fan-out memo), R8
+     (ops_tag_to_fem_eid, absent from the ADR), and the process floor
+     are attributed and reported but never counted.
+   * G0b(slope) = slope of RSS-peak growth vs hexes (from a paired
+     --rss-only run via --pair-rss-json) over slope of traced-peak
+     growth vs hexes.  The per-cell RSS/traced ratio is printed but
+     demoted — at bench scale it is offset-dominated noise.
 
    The old instrument could not answer G0: it snapshotted only *after* emit
    returned (when the loop-local structures were already dead), its RSS
@@ -52,11 +65,13 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import functools
 import gc
 import io
 import json
 import math
 import os
+import statistics
 import pstats
 import shutil
 import sys
@@ -226,7 +241,30 @@ def _norm(p: str) -> str:
 # the deepest / most-specific terms claim first so that e.g. the R7 chunk
 # tuples (allocated under infer_node_ndf, whose CALL SITE is also an R6
 # anchor) land on R7, not R6.  The order is printed with every report.
-TERM_ORDER = ("R7", "R6", "R1", "R3", "R2", "R4")
+#
+# CACHE claims FIRST: the broker fan-out memo (_PG_FANOUT_CACHE arrays,
+# concatenated in build._fanout_arrays_from_group_result) is the ADR's
+# separate "2nd connectivity copy", NOT an R-term — its allocation frames
+# pass through R7's span (the expand_spec_to_elements call at ~build:423),
+# so without this pseudo-term R7 silently charges ~72 B/hex of cache to
+# the numerator and, at the anchor (where the real class_chunks tuples
+# are long dead), R7 collapses to ~pure cache — inverting the D4-vs-D5
+# priority a reader would take from the report.
+#
+# CAVEAT (measured, do not "fix"): once CACHE claims first, the R6/R7
+# split is entirely a TERM_ORDER artefact — R7's remaining frames sit
+# inside R6's call-site span, so R6 and R7 individually carry no
+# independent information; only their SUM is order-invariant.
+TERM_ORDER = ("CACHE", "R7", "R6", "R8", "R1", "R3", "R2", "R4")
+# The G0a numerator is EXACTLY the set ADR 0100's decision rule was
+# written over: R1-R4, R6, R7.  CACHE, R8, and the process floor (R5)
+# are attributed and reported but NEVER counted — widening the
+# numerator beyond the authorised set would RAISE the gate number
+# (measured: R8 alone is ~+0.13 at 13.8k hexes, more than cancelling
+# the cache correction), which is precisely the failure mode this
+# instrument exists to prevent.  R8's inclusion goes through an ADR
+# amendment or not at all.
+NUMERATOR_TERMS = ("R7", "R6", "R1", "R3", "R2", "R4")
 
 _TERMS_CACHE: "list[tuple[str, list[tuple[str, int, int]]]] | None" = None
 
@@ -248,6 +286,15 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
 
     specs: "list[tuple[str, str, str, int, int, int]]" = [
         # (term, path, anchor, occurrence, before, after)
+        # CACHE — the broker fan-out memo's persistent arrays: the
+        # np.concatenate outputs (uniform-npe path) and the object-dtype
+        # container (mixed-npe path) in _fanout_arrays_from_group_result
+        # (~1876 / 1879 / 1886).  Claims before R7 (see TERM_ORDER).
+        ("CACHE", bd, "eids = np.concatenate(id_blocks)", 1, 0, 0),
+        ("CACHE", bd, "return eids, np.concatenate(conn_blocks, axis=0)",
+         1, 0, 0),
+        ("CACHE", bd, "conn_obj = np.empty((len(rows),), dtype=object)",
+         1, 0, 2),
         # R7 — class_chunks dict + the chunks.append(node_tags) loop
         # (build.py ~420-424).  The node_tags tuples allocate inside the
         # expand_spec_to_elements generator, but the caller frame at the
@@ -262,6 +309,13 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         ("R6", ap, "effective_ndf = {**inferred_ndf", 1, 0, 0),
         ("R6", bd, "for t, f in zip(all_ids.tolist(), floors.tolist())",
          1, 2, 1),
+        # R8 — ops_tag_to_fem_eid (~3674): a full per-element reverse
+        # tag map built inside _emit_stages_partitioned (its boxed ints
+        # come from FemToOpsTagMap.items(), whose caller frame is in
+        # this span).  ~128 B/elem ≈ 6.5 GB at incident scale; ABSENT
+        # from the ADR's R-table, so it is attributed and REPORTED but
+        # NOT in the gate numerator (see NUMERATOR_TERMS).
+        ("R8", ap, "ops_tag_to_fem_eid: dict[int, int] = {", 1, 0, 3),
         # R1 — node_idx_lookup and its siblings.  Occurrence order in the
         # file: 1 = staged-flat (~2209), 2 = partitioned base (~2806),
         # 3 = staged partitioned co-resident twin (~3527).  Windows kept
@@ -319,10 +373,22 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
     return _TERMS_CACHE
 
 
+@functools.lru_cache(maxsize=8192)
+def _norm_frame(p: str) -> str:
+    """Frame filenames get the SAME normalisation as the span table.
+
+    normcase alone is not enough: a runtime sys.path entry that is
+    absolute but unnormalised yields co_filenames that never match spans
+    built from module __file__ — measured as per-term all-zeros and a
+    G0a of 0.000 printed as the gate.  Memoised: one normpath per
+    distinct filename, not per frame."""
+    return _norm(p)
+
+
 def _match_term(traceback_obj, terms) -> "str | None":
     """First term (in table order) with a frame inside one of its spans."""
     frames = [
-        (os.path.normcase(fr.filename), fr.lineno) for fr in traceback_obj
+        (_norm_frame(fr.filename), fr.lineno) for fr in traceback_obj
     ]
     for name, spans in terms:
         for fn, ln in frames:
@@ -526,9 +592,19 @@ class TracedPeakTracker:
                 snap = tracemalloc.take_snapshot()
                 snap.dump(self.snap_path)
                 del snap
-                # The snapshot just taken is the TRACKER's own transient;
-                # reset so it doesn't masquerade as emit residency (the
-                # real peak up to here is banked in counter_max above).
+                # Re-bank IMMEDIATELY before the reset: snap.dump's file
+                # write releases the GIL, so main-thread growth during it
+                # would otherwise be erased by the reset (inflating G0a).
+                # The peak READING here is unusable — it includes the
+                # tracker's own snapshot transient — so bank the re-read
+                # CURRENT instead (the snapshot is freed by now): real
+                # main-thread residency shows in cur3, instrument bytes
+                # do not.  A main-thread rise-AND-fall inside the dump
+                # window is the one shape still lost; it is inseparable
+                # from the tracker's own bytes in a single counter.
+                cur3 = tracemalloc.get_traced_memory()[0]
+                if cur3 > self.counter_max:
+                    self.counter_max = cur3
                 tracemalloc.reset_peak()
                 self.last_snap_cur = cur2
                 self.snaps += 1
@@ -768,7 +844,8 @@ def emit_instrumented(
                 snap = tracemalloc.take_snapshot()
                 per_term = _attribute_snapshot(snap, terms)
                 entry["per_term"] = per_term
-                entry["term_sum"] = sum(per_term.values())
+                entry["term_sum"] = sum(
+                    per_term[t] for t in NUMERATOR_TERMS)
                 p = os.path.join(
                     snap_dir,
                     f"{len(hooks):02d}_{label.replace('#', '_')}.tm")
@@ -805,9 +882,37 @@ def emit_instrumented(
                 capture("ndf_chunks_peak")
         return orig_ndf_ok(class_name)
 
+    # -- staged-pass DIAGNOSTIC hooks (ADR 0100 D0): the tracker's peak
+    # snapshot landing inside the staged pass is TIMING, not mechanism —
+    # measured spread 0.12 on G0a across identical runs depending on
+    # whether the snapshot happened to fire after the R1 twin was built.
+    # ``stages_enter`` (at _emit_stages_partitioned entry) and
+    # ``stage_open#first`` (the emitter's first stage_open) were built to
+    # bracket the twin, but MEASURED they fire BELOW the tracked peak —
+    # they do not close the sampling lottery.  They stay because they
+    # make the miss visible in the hook table; the load-bearing fix is
+    # the shortfall-discard rule in the report (a cell whose best
+    # sampled state sits below the true counter peak has no G0a).
+    import apeGmsh.opensees.apesees as _apesees_mod
+    _BM = _apesees_mod.BuiltModel
+    orig_stages = _BM._emit_stages_partitioned
+
+    def _stages_wrapper(bm_self, *a, **k):
+        capture("stages_enter")
+        return orig_stages(bm_self, *a, **k)
+
     emitter = TclEmitter()
     if stream:
         emitter.stream_to(deck_path, per_rank=per_rank)
+
+    orig_so = emitter.stage_open
+    so_fired = [False]
+
+    def _so_wrapper(name):
+        if not so_fired[0]:
+            so_fired[0] = True
+            capture("stage_open#first")
+        return orig_so(name)
 
     # -- peak tracking (mem mode): a TracedPeakTracker ticked from the
     # RSS sampler's daemon thread.  The earlier append-anchored poll was
@@ -845,6 +950,8 @@ def emit_instrumented(
         gc.disable()
     _ecap.element_class_ndf_ok = _ndf_ok_wrapper
     emitter.partition_open = _po_wrapper
+    emitter.stage_open = _so_wrapper
+    _BM._emit_stages_partitioned = _stages_wrapper
     if tracker is not None:
         sampler.attach_tm(tracker, tm_poll_ms / 1000.0)
     try:
@@ -872,10 +979,15 @@ def emit_instrumented(
         # Restore EVERY patch — a leaked monkeypatch poisons the next
         # size in the same process.
         _ecap.element_class_ndf_ok = orig_ndf_ok
+        _BM._emit_stages_partitioned = orig_stages
         if tracker is not None:
             sampler.detach_tm()
         try:
             del emitter.partition_open
+        except AttributeError:
+            pass
+        try:
+            del emitter.stage_open
         except AttributeError:
             pass
         if no_gc:
@@ -895,7 +1007,8 @@ def emit_instrumented(
                 per_term = _attribute_snapshot(snap, terms)
                 del snap
                 entry["per_term"] = per_term
-                entry["term_sum"] = sum(per_term.values())
+                entry["term_sum"] = sum(
+                    per_term[t] for t in NUMERATOR_TERMS)
                 snap_paths["peak_tracked"] = peak_snap_path
                 hooks.insert(min(tracker.idx, len(hooks)), entry)
             except Exception as exc:  # diagnostic aid must not kill the run
@@ -918,7 +1031,7 @@ def _mb(x) -> str:
 
 
 def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
-                        sampler: "RssSampler | None") -> dict:
+                        sampler: "RssSampler | None", rep: int = 0) -> dict:
     """Print the G0 report for one measured cell; return the JSON record."""
     hooks = result["hooks"]
     by_label = {h["label"]: h for h in hooks}
@@ -956,20 +1069,35 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
     named_anchor_label = None
     pt_cur = None
     shortfall = None
+    gate_status = None
+    cons_growth = None
 
     if mem:
         pre_cur = pre["traced_cur"]
         anchor = max(hooks, key=lambda h: h["traced_cur"])
+        # A per-term of zero for every term at every hook is never a
+        # real measurement (path-normalisation drift or span rot) —
+        # refusing to print a G0a beats printing 0.000 as the gate.
+        if all(not h["term_sum"] for h in hooks):
+            raise RuntimeError(
+                "G0 attribution returned ZERO bytes for every R-term at "
+                "every hook. That is never a real measurement — check "
+                "frame-filename normalisation and the span table before "
+                "trusting anything this process printed."
+            )
         # Named-hook peaks cover only the intervals since their previous
-        # reset; the poll banks its own counter readings (pre-reset) in
+        # reset; the poll banks its counter readings (pre-reset) in
         # peak_counter_max — the true global peak is the max of both.
+        # pre_build's own traced_peak is EXCLUDED: it covers the
+        # mesh/model-build window (pre-emit transients, measured 2.6 MB)
+        # and G0a is about emit growth.
         global_peak = max(
-            max(h["traced_peak"] for h in hooks),
+            max(h["traced_peak"] for h in hooks[1:]),
             result.get("peak_counter_max") or 0,
         )
 
         print(f"  {'hook':<22} {'traced-cur':>10} {'d-pre':>9} "
-              f"{'traced-peak':>11} {'RSS':>9} {'G0a':>6}")
+              f"{'traced-peak':>11} {'RSS':>9} {'G0a(s)':>7}")
         for h in hooks:
             growth = h["traced_cur"] - pre_cur
             if h is pre or growth <= 0:
@@ -979,15 +1107,29 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
             mark = " <-anchor" if h is anchor else ""
             print(f"  {h['label']:<22} {_mb(h['traced_cur'])} "
                   f"{growth / 1e6:>+9.1f} {_mb(h['traced_peak']):>11} "
-                  f"{_mb(h['rss'])} {g0a_h:>6}{mark}")
+                  f"{_mb(h['rss'])} {g0a_h:>7}{mark}")
+        # Full per-term row at EVERY hook — the anchor-only view once
+        # inverted the R7 story (real chunk tuples live at
+        # ndf_chunks_peak; by the anchor only the cache remains).
+        print(f"  {'per-term (MB)':<22} "
+              + " ".join(f"{t:>6}" for t in TERM_ORDER))
+        for h in hooks:
+            row = h["per_term"] or {}
+            print(f"  {h['label']:<22} "
+                  + " ".join(f"{row.get(t, 0) / 1e6:>6.1f}"
+                             for t in TERM_ORDER))
 
         traced_growth = anchor["traced_cur"] - pre_cur
         per_term_anchor = anchor["per_term"]
         term_sum = anchor["term_sum"]
-        # G0a(sampled): against the best state a snapshot actually saw.
-        # G0a(conservative): against the TRUE counter peak — the entire
-        # unsampled excursion is charged to unattributed.  Conservative
-        # is the gate number; it cannot flatter the hypothesis.
+        # G0a(sampled): against the best state a snapshot actually saw —
+        # this is the form ADR 0100's literal wording ("a snapshot taken
+        # at the peak") describes.  G0a(conservative): against the TRUE
+        # counter peak — the entire unsampled excursion is charged to
+        # unattributed.  Conservative is chosen DELIBERATELY as the gate
+        # (the ADR amendment will say so): it is the only form that
+        # cannot flatter the hypothesis.  An unqualified "G0a" must
+        # never appear anywhere in the output.
         g0a_sampled = (term_sum / traced_growth
                        if traced_growth > 0 else float("nan"))
         cons_growth = global_peak - pre_cur
@@ -995,7 +1137,10 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                     if cons_growth > 0 else float("nan"))
         g0a = g0a_cons
         shortfall = global_peak - anchor["traced_cur"]
-        unattributed = cons_growth - term_sum
+        # Unattributed = growth minus EVERYTHING claimed (numerator terms
+        # AND the non-numerator CACHE) — cache bytes are attributed, just
+        # never counted toward G0a.
+        unattributed = cons_growth - sum(per_term_anchor.values())
 
         print(f"  anchor hook: {anchor['label']} "
               f"(traced-cur {anchor['traced_cur'] / 1e6:,.1f} MB; "
@@ -1020,12 +1165,8 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                       f"by {gap:.0f}% - the resident peak lives BETWEEN "
                       f"the named hooks (staged pass); G0a above is "
                       f"computed there, not at a named hook.")
-            if pt["traced_cur"] < 0.95 * global_peak:
-                short = (global_peak - pt["traced_cur"]) / 1e6
-                print(f"  *** WARNING: tracked peak under-samples the true "
-                      f"traced peak by {short:,.1f} MB (>5%) even from the "
-                      f"sampler thread (--tm-poll-ms); G0a(conservative) "
-                      f"charges the shortfall to unattributed. ***")
+            # (under-sampling is no longer a footnote here — a >5%
+            # shortfall REFUSES the gate below.)
         else:
             print("  (no peak_tracked snapshot fired - emit too small for "
                   "the poll cadence; anchor is named-hook only)")
@@ -1033,39 +1174,85 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
             f"{t}={per_term_anchor[t] / 1e6:,.1f}MB" for t in TERM_ORDER
         )
         print(f"  per-term at anchor: {terms_txt}")
-        print(f"  R5 floor (pre_build traced-cur, incl. fem pin - NEVER in "
-              f"the G0a numerator): {pre_cur / 1e6:,.1f} MB")
+        print(f"  CACHE at anchor (broker fan-out memo, the ADR's separate "
+              f"'2nd connectivity copy' - reported, never in the "
+              f"numerator): {per_term_anchor.get('CACHE', 0) / 1e6:,.1f} MB")
+        print(f"  R8 at anchor (ops_tag_to_fem_eid reverse tag map, "
+              f"~128 B/elem at incident scale - measured and reported, "
+              f"but NOT in the G0a numerator: ADR 0100 does not authorise "
+              f"it; queued for amendment): "
+              f"{per_term_anchor.get('R8', 0) / 1e6:,.1f} MB")
+        print(f"  process floor (pre_build traced-cur: imports + session + "
+              f"fem pin; NOT R5 alone, never in the numerator): "
+              f"{pre_cur / 1e6:,.1f} MB")
         cons_share = (unattributed / cons_growth * 100.0
                       if cons_growth > 0 else float("nan"))
-        print(f"  G0a(sampled)      = {g0a_sampled:.3f}  "
-              f"(sum(terms) {term_sum / 1e6:,.1f} MB / sampled growth "
-              f"{traced_growth / 1e6:,.1f} MB)")
-        print(f"  G0a(conservative) = {g0a_cons:.3f}  "
-              f"(sum(terms) {term_sum / 1e6:,.1f} MB / true-peak growth "
-              f"{cons_growth / 1e6:,.1f} MB; unattributed incl. unsampled "
-              f"excursion {unattributed / 1e6:,.1f} MB = {cons_share:.0f}%)"
-              f"  <- GATE NUMBER")
-        if abs(g0a_sampled - g0a_cons) <= 0.05:
-            print("  sampled and conservative agree within 0.05 - the "
-                  "sampled peak is representative; the instrument is "
-                  "sound for this cell.")
+        # GATE VALIDITY — the load-bearing rule (ADR 0100 D0): the
+        # sampler trigger is allocation-driven, so a cell that misses
+        # the peak misses it IDENTICALLY on every run — a stable wrong
+        # number that looks converged (measured: reproducible to ±0.001
+        # across repeats while sitting 0.031 from the <0.40
+        # abandon-the-program threshold).  The named twin hooks do NOT
+        # close this (measured: they fire below the tracked peak — the
+        # twin dict is built after both fire); they are DIAGNOSTICS that
+        # make the miss visible, not the fix.  ANY non-zero shortfall
+        # means the cell DID NOT MEASURE THE PEAK and is DISCARDED: no
+        # gate number exists for it, in the report or the JSON.
+        # Repeats are no defence — a missed peak repeats identically.
+        gate_ok = shortfall == 0
+        gate_status = "ok" if gate_ok else "discarded_shortfall"
+        if gate_ok:
+            print(f"  G0a(sampled)      = {g0a_sampled:.3f}  "
+                  f"(sum(R-terms) {term_sum / 1e6:,.1f} MB / sampled "
+                  f"growth {traced_growth / 1e6:,.1f} MB)")
+            print(f"  G0a(conservative) = {g0a_cons:.3f}  "
+                  f"(sum(R-terms) {term_sum / 1e6:,.1f} MB / true-peak "
+                  f"growth {cons_growth / 1e6:,.1f} MB; unattributed "
+                  f"{unattributed / 1e6:,.1f} MB = {cons_share:.0f}%)"
+                  f"  <- GATE NUMBER")
+            if abs(g0a_sampled - g0a_cons) <= 0.05:
+                print("  G0a(sampled) and G0a(conservative) agree within "
+                      "0.05. (This checks sampled-vs-conservative "
+                      "agreement ONLY - not a global soundness "
+                      "certificate.)")
         else:
-            print(f"  sampled vs conservative differ by "
-                  f"{abs(g0a_sampled - g0a_cons):.2f} - "
-                  f"{shortfall / 1e6:,.1f} MB of excursion was never "
-                  f"sampled and is charged to unattributed.")
+            g0a = None
+            print(f"  *** did not measure the peak - cell DISCARDED "
+                  f"(shortfall {shortfall:,} B = "
+                  f"{shortfall / 1e6:,.2f} MB between the true counter "
+                  f"peak and the best sampled state). A discarded cell "
+                  f"has no G0a - the ratio fields stay in the JSON as "
+                  f"diagnostics only, g0a is null. ***")
         if g0a_sampled > 1.0:
-            print("  *** WARNING: G0a > 1 - the R-term spans double-count; "
+            print("  *** WARNING: G0a(sampled) > 1 - the R-term spans "
+                  "double-count; "
                   "the first-match order / span windows need revisiting. "
                   "The number above is printed UNCLAMPED. ***")
-        if rss_growth is not None and traced_growth > 0:
-            g0b = rss_growth / traced_growth
-            print(f"  G0b = {g0b:.2f}  (RSS growth {rss_growth / 1e6:,.1f} MB"
-                  f" / traced growth {traced_growth / 1e6:,.1f} MB) "
-                  f"[tracemalloc-INFLATED — pair with a --rss-only run for "
-                  f"the honest G0b]")
+        # G0b per-cell — AUDITED: the old form divided end-to-end RSS
+        # growth by the ANCHOR traced growth (mismatched instants; it
+        # printed a non-physical 0.68).  Both ends now sit at
+        # pre_build→post_write.  Still demoted: at bench scale the ratio
+        # is dominated by size-independent RSS offsets (interpreter,
+        # numpy, allocator arenas), not by the ADR's x~1.9 amplification
+        # SLOPE — the slope-based G0b printed after the size sweep is
+        # the number the ADR's "G0b ~= 2" branch rule means.
+        traced_growth_end = (
+            by_label["post_write"]["traced_cur"] - pre_cur
+            if "post_write" in by_label else None)
+        if (rss_growth is not None and traced_growth_end is not None
+                and traced_growth_end > 0):
+            g0b = rss_growth / traced_growth_end
+            print(f"  G0b(per-cell) = {g0b:.2f}  (end-to-end RSS growth "
+                  f"{rss_growth / 1e6:,.1f} MB / end-to-end traced growth "
+                  f"{traced_growth_end / 1e6:,.1f} MB) [OFFSET-DOMINATED "
+                  f"at bench scale and tracemalloc-inflated - use the "
+                  f"slope-based G0b printed after the size sweep]")
         print(f"  partition_open: {result['po_calls']} calls, "
               f"{result['po_ranks']} distinct ranks")
+        print("  standing limitation: a main-thread allocation that rises "
+              "AND falls inside a tracker dump window cannot be witnessed "
+              "- instrument and main-thread bytes share one counter, so "
+              "such a transient is absent from BOTH G0a forms.")
 
         # Top unattributed growth sites (anchor vs pre_build) — the most
         # valuable output of the whole tool if attribution comes out low.
@@ -1113,6 +1300,11 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                     if mem and hx else None)
     b_hex_rss = (rss_peak_growth / hx
                  if rss_peak_growth is not None and hx else None)
+    if b_hex_rss is not None and hx < 500_000:
+        print("  NOTE: RSS-implied extrapolation from a cell below 0.5M "
+              "hexes is UNRELIABLE - size-independent RSS offsets "
+              "(interpreter, numpy, allocator arenas) dominate the "
+              "per-hex figure; treat as an upper bound at best.")
     extrap = {}
     for tgt in EXTRAP_TARGETS:
         tr = b_hex_traced * tgt / 1e9 if b_hex_traced is not None else None
@@ -1140,13 +1332,22 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "rss_peak_growth_b": rss_peak_growth,
         "b_per_hex_traced": b_hex_traced,
         "b_per_hex_rss": b_hex_rss,
-        # "g0a" is the GATE number = g0a_conservative (Σterms over the
-        # true counter peak); "g0a_sampled" is against the best state a
-        # snapshot actually saw.
+        # "g0a" is the GATE number = g0a_conservative (Σ R-terms over the
+        # true counter peak), or null when the cell was DISCARDED
+        # (gate_status == "discarded_shortfall": the tracker did not
+        # sample the peak; a discarded cell has no G0a).  The
+        # g0a_sampled / g0a_conservative fields remain as diagnostics —
+        # their names are unambiguous; only "g0a" is ever a gate number.
         "g0a": g0a,
         "g0a_sampled": g0a_sampled,
         "g0a_conservative": g0a_cons,
-        "g0b": g0b,
+        "gate_status": gate_status,
+        "discarded_reason": (None if gate_status in (None, "ok")
+                             else "peak_shortfall"),
+        "repeat": rep,
+        "cons_growth_b": cons_growth,
+        "cache_bytes": (per_term_anchor or {}).get("CACHE"),
+        "g0b_percell": g0b,
         "anchor_hook": anchor["label"] if anchor is not None else None,
         "named_anchor_hook": named_anchor_label,
         "peak_tracked_cur_b": pt_cur,
@@ -1165,7 +1366,27 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                 "rss": h["rss"],
             } for h in hooks
         },
+        "per_term_by_hook": (
+            {h["label"]: h["per_term"] for h in hooks} if mem else None
+        ),
     }
+
+
+def _fit_slope(points) -> "tuple[float, float]":
+    """Least-squares ``y = a*x + b`` over (x, y); returns (a, R^2).
+
+    The intercept b absorbs the size-independent offsets that make the
+    per-cell G0b ratio meaningless at bench scale — the slope ratio is
+    the amplification factor the ADR's "G0b ~= 2" branch rule means."""
+    import numpy as np
+    xs = np.asarray([p[0] for p in points], dtype=float)
+    ys = np.asarray([p[1] for p in points], dtype=float)
+    a, b = np.polyfit(xs, ys, 1)
+    pred = a * xs + b
+    ss_res = float(((ys - pred) ** 2).sum())
+    ss_tot = float(((ys - ys.mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return float(a), r2
 
 
 def profile_emit(ops, top: int, deck_path: str) -> str:
@@ -1215,6 +1436,15 @@ def main():
                     help="--mem: re-snapshot the tracked peak when "
                          "traced-current exceeds the last snapshot by this "
                          "factor (default 1.05)")
+    ap.add_argument("--repeats", type=int, default=None,
+                    help="repeat each size N times; the per-size summary "
+                         "reports median/min/max G0a(conservative) over "
+                         "gate-ok repeats (default 3 under --mem, else 1). "
+                         "Repeats defend against ORDINARY noise only - the "
+                         "allocation-driven sampler trigger locks onto the "
+                         "same instant every run, so a missed peak is "
+                         "missed identically; the shortfall gate-refusal "
+                         "is the defence against that, not repeats.")
     ap.add_argument("--rss-only", action="store_true",
                     help="sampler on, tracemalloc OFF: phase-resolved RSS "
                          "deltas + B/hex-RSS, uninflated. Pair with a --mem "
@@ -1235,6 +1465,12 @@ def main():
     ap.add_argument("--json", default=None, metavar="PATH",
                     help="write one flat record per measured cell (the ADR "
                          "0100 campaign aggregator's input)")
+    ap.add_argument("--pair-rss-json", default=None, metavar="PATH",
+                    help="--mem: JSON from a paired --rss-only run of the "
+                         "SAME cells; its uninflated RSS-peak growths give "
+                         "the RSS slope for G0b(slope). Without it the "
+                         "slope G0b is declared not computable rather than "
+                         "derived from tracemalloc-inflated RSS.")
     args = ap.parse_args()
 
     if args.mem and args.rss_only:
@@ -1261,9 +1497,15 @@ def main():
         print("(wall-clock below is tracemalloc-inflated - throughput from "
               "a plain run only)")
 
+    repeats = (args.repeats if args.repeats is not None
+               else (3 if args.mem else 1))
     rows = []
     records = []
     for sz in sizes:
+      size_recs: "list[dict]" = []
+      for rep in range(repeats):
+        if repeats > 1:
+            print(f"\n--- size {sz}: repeat {rep + 1}/{repeats} ---")
         ph = dict.fromkeys(
             ["geom", "mesh", "partition", "get_fem", "build", "emit", "write"], 0.0)
         tmpdir = tempfile.mkdtemp(prefix="emit_prof_")
@@ -1319,15 +1561,18 @@ def main():
                   f"{ph['write']:>7.2f} {rate:>10.0f}")
 
             if instrumented:
-                records.append(
-                    report_instrumented(args, sz, hx, nn, result, sampler))
-            rows.append((hx, emit_total))
+                rec = report_instrumented(
+                    args, sz, hx, nn, result, sampler, rep)
+                records.append(rec)
+                size_recs.append(rec)
+            if rep == repeats - 1:
+                rows.append((hx, emit_total))
 
             # --profile runs INSIDE the largest size's iteration (the old
             # tool kept ``last = (ops, sz)`` alive across sizes, pinning
             # the previous FEMData + fan-out cache through the next size's
             # measurement — the cross-size retention this rebuild drops).
-            if args.profile and sz == largest:
+            if args.profile and sz == largest and rep == repeats - 1:
                 if tm_started:
                     tracemalloc.stop()
                     tm_started = False
@@ -1360,9 +1605,9 @@ def main():
                 sampler.stop()
                 if args.rss_trace and sampler.available:
                     tp = args.rss_trace
-                    if len(sizes) > 1:
+                    if len(sizes) > 1 or repeats > 1:
                         root, ext = os.path.splitext(tp)
-                        tp = f"{root}_sz{sz}{ext or '.csv'}"
+                        tp = f"{root}_sz{sz}_r{rep}{ext or '.csv'}"
                     try:
                         sampler.write_trace(tp)
                         print(f"  rss trace: {tp} "
@@ -1371,11 +1616,126 @@ def main():
                         print(f"  rss trace write failed: {exc!r}")
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+      # -- per-size summary over repeats.  NOTE: median-of-repeats
+      # defends against ORDINARY noise only — the allocation-driven
+      # trigger locks onto the same instant every run, so a missed peak
+      # is missed identically; the shortfall gate-refusal is the
+      # defence against that, not repeats.
+      if args.mem and repeats > 1 and size_recs:
+        statuses = [r.get("gate_status") for r in size_recs]
+        ok_vals = [r["g0a_conservative"] for r in size_recs
+                   if r.get("gate_status") == "ok"
+                   and r.get("g0a_conservative") is not None]
+        print(f"\n== size {sz} over {repeats} repeats ==")
+        print(f"  gate status per repeat: {statuses}")
+        if ok_vals:
+            print(f"  G0a(conservative) over gate-ok repeats: median "
+                  f"{statistics.median(ok_vals):.3f} "
+                  f"(min {min(ok_vals):.3f}, max {max(ok_vals):.3f}, "
+                  f"n={len(ok_vals)}/{repeats})")
+        else:
+            print("  G0a(conservative): NO gate-ok repeat - this size did "
+                  "not measure a gate number.")
+        r1_twin = [
+            round((((r.get("per_term_by_hook") or {})
+                    .get("stage_open#first") or {}).get("R1", 0)) / 1e6, 2)
+            for r in size_recs
+        ]
+        r1_mid = [
+            round((((r.get("per_term_by_hook") or {})
+                    .get("partition_open#mid") or {}).get("R1", 0)) / 1e6, 2)
+            for r in size_recs
+        ]
+        print(f"  R1 (MB) at stage_open#first per repeat: {r1_twin}  vs at "
+              f"partition_open#mid: {r1_mid}")
+        print("  (median defends against ordinary noise ONLY - a missed "
+              "peak repeats identically; see the gate-refusal rule.)")
+
     if len(rows) >= 2 and rows[0][1] and rows[0][0]:
         sh = rows[-1][0] / rows[0][0]
         st = rows[-1][1] / rows[0][1]
         print(f"\nemit linearity: hexes x{sh:.1f} -> emit-time x{st:.1f} "
               f"(exponent ~{math.log(st)/math.log(sh) if sh > 1 else 0:.2f})")
+
+    # -- shortfall-zero census: how many cells actually measured the
+    # peak.  The campaign's gate needs >=3 sizes x >=2 np of SURVIVING
+    # cells — if the surviving band is thinner than that, the driver
+    # decides whether to spend the plan's one permitted library-side
+    # exception (a mid-emit snapshot hook); this tool only reports.
+    if args.mem and records:
+        ok_n = sum(1 for r in records if r.get("gate_status") == "ok")
+        print(f"\nshortfall-zero census: {ok_n}/{len(records)} cells "
+              f"measured the peak (only survivors carry gate numbers)")
+        by_sz_c: "dict[int, list]" = {}
+        for r in records:
+            by_sz_c.setdefault(r["size"], []).append(r)
+        for s in sorted(by_sz_c):
+            rs = by_sz_c[s]
+            n_ok = sum(1 for x in rs if x.get("gate_status") == "ok")
+            sf = [x.get("peak_shortfall_b") for x in rs]
+            print(f"  size {s} (hexes {rs[0]['hexes']:,}): {n_ok}/{len(rs)} "
+                  f"survived; shortfalls (B): {sf}")
+
+    # -- G0b(slope): slope of RSS-peak growth vs hexes over slope of
+    # traced-peak growth vs hexes.  The RSS side must come from a paired
+    # --rss-only run (--pair-rss-json) — this process's own RSS is
+    # tracemalloc-inflated, and the per-cell ratio is offset-dominated
+    # (measured 0.68–87 across cells: noise).  Without the pair the tool
+    # says "not computable" rather than printing an indefensible number.
+    g0b_slope = None
+    g0b_r2_rss = None
+    g0b_r2_traced = None
+    if args.mem:
+        by_sz: "dict[int, list[dict]]" = {}
+        for r in records:
+            by_sz.setdefault(r["size"], []).append(r)
+        pts_traced = []
+        for s in sorted(by_sz):
+            vals = [x["cons_growth_b"] for x in by_sz[s]
+                    if x.get("cons_growth_b") is not None]
+            if vals:
+                pts_traced.append(
+                    (by_sz[s][0]["hexes"], statistics.median(vals)))
+        pts_rss = []
+        if args.pair_rss_json:
+            try:
+                with open(args.pair_rss_json, encoding="utf-8") as f:
+                    pair = json.load(f)
+                pair_by_sz: "dict[int, list]" = {}
+                for r in pair:
+                    if r.get("rss_peak_growth_b") is not None:
+                        pair_by_sz.setdefault(r["hexes"], []).append(
+                            r["rss_peak_growth_b"])
+                pts_rss = [(h, statistics.median(v))
+                           for h, v in sorted(pair_by_sz.items())]
+            except (OSError, ValueError, KeyError) as exc:
+                print(f"\nG0b(slope): pair json unreadable ({exc!r})")
+        if len(pts_traced) >= 3 and len(pts_rss) >= 3:
+            a_tr, g0b_r2_traced = _fit_slope(pts_traced)
+            a_rss, g0b_r2_rss = _fit_slope(pts_rss)
+            g0b_slope = a_rss / a_tr if a_tr > 0 else None
+            def fmt(pts):
+                return " ".join(
+                    f"({h},{v / 1e6:.1f}MB)" for h, v in pts)
+
+            val = "n/a" if g0b_slope is None else f"{g0b_slope:.2f}"
+            print(f"\nG0b(slope) = {val}  "
+                  f"(uninflated RSS slope from paired --rss-only run / "
+                  f"traced slope from this run)")
+            print(f"  fit: R2 rss={g0b_r2_rss:.3f} over {fmt(pts_rss)}")
+            print(f"  fit: R2 traced={g0b_r2_traced:.3f} over "
+                  f"{fmt(pts_traced)}")
+        else:
+            print(f"\nG0b(slope): NOT COMPUTABLE in this invocation - "
+                  f"needs >=3 sizes on both series (have traced="
+                  f"{len(pts_traced)}, rss={len(pts_rss)}; the RSS series "
+                  f"comes from --pair-rss-json, a paired --rss-only run). "
+                  f"The per-cell G0b is offset-dominated - do not gate "
+                  f"on it.")
+        for r in records:
+            r["g0b_slope"] = g0b_slope
+            r["g0b_slope_r2_rss"] = g0b_r2_rss
+            r["g0b_slope_r2_traced"] = g0b_r2_traced
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
