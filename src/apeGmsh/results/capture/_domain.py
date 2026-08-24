@@ -1075,8 +1075,29 @@ class DomainCapture:
     # ------------------------------------------------------------------
 
     def _lazy_ops(self) -> Any:
+        """The OpenSees module to query — the one the bridge is DRIVING.
+
+        This used to go straight to ``import openseespy.opensees``, which is
+        a *different module object* from the ``opensees`` the live emitter
+        imports whenever both are importable — a fork build on ``PYTHONPATH``
+        beside a stock openseespy in site-packages, say. Two modules mean two
+        domains, and the capture then samples the empty one: every
+        ``nodeDisp`` reports ``WARNING no response is found`` while the
+        analysis it is meant to be sampling ran, and converged, in the other.
+        The two coincide in a normally-wired venv (``openseespy.opensees is
+        opensees``), so the split only appears in mixed setups — and there it
+        reads exactly like a solver regression.
+
+        Resolved late rather than in ``__init__`` on purpose:
+        ``ops.domain_capture(...)`` is entered *before* ``analyze()`` creates
+        the live emitter, so at construction time there is nothing to bind to.
+        """
         if self._ops is not None:
             return self._ops
+        live = getattr(self._bridge, "_live_emitter", None)
+        live_ops = getattr(live, "ops", None)
+        if live_ops is not None:
+            return live_ops
         try:
             import openseespy.opensees as ops
         except ImportError as exc:
