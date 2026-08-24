@@ -44,10 +44,20 @@ snapshot in memory (geometry only) nor the STKO/MPCO results
 **solver-specific zone** under `/opensees/`.
 
 * The **neutral zone** (broker-owned, Phase 8.5) holds geometry and
-  pre-solver model declarations: `/meta`, `/nodes`,
+  pre-solver model declarations. Every top-level group/dataset is
+  written by [`write_neutral_zone`](../../mesh/_femdata_h5_io.py) (the
+  enumeration below tracks that function — the ratchet test
+  `test_h5_schema_doc_names_every_neutral_zone_group` fails if a new
+  one is added here without a matching doc mention): `/meta`, `/nodes`,
   `/elements/{type}`, `/physical_groups`, `/labels`,
-  `/constraints/{kind}`, `/loads/{kind}/{pattern}`, `/masses`.
-  These describe the model independent of which solver consumes it.
+  `/mesh_selections`, `/partitions`, `/parts`, `/constraints/{kind}`,
+  `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`,
+  `/contact_planes`, `/interfaces`, `/loads/{kind}/{pattern}`,
+  `/masses`, `/composed_from`. Most of these are omitted entirely when
+  the model has nothing to report for them (e.g. no ties, no
+  partitions) — absence is the "not declared" signal, not "data
+  missing". These describe the model independent of which solver
+  consumes it.
 * The **OpenSees zone** (bridge-owned, Phase 8.4) holds anything the
   OpenSees adapter contributes: `/opensees/materials`,
   `/opensees/sections`, `/opensees/transforms`,
@@ -90,15 +100,35 @@ model.h5
 ├── /labels                                schema 2.10: side-partitioned
 │     ├── /node_side/{name}                node-side label entries
 │     └── /element_side/{name}             element-side label entries
-├── /mesh_selections
+├── /mesh_selections                      (optional)
 │     └── /{name}                          one group per post-mesh selection set
+├── /partitions                           (optional, schema 2.5.0)
+│     └── /{id}                            one group per Gmsh partition rank
+├── /parts                                (optional, schema 2.5.0)
+│     └── /{label}                         one group per Part label
 ├── /constraints
 │     └── /{kind}                          one dataset per constraint kind
+├── /reinforce_ties                       (optional, schema 2.15.0)
+│     └── ties                             one symmetric-compound dataset
+├── /embed_ties                           (optional, schema 2.22.0)
+│     └── ties                             one symmetric-compound dataset
+├── /rebar_elements                       (optional, schema 2.16.0)
+│     └── elements                         one symmetric-compound dataset
+├── /contacts                             (optional, schema 2.21.0)
+│     └── contacts                         one symmetric-compound dataset
+├── /contact_planes                       (optional, schema 2.24.0)
+│     └── contact_planes                   one symmetric-compound dataset
+├── /interfaces                           (optional, schema 2.29.0)
+│     └── interfaces                       one symmetric-compound dataset
 ├── /loads
 │     ├── /nodal/{pattern}                 one dataset per pattern
 │     ├── /element/{pattern}               one dataset per pattern
-│     └── /sp/default                      single-point constraints
+│     └── /sp/{pattern}                    single-point constraints, one dataset
+│                                           per case name (schema 2.26.1; earlier
+│                                           files flatten every record into `default`)
 ├── /masses                                single dataset
+├── /composed_from                        (optional, schema 2.9.0)
+│     └── /{label}                         one group per composed source module
 │
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       ├── /materials
@@ -153,8 +183,8 @@ Attributes only.
 | Attribute | Type | Description |
 |---|---|---|
 | `schema_version` | string | **legacy envelope** — back-compat only; *not* authoritative (see [Schema versioning](#versioning)) |
-| `neutral_schema_version` | string | per-zone version of the broker neutral zone (e.g. `"2.10.0"`) |
-| `opensees_schema_version` | string | per-zone version of the `/opensees/` zone (e.g. `"2.12.0"`); forward-stamped even on broker-only files |
+| `neutral_schema_version` | string | per-zone version of the broker neutral zone (e.g. `"2.31.0"`) |
+| `opensees_schema_version` | string | per-zone version of the `/opensees/` zone (e.g. `"2.20.0"`); forward-stamped even on broker-only files |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -163,9 +193,14 @@ Attributes only.
 | `model_name` | string | user-provided model name |
 | `tag_span_max` | int | `max(max_node,max_elem) - min(min_node,min_elem) + 1`; sizes compose tag-offset reservations (ADR 0038) |
 
-> The `/meta/lineage/` sub-group (ADR 0021) is additionally stamped by
-> the composer; the composed `results.h5` carries its version keys at
-> the **file root** (not `/meta`) — see [Schema versioning](#versioning).
+> The `/meta/lineage/` sub-group (ADR 0021) is stamped whenever the
+> neutral zone is written, not only by the composer: `write_fem_h5`
+> (the broker-only `fem.to_h5(path)` path) stamps just `fem_hash`
+> (there is no `/opensees/` zone to fold into a `model_hash` yet); the
+> composer additionally computes and stamps `model_hash` once
+> `/opensees/...` exists. The composed `results.h5` carries its
+> version keys at the **file root** (not `/meta`) — see
+> [Schema versioning](#versioning).
 
 Schema versioning is **per-zone**, **strict on major**, **bounded on
 minor** via the two-version reader window
@@ -184,8 +219,21 @@ Neutral-zone group at the root, broker-owned.
 ```
 /nodes/
 ├── ids               (N,) int64
-└── coords            (N, 3) float64
+├── coords            (N, 3) float64
+├── ndf               (N,) int8              optional, schema 2.7.0
+├── provenance        (N,) int8              optional, schema 2.11.0 (0=mesh, 1=decoupled)
+└── module_label      (N,) vlen-utf-8        always written, schema 2.9.0
 ```
+
+`ndf` carries per-node DOF-count overrides declared via
+`g.node_ndf.set(...)` / `g.node_ndf.set_default(...)` (shell-to-solid
+coupling, S1b); omitted when the broker has no populated `_ndf` array.
+`provenance` distinguishes ordinary mesh nodes from nodes synthesized
+by `g.decouple_node` (ADR 0049); omitted when the broker has no
+decoupled nodes. `module_label` is **always** written (unlike the two
+above) so a compose-aware reader has a stable shape contract — it
+carries the source module's label for compose-merged rows (ADR 0038)
+and `""` for host-owned rows / the uncomposed case.
 
 The viewer renders the mesh substrate from `/nodes/coords` keyed by
 `/nodes/ids`.  Bridge-side data that refers to nodes (loads,
@@ -204,13 +252,19 @@ matching group regardless of which PG it belongs to.
 /elements/tet4/
 ├── attrs: code=4, gmsh_name="Tetrahedron 4", npe=4, dim=3, order=1
 ├── ids               (E_t,) int64                — element tags
-└── connectivity      (E_t, 4) int64              — node tags per element
+├── connectivity      (E_t, 4) int64              — node tags per element
+└── module_label      (E_t,) vlen-utf-8           — always written, schema 2.9.0
 
 /elements/line2/
 ├── attrs: code=1, gmsh_name="Line 2", npe=2, dim=1, order=1
 ├── ids
-└── connectivity      (E_l, 2) int64
+├── connectivity      (E_l, 2) int64
+└── module_label      (E_l,) vlen-utf-8
 ```
+
+`module_label` is always written (same contract as `/nodes/module_label`
+above) — the source module's label for compose-merged rows (ADR 0038),
+`""` for host-owned rows / the uncomposed case.
 
 OpenSees-specific element metadata (positional args, cross-references)
 lives under `/opensees/element_meta/{type_token}` — a parallel index
@@ -327,8 +381,13 @@ Per-pattern, per-kind datasets sharing the symmetric outer compound.
   `element_id`, `load_type` (utf-8), `params_json` (utf-8 JSON
   blob — element-load `*args` shape is too freeform for a fixed
   typed compound).
-* `/loads/sp/default` — `SPRecord` rows (single-point constraints).
-  Payload: `node_id`, `dof`, `value`, `is_homogeneous` (int 0/1).
+* `/loads/sp/{pattern}` — `SPRecord` rows (single-point constraints),
+  one dataset per case name (schema 2.26.1, mirroring
+  `/loads/nodal/{pattern}`). Payload: `node_id`, `dof`, `value`,
+  `is_homogeneous` (int 0/1). Files written before 2.26.1 flattened
+  every SP record into a single `/loads/sp/default` dataset regardless
+  of `g.displacements.case(...)`; the reader has always iterated the
+  group's keys as pattern names, so both layouts read back correctly.
 
 `{pattern}` is the broker pattern name (e.g. `gravity`, `quake_x`)
 or `default` for records that didn't carry one.
@@ -829,8 +888,8 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/constraints`, `/loads`, `/masses`, `/partitions`, `/parts`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.12.0** |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.31.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.20.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../../results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../../cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
 
@@ -874,11 +933,13 @@ our own output is held by
 
 ### Neutral-zone history
 
-The list below is the **neutral-zone** lineage. The opensees zone's
-per-version history is maintained inline in
-[`opensees/emitter/h5.py`](../emitter/h5.py) (`SCHEMA_VERSION`
-docstring), current through **2.12.0**; its post-2.10 additions are
-summarized after this list.
+The list below is the **neutral-zone** lineage, condensed from the
+canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
+[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py), current
+through **2.31.0**. The opensees zone's per-version history is
+maintained inline in [`opensees/emitter/h5.py`](../emitter/h5.py)
+(`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
+additions are summarized after this list.
 
 History:
 
@@ -954,6 +1015,84 @@ History:
   and labels weren't hashed at all). **Not additive** — 2.9
   files cannot be read by the 2.10 reader, the window slid forward.
   ADR 0021 INV-1 retired; ADR 0023 window semantics reframed.
+- `2.11.0` — ADR 0049 (decoupled-node provenance): additive — adds the
+  optional `/nodes/provenance` int8 dataset (0=mesh, 1=decoupled),
+  distinguishing ordinary mesh nodes from nodes synthesized by
+  `g.decouple_node`. Omitted when the broker has no decoupled nodes.
+  Per ADR 0023's two-version reader window, readers tolerate 2.10.x
+  and 2.11.x.
+- `2.12.0` — fork-coupling control knobs: additive — adds the
+  `CouplingControl` columns (`cpl_has`, `cpl_k`, `cpl_kr`, `cpl_dtcr`,
+  `cpl_enforce`, `cpl_absolute`) to `node_group_payload_dtype` /
+  `interpolation_payload_dtype` (plus the `sr_cpl_*` per-slave mirror
+  on `surface_coupling_payload_dtype`) so `g.constraints
+  .kinematic_coupling` / `distributing_coupling`'s `k` / `kr` /
+  `enforce` / `bipenalty_dtcr` / `absolute` knobs round-trip. Pre-2.12.0
+  files lack the columns; the reader probes `p.dtype.names` and falls
+  back to `control=None`. Per ADR 0023's two-version reader window,
+  readers tolerate 2.11.x and 2.12.x.
+
+**From 2.13.0 onward** the per-version rationale is maintained inline
+as the canonical log in the `NEUTRAL_SCHEMA_VERSION` docstring in
+[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) — this table
+condenses it to one line per version; consult the docstring for the
+full "why" and the exact affected dtype columns:
+
+- `2.13.0` — fork-coupling host auto-scalers (`k="auto"`, `k_alpha`,
+  `host` FEM element id, `bipenalty_wcap`) added to the 2.12.0 coupling
+  lane.
+- `2.14.0` — ADR 0068 equation-constraint tied interface: adds the
+  `enforce` route (`"penalty"|"penalty_al"|"equation"`) to the
+  interpolation / surface-coupling lanes.
+- `2.15.0` — ADR 0067 P5.1: new `/reinforce_ties` group persists
+  `g.reinforce`'s `LadrunoEmbeddedRebar` couplings (previously dropped
+  with a deferral warning).
+- `2.16.0` — ADR 0067 P5.2 / B1a.2: new `/rebar_elements` group
+  persists a cage's auto-emitted (`emit_elements=True`) structural
+  elements.
+- `2.17.0` — ADR 0069 equalDOF_Mixed: adds the `master_dofs` column to
+  the node-pair payload for the retained-node DOFs of an
+  `equal_dof_mixed` record.
+- `2.18.0` — ADR 0069 follow-up (EmbeddedNodeControl pressure tie):
+  adds `cpl_pressure` / `cpl_kp` (+ `sr_cpl_*` mirrors) to the coupling
+  lane.
+- `2.19.0` — ADR 0071 LadrunoRigidBody: adds `rb_as_element` / `rb_mass`
+  to `node_group_payload_dtype` for a rigid_body declared with
+  `as_element=True`.
+- `2.20.0` — ADR 0071 follow-up: adds the `omega` (3,)-float64 column
+  (initial body-frame angular velocity) to `node_group_payload_dtype`.
+- `2.21.0` — ADR 0073 follow-up: new `/contacts` group persists
+  `g.constraints.contact` / `.mortar` NTS/mortar interactions
+  (previously dropped with a deferral warning, no neutral persistence).
+- `2.22.0` — ADR 0073 follow-up: new `/embed_ties` group persists
+  `g.embed`'s `LadrunoEmbeddedNode` node-to-host couplings.
+- `2.23.0` — ADR 0073 follow-up: adds the optional `cell` (broad-phase
+  cell-size scale) column to `contact_payload_dtype`.
+- `2.24.0` — ADR 0073 follow-up: new `/contact_planes` group persists
+  `g.constraints.contact_plane` rigid-plane contacts.
+- `2.25.0` — ADR 0073 follow-up: adds the edge-edge contact fallback
+  columns (`edge_edge`, `edge_kn`, `edge_band`, `edge_mu`, …) to
+  `contact_payload_dtype`.
+- `2.26.0` — ADR 20 R3c: adds `corot` / `shape_b` / `has_shape_b`
+  (co-rotated bar axis) to `reinforce_tie_payload_dtype`.
+- `2.26.1` — patch: `_write_sp_loads` writes one `/loads/sp/{pattern}`
+  dataset per case name instead of flattening every SP record into
+  `/loads/sp/default` (see the `/loads` section above).
+- `2.27.0` — tie `stiffness="auto"`: adds `stiffness_auto` (+
+  `sr_stiffness_auto` mirror) to the interpolation / surface-coupling
+  lanes.
+- `2.28.0` — ADR 0091 load basis: adds the `basis` column
+  (`"lagrange"`/`"bernstein"`) to `nodal_load_payload_dtype`.
+- `2.29.0` — ADR 0093 S6: new `/interfaces` group persists
+  `g.constraints.interface()` oriented coincident-pair zeroLength
+  springs (previously refused outright with no persisted form).
+- `2.30.0` — 2D contact (the wound chain): widens the value domain of
+  `master_nps` / `slave_nps` in `contact_payload_dtype` from `{3, 4}`
+  to `{2, 3, 4}` (fork 2D line-segment contact surfaces); also adds the
+  additive `outward_mode` column.
+- `2.31.0` — 2D mortar (`-slave-segments` lane): adds the `thickness`
+  column (2D mortar plane-model out-of-plane thickness) to
+  `contact_payload_dtype`.
 
 ### OpenSees-zone history (post-2.10)
 
@@ -1012,6 +1151,24 @@ detail lives in the `SCHEMA_VERSION` docstring in
   `element_meta` `fem_eids`/`ids` columns.  Written only when ≥ 1 stage
   exists (vanilla byte-identical); folds into `model_hash`; hard-floor
   window semantics as above.
+- `2.19.0` — ADR 0055 Phase 5 (P5.1, partitioned staged archival): NO
+  layout change — the bump marks that PARTITIONED staged archives now
+  exist (the last `apeSees.h5` fail-loud guard is lifted). Per-rank
+  replicated emission dedupes to one captured record; per-rank pattern
+  and stage-region fragments merge by tag. Folds into `model_hash`;
+  hard-floor window semantics as above.
+- `2.20.0` — ADR 0078 Amendment A1 (ComputedSection provenance):
+  additive — new optional `/opensees/computed_sections` sidecar
+  (`tag` / `analyzer_name` / JSON `payload`), written only when a
+  `ComputedSection` emitted. Provenance metadata, not authored model
+  state → excluded from `model_hash` (same carve-out as `names`).
+  Standard additive-minor window semantics (a 2.20 reader opens 2.19
+  and 2.20 files; a 2.19.x reader refuses a 2.20.x file).
+
+This is the **current** opensees-zone version (`SCHEMA_VERSION` in
+[`opensees/emitter/h5.py`](../emitter/h5.py)); check that constant
+directly before trusting this list on a future read — it is a
+condensed log, not the source of truth.
 
 A reader skeleton:
 

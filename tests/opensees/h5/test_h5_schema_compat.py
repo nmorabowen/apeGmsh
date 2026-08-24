@@ -12,6 +12,8 @@ bumps.  Phase 8.4 (the namespace reshuffle) renamed this from
 """
 from __future__ import annotations
 
+import inspect
+import re
 from typing import Any
 
 import h5py
@@ -488,3 +490,187 @@ def test_phantom_node_tags_present_when_predicate_installed(
             "phantom_node_tags must contain only tags in the predicate "
             "set installed via set_phantom_node_tags (ADR 0033)."
         )
+
+
+# ===========================================================================
+# Doc-sync ratchet — architecture/h5-schema.md vs the live writer constants
+# (2026-08 housekeeping). A 2026-08 audit found the doc's zone-registry
+# "Current" column frozen at neutral 2.10.0 / opensees 2.12.0 while the
+# writers had moved on to 2.31.0 / 2.20.0, and the "Two zones" bullet list
+# silently missing ~10 neutral-zone groups (`/mesh_selections`,
+# `/partitions`, `/parts`, `/contacts`, `/interfaces`, the tie groups, …)
+# that `write_neutral_zone` actually writes. Nothing failed when either
+# drifted. These two tests are the ratchet: they read the live writer
+# constants and the live writer source directly (never a hand-copied
+# snapshot of either), so a future version bump or a new neutral-zone
+# group added without a doc update fails loud here instead of drifting
+# silently again.
+# ===========================================================================
+
+from pathlib import Path as _Path
+
+_H5_SCHEMA_DOC = (
+    _Path(__file__).resolve().parents[3]
+    / "src" / "apeGmsh" / "opensees" / "architecture" / "h5-schema.md"
+)
+
+
+def _h5_schema_doc_text() -> str:
+    assert _H5_SCHEMA_DOC.is_file(), (
+        f"h5-schema.md not found at {_H5_SCHEMA_DOC} — update the path "
+        "if the doc moved."
+    )
+    return _H5_SCHEMA_DOC.read_text(encoding="utf-8")
+
+
+def _zone_registry_current(text: str, zone_label: str) -> str:
+    """The bolded ``**X.Y.Z**`` Current-column value for one zone-registry row.
+
+    ``zone_label`` is the row's leading cell, e.g. ``"neutral (broker)"``.
+    Matches the whole markdown-table row (one line) so the scan does not
+    depend on column count or ordering, only on the row starting with
+    ``| {zone_label} |`` and ending with a bolded semver cell.
+    """
+    row = re.search(
+        rf"^\|\s*{re.escape(zone_label)}\s*\|.*\|\s*$", text, re.M,
+    )
+    assert row is not None, (
+        f"h5-schema.md: no zone-registry row found starting with "
+        f"`| {zone_label} |` — table reformatted or row renamed, update "
+        "the scan (or the doc)."
+    )
+    version = re.search(r"\*\*(\d+\.\d+\.\d+)\*\*", row.group(0))
+    assert version is not None, (
+        f"h5-schema.md: zone-registry row for {zone_label!r} has no "
+        "bolded **X.Y.Z** Current cell — table format drifted."
+    )
+    return version.group(1)
+
+
+def test_h5_schema_doc_registry_matches_writer_constants() -> None:
+    """The zone-registry's "Current" column must equal the live writer
+    constants for the neutral and opensees zones — not a hand-typed
+    snapshot that can silently go stale."""
+    from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
+    from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
+
+    text = _h5_schema_doc_text()
+    neutral_doc = _zone_registry_current(text, "neutral (broker)")
+    opensees_doc = _zone_registry_current(text, "opensees (bridge)")
+    assert neutral_doc == NEUTRAL_SCHEMA_VERSION, (
+        f"h5-schema.md zone registry says neutral Current={neutral_doc!r} "
+        f"but NEUTRAL_SCHEMA_VERSION={NEUTRAL_SCHEMA_VERSION!r} — the doc "
+        "has drifted from mesh/_femdata_h5_io.py; update the table."
+    )
+    assert opensees_doc == OPENSEES_VERSION, (
+        f"h5-schema.md zone registry says opensees Current={opensees_doc!r} "
+        f"but SCHEMA_VERSION={OPENSEES_VERSION!r} — the doc has drifted "
+        "from opensees/emitter/h5.py; update the table."
+    )
+
+
+def _write_neutral_zone_group_names() -> list[str]:
+    """Top-level HDF5 group/dataset names ``write_neutral_zone`` writes.
+
+    Derived from the live source rather than hand-maintained, so a new
+    ``_write_*`` group added to ``write_neutral_zone`` is picked up
+    automatically instead of requiring someone to remember to update a
+    parallel list here. For each ``_write_x(fem, f)`` callee in
+    ``write_neutral_zone``'s own body, extracts the literal top-level
+    name it creates: directly via ``f.create_group("name")`` /
+    ``f.create_dataset("name", ...)``, or indirectly via a
+    ``group_name="name"`` keyword forwarded to a shared helper (the
+    ``/physical_groups`` / ``/labels`` pattern). A callee whose source
+    matches none of these patterns fails loud asking the scan to be
+    extended — it never silently drops a group from the check.
+    """
+    from apeGmsh.mesh import _femdata_h5_io as mod
+
+    writer_src = inspect.getsource(mod.write_neutral_zone)
+    callees = re.findall(r"\b(_write_\w+)\(fem, f\)", writer_src)
+    assert callees, (
+        "write_neutral_zone's body no longer matches the `_write_x(fem, "
+        "f)` call pattern this scan looks for — update the regex."
+    )
+
+    names: list[str] = []
+    for callee in callees:
+        fn = getattr(mod, callee, None)
+        assert fn is not None, (
+            f"write_neutral_zone calls `{callee}` but no such attribute "
+            "exists on apeGmsh.mesh._femdata_h5_io."
+        )
+        src = inspect.getsource(fn)
+        m = (
+            re.search(r'\.create_group\(\s*["\'](\w+)["\']', src)
+            or re.search(r'\.create_dataset\(\s*["\'](\w+)["\']', src)
+            or re.search(r'group_name\s*=\s*["\'](\w+)["\']', src)
+        )
+        assert m is not None, (
+            f"{callee}: found no `.create_group(\"...\")` / "
+            "`.create_dataset(\"...\")` / `group_name=\"...\"` literal in "
+            "its source — extend the scan pattern in this test."
+        )
+        names.append(m.group(1))
+    return names
+
+
+def test_neutral_zone_group_scan_finds_the_full_writer() -> None:
+    """Sanity check on the extractor itself: it must find every group
+    `write_neutral_zone` is known (as of this housekeeping pass) to
+    write, not just a handful — guards against the regex silently
+    matching nothing or only the first few calls."""
+    names = _write_neutral_zone_group_names()
+    expected_minimum = {
+        "nodes", "elements", "physical_groups", "labels",
+        "mesh_selections", "partitions", "parts", "constraints",
+        "reinforce_ties", "embed_ties", "rebar_elements", "contacts",
+        "contact_planes", "interfaces", "loads", "masses",
+        "composed_from",
+    }
+    missing = expected_minimum - set(names)
+    assert not missing, (
+        f"_write_neutral_zone_group_names() no longer finds {missing} — "
+        "either the scan regressed or write_neutral_zone stopped writing "
+        "them (check mesh/_femdata_h5_io.py)."
+    )
+
+
+def test_h5_schema_doc_names_every_neutral_zone_group() -> None:
+    """Every top-level group/dataset ``write_neutral_zone`` writes must be
+    named somewhere in ``h5-schema.md`` (as a ``/name`` path mention).
+    Catches a new neutral-zone group shipping without any doc update at
+    all — the failure mode a 2026-08 audit found for ~10 pre-existing
+    groups."""
+    text = _h5_schema_doc_text()
+    missing = sorted({
+        name for name in _write_neutral_zone_group_names()
+        if f"/{name}" not in text
+    })
+    assert not missing, (
+        "h5-schema.md never mentions these neutral-zone groups that "
+        f"write_neutral_zone writes: {missing} — add them (e.g. to the "
+        '"Two zones" bullet list and/or the top-level layout tree).'
+    )
+
+
+def test_control_zone_registry_scan_detects_mismatch() -> None:
+    """Control: a synthetic doc with a wrong Current value must be
+    flagged by ``_zone_registry_current`` — proves the extractor
+    actually reads the value rather than trivially passing."""
+    fake_doc = (
+        "| Zone | key | paths | writer | Current |\n"
+        "|---|---|---|---|---|\n"
+        "| neutral (broker) | k | p | w | **9.9.9** |\n"
+    )
+    assert _zone_registry_current(fake_doc, "neutral (broker)") == "9.9.9"
+    assert _zone_registry_current(fake_doc, "neutral (broker)") != "2.31.0"
+
+
+def test_control_group_name_scan_flags_missing_mention() -> None:
+    """Control: a name absent from a synthetic doc must show up as
+    missing — proves the membership check isn't vacuously true."""
+    fake_names = ["contacts", "interfaces"]
+    fake_doc_text = "See /contacts for details."
+    missing = [n for n in fake_names if f"/{n}" not in fake_doc_text]
+    assert missing == ["interfaces"]
