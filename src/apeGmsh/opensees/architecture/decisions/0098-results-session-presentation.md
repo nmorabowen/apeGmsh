@@ -2036,6 +2036,25 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
   0.25 m, so a per-call scalar would apply one group's thickness to the
   other). Verified on `c008_derived_contour`, 22/22.
 
+* **The `dispose()` context question — CLOSED, and the answer is no.**
+  It was reasonable to suspect a leak: `manual_legend_gesture.py` only
+  stopped hanging the qt lane once its teardown added `hide` +
+  `deleteLater` + pumping ON TOP of `dispose()`, and A1 caution 1 says
+  a pane that does not close its own context leaves a live render
+  window behind. **Measured instead of argued**: three shown panes,
+  disposed with `dispose()` and nothing after it, take pyvista's
+  open-plotter count back to baseline. `dispose()` releases the
+  context.
+  The measurement is mutation-proven, which is the only reason the
+  negative result is worth anything — with `self._surface.close()`
+  removed the same file reports "left 3 of 3 render window(s) open",
+  so a pass means the context is released and not that the probe sees
+  nothing. What the harness's extra teardown addresses is therefore
+  something other than a GL-context leak: the WIDGETS survive
+  `dispose()`, correctly, because destroying them is Qt's
+  parent-ownership job. `tests/viewers/test_pane_dispose_releases_context.py`
+  pins both halves, so caution 1 is now a gate rather than a worry.
+
 * **R1 — the clip and scope gizmos.** A5.5 called this "a wiring job
   without A5.3's state question". **That was wrong, and this corrects
   it**: the session path emits no gizmo actors at all. `ViewClip` carries
