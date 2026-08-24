@@ -2031,8 +2031,18 @@ close leaks a context, which is Amendment 1 caution 1 in a new place.
   the gate's verdict is tested against whether a bare-name compute
   actually works, for every scalar the listing advertises, so a future
   derived family needing an argument cannot slip into a slot.
-  Unblocks per-ELEMENT thickness from the section record as the
-  follow-up (the model has `h`, but slabs and wall differ, 0.15 vs
+  **The follow-up landed too**: `apeGmsh.results._shell_thickness`
+  resolves the thickness per ELEMENT from the section record, so
+  `von_mises_shell` contours with no argument and the gate's exclusion
+  is now conditional — it refuses only when no thickness can be read.
+  Keyed by FEM element id, MEASURED not reasoned: a Gauss slab's
+  `element_index` intersects `ElementRecord.fem_eid` 864/864 and `.tag`
+  0/864, and both are plausible int spaces. `thickness_vector` refuses
+  rather than default-filling, because a wrong `t` does not fail — it
+  scales the stress by (t_wrong/t_right)² and still draws. Verified on
+  `c009_shell_von_mises`, 24/24, whose gate asserts the auto answer
+  matches a forced t=0.15 on the slabs and DIFFERS on the wall.
+  Superseded note: per-ELEMENT thickness from the section record (the model has `h`, but slabs and wall differ, 0.15 vs
   0.25 m, so a per-call scalar would apply one group's thickness to the
   other). Verified on `c008_derived_contour`, 22/22.
 

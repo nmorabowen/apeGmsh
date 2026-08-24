@@ -240,7 +240,8 @@ def principal_frame(
 
 
 def compute_shell(
-    name: str, columns: dict[str, np.ndarray], *, thickness: float,
+    name: str, columns: dict[str, np.ndarray],
+    *, thickness: "float | np.ndarray",
 ) -> np.ndarray:
     """Shell von Mises from stress resultants (through-thickness envelope).
 
@@ -251,14 +252,41 @@ def compute_shell(
 
     and returns the larger of the top / bottom von Mises per point — the
     worst-case surface demand. ``columns`` holds the six in-plane
-    resultants (``membrane_force_*`` / ``bending_moment_*``); ``thickness``
-    is the shell thickness ``t``. Transverse shears are not included.
+    resultants (``membrane_force_*`` / ``bending_moment_*``).
+    Transverse shears are not included.
+
+    ``thickness`` is a scalar ``t``, or a **per-column** array aligned to
+    the ``(T, N)`` resultant columns — i.e. one thickness per Gauss
+    point, which is what
+    :func:`apeGmsh.results._shell_thickness.thickness_vector` builds from
+    a slab's ``element_index``. A model can mix thicknesses under one
+    read (the ssi_frame_wall bench spans 0.15 m slabs and a 0.25 m wall),
+    and a single scalar there would apply one group's thickness to the
+    other — a (t_wrong/t_right)² error in the 6M/t² term that still draws
+    a plausible picture.
     """
     if name not in _SHELL_DERIVED:
         raise ValueError(f"'{name}' is not a derived shell scalar.")
-    t = float(thickness)
-    if t <= 0.0:
-        raise ValueError(f"thickness must be > 0 (got {thickness!r}).")
+    t = np.asarray(thickness, dtype=np.float64)
+    if t.ndim > 1:
+        raise ValueError(
+            f"thickness must be a scalar or a 1-D per-column array, got "
+            f"shape {t.shape}."
+        )
+    if not np.all(t > 0.0):
+        bad = t if t.ndim == 0 else t[t <= 0.0][:5]
+        raise ValueError(f"thickness must be > 0 (got {bad!r}).")
+    if t.ndim == 1:
+        # Broadcast along the time axis of the (T, N) columns.
+        sample = next(iter(columns.values()))
+        n_cols = np.asarray(sample).shape[-1]
+        if t.size != n_cols:
+            raise ValueError(
+                f"per-column thickness has {t.size} entries but the "
+                f"resultant columns have {n_cols} — the vector must align "
+                f"to the slab's element_index."
+            )
+        t = t[np.newaxis, :]
 
     membrane = {k: np.asarray(columns[f"membrane_force_{k}"], dtype=np.float64)
                 for k in ("xx", "yy", "xy")}

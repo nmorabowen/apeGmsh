@@ -281,14 +281,18 @@ datasets, so it answers the same recorded-only question. `vector` is
 untouched on purpose — a derived scalar has no axis, and a vector glyph
 of a scalar is meaningless.
 
-**Open — `von_mises_shell` still cannot be contoured.** It is derived
-but not computable from the stored columns alone: it recovers
-σ = N/t ± 6M/t² and needs the shell THICKNESS. The thickness is in the
-model (`ElasticMembranePlateSection` carries `h`) but differs per group
-— slabs 0.15 m, wall 0.25 m — so it must be resolved per ELEMENT, not
-passed per call. `available_derived()` still advertises it, correctly:
-its other callers can pass `thickness=`. The contour GATE excludes it,
-because a slot carries a bare component name and nothing else.
+**Fixed — `von_mises_shell` contours** (case `c009_shell_von_mises`).
+It recovers σ = N/t ± 6M/t², so it needs the shell THICKNESS, which is
+now resolved PER ELEMENT from the section record
+(`apeGmsh.results._shell_thickness`). Per element because the bench
+spans two — slabs 0.15 m, wall 0.25 m — and one scalar for both would
+apply the slab's to the wall, a (0.25/0.15)² error in the 6M/t² term
+that still renders. Gated by the `contour_shell_vm` slot and the
+`per-element shell thickness` check, which asserts the auto answer
+matches a forced t=0.15 on the slabs and DIFFERS on the wall — a
+single-thickness fixture could not tell the two apart. An explicit
+`thickness=` still overrides, and is the escape hatch for a section
+type apeGmsh cannot measure.
 
 **~~Open~~ (superseded) — the `contour` and `vector` slots cannot see derived scalars.**
 `resolve_contour_topology` tests the quantity against
