@@ -111,6 +111,48 @@ doc's zone-registry "Current" cells against the live
 and asserts each is named somewhere in the doc — both fail loud (proven
 by deliberately reverting the doc and re-running before restoring it)
 instead of the doc quietly going stale again.
+### ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)
+
+Three additive gaps closed at once, all found while an out-of-process
+consumer vendored the published goldens. `CONTRACT_VERSION` goes
+1.7.0 → **1.8.0**; nothing gained a `required` field, so old readers
+are unaffected (INV-17).
+
+**`.apegmsh/progress.json` — the live solve's step counter.** The
+analyze loop has always emitted `APEGMSH_PROGRESS i=.. n=.. t=..`, and
+`opensees/_run.py` has always parsed it for the `verbose` console
+counter — but another process could only learn how far along a solve
+was by tailing the solver log and reimplementing a private regex. Each
+parsed sample now also atomic-replaces
+`{schema, contract_version, deck, log, i, n, t, ts, done, warnings}`,
+with a terminal `done: true` + `ok` write that fires on a failed exit
+too. Throttle is the marker cadence (~20 samples/run), not a timer.
+The sidecar is **habitat-only**: it writes where `.apegmsh/` already
+exists and nowhere else, so a plain `python model.py` grows no dot-dir
+(INV-28), and it swallows its own IO errors — a lost sample must never
+kill a long solve (INV-29). The writer lives in `studio/_progress.py`;
+`opensees/_run.py` reaches it through a deferred import, so
+`import apeGmsh.opensees` gains no eager edge onto the habitat.
+
+**Run ledger lines carry `started_at` + `duration_s`.** A run line had
+only `ts`, written at the end, so "how long did that take" meant
+differencing adjacent lines — wrong when runs are not back-to-back and
+undefined for the first line. Both `_exec_hold_open` exits are now
+timed with a monotonic clock, so a *failed* replay also reports how
+long it burned. Untimed lines **omit** the keys rather than writing
+`null`, so a reader that finds `duration_s` can trust it.
+
+**`contract_version` is now stamped into files, not just payloads.**
+It lived only on the live `status` dict, so a consumer reading
+`.apegmsh/` directly had an INV-17 major gate it could never engage.
+`names.json` and `progress.json` now carry the stamp, and `validate()`
+applies the major check to any payload that has it. Absence means
+"pre-1.8.0", not "wrong major".
+
+New `progress.schema.json` + golden; `ledger` / `names` schemas gained
+the optional properties; `studio-habitat.md` documents the file, its
+poll contract, and the staleness rule (nothing prunes it — gate on
+mtime or `busy.busy`).
 
 ### ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)
 

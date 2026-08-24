@@ -7,6 +7,9 @@ consumer copies instead of importing the FEM stack.
 ``contract_version`` is a semver for the *habitat contract* (distinct
 from per-file integer ``schema`` fields). Additive fields never bump
 the major; readers ignore unknown keys; unknown major is refused.
+Since 1.8.0 the two snapshots a consumer polls most — ``names.json``
+and ``progress.json`` — carry the stamp themselves, so the major gate
+works off a file on disk and not only off a live ``status`` call.
 
 ``runs.jsonl`` interleaves TWO record kinds and therefore has two
 published schemas: a run line carries no ``kind`` and validates as
@@ -27,7 +30,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = "1.7.0"
+CONTRACT_VERSION = "1.8.0"
 CONTRACT_MAJOR = 1
 
 # kind → (schema file stem, expected per-file schema int)
@@ -42,6 +45,7 @@ _KINDS: dict[str, tuple[str, int]] = {
     "project": ("project", 1),
     "busy": ("busy", 1),
     "assess": ("assess", 1),
+    "progress": ("progress", 1),
 }
 
 
@@ -122,10 +126,14 @@ def validate(kind: str, data: Any) -> None:
                 f"{kind}.schema={got} unsupported "
                 f"(expected {expected_schema})"
             )
-    if kind == "status":
-        ver = data.get("contract_version")
-        if ver is not None:
-            check_contract_version(str(ver))
+    # Any payload MAY carry ``contract_version``; when it does, the major
+    # gate applies (INV-17). ``status`` was the only carrier until 1.8.0
+    # put the stamp on the ``names.json`` / ``progress.json`` files that
+    # actually land on disk — a consumer that only ever reads files could
+    # not otherwise engage the gate at all.
+    ver = data.get("contract_version")
+    if ver is not None:
+        check_contract_version(str(ver))
     schema = load_schema(kind)
     _validate_against(schema, data, path=kind)
 

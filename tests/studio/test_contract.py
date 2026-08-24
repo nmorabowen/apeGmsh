@@ -24,7 +24,7 @@ from apeGmsh.studio._names import write_names
 
 _KINDS = (
     "selection", "names", "ledger", "ledger_pin", "highlight", "status", "host",
-    "project", "busy", "assess",
+    "project", "busy", "assess", "progress",
 )
 
 
@@ -115,6 +115,82 @@ def test_live_writers_match_contract(tmp_path: Path) -> None:
         ts="2026-08-16T05:00:00Z",
     )
     validate("ledger", rec)
+
+
+# =====================================================================
+# ADR 0095 Amendment 11 — contract 1.8.0
+# =====================================================================
+
+
+def test_the_version_stamp_reaches_a_file_and_not_only_a_payload() -> None:
+    """The gap that motivated the stamp.
+
+    ``contract_version`` used to exist only on the ``status`` *payload*,
+    which is a live call. A consumer that reads ``.apegmsh/`` directly —
+    the whole point of publishing schemas — therefore had an INV-17
+    major gate it could never engage. These two goldens are files.
+    """
+    for kind in ("names", "progress"):
+        assert load_fixture(kind)["contract_version"] == CONTRACT_VERSION
+
+
+@pytest.mark.parametrize("kind", ["names", "progress", "status"])
+def test_a_foreign_major_is_refused_wherever_the_stamp_appears(kind: str) -> None:
+    """The gate is generic, not a ``status`` special case.
+
+    Before 1.8.0 ``validate`` only checked ``contract_version`` when
+    ``kind == "status"``, so stamping the new files would have bought a
+    field nobody enforced.
+    """
+    payload = {**load_fixture(kind), "contract_version": "2.0.0"}
+    with pytest.raises(ContractError, match="unsupported contract major"):
+        validate(kind, payload)
+
+
+def test_a_pre_1_8_file_without_the_stamp_still_validates() -> None:
+    """Absence means "older", never "wrong major" — the additive law."""
+    older = {k: v for k, v in load_fixture("names").items() if k != "contract_version"}
+    validate("names", older)
+
+
+def test_the_live_names_writer_stamps_the_version(tmp_path: Path) -> None:
+    """``collect_manifest`` is the real assembler; nothing else adds this."""
+    import apeGmsh.studio._names as names_mod
+
+    manifest = names_mod.collect_manifest(phase="model")
+
+    assert manifest["contract_version"] == CONTRACT_VERSION
+    path = tmp_path / "names.json"
+    write_names(path, manifest)
+    validate("names", json.loads(path.read_text(encoding="utf-8")))
+
+
+def test_durations_are_optional_on_a_run_line(tmp_path: Path) -> None:
+    """Both shapes are legal: the schema must not have grown a requirement."""
+    untimed = make_record(
+        script=tmp_path / "box.py", phase="model", ok=True,
+        root=tmp_path, ts="2026-08-16T05:00:00Z",
+    )
+    assert "duration_s" not in untimed and "started_at" not in untimed
+    validate("ledger", untimed)
+
+    timed = make_record(
+        script=tmp_path / "box.py", phase="model", ok=True,
+        root=tmp_path, ts="2026-08-16T05:00:00Z",
+        started_at="2026-08-16T04:59:57Z", duration_s=2.847031,
+    )
+    validate("ledger", timed)
+    assert timed["duration_s"] == 2.847031
+
+
+def test_the_terminal_progress_record_also_validates() -> None:
+    """The golden is the in-flight shape; the ``done``/``ok`` one must pass too.
+
+    A consumer vendoring only the golden would otherwise never see the
+    key that tells it to stop drawing a progress bar.
+    """
+    final = {**load_fixture("progress"), "done": True, "ok": True}
+    validate("progress", final)
 
 
 # =====================================================================

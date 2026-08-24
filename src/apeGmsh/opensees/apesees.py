@@ -9700,6 +9700,7 @@ class apeSees:
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
+            deck_path=path,
         )
 
     def modal_deck(
@@ -10208,6 +10209,7 @@ class apeSees:
             label=run_label(path, analyze_steps, analyze_dt),
             header="openseespy",
             env=child_env,
+            deck_path=path,
         )
 
     def run(self, *, wipe: bool = True) -> None:

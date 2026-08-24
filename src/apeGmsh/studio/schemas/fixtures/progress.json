@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "contract_version": "1.8.0",
+  "deck": "out/model.tcl",
+  "log": "out/model.log",
+  "i": 120,
+  "n": 500,
+  "t": "1.2",
+  "ts": "2026-08-16T06:05:00Z",
+  "done": false,
+  "warnings": 0
+}

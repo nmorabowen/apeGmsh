@@ -21,8 +21,10 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -164,6 +166,8 @@ def _record_run(
     root: Path,
     cwd: Path | None,
     trigger: str = "open",
+    started_at: str | None = None,
+    duration_s: float | None = None,
 ) -> None:
     from ._ledger import append_run, make_record
     from ._paths import ledger_path
@@ -185,6 +189,8 @@ def _record_run(
             root=root,
             cwd=cwd,
             trigger=trigger,
+            started_at=started_at,
+            duration_s=duration_s,
         ),
     )
     if ok and session is not None:
@@ -206,6 +212,14 @@ def _exec_hold_open(
     """Exec *script* with sessions held open. Raises on failure."""
     if phase not in PHASES:
         raise ValueError(f"phase must be one of {PHASES}; got {phase!r}")
+
+    # Amendment 11: both ledger exits below are timed, so a failed run
+    # reports how long it burned before it died — the number a human
+    # actually wants when a replay is slow AND broken. Wall clock for
+    # "when", monotonic for "how long"; a clock step must not be able to
+    # produce a negative duration.
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    started = time.monotonic()
 
     from apeGmsh._session import _SessionBase
     from apeGmsh.core.Model import Model
@@ -305,6 +319,8 @@ def _exec_hold_open(
             root=habitat,
             cwd=exec_cwd,
             trigger=trigger,
+            started_at=started_at,
+            duration_s=time.monotonic() - started,
         )
         raise caught
 
@@ -323,6 +339,8 @@ def _exec_hold_open(
         root=habitat,
         cwd=exec_cwd,
         trigger=trigger,
+        started_at=started_at,
+        duration_s=time.monotonic() - started,
     )
     return ReplayResult(
         ok=True,
