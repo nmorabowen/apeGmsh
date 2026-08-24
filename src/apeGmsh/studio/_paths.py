@@ -2,10 +2,10 @@
 
 Workspace-relative ``.apegmsh/selection.json`` (picks),
 ``names.json`` (what exists now), ``runs.jsonl`` (run_until
-history), ``highlight.json`` (Point-tool request), and ``visors/``
-(working stills / clips). Stable for the skill: one path under a
-resolved **project root** (INV-15), not "wherever the process cwd
-happened to be."
+history), ``highlight.json`` (Point-tool request), ``progress.json``
+(the live solve's step counter), and ``visors/`` (working stills /
+clips). Stable for the skill: one path under a resolved **project
+root** (INV-15), not "wherever the process cwd happened to be."
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ DEFAULT_HOST_REL = Path(".apegmsh") / "host.json"
 DEFAULT_PROJECT_REL = Path(".apegmsh") / "project.json"
 DEFAULT_BUSY_REL = Path(".apegmsh") / "busy.json"
 DEFAULT_ASSESS_REL = Path(".apegmsh") / "assess.json"
+DEFAULT_PROGRESS_REL = Path(".apegmsh") / "progress.json"
 DEFAULT_PINS_REL = Path(".apegmsh") / "pins"
 
 ROOT_ENV = "APEGMSH_ROOT"
@@ -187,6 +188,12 @@ def assess_path(root: Path | None = None) -> Path:
     """Return ``<root>/.apegmsh/assess.json`` (``root`` via :func:`resolve_root`)."""
     base = resolve_root(root)
     return base / DEFAULT_ASSESS_REL
+
+
+def progress_path(root: Path | None = None) -> Path:
+    """Return ``<root>/.apegmsh/progress.json`` (``root`` via :func:`resolve_root`)."""
+    base = resolve_root(root)
+    return base / DEFAULT_PROGRESS_REL
 
 
 def pin_dir(pin_id: str, root: Path | None = None) -> Path:

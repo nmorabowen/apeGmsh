@@ -1406,3 +1406,128 @@ case and writes its record.
   the script's code; a `--no-git` habitat records no provenance
   fields and still exits 0.
 - Habitat suites and the INV-20 / INV-24 grep gates stay green.
+
+---
+
+## Amendment 11 (2026-08-24) — the progress sidecar, run durations, and a version stamp on disk (contract 1.8.0)
+
+Append-only. Parts 1–6, INV-1–INV-27, S0–S11a, and Amendments 1–10
+stay. Amendment 3 froze the contract with the note that "a separate
+product shell that consumes Studio's contract motivated this freeze."
+That shell now exists and has vendored the goldens, and the exercise
+surfaced three gaps cheaper to close than to work around:
+
+1. **Progress was greppable, not readable.** The analyze loop emits
+   `APEGMSH_PROGRESS i=.. n=.. t=..` and `opensees/_run.py` already
+   parses it to draw a console counter — but the only way for another
+   process to learn how far along a solve was, was to tail the solver
+   log and reimplement a private regex against a format that belongs to
+   the solver, not to us.
+2. **"How long did that take" was arithmetic.** A ledger run line
+   carried `ts` (written at the end) and nothing else, so a duration
+   could only be guessed by differencing adjacent lines — wrong
+   whenever runs are not back-to-back, and impossible for the first
+   line in the file.
+3. **No file on disk said which contract wrote it.** `contract_version`
+   existed only on the `status` *payload*, which is a live call and not
+   a file. A consumer reading `.apegmsh/` directly therefore had an
+   INV-17 major gate it could never engage — the one check that is
+   supposed to make a future major bump safe was unreachable from the
+   place the data actually lives.
+
+### Decision
+
+- **`.apegmsh/progress.json`** (schema 1) — one atomic-replace snapshot
+  of the live solve:
+  `{schema, contract_version, deck, log, i, n, t, ts, done, warnings}`,
+  with `ok` added on the terminal write. `deck` / `log` follow S5i
+  (root-relative posix under the habitat, absolute outside). `t` stays
+  the **string** the marker carried: it is the solver's own token, and
+  a lossless copy cannot misreport a `nan` the way a coerced float
+  would.
+- **Written from the stream tee, throttled by the marker cadence.**
+  One write per parsed sample (~20 per analyze) — no timer of our own,
+  so the file's write rate is whatever the deck already prints. The
+  final write (`done: true` plus `ok`) happens on failure as well as
+  success, and before the non-zero-exit raise: a solve that dies must
+  not leave a consumer polling `done: false` forever.
+- **Habitat-only, and it never founds one.** The root is the ordinary
+  INV-15 resolution, but the answer only counts when `.apegmsh/`
+  already exists there — `resolve_root` falls back to cwd by design, so
+  without that check every `python model.py` anywhere on the machine
+  would deposit a dot-dir. Nothing is written before the first marker
+  either: a deck with no `analyze` has no progress to report, and
+  publishing a fabricated `0/0` would tell a poller that an analysis
+  finished at step zero.
+- **The writer lives in `studio/_progress.py`; `opensees/_run.py`
+  reaches it through a deferred import.** The habitat contract is
+  `studio`'s property — its schema, its paths, its atomic-write
+  discipline — and splitting the writer away from them would be a
+  second implementation of a guarantee that stays correct in exactly
+  one of them (the `_atomic_io` lesson). The function-body import is
+  the idiom `studio` already uses in the opposite direction (`_replay`
+  imports `apeSees` inside `_install_phase_gates`), so
+  `import apeGmsh.opensees` grows no eager edge onto the habitat.
+- **Run lines gain `started_at` and `duration_s`** (ISO-8601 UTC;
+  seconds from a monotonic clock, so a wall-clock step cannot produce a
+  negative). Both replay exits are timed, so a *failed* run reports how
+  long it burned before it died. Absent values are **omitted, not
+  null**: a line with no `duration_s` says "not timed", and a reader
+  that finds the key can trust it. A short-circuited "same hash, same
+  phase" skip never reaches the ledger at all, so it needs no rule.
+- **`contract_version` is stamped into `names.json` and
+  `progress.json`** — the two files a consumer polls — and `validate()`
+  now applies the major gate to any payload carrying the key, not only
+  to `status`. Absence means "pre-1.8.0", never "wrong major".
+- **`CONTRACT_VERSION` → 1.8.0.** Every addition is an optional
+  property on an existing shape or a new file; no `required` list grew;
+  old readers ignore what they do not know (INV-17). One bump covers
+  all three.
+
+### New invariants
+
+- **INV-28 (a sidecar never founds a habitat).** A file written as a
+  side effect of ordinary work — as opposed to a verb the user
+  invoked — writes only where `.apegmsh/` already exists, and skips
+  silently otherwise. The INV-15 cwd fallback is for verbs, not for
+  side effects.
+- **INV-29 (a side-effect writer cannot fail its host).** Habitat
+  writes that ride along inside a longer operation swallow their own
+  errors. Losing a progress sample is a cost the contract may impose;
+  killing a solve that has been running for hours is not.
+
+### Slices
+
+| Slice | Ships | Depends |
+|---|---|---|
+| **S12a** | `studio/_progress.py` + `DEFAULT_PROGRESS_REL` / `progress_path` + `progress.schema.json` + golden; `stream_run(deck_path=)` wiring via the deferred import; ledger `started_at` / `duration_s` timed at both `_exec_hold_open` exits; `contract_version` on `collect_manifest`; generic major gate in `validate`; `CONTRACT_VERSION` 1.8.0; `studio-habitat.md` ownership + poll rows; tests (goldens validate, live writers match, fake-stream sidecar, terminal write on a failed exit, no-habitat skip, unwritable habitat does not raise) | Amendment 3 (S5d) |
+
+### Alternatives rejected (this amendment)
+
+| Rejected | Why |
+|---|---|
+| **Consumer tails the solver log** | Makes `_PROGRESS_RE` a de facto public API inside a file whose format belongs to the solver, and every consumer reimplements the parse. The sample is already parsed here; publishing it costs one atomic write. |
+| **A root-level leaf writer** (the `_atomic_io` move) | That move existed because `results` may not import `studio` *at all*. Here the dependency is one deferred function-body import, in the opposite direction of an edge `studio` already has — and a root leaf would have to duplicate `resolve_root` and `CONTRACT_VERSION`, which is precisely the two-implementations failure `_atomic_io` was created to avoid. |
+| **A timer-throttled writer** | The marker cadence is already the throttle (~20 samples/run). A second rate limiter is a knob to tune and a way to publish a sample that no longer matches the log. |
+| **`duration_s: null` on untimed lines** | A null duration is indistinguishable from a broken clock. Omission is the honest encoding, and INV-17 already obliges readers to tolerate a missing additive key. |
+| **Deriving durations from adjacent `ts` values** | Wrong whenever runs are not back-to-back, and undefined for the first line in the file. |
+| **Writing `progress.json` for a deck with no `analyze`** | A `0/0` record is a claim about an analysis that never ran. Silence is accurate. |
+| **Pruning / deleting `progress.json` between runs** | Deleting is not atomic replace, and a consumer needs a freshness rule regardless (mtime, or `busy.busy`). One rule beats two. |
+| **A new ADR** | Amendment 1's bar — a new ADR only if the CLI/JSON transport is reversed — is not met; this is additive contract surface. |
+
+### Acceptance (this amendment)
+
+- Every published golden validates against its schema, `progress`
+  included; the live `names.json` / ledger / progress writers each
+  produce a payload their own schema accepts.
+- A fake solve stream driven through `stream_run` inside a habitat
+  leaves a `progress.json` matching the last marker, then a terminal
+  record with `done: true` and the right `ok` — on a non-zero exit as
+  well as a clean one.
+- The same stream outside a habitat creates no `.apegmsh/`; a habitat
+  whose writes fail does not disturb the run's own outcome.
+- A timed replay's ledger line carries `started_at` and a `duration_s`
+  that bounds the observed wall time; a failed replay's line carries
+  them too.
+- `CONTRACT_VERSION == "1.8.0"`, the major stays 1, and a payload
+  claiming major 2 is refused wherever the stamp appears.

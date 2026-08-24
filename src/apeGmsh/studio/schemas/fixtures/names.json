@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "contract_version": "1.8.0",
   "phase": "model",
   "labels": ["body"],
   "physical_groups": ["Body"],

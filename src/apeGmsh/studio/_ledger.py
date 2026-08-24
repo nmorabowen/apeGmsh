@@ -1,9 +1,12 @@
-"""Append-only run ledger (ADR 0095 S2c / S5f).
+"""Append-only run ledger (ADR 0095 S2c / S5f / Amendment 11).
 
 ``names.json`` is the current snapshot. ``.apegmsh/runs.jsonl`` is the
 history of ``run_until`` stops — enough for a later session to reconstruct
 phase, counts, and names without the chat. Assess findings and visor
 paths are reserved keys; they stay empty until those artifacts exist.
+A timed replay also records ``started_at`` / ``duration_s``, so "how
+long did that take" is a field and not an arithmetic guess between two
+adjacent ``ts`` values.
 
 Append is best-effort (not atomic replace). Readers skip torn lines and
 never raise (INV-16). Pure: no ``gmsh``, no Qt.
@@ -36,6 +39,8 @@ def make_record(
     root: Path | str | None = None,
     cwd: Path | str | None = None,
     trigger: str = "open",
+    started_at: str | None = None,
+    duration_s: float | None = None,
 ) -> dict[str, Any]:
     """One JSONL object. ``assess`` / ``visors`` reserved, not invented.
 
@@ -48,6 +53,16 @@ def make_record(
     refresh), or ``"watch"`` (settled file-watch tick). Additive —
     readers of older records without the key must tolerate its
     absence (INV-17).
+
+    ``started_at`` (ISO-8601 UTC) and ``duration_s`` (seconds, from a
+    monotonic clock) are the ADR 0095 Amendment 11 pair: how long the
+    replay took, and when it began. ``ts`` remains the moment the
+    record was *written*, i.e. the end of the run — the two are not
+    redundant. Both keys are **omitted entirely** when the caller has
+    no honest value rather than written as ``null``: a record with no
+    ``duration_s`` says "not timed", and a reader that finds the key
+    can trust it. Only a real, clocked replay supplies them (a
+    short-circuited "skip" never reaches the ledger at all).
     """
     labels: list[str] = []
     pgs: list[str] = []
@@ -84,6 +99,10 @@ def make_record(
         rec["root"] = str(base)
     if cwd is not None:
         rec["cwd"] = display_path(cwd, base)
+    if started_at is not None:
+        rec["started_at"] = started_at
+    if duration_s is not None:
+        rec["duration_s"] = round(float(duration_s), 6)
     return rec
 
 

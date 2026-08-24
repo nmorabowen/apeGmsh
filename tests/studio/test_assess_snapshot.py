@@ -297,8 +297,11 @@ def test_pin_preferred_over_changed_live_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def test_contract_version_is_1_7_0() -> None:
-    # 1.7.0 (ADR 0098 S5b): the pin record gained `session_snapshot` and
-    # `ledger_pin` joined the published kinds. Additive both ways — no
-    # existing reader's behaviour changes, so the major stays 1.
-    assert CONTRACT_VERSION == "1.7.0"
+def test_contract_version_is_1_8_0() -> None:
+    # 1.8.0 (ADR 0095 Amendment 11): `progress.json` joined the published
+    # kinds, run lines gained `started_at` / `duration_s`, and
+    # `names.json` / `progress.json` now stamp `contract_version` so a
+    # file-only consumer can engage the INV-17 major gate. Additive
+    # throughout — no existing reader's behaviour changes, so the major
+    # stays 1.
+    assert CONTRACT_VERSION == "1.8.0"

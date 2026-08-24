@@ -25,7 +25,9 @@
     "trigger": {
       "type": ["string", "null"],
       "enum": ["open", "refresh", "watch", null]
-    }
+    },
+    "started_at": { "type": "string" },
+    "duration_s": { "type": "number" }
   },
   "additionalProperties": true
 }
