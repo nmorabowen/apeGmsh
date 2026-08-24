@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — DomainCapture queried a different OpenSees module than the bridge was driving
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-live-contact-queries-ladruno_contact_force-and-friends-fork-adr-85-adoption-s6-thin" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8582,6 +8593,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — DomainCapture queried a different OpenSees module than the bridge was driving
       
     </span>
   </a>
@@ -13602,6 +13624,39 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving">FIXED — <code>DomainCapture</code> queried a different OpenSees module than the bridge was driving<a class="headerlink" href="#fixed-domaincapture-queried-a-different-opensees-module-than-the-bridge-was-driving" title="Permanent link">&para;</a></h3>
+<p><code>DomainCapture._lazy_ops()</code> resolved its OpenSees module by
+<code>import openseespy.opensees</code>, while a live :class:<code>LiveOpsEmitter</code> imports
+<code>opensees</code>. Those are the <strong>same module object</strong> in a normally-wired venv
+(both are the installed <code>opensees.pyd</code>), so the two names were treated as
+interchangeable. They are not: put a second OpenSees in the interpreter — a
+locally built fork on <code>PYTHONPATH</code> beside a stock openseespy in
+site-packages — and they resolve to <strong>two different modules with two
+different domains</strong>.</p>
+<p>The capture then samples the empty one. Every <code>nodeDisp</code> returns
+<code>WARNING no response is found</code> and surfaces as
+<code>opensees.OpenSeesError: See stderr output</code>, while the analysis it is meant
+to be sampling ran, and converged, in the other module. Nothing in the message
+points at the module split.</p>
+<p>It is a convincing impostor. Found while validating a fork rebuild:
+<code>test_shell_on_solid.py::test_node_ndf_roundtrips_through_domain_capture</code>
+failed against the new build and passed against the installed one, which reads
+as a solver regression and was initially called one. The A/B was confounded —
+the two runs differed by <em>venv</em> as well as by build, and only the venv
+mattered.</p>
+<p><code>_lazy_ops</code> now prefers the module the bridge is actually driving
+(<code>bridge._live_emitter.ops</code>), falling back to the import as before. The
+resolution stays <strong>late</strong> rather than moving into <code>__init__</code>: a caller
+enters <code>ops.domain_capture(...)</code> <em>before</em> <code>analyze()</code> creates the live
+emitter, so there is nothing to bind to at construction time. An explicit
+<code>ops=</code> still wins, since that is the seam the capture's own tests mock
+through.</p>
+<p>Verified on the exact scenario that produced the false positive (stock
+openseespy in site-packages + fork build on <code>PYTHONPATH</code>): the failing test
+passes, and the <code>live</code> lane against that build goes from 69 passed / 1
+spurious failure to <strong>70 passed</strong>, leaving only the three
+<code>raises_friendly_error_on_pre_adr44/46_build</code> tests that are <em>designed</em> to
+flip once a fork build gains those features.</p>
 <h3 id="added-live-contact-queries-ladruno_contact_force-and-friends-fork-adr-85-adoption-s6-thin">ADDED — live contact queries: <code>ladruno_contact_force</code> and friends (fork ADR-85, adoption S6 thin)<a class="headerlink" href="#added-live-contact-queries-ladruno_contact_force-and-friends-fork-adr-85-adoption-s6-thin" title="Permanent link">&para;</a></h3>
 <p>The last adoption slice, in the shape the fork actually supports. S6 was
 scoped as "<code>Results</code> reads contact data" — but <code>LadrunoContact</code> is a
