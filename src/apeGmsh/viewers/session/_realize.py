@@ -1539,6 +1539,41 @@ def _pair_isin(
 # =====================================================================
 
 
+def reclip_pane(view: "MeshView", backend: Any) -> None:
+    """Re-cut an already-realized pane in place (ADR 0098 A7 / R1).
+
+    The clip analogue of A4's :func:`restep_pane`, and it exists for a
+    measured reason. ``pane.clips`` used to sit in the reconciler's
+    STRUCTURE term, so every mouse-move of a section-plane gizmo drag
+    tore down and rebuilt every layer, diagram and scalar bar: **240.8
+    ms mean per frame** on the bench (``ssi_frame_wall``,
+    ``c010_clip_gizmo_drag``, one pane), against the scrubber's 33 ms
+    budget and a 17.7 ms scrub on the SAME pane. About 4 fps for a
+    direct-manipulation gesture. A4's fast path could never help: it
+    fires only when the CURSOR term moved alone, so ``can_restep`` was
+    never consulted for a clip edit.
+
+    Nothing is rebuilt because nothing needs to be. A clip edit changes
+    which half-spaces cut the scene — never which actors exist — and
+    :meth:`RenderBackend.set_clip_planes` re-stamps its set onto every
+    live handle (ADR 0083 Part 2), so one call re-cuts the whole pane.
+    Gizmo layers are ``clip_exempt`` and are skipped by that stamp, so
+    a plane cannot slice its own handle.
+
+    Deliberately delegates to :func:`_apply_clips` rather than
+    reimplementing the resolution: ONE writer, so the fast path and a
+    full realize cannot disagree about what ``offset`` and ``flipped``
+    mean. That equivalence is the fast path's whole safety argument and
+    it is gated, not assumed.
+
+    Raises whatever the backend raises; the caller reports and falls
+    back to a full realize in the same flush, exactly as A4.4 requires,
+    because a HALF re-cut pane is the stale-picture class ADR 0084
+    exists to prevent.
+    """
+    _apply_clips(backend, view)
+
+
 def _apply_clips(backend: Any, view: "MeshView") -> None:
     """Push this view's ACTIVE section planes onto the backend.
 
@@ -1655,6 +1690,6 @@ def _layer_lutspec(diagram: Any) -> Any:
 
 __all__ = [
     "GaussTargets", "NodeTargets", "PaneTargets", "RealizedLayer",
-    "RealizedPane", "realize_pane", "recorded_components",
+    "RealizedPane", "realize_pane", "reclip_pane", "recorded_components",
     "recorded_line_components",
 ]
