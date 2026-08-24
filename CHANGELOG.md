@@ -77,6 +77,40 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — the `model.h5` neutral zone is a published contract (ADR 0023 amendment)
+
+The neutral zone has always been the part of `model.h5` a non-apeGmsh
+tool can actually use — nodes, elements, physical groups, labels, mesh
+selections — but it was documented only internally, in
+`opensees/architecture/h5-schema.md`, which is written for people
+changing the emitter rather than people reading its output.
+
+[`docs/design/model-h5-neutral-zone.md`](docs/design/model-h5-neutral-zone.md)
+publishes it: every group and dataset with exact dtype, shape,
+attributes and optionality; the version rule as the code enforces it
+(semver strings under `/meta/neutral_schema_version`, the backward-only
+two-version window, refuse-don't-guess on an unknown version); and the
+index-base contract that a reader most easily gets wrong —
+`connectivity` holds **node ids**, not row indices, and ids are 1-based
+and need not be contiguous.
+
+Nothing about the emitter changed. This is publication only: no new
+fields, no version bump.
+
+The contract is machine-readable and lives in exactly one place,
+`tests/fixtures/neutral_zone/inventory.py`.
+`tests/mesh/test_neutral_zone_schema_note.py` holds emitter, inventory
+and page together in both directions — emitter drift and doc drift each
+fail there — against a committed 41 KB golden,
+`tests/fixtures/neutral_zone/box.h5`, reproducible from
+`_generate_fixtures.py`. The golden is deliberately built to exercise
+the awkward cases: element ids that do not start at 1, and a physical
+group whose `element_ids` name elements no `/elements/{type}` group
+carries.
+
+The first consumer is an apeWorkbench browser reader (h5wasm, no h5py,
+no apeGmsh import); the golden is the artifact it conforms against.
+
 ### ADDED — docs: the contact section, with the 2D lane as its new half (fork ADR-85, adoption S5)
 
 `g.constraints.contact` / `contact_plane` were documented **nowhere** —

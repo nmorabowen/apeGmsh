@@ -229,6 +229,7 @@ nav:
       - The broker: design/broker.md
       - Parts & assembly internals: design/parts-assembly.md
       - Results internals: design/results.md
+      - "The model.h5 neutral zone": design/model-h5-neutral-zone.md
   - API Reference:
       - Overview: api/index.md
       - API Flow Atlas: api-flows/index.md

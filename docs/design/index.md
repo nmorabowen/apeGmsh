@@ -9,7 +9,7 @@ If you're here to *use* apeGmsh, you're one level too deep: the
 outside. Come back when a question starts with "why is it built this way" or
 "where would I change this."
 
-Four pages cover the load-bearing internals, in reading order:
+Five pages cover the load-bearing internals, in reading order:
 [Architecture](architecture.md) — the layers and the data flow;
 [Principles](principles.md) — the commitments every change is measured
 against; [The broker](broker.md) — how declarations become the frozen
@@ -17,6 +17,12 @@ against; [The broker](broker.md) — how declarations become the frozen
 instancing registry and fragmentation bookkeeping; and
 [Results internals](results.md) — the three-broker read side and the
 render seam.
+
+A sixth page faces outward rather than inward:
+[The `model.h5` neutral zone](model-h5-neutral-zone.md) publishes the
+on-disk model layout — dataset by dataset, with its version rule and a
+golden fixture — as a contract for tools that read apeGmsh's output
+without importing apeGmsh.
 
 The authoritative record of *decisions* — what was chosen, what was
 rejected, and why — is the append-only ADR log in the repository at
