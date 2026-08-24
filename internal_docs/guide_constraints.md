@@ -563,6 +563,13 @@ out-of-plane thickness in three places, and only one of them is this parameter:
 `kn="auto"` already folds the element's thickness), and a 3D model is refused
 by name. apeGmsh never invents an `h` from the declared element thickness.
 
+All three rows are measured, on fork build `b17e8bd82`: omitting `-thickness`
+is bit-identical to `thickness=1.0`; halving `h` against an explicit `eps_n`
+doubles the interface penetration (the ratio tends to exactly 2 as the
+interface stiffens — `2.000000018` at `eps_n = 1e12` — and is never 4, which is
+what an h² error would give); and `eps_n="auto"` is bit-identical at `h = 1.0`
+and `h = 0.5`.
+
 ```python
 g.constraints.contact("rock_face", "liner_face",
                       formulation="mortar", eps_n="auto",

@@ -95,6 +95,37 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — S4's three `-thickness` conventions re-measured on a trustworthy build
+
+The adoption-S4 figures were credited to fork build `e7555f2c9`. That stamp was
+wrong — the worktree binary that produced them misreported its own hash (it
+contained ADR-85 **F1**, which landed after `e7555f2c9`; see the `ladrunoBuild`
+staleness entry). The numbers were internally consistent, so the earlier
+correction flagged the provenance and left them alone. They are now re-measured
+against **`b17e8bd82`**, whose stamp is trustworthy because `rebuild` wipes
+`build/` and forces a CMake reconfigure.
+
+**All three conventions hold.**
+
+| Convention | Result on `b17e8bd82` |
+|---|---|
+| absent ≡ `-thickness 1.0` | bit-identical — `5.051658913343455e-07` both |
+| `h` applied **once**, not squared | penetration ratio `h=0.5 : h=1.0` = **2.0** |
+| `-epsN auto` never h-scaled | bit-identical at `h=1.0` vs `0.5` — `3.2823219478178336e-06` both |
+
+The middle one is worth a note, because a single deck does *not* return exactly
+2. Sweeping `epsN` across five decades gives 1.99978 (1e8), 1.99808 (1e9),
+1.99392 (1e10), 1.99995 (1e11), **2.000000018** (1e12). The interface force is
+fixed by equilibrium, so penetration goes as `1/(epsN·h)` and the ratio tends to
+exactly 2 as the interface stiffens; the sub-1 % wobble at intermediate
+stiffness is elastic coupling in the bodies, not an `h²` effect — which would
+have shown as **4.0**, and never does at any stiffness.
+
+Absolute values differ from the originals because the rig differs. What is
+pinned is the law, and each law reproduces. The S4 **tie** equilibrium residual
+(`0` to `2.3e-10` on a `1e6` load) was not re-measured and keeps its original
+provenance caveat.
+
 ### FIXED — `DomainCapture` queried a different OpenSees module than the bridge was driving
 
 `DomainCapture._lazy_ops()` resolved its OpenSees module by
