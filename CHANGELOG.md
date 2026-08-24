@@ -95,6 +95,45 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `DomainCapture` queried a different OpenSees module than the bridge was driving
+
+`DomainCapture._lazy_ops()` resolved its OpenSees module by
+``import openseespy.opensees``, while a live :class:`LiveOpsEmitter` imports
+``opensees``. Those are the **same module object** in a normally-wired venv
+(both are the installed ``opensees.pyd``), so the two names were treated as
+interchangeable. They are not: put a second OpenSees in the interpreter — a
+locally built fork on ``PYTHONPATH`` beside a stock openseespy in
+site-packages — and they resolve to **two different modules with two
+different domains**.
+
+The capture then samples the empty one. Every ``nodeDisp`` returns
+``WARNING no response is found`` and surfaces as
+``opensees.OpenSeesError: See stderr output``, while the analysis it is meant
+to be sampling ran, and converged, in the other module. Nothing in the message
+points at the module split.
+
+It is a convincing impostor. Found while validating a fork rebuild:
+``test_shell_on_solid.py::test_node_ndf_roundtrips_through_domain_capture``
+failed against the new build and passed against the installed one, which reads
+as a solver regression and was initially called one. The A/B was confounded —
+the two runs differed by *venv* as well as by build, and only the venv
+mattered.
+
+``_lazy_ops`` now prefers the module the bridge is actually driving
+(``bridge._live_emitter.ops``), falling back to the import as before. The
+resolution stays **late** rather than moving into ``__init__``: a caller
+enters ``ops.domain_capture(...)`` *before* ``analyze()`` creates the live
+emitter, so there is nothing to bind to at construction time. An explicit
+``ops=`` still wins, since that is the seam the capture's own tests mock
+through.
+
+Verified on the exact scenario that produced the false positive (stock
+openseespy in site-packages + fork build on ``PYTHONPATH``): the failing test
+passes, and the `live` lane against that build goes from 69 passed / 1
+spurious failure to **70 passed**, leaving only the three
+``raises_friendly_error_on_pre_adr44/46_build`` tests that are *designed* to
+flip once a fork build gains those features.
+
 ### ADDED — live contact queries: `ladruno_contact_force` and friends (fork ADR-85, adoption S6 thin)
 
 The last adoption slice, in the shape the fork actually supports. S6 was
