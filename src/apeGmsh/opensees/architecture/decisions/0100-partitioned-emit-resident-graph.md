@@ -352,7 +352,7 @@ admitted per cell by an error bound `|sampled − conservative| ≤ 0.02`.
 
 | hexes | np | median G0a | vs cross-repeat max peak |
 |---|---|---|---|
-| 24,389 | 8 | 0.558–0.599 | 0.558 |
+| 24,389 | 8 | 0.558–0.600 | 0.558 |
 | 29,791 | 4 | 0.605 | 0.581–0.584 |
 | 29,791 | 8 | 0.552 | 0.530–0.535 |
 | 32,768 | 4 | 0.602 | 0.572 |
@@ -428,9 +428,15 @@ numbers in view — not an instrument quietly grading its own homework.
 
 **Provenance, because this document must not appear to grade itself:** the
 decision to authorise R8 and to select the branch was taken by the **project
-owner on 2026-08-25**, with the dual-definition table above in view. This
-amendment *records* that ruling; it does not make it. The measuring party
-proposed both readings and did not choose between them.
+owner on 2026-08-25**, with the dual-definition table above in view — the
+owner selected "Amend + hybrid" from the options put to them. The ruling is
+recorded on the amendment's own pull request:
+<https://github.com/nmorabowen/apeGmsh/pull/1076#issuecomment-5405842105>.
+That record was written by the driving session **on the owner's behalf**,
+capturing an interactive decision — it is not a GitHub review by the owner's
+account, and should not be read as one. This amendment *records* the ruling;
+it does not make it. The measuring party proposed both readings and did not
+choose between them.
 
 ### `_PG_FANOUT_CACHE` — identified, measured, still not routed
 
