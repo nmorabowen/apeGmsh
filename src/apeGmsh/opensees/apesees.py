@@ -3424,6 +3424,7 @@ class BuiltModel:
                 element_plan=element_plan,
                 plan_by_rank=plan_by_rank,
                 rank_owned_nodes=rank_owned_nodes,
+                rank_primary_nodes=rank_primary_nodes,
                 node_idx_lookup=node_idx_lookup,
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
@@ -3450,6 +3451,7 @@ class BuiltModel:
         element_plan: "list[tuple[Element, ElementPlanRows]]",
         plan_by_rank: "dict[int, LazyRankBuckets]",
         rank_owned_nodes: "dict[int, SortedIntSet]",
+        rank_primary_nodes: "dict[int, SortedIntSet]",
         node_idx_lookup: "SortedIntToInt",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
@@ -4091,11 +4093,17 @@ class BuiltModel:
             if stage.pattern_specs:
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
-                    rank_owned = {int(n) for n in part.node_ids}
-                    rank_primary = {
-                        nid for nid in rank_owned
-                        if primary_owner.get(nid) == rank
-                    }
+                    # ADR 0100 D2 completeness (found by the mypy rebind
+                    # flag): this pass used to rebuild a full per-rank
+                    # owned SET plus a primary set per stage x rank —
+                    # one scalar primary_owner.get per owned node, the
+                    # exact construct D2 removed elsewhere.  Membership
+                    # is all the pattern pre-check and emit consume, and
+                    # both columnar containers carry identical
+                    # membership (a node's primary rank is always an
+                    # owning rank), so the deck is byte-identical.
+                    rank_owned = rank_owned_nodes[rank]
+                    rank_primary = rank_primary_nodes[rank]
                     if not self._stage_pattern_specs_have_owned_content(
                         stage.pattern_specs, rank_owned,
                         primary_nodes=rank_primary,

@@ -51,6 +51,7 @@ from typing import (
     Sequence,
     TypeAlias,
     cast,
+    overload,
 )
 
 import numpy as np
@@ -6534,6 +6535,15 @@ class SortedIntToInt:
             return i
         return -1
 
+    # ``dict.get``-shaped overloads: an explicit non-None default means
+    # the result is always an int — encoding the real contract so e.g.
+    # ``owner.get(reverse.get(tag, -1))`` type-checks without a cast.
+    @overload
+    def get(self, key: int) -> "int | None": ...
+
+    @overload
+    def get(self, key: int, default: int) -> int: ...
+
     def get(self, key: int, default: "int | None" = None) -> "int | None":
         i = self._find(int(key))
         if i < 0:
@@ -6692,7 +6702,7 @@ class SortedIntSet:
         return int(self._keys.shape[0])
 
     def __bool__(self) -> bool:
-        return self._keys.shape[0] > 0
+        return bool(self._keys.shape[0] > 0)
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, (int, np.integer)):
@@ -6718,14 +6728,14 @@ class SortedIntSet:
         pos = np.searchsorted(k, q_sorted)
         in_range = pos < k.shape[0]
         pos_c = np.where(in_range, pos, 0)
-        return in_range & (k[pos_c] == q_sorted)
+        return cast("np.ndarray", in_range & (k[pos_c] == q_sorted))
 
     def intersection_sorted(self, other: "Iterable[int]") -> "list[int]":
         """``sorted(self & set(other))`` — one vectorised pass."""
         q = self._query_array(other)
         if q.shape[0] == 0 or self._keys.shape[0] == 0:
             return []
-        return q[self._member_mask(q)].tolist()
+        return cast("list[int]", q[self._member_mask(q)].tolist())
 
     def isdisjoint(self, other: "Iterable[int]") -> bool:
         q = self._query_array(other)
