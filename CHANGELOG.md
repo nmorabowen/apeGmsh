@@ -50,7 +50,7 @@ Docs only: an ADR amendment. No code, no API change.
 ### CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed
 
 The merged D3+D2+D4+R8 slice (#1077) roughly halves emit-side residency:
-traced peak growth -48%/-54% and **RSS -33%/-40%** at two mesh sizes, for
+traced peak growth -48%/-54% and **RSS ~-40%** at two mesh sizes, for
 +6-7% emit time (flat in N). RSS is the OOM-relevant statistic and is quoted
 alongside traced throughout.
 

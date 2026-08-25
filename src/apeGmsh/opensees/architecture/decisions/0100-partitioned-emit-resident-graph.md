@@ -7,7 +7,7 @@ prologue. **Gate G0 is closed (Amendment 1) and route P3 has shipped
 (Amendment 2, #1077) — read both before acting on anything below.**
 Amendment 1 records the measured attribution (G0a = 0.55–0.61 over the
 originally authorised terms), **adds R8 to the R-table**, and redefines G0b.
-Amendment 2 records P3's result (traced peak −48/−54 %, **RSS −33/−40 %**),
+Amendment 2 records P3's result (traced peak −48/−54 %, **RSS ~−40 %**),
 **re-prices D5 UP** — R7 is now the binding peak term at ~370 B/hex,
 reversing Amendment 1's de-pricing — and states that **P3 alone does not
 close the incident** (~23–25 GB traced remains at 51 M elements). The
@@ -534,6 +534,9 @@ the only measurements that speak to the real ceiling.
 - **R8 joins the routed program** — same surgical class as D2/D3's targets
   (another `_emit_stages_partitioned` dict).
 - **D5** is halved: R6 stays a candidate, `class_chunks` is de-priced.
+  **[SUPERSEDED by Amendment 2 — R7 is the binding peak term post-P3 at
+  ~370 B/hex; `class_chunks` is re-priced UP and is the largest remaining
+  target.]**
 - **Route E stays deferred.** Its trigger record stands; G2/G3 measure the
   post-fix ceiling that re-prices it.
 - The merged instrument is **P3's before/after oracle**: a post-P3 campaign
@@ -555,21 +558,43 @@ recorded, one of them in the opposite direction.
 ### What P3 achieved
 
 Measured with the D0 instrument as its own before/after oracle, median-of-3,
-all cells gate-ok (6/6), re-measured at the merged SHA:
+all cells gate-ok (6/6). Measured at `1e0fa04a`; the later `e471a01b`
+touches only the stage pattern pass, which this benchmark never reaches
+(`make_ops` adds no `pattern_specs` — verified), so the figures are
+unaffected:
 
 | cell | traced peak growth | RSS growth | emit time |
 |---|---|---|---|
-| 24,389 hexes, np 8 | 22.8 → **11.9 MB** (−48 %) | −33 % | +6–7 % |
-| 32,768 hexes, np 8 | 31.9 → **14.6 MB** (−54 %) | −40 % | +6–7 % |
+| 24,389 hexes, np 8 | 22.8 → **11.9 MB** (−48 %) | ≈ −40 % | +6–7 % |
+| 32,768 hexes, np 8 | 31.9 → **14.6 MB** (−54 %) | ≈ −40 % | +6–7 % |
+
+RSS is the **median of per-repeat RSS growth** across the 3 repeats of each
+cell; traced figures are medians on the same repeats.
 
 **RSS is the OOM-relevant statistic** — traced bytes are not what the kernel
 killed. Quote both, and never present the traced figure alone.
 
-R1/R2/R3/R8 shrink **4–13× at their own hooks** (R1 ~84 B/node ×2 → 16.1
-B/node; R2 ~41 → 8.3 B/node/set; R8 103–228 → 13 B/elem). They read 0.00 at
-the *anchor* row only because the peak **relocates** to the ndf phase, before
-those terms are constructed — a timing artefact, not an attribution loss:
-at identical named hooks the unattributed residue is unchanged (3.3 → 3.2 MB).
+R1/R2/R8 read 0.00 at the *anchor* row only because the peak **relocates**
+to the ndf phase, before those terms are constructed — a timing artefact, not
+an attribution loss (at identical named hooks the unattributed residue is
+unchanged, ~4.0 → ~4.0 MB).
+
+Pre-P3 per-entry rates, measured (`r2_before.json`, np 8):
+
+| term | 24,389 hexes | 32,768 hexes |
+|---|---|---|
+| R1 `node_idx_lookup`, both dicts co-resident | 152.6 B/node | 128.6 B/node |
+| — per dict | 76.3 | 64.3 |
+| R2 owned+primary, both sets | 144.7 B/node | 223.7 B/node |
+| — per set | 72.4 | 111.9 |
+| R8 `ops_tag_to_fem_eid` | 148.8–227.7 B/elem | 152.1–204.7 B/elem |
+
+Post-P3, R8 measures **16.01–16.02 B/elem** (6/6 measurements agree) — two
+`int64` arrays, i.e. the columnar floor. Per-entry post rates for R1 and R2
+are **not quoted here**: the merged instrument prints per-term only at the
+anchor, where those terms no longer live, so no artifact supports a figure.
+The aggregate effect is the peak halving below, which is
+attribution-independent.
 
 ### ⚠ THE INCIDENT IS NOT RESOLVED — D5 is necessary, not optional
 
@@ -625,7 +650,10 @@ Two traps for anyone reading the logs:
 
 - **The numerator changed mid-branch.** Amendment 1 authorised R8 into
   `NUMERATOR_TERMS`, so a pre-Amendment-1 G0a and a post-P3 G0a are not the
-  same statistic. Like-for-like, P3 moves G0a **0.802 → 0.836**.
+  same statistic. **No like-for-like pairing is quoted here**: a candidate
+  pre-P3 value was checked against the artifacts under several numerator
+  conventions and reproduced under none, so it is omitted rather than
+  guessed. G0a is not the improvement metric.
 - **Gate-ok counts differ per repeat.** Discards are non-deterministic; the
   32,768 *before* cell was **n = 1/3 gate-ok** while the after cells are
   3/3. Compare medians only across equal footing, and say the n.
