@@ -18,13 +18,17 @@ Two jobs:
      describes.  G0a(conservative) divides by the TRUE counter peak,
      charging every unsampled excursion to unattributed — it is the
      GATE number, chosen deliberately because it cannot flatter.  A
-     cell whose shortfall exceeds the sampler-self-footprint tolerance
-     (SHORTFALL_TOLERANCE_B, --shortfall-tolerance) is DISCARDED — it
+     cell fails the gate when |G0a(sampled) − G0a(conservative)|
+     exceeds G0A_ERROR_BOUND (--g0a-error-bound, default 0.02) — an
+     error bound on the reported quantity itself; it is DISCARDED and
      has no G0a at all: the allocation-driven trigger misses the same
      instant identically on every run, so a missed peak yields a
-     stable wrong number that looks converged.  The raw shortfall in
-     bytes always prints beside the verdict.  The numerator is EXACTLY
-     the ADR's
+     stable wrong number that looks converged.  The verdict certifies
+     snapshot-vs-counter agreement INSIDE one process only — the
+     counter itself can under-read (reset-window erasure), so
+     peak_counter_b comparison across runs is part of the verdict.
+     The raw shortfall in bytes always prints.  The numerator is
+     EXACTLY the ADR's
      authorised set; CACHE (the broker fan-out memo), R8
      (ops_tag_to_fem_eid, absent from the ADR), and the process floor
      are attributed and reported but never counted.
@@ -93,18 +97,21 @@ from apeGmsh.opensees.time_series.time_series import Path
 # campaign's forward-looking sizes.
 EXTRAP_TARGETS = (51_000_000, 71_300_000, 100_000_000, 139_000_000)
 
-# Shortfall tolerance (bytes) for the peak-measured verdict.  The
-# measured shortfall distribution is bimodal: the sampler thread's own
-# bookkeeping produces a recurring ~308 B self-footprint (observed in 4
-# independent runs), while the smallest GENUINE miss observed is
-# ~30,000 B — a ~100x gap with nothing in between.  4096 B sits ~13x
-# above the self-footprint and ~7x below the smallest real miss: a cut
-# between two clearly separated modes, not a fudge factor.  The literal
-# !=0 rule it replaces was unreachable by construction (the instrument
-# measures itself) and discarded 9/9 cells.  Auditable and re-runnable
-# at any threshold via --shortfall-tolerance; the raw shortfall in
-# bytes always prints next to the verdict.
-SHORTFALL_TOLERANCE_B = 4096
+# Gate bound: |G0a(sampled) - G0a(conservative)| <= this — an ERROR
+# BOUND on the quantity we actually report, replacing two failed proxy
+# rules on the shortfall byte count.  History, kept because each step
+# was measured: a literal !=0 rule was unreachable by construction (the
+# sampler's own bookkeeping leaves a recurring ~308 B self-footprint —
+# notable for being SIZE-INVARIANT across sizes and parts, while
+# genuine misses scale with the model) and discarded 9/9 cells; a
+# 4096 B byte threshold worked on the first dataset but its "bimodal,
+# 100x gap" justification was refuted — the genuine-miss population is
+# a CONTINUUM, so any byte cut is arbitrary.  Bounding the G0a error
+# itself is not: a cell passes when the unsampled excursion cannot move
+# the reported number by more than this, whatever its byte size.
+# Auditable via --g0a-error-bound; the raw shortfall in bytes still
+# prints beside every verdict for re-cutting.
+G0A_ERROR_BOUND = 0.02
 
 
 # ----------------------------------------------------------------------------
@@ -1208,21 +1215,27 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         # number that looks converged (measured: reproducible to ±0.001
         # across repeats while sitting 0.031 from the <0.40
         # abandon-the-program threshold).  Repeats are no defence — a
-        # missed peak repeats identically.  A cell is MEASURED only when
-        # its shortfall is inside the sampler-self-footprint tolerance
-        # (SHORTFALL_TOLERANCE_B; the literal !=0 rule it replaces was
-        # unreachable by construction — the instrument measures itself —
-        # and discarded 9/9 cells).  Anything beyond it is DISCARDED: no
-        # gate number exists for that cell, in the report or the JSON.
-        # The raw bytes always print so a reviewer can re-cut at any
-        # threshold without re-running.
-        tol = int(getattr(args, "shortfall_tolerance",
-                          SHORTFALL_TOLERANCE_B))
-        gate_ok = shortfall <= tol
-        gate_status = "ok" if gate_ok else "discarded_shortfall"
+        # missed peak repeats identically.  The gate is an ERROR BOUND
+        # on the reported quantity (see G0A_ERROR_BOUND): a cell passes
+        # when the unsampled excursion cannot move G0a by more than the
+        # bound.  IMPORTANT FRAMING: this certifies snapshot-vs-counter
+        # agreement INSIDE THIS PROCESS only — the counter itself can
+        # under-read when a reset-window erasure swallows an excursion
+        # (measured: a sweep counter 1.24 MB below two standalone runs
+        # of the same cell, silently deciding survival in the flattering
+        # direction), so cross-run peak_counter_b comparison is part of
+        # the verdict and prints in the per-size summary.
+        bound = float(getattr(args, "g0a_error_bound", G0A_ERROR_BOUND))
+        g0a_err = abs(g0a_sampled - g0a_cons)
+        gate_ok = g0a_err <= bound
+        gate_status = "ok" if gate_ok else "discarded_error_bound"
         if gate_ok:
-            print(f"  peak verdict: MEASURED (shortfall {shortfall:,} B "
-                  f"<= tolerance {tol:,} B)")
+            print(f"  gate verdict: WITHIN ERROR BOUND "
+                  f"(|G0a(sampled) - G0a(conservative)| = {g0a_err:.3f} "
+                  f"<= {bound:.2f}; raw shortfall {shortfall:,} B). "
+                  f"Certifies INTERNAL consistency only - the counter "
+                  f"itself can under-read; compare peak_counter_b "
+                  f"across runs.")
             print(f"  G0a(sampled)      = {g0a_sampled:.3f}  "
                   f"(sum(R-terms) {term_sum / 1e6:,.1f} MB / sampled "
                   f"growth {traced_growth / 1e6:,.1f} MB)")
@@ -1230,19 +1243,15 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                   f"(sum(R-terms) {term_sum / 1e6:,.1f} MB / true-peak "
                   f"growth {cons_growth / 1e6:,.1f} MB; unattributed "
                   f"{unattributed / 1e6:,.1f} MB = {cons_share:.0f}%)"
-                  f"  <- GATE NUMBER")
-            if abs(g0a_sampled - g0a_cons) <= 0.05:
-                print("  G0a(sampled) and G0a(conservative) agree within "
-                      "0.05. (This checks sampled-vs-conservative "
-                      "agreement ONLY - not a global soundness "
-                      "certificate.)")
+                  f"  <- GATE NUMBER (error <= {bound:.2f})")
         else:
             g0a = None
-            print(f"  *** DISCARDED - did not measure the peak "
-                  f"(shortfall {shortfall:,} B = "
-                  f"{shortfall / 1e6:,.2f} MB > tolerance {tol:,} B). "
-                  f"A discarded cell has no G0a - the ratio fields stay "
-                  f"in the JSON as diagnostics only, g0a is null. ***")
+            print(f"  *** DISCARDED - G0a error bound exceeded "
+                  f"(|G0a(sampled) - G0a(conservative)| = {g0a_err:.3f} "
+                  f"> {bound:.2f}; raw shortfall {shortfall:,} B = "
+                  f"{shortfall / 1e6:,.2f} MB). A discarded cell has no "
+                  f"G0a - the ratio fields stay in the JSON as "
+                  f"diagnostics only, g0a is null. ***")
         if g0a_sampled > 1.0:
             print("  *** WARNING: G0a(sampled) > 1 - the R-term spans "
                   "double-count; "
@@ -1320,11 +1329,13 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                     if mem and hx else None)
     b_hex_rss = (rss_peak_growth / hx
                  if rss_peak_growth is not None and hx else None)
-    if b_hex_rss is not None and hx < 500_000:
-        print("  NOTE: RSS-implied extrapolation from a cell below 0.5M "
-              "hexes is UNRELIABLE - size-independent RSS offsets "
-              "(interpreter, numpy, allocator arenas) dominate the "
-              "per-hex figure; treat as an upper bound at best.")
+    if hx < 500_000 and (b_hex_rss is not None
+                         or b_hex_traced is not None):
+        print("  NOTE: extrapolations from a cell below 0.5M hexes are "
+              "UNRELIABLE - traced AND rss: per-hex costs sawtooth "
+              "(+/-40% across adjacent sizes) and size-independent "
+              "offsets (interpreter, numpy, allocator arenas) dominate; "
+              "treat as upper bounds at best.")
     extrap = {}
     for tgt in EXTRAP_TARGETS:
         tr = b_hex_traced * tgt / 1e9 if b_hex_traced is not None else None
@@ -1354,7 +1365,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "b_per_hex_rss": b_hex_rss,
         # "g0a" is the GATE number = g0a_conservative (Σ R-terms over the
         # true counter peak), or null when the cell was DISCARDED
-        # (gate_status == "discarded_shortfall": the tracker did not
+        # (gate_status == "discarded_error_bound": the tracker did not
         # sample the peak; a discarded cell has no G0a).  The
         # g0a_sampled / g0a_conservative fields remain as diagnostics —
         # their names are unambiguous; only "g0a" is ever a gate number.
@@ -1363,10 +1374,10 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "g0a_conservative": g0a_cons,
         "gate_status": gate_status,
         "discarded_reason": (None if gate_status in (None, "ok")
-                             else "peak_shortfall"),
-        "shortfall_tolerance_b": (
-            int(getattr(args, "shortfall_tolerance",
-                        SHORTFALL_TOLERANCE_B)) if mem else None),
+                             else "g0a_error_bound"),
+        "g0a_error_bound": (
+            float(getattr(args, "g0a_error_bound", G0A_ERROR_BOUND))
+            if mem else None),
         "repeat": rep,
         "cons_growth_b": cons_growth,
         "cache_bytes": (per_term_anchor or {}).get("CACHE"),
@@ -1457,14 +1468,15 @@ def main():
                          "small extra emit overhead). Thread-side, so it "
                          "sees excursions that rise and fall between two "
                          "emitted lines.")
-    ap.add_argument("--shortfall-tolerance", type=int,
-                    default=SHORTFALL_TOLERANCE_B,
-                    help="--mem: max peak shortfall (bytes) for a cell to "
-                         "count as MEASURED (default 4096 - ~13x the "
-                         "sampler's own ~308 B bookkeeping footprint and "
-                         "~7x below the smallest observed genuine miss; "
-                         "the raw shortfall always prints so any reviewer "
-                         "can re-cut).")
+    ap.add_argument("--g0a-error-bound", type=float,
+                    default=G0A_ERROR_BOUND,
+                    help="--mem: max |G0a(sampled) - G0a(conservative)| "
+                         "for a cell to pass the gate (default 0.02). An "
+                         "error bound on the reported quantity itself - "
+                         "byte thresholds on the shortfall were refuted "
+                         "(the genuine-miss population is a continuum). "
+                         "The raw shortfall still prints beside every "
+                         "verdict for audit.")
     ap.add_argument("--peak-snap-grow", type=float, default=1.05,
                     help="--mem: re-snapshot the tracked peak when "
                          "traced-current exceeds the last snapshot by this "
@@ -1482,8 +1494,11 @@ def main():
                     help="sampler on, tracemalloc OFF: phase-resolved RSS "
                          "deltas + B/hex-RSS, uninflated. Pair with a --mem "
                          "run for an honest G0b.")
-    ap.add_argument("--rss-interval-ms", type=int, default=50,
-                    help="RSS sampler poll interval (default 50)")
+    ap.add_argument("--rss-interval-ms", type=int, default=None,
+                    help="RSS sampler poll interval. Default 5 under "
+                         "--rss-only (a 50 ms poll biases the RSS peak "
+                         "~9% low - measured G0b(slope) 0.81 vs ~0.88), "
+                         "50 otherwise.")
     ap.add_argument("--rss-trace", default=None, metavar="PATH",
                     help="dump the RSS trajectory as CSV (t_s,rss_bytes,mark)"
                          "; with multiple sizes, _sz<N> is appended per size")
@@ -1549,7 +1564,12 @@ def main():
         try:
             if instrumented:
                 os.makedirs(snap_dir, exist_ok=True)
-                sampler = RssSampler(args.rss_interval_ms / 1000.0)
+                # 5 ms default under --rss-only: a 50 ms poll misses the
+                # RSS peak plateau and biased G0b(slope) ~9% low.
+                rss_ms = (args.rss_interval_ms
+                          if args.rss_interval_ms is not None
+                          else (5 if args.rss_only else 50))
+                sampler = RssSampler(rss_ms / 1000.0)
                 sampler.start()
             if args.mem:
                 # Started BEFORE the model build so pre_build's
@@ -1654,12 +1674,12 @@ def main():
       # trigger locks onto the same instant every run, so a missed peak
       # is missed identically; the shortfall gate-refusal is the
       # defence against that, not repeats.
-      if args.mem and repeats > 1 and size_recs:
+      if args.mem and size_recs:
         statuses = [r.get("gate_status") for r in size_recs]
         ok_vals = [r["g0a_conservative"] for r in size_recs
                    if r.get("gate_status") == "ok"
                    and r.get("g0a_conservative") is not None]
-        print(f"\n== size {sz} over {repeats} repeats ==")
+        print(f"\n== size {sz} over {repeats} repeat(s) ==")
         print(f"  gate status per repeat: {statuses}")
         if ok_vals:
             print(f"  G0a(conservative) over gate-ok repeats: median "
@@ -1669,6 +1689,46 @@ def main():
         else:
             print("  G0a(conservative): NO gate-ok repeat - this size did "
                   "not measure a gate number.")
+        # Cross-repeat counter-peak check: a counter peak is a MAXIMUM,
+        # so the highest reading is the better bound on truth — a lower
+        # one means a reset-window erasure under-read it, biasing that
+        # repeat's G0a UP (measured deciding survival in the flattering
+        # direction across standalone-vs-sweep runs of one cell).
+        # Compared as peak GROWTH (peak − that repeat's own floor):
+        # absolute peaks are incomparable across repeats because the
+        # first repeat in a process traces the whole session import into
+        # its floor (measured: a 34 MB phantom "disagreement" from
+        # exactly that).
+        growths = [
+            (r.get("peak_counter_b") or 0) - (r.get("floor_traced_b") or 0)
+            for r in size_recs
+            if r.get("peak_counter_b") and r.get("floor_traced_b")
+            is not None
+        ]
+        if growths:
+            print(f"  counter peak growth per repeat (B): "
+                  f"{[int(g) for g in growths]}")
+            gmax = max(growths)
+            if gmax > 0 and (gmax - min(growths)) / gmax > 0.02:
+                print(f"  *** counter peak growths DISAGREE across "
+                      f"repeats (spread "
+                      f"{(gmax - min(growths)) / 1e6:.2f} MB). The "
+                      f"HIGHEST is the better bound on truth; "
+                      f"lower-growth repeats under-read and their G0a "
+                      f"is biased UP. ***")
+            band = []
+            for r in size_recs:
+                pt_anchor = ((r.get("per_term_by_hook") or {})
+                             .get(r.get("anchor_hook") or "") or {})
+                ts = sum(pt_anchor.get(t, 0) for t in NUMERATOR_TERMS)
+                if gmax > 0 and ts:
+                    band.append(ts / gmax)
+            if band:
+                print(f"  G0a(conservative) vs CROSS-REPEAT max peak "
+                      f"growth: {min(band):.3f}-{max(band):.3f} - the "
+                      f"more defensible band when growths disagree (the "
+                      f"JSON's peak_counter_b/floor_traced_b let an "
+                      f"aggregator extend this across invocations).")
         r1_twin = [
             round((((r.get("per_term_by_hook") or {})
                     .get("stage_open#first") or {}).get("R1", 0)) / 1e6, 2)
@@ -1687,10 +1747,10 @@ def main():
             print("  R1x2 co-residency: CONFIRMED deterministically at "
                   "stage_open#first (which fires AFTER the twin is built "
                   "at apesees ~3527) - every repeat, every size. It is "
-                  "NOT the driver of G0a variance: the anchor is the "
-                  "tracked peak, which lands elsewhere; the twin-live "
-                  "state is deterministically capturable but is not the "
-                  "peak instant.")
+                  "NOT the driver of RUN-TO-RUN G0a variance (the anchor "
+                  "is the tracked peak, which lands elsewhere) - but it "
+                  "IS a first-order contributor: R1 is ~30% of the "
+                  "numerator at these cells.")
         print("  (median defends against ordinary noise ONLY - a missed "
               "peak repeats identically; see the shortfall verdict.)")
 
@@ -1707,10 +1767,9 @@ def main():
     # exception (a mid-emit snapshot hook); this tool only reports.
     if args.mem and records:
         ok_n = sum(1 for r in records if r.get("gate_status") == "ok")
-        print(f"\nshortfall census (tolerance "
-              f"{args.shortfall_tolerance:,} B): {ok_n}/{len(records)} "
-              f"cells MEASURED the peak (only survivors carry gate "
-              f"numbers)")
+        print(f"\ngate census (error bound {args.g0a_error_bound}): "
+              f"{ok_n}/{len(records)} cells passed (only survivors carry "
+              f"gate numbers)")
         by_sz_c: "dict[int, list]" = {}
         for r in records:
             by_sz_c.setdefault(r["size"], []).append(r)
@@ -1718,8 +1777,9 @@ def main():
             rs = by_sz_c[s]
             n_ok = sum(1 for x in rs if x.get("gate_status") == "ok")
             sf = [x.get("peak_shortfall_b") for x in rs]
+            pk = [x.get("peak_counter_b") for x in rs]
             print(f"  size {s} (hexes {rs[0]['hexes']:,}): {n_ok}/{len(rs)} "
-                  f"survived; shortfalls (B): {sf}")
+                  f"passed; shortfalls (B): {sf}; counter peaks (B): {pk}")
 
     # -- G0b(slope): slope of RSS-peak growth vs hexes over slope of
     # traced-peak growth vs hexes.  The RSS side must come from a paired
@@ -1746,6 +1806,29 @@ def main():
             try:
                 with open(args.pair_rss_json, encoding="utf-8") as f:
                     pair = json.load(f)
+                # FOOTGUN GUARD (measured): pairing a --mem run's JSON
+                # with itself printed G0b(slope) = 2.19 — sitting
+                # exactly on the ADR's ~1.9 expectation, silently wrong.
+                # --mem records carry traced_peak_b; only --rss-only
+                # records (traced_peak_b null) are valid RSS-arm input.
+                mem_recs = [r for r in pair
+                            if r.get("traced_peak_b") is not None]
+                if mem_recs:
+                    print(f"\nG0b(slope): pair json contains "
+                          f"{len(mem_recs)} --mem record(s) - their RSS "
+                          f"is tracemalloc-inflated and they are "
+                          f"SKIPPED; pair a --rss-only run.")
+                pair = [r for r in pair
+                        if r.get("traced_peak_b") is None]
+                mismatch = sorted({
+                    k for r in pair
+                    for k in ("parts", "recipe", "staged", "stream")
+                    if r.get(k) != getattr(args, k)
+                })
+                if mismatch:
+                    print(f"\nG0b(slope) WARNING: pair json differs from "
+                          f"this run on {mismatch} - the pairing may be "
+                          f"invalid.")
                 pair_by_sz: "dict[int, list]" = {}
                 for r in pair:
                     if r.get("rss_peak_growth_b") is not None:
@@ -1779,6 +1862,13 @@ def main():
                       f"small-cell extrapolation caveat cuts BOTH ways - "
                       f"neither number refutes the other outside its own "
                       f"scale.")
+                if g0b_slope < 1.0:
+                    print("  physical read: at bench scale the mesh "
+                          "phase leaves an obmalloc reservoir that "
+                          "absorbs emit allocations, so RSS moves less "
+                          "than traced; at incident scale there is no "
+                          "reservoir and real memory pressure - the "
+                          "~1.9 regime.")
         else:
             print(f"\nG0b(slope): NOT COMPUTABLE in this invocation - "
                   f"needs >=3 sizes on both series (have traced="
