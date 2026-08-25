@@ -20,6 +20,33 @@ instead of demonstrating it by accident.
 
 Docs and skill text only: no code, no API change.
 
+### CHANGED — ADR 0100 gate G0 is closed; the R-table gains R8 and D5 is re-priced (Amendment 1)
+
+The partitioned-emit residency campaign ran at four mesh sizes and two rank
+counts. **G0a = 0.55-0.61** over the terms ADR 0100 authorised when its
+decision rule was written, with 13-16% unattributed at every cell.
+
+Three measurements corrected the ADR's pre-measurement guesses. A full
+per-element reverse tag map, `ops_tag_to_fem_eid`, was found resident inside
+`_emit_stages_partitioned` at 103-228 B/elem across cells (~5-12 GB at the
+incident's scale) -- larger than several named terms and missing from the
+original ledger; it is now **R8**. The `_PG_FANOUT_CACHE` arrays measure
+72 B/elem and stay deliberately unrouted, but are recorded rather than
+assumed. And **R7
+(`class_chunks`) measures 0.00 MB at the resident peak** -- the transient is
+real but lives early in emit, so the ADR's speculation that it "may be the
+largest single win" does not survive contact with the peak, and D5's
+`class_chunks` half is de-priced.
+
+G0b was not computable as originally defined (per-cell RSS/traced ratios
+spanned 0.68-87.35, including physically impossible sub-1 values). It is
+redefined as a **ratio of regression slopes** and measures 0.88 at bench
+scale -- below the ~1.9 the middle branch assumed, explained by an obmalloc
+reservoir left by the meshing phase that absorbs emit allocations at these
+sizes. That precondition is therefore recorded as unverified rather than met.
+
+Docs only: an ADR amendment. No code, no API change.
+
 ### FIXED — a `node` line now carries exactly `ndm` coordinates (2-D `-ndf` / `-mass` were silently dropped)
 
 The broker stores every node as ``(x, y, z)`` and the emitters wrote all

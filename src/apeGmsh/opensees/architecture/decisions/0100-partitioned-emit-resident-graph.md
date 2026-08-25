@@ -1,9 +1,13 @@
 # ADR 0100 — The partitioned-emit resident graph: closing the ledger term that ADR 0065 named and left
 
-**Status:** PROPOSED — incident measured 2026-08-24 (esmeralda, 60 GB build
+**Status:** ACCEPTED — incident measured 2026-08-24 (esmeralda, 60 GB build
 node, diag job 145221 with a 5 s RSS sampler); candidate resident terms
 identified in `apesees.py::_emit_partitioned` and its ndf-inference
-prologue; **attribution is owed to gate G0, not asserted here**. Amends
+prologue. **Gate G0 is now closed — see Amendment 1 (2026-08-25)**, which
+records the measured attribution (G0a = 0.55–0.61 over the originally
+authorised terms), **adds R8 to the R-table**, de-prices D5's `class_chunks`
+half, and redefines G0b. The attribution below is the pre-measurement
+*candidate* list; read it together with Amendment 1, which corrects it. Amends
 **ADR 0065** (whose plan, `internal_docs/plan_emit_memory_columnar.md`,
 closed with a remaining-ledger flag) and re-arms the **Route E** trigger,
 which has now fired. Two adversarial reviews folded 2026-08-24 (§Review
@@ -233,6 +237,13 @@ statement is that the post-D ceiling is G3's output, not this section's.
 
 ## Gates
 
+> **Superseded in part by Amendment 1 (2026-08-25).** G0 is closed:
+> G0a measured 0.55–0.61 over the terms listed here, **R8 was added to
+> the numerator** afterwards, and **G0b is redefined as a slope ratio**
+> (measured 0.88) — so the "G0b ≈ 2" precondition below was **not
+> satisfied** when the branch was chosen. Read this section together
+> with Amendment 1.
+
 - **G0 (instrument first, two numbers):**
   - **G0a:** ≥ 80 % of the *traced* emit-phase peak growth attributed to
     R1–R4/R6/R7 by a snapshot taken **at the peak** (mid-emit hook), at ≥ 3
@@ -319,3 +330,211 @@ inference (including the gmsh-kernel exoneration), the `select_rows`-copies
 finding (the docstring calling it a view is wrong), R4's mechanism and
 D1's byte-identity argument, the no-release greps, the guide/skill
 citations, and the Route E trigger arithmetic.
+
+## Amendment 1 (2026-08-25) — G0 measured; the R-table gains R8; D5 re-priced
+
+Gate **G0 is closed.** D0 shipped in two slices — the docs half (#1068) and
+the instrument half (#1071, `tests/benchmarks/emit_throughput_profile.py`) —
+and the campaign ran 2026-08-24 on the desktop rig against the `box`
+recipe, staged,
+`--stream`, at four sizes × two np values.
+
+This amendment is written **after** the measurement, and says so on purpose:
+it changes the gate's own numerator, and that history has to stay legible
+rather than be quietly folded into the original table.
+
+### What G0 measured
+
+**G0a = 0.55–0.61** over the terms this ADR authorised when the decision rule
+was written (R1–R4, R6, R7), with the fan-out cache excluded. The gate
+statistic is `G0a(conservative)` — Σterms ÷ *true counter-peak* growth —
+admitted per cell by an error bound `|sampled − conservative| ≤ 0.02`.
+
+| hexes | np | median G0a | vs cross-repeat max peak |
+|---|---|---|---|
+| 24,389 | 8 | 0.558–0.600 | 0.558 |
+| 29,791 | 4 | 0.605 | 0.581–0.584 |
+| 29,791 | 8 | 0.552 | 0.530–0.535 |
+| 32,768 | 4 | 0.602 | 0.572 |
+| 32,768 | 8 | 0.597 | 0.594 |
+| 39,304 | 4, 8 | **discarded 0/6** | error 0.0364–0.0411 > 0.02 (deterministic) |
+
+Where counter-peak growths disagree across repeats, the right-hand column is
+the defensible reading: a counter peak is a **maximum**, so a lower-growth
+repeat under-read and its G0a is biased **up**. That pulls the honest floor
+to ~0.53. Note also what the bound does *not* certify — it tests
+snapshot-vs-counter agreement, **not counter-vs-reality**.
+
+One bookkeeping note, so the two tables below reconcile: the gate table
+above divides by the *conservative* denominator (`cons_growth_b`, the true
+counter-peak growth), while the dual-definition table divides by
+`traced_growth_b` at the anchor. The same cell therefore reads 0.597 in one
+and 0.600 in the other. Both are stated as measured; neither is a typo.
+
+Per-term ledger at the largest clean cell (32,768 hexes, np 8, growth
+31.74 MB):
+
+| term | MB | % of growth |
+|---|---|---|
+| R2 `rank_owned_nodes` / `rank_primary_nodes` | 8.04 | 25 % |
+| **R8** `ops_tag_to_fem_eid` | 6.49 | 20 % |
+| R1 `node_idx_lookup` (incl. the staged twin) | 4.62 | 15 % |
+| R6 ndf dicts | 3.76 | 12 % |
+| R3 `plan_by_rank` | 2.63 | 8 % |
+| `_PG_FANOUT_CACHE` | 2.36 | 7 % |
+| R7 `class_chunks` | **0.00** | **0 %** |
+| R4 `model_mass_by_rank` | 0.00 | 0 % (8.9 MB under `--mass from_model`) |
+| unattributed | ~4.0 | 13 % |
+
+### R8 — a new authorised term
+
+`ops_tag_to_fem_eid` (`apesees.py:3674-3677`, filled via `build.py:7221`) is
+a full per-element **reverse tag map** built inside
+`_emit_stages_partitioned`. Measured across cells at **103–228 B/elem
+(~189 average over gate-ok entries)**, i.e. **~5–12 GB at the incident's
+51.0 M elements** — larger than several terms this ADR already names, and
+absent from the original R-table only because the pre-measurement inventory
+missed it. The rate is given as a range because it genuinely varies with np
+and mesh size; no single-point figure is defensible from the campaign data.
+
+**Instrument inconsistency, named rather than left standing:** the merged
+bench (`emit_throughput_profile.py:337`, `:1202-1206`) still prints
+"~128 B/elem ≈ 6.5 GB" for R8. That string is a **stale pre-measurement
+estimate** — it predates the campaign and is not supported by any artifact.
+A docs amendment cannot change code, so its one-line correction is folded
+into **P3's scope**.
+
+It is **added to the R-table and to G0a's numerator.** The effect is the
+whole reason this amendment carries a date:
+
+| numerator | G0a | branch under §Gates |
+|---|---|---|
+| as originally written (R1–R4/R6/R7) | **0.600** | middle |
+| + `_PG_FANOUT_CACHE` | 0.675 | middle |
+| **+ R8** | **0.805** | **proceed as planned** |
+| + both | 0.879 | proceed |
+
+This table is computed from the size-33 / np-8 cell's measured per-term
+bytes and is **unaffected by the rate question above** — the rate is a
+summary statistic over cells; the branch arithmetic uses one cell's bytes
+directly.
+
+**~88 % of emit growth is attributable to identified structures; only ~60 %
+to the originally authorised ones.** The branch therefore turned on the
+ledger's completeness, not on the measurement. The campaign deliberately
+reported the gate over the *original* set and surfaced this table separately,
+so that widening the numerator was an explicit decision taken with the
+numbers in view — not an instrument quietly grading its own homework.
+
+**Provenance, because this document must not appear to grade itself:** the
+decision to authorise R8 and to select the branch was taken by the **project
+owner on 2026-08-25**, with the dual-definition table above in view — the
+owner selected "Amend + hybrid" from the options put to them. The ruling is
+recorded on the amendment's own pull request:
+<https://github.com/nmorabowen/apeGmsh/pull/1076#issuecomment-5405842105>.
+That record was written by the driving session **on the owner's behalf**,
+capturing an interactive decision — it is not a GitHub review by the owner's
+account, and should not be read as one. This amendment *records* the ruling;
+it does not make it. The measuring party proposed both readings and did not
+choose between them.
+
+### `_PG_FANOUT_CACHE` — identified, measured, still not routed
+
+Measured at **72 B/elem** (exact to three digits at three sizes), 7 % of
+growth. The plan's risk #5 scoped it out of every D-route as a deliberate
+speed cache; that decision **stands**, but it is now a measured quantity
+rather than an assumption, and it is recorded here so a future route can
+price it.
+
+It is **not** in G0a's numerator. It earns its own line because R7's original
+span silently absorbed it: `build.py:423` sits inside the `class_chunks`
+block and calls `expand_spec_to_elements`, whose callee allocates the cache
+arrays at `build.py:1876`/`:1879`. Attribution that did not separate the two
+inflated G0a by ~0.075 at every cell.
+
+### R7 collapses at the peak — D5 is re-priced
+
+**R7 measures 0.00–0.19 MB at the resident peak in every cell.** The
+~344 B/hex transient this ADR estimates is real, but it lives at
+`infer_node_ndf` time — early in emit — and is gone before the peak.
+
+This ADR speculated that R7 "may be the largest single win in the program"
+and might outrank D4. At the peak it contributes **nothing**. Accordingly:
+
+- **D5's `class_chunks` half is de-priced** and drops out of the priced
+  program unless G2 shows otherwise.
+- **D5's ndf-dict half (R6, 3.76 MB, 12 %) stays a candidate** — that term is
+  real at the peak.
+
+### R1 — site-name correction
+
+The R1 row lists four lookup sites. The fourth (`_emit_split`) is spelled
+**`node_idx`**, not `node_idx_lookup` — `apesees.py:1962` reads
+`node_idx = {int(nid): i for i, nid in enumerate(self.fem.nodes.ids)}`. The
+line number was right; the name was not. D3 must cover it under the correct
+spelling.
+
+Separately, R1's **×2 co-residency on staged partitioned decks is confirmed
+deterministically** — R1 exactly doubles at every repeat and every size, at a
+hook firing after the twin's construction. It is *not* the driver of
+run-to-run G0a variance, but it **is** a first-order contributor at
+**~24–30 %** of the numerator across measured cells. Both halves of that
+sentence are load-bearing.
+
+### G0b — redefined, and its precondition fails at bench scale
+
+As written, G0b was a per-cell RSS/traced ratio. That is not a usable
+estimator at bench sizes: RSS carries large size-independent components
+(interpreter, numpy, gmsh, allocator arenas) that swamp tens of MB of traced
+growth, and measured values spanned 0.68–87.35 — including values below 1,
+which are unphysical for the quantity intended.
+
+**G0b is redefined as a ratio of slopes**: regress RSS growth and traced
+growth on element count across ≥3 sizes and take `slope_rss / slope_traced`,
+reporting R² and the points used. ADR 0065's ×~1.9 allocator multiplier was
+always a slope, not a level.
+
+Measured: **G0b(slope) = 0.88** (R² 0.996/0.999), paired `--mem` ×
+`--rss-only` at a 5 ms poll.
+
+0.88 is **below 1, and well below the `≈2`** this ADR's middle branch assumes.
+The explanation is physical, not instrumental: the mesh phase leaves an
+**obmalloc reservoir** that absorbs emit allocations at bench scale, so RSS
+grows more slowly than traced memory. At incident scale there is no reservoir
+and there *is* real memory pressure — the regime the ~1.9 came from. The
+caveat cuts both ways, and it means **the middle branch's "G0b ≈ 2"
+precondition was not satisfied when the branch was evaluated.** The decision
+was taken on G0a alone, and readers of §Gates should treat that precondition
+as unverified at desktop scale rather than as met.
+
+### Standing extrapolation caveat
+
+Every measured cell is **~1,300× below the 51 M-hex incident**. An early
+hypothesis that G0a rises monotonically with size toward ~0.76–0.78 was
+**retracted on fresh data** (a 6,859-hex cell scored 0.678, above a
+13,824-hex cell's 0.513 — both from the pre-gate instrument generation; the
+mature gated run measures that same 13,824-hex cell at 0.552, so the
+direction of the retraction survives the instrument change). There is
+therefore **no established basis for
+extrapolating G0a to incident scale**, and the largest size attempted
+(39,304 hexes) fails deterministically under the error bound. G2/G3 remain
+the only measurements that speak to the real ceiling.
+
+### Consequences for the routes
+
+- **P3 proceeds** as the merged D3+D2+D4 slice. R2 is confirmed the largest
+  authorised term at every cell (25 %), so the plan's ordering holds.
+- **R8 joins the routed program** — same surgical class as D2/D3's targets
+  (another `_emit_stages_partitioned` dict).
+- **D5** is halved: R6 stays a candidate, `class_chunks` is de-priced.
+- **Route E stays deferred.** Its trigger record stands; G2/G3 measure the
+  post-fix ceiling that re-prices it.
+- The merged instrument is **P3's before/after oracle**: a post-P3 campaign
+  must show R1/R2/R3 (and R8) collapse. That is G0's re-run gate.
+
+**Provenance of the numbers above:** every figure comes from the JSON
+records the instrument emits (`--json`), not from a checked-in driver
+script. The campaign was run as ad hoc invocations of
+`emit_throughput_profile.py`; the per-cell JSON records — which carry
+`per_term_bytes`, `peak_counter_b`, the gate verdict and the discard reason
+— are the authoritative provenance.
