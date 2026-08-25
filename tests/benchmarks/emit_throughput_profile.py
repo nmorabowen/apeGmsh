@@ -1209,9 +1209,9 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
               f"'2nd connectivity copy' - reported, never in the "
               f"numerator): {per_term_anchor.get('CACHE', 0) / 1e6:,.1f} MB")
         print(f"  R8 at anchor (ops_tag_to_fem_eid reverse tag map, "
-              f"~128 B/elem at incident scale - measured and reported, "
-              f"but NOT in the G0a numerator: ADR 0100 does not authorise "
-              f"it; queued for amendment): "
+              f"measured 103-228 B/elem pre-P3 ≈ ~5-12 GB at the 51.0 M-"
+              f"element incident - authorised into the G0a numerator by "
+              f"ADR 0100 Amendment 1; columnarised by P3): "
               f"{per_term_anchor.get('R8', 0) / 1e6:,.1f} MB")
         print(f"  process floor (pre_build traced-cur: imports + session + "
               f"fem pin; NOT R5 alone, never in the numerator): "
