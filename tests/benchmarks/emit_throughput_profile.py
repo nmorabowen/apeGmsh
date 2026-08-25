@@ -1,7 +1,13 @@
 """Emit-throughput / phase-resolved profiling tool (ADR 0065 Tier 2, Cost
-Center B) — rebuilt as the ADR 0100 D0 instrument so it can answer gate G0.
+Center B) -- rebuilt as the ADR 0100 D0 instrument so it can answer gate G0.
 
-NOT a pytest test (no ``test_`` prefix → not collected). A standalone CLI.
+NOT a pytest test (no ``test_`` prefix -> not collected). A standalone CLI.
+
+This docstring doubles as the argparse description, and Windows stdout is
+cp1252 whenever piped or redirected -- so it, like every printed string in
+this module, must stay ASCII-ONLY (a stray U+2248 killed the bench at the
+first cell; see tests/benchmarks/test_emit_profile_smoke.py).  Comments
+may use whatever they like.
 
 Two jobs:
 
@@ -13,23 +19,23 @@ Two jobs:
    *resident* memory growth to the seven candidate terms R1..R7 of ADR 0100,
    producing gate G0's numbers:
 
-   * G0a(sampled) = Σ(R1..R4, R6, R7) / (anchor traced-current −
-     pre_build traced-current) — the form the ADR's literal wording
+   * G0a(sampled) = sum(R1..R4, R6, R7) / (anchor traced-current -
+     pre_build traced-current) -- the form the ADR's literal wording
      describes.  G0a(conservative) divides by the TRUE counter peak,
-     charging every unsampled excursion to unattributed — it is the
+     charging every unsampled excursion to unattributed -- it is the
      GATE number, chosen deliberately because it cannot flatter.  A
-     cell fails the gate when |G0a(sampled) − G0a(conservative)|
-     exceeds G0A_ERROR_BOUND (--g0a-error-bound, default 0.02) — an
+     cell fails the gate when |G0a(sampled) - G0a(conservative)|
+     exceeds G0A_ERROR_BOUND (--g0a-error-bound, default 0.02) -- an
      error bound on the reported quantity itself; it is DISCARDED and
      has no G0a at all: the allocation-driven trigger misses the same
      instant identically on every run, so a missed peak yields a
      stable wrong number that looks converged.  The verdict certifies
-     snapshot-vs-counter agreement INSIDE one process only — the
+     snapshot-vs-counter agreement INSIDE one process only -- the
      counter itself can under-read (reset-window erasure), so
      peak_counter_b comparison across runs is part of the verdict.
      The raw shortfall in bytes always prints.  The numerator is
      EXACTLY the ADR's
-     authorised set — R1-R4, R6, R7 plus R8, which ADR 0100
+     authorised set -- R1-R4, R6, R7 plus R8, which ADR 0100
      Amendment 1 (2026-08-25) added to the R-table and the numerator
      after the G0 campaign measured it; CACHE (the broker fan-out
      memo) and the process floor are attributed and reported but
@@ -37,7 +43,7 @@ Two jobs:
    * G0b(slope) = slope of RSS-peak growth vs hexes (from a paired
      --rss-only run via --pair-rss-json) over slope of traced-peak
      growth vs hexes.  The per-cell RSS/traced ratio is printed but
-     demoted — at bench scale it is offset-dominated noise.
+     demoted -- at bench scale it is offset-dominated noise.
 
    The old instrument could not answer G0: it snapshotted only *after* emit
    returned (when the loop-local structures were already dead), its RSS
@@ -53,7 +59,7 @@ Two jobs:
    * G0a is never clamped, normalised, or capped.  >1 means the term spans
      double-count and the first-match order needs revisiting; 0.1 means the
      R-table does not own the growth.  Either way the real number prints.
-   * A missing anchor ABORTS the run — a silently-rotted span reads as
+   * A missing anchor ABORTS the run -- a silently-rotted span reads as
      "unattributed", which corrupts G0a.
    * RSS prints "unavailable" where it cannot be measured, never 0.0.
 
@@ -61,7 +67,7 @@ Two recipes:
   --recipe box        structured hex box (fast, clean, scalable knob = nodes/edge)
   --recipe planewave  the ADR loh1-mirror: add_plane_wave_box (ASDAbsorbing skin)
                       + per-layer masses.volume + stdBrick per soil PG + staged
-                      activate_absorbing — the config that produced 670 hex/s.
+                      activate_absorbing -- the config that produced 670 hex/s.
 
 Run (venv):
   python tests/benchmarks/emit_throughput_profile.py \
@@ -252,7 +258,7 @@ def _locate(path: str, anchor: str, *, occurrence: int = 1,
                     return (path, max(1, i - before), i + after)
     raise RuntimeError(
         f"G0 R-term anchor NOT FOUND: {anchor!r} (occurrence {occurrence}) "
-        f"in {path}. The source has drifted — re-verify the ADR 0100 "
+        f"in {path}. The source has drifted -- re-verify the ADR 0100 "
         f"R-term table before trusting any attribution number."
     )
 
@@ -1112,7 +1118,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         if all(not h["term_sum"] for h in hooks):
             raise RuntimeError(
                 "G0 attribution returned ZERO bytes for every R-term at "
-                "every hook. That is never a real measurement — check "
+                "every hook. That is never a real measurement -- check "
                 "frame-filename normalisation and the span table before "
                 "trusting anything this process printed."
             )
@@ -1209,7 +1215,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
               f"'2nd connectivity copy' - reported, never in the "
               f"numerator): {per_term_anchor.get('CACHE', 0) / 1e6:,.1f} MB")
         print(f"  R8 at anchor (ops_tag_to_fem_eid reverse tag map, "
-              f"measured 103-228 B/elem pre-P3 ≈ ~5-12 GB at the 51.0 M-"
+              f"measured 103-228 B/elem pre-P3 ~= ~5-12 GB at the 51.0 M-"
               f"element incident - authorised into the G0a numerator by "
               f"ADR 0100 Amendment 1; columnarised by P3): "
               f"{per_term_anchor.get('R8', 0) / 1e6:,.1f} MB")
@@ -1460,7 +1466,7 @@ def main():
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--mem", action="store_true",
                     help="ADR 0100 D0: hooked tracemalloc attribution of the "
-                         "R1..R7 terms + G0a/G0b. Distorts wall-clock — "
+                         "R1..R7 terms + G0a/G0b. Distorts wall-clock -- "
                          "don't read throughput from a --mem run.")
     ap.add_argument("--mem-top", type=int, default=15,
                     help="--mem: unattributed growth sites to list at the "
@@ -1506,7 +1512,7 @@ def main():
     ap.add_argument("--rss-interval-ms", type=int, default=None,
                     help="RSS sampler poll interval. Default 5 under "
                          "--rss-only (a 50 ms poll biases the RSS peak "
-                         "~9% low - measured G0b(slope) 0.81 vs ~0.88), "
+                         "~9%% low - measured G0b(slope) 0.81 vs ~0.88), "
                          "50 otherwise.")
     ap.add_argument("--rss-trace", default=None, metavar="PATH",
                     help="dump the RSS trajectory as CSV (t_s,rss_bytes,mark)"
@@ -1517,7 +1523,7 @@ def main():
     ap.add_argument("--stream", action="store_true",
                     help="emit through the ADR 0065 Tier 2 write-through "
                          "sink (ops.tcl(stream=True) equivalent, "
-                         "plan A1–A3) instead of accumulating the line "
+                         "plan A1-A3) instead of accumulating the line "
                          "buffer")
     ap.add_argument("--json", default=None, metavar="PATH",
                     help="write one flat record per measured cell (the ADR "

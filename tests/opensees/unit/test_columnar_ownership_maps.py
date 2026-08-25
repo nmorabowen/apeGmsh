@@ -506,6 +506,59 @@ def test_lazy_rank_buckets_empty_plan() -> None:
     assert lazy.get(0, []) == []
 
 
+def test_columnar_containers_hold_no_eager_residency() -> None:
+    """Residency regression (refuter lens 2): the equivalence tests
+    above stay green even if a future edit re-grows the eager residency
+    these classes exist to remove.  Pin the RESIDENT bytes directly:
+    after exercising every read path, each container's arrays sit at
+    their columnar budget, ``get()`` results are fresh (never cached
+    back onto the object), and slots leave nowhere to hide a cache."""
+    n = 50_000
+    ranks = 8
+    rng = np.random.default_rng(3)
+    ids = rng.permutation(np.arange(1, n + 1)).astype(np.int64)
+
+    # D3 — node_index_lookup: 16 B/node (sorted ids + permutation).
+    m = node_index_lookup(ids)
+    assert m.get(int(ids[0])) is not None
+    assert m.get(n + 99) is None
+    assert m._keys.nbytes + m._vals.nbytes == 16 * n
+
+    # D2 — SortedIntSet: 8 B/node.
+    s = SortedIntSet.from_ids(ids)
+    assert int(ids[7]) in s
+    assert s.intersection_sorted({int(ids[0]), n + 99}) == [int(ids[0])]
+    assert not s.isdisjoint({int(ids[1])})
+    assert s._keys.nbytes == 8 * n
+
+    # D4 — LazyRankBuckets: <= ~8 B/row + O(ranks), even after get()
+    # has materialised every rank once.
+    conn = np.arange(8 * n, dtype=np.int64).reshape(n, 8)
+    rows = ElementPlanRows(
+        np.arange(1, n + 1, dtype=np.int64), conn, tag_start=1,
+    )
+    owner = SortedIntToInt(
+        np.arange(1, n + 1, dtype=np.int64),
+        np.arange(n, dtype=np.int64) % ranks,
+    )
+    lazy = LazyRankBuckets(rows, owner)
+    total = 0
+    for r in range(ranks):
+        b1 = lazy.get(r)
+        b2 = lazy.get(r)
+        assert b1 is not b2, "get() cached a bucket — eager residency"
+        total += len(b1)
+    assert total == n
+    resident = (
+        lazy._order.nbytes + lazy._ranks.nbytes
+        + lazy._starts.nbytes + lazy._ends.nbytes
+    )
+    assert resident <= 8 * n + 64 * ranks
+    # __slots__ classes have no __dict__ to grow a cache into.
+    for obj in (m, s, lazy):
+        assert not hasattr(obj, "__dict__")
+
+
 def test_tag_map_inverse_matches_reference_reverse_dict() -> None:
     """R8: the reverse map must reproduce
     ``{int(tag): int(eid) for eid, tag in m.items()}`` exactly —
