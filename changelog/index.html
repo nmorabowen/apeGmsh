@@ -3564,6 +3564,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-2-p3-shipped-d5-re-priced-up-the-incident-is-not-yet-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8622,6 +8633,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-2-p3-shipped-d5-re-priced-up-the-incident-is-not-yet-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13668,6 +13690,23 @@ redefined as a <strong>ratio of regression slopes</strong> and measures 0.88 at 
 scale -- below the ~1.9 the middle branch assumed, explained by an obmalloc
 reservoir left by the meshing phase that absorbs emit allocations at these
 sizes. That precondition is therefore recorded as unverified rather than met.</p>
+<p>Docs only: an ADR amendment. No code, no API change.</p>
+<h3 id="changed-adr-0100-amendment-2-p3-shipped-d5-re-priced-up-the-incident-is-not-yet-closed">CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed<a class="headerlink" href="#changed-adr-0100-amendment-2-p3-shipped-d5-re-priced-up-the-incident-is-not-yet-closed" title="Permanent link">&para;</a></h3>
+<p>The merged D3+D2+D4+R8 slice (#1077) roughly halves emit-side residency:
+traced peak growth -48%/-54% and <strong>RSS ~-40%</strong> at two mesh sizes, for
++6-7% emit time (flat in N). RSS is the OOM-relevant statistic and is quoted
+alongside traced throughout.</p>
+<p>It does <strong>not</strong> close the incident. Extrapolated to the 51.0 M-element
+incident the traced peak falls from ~48-50 GB to <strong>~23-25 GB</strong> -- real
+progress against a 60 GB node, not a fix.</p>
+<p>And it inverts one of Amendment 1's conclusions. That amendment de-priced
+D5's <code>class_chunks</code> half because R7 measured 0.00 MB at the peak -- but the
+peak it measured against was the staged residency P3 has now removed. With
+that gone the peak migrates into <code>infer_node_ndf</code>, where <strong>R7 is the binding
+term at ~370 B/hex, 76-83% of what remains</strong>, matching this ADR's <em>original</em>
+~344 B/hex estimate. D5's <code>class_chunks</code> half is restored as the largest
+remaining target. The general lesson is recorded with it: a term's measured
+share depends on where the peak is, and removing one term moves the peak.</p>
 <p>Docs only: an ADR amendment. No code, no API change.</p>
 <h3 id="fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped">FIXED — a <code>node</code> line now carries exactly <code>ndm</code> coordinates (2-D <code>-ndf</code> / <code>-mass</code> were silently dropped)<a class="headerlink" href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" title="Permanent link">&para;</a></h3>
 <p>The broker stores every node as <code>(x, y, z)</code> and the emitters wrote all
