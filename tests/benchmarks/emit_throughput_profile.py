@@ -18,11 +18,13 @@ Two jobs:
      describes.  G0a(conservative) divides by the TRUE counter peak,
      charging every unsampled excursion to unattributed — it is the
      GATE number, chosen deliberately because it cannot flatter.  A
-     cell with ANY non-zero shortfall (best sampled state below the
-     true counter peak) is DISCARDED — it has no G0a at all: the
-     allocation-driven trigger misses the same instant identically on
-     every run, so a missed peak yields a stable wrong number that
-     looks converged.  The numerator is EXACTLY the ADR's
+     cell whose shortfall exceeds the sampler-self-footprint tolerance
+     (SHORTFALL_TOLERANCE_B, --shortfall-tolerance) is DISCARDED — it
+     has no G0a at all: the allocation-driven trigger misses the same
+     instant identically on every run, so a missed peak yields a
+     stable wrong number that looks converged.  The raw shortfall in
+     bytes always prints beside the verdict.  The numerator is EXACTLY
+     the ADR's
      authorised set; CACHE (the broker fan-out memo), R8
      (ops_tag_to_fem_eid, absent from the ADR), and the process floor
      are attributed and reported but never counted.
@@ -90,6 +92,19 @@ from apeGmsh.opensees.time_series.time_series import Path
 # OOM-killed a 60 GB node at ~61.3 GB RSS (ADR 0100); the rest are the
 # campaign's forward-looking sizes.
 EXTRAP_TARGETS = (51_000_000, 71_300_000, 100_000_000, 139_000_000)
+
+# Shortfall tolerance (bytes) for the peak-measured verdict.  The
+# measured shortfall distribution is bimodal: the sampler thread's own
+# bookkeeping produces a recurring ~308 B self-footprint (observed in 4
+# independent runs), while the smallest GENUINE miss observed is
+# ~30,000 B — a ~100x gap with nothing in between.  4096 B sits ~13x
+# above the self-footprint and ~7x below the smallest real miss: a cut
+# between two clearly separated modes, not a fudge factor.  The literal
+# !=0 rule it replaces was unreachable by construction (the instrument
+# measures itself) and discarded 9/9 cells.  Auditable and re-runnable
+# at any threshold via --shortfall-tolerance; the raw shortfall in
+# bytes always prints next to the verdict.
+SHORTFALL_TOLERANCE_B = 4096
 
 
 # ----------------------------------------------------------------------------
@@ -882,17 +897,17 @@ def emit_instrumented(
                 capture("ndf_chunks_peak")
         return orig_ndf_ok(class_name)
 
-    # -- staged-pass DIAGNOSTIC hooks (ADR 0100 D0): the tracker's peak
-    # snapshot landing inside the staged pass is TIMING, not mechanism —
-    # measured spread 0.12 on G0a across identical runs depending on
-    # whether the snapshot happened to fire after the R1 twin was built.
-    # ``stages_enter`` (at _emit_stages_partitioned entry) and
-    # ``stage_open#first`` (the emitter's first stage_open) were built to
-    # bracket the twin, but MEASURED they fire BELOW the tracked peak —
-    # they do not close the sampling lottery.  They stay because they
-    # make the miss visible in the hook table; the load-bearing fix is
-    # the shortfall-discard rule in the report (a cell whose best
-    # sampled state sits below the true counter peak has no G0a).
+    # -- staged-pass DIAGNOSTIC hooks (ADR 0100 D0).  ``stages_enter``
+    # fires at _emit_stages_partitioned entry (BEFORE the twin at
+    # apesees ~3527); ``stage_open#first`` fires on the emitter's first
+    # stage_open (apesees ~3561, AFTER the twin).  Measured: R1 doubles
+    # at stage_open#first deterministically on every staged partitioned
+    # repeat at every size — the ADR's R1x2 co-residency prediction,
+    # CONFIRMED at a named hook.  AND: that twin-live state is NOT the
+    # peak instant — the anchor is the tracked peak, which lands
+    # elsewhere — so these hooks are diagnostics, and the shortfall
+    # verdict in the report is the load-bearing rule.  (Both halves of
+    # that statement matter; never quote one without the other.)
     import apeGmsh.opensees.apesees as _apesees_mod
     _BM = _apesees_mod.BuiltModel
     orig_stages = _BM._emit_stages_partitioned
@@ -1192,16 +1207,22 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         # the peak misses it IDENTICALLY on every run — a stable wrong
         # number that looks converged (measured: reproducible to ±0.001
         # across repeats while sitting 0.031 from the <0.40
-        # abandon-the-program threshold).  The named twin hooks do NOT
-        # close this (measured: they fire below the tracked peak — the
-        # twin dict is built after both fire); they are DIAGNOSTICS that
-        # make the miss visible, not the fix.  ANY non-zero shortfall
-        # means the cell DID NOT MEASURE THE PEAK and is DISCARDED: no
-        # gate number exists for it, in the report or the JSON.
-        # Repeats are no defence — a missed peak repeats identically.
-        gate_ok = shortfall == 0
+        # abandon-the-program threshold).  Repeats are no defence — a
+        # missed peak repeats identically.  A cell is MEASURED only when
+        # its shortfall is inside the sampler-self-footprint tolerance
+        # (SHORTFALL_TOLERANCE_B; the literal !=0 rule it replaces was
+        # unreachable by construction — the instrument measures itself —
+        # and discarded 9/9 cells).  Anything beyond it is DISCARDED: no
+        # gate number exists for that cell, in the report or the JSON.
+        # The raw bytes always print so a reviewer can re-cut at any
+        # threshold without re-running.
+        tol = int(getattr(args, "shortfall_tolerance",
+                          SHORTFALL_TOLERANCE_B))
+        gate_ok = shortfall <= tol
         gate_status = "ok" if gate_ok else "discarded_shortfall"
         if gate_ok:
+            print(f"  peak verdict: MEASURED (shortfall {shortfall:,} B "
+                  f"<= tolerance {tol:,} B)")
             print(f"  G0a(sampled)      = {g0a_sampled:.3f}  "
                   f"(sum(R-terms) {term_sum / 1e6:,.1f} MB / sampled "
                   f"growth {traced_growth / 1e6:,.1f} MB)")
@@ -1217,12 +1238,11 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                       "certificate.)")
         else:
             g0a = None
-            print(f"  *** did not measure the peak - cell DISCARDED "
+            print(f"  *** DISCARDED - did not measure the peak "
                   f"(shortfall {shortfall:,} B = "
-                  f"{shortfall / 1e6:,.2f} MB between the true counter "
-                  f"peak and the best sampled state). A discarded cell "
-                  f"has no G0a - the ratio fields stay in the JSON as "
-                  f"diagnostics only, g0a is null. ***")
+                  f"{shortfall / 1e6:,.2f} MB > tolerance {tol:,} B). "
+                  f"A discarded cell has no G0a - the ratio fields stay "
+                  f"in the JSON as diagnostics only, g0a is null. ***")
         if g0a_sampled > 1.0:
             print("  *** WARNING: G0a(sampled) > 1 - the R-term spans "
                   "double-count; "
@@ -1344,6 +1364,9 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "gate_status": gate_status,
         "discarded_reason": (None if gate_status in (None, "ok")
                              else "peak_shortfall"),
+        "shortfall_tolerance_b": (
+            int(getattr(args, "shortfall_tolerance",
+                        SHORTFALL_TOLERANCE_B)) if mem else None),
         "repeat": rep,
         "cons_growth_b": cons_growth,
         "cache_bytes": (per_term_anchor or {}).get("CACHE"),
@@ -1426,12 +1449,22 @@ def main():
                     help="--mem: tracemalloc nframe. 1 cannot attribute "
                          "R3/R6/R7 (their bytes allocate below the owning "
                          "site); default 12.")
-    ap.add_argument("--tm-poll-ms", type=float, default=5.0,
+    ap.add_argument("--tm-poll-ms", type=float, default=1.0,
                     help="--mem: sampler-thread tick for the peak_tracked "
-                         "tracker (default 5 ms). Thread-side, so it sees "
-                         "excursions that rise and fall between two "
-                         "emitted lines - the append-anchored poll it "
-                         "replaces was structurally blind to those.")
+                         "tracker (default 1 ms - measured to convert "
+                         "large peak misses into near-self-footprint "
+                         "ones where 5 ms discarded every repeat, at "
+                         "small extra emit overhead). Thread-side, so it "
+                         "sees excursions that rise and fall between two "
+                         "emitted lines.")
+    ap.add_argument("--shortfall-tolerance", type=int,
+                    default=SHORTFALL_TOLERANCE_B,
+                    help="--mem: max peak shortfall (bytes) for a cell to "
+                         "count as MEASURED (default 4096 - ~13x the "
+                         "sampler's own ~308 B bookkeeping footprint and "
+                         "~7x below the smallest observed genuine miss; "
+                         "the raw shortfall always prints so any reviewer "
+                         "can re-cut).")
     ap.add_argument("--peak-snap-grow", type=float, default=1.05,
                     help="--mem: re-snapshot the tracked peak when "
                          "traced-current exceeds the last snapshot by this "
@@ -1648,8 +1681,18 @@ def main():
         ]
         print(f"  R1 (MB) at stage_open#first per repeat: {r1_twin}  vs at "
               f"partition_open#mid: {r1_mid}")
+        if any(v > 0 for v in r1_twin):
+            # Both halves of this statement matter; never print one
+            # without the other (driver ruling, ADR 0100 D0).
+            print("  R1x2 co-residency: CONFIRMED deterministically at "
+                  "stage_open#first (which fires AFTER the twin is built "
+                  "at apesees ~3527) - every repeat, every size. It is "
+                  "NOT the driver of G0a variance: the anchor is the "
+                  "tracked peak, which lands elsewhere; the twin-live "
+                  "state is deterministically capturable but is not the "
+                  "peak instant.")
         print("  (median defends against ordinary noise ONLY - a missed "
-              "peak repeats identically; see the gate-refusal rule.)")
+              "peak repeats identically; see the shortfall verdict.)")
 
     if len(rows) >= 2 and rows[0][1] and rows[0][0]:
         sh = rows[-1][0] / rows[0][0]
@@ -1664,8 +1707,10 @@ def main():
     # exception (a mid-emit snapshot hook); this tool only reports.
     if args.mem and records:
         ok_n = sum(1 for r in records if r.get("gate_status") == "ok")
-        print(f"\nshortfall-zero census: {ok_n}/{len(records)} cells "
-              f"measured the peak (only survivors carry gate numbers)")
+        print(f"\nshortfall census (tolerance "
+              f"{args.shortfall_tolerance:,} B): {ok_n}/{len(records)} "
+              f"cells MEASURED the peak (only survivors carry gate "
+              f"numbers)")
         by_sz_c: "dict[int, list]" = {}
         for r in records:
             by_sz_c.setdefault(r["size"], []).append(r)
@@ -1725,6 +1770,15 @@ def main():
             print(f"  fit: R2 rss={g0b_r2_rss:.3f} over {fmt(pts_rss)}")
             print(f"  fit: R2 traced={g0b_r2_traced:.3f} over "
                   f"{fmt(pts_traced)}")
+            if g0b_slope is not None:
+                rel = ("BELOW 1" if g0b_slope < 1.0
+                       else f"{g0b_slope:.2f}")
+                print(f"  NOTE: G0b(slope) is {rel} at bench scale, "
+                      f"against the ADR's ~1.9 expectation. The ~1.9 "
+                      f"came from the incident-scale ledger, and the "
+                      f"small-cell extrapolation caveat cuts BOTH ways - "
+                      f"neither number refutes the other outside its own "
+                      f"scale.")
         else:
             print(f"\nG0b(slope): NOT COMPUTABLE in this invocation - "
                   f"needs >=3 sizes on both series (have traced="
