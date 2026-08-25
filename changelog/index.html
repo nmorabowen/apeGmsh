@@ -3553,6 +3553,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-gate-g0-is-closed-the-r-table-gains-r8-and-d5-is-re-priced-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 gate G0 is closed; the R-table gains R8 and D5 is re-priced (Amendment 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8600,6 +8611,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-gate-g0-is-closed-the-r-table-gains-r8-and-d5-is-re-priced-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 gate G0 is closed; the R-table gains R8 and D5 is re-priced (Amendment 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13625,6 +13647,28 @@ block dropped RSS 31 → 18 GB on that model before <code>build()</code> even st
 partitioning guide, the bridge guide, and the bridge concepts page now say so
 instead of demonstrating it by accident.</p>
 <p>Docs and skill text only: no code, no API change.</p>
+<h3 id="changed-adr-0100-gate-g0-is-closed-the-r-table-gains-r8-and-d5-is-re-priced-amendment-1">CHANGED — ADR 0100 gate G0 is closed; the R-table gains R8 and D5 is re-priced (Amendment 1)<a class="headerlink" href="#changed-adr-0100-gate-g0-is-closed-the-r-table-gains-r8-and-d5-is-re-priced-amendment-1" title="Permanent link">&para;</a></h3>
+<p>The partitioned-emit residency campaign ran at four mesh sizes and two rank
+counts. <strong>G0a = 0.55-0.61</strong> over the terms ADR 0100 authorised when its
+decision rule was written, with 13-16% unattributed at every cell.</p>
+<p>Three measurements corrected the ADR's pre-measurement guesses. A full
+per-element reverse tag map, <code>ops_tag_to_fem_eid</code>, was found resident inside
+<code>_emit_stages_partitioned</code> at 103-228 B/elem across cells (~5-12 GB at the
+incident's scale) -- larger than several named terms and missing from the
+original ledger; it is now <strong>R8</strong>. The <code>_PG_FANOUT_CACHE</code> arrays measure
+72 B/elem and stay deliberately unrouted, but are recorded rather than
+assumed. And <strong>R7
+(<code>class_chunks</code>) measures 0.00 MB at the resident peak</strong> -- the transient is
+real but lives early in emit, so the ADR's speculation that it "may be the
+largest single win" does not survive contact with the peak, and D5's
+<code>class_chunks</code> half is de-priced.</p>
+<p>G0b was not computable as originally defined (per-cell RSS/traced ratios
+spanned 0.68-87.35, including physically impossible sub-1 values). It is
+redefined as a <strong>ratio of regression slopes</strong> and measures 0.88 at bench
+scale -- below the ~1.9 the middle branch assumed, explained by an obmalloc
+reservoir left by the meshing phase that absorbs emit allocations at these
+sizes. That precondition is therefore recorded as unverified rather than met.</p>
+<p>Docs only: an ADR amendment. No code, no API change.</p>
 <h3 id="fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped">FIXED — a <code>node</code> line now carries exactly <code>ndm</code> coordinates (2-D <code>-ndf</code> / <code>-mass</code> were silently dropped)<a class="headerlink" href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" title="Permanent link">&para;</a></h3>
 <p>The broker stores every node as <code>(x, y, z)</code> and the emitters wrote all
 three, so a 2-D deck emitted <code>node 1 0.0 0.0 0.0 -ndf 2</code>.  OpenSees
