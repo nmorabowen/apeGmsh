@@ -589,12 +589,23 @@ Pre-P3 per-entry rates, measured (`r2_before.json`, np 8):
 | — per set | 72.4 | 111.9 |
 | R8 `ops_tag_to_fem_eid` | 148.8–227.7 B/elem | 152.1–204.7 B/elem |
 
-Post-P3, R8 measures **16.01–16.02 B/elem** (6/6 measurements agree) — two
-`int64` arrays, i.e. the columnar floor. Per-entry post rates for R1 and R2
-are **not quoted here**: the merged instrument prints per-term only at the
-anchor, where those terms no longer live, so no artifact supports a figure.
-The aggregate effect is the peak halving below, which is
-attribution-independent.
+Post-P3 per-entry rates, measured at the terms' own hook
+(`r2_after2.json`, `per_term_by_hook["partition_open#mid"]`; the same values
+appear in the printed per-hook table):
+
+| term | 24,389 hexes | 32,768 hexes | shrink |
+|---|---|---|---|
+| R1, now a single lookup | **16.01 B/node** | **16.01 B/node** | **4.0–9.5×** |
+| R2, both containers | **17.0 B/node** (8.50/set) | **16.9 B/node** (8.45/set) | **8.5–13.2×** |
+| R8 | **16.01–16.02 B/elem** (6/6 agree) | " | **9.3–14.2×** |
+
+Every post rate lands at **~16 B/entry** — two `int64` arrays, the columnar
+floor. R1's staged twin is gone entirely, so its 4.0–9.5× already includes
+dropping the second dict.
+
+These are read at `partition_open#mid`, where the terms live; they read 0.00
+at the *anchor* row because the peak has relocated. The aggregate effect is
+the peak halving below, which is attribution-independent.
 
 ### ⚠ THE INCIDENT IS NOT RESOLVED — D5 is necessary, not optional
 
