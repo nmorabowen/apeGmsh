@@ -237,6 +237,13 @@ statement is that the post-D ceiling is G3's output, not this section's.
 
 ## Gates
 
+> **Superseded in part by Amendment 1 (2026-08-25).** G0 is closed:
+> G0a measured 0.55–0.61 over the terms listed here, **R8 was added to
+> the numerator** afterwards, and **G0b is redefined as a slope ratio**
+> (measured 0.88) — so the "G0b ≈ 2" precondition below was **not
+> satisfied** when the branch was chosen. Read this section together
+> with Amendment 1.
+
 - **G0 (instrument first, two numbers):**
   - **G0a:** ≥ 80 % of the *traced* emit-phase peak growth attributed to
     R1–R4/R6/R7 by a snapshot taken **at the peak** (mid-emit hook), at ≥ 3
@@ -328,7 +335,8 @@ citations, and the Route E trigger arithmetic.
 
 Gate **G0 is closed.** D0 shipped in two slices — the docs half (#1068) and
 the instrument half (#1071, `tests/benchmarks/emit_throughput_profile.py`) —
-and the campaign ran 2026-08-24 on the desktop rig against the `box` recipe, staged,
+and the campaign ran 2026-08-24 on the desktop rig against the `box`
+recipe, staged,
 `--stream`, at four sizes × two np values.
 
 This amendment is written **after** the measurement, and says so on purpose:
@@ -344,18 +352,24 @@ admitted per cell by an error bound `|sampled − conservative| ≤ 0.02`.
 
 | hexes | np | median G0a | vs cross-repeat max peak |
 |---|---|---|---|
-| 24,389 | 8 | 0.558–0.593 | 0.558 |
+| 24,389 | 8 | 0.558–0.599 | 0.558 |
 | 29,791 | 4 | 0.605 | 0.581–0.584 |
 | 29,791 | 8 | 0.552 | 0.530–0.535 |
 | 32,768 | 4 | 0.602 | 0.572 |
 | 32,768 | 8 | 0.597 | 0.594 |
-| 39,304 | 4, 8 | **discarded 0/6** | error 0.029–0.041 > 0.02 (deterministic) |
+| 39,304 | 4, 8 | **discarded 0/6** | error 0.0364–0.0411 > 0.02 (deterministic) |
 
 Where counter-peak growths disagree across repeats, the right-hand column is
 the defensible reading: a counter peak is a **maximum**, so a lower-growth
 repeat under-read and its G0a is biased **up**. That pulls the honest floor
 to ~0.53. Note also what the bound does *not* certify — it tests
 snapshot-vs-counter agreement, **not counter-vs-reality**.
+
+One bookkeeping note, so the two tables below reconcile: the gate table
+above divides by the *conservative* denominator (`cons_growth_b`, the true
+counter-peak growth), while the dual-definition table divides by
+`traced_growth_b` at the anchor. The same cell therefore reads 0.597 in one
+and 0.600 in the other. Both are stated as measured; neither is a typo.
 
 Per-term ledger at the largest clean cell (32,768 hexes, np 8, growth
 31.74 MB):
@@ -376,9 +390,19 @@ Per-term ledger at the largest clean cell (32,768 hexes, np 8, growth
 
 `ops_tag_to_fem_eid` (`apesees.py:3674-3677`, filled via `build.py:7221`) is
 a full per-element **reverse tag map** built inside
-`_emit_stages_partitioned`. Measured at **~210 B/elem ≈ ~10 GB at incident
-scale** — larger than several terms this ADR already names, and absent from
-the original R-table only because the pre-measurement inventory missed it.
+`_emit_stages_partitioned`. Measured across cells at **103–228 B/elem
+(~189 average over gate-ok entries)**, i.e. **~5–12 GB at the incident's
+51.0 M elements** — larger than several terms this ADR already names, and
+absent from the original R-table only because the pre-measurement inventory
+missed it. The rate is given as a range because it genuinely varies with np
+and mesh size; no single-point figure is defensible from the campaign data.
+
+**Instrument inconsistency, named rather than left standing:** the merged
+bench (`emit_throughput_profile.py:337`, `:1202-1206`) still prints
+"~128 B/elem ≈ 6.5 GB" for R8. That string is a **stale pre-measurement
+estimate** — it predates the campaign and is not supported by any artifact.
+A docs amendment cannot change code, so its one-line correction is folded
+into **P3's scope**.
 
 It is **added to the R-table and to G0a's numerator.** The effect is the
 whole reason this amendment carries a date:
@@ -390,12 +414,23 @@ whole reason this amendment carries a date:
 | **+ R8** | **0.805** | **proceed as planned** |
 | + both | 0.879 | proceed |
 
+This table is computed from the size-33 / np-8 cell's measured per-term
+bytes and is **unaffected by the rate question above** — the rate is a
+summary statistic over cells; the branch arithmetic uses one cell's bytes
+directly.
+
 **~88 % of emit growth is attributable to identified structures; only ~60 %
 to the originally authorised ones.** The branch therefore turned on the
 ledger's completeness, not on the measurement. The campaign deliberately
 reported the gate over the *original* set and surfaced this table separately,
 so that widening the numerator was an explicit decision taken with the
 numbers in view — not an instrument quietly grading its own homework.
+
+**Provenance, because this document must not appear to grade itself:** the
+decision to authorise R8 and to select the branch was taken by the **project
+owner on 2026-08-25**, with the dual-definition table above in view. This
+amendment *records* that ruling; it does not make it. The measuring party
+proposed both readings and did not choose between them.
 
 ### `_PG_FANOUT_CACHE` — identified, measured, still not routed
 
@@ -436,8 +471,9 @@ spelling.
 Separately, R1's **×2 co-residency on staged partitioned decks is confirmed
 deterministically** — R1 exactly doubles at every repeat and every size, at a
 hook firing after the twin's construction. It is *not* the driver of
-run-to-run G0a variance, but it **is** a first-order contributor at ~30 % of
-the numerator. Both halves of that sentence are load-bearing.
+run-to-run G0a variance, but it **is** a first-order contributor at
+**~24–30 %** of the numerator across measured cells. Both halves of that
+sentence are load-bearing.
 
 ### G0b — redefined, and its precondition fails at bench scale
 
@@ -470,7 +506,10 @@ as unverified at desktop scale rather than as met.
 Every measured cell is **~1,300× below the 51 M-hex incident**. An early
 hypothesis that G0a rises monotonically with size toward ~0.76–0.78 was
 **retracted on fresh data** (a 6,859-hex cell scored 0.678, above a
-13,824-hex cell's 0.513). There is therefore **no established basis for
+13,824-hex cell's 0.513 — both from the pre-gate instrument generation; the
+mature gated run measures that same 13,824-hex cell at 0.552, so the
+direction of the retraction survives the instrument change). There is
+therefore **no established basis for
 extrapolating G0a to incident scale**, and the largest size attempted
 (39,304 hexes) fails deterministically under the error bound. G2/G3 remain
 the only measurements that speak to the real ceiling.
@@ -486,3 +525,10 @@ the only measurements that speak to the real ceiling.
   post-fix ceiling that re-prices it.
 - The merged instrument is **P3's before/after oracle**: a post-P3 campaign
   must show R1/R2/R3 (and R8) collapse. That is G0's re-run gate.
+
+**Provenance of the numbers above:** every figure comes from the JSON
+records the instrument emits (`--json`), not from a checked-in driver
+script. The campaign was run as ad hoc invocations of
+`emit_throughput_profile.py`; the per-cell JSON records — which carry
+`per_term_bytes`, `peak_counter_b`, the gate verdict and the discard reason
+— are the authoritative provenance.
