@@ -17,3 +17,6 @@ CHANGELOG.md merge=union
 # an LF-only .bat, and scripts/make-venv.bat relies on label jumps for its
 # name validation.
 *.bat text eol=crlf
+
+# ADR 0100 P3 golden deck: byte-exact ordering oracle; no EOL translation.
+tests/opensees/parity/*.golden.tcl -text

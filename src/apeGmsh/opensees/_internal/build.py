@@ -51,6 +51,7 @@ from typing import (
     Sequence,
     TypeAlias,
     cast,
+    overload,
 )
 
 import numpy as np
@@ -1741,7 +1742,7 @@ class ElementPlanRows:
         when ``tags`` is ``None`` (the contiguous-block common case).
     tags : numpy.ndarray or None
         Optional ``int64[N]`` explicit per-row tags. Set only for
-        rank-bucketed *subsets* (see :func:`bucket_pre_allocated_by_rank`)
+        rank-bucketed *subsets* (see :class:`LazyRankBuckets`)
         where the selected rows are no longer contiguous, so row ``i``'s
         tag is ``tags[i]``. ``None`` for the full per-spec plan.
 
@@ -1801,7 +1802,7 @@ class ElementPlanRows:
     def select_rows(self, idx: "np.ndarray") -> "ElementPlanRows":
         """Return a row-subset view for the integer index array ``idx``.
 
-        Used by :func:`bucket_pre_allocated_by_rank` to build a per-rank
+        Used by :class:`LazyRankBuckets` to build a per-rank
         bucket that is still columnar (arrays indexed by ``idx``) instead
         of a re-materialised list of tuples. The subset carries explicit
         per-row ``tags`` (``tag_start + idx``) because the selected rows
@@ -6508,7 +6509,7 @@ class SortedIntToInt:
     resident form is two int64 arrays; point ``get`` is a
     ``searchsorted``, and :meth:`translate_ranks` resolves a whole array
     of keys in one vectorised pass (used for the per-element owner lookup
-    in :func:`bucket_pre_allocated_by_rank`).
+    in :class:`LazyRankBuckets`).
 
     Duck-typed to the old dict for the point-lookup consumers: :meth:`get`
     (``int`` or ``None`` — unknown key stays ``None``, never
@@ -6533,6 +6534,15 @@ class SortedIntToInt:
         if i < k.shape[0] and int(k[i]) == key:
             return i
         return -1
+
+    # ``dict.get``-shaped overloads: an explicit non-None default means
+    # the result is always an int — encoding the real contract so e.g.
+    # ``owner.get(reverse.get(tag, -1))`` type-checks without a cast.
+    @overload
+    def get(self, key: int) -> "int | None": ...
+
+    @overload
+    def get(self, key: int, default: int) -> int: ...
 
     def get(self, key: int, default: "int | None" = None) -> "int | None":
         i = self._find(int(key))
@@ -6608,6 +6618,154 @@ class SortedIntToInt:
         hit = in_range & (k[pos_c] == q)
         out[hit] = self._vals[pos_c[hit]]
         return out
+
+
+def node_index_lookup(ids: "Any") -> "SortedIntToInt":
+    """Columnar ``{node_id: coord_row}`` lookup (ADR 0100 D3).
+
+    Replaces the per-emit ``{int(nid): i for i, nid in enumerate(ids)}``
+    dict (~84 B/node of boxed pairs; built up to twice, co-resident, on
+    staged partitioned decks) with two int64 arrays — 16 B/node.
+
+    ``fem.nodes.ids`` is object-dtype and entity-grouped — **unsorted on
+    every partitioned mesh** (``_fem_extract`` takes
+    ``gmsh.model.mesh.getNodes()`` verbatim) — so a raw ``searchsorted``
+    over the ids would be wrong; the ids are int64-ified and sorted once,
+    and lookups go through the argsort permutation.  Missing-id detection
+    is preserved exactly: ``.get`` answers ``None`` on a miss and
+    ``[...]`` raises ``KeyError``, like the dict it replaces.  There is
+    deliberately NO dict fallback — a fallback would fire on exactly the
+    partitioned meshes D3 targets (ADR 0100 §D3, review finding 4).
+
+    LAST-wins on a duplicated id, like the dict it replaces (a later
+    ``enumerate`` key overwrites an earlier one).  Broker node ids are
+    unique today, but "unique today" is exactly what
+    :meth:`FemToOpsTagMap._find` assumed before the review caught its
+    silent first-wins flip (ADR 0065 v2 hardening) — same defect class,
+    defended the same way: the stable argsort preserves enumerate order
+    among equals, and keeping the last row of each duplicate run
+    reproduces the dict.  (The dedup lives at build time because
+    :class:`SortedIntToInt` contracts sorted+unique keys, where
+    FemToOpsTagMap keeps duplicates and resolves them per lookup with
+    ``side="right" - 1``.)
+    """
+    ids_i64 = np.asarray(ids, dtype=np.int64)
+    order = np.argsort(ids_i64, kind="stable")
+    keys = ids_i64[order]
+    if keys.shape[0]:
+        keep = np.empty(keys.shape[0], dtype=bool)
+        keep[:-1] = keys[:-1] != keys[1:]
+        keep[-1] = True
+        if not keep.all():
+            keys = keys[keep]
+            order = order[keep]
+    return SortedIntToInt(
+        keys, order.astype(np.int64, copy=False),
+    )
+
+
+_EMPTY_INT64 = np.empty((0,), dtype=np.int64)
+
+
+class SortedIntSet:
+    """Compact read-only ``set[int]`` backed by one sorted-unique int64
+    array (ADR 0100 D2).
+
+    Replaces the per-rank ``set[int]`` membership sets
+    (``rank_owned_nodes`` / ``rank_primary_nodes``, ~41 B/node each,
+    Σ over ranks growing with np through the shared-boundary factor)
+    with 8 B/node.  Duck-typed to the surface the partitioned emit
+    passes actually use: ``in`` / ``len`` / truthiness / iteration
+    (ascending), plus the two set-algebra forms the staged pass needs —
+    :meth:`intersection_sorted` (``sorted(self & other)``) and
+    :meth:`isdisjoint`.  Read-only.
+    """
+
+    __slots__ = ("_keys",)
+
+    def __init__(self, keys: "np.ndarray") -> None:
+        # ``keys`` must be sorted + unique; build via :meth:`from_ids`.
+        self._keys = keys
+
+    @classmethod
+    def from_ids(cls, ids: "Any") -> "SortedIntSet":
+        """Build from any id iterable / array; duplicates collapse."""
+        if isinstance(ids, np.ndarray):
+            arr = ids.astype(np.int64, copy=False)
+        else:
+            arr = np.fromiter((int(n) for n in ids), dtype=np.int64)
+        if arr.shape[0] == 0:
+            return cls(_EMPTY_INT64)
+        return cls(np.unique(arr))
+
+    def __len__(self) -> int:
+        return int(self._keys.shape[0])
+
+    def __bool__(self) -> bool:
+        return bool(self._keys.shape[0] > 0)
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, (int, np.integer)):
+            return False
+        k = self._keys
+        i = int(np.searchsorted(k, key))
+        return i < k.shape[0] and int(k[i]) == int(key)
+
+    def __iter__(self) -> "Iterator[int]":
+        return iter(self._keys.tolist())
+
+    def _query_array(self, other: "Any") -> "np.ndarray":
+        if isinstance(other, np.ndarray):
+            arr = other.astype(np.int64, copy=False)
+        else:
+            arr = np.fromiter((int(n) for n in other), dtype=np.int64)
+        if arr.shape[0] == 0:
+            return _EMPTY_INT64
+        return np.unique(arr)
+
+    def _member_mask(self, q_sorted: "np.ndarray") -> "np.ndarray":
+        k = self._keys
+        pos = np.searchsorted(k, q_sorted)
+        in_range = pos < k.shape[0]
+        pos_c = np.where(in_range, pos, 0)
+        return cast("np.ndarray", in_range & (k[pos_c] == q_sorted))
+
+    def intersection_sorted(self, other: "Iterable[int]") -> "list[int]":
+        """``sorted(self & set(other))`` — one vectorised pass."""
+        q = self._query_array(other)
+        if q.shape[0] == 0 or self._keys.shape[0] == 0:
+            return []
+        return cast("list[int]", q[self._member_mask(q)].tolist())
+
+    def isdisjoint(self, other: "Iterable[int]") -> bool:
+        q = self._query_array(other)
+        if q.shape[0] == 0 or self._keys.shape[0] == 0:
+            return True
+        return not bool(self._member_mask(q).any())
+
+
+def bucket_primary_nodes_by_rank(
+    primary_owner: "SortedIntToInt",
+    seed_ranks: "Iterable[int]",
+) -> "dict[int, SortedIntSet]":
+    """Per-rank PRIMARY-owned node-id sets, columnar (ADR 0100 D2).
+
+    Same key set and per-rank membership as the
+    ``{rank: set()}`` seed + ``setdefault(owner_rank).add(nid)`` fill
+    over ``primary_owner.items()`` it replaces: every seed rank is
+    present (possibly empty), and any owner rank absent from the seed
+    is created — but each per-rank set is a sorted int64 array instead
+    of boxed ints.
+    """
+    empty = SortedIntSet(_EMPTY_INT64)
+    out: "dict[int, SortedIntSet]" = {int(r): empty for r in seed_ranks}
+    # Same-module access to the columnar map's parallel arrays: keys
+    # ascend, so each per-rank mask subset is already sorted + unique.
+    keys = primary_owner._keys
+    vals = primary_owner._vals
+    for r in np.unique(vals).tolist():
+        out[int(r)] = SortedIntSet(keys[vals == r])
+    return out
 
 
 class NodePartitionOwners:
@@ -7239,6 +7397,34 @@ class FemToOpsTagMap:
         out[hit] = self._sorted_tags[pos_clamped[hit]]
         return out
 
+    def inverse(self) -> "SortedIntToInt":
+        """Columnar ``{ops_tag: fem_eid}`` reverse map (ADR 0100 R8).
+
+        Replaces the per-stage
+        ``{int(tag): int(eid) for eid, tag in self.items()}`` dict in
+        ``_emit_stages_partitioned`` (measured 103-228 B/elem across
+        the G0 cells ≈ ~5-12 GB at the 51.0 M-element incident) with
+        two int64 arrays.  ``SortedIntToInt.get(tag, -1)`` preserves
+        the sole consumer's ``-1`` miss default exactly.
+
+        Tags are unique by construction (block allocation), but
+        ``from_pairs`` replay accepts arbitrary pairs — so a duplicate
+        tag keeps the LAST pair, exactly as the dict comprehension did.
+        """
+        order = np.argsort(self._tags, kind="stable")
+        t = self._tags[order]
+        e = self._eids[order]
+        if t.shape[0]:
+            # keep-last per duplicate run (stable sort preserved
+            # items() order among equals).
+            keep = np.empty(t.shape[0], dtype=bool)
+            keep[:-1] = t[:-1] != t[1:]
+            keep[-1] = True
+            if not keep.all():
+                t = t[keep]
+                e = e[keep]
+        return SortedIntToInt(t, e)
+
 
 def compute_stage_ownership(
     stage_records: "tuple[StageRecord, ...]",
@@ -7550,43 +7736,85 @@ def _plan_owner_ranks(
     )
 
 
-def bucket_pre_allocated_by_rank(
-    pre_allocated: "ElementPlanRows",
-    element_owner: "SortedIntToInt | Mapping[int, int]",
-) -> "dict[int, ElementPlanRows]":
-    """Group a spec's pre-allocated element plan by owner rank.
+class LazyRankBuckets:
+    """Lazy per-rank element-plan buckets for ONE spec (ADR 0100 D4).
 
-    One O(plan) pass replacing the per-rank full-plan skip-scan in
-    :func:`emit_element_spec_partitioned` — feeding each rank only its
-    own bucket turns the per-rank fan-out from O(plan × ranks) into
-    O(plan).  Plan order is preserved within each bucket, and entries
-    with no owner are dropped (they never emitted on any rank before
-    either), so the emitted deck is byte-identical.
+    The eager form this replaces (``bucket_pre_allocated_by_rank``)
+    materialised every rank's ``select_rows`` copy up front — eids +
+    connectivity + tags for the whole model, the emit path's **3rd
+    connectivity copy** (~80 B/row; 1st = FEMData, 2nd =
+    ``_PG_FANOUT_CACHE``).  Here the resident state is one int64
+    permutation of the spec's rows grouped by owner rank (8 B/row)
+    plus O(ranks) offsets; :meth:`get` materialises a single rank's
+    rows on demand and the caller lets them die when that rank's block
+    closes.  Rows with no owner (sentinel -1) are dropped exactly as
+    the eager bucketing dropped them — they never emitted on any rank.
 
-    ADR 0065 v2 / plan_emit_memory_columnar.md B1+B4: the buckets are
-    columnar :class:`ElementPlanRows` *row-subset views* (arrays indexed
-    by the owned-row positions) rather than lists of re-materialised
-    tuples — the partitioned emit re-materialising a tuple graph per rank
-    was exactly the leak B1 targets. ``emit_element_spec_partitioned``
-    consumes each bucket by iterating triples / ``if not pre_allocated``,
-    both of which the columnar view supports unchanged.
+    Row order inside a bucket is plan order: the stable argsort keeps
+    ascending original positions within each rank run, matching the
+    eager path's ``np.nonzero`` positions — the emitted deck is
+    byte-identical.
+
+    :meth:`count` answers the ADR 0099 S5 hoist pre-pass (per-rank
+    presence for ALL ranks *before* the rank loop) without
+    materialising any rows.
     """
-    n = len(pre_allocated)
-    if n == 0:
-        return {}
-    # Vectorised owner lookup per row (positional). ``element_owner`` is a
-    # sparse dict keyed by fem eid; rows with no owner get sentinel -1 and
-    # are dropped (they emitted on no rank before either).
-    owners = _plan_owner_ranks(pre_allocated, element_owner)
-    out: "dict[int, ElementPlanRows]" = {}
-    for owner in np.unique(owners):
-        r = int(owner)
-        if r < 0:
-            continue
-        # np.nonzero preserves ascending position order == plan order.
-        idx = np.nonzero(owners == owner)[0]
-        out[r] = pre_allocated.select_rows(idx)
-    return out
+
+    __slots__ = ("_plan", "_order", "_ranks", "_starts", "_ends")
+
+    def __init__(
+        self,
+        pre_allocated: "ElementPlanRows",
+        element_owner: "SortedIntToInt | Mapping[int, int]",
+    ) -> None:
+        self._plan = pre_allocated
+        n = len(pre_allocated)
+        if n == 0:
+            self._order = _EMPTY_INT64
+            self._ranks = _EMPTY_INT64
+            self._starts = _EMPTY_INT64
+            self._ends = _EMPTY_INT64
+            return
+        owners = _plan_owner_ranks(pre_allocated, element_owner)
+        order = np.argsort(owners, kind="stable")
+        sorted_owners = owners[order]
+        ranks, starts = np.unique(sorted_owners, return_index=True)
+        ends = np.append(starts[1:], n)
+        keep = ranks >= 0
+        self._order = order
+        self._ranks = ranks[keep]
+        self._starts = starts[keep]
+        self._ends = ends[keep]
+
+    def _find(self, rank: int) -> int:
+        r = self._ranks
+        i = int(np.searchsorted(r, rank))
+        if i < r.shape[0] and int(r[i]) == rank:
+            return i
+        return -1
+
+    def count(self, rank: int) -> int:
+        """Row count for ``rank`` — no materialisation."""
+        i = self._find(int(rank))
+        if i < 0:
+            return 0
+        return int(self._ends[i] - self._starts[i])
+
+    def get(
+        self, rank: int, default: "Any" = None,
+    ) -> "ElementPlanRows | Any":
+        """Materialise ``rank``'s rows; ``default`` when it owns none.
+
+        Same surface as the eager bucket-dict's ``.get``.  Each call
+        builds a FRESH :class:`ElementPlanRows` subset — consume it and
+        let it die; retaining every rank's result rebuilds the eager
+        residency this class exists to remove.
+        """
+        i = self._find(int(rank))
+        if i < 0:
+            return default
+        idx = self._order[int(self._starts[i]):int(self._ends[i])]
+        return self._plan.select_rows(idx)
 
 
 def emit_element_spec_partitioned(
