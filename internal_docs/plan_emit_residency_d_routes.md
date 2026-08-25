@@ -62,7 +62,8 @@ spend) sits behind the decision point.
    preserve emission order and missing-id semantics exactly. Mitigation:
    G1's three tiers; refuter lens 1.
 3. **Speed regressions.** searchsorted vs dict in hot loops; O(np·N)
-   bucketing time already exists in `bucket_pre_allocated_by_rank` — report
+   bucketing time already existed in the eager
+   `bucket_pre_allocated_by_rank` (replaced by `LazyRankBuckets`) — report
    time so a non-regression isn't misread. The old "10 % emit-time budget"
    is replaced by the committed 1.7× ratio gate + median-of-3 reporting
    (10 % sits inside the instrument's documented ~1.6× drift).

@@ -23,6 +23,7 @@ from apeGmsh.opensees._internal.build import (
     SortedIntSet,
     SortedIntToInt,
     _plan_owner_ranks,
+    bucket_primary_nodes_by_rank,
     build_node_partition_owners,
     node_index_lookup,
 )
@@ -356,6 +357,41 @@ def test_node_index_lookup_empty_ids() -> None:
     m = node_index_lookup(np.asarray([], dtype=object))
     assert len(m) == 0
     assert m.get(1) is None
+
+
+def test_node_index_lookup_duplicate_id_is_last_wins_like_the_old_dict() -> None:
+    """Broker node ids are unique today — but "unique today" is what
+    FemToOpsTagMap assumed before the review caught its first-wins
+    flip.  The dict this replaces resolved a duplicate LAST-wins
+    (later enumerate key overwrites); pin the same tie-break."""
+    ids = np.asarray([7, 3, 7, 9], dtype=object)
+    ref = {int(nid): i for i, nid in enumerate(ids)}
+    assert ref[7] == 2  # last-wins by construction
+    m = node_index_lookup(ids)
+    assert m.get(7) == 2
+    assert m[7] == 2
+    assert m.get(3) == 1
+    assert m.get(9) == 3
+    assert len(m) == len(ref) == 3
+
+
+def test_bucket_primary_nodes_seeds_a_zero_primary_rank() -> None:
+    """M7 guard (refuter lens 1): a rank can own ONLY shared nodes
+    whose primary owner is another rank.  The seed must still create
+    that rank's (empty) entry — the per-rank pattern pass reads
+    ``rank_primary_nodes[rank]`` unconditionally, so a dropped seed is
+    a KeyError on every deck with such a rank."""
+    primary_owner = SortedIntToInt(
+        np.asarray([1, 2, 3], dtype=np.int64),
+        np.asarray([0, 1, 0], dtype=np.int64),
+    )
+    out = bucket_primary_nodes_by_rank(primary_owner, [0, 1, 2])
+    assert sorted(out) == [0, 1, 2]
+    assert list(out[0]) == [1, 3]
+    assert list(out[1]) == [2]
+    assert list(out[2]) == []
+    assert not out[2]
+    assert len(out[2]) == 0
 
 
 def test_sorted_int_set_membership_matches_reference_set() -> None:

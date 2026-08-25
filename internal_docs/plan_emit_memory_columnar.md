@@ -69,7 +69,9 @@ regression harness every slice below must move.
    (WeakKeyDictionary); `expand_spec_to_elements` (`build.py:1622`) adds the
    node-pair synthetic `(MISSING_FEM_ELEMENT_ID, (i, j))`.
 3. `bucket_pre_allocated_by_rank` (`build.py:4718`) builds per-rank
-   dict-of-lists via `element_owner` dict lookups.
+   dict-of-lists via `element_owner` dict lookups.  (Since ADR 0100 P3
+   the eager bucketing is gone — `LazyRankBuckets` holds a per-spec
+   argsort permutation and materialises one rank's rows on demand.)
 4. `fem_eid_to_ops_tag` is built as a dict comprehension over the plan
    (`apesees.py:1247/1309/1574/2261/2332`); consumers: `_emit_rayleigh` /
    `_emit_damping_attach` region `-ele` lists (`apesees.py:1369–1370`), point
@@ -121,7 +123,9 @@ partitioned, and staged+partitioned — no flat-only shortcut.
   `emit_element_spec_partitioned` (`build.py:4740`), staged per-rank blocks:
   iterate the arrays directly (per-row f-string emit off array scalars —
   `int()` at the line boundary keeps output byte-identical). Rank bucketing
-  via `bucket_pre_allocated_by_rank` → mask/argsort form; `element_owner`
+  via `bucket_pre_allocated_by_rank` → mask/argsort form (itself
+  replaced by the lazy `LazyRankBuckets` in ADR 0100 P3);
+  `element_owner`
   and `compute_stage_ownership` outputs move to positional arrays.
   ~3–4 days.
 - **B3 — retire the tag dict.** `FemToOpsTagMap` replaces the dict

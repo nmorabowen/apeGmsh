@@ -6626,11 +6626,31 @@ def node_index_lookup(ids: "Any") -> "SortedIntToInt":
     ``[...]`` raises ``KeyError``, like the dict it replaces.  There is
     deliberately NO dict fallback — a fallback would fire on exactly the
     partitioned meshes D3 targets (ADR 0100 §D3, review finding 4).
+
+    LAST-wins on a duplicated id, like the dict it replaces (a later
+    ``enumerate`` key overwrites an earlier one).  Broker node ids are
+    unique today, but "unique today" is exactly what
+    :meth:`FemToOpsTagMap._find` assumed before the review caught its
+    silent first-wins flip (ADR 0065 v2 hardening) — same defect class,
+    defended the same way: the stable argsort preserves enumerate order
+    among equals, and keeping the last row of each duplicate run
+    reproduces the dict.  (The dedup lives at build time because
+    :class:`SortedIntToInt` contracts sorted+unique keys, where
+    FemToOpsTagMap keeps duplicates and resolves them per lookup with
+    ``side="right" - 1``.)
     """
     ids_i64 = np.asarray(ids, dtype=np.int64)
     order = np.argsort(ids_i64, kind="stable")
+    keys = ids_i64[order]
+    if keys.shape[0]:
+        keep = np.empty(keys.shape[0], dtype=bool)
+        keep[:-1] = keys[:-1] != keys[1:]
+        keep[-1] = True
+        if not keep.all():
+            keys = keys[keep]
+            order = order[keep]
     return SortedIntToInt(
-        ids_i64[order], order.astype(np.int64, copy=False),
+        keys, order.astype(np.int64, copy=False),
     )
 
 

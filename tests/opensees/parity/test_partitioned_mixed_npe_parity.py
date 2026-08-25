@@ -240,6 +240,69 @@ def test_stage2_remove_element_routes_to_owning_rank_bracket() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2b. A rank with ZERO primary-owned nodes (M7 guard, refuter lens 1).
+# ---------------------------------------------------------------------------
+
+
+def _make_zero_primary_rank_fem() -> FEMStub:
+    """Rank 1 owns ONLY shared nodes ({2, 3} ⊂ rank 0's {1, 2, 3}).
+
+    ``primary_owner_map`` assigns each node to its LOWEST owning rank
+    (documented tie-break), so every rank-1 node is primary on rank 0
+    and ``rank_primary_nodes[1]`` must exist as an EMPTY set — a
+    dropped seed is a KeyError in the per-rank pattern pass.  No prior
+    fixture had such a rank.
+    """
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3],
+            coords=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
+            node_pgs={"anchor": [1], "tip": [3]},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "bars": _ElementGroupView(
+                    ids=(1, 2),
+                    connectivity=((1, 2), (2, 3)),
+                ),
+            },
+        ),
+    )
+    fem.set_partitions([
+        (0, [1, 2, 3], [1]),
+        (1, [2, 3], [2]),
+    ])
+    return fem
+
+
+def test_zero_primary_rank_emits_loads_once_and_does_not_crash() -> None:
+    fem = _make_zero_primary_rank_fem()
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=3)
+    ux = ops.uniaxialMaterial.ElasticMaterial(E=2e11)
+    ops.element.Truss(pg="bars", A=1e-4, material=ux)
+    ops.fix(pg="anchor", dofs=(1, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=2, forces=(1.0, 0.0, 0.0))
+        p.load(node=3, forces=(0.0, 0.0, -1.0))
+
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    buckets = _bucket_calls_by_scope(rec)
+
+    loads = [
+        (scope, c[1][0])
+        for scope, calls in buckets.items()
+        for c in calls
+        if c[0] == "load"
+    ]
+    # Additive invariant: each load emits exactly ONCE, on the primary
+    # rank (rank 0 — the lowest owner); rank 1's bracket carries none.
+    assert sorted(loads) == [((-1, 0), 2), ((-1, 0), 3)]
+
+
+# ---------------------------------------------------------------------------
 # 3. Stream-vs-list byte identity on this fixture (the P3 gate shape).
 # ---------------------------------------------------------------------------
 
@@ -280,3 +343,124 @@ def test_stream_per_rank_byte_identical_on_3rank_mixed_npe(
             (stream_dir / "ranks" / name).read_bytes()
             == (list_dir / "ranks" / name).read_bytes()
         ), f"fragment {name} differs between stream and list mode"
+
+
+# ---------------------------------------------------------------------------
+# 4. Committed golden deck — full-text ordering pin (refuter lens 1).
+# ---------------------------------------------------------------------------
+#
+# ``deck_lines`` in the bench gate is a COUNT and the routing tests above
+# assert SETS — neither proves line ORDER at deck level.  This golden
+# pins every byte of the emitted deck for a deterministic stub whose
+# node ids are UNSORTED and non-contiguous (the real partitioned-broker
+# shape: ``fem.nodes.ids`` is entity-grouped), so the D3 argsort
+# permutation is non-trivial — an id-sorted stub would let a dropped
+# permutation pass.  A stub (not a live Gmsh mesh) keeps the digest out
+# of gmsh/METIS version churn; the golden is byte-exact on every
+# platform (``.gitattributes`` marks it ``-text``).
+#
+# Re-baselining: a DELIBERATE deck-shape change regenerates the golden
+# (run ``_emit_unsorted_deck`` and overwrite the file) and commits it in
+# the same PR, so the diff shows the deck change being accepted — same
+# policy as ``emit_gate_baseline.json``.
+
+GOLDEN_DECK = Path(__file__).with_name("partitioned_mixed_npe.golden.tcl")
+
+# Storage-order node ids (index i holds the id of the original fixture's
+# node i+1) — unsorted, non-contiguous, gap-heavy.
+_UNSORTED_IDS = (
+    104, 7, 9001, 55, 2, 300, 18, 73,
+    210, 9, 64, 5000, 31, 88, 402, 11,
+)
+
+
+def _remap(*orig: int) -> tuple[int, ...]:
+    return tuple(_UNSORTED_IDS[o - 1] for o in orig)
+
+
+def _make_unsorted_ids_fem() -> FEMStub:
+    """The 3-rank mixed-npe fixture with unsorted broker node ids."""
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=list(_UNSORTED_IDS),
+            coords=[
+                (0.0, 0.0, 0.0),  # 104
+                (1.0, 0.0, 0.0),  # 7
+                (1.0, 1.0, 0.0),  # 9001
+                (0.0, 1.0, 0.0),  # 55
+                (0.0, 0.0, 1.0),  # 2
+                (1.0, 0.0, 1.0),  # 300
+                (1.0, 1.0, 1.0),  # 18
+                (0.0, 1.0, 1.0),  # 73
+                (0.0, 0.0, 2.0),  # 210
+                (1.0, 0.0, 2.0),  # 9
+                (1.0, 1.0, 2.0),  # 64
+                (0.0, 1.0, 2.0),  # 5000
+                (0.0, 0.0, 3.0),  # 31
+                (1.0, 0.0, 3.0),  # 88
+                (2.0, 0.0, 2.0),  # 402
+                (2.0, 1.0, 2.0),  # 11
+            ],
+            node_pgs={"base": list(_remap(1, 2, 3, 4))},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "solids": _ElementGroupView(
+                    ids=(1, 2),
+                    connectivity=(
+                        _remap(1, 2, 3, 4, 5, 6, 7, 8),
+                        _remap(5, 6, 7, 8, 9, 10, 11, 12),
+                    ),
+                ),
+                "bars": _ElementGroupView(
+                    ids=(3, 4, 5),
+                    connectivity=(
+                        _remap(9, 13), _remap(10, 14), _remap(13, 14),
+                    ),
+                ),
+                "late": _ElementGroupView(
+                    ids=(6, 7),
+                    connectivity=(_remap(10, 15), _remap(12, 16)),
+                ),
+            },
+        ),
+    )
+    fem.set_partitions([
+        (0, list(_remap(1, 2, 3, 4, 5, 6, 7, 8)), [1]),
+        (1, list(_remap(5, 6, 7, 8, 9, 10, 11, 12, 15, 16)), [2, 6, 7]),
+        (2, list(_remap(9, 10, 13, 14)), [3, 4, 5]),
+    ])
+    return fem
+
+
+def _emit_unsorted_deck(out_path: Path) -> None:
+    _setup_ops(_make_unsorted_ids_fem()).tcl(str(out_path))
+
+
+def test_unsorted_ids_deck_matches_committed_golden(tmp_path: Path) -> None:
+    deck = tmp_path / "deck.tcl"
+    _emit_unsorted_deck(deck)
+    assert GOLDEN_DECK.exists(), (
+        f"missing committed golden {GOLDEN_DECK.name}; regenerate via "
+        "_emit_unsorted_deck (see the re-baselining note above)"
+    )
+    # EOL-normalised: ``open(..., 'w')`` translates to the platform EOL
+    # (CRLF on Windows), which is the OS's byte, not the emitter's
+    # ordering.  Everything else — every line, in order — is exact.
+    got = deck.read_bytes().replace(b"\r\n", b"\n")
+    want = GOLDEN_DECK.read_bytes().replace(b"\r\n", b"\n")
+    if got != want:
+        got_lines = got.decode("utf-8").splitlines()
+        want_lines = want.decode("utf-8").splitlines()
+        first = next(
+            (i for i, (g, w) in enumerate(zip(got_lines, want_lines))
+             if g != w),
+            min(len(got_lines), len(want_lines)),
+        )
+        raise AssertionError(
+            f"emitted deck diverges from {GOLDEN_DECK.name} at line "
+            f"{first + 1}: emitted {got_lines[first] if first < len(got_lines) else '<EOF>'!r} "
+            f"vs golden {want_lines[first] if first < len(want_lines) else '<EOF>'!r} "
+            f"({len(got_lines)} vs {len(want_lines)} lines). If the deck "
+            "change is deliberate, regenerate the golden in this PR."
+        )
