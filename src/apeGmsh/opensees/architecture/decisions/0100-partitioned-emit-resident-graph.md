@@ -3,11 +3,16 @@
 **Status:** ACCEPTED — incident measured 2026-08-24 (esmeralda, 60 GB build
 node, diag job 145221 with a 5 s RSS sampler); candidate resident terms
 identified in `apesees.py::_emit_partitioned` and its ndf-inference
-prologue. **Gate G0 is now closed — see Amendment 1 (2026-08-25)**, which
-records the measured attribution (G0a = 0.55–0.61 over the originally
-authorised terms), **adds R8 to the R-table**, de-prices D5's `class_chunks`
-half, and redefines G0b. The attribution below is the pre-measurement
-*candidate* list; read it together with Amendment 1, which corrects it. Amends
+prologue. **Gate G0 is closed (Amendment 1) and route P3 has shipped
+(Amendment 2, #1077) — read both before acting on anything below.**
+Amendment 1 records the measured attribution (G0a = 0.55–0.61 over the
+originally authorised terms), **adds R8 to the R-table**, and redefines G0b.
+Amendment 2 records P3's result (traced peak −48/−54 %, **RSS ~−40 %**),
+**re-prices D5 UP** — R7 is now the binding peak term at ~370 B/hex,
+reversing Amendment 1's de-pricing — and states that **P3 alone does not
+close the incident** (~23–25 GB traced remains at 51 M elements). The
+attribution below is the pre-measurement *candidate* list; read it with both
+amendments, which correct it. Amends
 **ADR 0065** (whose plan, `internal_docs/plan_emit_memory_columnar.md`,
 closed with a remaining-ledger flag) and re-arms the **Route E** trigger,
 which has now fired. Two adversarial reviews folded 2026-08-24 (§Review
@@ -462,7 +467,9 @@ This ADR speculated that R7 "may be the largest single win in the program"
 and might outrank D4. At the peak it contributes **nothing**. Accordingly:
 
 - **D5's `class_chunks` half is de-priced** and drops out of the priced
-  program unless G2 shows otherwise.
+  program unless G2 shows otherwise. **[SUPERSEDED by Amendment 2: the peak
+  this was measured against was the staged residency P3 removed; R7 is now
+  the binding term at ~370 B/hex and D5 is re-priced UP.]**
 - **D5's ndf-dict half (R6, 3.76 MB, 12 %) stays a candidate** — that term is
   real at the peak.
 
@@ -527,6 +534,9 @@ the only measurements that speak to the real ceiling.
 - **R8 joins the routed program** — same surgical class as D2/D3's targets
   (another `_emit_stages_partitioned` dict).
 - **D5** is halved: R6 stays a candidate, `class_chunks` is de-priced.
+  **[SUPERSEDED by Amendment 2 — R7 is the binding peak term post-P3 at
+  ~370 B/hex; `class_chunks` is re-priced UP and is the largest remaining
+  target.]**
 - **Route E stays deferred.** Its trigger record stands; G2/G3 measure the
   post-fix ceiling that re-prices it.
 - The merged instrument is **P3's before/after oracle**: a post-P3 campaign
@@ -538,3 +548,161 @@ script. The campaign was run as ad hoc invocations of
 `emit_throughput_profile.py`; the per-cell JSON records — which carry
 `per_term_bytes`, `peak_counter_b`, the gate verdict and the discard reason
 — are the authoritative provenance.
+
+## Amendment 2 (2026-08-25) — P3 shipped; D5 re-priced UP; the incident is not yet closed
+
+**Supersedes part of Amendment 1.** P3 merged (#1077) as the merged
+D3+D2+D4+R8 slice. Its measurements move two conclusions Amendment 1
+recorded, one of them in the opposite direction.
+
+### What P3 achieved
+
+Measured with the D0 instrument as its own before/after oracle, median-of-3,
+all cells gate-ok (6/6). Measured at `1e0fa04a`; the later `e471a01b`
+touches only the stage pattern pass, which this benchmark never reaches
+(`make_ops` adds no `pattern_specs` — verified), so the figures are
+unaffected:
+
+| cell | traced peak growth | RSS growth | emit time |
+|---|---|---|---|
+| 24,389 hexes, np 8 | 22.8 → **11.9 MB** (−48 %) | ≈ −40 % | +6–7 % |
+| 32,768 hexes, np 8 | 31.9 → **14.6 MB** (−54 %) | ≈ −40 % | +6–7 % |
+
+RSS is the **median of per-repeat RSS growth** across the 3 repeats of each
+cell; traced figures are medians on the same repeats.
+
+**RSS is the OOM-relevant statistic** — traced bytes are not what the kernel
+killed. Quote both, and never present the traced figure alone.
+
+R1/R2/R8 read 0.00 at the *anchor* row only because the peak **relocates**
+to the ndf phase, before those terms are constructed — a timing artefact, not
+an attribution loss (at identical named hooks the unattributed residue is
+unchanged, ~4.0 → ~4.0 MB).
+
+Pre-P3 per-entry rates, measured (`r2_before.json`, np 8):
+
+| term | 24,389 hexes | 32,768 hexes |
+|---|---|---|
+| R1 `node_idx_lookup`, both dicts co-resident | 152.6 B/node | 128.6 B/node |
+| — per dict | 76.3 | 64.3 |
+| R2 owned+primary, both sets | 144.7 B/node | 223.7 B/node |
+| — per set | 72.4 | 111.9 |
+| R8 `ops_tag_to_fem_eid` | 148.8–227.7 B/elem | 152.1–204.7 B/elem |
+
+Post-P3 per-entry rates, measured at the terms' own hook
+(`r2_after2.json`, `per_term_by_hook["partition_open#mid"]`; the same values
+appear in the printed per-hook table):
+
+| term | 24,389 hexes | 32,768 hexes | shrink |
+|---|---|---|---|
+| R1, now a single lookup | **16.01 B/node** | **16.01 B/node** | **4.0–9.5×** |
+| R2, both containers | **17.0 B/node** (8.50/set) | **16.9 B/node** (8.45/set) | **8.5–13.2×** |
+| R8 | **16.01–16.02 B/elem** (6/6 agree) | " | **9.3–14.2×** |
+
+Every post rate lands at **~16 B/entry** — two `int64` arrays, the columnar
+floor. R1's staged twin is gone entirely, so its 4.0–9.5× already includes
+dropping the second dict.
+
+These are read at `partition_open#mid`, where the terms live; they read 0.00
+at the *anchor* row because the peak has relocated. The aggregate effect is
+the peak halving below, which is attribution-independent.
+
+### ⚠ THE INCIDENT IS NOT RESOLVED — D5 is necessary, not optional
+
+Extrapolating the measured per-element rates to the incident's 51.0 M
+elements:
+
+| | B/hex | implied traced peak @ 51.0 M |
+|---|---|---|
+| pre-P3 (24,389 / 32,768 cells) | 935 / 974 | **47.7 / 49.6 GB** |
+| **post-P3** | **488 / 446** | **24.9 / 22.7 GB** |
+
+So P3 roughly **halves** the emit-side residency — real progress — but
+**~23–25 GB of traced peak remains at incident scale**, against a 60 GB node
+that must also hold everything else the process needs. **P3 alone does not
+clear the ceiling.** The standing extrapolation caveat from Amendment 1
+still applies in both directions: these cells are ~1,500× below incident
+scale and the size-trend hypothesis remains retracted, so treat this as an
+order-of-magnitude statement, not a prediction.
+
+### D5 is re-priced UP — Amendment 1's de-pricing was an artefact
+
+Amendment 1 de-priced D5's `class_chunks` half because **R7 measured 0.00 MB
+at the peak**. That reasoning was sound given its data and is now
+**superseded**: *the peak it measured against was the staged residency P3 has
+since removed.* With that residency gone, the peak migrates into
+`infer_node_ndf`, where R7 is now the **binding term**:
+
+| cell | R7 at the post-P3 peak | B/hex | share of remaining peak |
+|---|---|---|---|
+| 24,389 hexes | 9.0–9.1 MB | **371** | **76 %** |
+| 32,768 hexes | 12.1 MB | **369** | **83 %** |
+
+**~370 B/hex — which matches this ADR's *original* ~344 B/hex estimate for
+R7.** The original inventory was right; the de-pricing was a measurement
+artefact of *peak position*, not a fact about the term.
+
+**Consequence: D5's `class_chunks` half is restored to the priced program and
+is now the single largest remaining target.** Its ndf-dict half (R6) remains
+a candidate. D5 is the necessary next slice; Route E's re-pricing still waits
+on G2/G3.
+
+The general lesson, worth carrying: **a term's measured share depends on
+where the peak is, and removing one term moves the peak.** Any attribution
+taken before a slice lands must be re-read after it.
+
+### G0a is not comparable across the P3 branch
+
+Post-P3 G0a **rises** (0.836–0.850) because the numerator now holds what
+*remains* — chiefly R7 — over a much smaller denominator. That is not an
+improvement signal.
+
+Two traps for anyone reading the logs:
+
+- **The numerator changed mid-branch.** Amendment 1 authorised R8 into
+  `NUMERATOR_TERMS`, so a pre-Amendment-1 G0a and a post-P3 G0a are not the
+  same statistic. **No like-for-like pairing is quoted here**: a candidate
+  pre-P3 value was checked against the artifacts under several numerator
+  conventions and reproduced under none, so it is omitted rather than
+  guessed. G0a is not the improvement metric.
+- **Gate-ok counts differ per repeat.** Discards are non-deterministic; the
+  32,768 *before* cell was **n = 1/3 gate-ok** while the after cells are
+  3/3. Compare medians only across equal footing, and say the n.
+
+**The improvement claim rests on true-peak growth (and RSS), which is
+attribution-independent — not on G0a.**
+
+### The instrument is code-coupled — a standing rule for future slices
+
+`_term_table` locates R-terms by **source-anchor text**. P3 rewrote the code
+those anchors pointed at, and every pre-P3 anchor now has zero occurrences.
+That was handled in-slice, but it is a permanent coupling:
+
+> **Any slice that moves, renames, or removes an R-term site MUST update
+> `_term_table` in the same PR.** Otherwise `--mem` aborts (by design — a
+> missing anchor fails loud rather than silently reading zero).
+
+Note the failure mode this guards: a term reading 0.0 because the instrument
+lost track of it is indistinguishable, in the output, from the term having
+been removed. P3's own headline had exactly that shape and needed four
+independent lines of evidence to confirm it was real.
+
+Related: the bench must stay **cp1252-safe**. A `≈` in a printed f-string
+killed it at the first cell under redirected stdout, which would have aborted
+G2/G3 immediately; a literal `%` in an argparse help string broke `--help`
+entirely. `tests/benchmarks/test_emit_profile_smoke.py` now pins both, with
+child stdio forced to cp1252 — on a UTF-8 console those tests prove nothing.
+
+### Two behaviours recorded from P3's review
+
+- **A missed D2-class site**, found by the *type* gate rather than either
+  memory or byte-identity review: the stage-scoped pattern pass rebuilt a
+  full per-rank owned set plus a primary set **per stage × rank**. It is now
+  columnar. Byte-identity holds because a node's primary rank is always one
+  of its owning ranks, so the rebuilt set equals `rank_primary_nodes[rank]`
+  exactly and membership is all the consumers use.
+- **Unknown-tag routing:** `ops_tag_to_fem_eid.get(tag, -1)` returns `-1` on
+  a miss, `-1` is never a fem eid, so `element_owner.get(-1)` is `None` and
+  the tag routes to **no** rank — byte-for-byte the old dict pair's
+  behaviour. Preserved deliberately, recorded so a future refactor does not
+  "fix" it.

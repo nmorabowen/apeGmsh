@@ -47,6 +47,28 @@ sizes. That precondition is therefore recorded as unverified rather than met.
 
 Docs only: an ADR amendment. No code, no API change.
 
+### CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed
+
+The merged D3+D2+D4+R8 slice (#1077) roughly halves emit-side residency:
+traced peak growth -48%/-54% and **RSS ~-40%** at two mesh sizes, for
++6-7% emit time (flat in N). RSS is the OOM-relevant statistic and is quoted
+alongside traced throughout.
+
+It does **not** close the incident. Extrapolated to the 51.0 M-element
+incident the traced peak falls from ~48-50 GB to **~23-25 GB** -- real
+progress against a 60 GB node, not a fix.
+
+And it inverts one of Amendment 1's conclusions. That amendment de-priced
+D5's `class_chunks` half because R7 measured 0.00 MB at the peak -- but the
+peak it measured against was the staged residency P3 has now removed. With
+that gone the peak migrates into `infer_node_ndf`, where **R7 is the binding
+term at ~370 B/hex, 76-83% of what remains**, matching this ADR's *original*
+~344 B/hex estimate. D5's `class_chunks` half is restored as the largest
+remaining target. The general lesson is recorded with it: a term's measured
+share depends on where the peak is, and removing one term moves the peak.
+
+Docs only: an ADR amendment. No code, no API change.
+
 ### FIXED — a `node` line now carries exactly `ndm` coordinates (2-D `-ndf` / `-mass` were silently dropped)
 
 The broker stores every node as ``(x, y, z)`` and the emitters wrote all
