@@ -39,7 +39,7 @@ from ._internal.build import (
     SupportRecord,
     _emit_node_with_inferred_ndf,
     allocate_element_tags,
-    bucket_pre_allocated_by_rank,
+    bucket_primary_nodes_by_rank,
     build_element_partition_owner,
     build_node_partition_owners,
     close_builder_ndf_bracket,
@@ -73,9 +73,12 @@ from ._internal.build import (
     expand_pg_to_nodes,
     ElementPlanRows,
     FemToOpsTagMap,
+    LazyRankBuckets,
     NodePartitionOwners,
+    SortedIntSet,
     SortedIntToInt,
     is_partitioned,
+    node_index_lookup,
     open_builder_ndf_bracket,
     primary_owner_map,
     runtime_rank_from_partition_record,
@@ -1958,7 +1961,7 @@ class BuiltModel:
         # -- per-module band.
         module_start = emitter.line_count()
         modules: list[tuple[str, int, int]] = []
-        node_idx = {int(nid): i for i, nid in enumerate(self.fem.nodes.ids)}
+        node_idx = node_index_lookup(self.fem.nodes.ids)  # ADR 0100 D3
         for label in ordered_labels:
             span_start = emitter.line_count()
             owned_nodes = {
@@ -2203,10 +2206,8 @@ class BuiltModel:
                 stage_owned_specs.setdefault(spec_sidx, []).append((spec, sub))
 
         # FEM node-id → coord index lookup (mirrors the
-        # _emit_partitioned helper inline).  Cheap to build once.
-        node_idx_lookup = {
-            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
-        }
+        # _emit_partitioned helper inline).  Columnar per ADR 0100 D3.
+        node_idx_lookup = node_index_lookup(self.fem.nodes.ids)
 
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
@@ -2799,12 +2800,14 @@ class BuiltModel:
         # Rank-independent lookups, hoisted out of the per-rank loop —
         # each is O(model), so rebuilding them per rank made the whole
         # pass O(model × ranks) (measured: dominant emit cost at
-        # production rank counts).
-        node_idx_lookup = {
-            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
-        }
+        # production rank counts).  ADR 0100 D3/D4: both are columnar —
+        # the node-index lookup is an argsort permutation (16 B/node vs
+        # the dict's ~84), and the per-rank element buckets are LAZY
+        # (8 B/row of permutation resident; each rank's select_rows
+        # copy materialises inside its own block and dies with it).
+        node_idx_lookup = node_index_lookup(self.fem.nodes.ids)
         plan_by_rank = {
-            id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
+            id(spec): LazyRankBuckets(sub, element_owner)
             for spec, sub in element_plan
         }
 
@@ -2831,7 +2834,7 @@ class BuiltModel:
         pre_scoped: list[Primitive] = [
             p for p in pre_element if is_builder_scoped(p)
         ]
-        hoist_by_rank: "dict[int, list[tuple[Element, ElementPlanRows]]]" = {}
+        hoist_by_rank: "dict[int, list[Element]]" = {}
         hoisted_spec_ids: set[int] = set()
         hoisted_nodes_by_rank: dict[int, set[int]] = {}
         if pre_scoped:
@@ -2841,15 +2844,17 @@ class BuiltModel:
                 and needs_builder_ndf_bracket(
                     spec, ndm=self.ndm, envelope_ndf=self.ndf)
             ]
+            # ADR 0100 D4: the pre-pass gates on per-rank COUNTS (from
+            # element_owner, no rows materialised); step 1b materialises
+            # each hoisted rank's rows inside its own block.
             for _idx, _part in enumerate(partitions):
                 _rank = runtime_rank_from_partition_record(_part, _idx)
-                rows: "list[tuple[Element, ElementPlanRows]]" = []
-                for spec in gated_specs:
-                    sub = plan_by_rank[id(spec)].get(_rank)
-                    if sub is not None and len(sub):
-                        rows.append((spec, sub))
-                if rows:
-                    hoist_by_rank[_rank] = rows
+                rank_specs: "list[Element]" = [
+                    spec for spec in gated_specs
+                    if plan_by_rank[id(spec)].count(_rank)
+                ]
+                if rank_specs:
+                    hoist_by_rank[_rank] = rank_specs
             if hoist_by_rank:
                 hoisted_spec_ids = {id(spec) for spec in gated_specs}
         if not hoist_by_rank:
@@ -2914,9 +2919,15 @@ class BuiltModel:
         # fan-out has not run yet by construction.
         for idx, part in enumerate(partitions):
             rank = runtime_rank_from_partition_record(part, idx)
-            gated_rows = hoist_by_rank.get(rank)
-            if not gated_rows:
+            rank_gated_specs = hoist_by_rank.get(rank)
+            if not rank_gated_specs:
                 continue
+            # ADR 0100 D4: materialise THIS rank's gated rows only now,
+            # inside its own block (the pre-pass gated on counts).
+            gated_rows = [
+                (spec, plan_by_rank[id(spec)].get(rank, []))
+                for spec in rank_gated_specs
+            ]
             needed = {
                 int(n)
                 for _spec, _sub in gated_rows
@@ -3038,10 +3049,14 @@ class BuiltModel:
         # order).  Broker's ``part.id`` stays Gmsh's 1-based label and
         # is preserved verbatim on the records themselves; only the
         # runtime-rank seam is 0-based.
-        rank_owned_nodes: dict[int, set[int]] = {}
+        # ADR 0100 D2: both membership containers are columnar
+        # (sorted int64 arrays, 8 B/node) — membership via searchsorted,
+        # and the staged pass's set-algebra sites use the vectorised
+        # intersection/isdisjoint forms.
+        rank_owned_nodes: dict[int, SortedIntSet] = {}
         for idx, rec in enumerate(partitions):
             rank = runtime_rank_from_partition_record(rec, idx)
-            rank_owned_nodes[rank] = {int(n) for n in rec.node_ids}
+            rank_owned_nodes[rank] = SortedIntSet.from_ids(rec.node_ids)
 
         # ADDITIVE nodal quantities (mass lines, pattern load lines) emit
         # on each node's PRIMARY rank only — OpenSeesMP sums shared-node
@@ -3049,11 +3064,9 @@ class BuiltModel:
         # correct for idempotent lines (node / fix / sp) double-counts
         # interface nodes (see primary_owner_map).
         primary_owner = primary_owner_map(node_owners)
-        rank_primary_nodes: dict[int, set[int]] = {
-            rank: set() for rank in rank_owned_nodes
-        }
-        for nid, owner_rank in primary_owner.items():
-            rank_primary_nodes.setdefault(owner_rank, set()).add(nid)
+        rank_primary_nodes: dict[int, SortedIntSet] = (
+            bucket_primary_nodes_by_rank(primary_owner, rank_owned_nodes)
+        )
 
         # Cross-rank tag identity cache (region tags, ADR 0027
         # §"Tag determinism").
@@ -3411,6 +3424,7 @@ class BuiltModel:
                 element_plan=element_plan,
                 plan_by_rank=plan_by_rank,
                 rank_owned_nodes=rank_owned_nodes,
+                node_idx_lookup=node_idx_lookup,
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
                 element_owner=element_owner,
@@ -3434,8 +3448,9 @@ class BuiltModel:
         *,
         partitions: "list[Any]",
         element_plan: "list[tuple[Element, ElementPlanRows]]",
-        plan_by_rank: "dict[int, dict[int, ElementPlanRows]]",
-        rank_owned_nodes: "dict[int, set[int]]",
+        plan_by_rank: "dict[int, LazyRankBuckets]",
+        rank_owned_nodes: "dict[int, SortedIntSet]",
+        node_idx_lookup: "SortedIntToInt",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
         element_owner: "SortedIntToInt",
@@ -3521,9 +3536,9 @@ class BuiltModel:
             if spec_sidx is not None:
                 stage_owned_specs.setdefault(spec_sidx, []).append((spec, sub))
 
-        node_idx_lookup = {
-            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
-        }
+        # ADR 0100 D3: the node-index lookup arrives as a parameter —
+        # the co-resident staged twin (R1 ×2, confirmed deterministic
+        # by the G0 campaign) is gone.
 
         # ADR 0027 INV-2 (amended 2026-07-28) — ghost SP synchronisation
         # across stage boundaries.  A ghost's DOFs must be constrained on
@@ -3553,6 +3568,14 @@ class BuiltModel:
         ghosts_held: "dict[int, set[int]]" = {
             int(r): set(t) for r, t in (ghost_tags_by_rank or {}).items()
         }
+
+        # ADR 0100 R8: columnar ``{ops_tag: fem_eid}`` reverse map,
+        # built ONCE (it is stage-invariant; the per-stage dict rebuild
+        # it replaces measured 103-228 B/elem resident through every
+        # stage block).  Sole consumer: the per-rank ``remove_element``
+        # routing below — its ``.get(tag, -1)`` miss default is
+        # preserved exactly by SortedIntToInt.
+        ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()
 
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
@@ -3666,12 +3689,6 @@ class BuiltModel:
                     ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
                     if ops_tag is not None:
                         remove_element_targets.append(int(ops_tag))
-            # Build a fem_eid lookup for explicit ops_tag → fem_eid
-            # mapping (needed for per-rank routing of remove_element).
-            ops_tag_to_fem_eid: dict[int, int] = {
-                int(v): int(k)
-                for k, v in fem_eid_to_ops_tag.items()
-            }
 
             # ADR 0052: pre-resolve HOLD support targets ONCE per stage
             # (rank-independent) to ``(node_id, dof_idx)`` pairs, then
@@ -3726,8 +3743,10 @@ class BuiltModel:
                     # Owned-node sets are stage-invariant — computed once
                     # by the caller, not rebuilt per stage × rank.
                     rank_owned = rank_owned_nodes[rank]
-                    rank_stage_nodes = sorted(
-                        rank_owned & owned_nodes_this_stage
+                    # ADR 0100 D2: sorted(rank_owned & stage_owned) on
+                    # the columnar set, one vectorised pass.
+                    rank_stage_nodes = rank_owned.intersection_sorted(
+                        owned_nodes_this_stage
                     )
                     rank_fix = [
                         (rec, nid) for rec, nid in fix_targets
@@ -3740,11 +3759,13 @@ class BuiltModel:
                         (rec, nid) for rec, nid in mass_targets
                         if primary_owner.get(nid) == rank
                     ]
-                    rank_has_region_members = bool(
-                        region_target_nodes & rank_owned
+                    rank_has_region_members = not rank_owned.isdisjoint(
+                        region_target_nodes
                     )
+                    # ADR 0100 D4: presence via count — no rows
+                    # materialised for the gate.
                     rank_has_elements = any(
-                        plan_by_rank[id(spec)].get(rank)
+                        plan_by_rank[id(spec)].count(rank)
                         for spec, _sub in owned_specs_this_stage
                     )
                     # Phase SSI-2.E: per-rank removal filtering.
@@ -5440,7 +5461,7 @@ class BuiltModel:
         declared_ghosts: "set[int]",
         ghost_sp_ops: "dict[int, list[Any]]",
         inferred_ndf: "dict[int, int]",
-        node_idx_lookup: "dict[int, int]",
+        node_idx_lookup: "SortedIntToInt",
     ) -> None:
         """Emit this rank's owned contact interactions (ADR 0092 S4).
 
@@ -5860,7 +5881,7 @@ class BuiltModel:
         declared_ghosts: "set[int]",
         ghost_sp_ops: "dict[int, list[Any]]",
         inferred_ndf: "dict[int, int]",
-        node_idx_lookup: "dict[int, int]",
+        node_idx_lookup: "SortedIntToInt",
     ) -> None:
         """Emit this rank's owned interface units (ADR 0093 S8/S9).
 
@@ -6229,7 +6250,7 @@ class BuiltModel:
         stage: "StageRecord",
         emitter: Emitter,
         tags: TagAllocator,
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         region_tag_cache: dict[str, int],
     ) -> None:
         """Per-rank fan-out for one stage's region pool (MP path).
@@ -6271,7 +6292,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         tags: TagAllocator,
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         rank: int,
         region_tag_cache: dict[str, int],
     ) -> None:
@@ -6389,7 +6410,7 @@ class BuiltModel:
         emitter: Emitter,
         rank: int,
         plan: "dict[int, _MPCOFilterPlan]",
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         element_owner: "SortedIntToInt",
         fem_eid_to_ops_tag: "FemToOpsTagMap",
     ) -> None:
@@ -6484,9 +6505,9 @@ class BuiltModel:
         self,
         emitter: Emitter,
         post_element: "list[Primitive]",
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         *,
-        primary_nodes: set[int],
+        primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
         claimed_pattern_ids: "frozenset[int]" = frozenset(),
     ) -> None:
@@ -6524,9 +6545,9 @@ class BuiltModel:
         self,
         emitter: Emitter,
         p: "Pattern",
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         *,
-        primary_nodes: set[int],
+        primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Emit one pattern's rank-owned ``load`` / ``sp`` lines.
@@ -6606,9 +6627,9 @@ class BuiltModel:
     def _stage_pattern_specs_have_owned_content(
         self,
         specs: "tuple[Plain, ...]",
-        owned_nodes: set[int],
+        owned_nodes: "set[int] | SortedIntSet",
         *,
-        primary_nodes: set[int],
+        primary_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Pure pre-check: would any ``specs`` pattern emit a line for
@@ -6656,8 +6677,8 @@ class BuiltModel:
         self,
         cases: "tuple[str, ...]",
         *,
-        load_nodes: set[int],
-        sp_nodes: set[int],
+        load_nodes: "set[int] | SortedIntSet",
+        sp_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> "tuple[list[tuple[int, tuple[float, ...]]], list[tuple[int, int, float]]]":
         """Expand from_model ``cases`` to rank-owned (load, sp) lines.
@@ -6704,7 +6725,7 @@ class BuiltModel:
         self,
         moment_tensors: "tuple[Any, ...]",
         *,
-        load_nodes: set[int],
+        load_nodes: "set[int] | SortedIntSet",
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> "list[tuple[int, tuple[float, ...]]]":
         """Resolve moment-tensor sources to rank-owned nodal load lines (ADR 0062).
@@ -7251,7 +7272,7 @@ class BuiltModel:
 
 
 def _pattern_record_owned(
-    rec: "Any", owned_nodes: set[int], fem: "FEMData",
+    rec: "Any", owned_nodes: "set[int] | SortedIntSet", fem: "FEMData",
 ) -> bool:
     """True iff ``rec``'s ``pg``/``node`` targets include any owned node."""
     target_kind = getattr(rec, "target_kind", "node")
@@ -7278,7 +7299,7 @@ def _emit_pattern_load_partitioned(
     rec: "Any",
     emitter: Emitter,
     fem: "FEMData",
-    owned_nodes: set[int],
+    owned_nodes: "set[int] | SortedIntSet",
     ndf_of: "Callable[[int], int]",
 ) -> None:
     """Per-rank version of the inner load fan-out."""
@@ -7301,7 +7322,8 @@ def _emit_pattern_load_partitioned(
 
 
 def _emit_pattern_sp_partitioned(
-    rec: "Any", emitter: Emitter, fem: "FEMData", owned_nodes: set[int],
+    rec: "Any", emitter: Emitter, fem: "FEMData",
+    owned_nodes: "set[int] | SortedIntSet",
 ) -> None:
     """Per-rank version of the inner sp fan-out."""
     if rec.target_kind == "node":

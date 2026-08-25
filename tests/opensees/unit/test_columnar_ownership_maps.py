@@ -17,11 +17,14 @@ import pytest
 from apeGmsh.opensees._internal.build import (
     ElementPlanRows,
     FemToOpsTagMap,
+    LazyRankBuckets,
     MISSING_FEM_ELEMENT_ID,
     NodePartitionOwners,
+    SortedIntSet,
     SortedIntToInt,
     _plan_owner_ranks,
     build_node_partition_owners,
+    node_index_lookup,
 )
 
 
@@ -324,3 +327,168 @@ def test_resolve_many_handles_empty_query_and_empty_map() -> None:
     assert got[7] == frozenset()
     assert got[8] == frozenset()
     assert empty.get(7) == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# ADR 0100 P3 — node_index_lookup (D3), SortedIntSet (D2),
+# LazyRankBuckets (D4), FemToOpsTagMap.inverse (R8)
+# ---------------------------------------------------------------------------
+
+
+def test_node_index_lookup_matches_reference_dict_on_unsorted_ids() -> None:
+    """The broker's ``fem.nodes.ids`` is object-dtype and entity-grouped
+    (UNSORTED on every partitioned mesh) — the argsort lookup must agree
+    with the dict it replaces including the load-bearing miss -> None."""
+    ids = np.asarray([104, 7, 9001, 55, 2, 300], dtype=object)
+    ref = {int(nid): i for i, nid in enumerate(ids)}
+    m = node_index_lookup(ids)
+
+    assert len(m) == len(ref)
+    for nid, idx in ref.items():
+        assert m.get(nid) == idx
+        assert m[nid] == idx
+    assert m.get(9999) is None  # a miss must stay a miss
+    with pytest.raises(KeyError):
+        m[9999]
+
+
+def test_node_index_lookup_empty_ids() -> None:
+    m = node_index_lookup(np.asarray([], dtype=object))
+    assert len(m) == 0
+    assert m.get(1) is None
+
+
+def test_sorted_int_set_membership_matches_reference_set() -> None:
+    ref = {5, 2, 78, 41, 3}
+    s = SortedIntSet.from_ids([5, 2, 78, 41, 3])
+    assert len(s) == len(ref)
+    assert bool(s)
+    for v in range(100):
+        assert (v in s) == (v in ref)
+
+    empty = SortedIntSet.from_ids([])
+    assert not empty
+    assert len(empty) == 0
+    assert 1 not in empty
+
+    # ndarray input (the broker's per-rank node_ids arrive as arrays,
+    # possibly unsigned); duplicates collapse like set() would.
+    s2 = SortedIntSet.from_ids(np.asarray([9, 1, 9], dtype=np.uint64))
+    assert sorted(s2) == [1, 9]
+
+
+def test_sorted_int_set_intersection_and_isdisjoint_match_set_algebra() -> None:
+    base = {10, 20, 30, 40}
+    s = SortedIntSet.from_ids(sorted(base))
+    other = {5, 30, 10, 99}
+
+    assert s.intersection_sorted(other) == sorted(base & other)
+    assert s.intersection_sorted(set()) == []
+    assert SortedIntSet.from_ids([]).intersection_sorted(other) == []
+
+    assert s.isdisjoint({1, 2})
+    assert not s.isdisjoint({40})
+    assert s.isdisjoint(set())
+    assert SortedIntSet.from_ids([]).isdisjoint({1})
+
+
+def _eager_buckets_reference(rows: ElementPlanRows, owner) -> dict:
+    """The pre-P3 ``bucket_pre_allocated_by_rank`` semantics, inlined as
+    the parity oracle: nonzero position order per rank, unowned rows
+    dropped."""
+    n = len(rows)
+    if n == 0:
+        return {}
+    owners = _plan_owner_ranks(rows, owner)
+    out = {}
+    for r in np.unique(owners):
+        if int(r) < 0:
+            continue
+        idx = np.nonzero(owners == r)[0]
+        out[int(r)] = rows.select_rows(idx)
+    return out
+
+
+def test_lazy_rank_buckets_match_eager_reference_homogeneous() -> None:
+    eids = np.arange(1, 11, dtype=np.int64)
+    conn = np.arange(30, dtype=np.int64).reshape(10, 3)
+    rows = ElementPlanRows(eids, conn, tag_start=50)
+    # eid 10 has NO owner -> dropped from every bucket, both sides.
+    owner = SortedIntToInt(
+        np.arange(1, 10, dtype=np.int64),
+        np.asarray([0, 1, 2, 0, 1, 2, 0, 1, 2], dtype=np.int64),
+    )
+
+    lazy = LazyRankBuckets(rows, owner)
+    ref = _eager_buckets_reference(rows, owner)
+
+    assert sorted(ref) == [0, 1, 2]
+    for rank, bucket in ref.items():
+        assert lazy.count(rank) == len(bucket)
+        got = lazy.get(rank)
+        assert got is not None
+        assert list(got) == list(bucket)  # (eid, conn_tuple, tag) triples
+    assert lazy.count(99) == 0
+    assert lazy.get(99) is None
+    assert lazy.get(99, []) == []
+
+
+def test_lazy_rank_buckets_mixed_npe_object_conn() -> None:
+    """Mixed-npe plans carry object-dtype conn (per-row true-width
+    arrays); the lazy buckets must route them identically to the eager
+    select_rows copies — widths preserved, no padding leaked."""
+    conn_rows = [(1, 2), (3, 4, 5), (6, 7, 8, 9), (10, 11)]
+    conn = np.empty((4,), dtype=object)
+    for i, c in enumerate(conn_rows):
+        conn[i] = np.asarray(c, dtype=np.int64)
+    rows = ElementPlanRows(
+        np.asarray([21, 22, 23, 24], dtype=np.int64), conn, tag_start=7,
+    )
+    owner = SortedIntToInt(
+        np.asarray([21, 22, 23, 24], dtype=np.int64),
+        np.asarray([0, 1, 0, 1], dtype=np.int64),
+    )
+
+    lazy = LazyRankBuckets(rows, owner)
+    ref = _eager_buckets_reference(rows, owner)
+    for rank in (0, 1):
+        assert list(lazy.get(rank)) == list(ref[rank])
+    assert [c for _e, c, _t in lazy.get(0)] == [(1, 2), (6, 7, 8, 9)]
+
+
+def test_lazy_rank_buckets_empty_plan() -> None:
+    rows = ElementPlanRows(
+        np.empty((0,), dtype=np.int64),
+        np.empty((0, 0), dtype=np.int64),
+        tag_start=1,
+    )
+    lazy = LazyRankBuckets(rows, SortedIntToInt(
+        np.empty((0,), dtype=np.int64), np.empty((0,), dtype=np.int64),
+    ))
+    assert lazy.count(0) == 0
+    assert lazy.get(0) is None
+    assert lazy.get(0, []) == []
+
+
+def test_tag_map_inverse_matches_reference_reverse_dict() -> None:
+    """R8: the reverse map must reproduce
+    ``{int(tag): int(eid) for eid, tag in m.items()}`` exactly —
+    including the ``-1`` miss default its sole consumer relies on, and
+    dict last-wins on a (pathological) duplicate tag."""
+    pairs = [(5, 11), (7, 100), (7, 205), (9, 33)]
+    m = FemToOpsTagMap.from_pairs(pairs)
+    ref = {int(tag): int(eid) for eid, tag in m.items()}
+    inv = m.inverse()
+    for tag, eid in ref.items():
+        assert inv.get(tag, -1) == eid
+    assert inv.get(999, -1) == -1
+
+    # Duplicate TAG (never produced by the allocator, but from_pairs
+    # replay accepts it): the old dict comprehension kept the LAST row.
+    dup = FemToOpsTagMap.from_pairs([(5, 50), (6, 50), (8, 60)])
+    ref_dup = {int(t): int(e) for e, t in dup.items()}
+    assert ref_dup[50] == 6
+    inv_dup = dup.inverse()
+    assert inv_dup.get(50, -1) == 6
+    assert inv_dup.get(60, -1) == 8
+    assert len(inv_dup) == 2

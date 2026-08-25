@@ -29,9 +29,11 @@ Two jobs:
      peak_counter_b comparison across runs is part of the verdict.
      The raw shortfall in bytes always prints.  The numerator is
      EXACTLY the ADR's
-     authorised set; CACHE (the broker fan-out memo), R8
-     (ops_tag_to_fem_eid, absent from the ADR), and the process floor
-     are attributed and reported but never counted.
+     authorised set — R1-R4, R6, R7 plus R8, which ADR 0100
+     Amendment 1 (2026-08-25) added to the R-table and the numerator
+     after the G0 campaign measured it; CACHE (the broker fan-out
+     memo) and the process floor are attributed and reported but
+     never counted.
    * G0b(slope) = slope of RSS-peak growth vs hexes (from a paired
      --rss-only run via --pair-rss-json) over slope of traced-peak
      growth vs hexes.  The per-cell RSS/traced ratio is printed but
@@ -278,15 +280,16 @@ def _norm(p: str) -> str:
 # inside R6's call-site span, so R6 and R7 individually carry no
 # independent information; only their SUM is order-invariant.
 TERM_ORDER = ("CACHE", "R7", "R6", "R8", "R1", "R3", "R2", "R4")
-# The G0a numerator is EXACTLY the set ADR 0100's decision rule was
-# written over: R1-R4, R6, R7.  CACHE, R8, and the process floor (R5)
-# are attributed and reported but NEVER counted — widening the
-# numerator beyond the authorised set would RAISE the gate number
-# (measured: R8 alone is ~+0.13 at 13.8k hexes, more than cancelling
-# the cache correction), which is precisely the failure mode this
-# instrument exists to prevent.  R8's inclusion goes through an ADR
-# amendment or not at all.
-NUMERATOR_TERMS = ("R7", "R6", "R1", "R3", "R2", "R4")
+# The G0a numerator is EXACTLY the authorised set.  The original
+# decision rule was written over R1-R4, R6, R7; the G0 campaign then
+# measured R8 at ~20 % of growth, and ADR 0100 Amendment 1
+# (2026-08-25) added it to the R-table and the numerator EXPLICITLY —
+# the widening went through the amendment, with the numbers in view,
+# exactly as the rule below demanded.  CACHE and the process floor
+# (R5) stay attributed-and-reported but NEVER counted — silently
+# widening the numerator raises the gate number, which is precisely
+# the failure mode this instrument exists to prevent.
+NUMERATOR_TERMS = ("R7", "R6", "R8", "R1", "R3", "R2", "R4")
 
 _TERMS_CACHE: "list[tuple[str, list[tuple[str, int, int]]]] | None" = None
 
@@ -331,37 +334,43 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         ("R6", ap, "effective_ndf = {**inferred_ndf", 1, 0, 0),
         ("R6", bd, "for t, f in zip(all_ids.tolist(), floors.tolist())",
          1, 2, 1),
-        # R8 — ops_tag_to_fem_eid (~3674): a full per-element reverse
-        # tag map built inside _emit_stages_partitioned (its boxed ints
-        # come from FemToOpsTagMap.items(), whose caller frame is in
-        # this span).  ~128 B/elem ≈ 6.5 GB at incident scale; ABSENT
-        # from the ADR's R-table, so it is attributed and REPORTED but
-        # NOT in the gate numerator (see NUMERATOR_TERMS).
-        ("R8", ap, "ops_tag_to_fem_eid: dict[int, int] = {", 1, 0, 3),
-        # R1 — node_idx_lookup and its siblings.  Occurrence order in the
-        # file: 1 = staged-flat (~2209), 2 = partitioned base (~2806),
-        # 3 = staged partitioned co-resident twin (~3527).  Windows kept
-        # tight (after=2) because R3's plan_by_rank starts one line after
-        # the base dict — the overlap assertion below enforces it.
-        ("R1", ap, "node_idx_lookup = {", 2, 0, 2),
-        ("R1", ap, "node_idx_lookup = {", 3, 0, 2),
-        ("R1", ap, "node_idx_lookup = {", 1, 0, 2),
-        # ADR 0100's table names a 4th sibling near ~1962 (split='parts');
-        # its real spelling is ``node_idx = {...}``, not node_idx_lookup —
-        # anchored on the actual text.
-        ("R1", ap,
-         "node_idx = {int(nid): i for i, nid in "
-         "enumerate(self.fem.nodes.ids)}", 1, 0, 0),
-        # R3 — plan_by_rank (~2809); its bytes are actually allocated in
-        # build.py's bucket_pre_allocated_by_rank (~7564-7600) and
-        # ElementPlanRows.select_rows (~1810-1830).
+        # R8 — the {ops_tag: fem_eid} reverse tag map.  Pre-P3 this was
+        # a per-stage dict comprehension (~3674, measured 103-228 B/elem
+        # across G0 cells, ~189 avg over gate-ok entries ≈ ~5-12 GB at
+        # the 51.0 M-element incident); ADR 0100 P3 columnarised it
+        # (FemToOpsTagMap.inverse -> SortedIntToInt, built once before
+        # the stage loop).  The span anchors the build site; the array
+        # allocations inside inverse() carry this caller frame.
+        ("R8", ap, "ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()",
+         1, 0, 0),
+        # R1 — node_idx_lookup and its siblings, post-P3 columnar
+        # (build.node_index_lookup -> SortedIntToInt).  Occurrence
+        # order in the file: 1 = staged-flat (~2209), 2 = partitioned
+        # base (~2806).  The staged partitioned co-resident twin
+        # (~3527) is GONE — P3 passes the base lookup into
+        # _emit_stages_partitioned instead of rebuilding it.
+        ("R1", ap, "node_idx_lookup = node_index_lookup(", 2, 0, 0),
+        ("R1", ap, "node_idx_lookup = node_index_lookup(", 1, 0, 0),
+        # The 4th sibling near ~1962 (split='parts') is spelled
+        # ``node_idx = ...`` — anchored on the actual text.
+        ("R1", ap, "node_idx = node_index_lookup(", 1, 0, 0),
+        # R3 — plan_by_rank; post-P3 the resident form is
+        # LazyRankBuckets (one argsort permutation per spec, 8 B/row)
+        # and the per-rank select_rows copies are TRANSIENT — whatever
+        # the anchor still sees under select_rows is the one live
+        # rank's materialisation, honestly charged to R3.
         ("R3", ap, "plan_by_rank = {", 1, 0, 3),
-        ("R3", bd, "def bucket_pre_allocated_by_rank(", 1, 0, 36),
+        ("R3", bd, "owners = _plan_owner_ranks(pre_allocated, element_owner)",
+         1, 0, 10),
         ("R3", bd, "def select_rows(", 1, 0, 20),
-        # R2 — per-rank owned / primary node-set dicts + fill loops
-        # (~3044-3047, ~3055-3059).
-        ("R2", ap, "rank_owned_nodes: dict[int, set[int]] = {}", 1, 0, 3),
-        ("R2", ap, "rank_primary_nodes: dict[int, set[int]] = {", 1, 0, 4),
+        # R2 — per-rank owned / primary node sets, post-P3 columnar
+        # (SortedIntSet, 8 B/node).  Spans cover the decl + fill lines;
+        # allocations inside from_ids / bucket_primary_nodes_by_rank
+        # carry these caller frames.
+        ("R2", ap, "rank_owned_nodes: dict[int, SortedIntSet] = {}",
+         1, 0, 3),
+        ("R2", ap, "rank_primary_nodes: dict[int, SortedIntSet] = (",
+         1, 0, 2),
         # R4 — model_mass_by_rank dict + fill loop (~3127-3132); only
         # populated under --mass from_model.
         ("R4", ap, 'model_mass_by_rank: "dict[int, list[Any]]" = {}',
@@ -1742,15 +1751,17 @@ def main():
         print(f"  R1 (MB) at stage_open#first per repeat: {r1_twin}  vs at "
               f"partition_open#mid: {r1_mid}")
         if any(v > 0 for v in r1_twin):
-            # Both halves of this statement matter; never print one
-            # without the other (driver ruling, ADR 0100 D0).
-            print("  R1x2 co-residency: CONFIRMED deterministically at "
-                  "stage_open#first (which fires AFTER the twin is built "
-                  "at apesees ~3527) - every repeat, every size. It is "
-                  "NOT the driver of RUN-TO-RUN G0a variance (the anchor "
-                  "is the tracked peak, which lands elsewhere) - but it "
-                  "IS a first-order contributor: R1 is ~30% of the "
-                  "numerator at these cells.")
+            # Post-ADR-0100-P3 the staged pass RECEIVES the base lookup
+            # (no co-resident twin), so stage_open#first should read
+            # ~= partition_open#mid — a ~2x reading here is a twin
+            # REGRESSION, not the confirmed pre-P3 behaviour.  (Pre-P3
+            # history, kept for the record: the x2 was confirmed
+            # deterministically at every repeat and size, and R1 was
+            # ~30% of the numerator at these cells.)
+            print("  R1 twin check (ADR 0100 P3): stage_open#first "
+                  "should ~= partition_open#mid now that the staged "
+                  "pass shares the base lookup; a ~2x reading is a "
+                  "co-resident-twin REGRESSION.")
         print("  (median defends against ordinary noise ONLY - a missed "
               "peak repeats identically; see the shortfall verdict.)")
 
