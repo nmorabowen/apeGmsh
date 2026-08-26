@@ -23,6 +23,7 @@ from apeGmsh.opensees._internal.build import (
     BridgeError,
     ElementRemovalRecord,
     MassRecord,
+    MaterialStageRecord,
     SPRemovalRecord,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -646,3 +647,256 @@ def test_atomic_replace_global_sp_then_restage_with_new_value() -> None:
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     ops.build().emit(RecordingEmitter())  # both validators pass
+
+
+# ===========================================================================
+# s.update_material_stage - SANISAND elastic <-> elastoplastic flip
+# ===========================================================================
+
+
+#: ManzariDafalias parameters (Toyoura sand, Dafalias & Manzari 2004
+#: Table 1) - the values are irrelevant to the stage verb, only the
+#: class name is, but a real parameter set keeps the fixture honest.
+_MD_KW = dict(
+    G0=125.0, nu=0.05, e_init=0.8, Mc=1.25, c=0.712, lambda_c=0.019,
+    e0=0.934, ksi=0.7, P_atm=101.3, m=0.01, h0=7.05, Ch=0.968, nb=1.1,
+    A0=0.704, nd=3.5, z_max=4.0, cz=600.0, rho=1.6,
+)
+
+
+def _sanisand_ops() -> tuple[apeSees, object, object]:
+    """Two-PG bridge with one SANISAND material per PG, both global."""
+    fem = _make_two_pg_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    sand_a = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    sand_b = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=sand_a)
+    ops.element.FourNodeQuad(pg="cimbra", thickness=1.0, material=sand_b)
+    return ops, sand_a, sand_b
+
+
+def test_stage_builder_slots_include_material_stage_pool() -> None:
+    assert "_update_material_stage_records" in _StageBuilder.__slots__
+
+
+def test_s_update_material_stage_populates_stage_record() -> None:
+    ops, sand_a, sand_b = _sanisand_ops()
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    (rec,) = ops._stage_records[0].update_material_stage_records
+    assert isinstance(rec, MaterialStageRecord)
+    assert rec.stage == 1
+    assert rec.mat_tags == (ops.tag_for(sand_a), ops.tag_for(sand_b))
+
+
+def test_stage_without_flip_leaves_the_pool_empty() -> None:
+    ops, _a, _b = _sanisand_ops()
+    with ops.stage(name="gravity") as s:
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    assert ops._stage_records[0].update_material_stage_records == ()
+
+
+def test_update_material_stage_rejects_out_of_range_stage() -> None:
+    ops, sand_a, _b = _sanisand_ops()
+    with ops.stage(name="bad") as s:
+        with pytest.raises(ValueError, match="stage= must be 0"):
+            s.update_material_stage(materials=[sand_a], stage=2)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+
+
+def test_update_material_stage_rejects_empty_materials() -> None:
+    ops, _a, _b = _sanisand_ops()
+    with ops.stage(name="bad") as s:
+        with pytest.raises(ValueError, match="at least one material"):
+            s.update_material_stage(materials=[], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+
+
+def test_update_material_stage_rejects_non_staged_material_class() -> None:
+    """Flipping an ElasticIsotropic is a silent no-op in OpenSees, so
+    the bridge refuses it rather than emitting a dead line."""
+    ops, sand_a, _b = _sanisand_ops()
+    elastic = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    with ops.stage(name="bad") as s:
+        with pytest.raises(
+            BridgeError, match="does not honour updateMaterialStage",
+        ):
+            s.update_material_stage(materials=[sand_a, elastic], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+
+
+def test_update_material_stage_rejects_unregistered_handle() -> None:
+    """A handle constructed standalone (never through the bridge
+    namespace, never ops.register'd) has no tag - fail loud."""
+    from apeGmsh.opensees.material.nd import ManzariDafalias
+
+    ops, _a, _b = _sanisand_ops()
+    orphan = ManzariDafalias(**_MD_KW)
+    with ops.stage(name="bad") as s:
+        with pytest.raises(BridgeError, match="never registered"):
+            s.update_material_stage(materials=[orphan], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+
+
+def test_flat_emit_one_line_per_material_in_listed_order() -> None:
+    ops, sand_a, sand_b = _sanisand_ops()
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    calls = [c for c in rec.calls if c[0] == "update_material_stage"]
+    assert calls == [
+        ("update_material_stage", (ops.tag_for(sand_a), 1), {}),
+        ("update_material_stage", (ops.tag_for(sand_b), 1), {}),
+    ]
+
+
+def test_flat_emit_slot_is_after_removals_and_before_stage_bcs() -> None:
+    """A stage may release, re-fix, and then flip - the flip line sits
+    after both removals and before the stage's new ``fix``."""
+    ops, sand_a, _sand_b = _sanisand_ops()
+    ops.fix(pg="Left", dofs=(1, 1))
+    with ops.stage(name="swap") as s:
+        s.remove_sp(nodes=[1], dofs=(1,))
+        s.remove_element(elements=[2])       # cimbra
+        s.update_material_stage(materials=[sand_a], stage=1)
+        s.fix(nodes=[1], dofs=(1, 0))
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    names = [c[0] for c in rec.calls]
+    flip_i = names.index("update_material_stage")
+    assert names.index("remove_sp") < flip_i
+    assert names.index("remove_element") < flip_i
+    in_stage_fix = [
+        i for i, c in enumerate(rec.calls)
+        if i > names.index("stage_open") and c[0] == "fix" and c[1][0] == 1
+    ]
+    assert in_stage_fix and flip_i < in_stage_fix[0]
+
+
+def test_flat_emit_slot_is_after_the_stages_own_element_activation() -> None:
+    """``updateMaterialStage`` resolves through the Domain's LIVE
+    elements, so the flip must land after this stage's activation."""
+    fem = _make_two_pg_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    sand = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=sand)
+    ops.element.FourNodeQuad(pg="cimbra", thickness=1.0, material=sand)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["cimbra"])
+        s.update_material_stage(materials=[sand], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    names = [c[0] for c in rec.calls]
+    stage_open_i = names.index("stage_open")
+    stage_element_i = [
+        i for i, n in enumerate(names) if n == "element" and i > stage_open_i
+    ]
+    assert stage_element_i
+    assert stage_element_i[-1] < names.index("update_material_stage")
+
+
+def test_flat_flip_alone_still_emits_domain_change() -> None:
+    ops, sand_a, _b = _sanisand_ops()
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    stage0 = _bucket_flat(rec).get(0, [])
+    assert [c for c in stage0 if c[0] == "update_material_stage"]
+    assert [c for c in stage0 if c[0] == "domain_change"]
+
+
+def test_tcl_emit_update_material_stage_line() -> None:
+    ops, sand_a, _b = _sanisand_ops()
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    emitter = TclEmitter()
+    ops.build().emit(emitter)
+    tag = ops.tag_for(sand_a)
+    assert (
+        f"updateMaterialStage -material {tag} -stage 1"
+        in "\n".join(emitter.lines())
+    )
+
+
+# ===========================================================================
+# V7 - the flipped material needs a LIVE element in the Domain
+# ===========================================================================
+
+
+def test_v7_passes_for_globally_emitted_element() -> None:
+    ops, sand_a, sand_b = _sanisand_ops()
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    ops.build().emit(RecordingEmitter())  # no raise
+
+
+def test_v7_fails_when_the_material_has_no_element_at_all() -> None:
+    ops, _a, _b = _sanisand_ops()
+    lonely = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[lonely], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    with pytest.raises(BridgeError, match="not used by any element"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_v7_fails_when_the_elements_are_activated_by_a_later_stage() -> None:
+    """OpenSees would print ``no effect with material tag N`` and the
+    flip would silently do nothing - refuse it at build time."""
+    fem = _make_two_pg_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    elastic = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    sand = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=elastic)
+    ops.element.FourNodeQuad(pg="cimbra", thickness=1.0, material=sand)
+    with ops.stage(name="gravity") as s:
+        s.update_material_stage(materials=[sand], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["cimbra"])
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    with pytest.raises(BridgeError, match="activated later"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_v7_passes_when_the_flip_is_in_the_activating_stage() -> None:
+    fem = _make_two_pg_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    elastic = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    sand = ops.nDMaterial.ManzariDafalias(**_MD_KW)
+    ops.element.FourNodeQuad(pg="rock", thickness=1.0, material=elastic)
+    ops.element.FourNodeQuad(pg="cimbra", thickness=1.0, material=sand)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["cimbra"])
+        s.update_material_stage(materials=[sand], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    ops.build().emit(RecordingEmitter())  # no raise

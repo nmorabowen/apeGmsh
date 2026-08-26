@@ -719,76 +719,15 @@ needs it.
 
 ## `updateMaterialStage` — a typed staged-plasticity mutator
 
-OpenSees' staged-gravity idiom for soil plasticity is three steps:
-build with the material in its **elastic** stage, solve gravity,
-then flip every soil material to its **plastic** stage and push:
-
-```tcl
-# ... elastic gravity solve ...
-updateMaterialStage -material 1 -stage 1
-# ... seismic / pushover ...
-```
-
-apeGmsh has no wrapper for that call, so decks make it by hand
-(raw `ops` / a hand-edited deck). It matters more than it used
-to: **Ladruno engines from 2026-08 changed `ManzariDafalias` to
-start elastic by default** (the static `mElastFlag = 1` is gone;
-constructors set `0`), so a deck that never called
-`updateMaterialStage` silently loses its plasticity instead of
-silently gaining it. Documented for users in
+**DONE.** Shipped together with typed `ManzariDafalias` /
+`SAniSandMS` materials as `s.update_material_stage(materials=[...],
+stage=0|1)` on the staged context manager, plus a build-time
+validator (V7) for the Domain-liveness gotcha. See
+[ADR 0101](decisions/0101-sanisand-materials-and-material-stage.md)
+for the full design; documented for users in
 `internal_docs/guide_opensees.md` §2.1.
 
-### Shape it would take
-
-The natural seam is the **Phase SSI-2.E between-stage Domain
-mutators** on the staged context manager (`s.remove_sp`,
-`s.remove_element`, `s.activate_absorbing`, …), i.e.
-
-```python
-with ops.stage("gravity") as s:
-    ...
-with ops.stage("push") as s:
-    s.update_material_stage(materials=[soil], stage=1)
-```
-
-fired in the same pre-analysis slot as the other mutators.
-
-### Why it is not a small addition
-
-`s.*` mutators are not thin pass-throughs. One would need, at
-minimum:
-
-1. a record dataclass + `Stage` builder method with the
-   xor/validator surface the sibling mutators carry (ADR 0034's
-   V1–V5 family — here: "was this material ever declared?",
-   "does this material *have* stages?");
-2. an `Emitter` Protocol widening (ADR 0008 / 0022 pattern) with
-   all four targets implemented — Tcl, openseespy, live, H5;
-3. an H5 zone + **schema version bump** with the two-version
-   reader window of ADR 0023, plus `h5_reader` round-trip;
-4. a decision on the *material-vs-element* form of the command
-   (`-material <tag>` vs `-elements`), and on whether the bridge
-   should refuse the call for materials that have no staged
-   behaviour — which needs the typed soil materials that are
-   themselves deferred (`nd.py` module docstring: the
-   `PressureIndepMultiYield` / `PM4Sand` family is held pending
-   an OpenSees-expert sign-off, and `ManzariDafalias` is not
-   wrapped at all).
-
-Point 4 is the load-bearing one: a typed staging mutator over
-materials apeGmsh cannot yet *declare* would be typed at one end
-and stringly at the other.
-
-### Trigger conditions
-
-- The soil-material family gets typed primitives (that review is
-  the natural place to settle the staging surface with it), or
-- a real staged-SSI model in the repo's examples needs the flip
-  and the raw-`ops` escape hatch proves insufficient.
-
-### See also
-
-- ADR 0029 — staged analysis context manager (the seam).
-- ADR 0034 — stage-bound BCs and recorders (the validator surface
-  a new `s.*` member must join).
-- ADR 0023 — per-zone schema versioning (the bump this would owe).
+The `PressureIndepMultiYield` / `PM4Sand` family remains deferred —
+still held pending an OpenSees-expert sign-off, raw-`ops` only.
+`STAGED_MATERIAL_CLASSES` in `apesees.py` is the named extension
+point for adding it (and a future `LadrunoSANISAND`) once typed.

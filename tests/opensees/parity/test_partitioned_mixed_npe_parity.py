@@ -302,6 +302,62 @@ def test_zero_primary_rank_emits_loads_once_and_does_not_crash() -> None:
     assert sorted(loads) == [((-1, 0), 2), ((-1, 0), 3)]
 
 
+
+# ---------------------------------------------------------------------------
+# 2b. Stage 2: s.update_material_stage replicates on EVERY rank (SSI-2.E).
+# ---------------------------------------------------------------------------
+
+
+def _material_stage_ops() -> apeSees:
+    """Same 3-rank mesh, but the bricks carry a SANISAND material that
+    a second stage flips to elastoplastic."""
+    ops = apeSees(cast("object", _make_3rank_mixed_npe_fem()))
+    ops.model(ndm=3, ndf=3)
+    sand = ops.nDMaterial.ManzariDafalias(
+        name="sand", G0=125.0, nu=0.05, e_init=0.8, Mc=1.25, c=0.712,
+        lambda_c=0.019, e0=0.934, ksi=0.7, P_atm=101.3, m=0.01, h0=7.05,
+        Ch=0.968, nb=1.1, A0=0.704, nd=3.5, z_max=4.0, cz=600.0, rho=1.6,
+    )
+    ux = ops.uniaxialMaterial.ElasticMaterial(E=2e11)
+    ops.element.stdBrick(pg="solids", material=sand)
+    ops.element.Truss(pg="bars", A=1e-4, material=ux)
+    ops.fix(pg="base", dofs=(1, 1, 1))
+
+    with ops.stage(name="gravity") as s:
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand], stage=1)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    return ops
+
+
+def test_stage_material_flip_replicates_in_every_rank_bracket() -> None:
+    """``ManzariDafalias::mElastFlag`` is a per-process static, and each
+    rank is its own process — so the flip must land inside EVERY rank's
+    stage bracket, not just the owner's (unlike ``remove_element``)."""
+    ops = _material_stage_ops()
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+
+    tag = ops.tag_for(ops._names["sand"])
+    rank = None
+    per_rank: "dict[int, list[tuple[int, int]]]" = {}
+    seen_push = False
+    for name, args, _kw in rec.calls:
+        if name == "stage_open":
+            seen_push = args[0] == "push"
+        elif name == "partition_open":
+            rank = int(args[0])
+        elif name == "partition_close":
+            rank = None
+        elif name == "update_material_stage" and seen_push:
+            assert rank is not None, "flip emitted outside a rank bracket"
+            per_rank.setdefault(rank, []).append((args[0], args[1]))
+
+    assert per_rank == {0: [(tag, 1)], 1: [(tag, 1)], 2: [(tag, 1)]}
+
 # ---------------------------------------------------------------------------
 # 3. Stream-vs-list byte identity on this fixture (the P3 gate shape).
 # ---------------------------------------------------------------------------

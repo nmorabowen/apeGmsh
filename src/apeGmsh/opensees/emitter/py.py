@@ -773,6 +773,15 @@ class PyEmitter:
         self._lines.append(_ops_call("remove", "element", int(tag)))
         self._lines.indent = prev_indent
 
+    def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call(
+            "updateMaterialStage",
+            "-material", int(mat_tag), "-stage", int(stage),
+        ))
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_function(
         self,
         name: str,

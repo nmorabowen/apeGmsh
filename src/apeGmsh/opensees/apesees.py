@@ -30,6 +30,7 @@ from ._internal.build import (
     FixRecord,
     InitialStressRecord,
     MassRecord,
+    MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
     RayleighRecord,
@@ -297,6 +298,16 @@ _ANALYSIS_CHAIN_BASES: tuple[type[Primitive], ...] = (
     SolutionAlgorithm,
     Integrator,
     Analysis,
+)
+
+
+# Phase SSI-2.E: nDMaterial classes that honour ``updateMaterialStage``.
+# Matched by ``type(handle).__name__`` so the stage verb does not have to
+# import the material classes.  Flipping anything else is a silent no-op
+# in OpenSees, so ``s.update_material_stage`` refuses it instead.  This
+# set grows when the PressureIndepMultiYield / PM4Sand family gets typed.
+STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
+    {"ManzariDafalias", "SAniSandMS"},
 )
 
 
@@ -2306,6 +2317,18 @@ class BuiltModel:
                     if ops_tag is not None:
                         emitter.remove_element(int(ops_tag))
 
+            # Phase SSI-2.E: SANISAND stage flips.  Emitted AFTER the
+            # removals (so a stage can release / re-bind first) and
+            # necessarily after step 3's element activation above —
+            # updateMaterialStage reaches a material through the
+            # Domain's LIVE elements, not through the material
+            # registry.  Validator V7 already gated this at build time.
+            for mat_stage in stage.update_material_stage_records:
+                for mat_tag in mat_stage.mat_tags:
+                    emitter.update_material_stage(
+                        int(mat_tag), int(mat_stage.stage),
+                    )
+
             # 4. Stage-bound BCs (Phase SSI-2.D PR-B + PR-C): fix +
             # mass + region.  Per-record fan-out via _resolve_node_target
             # (same as the global path).  Records emit in registration
@@ -3612,7 +3635,9 @@ class BuiltModel:
             # Phase SSI-2.E: removals contribute to the unified
             # domain_change gate and per-rank empty-bracket-skip logic.
             has_removals = bool(
-                stage.remove_sp_records or stage.remove_element_records
+                stage.remove_sp_records
+                or stage.remove_element_records
+                or stage.update_material_stage_records
             )
             # ADR 0052: stage-bound HOLD supports likewise drive the
             # unified gate (so the per-rank loop + global domain_change
@@ -3838,6 +3863,11 @@ class BuiltModel:
                         or rank_has_region_members
                         or rank_remove_sp
                         or rank_remove_element
+                        # Phase SSI-2.E: a SANISAND stage flip is
+                        # model-global — every rank is its own process
+                        # with its own static mElastFlag, so EVERY rank
+                        # must emit the line.
+                        or stage.update_material_stage_records
                         or rank_support
                         or rank_ghost_sp
                         or rank_iface_entries
@@ -3890,6 +3920,17 @@ class BuiltModel:
                             emitter.remove_sp(nid, dof)
                         for ops_tag in rank_remove_element:
                             emitter.remove_element(ops_tag)
+                        # Phase SSI-2.E: SANISAND stage flips, after
+                        # this rank's element fan-out above (the command
+                        # reaches materials through the Domain's live
+                        # elements) and replicated on every rank.
+                        for mat_stage in (
+                            stage.update_material_stage_records
+                        ):
+                            for mat_tag in mat_stage.mat_tags:
+                                emitter.update_material_stage(
+                                    int(mat_tag), int(mat_stage.stage),
+                                )
                         # Phase SSI-2.D PR-B + PR-C: per-rank stage-
                         # bound BCs (fix + mass + region).  Targets
                         # pre-resolved above; per-rank filter via
@@ -4234,6 +4275,7 @@ class BuiltModel:
             if fem_eid_to_ops_tag is not None
             else FemToOpsTagMap.from_plan(()),
         )
+        self._validate_material_stage_targets(element_owner_stage or {})
 
     # -- Ownership-tier helpers (PR-A: shared by H1 + V1) -----------------
 
@@ -4971,6 +5013,100 @@ class BuiltModel:
             "``s.activate(pgs=...)``, or drop the s.remove_element "
             "call."
             "\n\n" + "\n\n".join(chunks)
+        )
+
+    def _validate_material_stage_targets(
+        self,
+        element_owner_stage: "dict[int, int]",
+    ) -> None:
+        """V7: every ``s.update_material_stage`` target must be used by
+        an element that is LIVE in the Domain where the
+        ``updateMaterialStage`` line emits.
+
+        ``MaterialStageParameter::setDomain()`` walks the Domain's
+        elements looking for the material tag; on a miss it prints
+        ``no effect with material tag N``, the command still reports
+        success, and the flip silently does nothing.  This validator
+        turns that into a build-time error.
+
+        An element is live at the flip if it emitted in the global
+        pre-stage fan-out (spec NOT in ``element_owner_stage``) or was
+        activated by this stage or a strictly-earlier one — the flip
+        block emits after the stage's own element fan-out.
+
+        Known gap: ``s.remove_element`` is NOT modelled here.  A deck
+        that removes every element using a material and then flips that
+        material still passes V7 and silently no-ops at run time.  That
+        needs a per-stage live-set walk rather than this earliest-live
+        map; it is not worth the machinery until a real deck hits it.
+        """
+        if not self.stage_records:
+            return
+        if not any(
+            stage.update_material_stage_records
+            for stage in self.stage_records
+        ):
+            return
+        # nDMaterial tag → earliest stage index at which some element
+        # using it is live.  -1 == globally emitted (live from line 1).
+        first_live: dict[int, int] = {}
+        for spec in self.primitives:
+            if not isinstance(spec, Element):
+                continue
+            sidx = element_owner_stage.get(id(spec), -1)
+            # Walk the spec's dependency closure — an ND material may
+            # sit directly on the element or behind a section wrapper.
+            seen: set[int] = set()
+            frontier: list[Primitive] = list(spec.dependencies())
+            while frontier:
+                dep = frontier.pop()
+                if id(dep) in seen:
+                    continue
+                seen.add(id(dep))
+                frontier.extend(dep.dependencies())
+                if not isinstance(dep, NDMaterial):
+                    continue
+                mat_tag = self.tag_for.get(id(dep))
+                if mat_tag is None:
+                    continue
+                prior = first_live.get(int(mat_tag))
+                if prior is None or sidx < prior:
+                    first_live[int(mat_tag)] = sidx
+        offenders: list[str] = []
+        for stage_idx, stage in enumerate(self.stage_records):
+            for rec in stage.update_material_stage_records:
+                for mat_tag in rec.mat_tags:
+                    live_at = first_live.get(int(mat_tag))
+                    if live_at is not None and live_at <= stage_idx:
+                        continue
+                    offenders.append(
+                        f"  • stage {stage.name!r} flips nDMaterial tag "
+                        f"{mat_tag} to stage {rec.stage}, but no element "
+                        "using that material is live in the Domain at "
+                        "that point"
+                        + (
+                            " (it is not used by any element)"
+                            if live_at is None else
+                            f" (its elements are activated later, by "
+                            f"stage "
+                            f"{self.stage_records[live_at].name!r})"
+                        )
+                    )
+        if not offenders:
+            return
+        preview = offenders[:10]
+        extra = (
+            f"\n  • ... and {len(offenders) - 10} more"
+            if len(offenders) > 10 else ""
+        )
+        raise BridgeError(
+            "s.update_material_stage targets a material with no live "
+            "element — OpenSees resolves updateMaterialStage through "
+            "the Domain's elements, so the flip would print "
+            "``no effect with material tag N`` and silently do "
+            "nothing.  Move the call to a stage at or after the one "
+            "that activates the material's elements."
+            "\n\n" + "\n".join(preview) + extra
         )
 
     def _emit_fixes(
@@ -11088,6 +11224,7 @@ class _StageBuilder:
         # before analyze).
         "_remove_sp_records",
         "_remove_element_records",
+        "_update_material_stage_records",
         "_set_time",
         "_set_creep_on",
         "_pre_analyze_reset",
@@ -11134,6 +11271,7 @@ class _StageBuilder:
         # Phase SSI-2.E: between-stage Domain mutators.
         self._remove_sp_records: list[SPRemovalRecord] = []
         self._remove_element_records: list[ElementRemovalRecord] = []
+        self._update_material_stage_records: list[MaterialStageRecord] = []
         self._set_time: float | None = None
         self._set_creep_on: bool | None = None
         self._pre_analyze_reset: bool = False
@@ -11209,6 +11347,9 @@ class _StageBuilder:
             stage_interface_records=tuple(self._stage_interface_records),
             remove_sp_records=tuple(self._remove_sp_records),
             remove_element_records=tuple(self._remove_element_records),
+            update_material_stage_records=tuple(
+                self._update_material_stage_records,
+            ),
             set_time=self._set_time,
             set_creep_on=self._set_creep_on,
             pre_analyze_reset=self._pre_analyze_reset,
@@ -12091,6 +12232,101 @@ class _StageBuilder:
         )
         self._remove_element_records.append(
             ElementRemovalRecord(pg=pg, elements=elements_tuple),
+        )
+
+    def update_material_stage(
+        self,
+        *,
+        materials: "Iterable[Primitive]",
+        stage: int,
+    ) -> None:
+        """Flip SANISAND materials between the elastic and the
+        elastoplastic stage within this stage (Phase SSI-2.E).
+
+        Stage-bound only — there is no top-level
+        ``apeSees.update_material_stage``.  Emits one
+        ``updateMaterialStage -material $tag -stage $stage`` line per
+        material, in the order given.  ``stage=0`` is elastic,
+        ``stage=1`` is elastoplastic; the OpenSees handler additionally
+        calls ``Elastic2Plastic()`` when the value is 1.  This is the
+        staged-gravity idiom for soil plasticity: build elastic, solve
+        gravity, flip to plastic, push.
+
+        The lines emit AFTER this stage's element activation and after
+        its ``remove_sp`` / ``remove_element`` block, and BEFORE the
+        stage's new ``fix`` / ``mass`` / ``region`` lines — so a stage
+        can release, re-fix, and then flip.
+
+        Only materials whose elements are LIVE in the Domain at that
+        point are reached: ``MaterialStageParameter::setDomain()`` walks
+        the Domain's elements looking for the material tag, so a
+        material whose elements are activated by a *later* stage is not
+        flipped by an earlier stage's call (OpenSees prints
+        ``no effect with material tag N`` and the flip silently does
+        nothing).  Validator V7 turns that no-op into a build-time
+        error.
+
+        ``materials=`` is a SEQUENCE on purpose.
+        ``ManzariDafalias::mElastFlag`` is declared ``static`` — a
+        single stage flag shared by every instance in the process, and
+        any constructor resets it.  Two SANISAND materials therefore
+        cannot sit at different stages, and construction order preserves
+        nothing.  The enforced practice is to call this for EVERY
+        material tag, EVERY time, immediately before the
+        stage-dependent analysis step.
+
+        Parameters
+        ----------
+        materials
+            The SANISAND material handles to flip.  Every handle must
+            already be registered on the bridge and must be one of
+            :data:`STAGED_MATERIAL_CLASSES`.
+        stage
+            ``0`` (elastic) or ``1`` (elastoplastic).
+
+        Raises
+        ------
+        ValueError
+            If ``stage`` is not 0 or 1, or if ``materials`` is empty.
+        BridgeError
+            If a handle was never registered on this bridge, or its
+            class does not honour ``updateMaterialStage``.
+        """
+        stage_i = int(stage)
+        if stage_i not in (0, 1):
+            raise ValueError(
+                f"Stage {self._name!r}.update_material_stage: stage= "
+                f"must be 0 (elastic) or 1 (elastoplastic), got "
+                f"{stage!r}."
+            )
+        mats = tuple(materials)
+        if not mats:
+            raise ValueError(
+                f"Stage {self._name!r}.update_material_stage: "
+                "materials= must contain at least one material."
+            )
+        mat_tags: list[int] = []
+        for mat in mats:
+            tag = self._bridge.tag_for(mat)
+            if tag is None:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_material_stage: "
+                    f"{type(mat).__name__} was never registered on this "
+                    "bridge, so it has no nDMaterial tag.  Create it via "
+                    "ops.nDMaterial.<Class>(...) (or register it with "
+                    "ops.register(mat)) before flipping its stage."
+                )
+            if type(mat).__name__ not in STAGED_MATERIAL_CLASSES:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_material_stage: "
+                    f"{type(mat).__name__} does not honour "
+                    "updateMaterialStage — the command would be a "
+                    "silent no-op.  Supported: "
+                    f"{', '.join(sorted(STAGED_MATERIAL_CLASSES))}."
+                )
+            mat_tags.append(int(tag))
+        self._update_material_stage_records.append(
+            MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i),
         )
 
     def set_time(self, t: float) -> None:

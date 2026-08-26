@@ -151,16 +151,58 @@ The returned `conc` handle is passed later as
 *is* the OpenSees nDMaterial type -- `ElasticIsotropic`,
 `J2Plasticity`, `DruckerPrager`, etc.
 
-> **Staged soil plasticity (`ManzariDafalias`, the `*MultiYield`
-> family).** These are not typed on the bridge -- declare them with raw
-> `ops` calls. On **Ladruno engines from 2026-08** `ManzariDafalias`
-> starts in its **ELASTIC** material stage by default (the old build
-> started elastoplastic), matching the community staged-gravity idiom.
-> Your deck must therefore enter the plastic stage itself:
-> elastic gravity → `updateMaterialStage -material <tag> -stage 1` →
-> push. A deck that never calls `updateMaterialStage` used to get
-> plasticity by accident; on a new engine it stays elastic for the whole
-> run. apeGmsh has no wrapper for the call yet -- see
+> **Staged soil plasticity (`ManzariDafalias`, `SAniSandMS`).** Both
+> SANISAND models are typed:
+>
+> ```python
+> soil = ops.nDMaterial.ManzariDafalias(
+>     G0=125.0, nu=0.05, e_init=0.85, Mc=1.25, c=0.712, lambda_c=0.019,
+>     e0=0.934, ksi=0.7, P_atm=101.325, m=0.01, h0=7.05, Ch=0.968,
+>     nb=1.1, A0=0.704, nd=3.5, z_max=4.0, cz=600.0, rho=1.7,
+> )
+> ```
+>
+> Use the stage-bound mutator for the staged-gravity idiom (build
+> elastic, solve gravity, flip to plastic, push):
+>
+> ```python
+> with ops.stage(name="gravity") as s:
+>     ...                                    # elastic gravity solve
+> with ops.stage(name="push") as s:
+>     s.update_material_stage(materials=[soil], stage=1)  # 0=elastic, 1=plastic
+>     ...                                    # seismic / pushover
+> ```
+>
+> `ManzariDafalias::mElastFlag` is a `static` field -- one stage flag
+> shared by every SANISAND instance in the process, reset by any
+> constructor call. Two SANISAND materials can never sit at different
+> stages: `materials=` takes a sequence, and the enforced practice is
+> to list **every** SANISAND material that needs plasticity in the
+> **same** call, every time. The flip only reaches materials whose
+> elements are already live in the Domain at that point --
+> `updateMaterialStage -material <tag>` resolves through the Domain's
+> elements, not the material registry, and a build-time validator (V7)
+> catches a flip aimed at a material with no live element yet.
+>
+> On **Ladruno engines from 2026-08** (fork PR #714) `ManzariDafalias`
+> starts in its **ELASTIC** material stage by default (older builds
+> start elastoplastic); either way, set the stage explicitly rather
+> than rely on the constructor default. See
+> [ADR 0101](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0101-sanisand-materials-and-material-stage.md)
+> for the full parameter surface (including the `int_scheme` /
+> `tol_r` restrictions each model enforces) and the `ssp`-formulation
+> pairing warning.
+>
+> **A staged deck with `update_material_stage` cannot run via
+> `ops.run()`** -- `LiveOpsEmitter.stage_open` raises
+> `NotImplementedError` (staged models are not supported in Phase
+> SSI-2.A). Emit `ops.py(...)` / `ops.tcl(...)` instead and run the
+> script as a subprocess. This is a pre-existing limitation of staged
+> decks in general, not specific to SANISAND, but it is the first
+> thing you hit following this idiom.
+>
+> The `*MultiYield` / `PM4Sand` family (`PressureIndepMultiYield`,
+> `PM4Sand`) is still not typed -- declare it with raw `ops` calls; see
 > `opensees/architecture/_DEFERRED.md`.
 
 ### 2.2 uniaxialMaterial -- trusses and springs

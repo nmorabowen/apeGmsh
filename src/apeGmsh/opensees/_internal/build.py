@@ -1119,6 +1119,30 @@ class ElementRemovalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class MaterialStageRecord:
+    """One ``s.update_material_stage`` directive — flips the SANISAND
+    elastic/elastoplastic stage flag mid-analysis (Phase SSI-2.E).
+
+    Stage-bound only — no top-level ``apeSees.update_material_stage``.
+    ``mat_tags`` are bridge-allocated ``nDMaterial`` tags resolved at
+    the call site: unlike the PG-bearing removal records above there is
+    nothing to defer, since a material's tag is allocated the moment it
+    is registered.  Emit fans out one
+    ``emitter.update_material_stage(tag, stage)`` per tag, in the order
+    the user listed the materials.
+
+    Validator V7 (Phase SSI-2.E) refuses a record whose target material
+    is not referenced by an element that is live in the Domain at or
+    before this stage.  ``MaterialStageParameter::setDomain()`` walks
+    the Domain's *elements* looking for the material tag; a miss
+    prints a WARNING and the flip is a silent no-op.
+    """
+
+    mat_tags: tuple[int, ...]
+    stage: int
+
+
+@dataclass(frozen=True, slots=True)
 class RegionAssignmentRecord:
     """One ``apeSees.region(name=...)`` directive — assigns nodes to a
     named OpenSees Region.
@@ -1338,6 +1362,12 @@ class StageRecord:
     # ``_validate_remove_sp_targets`` / ``_validate_remove_element_targets``.
     remove_sp_records: tuple[SPRemovalRecord, ...] = ()
     remove_element_records: tuple[ElementRemovalRecord, ...] = ()
+    # Phase SSI-2.E: SANISAND elastic → elastoplastic stage flips.
+    # Emitted AFTER the removals (so a stage can release, re-fix, then
+    # flip) and after this stage's element activation — the OpenSees
+    # command reaches materials through the Domain's live elements.
+    # Validator V7 gates these — see ``_validate_material_stage_targets``.
+    update_material_stage_records: tuple[MaterialStageRecord, ...] = ()
     # Phase SSI-2.E: time-state mutators.  ``set_time`` overrides the
     # ``loadConst -time 0.0`` reset that the previous stage's
     # ``stage_close`` emitted (useful when the next stage's pseudo-

@@ -439,3 +439,8 @@ class RecordingEmitter:
 
     def remove_element(self, tag: int) -> None:
         self.calls.append(("remove_element", (int(tag),), {}))
+
+    def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self.calls.append(
+            ("update_material_stage", (int(mat_tag), int(stage)), {}),
+        )

@@ -1271,6 +1271,11 @@ class LiveOpsEmitter:
     def remove_element(self, tag: int) -> None:
         self._ops.remove("element", int(tag))
 
+    def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        self._ops.updateMaterialStage(
+            "-material", int(mat_tag), "-stage", int(stage),
+        )
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

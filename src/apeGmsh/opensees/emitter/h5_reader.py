@@ -1008,6 +1008,10 @@ class H5Model:
             remove_elements: "list[int]" = []
             if "remove_element" in g:
                 remove_elements = [int(t) for t in g["remove_element"][:]]
+            update_material_stages: "list[tuple[int, int]]" = []
+            if "update_material_stage" in g:
+                for row in g["update_material_stage"][:]:
+                    update_material_stages.append((int(row[0]), int(row[1])))
 
             # -- Per-stage chain attrs ---------------------------------
             chain_attrs: "dict[str, Any]" = {}
@@ -1099,6 +1103,7 @@ class H5Model:
                 rayleigh_seq=tuple(rayleigh_seq),
                 remove_sps=tuple(remove_sps),
                 remove_elements=tuple(remove_elements),
+                update_material_stages=tuple(update_material_stages),
                 chain_attrs=chain_attrs,
                 initial_stress=tuple(initial_stress),
                 activate_absorbing=tuple(absorb),

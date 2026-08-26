@@ -889,7 +889,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.31.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.20.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../../results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../../cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
 
@@ -1164,6 +1164,13 @@ detail lives in the `SCHEMA_VERSION` docstring in
   state → excluded from `model_hash` (same carve-out as `names`).
   Standard additive-minor window semantics (a 2.20 reader opens 2.19
   and 2.20 files; a 2.19.x reader refuses a 2.20.x file).
+- `2.21.0` — Phase SSI-2.E (`s.update_material_stage`): additive —
+  new optional `update_material_stage` dataset (`(N, 2)` int64,
+  `(mat_tag, stage)`) under `/opensees/stages/stage_NNN/`, written
+  only when a stage actually flips a SANISAND material. Authored
+  model state, not provenance → folds into `model_hash`. Standard
+  additive-minor window semantics (a 2.21 reader opens 2.20 and 2.21
+  files; a 2.20.x reader refuses a 2.21.x file).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../emitter/h5.py)); check that constant

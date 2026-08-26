@@ -536,3 +536,55 @@ def test_one_partition_staged_build_writes(tmp_path: Path) -> None:
     ops.h5(str(out))
     with h5py.File(str(out), "r") as f:
         assert "stages" in f["opensees"]
+
+
+# ---------------------------------------------------------------------------
+# SSI-2.E ``update_material_stage`` dataset (schema 2.21.0)
+# ---------------------------------------------------------------------------
+
+
+#: ManzariDafalias parameters (Toyoura sand, Dafalias & Manzari 2004).
+_MD_KW = dict(
+    G0=125.0, nu=0.05, e_init=0.8, Mc=1.25, c=0.712, lambda_c=0.019,
+    e0=0.934, ksi=0.7, P_atm=101.3, m=0.01, h0=7.05, Ch=0.968, nb=1.1,
+    A0=0.704, nd=3.5, z_max=4.0, cz=600.0, rho=1.6,
+)
+
+
+def build_material_stage_bridge(fem: Any) -> apeSees:
+    """Gravity stage (elastic, no flip) then a push stage that flips
+    both sands to elastoplastic.  Shared with the reader tests."""
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    sand_a = ops.nDMaterial.ManzariDafalias(name="sand_a", **_MD_KW)
+    sand_b = ops.nDMaterial.ManzariDafalias(name="sand_b", **_MD_KW)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=sand_a)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=sand_b)
+    ops.fix(pg="Base", dofs=(1, 1))
+
+    with ops.stage(name="gravity") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    with ops.stage(name="push") as s:
+        s.update_material_stage(materials=[sand_a, sand_b], stage=1)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    return ops
+
+
+def test_update_material_stage_dataset_content(tmp_path: Path) -> None:
+    out = tmp_path / "flip.h5"
+    ops = build_material_stage_bridge(_make_two_quad_fem_stub())
+    ops.h5(str(out))
+
+    with h5py.File(str(out), "r") as f:
+        stages = f["opensees"]["stages"]
+        # A stage that never flips writes NO dataset (additive schema).
+        assert "update_material_stage" not in stages["stage_000"]
+        rows = stages["stage_001"]["update_material_stage"][()]
+
+    assert rows.shape == (2, 2)
+    assert [(int(r[0]), int(r[1])) for r in rows] == [
+        (ops.tag_for(ops._names["sand_a"]), 1),
+        (ops.tag_for(ops._names["sand_b"]), 1),
+    ]

@@ -1080,6 +1080,23 @@ SIGMA_ZZ_MATERIAL_CLASSES: frozenset[str] = frozenset({
     "PlaneStrain",
 })
 
+#: apeGmsh ``NDMaterial`` classes that must not be paired with an ``ssp``
+#: element formulation.  The ``ssp`` stabilization stiffness is built from the
+#: material's INITIAL tangent, and ``ManzariDafalias::initialize()``
+#: (``ManzariDafalias.cpp:826-864``) evaluates that tangent through the
+#: ``GetElasticModuli`` call at ``:855`` at a hard-coded reference stress
+#: ``p = P_atm``, regardless of the model's real confinement — so at low or
+#: high confinement the stabilization is scaled from the wrong reference.
+#: ``SAniSandMS`` is a separate implementation, not a subclass, but its own
+#: ``initialize()`` (``SAniSandMS.cpp:1010-1013``) hard-codes the same
+#: ``p = P_atm`` reference, so the pairing is unsafe there too.
+#: Known upstream ``ssp``
+#: defect; fix deferred (TIMs report item 9), so the pairing only warns.
+SSP_UNSAFE_MATERIAL_CLASSES: frozenset[str] = frozenset({
+    "ManzariDafalias",
+    "SAniSandMS",
+})
+
 
 def element_records_stress_zz(spec: Any) -> bool:
     """True when an ``Element`` spec's Gauss points can record a real σ_zz.
