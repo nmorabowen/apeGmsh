@@ -17,9 +17,13 @@ the pre-P3 incident's own numbers, not the bench-scale ~40 % — and the
 ladder's next rung (71.3 M) OOM-kills in turn, **before ever completing
 `get_fem_data()` — i.e. its failure has not been shown to occur in the code
 this ADR's D-routes touch at all.** **The practical single-node ceiling has
-not moved to a new order of magnitude.** The attribution below is the
-pre-measurement *candidate* list; read it with all three amendments, which
-correct it. Amends
+not moved to a new order of magnitude.** **Amendment 4 (2026-08-26) closes
+the one open item Amendment 3 left: the solve-based emission-correctness
+check at 51.0 M scale PASSES** (job 145623, 240/240 ranks complete, zero
+error signatures) — after an unrelated PATH bug (bare `srun` in
+`run_p6.sbatch`) killed the first attempt (job 145609) instantly. The
+attribution below is the pre-measurement *candidate* list; read it with all
+four amendments, which correct it. Amends
 **ADR 0065** (whose plan, `internal_docs/plan_emit_memory_columnar.md`,
 closed with a remaining-ledger flag) and re-arms the **Route E** trigger,
 which has now fired. Two adversarial reviews folded 2026-08-24 (§Review
@@ -816,6 +820,11 @@ correctness confirmation is a separate artifact that did not clear the
 queue during this campaign and is not asserted here.** Record it when
 `rung-051M/p6-r-051M-145609.out` exists, not before.
 
+**[RESOLVED by Amendment 4 — PASS.** Job 145609 itself died instantly on an
+unrelated PATH bug; the re-submitted fix (job 145623) completed and the
+solve-based correctness check passes. See Amendment 4 for the full
+verdict.]
+
 ### G3 — the ladder stops one rung above the incident
 
 **Wiring, stated plainly.** `submit_p6_ladder.sh` (as shipped) chains each
@@ -951,14 +960,107 @@ through to RSS at incident scale (see the G0b discussion above).
    topology done" and "FEM built" cannot be attributed to mesh/partition/
    extraction vs. emit. This gap is exactly what left 071M's failure phase
    undetermined.
-2. **G2's solve (job 145609) is still open** as of this amendment —
-   cluster contention from an unrelated, unlimited-walltime job (145222)
-   blocked the full-machine solve stage for the duration of this campaign.
-   Append the result (pass/fail, `ANALYZE_MS`, `profile_*.h5` numbers via
-   `collect_sweep.py`) when it clears, rather than assuming it.
+2. **[CLOSED by Amendment 4]** G2's solve (job 145609) is still open as of
+   this amendment — cluster contention from an unrelated, unlimited-walltime
+   job (145222) blocked the full-machine solve stage for the duration of
+   this campaign. Append the result (pass/fail, `ANALYZE_MS`, `profile_*.h5`
+   numbers via `collect_sweep.py`) when it clears, rather than assuming it.
 3. **D5's bench-scale win needs a repeat of G2's methodology** — a real
    cluster memlog at incident scale — not just the existing bench
    instrument, before its effect at 51–71 M scale is asserted. This
    amendment's central finding is that the bench→cluster gap is large and
    directional (RSS improves far less than traced bytes), and there is no
    reason to expect D5 to be exempt from the same gap.
+
+## Amendment 4 (2026-08-26) — the solve-based emission-correctness verdict: PASS
+
+Closes Amendment 3's one open item: whether the P3-columnar-emitted
+51.0 M-hex / 157.8 M-DOF deck actually solves. It does. Two solve attempts
+against `rung-051M/deck.tcl` (job 145608's output, unchanged since G2):
+
+### The false start — job 145609 (a PATH bug, not an ADR 0100 defect)
+
+`p6-r-051M-145609.out` shows only the start banner; `p6-r-051M-145609.err`
+is one line:
+
+```
+/var/spool/slurmd/job145609/slurm_script: line 27: srun: command not found
+```
+
+`run_p6.sbatch` called bare `srun`. Every earlier stage in this campaign
+(`build_memlog.sbatch`'s builds, and every prior `numberer_sweep` solve)
+happened to work because those jobs were launched by `submit_*.sh` scripts
+run from an interactive shell with `/opt/slurm/bin` on `PATH`, and
+`--export=ALL` propagated that `PATH` into the job environment. `run_p6.sbatch`
+for 145609 was submitted the same way, from the same kind of shell — so the
+trap is not "which shell submitted it" but that **the propagated `PATH` is
+not a property of the script and cannot be relied on** the moment a job is
+resubmitted from any different context (a cron entry, a different login
+shell, a shell with a trimmed `PATH`, etc.). **The robust fix is the
+absolute path in the script itself**, not a `PATH` assumption at the
+submission site. `run_p6.sbatch` now calls `/opt/slurm/bin/srun` directly
+(`rung-051M/run_p6.sbatch.fixed-post-145609` in the provenance archives).
+This is a harness bug in this campaign's own scripts, unrelated to
+`apesees.py`/`build.py`/the D-routes — recorded because it cost real wall
+time (145609 sat queued from submission until 05:21 the next day before
+dying in under a second) and because "bare `srun` in an `sbatch` script" is
+a trap worth naming for the next cluster harness.
+
+### The fix — job 145623 — PASS
+
+Resubmitted with the fixed script (`--job-name=p6-r-051M-fix`). Wall time
+**00:09:45**, from `p6-r-051M-fix-145623.out`'s own markers:
+`2026-08-26T15:28:38-04:00` → `2026-08-26T15:38:23-04:00`.
+
+Verified directly against `p6-r-051M-fix-145623.err` (215,345 bytes) for
+this amendment, not relayed:
+
+| check | result |
+|---|---|
+| `profile_*.h5` written | **240 / 240** (`ls rung-051M/profile_*.h5 \| wc -l`) |
+| `ANALYZE_MS` lines | **240** — min 516,017 ms, max 571,849 ms, mean 563,730 ms (55,832 ms / 9.8 % spread across ranks) |
+| `APEGMSH_PROGRESS` lines | **4,800** = 240 ranks × 20 steps, every one reading `i=20 n=20` (every rank completed every step) |
+| `Process Terminating` (clean per-rank shutdown) | **240** — one per rank |
+| error / exception / traceback / segfault matches | **0** |
+
+**Verdict: PASS.** The deck emitted by the P3-columnar `_emit_partitioned`
+path at 51.0 M hexes / 157.8 M DOF parses and solves end-to-end on
+`OpenSeesMP` at np=240, all 240 ranks, all 20 steps, no errors. This is the
+at-scale confirmation this ADR's own G2 framing asked for: byte-identity
+was proven at bench scale pre-merge (97 artifacts, golden deck, mutation-
+tested suite, Gate G1); this is the cluster-scale solve confirming the
+emitted bytes are not just byte-identical to a golden fixture but
+functionally correct at the incident's own scale.
+
+### The numberer, incidentally — a fresh LadrunoParallelRCM data point at 51 M
+
+`collect_sweep.py` against the completed rung
+(`rung-051M/collect_sweep_output.txt`):
+
+| metric | value (max over 240 ranks) |
+|---|---|
+| dc.numberDOF | 215.96 s |
+| dc.handle | 0.41 s |
+| dc.setSize | 77.69 s |
+| domainChanged (total) | 297.69 s |
+| step1 (first step, numberer fires once) | 494.26 s |
+| median step | 4.11 s |
+
+Chained against the pre-P3 `numberer_sweep` ladder's own three points
+(`nladder-20260824-0039-np240-ladruno`, same np, same `LadrunoParallelRCM`):
+37,627,936 nodes → dc.numberDOF 154.70 s; 52,616,224 nodes (this rung) →
+215.96 s. Size ratio 1.398×, cost ratio 1.396× → **exponent ≈ 0.995** —
+indistinguishable from linear, extending the sweep's own N^0.99 finding one
+more rung, to 157.8 M DOF. **LadrunoParallelRCM (fork ADR-74) stays
+exonerated as a large-model cost driver at this larger scale too** — not
+the focus of this campaign, but free evidence from the same run, recorded
+so it doesn't have to be re-measured later.
+
+### Provenance
+
+`rung-051M/p6-r-051M-145609.{out,err}`, `run_p6.sbatch.fixed-post-145609`,
+`rung-051M/p6-r-051M-fix-145623.{out,err}`, `rung-051M/profile_0.h5.listing.txt`
+(a representative structure dump — the 240 binary `.h5` files themselves
+stay on the cluster), and `rung-051M/collect_sweep_output.txt`, copied into
+both provenance archives (`internal_docs/_adr0100_artifacts/p6/rung-051M/`
+and the Dropbox mirror).
