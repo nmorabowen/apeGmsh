@@ -8,6 +8,7 @@ type-system level.
 """
 from __future__ import annotations
 
+import warnings
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -28,8 +29,12 @@ from apeGmsh.opensees.material.nd import (
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
     LogStrain,
+    ManzariDafalias,
+    SAniSandMS,
+    SanisandIntegrationWarning,
     StagedStrain,
 )
+from apeGmsh.opensees.element.solid import LadrunoBrick, LadrunoQuad
 
 
 # ---------------------------------------------------------------------------
@@ -905,3 +910,222 @@ class TestLadrunoCohesiveHingeBiaxial:
         with pytest.raises(ValueError, match="bk_eta must be > 0"):
             LadrunoCohesiveHingeBiaxial(
                 Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, bk_eta=0.0)
+
+
+# ---------------------------------------------------------------------------
+# ManzariDafalias / SAniSandMS (vanilla SANISAND critical-state sand)
+# ---------------------------------------------------------------------------
+
+#: Toyoura sand (Dafalias & Manzari 2004, Table 1), stresses in kPa.
+_MD_KWARGS = {
+    "G0": 125.0, "nu": 0.05, "e_init": 0.80, "Mc": 1.25, "c": 0.712,
+    "lambda_c": 0.019, "e0": 0.934, "ksi": 0.7, "P_atm": 101.3, "m": 0.01,
+    "h0": 7.05, "Ch": 0.968, "nb": 1.1, "A0": 0.704, "nd": 3.5,
+    "z_max": 4.0, "cz": 600.0, "rho": 1.6,
+}
+
+#: The required-block arg tuple ``_MD_KWARGS`` must emit, in order.
+_MD_REQUIRED = (
+    125.0, 0.05, 0.80, 1.25, 0.712, 0.019, 0.934, 0.7, 101.3, 0.01,
+    7.05, 0.968, 1.1, 0.704, 3.5, 4.0, 600.0, 1.6,
+)
+
+#: Same base set with the memory-surface trio in place of the fabric pair.
+_MS_KWARGS = {
+    "G0": 125.0, "nu": 0.05, "e_init": 0.80, "Mc": 1.25, "c": 0.712,
+    "lambda_c": 0.019, "e0": 0.934, "ksi": 0.7, "P_atm": 101.3, "m": 0.01,
+    "h0": 7.05, "Ch": 0.968, "nb": 1.1, "A0": 0.704, "nd": 3.5,
+    "zeta": 0.0005, "mu0": 260.0, "beta": 1.0, "rho": 1.6,
+}
+
+_MS_REQUIRED = (
+    125.0, 0.05, 0.80, 1.25, 0.712, 0.019, 0.934, 0.7, 101.3, 0.01,
+    7.05, 0.968, 1.1, 0.704, 3.5, 0.0005, 260.0, 1.0, 1.6,
+)
+
+
+class TestManzariDafalias:
+    def test_defaults(self) -> None:
+        m = ManzariDafalias(**_MD_KWARGS)
+        assert (m.int_scheme, m.tan_type, m.jaco_type) == (1, 0, 1)
+        assert (m.tol_f, m.tol_r) == (1e-7, 1e-7)
+
+    def test_emit_bare_omits_the_optional_tail(self) -> None:
+        rec = RecordingEmitter()
+        ManzariDafalias(**_MD_KWARGS)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial", ("ManzariDafalias", 7) + _MD_REQUIRED, {}),
+        ]
+
+    def test_emit_full_optional_tail(self) -> None:
+        rec = RecordingEmitter()
+        ManzariDafalias(
+            **_MD_KWARGS,
+            int_scheme=45, tan_type=1, jaco_type=0,
+            tol_f=1e-8, tol_r=1e-9,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            ("ManzariDafalias", 2) + _MD_REQUIRED + (45, 1, 0, 1e-8, 1e-9)
+        )
+
+    def test_one_changed_optional_emits_all_five(self) -> None:
+        rec = RecordingEmitter()
+        ManzariDafalias(**_MD_KWARGS, tol_f=1e-9)._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            ("ManzariDafalias", 3) + _MD_REQUIRED + (1, 0, 1, 1e-9, 1e-7)
+        )
+
+    def test_explicit_defaults_still_omit_the_tail(self) -> None:
+        rec = RecordingEmitter()
+        ManzariDafalias(
+            **_MD_KWARGS, int_scheme=1, tan_type=0, jaco_type=1,
+            tol_f=1e-7, tol_r=1e-7,
+        )._emit(rec, tag=4)
+        assert rec.calls[0][1] == ("ManzariDafalias", 4) + _MD_REQUIRED
+
+    @pytest.mark.parametrize("scheme", [3, 5])
+    def test_uncontrolled_schemes_warn(self, scheme: int) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="error control"):
+            ManzariDafalias(**_MD_KWARGS, int_scheme=scheme)
+
+    @pytest.mark.parametrize("scheme", [1, 45])
+    def test_error_controlled_schemes_do_not_warn(self, scheme: int) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            ManzariDafalias(**_MD_KWARGS, int_scheme=scheme)
+
+    def test_rejects_unknown_int_scheme(self) -> None:
+        with pytest.raises(ValueError, match="int_scheme must be one of"):
+            ManzariDafalias(**_MD_KWARGS, int_scheme=10)
+
+    def test_rejects_non_positive_G0(self) -> None:
+        with pytest.raises(ValueError, match="G0 must be > 0"):
+            ManzariDafalias(**{**_MD_KWARGS, "G0": 0.0})
+
+    def test_rejects_nu_at_one_half(self) -> None:
+        with pytest.raises(ValueError, match=r"nu must be in \[0, 0.5\)"):
+            ManzariDafalias(**{**_MD_KWARGS, "nu": 0.5})
+
+    def test_dependencies_is_empty(self) -> None:
+        assert ManzariDafalias(**_MD_KWARGS).dependencies() == ()
+
+
+class TestSAniSandMS:
+    def test_defaults(self) -> None:
+        m = SAniSandMS(**_MS_KWARGS)
+        assert (m.int_scheme, m.tan_type, m.jaco_type) == (3, 2, 1)
+        assert (m.tol_f, m.tol_r) == (1e-7, 1e-7)
+
+    def test_emit_bare_omits_the_optional_tail(self) -> None:
+        rec = RecordingEmitter()
+        SAniSandMS(**_MS_KWARGS)._emit(rec, tag=8)
+        assert rec.calls == [
+            ("nDMaterial", ("SAniSandMS", 8) + _MS_REQUIRED, {}),
+        ]
+
+    def test_emit_full_optional_tail(self) -> None:
+        rec = RecordingEmitter()
+        SAniSandMS(
+            **_MS_KWARGS, int_scheme=1, tan_type=0, jaco_type=0, tol_f=1e-8,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            ("SAniSandMS", 2) + _MS_REQUIRED + (1, 0, 0, 1e-8, 1e-7)
+        )
+
+    def test_one_changed_optional_emits_all_five(self) -> None:
+        rec = RecordingEmitter()
+        SAniSandMS(**_MS_KWARGS, int_scheme=1)._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            ("SAniSandMS", 3) + _MS_REQUIRED + (1, 2, 1, 1e-7, 1e-7)
+        )
+
+    @pytest.mark.parametrize("scheme", [0, 2, 4, 5, 6, 7, 8, 9])
+    def test_rejects_unusable_int_schemes(self, scheme: int) -> None:
+        with pytest.raises(ValueError, match="int_scheme must be 1"):
+            SAniSandMS(**_MS_KWARGS, int_scheme=scheme)
+
+    @pytest.mark.parametrize("scheme", [1, 3])
+    def test_accepts_the_two_real_int_schemes(self, scheme: int) -> None:
+        assert SAniSandMS(**_MS_KWARGS, int_scheme=scheme).int_scheme == scheme
+
+    def test_rejects_non_default_tol_r(self) -> None:
+        with pytest.raises(NotImplementedError, match="tol_r is not honoured"):
+            SAniSandMS(**_MS_KWARGS, tol_r=1e-9)
+
+    def test_accepts_the_default_tol_r(self) -> None:
+        assert SAniSandMS(**_MS_KWARGS, tol_r=1e-7).tol_r == 1e-7
+
+    def test_rejects_non_positive_Mc(self) -> None:
+        with pytest.raises(ValueError, match="Mc must be > 0"):
+            SAniSandMS(**{**_MS_KWARGS, "Mc": 0.0})
+
+    def test_rejects_negative_rho(self) -> None:
+        with pytest.raises(ValueError, match="rho must be >= 0"):
+            SAniSandMS(**{**_MS_KWARGS, "rho": -1.0})
+
+    def test_dependencies_is_empty(self) -> None:
+        assert SAniSandMS(**_MS_KWARGS).dependencies() == ()
+
+
+class TestSanisandSspPairing:
+    """``ssp`` builds its stabilization from a wrongly referenced tangent."""
+
+    def test_brick_ssp_warns(self) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="P_atm"):
+            LadrunoBrick(
+                pg="soil",
+                material=ManzariDafalias(**_MD_KWARGS),
+                formulation="ssp",
+            )
+
+    def test_quad_ssp_warns(self) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="P_atm"):
+            LadrunoQuad(
+                pg="soil",
+                material=SAniSandMS(**_MS_KWARGS),
+                thickness=1.0,
+                formulation="ssp",
+            )
+
+    def test_brick_std_does_not_warn(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoBrick(
+                pg="soil",
+                material=ManzariDafalias(**_MD_KWARGS),
+                formulation="std",
+            )
+
+    def test_quad_std_does_not_warn(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoQuad(
+                pg="soil",
+                material=SAniSandMS(**_MS_KWARGS),
+                thickness=1.0,
+                formulation="std",
+            )
+
+    def test_ssp_with_a_non_sanisand_material_does_not_warn(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoQuad(
+                pg="soil",
+                material=ElasticIsotropic(E=30e6, nu=0.2),
+                thickness=1.0,
+                formulation="ssp",
+            )
+
+
+class TestSanisandNamespace:
+    def test_ManzariDafalias_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.ManzariDafalias(**_MD_KWARGS)
+        assert isinstance(m, ManzariDafalias)
+        assert ops.tag_for(m) == 1
+
+    def test_SAniSandMS_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.SAniSandMS(**_MS_KWARGS)
+        assert isinstance(m, SAniSandMS)
+        assert ops.tag_for(m) == 1

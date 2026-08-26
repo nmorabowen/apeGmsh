@@ -23,6 +23,8 @@ from apeGmsh.opensees.material.nd import (
     J2Plasticity,
     LadrunoJ2,
     LadrunoJ2Finite,
+    ManzariDafalias,
+    SAniSandMS,
 )
 
 
@@ -32,6 +34,8 @@ ALL_ND: list[type[NDMaterial]] = [
     DruckerPrager,
     LadrunoJ2,
     LadrunoJ2Finite,
+    ManzariDafalias,
+    SAniSandMS,
 ]
 
 
@@ -65,6 +69,50 @@ _MINIMAL_KWARGS: dict[type[NDMaterial], Callable[[], dict[str, Any]]] = {
     },
     LadrunoJ2: lambda: {"K": 1.65e8, "G": 7.5e7, "sig0": 5.0e5},
     LadrunoJ2Finite: lambda: {"K": 1.65e8, "G": 7.5e7, "sig0": 5.0e5},
+    # Toyoura sand (Dafalias & Manzari 2004, Table 1), stresses in kPa.
+    ManzariDafalias: lambda: {
+        "G0": 125.0,
+        "nu": 0.05,
+        "e_init": 0.80,
+        "Mc": 1.25,
+        "c": 0.712,
+        "lambda_c": 0.019,
+        "e0": 0.934,
+        "ksi": 0.7,
+        "P_atm": 101.3,
+        "m": 0.01,
+        "h0": 7.05,
+        "Ch": 0.968,
+        "nb": 1.1,
+        "A0": 0.704,
+        "nd": 3.5,
+        "z_max": 4.0,
+        "cz": 600.0,
+        "rho": 1.6,
+    },
+    # Same Toyoura base set; the fabric pair replaced by the memory-surface
+    # trio (Liu, Yang & Kong 2019).
+    SAniSandMS: lambda: {
+        "G0": 125.0,
+        "nu": 0.05,
+        "e_init": 0.80,
+        "Mc": 1.25,
+        "c": 0.712,
+        "lambda_c": 0.019,
+        "e0": 0.934,
+        "ksi": 0.7,
+        "P_atm": 101.3,
+        "m": 0.01,
+        "h0": 7.05,
+        "Ch": 0.968,
+        "nb": 1.1,
+        "A0": 0.704,
+        "nd": 3.5,
+        "zeta": 0.0005,
+        "mu0": 260.0,
+        "beta": 1.0,
+        "rho": 1.6,
+    },
 }
 
 

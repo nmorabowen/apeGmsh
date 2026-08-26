@@ -41,6 +41,7 @@ from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.h5.test_h5_stages_writer import (
     _chain,
+    build_material_stage_bridge,
     _collect_zone,
     _model_hash_of,
 )
@@ -546,3 +547,39 @@ def test_vanilla_archive_stages_empty_and_flat_build_works(
     assert m.stages() == ()
     deck = m.build("tcl")
     assert isinstance(deck, str) and "element quad" in deck
+
+
+# ---------------------------------------------------------------------------
+# SSI-2.E ``update_material_stage`` round trip (schema 2.21.0)
+# ---------------------------------------------------------------------------
+
+
+def test_stages_accessor_reads_back_material_stage_flips(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "flip.h5"
+    ops = build_material_stage_bridge(build_two_quad_fem())
+    ops.h5(str(out))
+
+    gravity, push = OpenSeesModel.from_h5(str(out)).stages()
+    assert gravity.update_material_stages == ()
+    assert push.update_material_stages == (
+        (ops.tag_for(ops._names["sand_a"]), 1),
+        (ops.tag_for(ops._names["sand_b"]), 1),
+    )
+
+
+def test_material_stage_flip_survives_h5_echo(tmp_path: Path) -> None:
+    """``from_h5 -> to_h5 -> from_h5`` keeps the flip (store-and-echo)
+    and the deck replay re-emits it."""
+    out = tmp_path / "flip.h5"
+    echo = tmp_path / "flip_echo.h5"
+    build_material_stage_bridge(build_two_quad_fem()).h5(str(out))
+
+    m = OpenSeesModel.from_h5(str(out))
+    m.to_h5(str(echo))
+    assert _model_hash_of(str(echo)) == _model_hash_of(str(out))
+
+    _, push = OpenSeesModel.from_h5(str(echo)).stages()
+    assert len(push.update_material_stages) == 2
+    assert {v for _t, v in push.update_material_stages} == {1}

@@ -974,6 +974,11 @@ def _replay_staged_into(
             emitter.remove_sp(int(n_tag), int(dof))
         for e_tag in st.remove_elements:
             emitter.remove_element(int(e_tag))
+        # SSI-2.E SANISAND stage flips (after the removals, after the
+        # stage's own element replay above — updateMaterialStage
+        # resolves through the Domain's live elements).
+        for m_tag, m_stage in st.update_material_stages:
+            emitter.update_material_stage(int(m_tag), int(m_stage))
 
         # stage fix / mass.
         for r in st.fixes:

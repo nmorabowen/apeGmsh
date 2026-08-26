@@ -597,6 +597,16 @@ class Emitter(Protocol):
     # or future stage activations.
     def remove_element(self, tag: int) -> None: ...
 
+    # ``update_material_stage(mat_tag, stage)`` emits
+    # ``updateMaterialStage -material $mat_tag -stage $stage`` (Tcl) /
+    # ``ops.updateMaterialStage('-material', tag, '-stage', stage)``
+    # (Py / Live).  Stage 0 = elastic, stage 1 = elastoplastic.  Stage
+    # builders call this once per material in a stage's flip pool,
+    # emitted AFTER the stage's element activation and removals — the
+    # OpenSees command reaches a material through the Domain's live
+    # elements, not through the material registry.
+    def update_material_stage(self, mat_tag: int, stage: int) -> None: ...
+
     # -- Eigen (one-shot, returns values from live emitter) ---------------
     # Issues ``eigen [solver] $numModes`` — does not require an
     # ``analysis <Type>`` chain.  The live emitter returns the list of

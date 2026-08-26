@@ -716,6 +716,9 @@ class StageRecordRO:
     rayleigh_seq: tuple[int, ...] = ()
     remove_sps: tuple[tuple[int, int], ...] = ()
     remove_elements: tuple[int, ...] = ()
+    #: Phase SSI-2.E SANISAND stage flips — ``(mat_tag, stage)`` pairs
+    #: in emit order.  Empty for archives written before schema 2.21.0.
+    update_material_stages: tuple[tuple[int, int], ...] = ()
     #: Per-stage analysis chain — the ``_write_analysis`` attr shape
     #: (handler / numberer / system / test / algorithm / integrator /
     #: analysis + ``*_args`` tuples), stored as a plain dict.

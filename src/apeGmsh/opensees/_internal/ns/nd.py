@@ -25,8 +25,10 @@ from ...material.nd import (
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
     LogStrain,
+    ManzariDafalias,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     PlaneStrain,
+    SAniSandMS,
     StagedStrain,
 )
 from ..types import NDMaterial
@@ -115,6 +117,139 @@ class _NDMaterialNS(_BridgeNamespace):
                 delta2=delta2,
                 H=H,
                 theta=theta,
+            ),
+            name=name,
+        )
+
+    def ManzariDafalias(
+        self,
+        *,
+        G0: float,
+        nu: float,
+        e_init: float,
+        Mc: float,
+        c: float,
+        lambda_c: float,
+        e0: float,
+        ksi: float,
+        P_atm: float,
+        m: float,
+        h0: float,
+        Ch: float,
+        nb: float,
+        A0: float,
+        nd: float,
+        z_max: float,
+        cz: float,
+        rho: float,
+        int_scheme: int = 1,
+        tan_type: int = 0,
+        jaco_type: int = 1,
+        tol_f: float = 1e-7,
+        tol_r: float = 1e-7,
+        name: str | None = None,
+    ) -> ManzariDafalias:
+        """Register a :class:`ManzariDafalias` SANISAND-2004 sand material.
+
+        See the class for the full parameter table. ``int_scheme`` accepts
+        ``0..9`` and ``45``, but ``3`` and ``5`` warn
+        (:class:`SanisandIntegrationWarning`) — they run without error
+        control. The five optional integration arguments are emitted
+        all-or-nothing.
+        """
+        return self._bridge._register(
+            ManzariDafalias(
+                G0=G0,
+                nu=nu,
+                e_init=e_init,
+                Mc=Mc,
+                c=c,
+                lambda_c=lambda_c,
+                e0=e0,
+                ksi=ksi,
+                P_atm=P_atm,
+                m=m,
+                h0=h0,
+                Ch=Ch,
+                nb=nb,
+                A0=A0,
+                nd=nd,
+                z_max=z_max,
+                cz=cz,
+                rho=rho,
+                int_scheme=int_scheme,
+                tan_type=tan_type,
+                jaco_type=jaco_type,
+                tol_f=tol_f,
+                tol_r=tol_r,
+            ),
+            name=name,
+        )
+
+    def SAniSandMS(
+        self,
+        *,
+        G0: float,
+        nu: float,
+        e_init: float,
+        Mc: float,
+        c: float,
+        lambda_c: float,
+        e0: float,
+        ksi: float,
+        P_atm: float,
+        m: float,
+        h0: float,
+        Ch: float,
+        nb: float,
+        A0: float,
+        nd: float,
+        zeta: float,
+        mu0: float,
+        beta: float,
+        rho: float,
+        int_scheme: int = 3,
+        tan_type: int = 2,
+        jaco_type: int = 1,
+        tol_f: float = 1e-7,
+        tol_r: float = 1e-7,
+        name: str | None = None,
+    ) -> SAniSandMS:
+        """Register a :class:`SAniSandMS` memory-surface SANISAND material.
+
+        See the class for the full parameter table. ``int_scheme`` must be
+        ``1`` (ModifiedEuler) or ``3`` (RungeKutta4) — every other value
+        either calls ``exit(0)`` in the C++ or silently integrates
+        nothing. ``tol_r`` must stay at its default (the vanilla parser
+        never consumes it). The five optional integration arguments are
+        emitted all-or-nothing.
+        """
+        return self._bridge._register(
+            SAniSandMS(
+                G0=G0,
+                nu=nu,
+                e_init=e_init,
+                Mc=Mc,
+                c=c,
+                lambda_c=lambda_c,
+                e0=e0,
+                ksi=ksi,
+                P_atm=P_atm,
+                m=m,
+                h0=h0,
+                Ch=Ch,
+                nb=nb,
+                A0=A0,
+                nd=nd,
+                zeta=zeta,
+                mu0=mu0,
+                beta=beta,
+                rho=rho,
+                int_scheme=int_scheme,
+                tan_type=tan_type,
+                jaco_type=jaco_type,
+                tol_f=tol_f,
+                tol_r=tol_r,
             ),
             name=name,
         )

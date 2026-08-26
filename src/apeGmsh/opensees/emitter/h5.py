@@ -422,7 +422,15 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     semantics: a 2.20 reader opens 2.19 and 2.20 files; a 2.19.x
 #:     reader REFUSES a 2.20.x file (INV-4 — no forward tolerance),
 #:     and a 2.18.x stamp is now below the hard floor.
-SCHEMA_VERSION: str = "2.20.0"
+#:   * 2.21.0 — Phase SSI-2.E (``s.update_material_stage``): additive
+#:     — new optional ``update_material_stage`` dataset under
+#:     ``/opensees/stages/stage_NNN/``, written only when a stage
+#:     actually flips a SANISAND material, so every other file stays
+#:     byte-identical to 2.20.x.  Authored model state, not provenance
+#:     → folds into ``model_hash``.  Standard additive-minor window
+#:     semantics: a 2.21 reader opens 2.20 and 2.21 files; a 2.20.x
+#:     reader REFUSES a 2.21.x file (INV-4 — no forward tolerance).
+SCHEMA_VERSION: str = "2.21.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -736,6 +744,10 @@ class _StageEmitBlock:
     # SSI-2.E mutators (resolved targets, emit order).
     remove_sps: "list[tuple[int, int]]" = field(default_factory=list)
     remove_elements: "list[int]" = field(default_factory=list)
+    #: SANISAND stage flips — ``(mat_tag, stage)`` pairs, emit order.
+    update_material_stages: "list[tuple[int, int]]" = field(
+        default_factory=list,
+    )
     # Per-stage analysis chain + analyze loop (the ``_write_analysis``
     # attr shape, scoped to this stage).
     chain_attrs: "dict[str, Any]" = field(default_factory=dict)
@@ -865,6 +877,7 @@ def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
         rayleigh_seq=tuple(blk.rayleigh_seq),
         remove_sps=tuple(blk.remove_sps),
         remove_elements=tuple(blk.remove_elements),
+        update_material_stages=tuple(blk.update_material_stages),
         chain_attrs=dict(blk.chain_attrs),
         initial_stress=tuple(blk.initial_stress_records),
         activate_absorbing=tuple(
@@ -913,6 +926,9 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
     blk.rayleigh_seq = list(ro.rayleigh_seq)
     blk.remove_sps = [(int(n), int(d)) for n, d in ro.remove_sps]
     blk.remove_elements = [int(t) for t in ro.remove_elements]
+    blk.update_material_stages = [
+        (int(m), int(v)) for m, v in ro.update_material_stages
+    ]
     blk.chain_attrs = dict(ro.chain_attrs)
     blk.initial_stress_records = tuple(ro.initial_stress)
     blk.activate_absorbing_records = tuple(
@@ -2343,6 +2359,24 @@ class H5Emitter:
         if self._stage_current is not None:
             self._stage_current.remove_elements.append(int(tag))
 
+    def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        if self._stage_current is not None:
+            # A stage flip is model-global: the partitioned emit path
+            # replicates the line on EVERY rank (each rank is its own
+            # process with its own static mElastFlag), so the capture
+            # dedupes exactly like remove_sp's INV-4 fan-out.  Without
+            # this the archive would carry N copies per material under
+            # partitioning and one copy without it — an unstable
+            # model_hash for the same authored model.
+            if self._partition_dup(
+                ("stage_update_material_stage", self._stage_current.name,
+                 int(mat_tag), int(stage)),
+            ):
+                return
+            self._stage_current.update_material_stages.append(
+                (int(mat_tag), int(stage)),
+            )
+
     # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================
@@ -3514,6 +3548,15 @@ class H5Emitter:
                 g.create_dataset(
                     "remove_element",
                     data=np.asarray(blk.remove_elements, dtype=np.int64),
+                )
+            # SSI-2.E SANISAND stage flips — (mat_tag, stage) rows.
+            if blk.update_material_stages:
+                g.create_dataset(
+                    "update_material_stage",
+                    data=np.asarray(
+                        [[m, v] for m, v in blk.update_material_stages],
+                        dtype=np.int64,
+                    ).reshape(len(blk.update_material_stages), 2),
                 )
             # Stage-bound BCs — same compound writers as the global
             # ``/opensees/bcs`` zone.

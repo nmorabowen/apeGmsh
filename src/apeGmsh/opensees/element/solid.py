@@ -79,6 +79,7 @@ from .._element_capabilities import (
     GMSH_HEX20_TO_SERENDIPITY,
     LADRUNO_UP_SHAPES_BY_NDM,
     LADRUNO_UP_TH_NODE_COUNTS,
+    SSP_UNSAFE_MATERIAL_CLASSES,
 )
 from .._internal.tag_resolution import (
     current_element_nodes,
@@ -86,6 +87,7 @@ from .._internal.tag_resolution import (
     resolve_tag,
 )
 from .._internal.types import Damping, Element, NDMaterial, Primitive
+from ..material.nd import SanisandIntegrationWarning
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
@@ -152,6 +154,33 @@ _BRICK_HOURGLASS_TYPES: tuple[str, ...] = ("viscous", "stiffness", "physical")
 # Phase 3); apeGmsh rejects it at construction rather than emitting a deck the
 # fork would reject at parse.
 _QUAD_FORMULATIONS: tuple[str, ...] = ("std", "bbar", "ssp")
+
+
+def _warn_if_ssp_unsafe(
+    cls_name: str, formulation: str, material: NDMaterial
+) -> None:
+    """Warn when an ``ssp`` formulation meets a SANISAND material.
+
+    The stabilization stiffness comes from the material's initial tangent,
+    which the SANISAND models evaluate at a hard-coded ``p = P_atm``. Warn
+    only — the deck is well-formed and the defect is upstream's.
+    """
+    if formulation != "ssp":
+        return
+    mat_name = type(material).__name__
+    if mat_name not in SSP_UNSAFE_MATERIAL_CLASSES:
+        return
+    warnings.warn(
+        f"{cls_name}: formulation='ssp' with {mat_name} builds the "
+        "stabilization stiffness from the material's initial tangent, which "
+        "ManzariDafalias::initialize() evaluates at a hard-coded reference "
+        "stress p = P_atm regardless of the real confinement — so at low or "
+        "high confinement the stabilization is scaled from the wrong "
+        "reference. Known upstream ssp defect (fix deferred); use "
+        "formulation='std' if the stabilization matters.",
+        SanisandIntegrationWarning,
+        stacklevel=2,
+    )
 
 # BezierTri6's fork factory (OPS_BezierTri6.cpp:97-101) validates ONLY the
 # canonical pair and errors on anything else — it does NOT accept the
@@ -992,6 +1021,7 @@ class LadrunoBrick(Element):
                 "FiniteStrainNDMaterial is driven by setTrialF and yields zero "
                 "stress without the F-interface); use geom='finite'."
             )
+        _warn_if_ssp_unsafe("LadrunoBrick", self.formulation, self.material)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         if self.damp is not None:
@@ -1238,6 +1268,7 @@ class LadrunoQuad(Element):
             raise ValueError(
                 f"LadrunoQuad: rho must be >= 0 if supplied, got {self.rho!r}."
             )
+        _warn_if_ssp_unsafe("LadrunoQuad", self.formulation, self.material)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)

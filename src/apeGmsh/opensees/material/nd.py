@@ -6,7 +6,10 @@ Phase 1B ships the priority-1 set: ``ElasticIsotropic``,
 models (``PressureIndepMultiYield``, ``PM4Sand``, ``ASDConcrete3D``)
 are deferred — their parameter sets are large, version-dependent,
 and would benefit from an OpenSees expert sign-off before being
-locked in.
+locked in. The critical-state sand pair ``ManzariDafalias``
+(SANISAND-2004) and ``SAniSandMS`` (SANISAND-MS memory surface) is
+the exception: both are exposed here with their parameter sets
+audited against the vanilla C++ parsers.
 
 Per P12, every user-facing parameter is a fully typed keyword on the
 matching dataclass and on the namespace method. The OpenSees-vocabulary
@@ -50,6 +53,9 @@ __all__ = [
     "ElasticIsotropic",
     "J2Plasticity",
     "DruckerPrager",
+    "ManzariDafalias",
+    "SAniSandMS",
+    "SanisandIntegrationWarning",
     "ASDPlasticMaterial3D",
     "MohrCoulombSoil",
     "PlaneStrain",
@@ -293,6 +299,378 @@ class DruckerPrager(NDMaterial):
             self.H,
             self.theta,
         )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# SANISAND family — ManzariDafalias (2004) and SAniSandMS (memory surface)
+# ---------------------------------------------------------------------------
+#
+# Two vanilla-OpenSees critical-state sand plasticity models, both registered
+# in the openseespy interpreter map (so every emit target works).  They share
+# the first fifteen required doubles; ``SAniSandMS`` swaps the
+# fabric-dilatancy pair ``(z_max, cz)`` for the memory-surface trio
+# ``(zeta, mu0, beta)``.
+#
+# Both parsers read the five optional integration arguments positionally into
+# a fixed array, so a partial tail misaligns them.  apeGmsh therefore emits
+# the tail all-or-nothing: either none of the five, or all five.
+
+#: ``ManzariDafalias`` parser defaults for the optional tail
+#: ``(IntScheme, TanType, JacoType, TolF, TolR)``.
+_MANZARI_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
+    1, 0, 1, 1e-7, 1e-7
+)
+
+#: ``SAniSandMS`` parser defaults for the same tail — RungeKutta4 and the
+#: continuum elasto-plastic tangent, unlike ManzariDafalias.
+_SANISANDMS_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
+    3, 2, 1, 1e-7, 1e-7
+)
+
+
+def _validate_sanisand_bounds(
+    cls_name: str,
+    *,
+    G0: float,
+    nu: float,
+    e_init: float,
+    Mc: float,
+    lambda_c: float,
+    e0: float,
+    P_atm: float,
+    m: float,
+    rho: float,
+) -> None:
+    """Physical bounds shared by the two SANISAND primitives."""
+    for name, value in (
+        ("G0", G0),
+        ("Mc", Mc),
+        ("P_atm", P_atm),
+        ("e_init", e_init),
+        ("e0", e0),
+        ("m", m),
+        ("lambda_c", lambda_c),
+    ):
+        if value <= 0:
+            raise ValueError(f"{cls_name}: {name} must be > 0, got {value!r}")
+    if rho < 0:
+        raise ValueError(f"{cls_name}: rho must be >= 0, got {rho!r}")
+    if not (0.0 <= nu < 0.5):
+        raise ValueError(f"{cls_name}: nu must be in [0, 0.5), got {nu!r}")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ManzariDafalias(NDMaterial):
+    r"""``nDMaterial ManzariDafalias`` — SANISAND-2004 critical-state sand.
+
+    Tcl signature::
+
+        nDMaterial ManzariDafalias $tag $G0 $nu $e_init $Mc $c $lambda_c \
+            $e0 $ksi $P_atm $m $h0 $Ch $nb $A0 $nd $z_max $cz $Rho \
+            <$IntScheme $TanType $JacoType $TolF $TolR>
+
+    Eighteen required doubles plus an optional five-argument integration
+    tail. The tail is emitted **all-or-nothing** (both parsers read it
+    positionally into a fixed array, so a partial tail misaligns): leave
+    every optional at its default and only the required block is emitted;
+    change any one and all five are emitted.
+
+    Parameters
+    ----------
+    G0
+        Dimensionless elastic shear-modulus constant. Must be > 0.
+    nu
+        Poisson's ratio. Must be in ``[0, 0.5)``.
+    e_init
+        Initial void ratio. Must be > 0.
+    Mc
+        Critical-state stress ratio in triaxial compression. Must be > 0.
+    c
+        Extension/compression strength ratio ``Me / Mc``.
+    lambda_c
+        Slope of the critical-state line in ``e``-``(p/P_atm)^ksi`` space.
+        Must be > 0.
+    e0
+        Void ratio at ``p = 0`` on the critical-state line. Must be > 0.
+    ksi
+        Critical-state-line curvature exponent.
+    P_atm
+        Atmospheric pressure, in the model's stress units. Must be > 0.
+    m
+        Opening of the yield-surface cone (bounding-wedge half-angle).
+        Must be > 0.
+    h0
+        Bounding-surface hardening constant.
+    Ch
+        Void-ratio dependence of the hardening modulus.
+    nb
+        Bounding-surface parameter (state-parameter exponent).
+    A0
+        Dilatancy constant.
+    nd
+        Dilatancy-surface parameter (state-parameter exponent).
+    z_max
+        Fabric-dilatancy tensor saturation value.
+    cz
+        Fabric-dilatancy evolution rate.
+    rho
+        Mass density (Tcl ``$Rho``). Must be ``>= 0``.
+    int_scheme
+        Integration scheme (``$IntScheme``), default ``1``
+        (ModifiedEuler, error-controlled). Accepted values are
+        ``0..9`` and ``45`` (RungeKutta45 after Sloan, added by
+        J. Abell). Schemes ``3`` (RungeKutta4) and ``5``
+        (ForwardEuler) emit a :class:`SanisandIntegrationWarning`:
+        their adaptive-substep code is dead and the yield-drift
+        correction is commented out, so they integrate without error
+        control. A reported triaxial characterisation came out 31-46 %
+        too strong on scheme ``3`` before the mismatch was caught;
+        prefer ``1`` or ``45``.
+    tan_type
+        Tangent operator (``$TanType``), default ``0``.
+    jaco_type
+        Jacobian type used inside the implicit schemes (``$JacoType``),
+        default ``1``.
+    tol_f
+        Yield-function tolerance (``$TolF``), default ``1e-7``.
+    tol_r
+        Residual tolerance (``$TolR``), default ``1e-7``.
+    """
+
+    G0: float
+    nu: float
+    e_init: float
+    Mc: float
+    c: float
+    lambda_c: float
+    e0: float
+    ksi: float
+    P_atm: float
+    m: float
+    h0: float
+    Ch: float
+    nb: float
+    A0: float
+    nd: float
+    z_max: float
+    cz: float
+    rho: float
+    int_scheme: int = 1
+    tan_type: int = 0
+    jaco_type: int = 1
+    tol_f: float = 1e-7
+    tol_r: float = 1e-7
+
+    def __post_init__(self) -> None:
+        _validate_sanisand_bounds(
+            "ManzariDafalias",
+            G0=self.G0,
+            nu=self.nu,
+            e_init=self.e_init,
+            Mc=self.Mc,
+            lambda_c=self.lambda_c,
+            e0=self.e0,
+            P_atm=self.P_atm,
+            m=self.m,
+            rho=self.rho,
+        )
+        if self.int_scheme not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 45):
+            raise ValueError(
+                "ManzariDafalias: int_scheme must be one of "
+                f"(0..9, 45), got {self.int_scheme!r}"
+            )
+        # Schemes 3 (RungeKutta4) and 5 (ForwardEuler) reach the integrator
+        # with their adaptive-substep code dead and the yield-drift
+        # correction commented out — they run, but with no error control.
+        if self.int_scheme in (3, 5):
+            warnings.warn(
+                f"ManzariDafalias: int_scheme={self.int_scheme} has dead "
+                "adaptive-substep code and no yield-drift correction, so it "
+                "integrates with no error control (a reported triaxial "
+                "characterisation came out 31-46% too strong on scheme 3). "
+                "Use int_scheme=1 (ModifiedEuler) or 45 (RungeKutta45, "
+                "Sloan) for an error-controlled scheme.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int] = [
+            self.G0, self.nu, self.e_init, self.Mc, self.c, self.lambda_c,
+            self.e0, self.ksi, self.P_atm, self.m, self.h0, self.Ch, self.nb,
+            self.A0, self.nd, self.z_max, self.cz, self.rho,
+        ]
+        tail = (
+            self.int_scheme, self.tan_type, self.jaco_type,
+            self.tol_f, self.tol_r,
+        )
+        if tail != _MANZARI_TAIL_DEFAULTS:
+            args += tail
+        emitter.nDMaterial("ManzariDafalias", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SAniSandMS(NDMaterial):
+    r"""``nDMaterial SAniSandMS`` — SANISAND with a memory surface.
+
+    Tcl signature::
+
+        nDMaterial SAniSandMS $tag $G0 $nu $e_init $Mc $c $lambda_c \
+            $e0 $ksi $P_atm $m $h0 $Ch $nb $A0 $nd $zeta $mu0 $beta $Rho \
+            <$IntScheme $TanType $JacoType $TolF $TolR>
+
+    Nineteen required doubles plus the same optional five-argument
+    integration tail as :class:`ManzariDafalias`, emitted
+    **all-or-nothing**. Relative to SANISAND-2004 the fabric-dilatancy
+    pair ``(z_max, cz)`` is replaced by the memory-surface trio
+    ``(zeta, mu0, beta)``.
+
+    Parameters
+    ----------
+    G0
+        Dimensionless elastic shear-modulus constant. Must be > 0.
+    nu
+        Poisson's ratio. Must be in ``[0, 0.5)``.
+    e_init
+        Initial void ratio. Must be > 0.
+    Mc
+        Critical-state stress ratio in triaxial compression. Must be > 0.
+    c
+        Extension/compression strength ratio ``Me / Mc``.
+    lambda_c
+        Slope of the critical-state line in ``e``-``(p/P_atm)^ksi`` space.
+        Must be > 0.
+    e0
+        Void ratio at ``p = 0`` on the critical-state line. Must be > 0.
+    ksi
+        Critical-state-line curvature exponent.
+    P_atm
+        Atmospheric pressure, in the model's stress units. Must be > 0.
+    m
+        Opening of the yield-surface cone. Must be > 0.
+    h0
+        Bounding-surface hardening constant.
+    Ch
+        Void-ratio dependence of the hardening modulus.
+    nb
+        Bounding-surface parameter (state-parameter exponent).
+    A0
+        Dilatancy constant.
+    nd
+        Dilatancy-surface parameter (state-parameter exponent).
+    zeta
+        Memory-surface shrinkage parameter.
+    mu0
+        Memory-surface hardening (ratcheting) constant.
+    beta
+        Memory-surface dilatancy-coupling parameter.
+    rho
+        Mass density (Tcl ``$Rho``). Must be ``>= 0``.
+    int_scheme
+        Integration scheme (``$IntScheme``), default ``3``
+        (RungeKutta4). **Only ``1`` and ``3`` are accepted.** In
+        ``SAniSandMS.cpp:1240-1254`` the values 0, 4, 6, 7, 8 and 9 hit
+        branches that call ``exit(0)`` — which kills the Python process
+        with no traceback; value ``2`` (BackwardEuler) prints "Implicit
+        integration not available yet" and silently integrates nothing;
+        value ``5`` prints "does not work" and falls through to RK4.
+        Only ``1`` (ModifiedEuler, with error control) and ``3``
+        (RungeKutta4) are real.
+    tan_type
+        Tangent operator (``$TanType``), default ``2``.
+    jaco_type
+        Jacobian type (``$JacoType``), default ``1``.
+    tol_f
+        Yield-function tolerance (``$TolF``), default ``1e-7``. Consumed
+        by the parser **only** when all five optionals are passed.
+    tol_r
+        Residual tolerance (``$TolR``), default ``1e-7``. A non-default
+        value raises :exc:`NotImplementedError`: the vanilla parser's
+        tail arithmetic is off by one (``SAniSandMS.cpp:134`` computes
+        ``numData = numArgs - 19`` although the command carries 19
+        doubles *plus* the tag), so ``TolR`` is never consumed. The
+        keyword exists so a future ``LadrunoSANISAND`` — which will fix
+        the parser — can honour it without an API change.
+    """
+
+    G0: float
+    nu: float
+    e_init: float
+    Mc: float
+    c: float
+    lambda_c: float
+    e0: float
+    ksi: float
+    P_atm: float
+    m: float
+    h0: float
+    Ch: float
+    nb: float
+    A0: float
+    nd: float
+    zeta: float
+    mu0: float
+    beta: float
+    rho: float
+    int_scheme: int = 3
+    tan_type: int = 2
+    jaco_type: int = 1
+    tol_f: float = 1e-7
+    tol_r: float = 1e-7
+
+    def __post_init__(self) -> None:
+        _validate_sanisand_bounds(
+            "SAniSandMS",
+            G0=self.G0,
+            nu=self.nu,
+            e_init=self.e_init,
+            Mc=self.Mc,
+            lambda_c=self.lambda_c,
+            e0=self.e0,
+            P_atm=self.P_atm,
+            m=self.m,
+            rho=self.rho,
+        )
+        if self.int_scheme not in (1, 3):
+            raise ValueError(
+                f"SAniSandMS: int_scheme must be 1 (ModifiedEuler) or 3 "
+                f"(RungeKutta4), got {self.int_scheme!r}. In "
+                "SAniSandMS.cpp:1240-1254 the values 0, 4, 6, 7, 8 and 9 "
+                "call exit(0) and kill the Python process with no "
+                "traceback; 2 (BackwardEuler) prints 'Implicit integration "
+                "not available yet' and silently integrates nothing; 5 "
+                "prints 'does not work' and falls through to RK4."
+            )
+        if self.tol_r != _SANISANDMS_TAIL_DEFAULTS[4]:
+            raise NotImplementedError(
+                f"SAniSandMS: tol_r is not honoured by the vanilla parser "
+                f"(got {self.tol_r!r}). SAniSandMS.cpp:134 computes "
+                "numData = numArgs - 19 although the command carries 19 "
+                "doubles plus the tag, so TolR is never consumed (and TolF "
+                "only lands when all five optionals are passed). The "
+                "keyword is kept so a future LadrunoSANISAND — which will "
+                "fix the parser — can honour it without an API change."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int] = [
+            self.G0, self.nu, self.e_init, self.Mc, self.c, self.lambda_c,
+            self.e0, self.ksi, self.P_atm, self.m, self.h0, self.Ch, self.nb,
+            self.A0, self.nd, self.zeta, self.mu0, self.beta, self.rho,
+        ]
+        tail = (
+            self.int_scheme, self.tan_type, self.jaco_type,
+            self.tol_f, self.tol_r,
+        )
+        if tail != _SANISANDMS_TAIL_DEFAULTS:
+            args += tail
+        emitter.nDMaterial("SAniSandMS", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -685,6 +1063,21 @@ class ASDRegularizationWarning(UserWarning):
     idiom (cf. ``ComposeInterfaceSizeWarning``). Over-ceiling elements yield
     an over-brittle, mesh-dependent response (the binary floors the fracture
     energy); the model is still well-formed, so this never blocks emit.
+    """
+
+
+class SanisandIntegrationWarning(UserWarning):
+    """Raised (as a warning) for a SANISAND setting known to bite silently.
+
+    Subclass of :class:`UserWarning` so it can be silenced per-call or
+    promoted to an error in CI via
+    ``pytest -W error::...SanisandIntegrationWarning`` — the
+    warn-as-contract idiom (cf. :class:`ASDRegularizationWarning`). Covers
+    the :class:`ManzariDafalias` integration schemes whose adaptive-substep
+    and yield-drift-correction code is dead (3, 5) and the ``ssp`` element
+    pairing whose stabilization stiffness is built from a wrongly
+    referenced initial tangent. The model is still well-formed and the
+    defect is upstream's, so this never blocks emit.
     """
 
 

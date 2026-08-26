@@ -1348,6 +1348,15 @@ class TclEmitter:
         self._lines.append(f"remove element {int(tag)}")
         self._lines.indent = prev_indent
 
+    def update_material_stage(self, mat_tag: int, stage: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            f"updateMaterialStage -material {int(mat_tag)} "
+            f"-stage {int(stage)}"
+        )
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_proc(
         self,
         name: str,
