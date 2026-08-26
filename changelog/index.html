@@ -3586,6 +3586,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-4-the-solve-based-emission-correctness-verdict-is-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 4: the solve-based emission-correctness verdict is PASS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8670,6 +8681,17 @@
     <span class="md-ellipsis">
       
         CHANGED — ADR 0100 Amendment 3: G2/G3 measured on esmeralda, the ceiling did not move
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-4-the-solve-based-emission-correctness-verdict-is-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 4: the solve-based emission-correctness verdict is PASS
       
     </span>
   </a>
@@ -13770,6 +13792,33 @@ order-of-magnitude, not a precise validation.</p>
 <p>G2's solve (job 145609, the emission-correctness check at scale) did not
 clear the SLURM queue during this campaign and is recorded as an open item,
 not a result.</p>
+<p>Docs only: an ADR amendment. No code, no API change.</p>
+<h3 id="changed-adr-0100-amendment-4-the-solve-based-emission-correctness-verdict-is-pass">CHANGED — ADR 0100 Amendment 4: the solve-based emission-correctness verdict is PASS<a class="headerlink" href="#changed-adr-0100-amendment-4-the-solve-based-emission-correctness-verdict-is-pass" title="Permanent link">&para;</a></h3>
+<p>Closes follow-up 2 of Amendment 3's three open items (follow-ups 1, the
+<code>build_rung.py</code> phase-marker gap, and 3, D5's own cluster check, remain
+open). Job 145609 (the first solve attempt) died instantly to a harness
+bug unrelated to ADR 0100: <code>run_p6.sbatch</code> called bare <code>srun</code>. This
+campaign's jobs were submitted via non-interactive <code>ssh</code> calls whose <code>PATH</code>
+lacks <code>/opt/slurm/bin</code> -- the reason <code>submit_p6_ladder.sh</code>'s own <code>sbatch</code>
+calls already use the absolute path; <code>run_p6.sbatch</code>'s <code>srun</code> call was
+never given the same treatment. The pre-P3 sweeps that used bare <code>srun</code>
+successfully were submitted from an interactive shell that already had
+<code>/opt/slurm/bin</code> on <code>PATH</code> -- a different shell, not the same one.
+Fixed to the absolute <code>/opt/slurm/bin/srun</code> and resubmitted as job 145623,
+which <strong>completed</strong>: 240/240 <code>profile_*.h5</code> written, all 240 ranks report
+<code>ANALYZE_MS</code> (min 516,017 / max 571,849 / mean 563,730 ms) and 20/20 steps
+complete, zero error/exception/traceback/segfault matches in 215 KB of
+stderr.</p>
+<p><strong>Verdict: PASS.</strong> The P3-columnar-emitted 51.0 M-hex / 157.8 M-DOF deck
+assembles, numbers, and steps end-to-end on <code>OpenSeesMP</code> at np=240 (a
+null-excitation deck -- this proves parse/assembly/step completion, not a
+loaded response) -- the at-scale confirmation Amendment 3's framing of G2
+asked for, complementing the bench-scale byte-identity proof already on
+record.</p>
+<p>Incidentally, <code>collect_sweep.py</code> on the completed rung gives a fresh
+<code>LadrunoParallelRCM</code> numberer data point (dc.numberDOF 215.96 s at
+52.6 M nodes) that extends the pre-P3 sweep's N^0.99 (near-linear) finding
+one more rung -- the numberer stays exonerated as a large-model cost driver.</p>
 <p>Docs only: an ADR amendment. No code, no API change.</p>
 <h3 id="fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped">FIXED — a <code>node</code> line now carries exactly <code>ndm</code> coordinates (2-D <code>-ndf</code> / <code>-mass</code> were silently dropped)<a class="headerlink" href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" title="Permanent link">&para;</a></h3>
 <p>The broker stores every node as <code>(x, y, z)</code> and the emitters wrote all
