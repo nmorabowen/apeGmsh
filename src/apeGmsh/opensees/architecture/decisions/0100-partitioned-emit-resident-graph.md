@@ -18,12 +18,14 @@ ladder's next rung (71.3 M) OOM-kills in turn, **before ever completing
 `get_fem_data()` — i.e. its failure has not been shown to occur in the code
 this ADR's D-routes touch at all.** **The practical single-node ceiling has
 not moved to a new order of magnitude.** **Amendment 4 (2026-08-26) closes
-the one open item Amendment 3 left: the solve-based emission-correctness
-check at 51.0 M scale PASSES** (job 145623, 240/240 ranks complete, zero
-error signatures) — after an unrelated PATH bug (bare `srun` in
-`run_p6.sbatch`) killed the first attempt (job 145609) instantly. The
-attribution below is the pre-measurement *candidate* list; read it with all
-four amendments, which correct it. Amends
+follow-up 2 of Amendment 3's three open items: the solve-based
+emission-correctness check at 51.0 M scale PASSES** (job 145623, 240/240
+ranks complete, zero error signatures) — after an unrelated PATH bug (bare
+`srun` in `run_p6.sbatch`) killed the first attempt (job 145609) instantly.
+**Follow-ups 1 (071M's undetermined failure phase) and 3 (D5's bench-scale
+win needs its own cluster check) remain open.** The attribution below is
+the pre-measurement *candidate* list; read it with all four amendments,
+which correct it. Amends
 **ADR 0065** (whose plan, `internal_docs/plan_emit_memory_columnar.md`,
 closed with a remaining-ledger flag) and re-arms the **Route E** trigger,
 which has now fired. Two adversarial reviews folded 2026-08-24 (§Review
@@ -735,8 +737,10 @@ Provenance copy: `internal_docs/_adr0100_artifacts/p6/` (see its README) and
 `Dropbox/UANDES EC/Cluster Max Models/adr0100_campaign_artifacts/p6/`.
 
 **Jobs with a surviving, independently re-checkable artifact: 145608**
-(051M build), **145609** (051M run — still queued as of writing), **145616**
-(071M build). A first ladder was submitted via `submit_p6_ladder.sh`
+(051M build), **145609** (051M run, first attempt — died instantly on a
+`srun`-PATH bug, see Amendment 4), **145623** (051M run, the fix — PASS,
+see Amendment 4), and **145616** (071M build). A first ladder was submitted
+via `submit_p6_ladder.sh`
 (145608–145615, chained build-on-previous-run, identical to
 `numberer_sweep/submit_ladder.sh`'s pattern) and partly cancelled/superseded
 mid-campaign — see the wiring note under G3. **145610–145615 and
@@ -974,9 +978,12 @@ through to RSS at incident scale (see the G0b discussion above).
 
 ## Amendment 4 (2026-08-26) — the solve-based emission-correctness verdict: PASS
 
-Closes Amendment 3's one open item: whether the P3-columnar-emitted
-51.0 M-hex / 157.8 M-DOF deck actually solves. It does. Two solve attempts
-against `rung-051M/deck.tcl` (job 145608's output, unchanged since G2):
+Amendment 3 left three follow-ups; this amendment closes **follow-up 2**
+(whether the P3-columnar-emitted 51.0 M-hex / 157.8 M-DOF deck actually
+solves — it does). Follow-ups 1 (the `build_rung.py` phase-marker gap that
+left 071M's failure phase undetermined) and 3 (D5's bench-scale win needs
+its own cluster memlog) remain open. Two solve attempts against
+`rung-051M/deck.tcl` (job 145608's output, unchanged since G2):
 
 ### The false start — job 145609 (a PATH bug, not an ADR 0100 defect)
 
@@ -987,30 +994,45 @@ is one line:
 /var/spool/slurmd/job145609/slurm_script: line 27: srun: command not found
 ```
 
-`run_p6.sbatch` called bare `srun`. Every earlier stage in this campaign
-(`build_memlog.sbatch`'s builds, and every prior `numberer_sweep` solve)
-happened to work because those jobs were launched by `submit_*.sh` scripts
-run from an interactive shell with `/opt/slurm/bin` on `PATH`, and
-`--export=ALL` propagated that `PATH` into the job environment. `run_p6.sbatch`
-for 145609 was submitted the same way, from the same kind of shell — so the
-trap is not "which shell submitted it" but that **the propagated `PATH` is
-not a property of the script and cannot be relied on** the moment a job is
-resubmitted from any different context (a cron entry, a different login
-shell, a shell with a trimmed `PATH`, etc.). **The robust fix is the
-absolute path in the script itself**, not a `PATH` assumption at the
-submission site. `run_p6.sbatch` now calls `/opt/slurm/bin/srun` directly
+`run_p6.sbatch` called bare `srun`. **The mechanism is which shell
+submitted it, exactly what an earlier draft of this paragraph denied — and
+this campaign's own scripts are the proof.** This whole campaign's jobs
+were submitted via non-interactive `ssh esmeralda '...'` calls, whose
+`PATH` does not carry `/opt/slurm/bin` (a cluster fact this program already
+had — it is *why* `submit_p6_ladder.sh`'s own `sbatch`/`sinfo` calls use the
+absolute path throughout). `--export=ALL` faithfully propagates whatever
+`PATH` the submitting shell actually has; for this campaign, that is one
+without `/opt/slurm/bin`. `build_memlog.sbatch` never needed the same
+treatment because it **never calls `srun` at all** (`grep srun
+build_memlog.sbatch` is empty) — it only calls `python build_rung.py`, so
+the missing `PATH` entry was invisible there, not absent. The pre-P3
+`numberer_sweep` sweeps that used bare `srun` successfully were submitted a
+different way — from an interactive login shell that already had
+`/opt/slurm/bin` on `PATH`, propagated by the same `--export=ALL`
+mechanism. **The claim this replaces — that 145609 was "submitted the same
+way, from the same kind of shell" as those sweeps — is self-refuting: if it
+had inherited a slurm-bearing `PATH`, bare `srun` would have resolved. It
+did not, which is the proof the shell differed.** `run_p6.sbatch`'s `srun`
+call had simply never been given the absolute-path treatment the rest of
+this campaign's own scripts already used — an oversight, not evidence of a
+new failure mode. **The fix stands as shipped**: the absolute path in the
+script itself, not a `PATH` assumption at the submission site, since the
+submission site's `PATH` is exactly what varies
 (`rung-051M/run_p6.sbatch.fixed-post-145609` in the provenance archives).
 This is a harness bug in this campaign's own scripts, unrelated to
 `apesees.py`/`build.py`/the D-routes — recorded because it cost real wall
 time (145609 sat queued from submission until 05:21 the next day before
-dying in under a second) and because "bare `srun` in an `sbatch` script" is
-a trap worth naming for the next cluster harness.
+dying in under a second) and because "bare `srun` in an `sbatch` script
+submitted from a non-login shell" is a trap worth naming for the next
+cluster harness.
 
 ### The fix — job 145623 — PASS
 
-Resubmitted with the fixed script (`--job-name=p6-r-051M-fix`). Wall time
-**00:09:45**, from `p6-r-051M-fix-145623.out`'s own markers:
-`2026-08-26T15:28:38-04:00` → `2026-08-26T15:38:23-04:00`.
+Resubmitted with the fixed script, under a fresh `--job-name=p6-r-051M-fix`
+given on the `sbatch` command line at resubmission (not baked into
+`run_p6.sbatch` itself). Wall time **00:09:45**, from
+`p6-r-051M-fix-145623.out`'s own markers: `2026-08-26T15:28:38-04:00` →
+`2026-08-26T15:38:23-04:00`.
 
 Verified directly against `p6-r-051M-fix-145623.err` (215,345 bytes) for
 this amendment, not relayed:
@@ -1018,19 +1040,28 @@ this amendment, not relayed:
 | check | result |
 |---|---|
 | `profile_*.h5` written | **240 / 240** (`ls rung-051M/profile_*.h5 \| wc -l`) |
-| `ANALYZE_MS` lines | **240** — min 516,017 ms, max 571,849 ms, mean 563,730 ms (55,832 ms / 9.8 % spread across ranks) |
-| `APEGMSH_PROGRESS` lines | **4,800** = 240 ranks × 20 steps, every one reading `i=20 n=20` (every rank completed every step) |
+| `ANALYZE_MS` lines | **240** — min 516,017 ms, max 571,849 ms, mean 563,730 ms (55,832 ms spread = 9.76 % of the max) |
+| `APEGMSH_PROGRESS` lines | **4,800** = 240 ranks × 20 steps; `i` runs 1..20 with each value appearing **exactly 240 times**, `n=20` throughout — only the last 240 lines read `i=20 n=20` (every rank reached step 20 of 20) |
 | `Process Terminating` (clean per-rank shutdown) | **240** — one per rank |
 | error / exception / traceback / segfault matches | **0** |
 
 **Verdict: PASS.** The deck emitted by the P3-columnar `_emit_partitioned`
-path at 51.0 M hexes / 157.8 M DOF parses and solves end-to-end on
-`OpenSeesMP` at np=240, all 240 ranks, all 20 steps, no errors. This is the
-at-scale confirmation this ADR's own G2 framing asked for: byte-identity
-was proven at bench scale pre-merge (97 artifacts, golden deck, mutation-
-tested suite, Gate G1); this is the cluster-scale solve confirming the
-emitted bytes are not just byte-identical to a golden fixture but
-functionally correct at the incident's own scale.
+path at 51.0 M hexes / 157.8 M DOF **assembles, numbers, and steps
+end-to-end** on `OpenSeesMP` at np=240, all 240 ranks, all 20 steps, no
+errors. One caveat worth stating precisely: this deck drives no pattern,
+load, or recorder, so the run is a **null-excitation** solve — it proves
+parse + assembly + partitioning + numbering + 20 explicit steps complete
+without abort, not that a physically loaded response is correct. That is
+exactly the emission-correctness question this program has open, not a
+response-correctness claim, and it is the at-scale confirmation Amendment
+3's framing of G2 asked for (the base ADR's own G2 gate text asks only for
+"it completes, with the memlog trajectory attached" — the solve-as-
+correctness-check framing is Amendment 3's addition, not the original
+gate). Byte-identity was proven at bench scale pre-merge
+(`internal_docs/_adr0100_driver_log.md`, "P3 refuter LENS 1" — 97 emitted
+artifacts identical across four independent families, mutation-tested);
+this is the cluster-scale solve confirming those bytes also assemble and
+step without failure at the incident's own scale.
 
 ### The numberer, incidentally — a fresh LadrunoParallelRCM data point at 51 M
 
@@ -1046,21 +1077,33 @@ functionally correct at the incident's own scale.
 | step1 (first step, numberer fires once) | 494.26 s |
 | median step | 4.11 s |
 
-Chained against the pre-P3 `numberer_sweep` ladder's own three points
-(`nladder-20260824-0039-np240-ladruno`, same np, same `LadrunoParallelRCM`):
-37,627,936 nodes → dc.numberDOF 154.70 s; 52,616,224 nodes (this rung) →
-215.96 s. Size ratio 1.398×, cost ratio 1.396× → **exponent ≈ 0.995** —
-indistinguishable from linear, extending the sweep's own N^0.99 finding one
-more rung, to 157.8 M DOF. **LadrunoParallelRCM (fork ADR-74) stays
-exonerated as a large-model cost driver at this larger scale too** — not
-the focus of this campaign, but free evidence from the same run, recorded
-so it doesn't have to be re-measured later.
+Chained against each of the pre-P3 `numberer_sweep` ladder's three points
+(`nladder-20260824-0039-np240-ladruno`, same np, same `LadrunoParallelRCM`;
+`collect_sweep_output_nladder-20260824-0039.txt` in the provenance
+archives): 19,176,034 / 26,931,400 / 37,627,936 nodes at dc.numberDOF
+79.60 / 112.22 / 154.70 s, against this rung's 52,616,224 nodes at
+215.96 s:
+
+| paired against | size ratio | cost ratio | exponent |
+|---|---|---|---|
+| 19,176,034 nodes | 2.744× | 2.714× | 0.989 |
+| 26,931,400 nodes | 1.954× | 1.924× | 0.978 |
+| 37,627,936 nodes | 1.398× | 1.396× | 0.995 |
+
+All three pairings land in **0.978–0.995** — indistinguishable from linear
+regardless of which prior point is used, extending the sweep's own N^0.99
+finding one more rung, to 157.8 M DOF. **LadrunoParallelRCM (fork ADR-74)
+stays exonerated as a large-model cost driver at this larger scale too** —
+not the focus of this campaign, but free evidence from the same run,
+recorded so it doesn't have to be re-measured later.
 
 ### Provenance
 
-`rung-051M/p6-r-051M-145609.{out,err}`, `run_p6.sbatch.fixed-post-145609`,
+`rung-051M/p6-r-051M-145609.{out,err}`,
+`rung-051M/run_p6.sbatch.fixed-post-145609`,
 `rung-051M/p6-r-051M-fix-145623.{out,err}`, `rung-051M/profile_0.h5.listing.txt`
 (a representative structure dump — the 240 binary `.h5` files themselves
-stay on the cluster), and `rung-051M/collect_sweep_output.txt`, copied into
-both provenance archives (`internal_docs/_adr0100_artifacts/p6/rung-051M/`
-and the Dropbox mirror).
+stay on the cluster), `rung-051M/collect_sweep_output.txt`, and
+`collect_sweep_output_nladder-20260824-0039.txt` (the pre-P3 chained-baseline
+numbers this amendment cites), copied into both provenance archives
+(`internal_docs/_adr0100_artifacts/p6/` and the Dropbox mirror).

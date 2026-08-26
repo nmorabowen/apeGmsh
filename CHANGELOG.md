@@ -96,11 +96,16 @@ Docs only: an ADR amendment. No code, no API change.
 
 ### CHANGED — ADR 0100 Amendment 4: the solve-based emission-correctness verdict is PASS
 
-Closes Amendment 3's one open item. Job 145609 (the first solve attempt)
-died instantly to a harness bug unrelated to ADR 0100: `run_p6.sbatch`
-called bare `srun`, which only ever resolved because earlier jobs in this
-campaign happened to inherit `/opt/slurm/bin` on `PATH` via `--export=ALL`
-from an interactive submitting shell -- not a property of the script.
+Closes follow-up 2 of Amendment 3's three open items (follow-ups 1, the
+`build_rung.py` phase-marker gap, and 3, D5's own cluster check, remain
+open). Job 145609 (the first solve attempt) died instantly to a harness
+bug unrelated to ADR 0100: `run_p6.sbatch` called bare `srun`. This
+campaign's jobs were submitted via non-interactive `ssh` calls whose `PATH`
+lacks `/opt/slurm/bin` -- the reason `submit_p6_ladder.sh`'s own `sbatch`
+calls already use the absolute path; `run_p6.sbatch`'s `srun` call was
+never given the same treatment. The pre-P3 sweeps that used bare `srun`
+successfully were submitted from an interactive shell that already had
+`/opt/slurm/bin` on `PATH` -- a different shell, not the same one.
 Fixed to the absolute `/opt/slurm/bin/srun` and resubmitted as job 145623,
 which **completed**: 240/240 `profile_*.h5` written, all 240 ranks report
 `ANALYZE_MS` (min 516,017 / max 571,849 / mean 563,730 ms) and 20/20 steps
@@ -108,9 +113,11 @@ complete, zero error/exception/traceback/segfault matches in 215 KB of
 stderr.
 
 **Verdict: PASS.** The P3-columnar-emitted 51.0 M-hex / 157.8 M-DOF deck
-parses and solves end-to-end on `OpenSeesMP` at np=240 -- the at-scale
-confirmation this ADR's G2 framing asked for, complementing the bench-scale
-byte-identity proof already on record.
+assembles, numbers, and steps end-to-end on `OpenSeesMP` at np=240 (a
+null-excitation deck -- this proves parse/assembly/step completion, not a
+loaded response) -- the at-scale confirmation Amendment 3's framing of G2
+asked for, complementing the bench-scale byte-identity proof already on
+record.
 
 Incidentally, `collect_sweep.py` on the completed rung gives a fresh
 `LadrunoParallelRCM` numberer data point (dc.numberDOF 215.96 s at
