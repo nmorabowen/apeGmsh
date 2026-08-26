@@ -169,6 +169,45 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
+
+The Linux `suite` job had been dying with **exit 139 and no failing test**,
+hitting `main` and three PR branches on 2026-08-25/26 including docs-only
+diffs. The crashing test was
+`tests/sections/test_builder_gui_b6.py::test_panel_matches_headless_build_off_ui_thread`
+— named by a flush-per-test nodeid plugin in 5/6 CI shards, and corroborated
+by all four production failures stopping at exactly the same `-q` progress
+index (7409).
+
+A core dump named the frame: `Shiboken::BindingManager::runDeletionInMainThread`
+reached from `make_pending_calls`, calling through a NULL pointer — PySide6's
+cross-thread deletion queue draining an entry that no longer described a live
+object.
+
+August's `47e20ca6` kept the properties worker off the Qt object graph by
+**reachability**, making the thread target a module-level `_work(...)`. That was
+necessary and not sufficient: reachability governs only what the worker's own
+references can free, while the **cyclic collector** runs on whichever thread
+trips the allocation threshold — and this one allocates hard (document parse,
+`FEMData` unpickle, the NumPy solve). A gen-2 pass landing there while an
+earlier builder window's widget tree was unreachable finalized *that* Qt graph
+off the GUI thread, and the main thread died draining the queue at whatever
+test it happened to have reached. Hence: intermittent, load-dependent, and
+blamed on a test that does nothing wrong.
+
+The worker now runs under a `_no_cyclic_gc()` pause. Refcount-driven frees are
+untouched, so nothing leaks — cyclic garbage simply waits for the next
+collection after the build. The pause is refcounted across overlapping builds
+and restores whatever it found, so an interpreter that already had the
+collector off keeps it off. Three regression locks in
+`tests/sections/test_properties.py` pin all three properties, and they fail on
+the unfixed module.
+
+Measured on the harness that pinned the bug — one **cold** production-identical
+suite run per CI shard, because looping attempts inside one job warms the page
+cache and hides the crash entirely: **6/12 shards crashed before, 0/12 after**,
+with the tests still in the suite.
+
 ### FIXED — the API reference had no Tier 5, and a stale source-map footer
 
 `docs/api/constraints.md` named **Tier 5 — Fork** in its taxonomy table and
