@@ -821,7 +821,7 @@ queue during this campaign and is not asserted here.** Record it when
 **Wiring, stated plainly.** `submit_p6_ladder.sh` (as shipped) chains each
 rung's **build** on the **previous rung's run** succeeding — identical to
 `numberer_sweep/submit_ladder.sh`'s pattern (`DEP="${RUN_ID}"` at the loop's
-end). Run once, it submitted the full 145608–145621 chain this way. Once
+end). Run once, it submitted the full 145608–145615 chain this way. Once
 145608 (051M build) succeeded, its run (145609) queued `(Resources)` behind
 an unrelated job holding 13/15 nodes — which would have blocked 145610
 (071M build) indefinitely, since it depended on 145609's `afterok`.
@@ -874,7 +874,7 @@ signature, no Python traceback, consistent with an uncatchable SIGKILL.
 trough to 25,670 MiB around the same post-topology-creation window
 (t≈1,272 s) where G2 dropped to its 18,242 MiB baseline, then a **sharp
 climb at ~646 MiB/s** (36,184 MiB in 56 s) to a peak of **61,854 MiB**
-(mem_avail 832 MiB) at t≈1,328 s — followed by a **give-back of ~12.5 GiB**
+(mem_avail 832 MiB) at t≈1,328 s — followed by a **give-back of ~12.2 GiB (12,525 MiB)**
 to 49,329 MiB just 20 s later (t≈1,348 s), a spell hovering in the
 49,000–53,000 MiB band, then a **second, noisier climb** back into the
 60,500–61,600 MiB band, ending at a **last sample of 61,283 MiB at
