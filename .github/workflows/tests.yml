@@ -277,7 +277,7 @@ jobs:
           # hung the job for 6 h after ADR 0089 landed the first
           # blocking one. They belong to the qt lane, which gives each
           # file its own X server and a 300 s cap.
-          PYTHONFAULTHANDLER=1 pytest tests -v -p no:cacheprovider \
+          pytest tests -q -p no:cacheprovider \
             -m "not live and not subprocess and not bench and not qt"
 
   # The `live` surface — every test that drives an OpenSees backend
