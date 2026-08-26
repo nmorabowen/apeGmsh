@@ -3575,6 +3575,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-3-g2g3-measured-on-esmeralda-the-ceiling-did-not-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 3: G2/G3 measured on esmeralda, the ceiling did not move
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8637,6 +8648,17 @@
     <span class="md-ellipsis">
       
         CHANGED — ADR 0100 Amendment 2: P3 shipped, D5 re-priced UP, the incident is not yet closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-adr-0100-amendment-3-g2g3-measured-on-esmeralda-the-ceiling-did-not-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0100 Amendment 3: G2/G3 measured on esmeralda, the ceiling did not move
       
     </span>
   </a>
@@ -13707,6 +13729,25 @@ term at ~370 B/hex, 76-83% of what remains</strong>, matching this ADR's <em>ori
 ~344 B/hex estimate. D5's <code>class_chunks</code> half is restored as the largest
 remaining target. The general lesson is recorded with it: a term's measured
 share depends on where the peak is, and removing one term moves the peak.</p>
+<p>Docs only: an ADR amendment. No code, no API change.</p>
+<h3 id="changed-adr-0100-amendment-3-g2g3-measured-on-esmeralda-the-ceiling-did-not-move">CHANGED — ADR 0100 Amendment 3: G2/G3 measured on esmeralda, the ceiling did not move<a class="headerlink" href="#changed-adr-0100-amendment-3-g2g3-measured-on-esmeralda-the-ceiling-did-not-move" title="Permanent link">&para;</a></h3>
+<p>The post-P3 51.0 M-hex rung now builds+emits (job 145608, exit 0 -- it
+OOM-killed pre-P3) but with <strong>under 2% RSS improvement</strong> over the pre-P3
+incident's own re-measured memlog (job 145221), not the bench-scale ~40%.
+The capacity ladder self-stops at the very next rung, 71.3 M hexes (job
+145616, OOM-killed exit 137) -- 100 M and 139 M never ran.</p>
+<p>071M's OOM happens before <code>build_rung.py</code> ever prints <code>FEM built</code>, i.e.
+before <code>get_fem_data()</code> extraction completes and before <code>_emit_partitioned</code>
+(the code P3 touches) is ever reached -- named as an open instrumentation
+gap, not resolved here.</p>
+<p>A level-ratio cross-check (RSS growth / Amendment 2's traced-peak
+extrapolation, 1.80-1.97x) sits in the vicinity of ADR 0065's historical
+~1.9x allocator/fragmentation multiplier, though it is not the same
+statistic as Amendment 2's slope-based G0b(0.88) -- read as
+order-of-magnitude, not a precise validation.</p>
+<p>G2's solve (job 145609, the emission-correctness check at scale) did not
+clear the SLURM queue during this campaign and is recorded as an open item,
+not a result.</p>
 <p>Docs only: an ADR amendment. No code, no API change.</p>
 <h3 id="fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped">FIXED — a <code>node</code> line now carries exactly <code>ndm</code> coordinates (2-D <code>-ndf</code> / <code>-mass</code> were silently dropped)<a class="headerlink" href="#fixed-a-node-line-now-carries-exactly-ndm-coordinates-2-d-ndf-mass-were-silently-dropped" title="Permanent link">&para;</a></h3>
 <p>The broker stores every node as <code>(x, y, z)</code> and the emitters wrote all
