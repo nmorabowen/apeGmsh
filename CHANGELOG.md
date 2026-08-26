@@ -69,6 +69,31 @@ share depends on where the peak is, and removing one term moves the peak.
 
 Docs only: an ADR amendment. No code, no API change.
 
+### CHANGED — ADR 0100 Amendment 3: G2/G3 measured on esmeralda, the ceiling did not move
+
+The post-P3 51.0 M-hex rung now builds+emits (job 145608, exit 0 -- it
+OOM-killed pre-P3) but with **under 2% RSS improvement** over the pre-P3
+incident's own re-measured memlog (job 145221), not the bench-scale ~40%.
+The capacity ladder self-stops at the very next rung, 71.3 M hexes (job
+145616, OOM-killed exit 137) -- 100 M and 139 M never ran.
+
+071M's OOM happens before `build_rung.py` ever prints `FEM built`, i.e.
+before `get_fem_data()` extraction completes and before `_emit_partitioned`
+(the code P3 touches) is ever reached -- named as an open instrumentation
+gap, not resolved here.
+
+A level-ratio cross-check (RSS growth / Amendment 2's traced-peak
+extrapolation, 1.80-1.97x) sits in the vicinity of ADR 0065's historical
+~1.9x allocator/fragmentation multiplier, though it is not the same
+statistic as Amendment 2's slope-based G0b(0.88) -- read as
+order-of-magnitude, not a precise validation.
+
+G2's solve (job 145609, the emission-correctness check at scale) did not
+clear the SLURM queue during this campaign and is recorded as an open item,
+not a result.
+
+Docs only: an ADR amendment. No code, no API change.
+
 ### FIXED — a `node` line now carries exactly `ndm` coordinates (2-D `-ndf` / `-mass` were silently dropped)
 
 The broker stores every node as ``(x, y, z)`` and the emitters wrote all

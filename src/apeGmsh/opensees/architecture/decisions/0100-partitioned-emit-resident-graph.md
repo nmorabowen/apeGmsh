@@ -12,11 +12,14 @@ Amendment 2 records P3's result (traced peak −48/−54 %, **RSS ~−40 %**),
 reversing Amendment 1's de-pricing — and states that **P3 alone does not
 close the incident** (~23–25 GB traced remains at 51 M elements). **Gates G2
 and G3 are closed (Amendment 3, 2026-08-25/26):** the 51.0 M rung now
-builds+emits (it OOM-killed pre-P3), but by under 2 % of RSS margin, not the
-bench-scale ~40 % — and the ladder's next rung (71.3 M) OOM-kills in turn.
-**The practical single-node ceiling has not moved to a new order of
-magnitude.** The attribution below is the pre-measurement *candidate* list;
-read it with all three amendments, which correct it. Amends
+builds+emits (it OOM-killed pre-P3), but with under 2 % RSS improvement over
+the pre-P3 incident's own numbers, not the bench-scale ~40 % — and the
+ladder's next rung (71.3 M) OOM-kills in turn, **before ever completing
+`get_fem_data()` — i.e. its failure has not been shown to occur in the code
+this ADR's D-routes touch at all.** **The practical single-node ceiling has
+not moved to a new order of magnitude.** The attribution below is the
+pre-measurement *candidate* list; read it with all three amendments, which
+correct it. Amends
 **ADR 0065** (whose plan, `internal_docs/plan_emit_memory_columnar.md`,
 closed with a remaining-ledger flag) and re-arms the **Route E** trigger,
 which has now fired. Two adversarial reviews folded 2026-08-24 (§Review
@@ -281,9 +284,13 @@ statement is that the post-D ceiling is G3's output, not this section's.
   documented ~1.6× drift and is not a gate.
 - **G2 (the incident is the test):** re-run the 51.0 M-hex rung on the same
   60 GB node. It completes, with the memlog trajectory attached to this ADR.
+  **[CLOSED by Amendment 3 — it completes, RSS margin under 2 % better than
+  pre-P3.]**
 - **G3 (re-price the map):** rerun the ceiling arithmetic from measured
   post-D B/hex; resume the capacity ladder (71.3 M → 100 M → 139 M as far
   as the new ceiling allows); re-evaluate Route E triggers (b)/(c).
+  **[CLOSED by Amendment 3 — the ladder self-stops at 71.3 M; 100 M/139 M
+  never ran.]**
 
 ## Consequences
 
@@ -529,7 +536,8 @@ direction of the retraction survives the instrument change). There is
 therefore **no established basis for
 extrapolating G0a to incident scale**, and the largest size attempted
 (39,304 hexes) fails deterministically under the error bound. G2/G3 remain
-the only measurements that speak to the real ceiling.
+the only measurements that speak to the real ceiling. **[CLOSED by
+Amendment 3.]**
 
 ### Consequences for the routes
 
@@ -542,7 +550,8 @@ the only measurements that speak to the real ceiling.
   ~370 B/hex; `class_chunks` is re-priced UP and is the largest remaining
   target.]**
 - **Route E stays deferred.** Its trigger record stands; G2/G3 measure the
-  post-fix ceiling that re-prices it.
+  post-fix ceiling that re-prices it. **[CLOSED by Amendment 3 — re-priced
+  up, not down: the fix buys under 2 % of headroom at incident scale.]**
 - The merged instrument is **P3's before/after oracle**: a post-P3 campaign
   must show R1/R2/R3 (and R8) collapse. That is G0's re-run gate.
 
@@ -649,7 +658,8 @@ artefact of *peak position*, not a fact about the term.
 **Consequence: D5's `class_chunks` half is restored to the priced program and
 is now the single largest remaining target.** Its ndf-dict half (R6) remains
 a candidate. D5 is the necessary next slice; Route E's re-pricing still waits
-on G2/G3.
+on G2/G3. **[CLOSED by Amendment 3 — see its G2/G3 sections; D5 is confirmed
+necessary but its own bench-scale win is not yet cluster-checked.]**
 
 The general lesson, worth carrying: **a term's measured share depends on
 where the peak is, and removing one term moves the peak.** Any attribution
@@ -715,48 +725,86 @@ child stdio forced to cp1252 — on a UTF-8 console those tests prove nothing.
 
 **Gates G2 and G3 are closed.** Post-P3 (`main@889ba948`, PR #1077 merged;
 SHA verified via `git rev-parse HEAD` on the cluster checkout before the
-first job was submitted) capacity ladder on esmeralda. Jobs 145608–145621,
-ladder root `/mnt/deadmanschest/nmorabowen/apegmsh_jobs/adr0100_p6/ladder-20260825-1840-np240/`.
+first job was submitted) capacity ladder on esmeralda. Ladder root
+`/mnt/deadmanschest/nmorabowen/apegmsh_jobs/adr0100_p6/ladder-20260825-1840-np240/`.
 Provenance copy: `internal_docs/_adr0100_artifacts/p6/` (see its README) and
 `Dropbox/UANDES EC/Cluster Max Models/adr0100_campaign_artifacts/p6/`.
 
+**Jobs with a surviving, independently re-checkable artifact: 145608**
+(051M build), **145609** (051M run — still queued as of writing), **145616**
+(071M build). A first ladder was submitted via `submit_p6_ladder.sh`
+(145608–145615, chained build-on-previous-run, identical to
+`numberer_sweep/submit_ladder.sh`'s pattern) and partly cancelled/superseded
+mid-campaign — see the wiring note under G3. **145610–145615 and
+145617–145621 were observed live via `squeue` during the campaign but leave
+no artifact now**: `sacct` is broken on this cluster and `scontrol show job`
+returns `Invalid job id specified` for all of them (checked at the time of
+this amendment) — SLURM purges non-running job records after a retention
+window. Their submission and cancellation is real (this amendment and the
+companion Obsidian note both narrate it) but their exact terminal states are
+not independently re-verifiable after the fact; only the three IDs above
+carry surviving evidence.
+
 ### G2 — the incident cell, re-run
 
-The 51.0 M-hex rung (`--nh 1241`, np=240/15 nodes, `LadrunoParallelRCM`)
-**built and emitted successfully** (job 145608, `BUILD_EXIT=0`, wall
-00:59:53) — the same size that OOM-killed pre-P3. The pipeline genuinely
-clears 51.0 M hexes on a 60,232 MiB node now.
+The 51.0 M-hex rung (`--nh 1241`, np=240 for the eventual solve, built on
+**one exclusive node**, `LadrunoParallelRCM`) **built and emitted
+successfully** (job 145608, `BUILD_EXIT=0`) — the same size that OOM-killed
+pre-P3. Wall time **00:59:52** (3,592 s) — SLURM's own `RunTime` is no
+longer queryable (`scontrol` purges completed jobs; `sacct` is broken on
+this cluster), so this is derived from `p6-b-051M-145608.out`'s own
+`date -Is` markers: `2026-08-25T18:40:17-04:00` → `2026-08-25T19:40:09-04:00`.
+The pipeline genuinely clears 51.0 M hexes on this node now.
 
 **But by a margin far thinner than P3's bench-scale numbers implied.** The
-5 s-cadence memlog (`rung-051M/memlog.csv`) against the ADR's own incident
-figures (same script lineage: `diag_051M.sbatch` → `build_memlog.sbatch`):
+5 s-cadence memlog (`rung-051M/memlog.csv`) against the **real pre-P3
+incident memlog**, fetched from the cluster for this amendment (the
+original `/mnt/deadmanschest/nmorabowen/apegmsh_jobs/diag-051M-20260824-1043/
+memlog.csv`, 539 rows, job 145221 — previously only quoted from this ADR's
+own rounded prose; now cited directly, copied into both provenance archives
+as `preP3-incident-145221/memlog.csv`):
 
-| quantity | pre-P3 (this ADR's incident) | post-P3 (measured) | Δ |
+| quantity | pre-P3 (job 145221, measured from its memlog) | post-P3 (job 145608, measured) | Δ |
 |---|---|---|---|
-| post-session-close baseline RSS | ~18,000 MiB | **18,242 MiB** (t≈886 s) | — |
-| peak RSS | 61,300 MiB (OOM-killed here) | **60,861 MiB** (t≈1,399 s; completed) | **−439 MiB (−0.72 %)** |
-| growth (peak − baseline) | ~43,300 MiB | **42,619 MiB** | **−681 MiB (−1.57 %)** |
-| B/hex (growth ÷ 50,986,617) | ~850–890 | **876.5** | ~flat |
-| B/hex (peak ÷ N_hex) | ~1,200–1,260 | **1,251.6** | ~flat |
-| headroom at peak | none (killed) | **1,596 MiB avail / 1,073 MiB free** (~2.6 % of the node) | — |
+| post-session-close baseline RSS | **18,234 MiB** (t≈895 s) | **18,242 MiB** (t≈886 s) | — |
+| peak RSS | **61,328 MiB** (t≈1,424 s; OOM-killed) | **60,861 MiB** (t≈1,399 s; completed) | **−467 MiB (−0.76 %)** |
+| growth (peak − baseline) | **43,094 MiB** | **42,619 MiB** | **−475 MiB (−1.10 %)** |
+| B/hex (growth ÷ 50,986,617) | **886.3** | **876.5** | ~flat |
+| B/hex (peak ÷ N_hex) | **1,261.3** | **1,251.6** | ~flat |
+| headroom at peak | none (killed) | **1,596 MiB avail / 1,073 MiB free** | — |
 
-P3's own bench measurement (Amendment 2) found traced-peak reductions of
-**−48/−54 %** and RSS reductions of **~−40 %** at 24–39 K hexes. At the
-actual incident scale, the identical fix yields **under 2 % RSS
-improvement**. G2 **passes** — but with roughly 1.6 GiB of headroom, not the
-tens of gigabytes the bench-scale numbers would suggest.
+(Job 145221's `.out`/`.err`, also copied to both provenance archives, show it
+reached `FEM built: 52,616,224 nodes` before dying — i.e. it died **during**
+`_emit_partitioned`, unlike 071M below, which never got that far.)
 
-**This is not a contradiction of P3 — it is the ADR's own predicted
-mechanism, confirmed.** Amendment 2 found G0b (RSS growth ÷ traced-byte
-growth) **< 1 at bench scale** (a page-cache/allocator "reservoir" absorbs
-allocations when there is no real memory pressure) but *expected* **~1.9 at
-incident scale**, where the reservoir is gone and every allocation costs a
-real page. Checking that prediction: G2's measured RSS growth (42,619 MiB)
-÷ Amendment 2's own post-P3 *traced*-peak extrapolation at 51 M (22.7–24.9 GB
-= 23,245–25,498 MiB) = **1.67–1.83×** — inside the predicted ~1.9× band. The
-D-routes' object-graph reduction is real and measured (Amendment 2); it
-simply does not show up proportionally in process RSS at incident scale,
-exactly as Amendment 2 warned it might not.
+P3's own bench measurement (Amendment 2, at 24,389 and 32,768 hexes) found
+traced-peak reductions of **−48/−54 %** and RSS reductions of **~−40 %**. At
+the actual incident scale, the identical fix yields **under 2 % RSS
+improvement** (peak) and **~1.1 % RSS improvement** (growth). G2 **passes**
+— but with roughly 1.6 GiB of headroom, not the tens of gigabytes the
+bench-scale numbers would suggest.
+
+**This is not a contradiction of P3 — it is in the direction the ADR's own
+model would predict, though the two statistics are not identical.**
+Amendment 2 redefined **G0b as a ratio of regression *slopes*** (RSS growth
+vs. traced growth across sizes), measuring **G0b(slope) = 0.88 at bench
+scale** — below 1 because a page-cache/allocator "reservoir" left by meshing
+absorbs emit allocations when there is no real memory pressure — against
+ADR 0065's historical **~1.9× allocator/fragmentation multiplier** (itself a
+slope, from incident-scale conditions where the reservoir is exhausted).
+**What follows is a different, weaker statistic — a single-point *level*
+ratio, not Amendment 2's slope-based G0b** — reported with that caveat, not
+as a repeat measurement of it: G2's measured RSS growth (42,619 MiB) ÷
+Amendment 2's post-P3 *traced*-peak extrapolation at 51 M, **converted to
+MiB** (24.9/22.7 **decimal** GB = 23,747/21,648 MiB — the ADR's own traced
+figures are decimal, and dividing MiB by decimal-GB-labelled-MiB is the unit
+error this paragraph previously made) = **1.80–1.97×**. That interval
+straddles, rather than sits inside, the historical ~1.9×. Read as an
+order-of-magnitude cross-check, not a precise validation: **the D-routes'
+object-graph reduction is real and measured (Amendment 2); it does not show
+up proportionally in process RSS at incident scale, in roughly the
+allocator-amplified regime ADR 0065/Amendment 2 already named** — no more
+precisely than that.
 
 **Emission correctness (the solve).** Job 145609 (the 20-step np=240 solve —
 the end-to-end correctness check at scale per this ADR's G2 framing) was
@@ -770,19 +818,38 @@ queue during this campaign and is not asserted here.** Record it when
 
 ### G3 — the ladder stops one rung above the incident
 
-Rungs were chained by **build success on the previous build**, not run
-success on the previous run, because run needs the full 240-core machine and
-that was unavailable for the ladder's duration (see above) — this changes
-*how the chain is wired*, not what a passing/failing rung means. (051M's own
-run, 145609, stayed in the originally-submitted afterok chain and is the
-job discussed above.)
+**Wiring, stated plainly.** `submit_p6_ladder.sh` (as shipped) chains each
+rung's **build** on the **previous rung's run** succeeding — identical to
+`numberer_sweep/submit_ladder.sh`'s pattern (`DEP="${RUN_ID}"` at the loop's
+end). Run once, it submitted the full 145608–145621 chain this way. Once
+145608 (051M build) succeeded, its run (145609) queued `(Resources)` behind
+an unrelated job holding 13/15 nodes — which would have blocked 145610
+(071M build) indefinitely, since it depended on 145609's `afterok`.
+**Mid-campaign, 145610–145615 were cancelled (none had started) and
+071M/100M/139M were resubmitted by hand as a separate chain, this time
+gated build-on-previous-build** (145616 → 145618 → 145620, each with its own
+run gated on its own build: 145617/145619/145621) — decoupling ceiling-
+finding from the stuck solve queue. This is a live rewiring during the
+campaign, not what the committed harness script does on its own; see the
+job-evidence note above for which of these IDs still have artifacts.
 
-| rung | n_h | N_hex | job | result |
+| rung | n_h | N_hex | evidence | result |
 |---|---|---|---|---|
-| 051M | 1241 | 50,986,617 | build 145608 | **PASS**, exit 0, wall 00:59:53 (= G2 above) |
-| 071M | 1468 | 71,309,700 | build 145616 | **FAIL** — OOM-killed, exit 137, wall 00:27:55 |
-| 100M | 1736 | 99.7 M (nominal) | — | never ran — SLURM `DependencyNeverSatisfied` (self-stop) |
-| 139M | 2053 | 139.4 M (nominal) | — | never ran — self-stop |
+| 051M | 1241 | 50,986,617 (`rung.json` + gmsh's own hex count) | build 145608 | **PASS**, exit 0 (= G2 above) |
+| 071M | 1468 | 71,309,700 (gmsh's `Repartition of 71309700 hexahedra` line in `p6-b-071M-145616.out` — **no `rung.json`**, since the process died before that write) | build 145616 | **FAIL** — OOM-killed, exit 137 |
+| 100M | 1736 | 99.7 M (nominal, never confirmed against a build) | `rung-100M/` verified empty | never ran |
+| 139M | 2053 | 139.4 M (nominal, never confirmed) | `rung-139M/` verified empty | never ran |
+
+**What is verified vs. inferred for 100M/139M:** `rung-100M/` and
+`rung-139M/` are confirmed empty directories (checked live) — the builds
+genuinely never ran. The *mechanism* (SLURM's `DependencyNeverSatisfied`
+auto-cancellation) was observed live in `squeue` output at the time but was
+not saved to a durable artifact and cannot be re-verified now (`scontrol
+show job` on every cancelled ID in this campaign now returns `Invalid job
+id specified` — checked for this amendment). State it as **inferred from a
+live observation, not captured in a preserved artifact** — the ladder's
+self-stopping design makes it the overwhelmingly likely explanation, but it
+is not re-checkable evidence the way the three surviving job IDs are.
 
 **The new ceiling is bounded: 51.0 M passes (thin margin), 71.3 M fails.**
 Pre-P3, the incident already bracketed the boundary between 36.5 M (pass)
@@ -790,56 +857,79 @@ and 51.0 M (fail). Post-P3 the boundary has moved up by **less than one
 rung** — to somewhere between 51.0 M and 71.3 M. **P3 did not change the
 order of magnitude of what a single 60 GB node can build+emit.**
 
-071M's failure (`rung-071M/memlog.csv`, `p6-b-071M-145616.{out,err}`): mesh
-generation, METIS partitioning (Wall 624.052 s), and partition-topology
-creation (Wall 493.281 s) all completed, confirmed by gmsh's own timed
-`Info` lines. **The build never printed `FEM built: ... nodes`**
+071M's failure (`rung-071M/memlog.csv`, `p6-b-071M-145616.{out,err}`): wall
+time **00:27:52** (1,672 s), derived from the `.out`'s own `date -Is`
+markers (`2026-08-25T19:47:18-04:00` → `2026-08-25T20:15:10-04:00`) since
+SLURM's own `RunTime` is no longer queryable. Mesh generation, METIS
+partitioning (Wall 624.052 s), and partition-topology creation (Wall
+493.281 s) all completed, confirmed by gmsh's own timed `Info` lines.
+**The build never printed `FEM built: ... nodes`**
 (`build_rung.py`'s first line after the `with apeGmsh(...) as g:` block
 closes) — it never finished `get_fem_data()` extraction, and therefore
 **never reached `_emit_partitioned`**, the code this ADR's D-routes touch.
 `p6-b-071M-145616.err` shows only a bare `Killed` — the OOM-killer
 signature, no Python traceback, consistent with an uncatchable SIGKILL.
 
-The memlog shows a trough to 25,670 MiB around the same post-topology-
-creation window (t≈1,272 s) where G2 dropped to its 18,242 MiB baseline,
-then a sustained ~90 MiB/s climb to a final sampled peak of **61,854 MiB**
-(mem_avail 832 MiB) before the kill. **Whether this climb is
-`get_fem_data()`'s extraction cost or the start of the per-rank emit cannot
-be distinguished with the existing instrumentation** — `build_rung.py` has
-no phase marker between "partition topology done" and "FEM built", and the
-process died before the latter ever printed. **This is a real gap, stated
-plainly: the 071M failure may not even exercise the code ADR 0100
-modified.** Named as a follow-up below, not resolved here.
+**The trajectory, read directly from the CSV, is not a smooth climb:** a
+trough to 25,670 MiB around the same post-topology-creation window
+(t≈1,272 s) where G2 dropped to its 18,242 MiB baseline, then a **sharp
+climb at ~646 MiB/s** (36,184 MiB in 56 s) to a peak of **61,854 MiB**
+(mem_avail 832 MiB) at t≈1,328 s — followed by a **give-back of ~12.5 GiB**
+to 49,329 MiB just 20 s later (t≈1,348 s), a spell hovering in the
+49,000–53,000 MiB band, then a **second, noisier climb** back into the
+60,500–61,600 MiB band, ending at a **last sample of 61,283 MiB at
+t≈1,666 s** (not the 61,854 MiB peak — that occurred earlier and was not
+sustained) before the kill. **071M also peaks and gives back, the same
+shape G2 shows** — the two are not "071M climbs, G2 subsides"; the real
+contrast is that G2's give-back *held* at a materially lower level
+(~48,000–51,000 MiB) for the remaining ~2,100 s and the run finished there,
+while 071M's give-back did not hold — it climbed back to near its peak and
+was killed there.
 
-A growth-based B/hex for 071M (36,184 MiB ÷ 71,309,700 hex = **532 B/hex**)
-is reported for completeness but is **not comparable to G2's 876.5 B/hex**
-— it may be measuring a different pipeline stage, and it is a floor rather
-than a converged figure: the process was still climbing when the sampler
-last caught it (unlike G2, whose transient peak subsided to a lower stable
-plateau before the run finished cleanly).
+**Whether the 61,854 MiB peak is `get_fem_data()`'s extraction cost or the
+start of the per-rank emit cannot be distinguished with the existing
+instrumentation** — `build_rung.py` has no phase marker between "partition
+topology done" and "FEM built", and the process died before the latter
+ever printed. **This is a real gap, stated plainly: the 071M failure may
+not even exercise the code ADR 0100 modified.** Named as a follow-up below,
+not resolved here.
+
+A growth-based B/hex for 071M (36,184 MiB ÷ 71,309,700 hex = **532 B/hex**,
+using the 25,670 trough and the 61,854 peak) is reported for completeness
+but is **not comparable to G2's 876.5 B/hex** — it may be measuring a
+different pipeline stage, and given the give-back-then-reclimb shape above,
+it is not obviously a converged number either way.
 
 ### The predicted ceiling, checked against where the ladder actually stopped
 
-A linear projection from G2's growth-based B/hex (876.5) predicts the
-60,232 MiB node clears (60,232−18,242) MiB ÷ 876.5 B/hex × 1,048,576 B/MiB ≈
-**50.2 M hexes** — i.e., **already at the edge at 51.0 M**, consistent with
-G2's thin 1,596 MiB margin, and consistent with 071M (40 % larger) failing
-outright. **G3 confirms this projection rather than contradicting it**: a
-naive linear extrapolation from the *one* successful measurement correctly
-called the ladder's stopping point in advance. The earlier, bench-scale-
-derived expectation (a post-P3 ceiling well past 51 M, with headroom toward
-71–100 M) is **withdrawn** — it relied on traced-peak reductions that do not
-carry through to RSS at incident scale (see the G0b cross-check above).
+**On node capacity — a correction.** The cluster's own fact is
+"60,232 MB RealMemory" (SLURM's configured value); this ADR does not know,
+and should not assert, whether that figure is decimal or binary MB, and
+this amendment stops relabelling it as MiB. More importantly, **G2's own
+memlog shows the node holding more than that figure**: peak RSS 60,861 MiB
+*with* 1,596 MiB still reported available — a usable pool of **at least
+~62,457 MiB** at that instant, not 60,232. Projecting from that observed
+pool rather than the nominal SLURM figure: a linear projection from G2's
+growth-based B/hex (876.5) gives (62,457−18,242) MiB ÷ 876.5 B/hex ×
+1,048,576 B/MiB ≈ **52.9 M hexes** — closer to 51.0 M than to 71.3 M, but
+with more headroom than the nominal-capacity arithmetic implied, and not a
+number this amendment treats as "G2 was already at the edge": it says the
+next rung up should be expected to fail, which it did, without claiming the
+projection pins the boundary precisely. The earlier, bench-scale-derived
+expectation (a post-P3 ceiling well past 51 M, with headroom toward 71–100 M)
+is **withdrawn** — it relied on traced-peak reductions that do not carry
+through to RSS at incident scale (see the G0b discussion above).
 
 ### What this means for the program
 
 - **D5 (`class_chunks` streaming, the ndf-inference terms) is confirmed
   necessary, not optional** — Amendment 2 said this from bench-scale
   attribution; G2/G3 now say it from the cluster. Whether D5 alone reaches
-  71.3 M is unmeasured: the 1.67–1.83× allocator multiplier found here
-  applies to whatever D5 removes too, so its bench-scale traced-byte win
-  should be discounted the same way P3's was, before it is presented as a
-  new ceiling.
+  71.3 M is unmeasured: the ~1.8–2.0× level-ratio found here (see the G0b
+  discussion above — not the same statistic as G0b(slope), but pointing the
+  same direction) applies to whatever D5 removes too, so its bench-scale
+  traced-byte win should be discounted the same way P3's was, before it is
+  presented as a new ceiling.
 - **Route E (fork-side binary bulk loader) is re-priced up, not down.**
   Trigger (a) ("models pass ~30–50 M nodes") had already fired before this
   amendment; G2/G3 add that the Python-side D-route program, even after a
