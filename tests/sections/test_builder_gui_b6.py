@@ -19,6 +19,37 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from apeGmsh.sections import SectionDocument  # noqa: E402
 from apeGmsh.sections._properties import BuildResult  # noqa: E402
 
+#: QUARANTINE — see https://github.com/nmorabowen/apeGmsh/issues/1080.
+#:
+#: This is the only file in the suite that drives a REAL properties-worker
+#: build behind a full Qt window graph, and in the shared-process ``suite``
+#: lane that combination segfaults the interpreter: exit 139, no failing
+#: test, at ``test_panel_matches_headless_build_off_ui_thread``. The core
+#: names ``Shiboken::BindingManager::runDeletionInMainThread`` reached from
+#: ``make_pending_calls`` — PySide6's cross-thread deletion queue calling
+#: through a NULL pointer, i.e. a Qt wrapper's last reference dropped off
+#: the UI thread.
+#:
+#: That is the same signature 47e20ca6 (2026-08-18) fixed by making the
+#: thread target module-level, so THAT FIX WAS INCOMPLETE — its lock,
+#: ``test_properties.py::test_a_running_worker_owns_nothing_qt``, still
+#: passes. Something other than one-hop reachability from the running
+#: thread still drops a Qt wrapper there.
+#:
+#: The marker deselects this file from ``suite`` only. It still runs on
+#: every PR, in its own process, in the ``sections-worker-tests`` job — the
+#: coverage is kept deliberately, because Linux CI is the only oracle this
+#: product path has and it CAN still crash for a Linux user.
+#:
+#: Measured, one cold attempt per CI shard (looping inside one job warms the
+#: page cache and hides it — see the issue): unmodified suite 6/12 shards
+#: crashed; with this file deselected, 0/12.
+#:
+#: Re-enable by deleting this marker once the root cause is fixed, and prove
+#: it with the same 12-shard cold fan-out. Do not let the quarantine become
+#: the answer.
+pytestmark = pytest.mark.sections_worker
+
 
 def _qapp():
     QtWidgets = pytest.importorskip("qtpy.QtWidgets")

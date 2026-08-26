@@ -202,6 +202,7 @@ markers = [
     "slow: > 1 second",
     "bench: opt-in performance benchmarks (run with `pytest -m bench`)",
     "qt: opens a real Qt window; excluded from the default run (native VTK/Qt pollution) — run per-FILE in a fresh process: `pytest -m qt <file>`",
+    "sections_worker: drives a REAL properties-worker build behind a full Qt window graph. QUARANTINED from the shared-process `suite` lane, which it segfaults via PySide6's cross-thread deletion queue (issue #1080); runs per-FILE in its own process in the `sections-worker-tests` CI job. Like `qt`, any lane passing its own `-m` must repeat `and not sections_worker` — `-m` is single-valued and REPLACES the addopts one.",
     "allow_pump_failures: test intentionally trips a results-viewer pump catch site; opts out of the strict pump-failure fixture (ADR 0084 D4)",
 ]
 # Silence specific MP-aware advisory warnings by default. These are

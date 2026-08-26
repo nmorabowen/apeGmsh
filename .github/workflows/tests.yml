@@ -277,8 +277,66 @@ jobs:
           # hung the job for 6 h after ADR 0089 landed the first
           # blocking one. They belong to the qt lane, which gives each
           # file its own X server and a 300 s cap.
+          #
+          # `not sections_worker` is the same rule for the same reason:
+          # tests/sections/test_builder_gui_b6.py drives a real
+          # properties-worker build behind a full Qt window graph, and in
+          # THIS shared process that segfaults the interpreter (exit 139,
+          # no failing test) roughly half the time — issue #1080. It runs
+          # in its own process in `sections-worker-tests` below.
           pytest tests -q -p no:cacheprovider \
-            -m "not live and not subprocess and not bench and not qt"
+            -m "not live and not subprocess and not bench and not qt and not sections_worker"
+
+  # The `sections_worker` quarantine lane (issue #1080).
+  #
+  # tests/sections/test_builder_gui_b6.py is the only file that drives a
+  # REAL properties-worker build (which meshes in a child interpreter via
+  # _mesh_proc) behind a full Qt window graph. In the shared `suite`
+  # process that combination segfaults: exit 139, no failing test, the
+  # core naming Shiboken::BindingManager::runDeletionInMainThread — a Qt
+  # wrapper's last reference dropped off the UI thread.
+  #
+  # This job is why the quarantine is a deselection and not a skip. The
+  # crash needs the suite's accumulated process state: measured one cold
+  # attempt per shard, the unmodified suite died in 6/12 shards, while
+  # `pytest tests/sections` in a fresh process was clean 40/40. So the
+  # tests keep running on Linux — the only oracle this product path has —
+  # they just get a process of their own.
+  #
+  # No `timeout-minutes` heroics needed: seven tests, ~30 s. But note the
+  # lane is only worth having if it actually SELECTS something — pytest
+  # exits 5 on "no tests ran", which fails the step under `bash -e`, so a
+  # marker typo turns this job red instead of silently green.
+  sections-worker-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install apt deps for Qt/VTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libglu1-mesa
+
+      - name: Install package (no openseespy)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plot,viewer,dxf]" pytest
+
+      # `-m sections_worker` REPLACES pyproject's addopts `-m "not qt"`
+      # (-m is single-valued), which is fine here: the file carries no
+      # qt-marked tests. One file, one process — that is the whole point.
+      - name: Run the quarantined worker tests (own process)
+        run: |
+          pytest tests/sections/test_builder_gui_b6.py \
+            -q -p no:cacheprovider -m sections_worker
 
   # The `live` surface — every test that drives an OpenSees backend
   # IN PROCESS. No other job runs a single one of them: `suite`

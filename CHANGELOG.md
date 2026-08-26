@@ -169,6 +169,33 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the flaky `suite` segfault is pinned and quarantined (issue #1080)
+
+The Linux `suite` job had been dying with **exit 139 and no failing test**,
+hitting `main` and three PR branches on 2026-08-25/26 including docs-only
+diffs. The crashing test is
+`tests/sections/test_builder_gui_b6.py::test_panel_matches_headless_build_off_ui_thread`
+— named directly by a flush-per-test nodeid plugin in 5/6 shards, and
+corroborated by all four production failures stopping at exactly the same
+`-q` progress index (7409).
+
+The core names the frame: `Shiboken::BindingManager::runDeletionInMainThread`
+reached from `make_pending_calls`, calling through a NULL pointer. That is
+PySide6's cross-thread deletion queue — a Qt wrapper's last reference dropped
+off the UI thread — and it is the *same* signature 47e20ca6 fixed in August by
+moving the worker's thread target module-level. That fix was therefore
+incomplete; its lock still passes, so something beyond one-hop reachability
+from the running thread is still dropping a Qt wrapper there.
+
+The file is deselected from `suite` with a new `sections_worker` marker and
+runs in its own process in the new `sections-worker-tests` job, so **no
+coverage is lost** — the crash needs the suite's accumulated process state
+(unmodified suite: 6/12 cold shards died; `pytest tests/sections` alone:
+40/40 clean). Reproducing it at all requires one **cold** run per job; looping
+attempts inside one job warms the page cache and hides it entirely (39/39
+clean), which is why earlier hunts came up empty. This is a quarantine, not a
+fix: the product path can still crash for a Linux user.
+
 ### FIXED — the API reference had no Tier 5, and a stale source-map footer
 
 `docs/api/constraints.md` named **Tier 5 — Fork** in its taxonomy table and
