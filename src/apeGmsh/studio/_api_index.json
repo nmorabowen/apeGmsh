@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-24T20:44:22Z",
+  "generated": "2026-08-26T20:59:39Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3338,6 +3338,12 @@
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`LogStrain` Hencky finite-strain lift wrapper."
     },
+    "ops.nDMaterial.ManzariDafalias": {
+      "symbol": "ops.nDMaterial.ManzariDafalias",
+      "signature": "ManzariDafalias(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', z_max: 'float', cz: 'float', rho: 'float', int_scheme: 'int' = 1, tan_type: 'int' = 0, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, name: 'str | None' = None) -> 'ManzariDafalias'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`ManzariDafalias` SANISAND-2004 sand material."
+    },
     "ops.nDMaterial.MohrCoulombSoil": {
       "symbol": "ops.nDMaterial.MohrCoulombSoil",
       "signature": "MohrCoulombSoil(*, c: 'float', phi: 'float', psi: 'float', E: 'float', nu: 'float', rho: 'float' = 0.0, ds: 'float' = 1e-05, yield_stress: 'float' = 10000000000.0, initial_p0: 'float' = 0.0, integration_method: 'str' = 'Backward_Euler', tangent_type: 'str' = 'Secant', f_absolute_tol: 'float' = 1e-06, stress_absolute_tol: 'float' = 1e-06, n_max_iterations: 'int' = 100, return_to_yield_surface: 'str' = 'Disabled', rk45_dT_min: 'float' = 0.01, rk45_niter_max: 'int' = 100, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
@@ -3349,6 +3355,12 @@
       "signature": "PlaneStrain(*, base: 'NDMaterial | str', name: 'str | None' = None) -> 'PlaneStrain'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`PlaneStrain` 2-D wrapper around a 3-D nDMaterial."
+    },
+    "ops.nDMaterial.SAniSandMS": {
+      "symbol": "ops.nDMaterial.SAniSandMS",
+      "signature": "SAniSandMS(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', zeta: 'float', mu0: 'float', beta: 'float', rho: 'float', int_scheme: 'int' = 3, tan_type: 'int' = 2, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, name: 'str | None' = None) -> 'SAniSandMS'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`SAniSandMS` memory-surface SANISAND material."
     },
     "ops.nDMaterial.StagedStrain": {
       "symbol": "ops.nDMaterial.StagedStrain",

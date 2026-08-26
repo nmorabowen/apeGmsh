@@ -43,7 +43,7 @@ H5 schema `2.20.0` → `2.21.0` (additive): each stage group gains an optional
 `(N, 2)` int64 `update_material_stage` dataset, replayed through both the
 flat and partitioned `from_h5` paths.
 
-See [ADR 0101](src/apeGmsh/opensees/architecture/decisions/0101-sanisand-materials-and-material-stage.md)
+See [ADR 0101](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0101-sanisand-materials-and-material-stage.md)
 and `internal_docs/guide_opensees.md` §2.1.
 
 ### CHANGED — the "constant-memory partitioned emit" claim is corrected, and the session-close contract is written down (ADR 0100, route D0)
