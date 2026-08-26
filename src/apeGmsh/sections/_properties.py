@@ -24,6 +24,8 @@ so tests never touch Gmsh.
 """
 from __future__ import annotations
 
+import contextlib
+import gc
 import json
 import queue
 import threading
@@ -31,6 +33,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterator
+
     from ._analysis import SectionProperties
 
 __all__ = [
@@ -58,6 +62,59 @@ class BuildResult:
     identities: "dict[str, Any] | None" = None
     error: "str | None" = None
     worker_thread_id: "int | None" = None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Qt-safety: the cyclic GC must not run on the worker thread
+# ─────────────────────────────────────────────────────────────────────
+
+#: Serializes the pause/resume bookkeeping below.
+_GC_GUARD = threading.Lock()
+#: How many workers are currently inside :func:`_no_cyclic_gc`.
+_GC_HOLDERS = 0
+#: Whether the cyclic GC was enabled when the first holder arrived.
+_GC_WAS_ENABLED = False
+
+
+@contextlib.contextmanager
+def _no_cyclic_gc() -> "Iterator[None]":
+    """Pause automatic cyclic collection for the length of one build.
+
+    **Why this exists.** Qt objects belong to the thread that created
+    them: a PySide6 wrapper finalized off the GUI thread is handed to
+    ``Shiboken::BindingManager``'s deferred-deletion queue, which the
+    main thread later drains through ``Py_AddPendingCall``. By then the
+    queued entry no longer describes a live object, and the destructor
+    call jumps through it — SIGSEGV inside ``runDeletionInMainThread()``,
+    with no Python traceback and below the reach of any ``except``.
+
+    :func:`_work` already keeps Qt out of everything this thread can
+    *reach* (see its docstring). That is necessary and was not
+    sufficient: the cyclic collector runs on whichever thread happens to
+    trip the allocation threshold, and this one allocates hard —
+    document parse, ``FEMData`` unpickle, the NumPy solve. One gen-2
+    pass landing here while some earlier builder window's widget tree is
+    unreachable finalizes *that* Qt graph on this thread, and the main
+    thread dies draining the queue at whatever test it had reached.
+
+    Refcount-driven frees are unaffected, so this does not leak: it only
+    defers *cyclic* garbage to the next collection after the build, on
+    whatever thread runs it then. Overlapping builds are refcounted, and
+    an interpreter that already had the collector off keeps it off.
+    """
+    global _GC_HOLDERS, _GC_WAS_ENABLED
+    with _GC_GUARD:
+        if _GC_HOLDERS == 0:
+            _GC_WAS_ENABLED = gc.isenabled()
+            gc.disable()
+        _GC_HOLDERS += 1
+    try:
+        yield
+    finally:
+        with _GC_GUARD:
+            _GC_HOLDERS -= 1
+            if _GC_HOLDERS == 0 and _GC_WAS_ENABLED:
+                gc.enable()
 
 
 def canonical_state(doc_dict: "dict[str, Any]") -> str:
@@ -149,14 +206,22 @@ def _work(
     builder and the queue as plain arguments keeps this thread's
     reachable set Qt-free, so the last drop always lands on the UI
     thread.
+
+    **That is necessary but not sufficient**, which is why the body runs
+    under :func:`_no_cyclic_gc`. Reachability governs only what *this*
+    thread's own references can free; the cyclic collector can run here
+    and finalize a Qt graph this thread never touched. See #1080 — the
+    crash survived the reachability fix and the core still named
+    ``runDeletionInMainThread``.
     """
-    try:
-        res = builder(doc_dict)
-    except Exception as exc:  # pragma: no cover - builder isolation
-        res = BuildResult(key=key, kind="?", error=str(exc))
-    res.key = key
-    res.worker_thread_id = threading.get_ident()
-    results.put(res)
+    with _no_cyclic_gc():
+        try:
+            res = builder(doc_dict)
+        except Exception as exc:  # pragma: no cover - builder isolation
+            res = BuildResult(key=key, kind="?", error=str(exc))
+        res.key = key
+        res.worker_thread_id = threading.get_ident()
+        results.put(res)
 
 
 class PropertiesController:
