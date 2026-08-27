@@ -199,18 +199,30 @@ class _TclStreamState:
 def _fmt_value(v: Any) -> str:
     """Render one positional argument for Tcl.
 
-    Strings pass through unchanged unless they contain Tcl-significant
-    whitespace, in which case they're brace-quoted (``{...}``) so the
-    token survives as one word — e.g. file paths under a directory with
-    a space in it (``recorder mpco`` / ``-file`` args). Booleans are
-    coerced to ``1`` / ``0`` (OpenSees doesn't speak Python ``True``).
-    Integers and floats use their ``repr`` (which preserves enough
-    digits for floats to round-trip).
+    Strings pass through unchanged unless they contain a BACKSLASH or
+    Tcl-significant whitespace, in which case they're brace-quoted
+    (``{...}``) — inside braces Tcl performs no substitution at all, so
+    the token survives as one word AND with its backslashes intact.
+
+    Both halves are about Windows paths. The whitespace half is the
+    obvious one (``C:\\...\\My Libraries\\...``). The backslash half is
+    the silent one: Tcl processes ``\\`` escapes in a bare word, so an
+    unquoted ``C:\\Users\\nmora\\out.ladruno`` reaches the recorder as
+    ``C:Usersmora`` + a newline — ``\\U`` and ``\\n`` are consumed. A
+    path with a space was accidentally protected by the whitespace rule;
+    one without was not, which is most Windows paths. Measured on the
+    fork: the recorder then fails with ``cannot create file``, and
+    because a recorder failure is NON-FATAL the deck runs to completion
+    and exits 0 having written nothing.
+
+    Booleans are coerced to ``1`` / ``0`` (OpenSees doesn't speak Python
+    ``True``). Integers and floats use their ``repr`` (which preserves
+    enough digits for floats to round-trip).
     """
     if isinstance(v, bool):
         return "1" if v else "0"
     if isinstance(v, str):
-        if any(c.isspace() for c in v):
+        if "\\" in v or any(c.isspace() for c in v):
             return "{" + v + "}"
         return v
     if isinstance(v, int):
@@ -228,7 +240,15 @@ def _join(*parts: Any) -> str:
     :func:`_fmt_value` per token) — one function call per LINE instead
     of per token; the bulk bands emit ~10 tokens a line and the
     per-token call overhead was a measured flat-emit hotspot. Output is
-    identical: odd types still route through :func:`_fmt_value`.
+    identical: odd types still route through :func:`_fmt_value`, and the
+    inlined ``str`` branch carries the SAME brace-quoting rule (see
+    :func:`_fmt_value` for why backslashes are quoted, not just
+    whitespace). The two must not drift — a path emitted through one
+    and not the other is the silent-corruption case.
+
+    ``"\\\\" in p`` is a C-level substring scan and runs before the
+    per-character whitespace walk, so the common token (neither) pays
+    one extra fast scan and short-circuits.
     """
     out: list[str] = []
     append = out.append
@@ -239,7 +259,8 @@ def _join(*parts: Any) -> str:
         elif c is float:
             append(repr(p))
         elif c is str:
-            append("{" + p + "}" if any(ch.isspace() for ch in p) else p)
+            append("{" + p + "}"
+                   if "\\" in p or any(ch.isspace() for ch in p) else p)
         else:
             append(_fmt_value(p))
     return " ".join(out)
