@@ -30,6 +30,8 @@ DEFAULT_PROGRESS_REL = Path(".apegmsh") / "progress.json"
 DEFAULT_PINS_REL = Path(".apegmsh") / "pins"
 
 ROOT_ENV = "APEGMSH_ROOT"
+STUDIO_ROOT_ENV = "APEGMSH_STUDIO_ROOT"
+ROOT_ENVS = (ROOT_ENV, STUDIO_ROOT_ENV)
 
 
 def display_path(path: Path | str, root: Path | str | None = None) -> str:
@@ -95,25 +97,33 @@ def resolve_root(
 ) -> Path:
     """Resolve the studio project root (ADR 0095 INV-15).
 
-    Order: explicit ``root=`` / ``--root`` → ``APEGMSH_ROOT`` → nearest
-    ancestor of *start* (default: cwd) that contains a ``.apegmsh/``
-    directory → cwd (or *start*'s directory when *start* was given and
-    no ``.apegmsh/`` was found).
+    Order: explicit ``root=`` / ``--root`` → ``APEGMSH_ROOT`` →
+    ``APEGMSH_STUDIO_ROOT`` → nearest ancestor of *start* (default: cwd)
+    that contains a ``.apegmsh/`` directory → cwd (or *start*'s directory
+    when *start* was given and no ``.apegmsh/`` was found).
+
+    Both env vars name the same thing. ``APEGMSH_STUDIO_ROOT`` is what
+    the habitat template stamps into ``.cursor/mcp.json`` and what
+    ``scripts/_habitat.py`` exports, so ignoring it here left every
+    template-stamped habitat resolving by cwd instead of by its own
+    manifest. Set both to the same path; ``APEGMSH_ROOT`` wins if they
+    disagree.
 
     A ``.apegmsh/`` under the user home directory is ignored unless
     *start* itself is home — otherwise every process inherits a stale
     habitat from ``~/``.
 
     Cwd is the last fallback, never the definition of the habitat.
-    Empty / whitespace-only ``root=`` or ``APEGMSH_ROOT`` is treated as
+    Empty / whitespace-only ``root=`` or either env var is treated as
     unset (S5f) — agents must not silently bind process cwd via ``""``.
     """
     if explicit is not None and str(explicit).strip():
         return Path(str(explicit).strip()).expanduser().resolve()
     environ = os.environ if env is None else env
-    raw = environ.get(ROOT_ENV)
-    if raw is not None and str(raw).strip():
-        return Path(str(raw).strip()).expanduser().resolve()
+    for name in ROOT_ENVS:
+        raw = environ.get(name)
+        if raw is not None and str(raw).strip():
+            return Path(str(raw).strip()).expanduser().resolve()
     origin = Path.cwd() if start is None else Path(start)
     origin = origin.expanduser().resolve()
     if origin.is_file():

@@ -1531,3 +1531,84 @@ surfaced three gaps cheaper to close than to work around:
   them too.
 - `CONTRACT_VERSION == "1.8.0"`, the major stays 1, and a payload
   claiming major 2 is refused wherever the stamp appears.
+
+## Amendment 12 (2026-08-27) — `APEGMSH_STUDIO_ROOT` binds the habitat, and the user-level server does not
+
+**Status:** Accepted. No contract-version change — `CONTRACT_VERSION`
+stays `1.8.0`. INV-15's resolution chain gains one rung; no payload
+field changes.
+
+### Evidence
+
+Studio habitats across the office library were resolving to `$HOME` or
+to process cwd instead of their own root. Two independent causes:
+
+1. **The template stamped a variable nothing read.** Amendment 6's
+   habitat template writes `APEGMSH_STUDIO_ROOT` into
+   `.cursor/mcp.json`, and `scripts/_habitat.py` exports the same name.
+   But `resolve_root` read only `APEGMSH_ROOT`. Every habitat produced
+   by `init` was therefore *unbound* at the MCP door: the server fell
+   through to the ancestor walk, then to cwd. The habitat's two halves
+   named the same thing with two spellings and only one of them counted.
+2. **A user-level server carried a project's root.** Cursor binds
+   `apegmsh-studio` from `~/.cursor/mcp.json`; a project's
+   `.cursor/mcp.json` does not override a *different* user-level server
+   id, it adds a second one. The global entry pinned one habitat
+   (`Cerro Lindo/Staged Model`) plus `cwd` = the apeGmsh checkout — which
+   has its own `.apegmsh/`. So the global server was either bound to the
+   wrong project or bound to the library repo.
+
+Observed in the wild: a one-line `.apegmsh/mcp_calls.jsonl` written at
+the `Cerro Lindo/` library root and another under `WIP 2026/Plastisacks`
+— a `status` call landing in a folder that is not a habitat at all, and
+in the Plastisacks case a project that does not use apeGmsh.
+
+### Decision
+
+- **INV-15 amended.** The chain is now: explicit `root=` / `--root` →
+  `APEGMSH_ROOT` → `APEGMSH_STUDIO_ROOT` → nearest ancestor with
+  `.apegmsh/` → cwd. Both env vars name the same thing; `APEGMSH_ROOT`
+  wins if they disagree. Blank / whitespace in either is still unset
+  (S5f), so an empty `APEGMSH_ROOT` does not shadow a real
+  `APEGMSH_STUDIO_ROOT`.
+- **The template stamps both.** `template/cursor/mcp.json` carries
+  `APEGMSH_ROOT` and `APEGMSH_STUDIO_ROOT`, and `_align_mcp_json`
+  personalizes both to the resolved habitat.
+- **Library policy — the user-level server is unbound.**
+  `~/.cursor/mcp.json`'s `apegmsh-studio` carries no root env and no
+  `cwd`; it keeps only the quiet vars, `APEGMSH_PYTHON`, and
+  `PYTHONPATH`. A habitat is named by the project, never by the user
+  profile. Projects stamp `apegmsh-studio-habitat` in their own
+  `.cursor/mcp.json` (and `.mcp.json` for Claude Code).
+- **Workbench + Studio overlay.** `APEGMSH_ROOT` is the *overlay*
+  folder (e.g. `Staged Model/`), not the Workbench root, unless they are
+  the same directory. The Workbench board's own `.cursor/mcp.json` and
+  `.mcp.json` point at the overlay, so opening the board still reaches
+  the right habitat without nesting a second Workbench.
+- **Agent rule.** Read `status.root` at session start. If it is not the
+  intended habitat, pass `root=` on every Studio tool for the rest of
+  the session.
+
+### Alternatives rejected
+
+| Option | Why not |
+|---|---|
+| **Global "last active habitat", updated on project switch** | The stale value *is* the bug. It fails silently and asymmetrically — the wrong project is a valid directory, so nothing raises; you get someone else's `names.json`. A convention that must be re-typed on every context switch is a convention that will be wrong most of the time. |
+| **Rename to one variable and drop the other** | Both spellings are already stamped in habitats on disk and exported by `scripts/_habitat.py`. Accepting both is one line; a rename is a migration of every habitat in the library. |
+| **Make `APEGMSH_STUDIO_ROOT` win over `APEGMSH_ROOT`** | `APEGMSH_ROOT` is the documented INV-15 name and the one an operator reaches for to override. Precedence follows the documented chain. |
+| **Delete the stray `.apegmsh/` directories as part of this change** | They are the user's files in a live synced library. Reported, with the command, and left for the owner to remove. |
+| **Add `root_source` to the `status` payload** | Additive contract surface under INV-17 (schema + goldens + version bump) to report what `status.root` already implies. Deferred; reconsider if the "which rung fired?" question recurs. |
+
+### Acceptance (this amendment)
+
+- `resolve_root` honors `APEGMSH_STUDIO_ROOT` when `APEGMSH_ROOT` is
+  absent or blank; `APEGMSH_ROOT` wins when both are set; explicit
+  `root=` beats both.
+- A stray `.apegmsh/` in an ancestor directory does not capture a
+  habitat bound by either env var.
+- `init` stamps both root vars into `.cursor/mcp.json`.
+- The studio test suite does not inherit a habitat from the developer's
+  shell (both vars cleared by an autouse fixture).
+- For every stamped project in the library, `status` with no `root=`
+  returns that project's Studio root; with a deliberately wrong global
+  env, explicit `root=` still returns the intended habitat.

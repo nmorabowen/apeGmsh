@@ -160,11 +160,16 @@ def _apegmsh_src() -> str:
 
 def _align_mcp_json(target: Path) -> None:
     """Personalize ``.cursor/mcp.json`` for this machine: the habitat
-    root (``APEGMSH_STUDIO_ROOT``), the interpreter that launches the
-    server (``command``), and the apeGmsh source it should import
-    (``PYTHONPATH``). None of the three can be baked into package data —
-    they are properties of the machine running ``init``, not of the
-    template."""
+    root (``APEGMSH_ROOT`` *and* ``APEGMSH_STUDIO_ROOT``), the
+    interpreter that launches the server (``command``), and the apeGmsh
+    source it should import (``PYTHONPATH``). None of them can be baked
+    into package data — they are properties of the machine running
+    ``init``, not of the template.
+
+    Both root vars are stamped because ``resolve_root`` reads
+    ``APEGMSH_ROOT`` first and the habitat's own ``scripts/_habitat.py``
+    exports ``APEGMSH_STUDIO_ROOT``; writing only one of them leaves the
+    two halves of the habitat disagreeing about where it lives."""
     mcp_json = target / ".cursor" / "mcp.json"
     if not mcp_json.is_file():
         print("WARN: .cursor/mcp.json missing, skipping")
@@ -177,9 +182,10 @@ def _align_mcp_json(target: Path) -> None:
     changed = False
     for cfg in (data.get("mcpServers") or {}).values():
         env = cfg.get("env") or {}
-        if env.get("APEGMSH_STUDIO_ROOT") == ROOT_PLACEHOLDER:
-            env["APEGMSH_STUDIO_ROOT"] = resolved
-            changed = True
+        for name in ("APEGMSH_ROOT", "APEGMSH_STUDIO_ROOT"):
+            if env.get(name) == ROOT_PLACEHOLDER:
+                env[name] = resolved
+                changed = True
         if env.get("PYTHONPATH") == SRC_PLACEHOLDER:
             env["PYTHONPATH"] = src
             changed = True
@@ -188,7 +194,7 @@ def _align_mcp_json(target: Path) -> None:
             changed = True
     if changed:
         mcp_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        print(f"OK: .cursor/mcp.json APEGMSH_STUDIO_ROOT -> {resolved}")
+        print(f"OK: .cursor/mcp.json APEGMSH_ROOT/APEGMSH_STUDIO_ROOT -> {resolved}")
         print(f"OK: .cursor/mcp.json command -> {python}")
         print(f"OK: .cursor/mcp.json PYTHONPATH -> {src}")
     else:
