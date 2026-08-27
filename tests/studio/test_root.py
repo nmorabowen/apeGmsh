@@ -8,6 +8,7 @@ from apeGmsh.studio._mcp import run_until, status
 from apeGmsh.studio._mcp_log import append_mcp_call
 from apeGmsh.studio._paths import (
     ROOT_ENV,
+    STUDIO_ROOT_ENV,
     display_path,
     ledger_path,
     mcp_calls_path,
@@ -40,6 +41,51 @@ def test_resolve_root_env_then_ancestor(tmp_path: Path, monkeypatch) -> None:
     env_root.mkdir()
     monkeypatch.setenv(ROOT_ENV, str(env_root))
     assert resolve_root() == env_root.resolve()
+
+
+def test_resolve_root_studio_env(tmp_path: Path, monkeypatch) -> None:
+    """APEGMSH_STUDIO_ROOT binds the habitat too — it is what the
+    template stamps into .cursor/mcp.json."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setenv(STUDIO_ROOT_ENV, str(proj))
+    monkeypatch.chdir(tmp_path)
+    assert resolve_root() == proj.resolve()
+
+
+def test_resolve_root_env_precedence(tmp_path: Path, monkeypatch) -> None:
+    """APEGMSH_ROOT wins over APEGMSH_STUDIO_ROOT; blank falls through."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(ROOT_ENV, str(a))
+    monkeypatch.setenv(STUDIO_ROOT_ENV, str(b))
+    assert resolve_root() == a.resolve()
+    # Blank APEGMSH_ROOT must not shadow a real APEGMSH_STUDIO_ROOT.
+    monkeypatch.setenv(ROOT_ENV, "   ")
+    assert resolve_root() == b.resolve()
+    # Explicit root= still beats both.
+    assert resolve_root(tmp_path) == tmp_path.resolve()
+
+
+def test_studio_env_beats_ancestor_walk(tmp_path: Path, monkeypatch) -> None:
+    """A stale ancestor .apegmsh/ must not capture a bound habitat.
+
+    This is the Cerro Lindo shape: a stray `.apegmsh/` at the library
+    root sitting above the real habitat.
+    """
+    library = tmp_path / "library"
+    habitat = library / "Staged Model"
+    habitat.mkdir(parents=True)
+    (library / ".apegmsh").mkdir()
+    (habitat / ".apegmsh").mkdir()
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+    monkeypatch.setenv(STUDIO_ROOT_ENV, str(habitat))
+    monkeypatch.chdir(library)
+    assert resolve_root() == habitat.resolve()
 
 
 def test_resolve_root_skips_home_habitat(tmp_path: Path, monkeypatch) -> None:

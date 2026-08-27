@@ -60,10 +60,28 @@ forge.
 none of which can live in package data: the MCP `command` (the
 interpreter that ran `init`), `PYTHONPATH` (where that interpreter's
 apeGmsh lives — pinning it stops another editable install from winning),
-and `APEGMSH_STUDIO_ROOT` (this habitat's absolute path). The server is
-launched as `<python> -m apeGmsh.studio.mcp`; the quiet-banner env vars
-sit in the same block, which is early enough because MCP applies `env`
-before the interpreter starts.
+and this habitat's absolute path, stamped into **both** `APEGMSH_ROOT`
+and `APEGMSH_STUDIO_ROOT`. The server is launched as
+`<python> -m apeGmsh.studio.mcp`; the quiet-banner env vars sit in the
+same block, which is early enough because MCP applies `env` before the
+interpreter starts.
+
+Both root vars are written because `resolve_root` reads `APEGMSH_ROOT`
+first and the habitat's own `scripts/_habitat.py` exports
+`APEGMSH_STUDIO_ROOT`; setting only one leaves the two halves of the
+habitat disagreeing about where it lives (ADR 0095 Amendment 12).
+
+**Do not put a root in `~/.cursor/mcp.json`.** A user-level
+`apegmsh-studio` entry is bound for every project you open, so a global
+`APEGMSH_ROOT` is stale as soon as you switch habitats — and a project's
+`.cursor/mcp.json` does not override a *different* user-level server id,
+it adds a second server. Keep the user-level entry unbound (quiet vars,
+`APEGMSH_PYTHON`, `PYTHONPATH` — no root, no `cwd`) and let each project
+stamp `apegmsh-studio-habitat` itself. For a Workbench project with a
+Studio overlay, the root is the **overlay folder** (e.g. `Staged
+Model/`), not the Workbench root. Agents: read `status.root` at session
+start, and if it is not the habitat you mean, pass `root=` on every
+Studio tool for the rest of the session.
 
 Cloning a habitat onto another machine: all three are absolute paths, so
 re-run `init` into a fresh directory or edit the file once on the new

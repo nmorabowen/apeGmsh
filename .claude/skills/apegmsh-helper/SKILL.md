@@ -173,8 +173,8 @@ up to `--phase` (default `model`: **stops before** `generate()`;
 `--phase mesh` stops before `apeSees` / `Results`). The session stays
 open. MeshViewer if the replay produced elements, otherwise
 ModelViewer. Picks write `.apegmsh/selection.json` under the resolved project root
-(`root=` / `--root` / `APEGMSH_ROOT` / nearest `.apegmsh/` / cwd —
-ADR 0095 INV-15). A successful
+(`root=` / `--root` / `APEGMSH_ROOT` / `APEGMSH_STUDIO_ROOT` /
+nearest `.apegmsh/` / cwd — ADR 0095 INV-15). A successful
 stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
 what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
 (timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
@@ -250,27 +250,43 @@ Studio generation order (CAD then
 mesh, quotations on, parallel processes) is a **recommendation** for
 a given script, not a required path (ADR 0096 INV-14). Authored
 chapters go in `docs/`;
-visors stay under `.apegmsh/visors/`. Cursor config is
-`.cursor/mcp.json` → `scripts/studio-mcp.ps1` (quiet env only; do not
-pin cwd to the library repo — pass `root=` or set `APEGMSH_ROOT`). Set
-`LADRUNO_OPENSEES_QUIET=1` before Python starts (the office venv
-`.pth` banner goes to stdout and would break JSON-RPC)::
+visors stay under `.apegmsh/visors/`.
+
+**MCP wiring (ADR 0095 Amendment 12).** Each project stamps its own
+`apegmsh-studio-habitat` server in `.cursor/mcp.json` (and `.mcp.json`
+for Claude Code), binding **both** `APEGMSH_ROOT` and
+`APEGMSH_STUDIO_ROOT` to that project's Studio root. The user-level
+`~/.cursor/mcp.json` server is deliberately **unbound** — it carries no
+root env and no `cwd`, because a global root is stale the moment you
+switch projects. Set `LADRUNO_OPENSEES_QUIET=1` before Python starts
+(the office venv `.pth` banner goes to stdout and would break
+JSON-RPC)::
 
     {
       "mcpServers": {
-        "apegmsh-studio": {
-          "command": "powershell.exe",
-          "args": [
-            "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", "scripts/studio-mcp.ps1"
-          ],
+        "apegmsh-studio-habitat": {
+          "command": "<venv>/Scripts/python.exe",
+          "args": ["-m", "apeGmsh.studio.mcp"],
           "env": {
             "LADRUNO_OPENSEES_QUIET": "1",
-            "APEGMSH_QUIET": "1"
+            "APEGMSH_QUIET": "1",
+            "APEGMSH_ROOT": "<studio root>",
+            "APEGMSH_STUDIO_ROOT": "<studio root>",
+            "APEGMSH_PYTHON": "<venv>/Scripts/python.exe",
+            "PYTHONPATH": "<apeGmsh>/src"
           }
         }
       }
     }
+
+For a Workbench project with a Studio overlay, `<studio root>` is the
+**overlay folder** (e.g. `Staged Model/`), not the Workbench root. Do
+not pin `cwd` to the library repo — it has its own `.apegmsh/` and the
+ancestor walk would bind there.
+
+**Agents: check `status.root` first.** If it is not the habitat you
+mean, pass `root=` on *every* Studio tool call for the rest of the
+session — do not assume the server is bound correctly.
 
 ## When things go wrong: the usual suspects
 

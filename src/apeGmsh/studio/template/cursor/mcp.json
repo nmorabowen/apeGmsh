@@ -9,6 +9,7 @@
       "env": {
         "LADRUNO_OPENSEES_QUIET": "1",
         "APEGMSH_QUIET": "1",
+        "APEGMSH_ROOT": "__HABITAT_ROOT__",
         "APEGMSH_STUDIO_ROOT": "__HABITAT_ROOT__",
         "PYTHONPATH": "__APEGMSH_SRC__"
       }
