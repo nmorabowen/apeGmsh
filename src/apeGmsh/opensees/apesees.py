@@ -1726,7 +1726,7 @@ class BuiltModel:
         # replay re-drives a CAPTURE of the emitted lines (a re-run
         # could not reproduce the tags); ``pre_scoped`` primitives
         # re-emit deterministically and need no capture.
-        transf_replay_log: "list[tuple] | None" = None
+        transf_replay_log: "list[tuple[Any, ...]] | None" = None
         if (
             staged
             and (pre_scoped or transforms)
@@ -2402,7 +2402,7 @@ class BuiltModel:
         inferred_ndf: "dict[int, int]" = {},
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
-        scoped_replay: "tuple[list[Primitive], list[tuple]] | None" = None,
+        scoped_replay: "tuple[list[Primitive], list[tuple[Any, ...]]] | None" = None,
     ) -> None:
         """Phase SSI-2.A / 2.B / 2.D: emit each stage block in registration order.
 
