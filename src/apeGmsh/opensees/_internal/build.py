@@ -2243,7 +2243,9 @@ def validate_builder_scope_ordering(
         primitive (``quad(damp=...)``), so no ordering can save it: the
         element's own bracket destroys the declaration it references.
         INV-4 — a gated element brackets on an emit path that cannot
-        satisfy INV-1 (``partitioned per_rank`` / stage-activated).
+        satisfy INV-1 (``partitioned per_rank`` / a stage-activated
+        gated element on the partitioned path — the flat path handles
+        that last case with the S7 stage-close replay instead).
     """
     from .._element_capabilities import (
         builder_scoped_kind,
@@ -2298,7 +2300,15 @@ def validate_builder_scope_ordering(
             f"remove the gated element / the declaration."
         )
 
-    if stage_records:
+    # ADR 0099 S7: a stage-activated gated element brackets INSIDE the
+    # stage block, after the global declarations and (past the first
+    # stage) after a completed ``analyze`` — no earlier position exists
+    # to hoist to.  The FLAT path fixes it by REPLAYING the purged
+    # declarations at bracket close (``replay_builder_scoped_
+    # declarations``; Tcl only — the in-process module purges nothing,
+    # so a live/py replay would collide on the still-alive tags).  The
+    # partitioned path has no replay yet, so it keeps the refusal.
+    if stage_records and path != "flat":
         element_owner_stage, _ = compute_stage_ownership(
             tuple(stage_records), list(elements), fem,
         )
@@ -2309,8 +2319,10 @@ def validate_builder_scope_ordering(
                 f"builder-ndf bracket emits INSIDE the stage block — after "
                 f"the global {', '.join(scoped)} declaration(s), and (for "
                 f"any stage past the first) after a pattern and a completed "
-                f"analyze. The bracket destroys those declarations. {fix} "
-                f"Activate this element's physical group globally instead "
+                f"analyze. The bracket destroys those declarations, and the "
+                f"stage-close replay (ADR 0099 S7) is implemented on the "
+                f"flat path only. Emit this model unpartitioned, or "
+                f"activate this element's physical group globally instead "
                 f"of inside a stage."
             )
 
@@ -2320,18 +2332,19 @@ def validate_builder_scope_replay(
     *,
     ndm: int,
     envelope_ndf: int,
-    scoped_present: bool,
-    stage_owned_tags: "frozenset[int]" = frozenset(),
     already_gated: bool = False,
 ) -> None:
     """Replay-side sibling of :func:`validate_builder_scope_ordering`.
 
     ADR 0099 S4b.  The forward validator works over ``Element`` specs and
     ``dependencies()``; replay carries deck RECORDS (a type token, a tag,
-    a flat arg tail), so the same two unfixable-by-ordering cases have to
-    be recognised differently.  Both are reachable only from a PRE-S1
-    archive — the bridge refuses to write either today — so this is
-    legacy-data defence, not a live path.
+    a flat arg tail), so the unfixable-by-ordering case has to be
+    recognised differently.  Reachable only from a PRE-S1 archive — the
+    bridge refuses to write one today — so this is legacy-data defence,
+    not a live path.  (S7 note: this used to carry a second, INV-4 arm
+    refusing stage-OWNED gated elements; the stage-close declaration
+    replay lifted it, so the arm and its ``stage_owned_tags`` /
+    ``scoped_present`` parameters are gone.)
 
     Raises
     ------
@@ -2340,12 +2353,9 @@ def validate_builder_scope_replay(
         declaration through its arg tail (``quad ... -damp N``).  Its own
         bracket destroys that declaration, so no ordering satisfies both:
         hoisted, the element resolves a tag not yet declared; unhoisted,
-        the bracket purges it after the fact.
-        INV-4 — a stage-owned gated element in an archive that also
-        carries builder-scoped declarations.  Its bracket emits INSIDE
-        the stage block, after the global declarations and (past the
-        first stage) after a completed ``analyze``; there is no earlier
-        position to hoist to.
+        the bracket purges it after the fact.  A stage-close replay does
+        not save it either — the purge lands at bracket OPEN, before the
+        element line parses (measured: aborts at the element line).
     """
     from .._element_capabilities import (
         builder_scoped_kind_for_arg,
@@ -2397,21 +2407,6 @@ def validate_builder_scope_replay(
                 f"element's damp= argument, or use an ungated element."
             )
 
-    if stage_owned_tags and scoped_present:
-        staged = [rec for rec in gated if int(rec.tag) in stage_owned_tags]
-        if staged:
-            raise BridgeError(
-                f"replayed element {staged[0].type_token!r} (tag "
-                f"{int(staged[0].tag)}) is stage-owned, so its "
-                f"builder-ndf bracket emits INSIDE the stage block — "
-                f"after the global builder-scoped declarations, and (for "
-                f"any stage past the first) after a pattern and a "
-                f"completed analyze. The bracket destroys them and there "
-                f"is no earlier position to hoist to. Per ADR 0099 INV-4 "
-                f"this deck is refused rather than emitted wrong; "
-                f"activate this element's physical group globally."
-            )
-
 
 def open_builder_ndf_bracket(
     emitter: "Emitter", spec: "Element", *, ndm: int, envelope_ndf: int,
@@ -2455,6 +2450,61 @@ def close_builder_ndf_bracket(
 ) -> None:
     """Restore the model envelope after :func:`open_builder_ndf_bracket`."""
     emitter.model(ndm=int(ndm), ndf=int(envelope_ndf))
+
+
+def replay_builder_scoped_declarations(
+    emitter: "Emitter",
+    *,
+    scoped_primitives: "Sequence[Primitive]",
+    tag_for: "dict[int, int]",
+    transform_log: "Sequence[tuple[Any, ...]]" = (),
+) -> None:
+    """Re-declare the builder-scoped declarations a bracket just purged.
+
+    ADR 0099 S7 — the stage-activated gated-element case.  A stage-owned
+    gated element brackets INSIDE its stage block, after the global
+    ``timeSeries`` / ``geomTransf`` / ``beamIntegration`` / ``damping``
+    declarations; the bracket's ``model`` re-issue purges all four
+    registries, and there is no earlier position to hoist the element to.
+    So the STAGED path re-declares them at bracket close, in the exact
+    global emit order (the 5b scoped pass, then the transform fan-out).
+
+    Deliberately NOT a property of the bracket itself (the ADR records
+    the measured rejection): re-declaring a tag that was NOT purged
+    hard-errors (``MapOfTaggedObjects::addComponent - ... similar tag
+    exists``), and the in-process module purges nothing on a ``model``
+    re-issue — so a self-healing bracket would collide on ``live`` (and
+    on the emitted py deck, which runs under the same module) for
+    exactly the M >= 2-bracket models it would exist to fix.  Callers
+    invoke this ONLY after a bracket actually fired, and ONLY on an
+    emitter whose runtime actually purges (``model_reissue_purges`` —
+    the Tcl deck alone today).
+
+    Identity is safe by measurement (probe set recorded in ADR 0099 S7):
+    an already-bound ``pattern`` holds a private copy of its series, an
+    already-constructed element holds construction-time copies of its
+    ``CrdTransf`` / ``BeamIntegration``, and ``region -damp`` copies the
+    damping into the elements at the region line — so a re-declaration
+    (even a MUTATED one) leaves every already-integrated stage
+    bit-identical, and future by-tag references resolve the replayed
+    (identical) declarations.
+
+    ``transform_log`` is the capture :func:`emit_transform_specs` filled
+    on the first pass — the orientation fan-out ALLOCATES per-vecxz tags,
+    so a re-run cannot reproduce it; a log of the emitted lines can.
+    Entries are ``("spec", transf, tag)`` (re-run the primitive's own
+    deterministic ``_emit``) or ``("line", type_token, tag, vec)`` (the
+    bare-2D and fan-out forms, re-emitted verbatim).
+    """
+    for p in scoped_primitives:
+        p._emit(emitter, tag_for[id(p)])
+    for entry in transform_log:
+        if entry[0] == "spec":
+            _kind, transf, tag = entry
+            transf._emit(emitter, tag)
+        else:
+            _kind, type_token, tag, vec = entry
+            emitter.geomTransf(type_token, tag, *vec)
 
 
 def emit_element_spec(
@@ -2609,8 +2659,16 @@ def emit_transform_specs(
     tags: TagAllocator,
     spec_to_own_tag: dict[int, int],
     ndm: int = 3,
+    replay_log: "list[tuple[Any, ...]] | None" = None,
 ) -> dict[tuple[int, int], int]:
     """Emit ``geomTransf`` lines for every transform spec.
+
+    ``replay_log`` (ADR 0099 S7): when a stage-activated gated element
+    will bracket mid-deck, the staged path must be able to re-declare
+    these lines at bracket close — but the orientation fan-out ALLOCATES
+    per-vecxz tags, so a re-run cannot reproduce them.  A non-None log
+    captures one entry per emitted line, in emit order, for
+    :func:`replay_builder_scoped_declarations` to re-drive verbatim.
 
     For non-orientation transforms (explicit ``vecxz=``), one line
     per spec using the spec's own allocated tag — that's the path
@@ -2667,8 +2725,15 @@ def emit_transform_specs(
             )
             if bare_2d:
                 emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
+                if replay_log is not None:
+                    replay_log.append(
+                        ("line", _TRANSF_TYPE_TOKEN[type(transf)],
+                         own_tag, ()),
+                    )
             else:
                 transf._emit(emitter, own_tag)
+                if replay_log is not None:
+                    replay_log.append(("spec", transf, own_tag))
             continue
 
         # Guard: orientation= is meaningless in OpenSees 2-D.  The
@@ -2747,6 +2812,8 @@ def emit_transform_specs(
                 else:
                     key_to_tag[k] = tags.allocate("geomTransf")
                 emitter.geomTransf(type_token, key_to_tag[k], *vec)
+                if replay_log is not None:
+                    replay_log.append(("line", type_token, key_to_tag[k], vec))
 
             assigned = key_to_tag[k]
             if assigned != own_tag:

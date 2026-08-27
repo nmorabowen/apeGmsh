@@ -442,7 +442,7 @@ def test_no_scoped_declarations_means_no_hoist(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# S4b — the two legacy-archive refusals (INV-3 / INV-4)
+# S4b — the legacy-archive refusal (INV-3; the INV-4 arm was lifted by S7)
 # ---------------------------------------------------------------------------
 
 
@@ -539,69 +539,202 @@ def test_inv3_ignores_the_flag_on_an_UNGATED_element() -> None:
     )
 
 
-def test_inv4_stage_owned_gated_element_is_refused() -> None:
-    """A stage-OWNED gated element refuses on the staged replay path.
+def test_inv3_stage_owned_damp_record_is_refused() -> None:
+    """A stage-OWNED ``quad ... -damp N`` record still refuses (INV-3).
 
-    Its bracket emits inside the stage block — after the global
-    declarations and, past the first stage, after a completed
-    ``analyze`` — so unlike the global prefix (which S4a hoists) there is
-    no earlier position to move it to.
+    The S7 stage-close replay lifted the INV-4 refusal for stage-owned
+    gated elements, but it cannot save this shape: the purge lands at
+    bracket OPEN, before the element line parses, so the element dies
+    resolving the tag its own bracket destroyed (measured — aborts at
+    the element line).  The global ``_replay_into`` scan skips
+    stage-owned records, so ``_replay_staged_into`` scans them itself,
+    BEFORE any emit — which is why the thin stage stub suffices.
     """
     from apeGmsh.opensees._internal.compose import _replay_staged_into
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
-    class _Transf:
-        type_token = "Linear"
+    class _Damp:
+        type_token = "Uniform"
         tag = 1
-        vec = ()
+        args = (0.03, 0.5, 10.0)
 
     class _Stage:
         name = "excavation"
         owned_node_ids = ()
         owned_element_ids = (1,)
 
-    with pytest.raises(Exception, match="INV-4"):
+    with pytest.raises(Exception, match="INV-3"):
         _replay_staged_into(
             RecordingEmitter(), stages=(_Stage(),),
             ndm=2, ndf=3,
-            transforms=(_Transf(),),
-            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0)),),
+            dampings=(_Damp(),),
+            elements=(_Rec(1, "quad", (1, 2, 3, 4, 1.0, "-damp", 1)),),
         )
 
 
-def test_inv4_global_gated_element_in_a_staged_archive_is_allowed() -> None:
-    """The complement: gated but NOT stage-owned must NOT refuse.
+def test_stage_owned_gated_element_is_no_longer_refused() -> None:
+    """The S7 complement: the INV-4 arm is GONE from the replay guard.
 
-    S4a's hoist handles that case in the global prefix — the probe
-    measured it going from 3 INV-1 offenders to 0 and running clean on
-    the binary.  Refusing it as well would be a false positive that
-    breaks every staged soil model.
-
-    Pinned on the guard directly rather than through
-    ``_replay_staged_into``: the subject here is which elements the guard
-    discriminates, and driving the full stage machinery would only add a
-    fat stage stub between the test and what it asserts.
+    A stage-owned gated element is handled by the stage-close
+    declaration replay (asserted end-to-end below), so the guard now
+    accepts every gated record whose arg tail is clean — stage-owned or
+    global alike.  The end-to-end tests carry the behavioural pins; this
+    one pins the guard's surface.
     """
     from apeGmsh.opensees._internal.build import (
         validate_builder_scope_replay,
     )
 
-    args = {
-        "ndm": 2, "envelope_ndf": 3, "scoped_present": True,
-    }
     gated = (_Rec(1, "quad", (1, 2, 3, 4, 1.0)),)
-
-    # Owned by a stage -> refused.
-    with pytest.raises(Exception, match="INV-4"):
-        validate_builder_scope_replay(
-            gated, stage_owned_tags=frozenset({1}), **args,
-        )
-    # Same element, owned globally -> allowed.
+    validate_builder_scope_replay(gated, ndm=2, envelope_ndf=3)
     validate_builder_scope_replay(
-        gated, stage_owned_tags=frozenset({99}), **args,
+        gated, ndm=2, envelope_ndf=3, already_gated=True,
     )
-    # And with no stages at all.
-    validate_builder_scope_replay(gated, **args)
+
+
+# ---------------------------------------------------------------------------
+# S7 — stage-owned gated elements: replay at bracket close, end to end
+# ---------------------------------------------------------------------------
+
+
+def _staged_bridge(*, staged_pg: str) -> apeSees:
+    """``build_mixed_ndf_bridge`` with ONE element PG stage-activated and
+    the pattern stage-scoped (staged models keep patterns in stages).
+
+    ``staged_pg="Rock"`` stages the GATED quad — the S7 replay case;
+    ``staged_pg="Liner"`` stages the ungated beam and leaves the quad
+    global — the complement, which must take the S4a hoist and never
+    replay.
+    """
+    ops = apeSees(build_mixed_ndf_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+
+    sec = ops.section.Elastic(E=2.0e8, A=0.01, Iz=1e-5)
+    transf = ops.geomTransf.Linear()
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+    damp = ops.damping.uniform(
+        ratio=0.03, freq_lower=0.5, freq_upper=10.0, name="frame_damp",
+    )
+    ops.element.dispBeamColumn(
+        pg="Liner", transf=transf, integration=integ, damp=damp,
+    )
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+
+    # A stage-owned node may only be fixed from its own stage, so each
+    # variant fixes the STAGED pg's base inside the stage block.
+    if staged_pg == "Rock":
+        ops.fix(pg="LinerBase", dofs=(1, 1, 1))
+    else:
+        ops.fix(pg="Base", dofs=(1, 1))
+    ts = ops.timeSeries.Linear()
+
+    with ops.stage(name="dig") as s:
+        s.activate(pgs=[staged_pg])
+        if staged_pg == "Rock":
+            s.fix(pg="Base", dofs=(1, 1))
+        else:
+            s.fix(pg="LinerBase", dofs=(1, 1, 1))
+        with s.pattern(series=ts) as p:
+            p.load(pg="LinerBase", forces=(10.0, 0.0, 0.0))
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=0.5),
+            constraints=ops.constraints.Plain(),
+            numberer=ops.numberer.RCM(),
+            system=ops.system.UmfPack(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=2)
+    return ops
+
+
+def _from_h5_deck(ops: apeSees, tmp_path: Path, target: str) -> "list[str]":
+    p = tmp_path / "staged.h5"
+    ops.h5(str(p))
+    return [
+        ln.strip()
+        for ln in OpenSeesModel.from_h5(str(p)).build(target).splitlines()
+    ]
+
+
+def test_s6_staged_archive_replays_on_tcl(tmp_path: Path) -> None:
+    """A stage-OWNED gated quad round-trips and REPLAYS on the Tcl deck.
+
+    The bracket fires inside the stage block, after the global
+    declarations; the amended INV-1 is that every builder-scoped
+    declaration purged by the last ``model`` line is re-declared after
+    it — same lines, same tags.
+    """
+    lines = _from_h5_deck(_staged_bridge(staged_pg="Rock"), tmp_path, "tcl")
+    models = [i for i, ln in enumerate(lines) if ln.startswith("model ")]
+    assert len(models) == 3  # header + the stage bracket open + restore
+    last_model = models[-1]
+    quad = _first(lines, "element quad")
+    assert models[1] < quad < models[2], "the quad brackets in its stage"
+    for kind in SCOPED:
+        before = [ln for ln in lines[:last_model] if ln.startswith(kind)]
+        after = [ln for ln in lines[last_model:] if ln.startswith(kind)]
+        assert before, f"{kind} missing from the global prefix"
+        assert after == before, (
+            f"{kind}: the replay must re-declare exactly the purged "
+            f"lines, got {after} vs {before}"
+        )
+    # ...and the stage's pattern resolves the REPLAYED series.
+    assert _first(lines, "pattern ") > last_model
+
+
+def test_s6_staged_archive_py_deck_has_no_replay(tmp_path: Path) -> None:
+    """The py deck runs under the in-process module: no purge, and a
+    re-declaration collides on the still-alive tag (measured) — so the
+    same archive gets the bracket and NO replay there."""
+    lines = _from_h5_deck(_staged_bridge(staged_pg="Rock"), tmp_path, "py")
+    assert sum(1 for ln in lines if ln.startswith("ops.model(")) == 3
+    for kind in SCOPED:
+        decls = [ln for ln in lines if ln.startswith(f"ops.{kind}(")]
+        assert len(decls) == 1, f"{kind}: unexpected replay {decls}"
+
+
+def test_s6_global_gated_in_a_staged_archive_takes_the_hoist(
+    tmp_path: Path,
+) -> None:
+    """Hoist first, replay only what's left.
+
+    A staged archive whose gated quad is GLOBAL brackets in the global
+    prefix, where the S4a hoist puts it ABOVE the declarations — so no
+    stage bracket ever fires and nothing is replayed.  Refusing or
+    replaying this shape would be churn on every staged soil model.
+    """
+    lines = _from_h5_deck(_staged_bridge(staged_pg="Liner"), tmp_path, "tcl")
+    assert (
+        _first(lines, "element quad")
+        < _first(lines, "geomTransf")
+        < _first(lines, "element dispBeamColumn")
+    )
+    for kind in SCOPED:
+        assert sum(1 for ln in lines if ln.startswith(kind)) == 1, (
+            f"{kind}: no stage bracket fired, so nothing may be replayed"
+        )
+    # The bracket sits in the global prefix: both non-header model lines
+    # precede the stage banner.
+    models = [i for i, ln in enumerate(lines) if ln.startswith("model ")]
+    stage_open = _first(lines, "# === Stage")
+    assert len(models) == 3 and models[-1] < stage_open
+
+
+def test_s6_staged_gated_archive_roundtrip_fixed_point(
+    tmp_path: Path,
+) -> None:
+    """``h5 → from_h5 → to_h5`` stays a fixed point on the S7 shape too —
+    the archive rewrite goes through ``restore_stage_blocks``, not the
+    deck replay, so the stage-close replay must not perturb it."""
+    src = tmp_path / "src.h5"
+    rt = tmp_path / "rt.h5"
+    _staged_bridge(staged_pg="Rock").h5(str(src))
+    OpenSeesModel.from_h5(str(src)).to_h5(str(rt))
+    with h5py.File(str(src), "r") as a, h5py.File(str(rt), "r") as b:
+        _assert_h5_equal(a, b)
 
 
 def test_h5_roundtrip_fixed_point_on_a_gated_archive(tmp_path: Path) -> None:

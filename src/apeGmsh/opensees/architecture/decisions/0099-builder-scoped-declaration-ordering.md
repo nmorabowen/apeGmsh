@@ -321,7 +321,7 @@ text rather than over any one emitter.
    timeSeries / damping) skips the S5 hoist and emits a rank-0 stream
    with `geomTransf Linear 1` above its bracket — an INV-1 violation
    S5's fixtures never constructed, because every frame there carried a
-   beamIntegration.  Filed as its own follow-up; not fixed here.
+   beamIntegration.  Fixed separately; see the post-S5 correction above.
    Byte-identity measured on six no-hoist variants (no elements at all,
    scoped-only frame, mixed-ndf nothing-gated, mixed-ndf
    nothing-scoped; tcl + py): driver and every fragment byte-identical
@@ -357,6 +357,107 @@ text rather than over any one emitter.
    and S5 left `_emit_flat` / `_emit_partitioned` in — and the writers
    stay pure slicers over a `hoisted` band `_SplitLayout` now carries.
 
+7. **S7 — the staged replay.** The stage-activated gated-element case,
+   the one path hoisting cannot reach: the bracket fires INSIDE the
+   stage block — after the global declarations, after the pattern
+   blocks, and (for any stage past the first) after completed `analyze`
+   calls.  Implemented exactly under the constraints the self-healing
+   rejection below records: scoped to the STAGED paths alone
+   (`_emit_stages_flat` step 3 + `_replay_staged_into`'s stage loop),
+   fired only after a bracket actually emitted in that stage, and gated
+   on the runtime that actually purges — never a property of
+   `close_builder_ndf_bracket`.
+
+   *Hoist first, replay only what's left.*  Within the stage block the
+   bracket-needing specs emit FIRST, then the replay
+   (`replay_builder_scoped_declarations`), then the ungated stage-owned
+   elements — a stage-activated `dispBeamColumn` resolves `geomTransf`
+   / `beamIntegration` by tag on its own element line and must see the
+   replayed registry.  A staged model whose gated elements are all
+   GLOBAL keeps taking the S2 / S4a hoist: no stage bracket fires and
+   nothing is replayed.  Armed on the same two conditions as every
+   0099 hoist (a stage-owned bracket-needing element AND a
+   builder-scoped declaration for it to destroy), so every other
+   staged deck does not move a byte, and element tags come from the
+   same pre-allocated plan — only line positions move.
+
+   *The replay content.*  Bridge side: the 5b `pre_scoped` primitives
+   re-emit through their own deterministic `_emit`; the transform
+   fan-out cannot be re-RUN (it allocates per-vecxz tags), so
+   `emit_transform_specs` grows a `replay_log` capture of the emitted
+   lines that the replay re-drives verbatim.  Replay side: the four
+   record lists re-emit in the step 5–7b order.
+
+   *The backend gate, measured — and narrower than the rejection
+   paragraph below guessed.*  That paragraph said "gate it on the deck
+   backends"; measurement says gate it on the **Tcl deck alone**.  On
+   the fork's in-process module — which runs BOTH `build('live')` and
+   the emitted **py deck** — `ops.model()` purges nothing (a
+   `timeSeries` / `geomTransf` / `beamIntegration` declared before the
+   re-issue all survive), and re-declaring any of them hard-errors
+   (`MapOfTaggedObjects::addComponent - … similar tag exists`).  A
+   replay on the py deck would therefore kill the deck it exists to
+   save.  The gate is an emitter attribute
+   (`TclEmitter.model_reissue_purges = True`; everyone else takes the
+   `getattr` default `False`).  The py deck still gets the bracket and
+   the within-stage gated-first ordering — harmless there, and the
+   ordering then holds for any backend, matching the S4a live decision.
+
+   **Tag identity, measured on the binary** — the questions the
+   deferral paragraph left open, each probed as a mutated replay
+   against a bracket-free reference (Ladruno `25a0647f`, LoadControl /
+   Newmark, 16 printed digits):
+
+   - A `pattern` built before the bracket holds a **private copy** of
+     its series: replaying `timeSeries Constant 1 -factor 0.0` over a
+     purged `Linear 1` mid-LoadControl changes nothing — 16/16 digits
+     against the reference.  It does not re-resolve by tag.
+   - A `dispBeamColumn` built before the bracket holds
+     **construction-time copies** of its `CrdTransf` and
+     `BeamIntegration`: replaying `Corotational` + `Legendre` under
+     the original tags (with axial + lateral load, where the transform
+     class matters) changes nothing — 16/16 digits.
+   - `region -damp` **copies the damping into the elements at the
+     region line**: replaying a 10x-zeta `damping Uniform` under the
+     same tag mid-transient changes nothing — 16/16 digits.
+   - The purge ALONE also changes nothing for already-constructed
+     objects (16/16 digits with no replay at all): only future by-tag
+     lookups die, which is exactly the failure class the replay
+     serves.
+
+   So a re-declaration cannot retro-write integrated history, and every
+   post-bracket by-tag reference (`pattern`, later `element` lines,
+   `region -damp`) resolves the replayed — identical — declarations.
+
+   **Acceptance, measured on the real binary.**  A staged two-stage
+   mixed-ndf model — global frame + all four scoped kinds + a stage-1
+   pattern and completed analyze; gated quad soil activated at stage 2
+   with a stage-2 pattern resolving the series AFTER the bracket —
+   matches the same model's py deck run under the in-process module
+   (the form that never needed the replay, since that runtime never
+   purges) to **all 16 printed digits** on every probed displacement
+   component, for both the forward tcl deck and the
+   `h5 → from_h5 → build('tcl')` round-trip.  Stripping the replayed
+   lines from the accepted deck reproduces the RevA failure mid-stage
+   (`TimeSeries *getTimeSeries(int tag) - none found with tag: 1` at
+   `pattern Plain 2 1`) — `repros/repro4_builder_scoped_wipe.py
+   --staged` carries both probes.
+
+   *What stays refused, plainly.*  Partitioned staged gated — the
+   per-rank stage machinery has no replay, so
+   `validate_builder_scope_ordering`'s staged arm now keys on
+   `path != "flat"` — plus split and `per_rank` as before.  INV-3 is
+   untouched: a stage-owned `quad … -damp N` record still refuses,
+   because the purge lands at bracket OPEN, before the element line
+   parses, so no stage-close replay can save it (measured — the deck
+   aborts at the element line); the arg-tail scan moved into
+   `_replay_staged_into` because the global `_replay_into` scan skips
+   stage-owned records.  S4b's INV-4 arm (and its `stage_owned_tags` /
+   `scoped_present` parameters) is deleted — the case it refused is now
+   emitted correctly, and the write-time staged refusal in
+   `validate_builder_scope_ordering` is lifted for the flat path, so a
+   stage-owned gated element now archives to h5 and replays.
+
 **Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
 defect** after S2 — they are not fixed there, they are made **loud** by
 INV-4. *(S5 has since fixed the default partitioned path and S6 the
@@ -368,7 +469,10 @@ stage-activated gated element brackets after the pattern blocks and after
 completed `analyze` calls, so there is no earlier position to hoist to.
 That case needs a **replay of the builder-scoped declarations at bracket
 close**, which is a different mechanism with its own tag-identity questions.
-Future work, not a rider on this ADR.
+*(S7 has since shipped that replay on the flat staged path — Tcl deck
+only, with the tag-identity questions answered by measurement above.
+What remains refused after S7: split, `per_rank`, and a stage-activated
+gated element on the PARTITIONED staged path.)*
 
 ### How the two deferred paths should actually be fixed (measured, S4)
 
@@ -417,7 +521,12 @@ round of design before an adversarial probe measured it.
   case, scope it there alone, gate it on the deck backends, and gate it on a
   bracket having actually fired — never as a property of the bracket itself.
   Even in staged, hoist every gated element that is not stage-activated first;
-  only truly stage-activated ones need the replay.
+  only truly stage-activated ones need the replay.  *(S7 has since shipped
+  exactly that heal, under exactly these constraints — and measured the
+  backend gate NARROWER than "the deck backends": the emitted py deck runs
+  under the same in-process module as live, which purges nothing and
+  hard-errors on re-declaration, so the replay is gated on the Tcl deck
+  alone, via `TclEmitter.model_reissue_purges`.)*
 
 The replay mechanism itself is **sound where it is needed** (measured): an
 element built before a purge keeps working — `FourNodeQuad` stores
@@ -442,7 +551,12 @@ elimination: `_replay_staged_into` delegates its global prefix to
 archive replays with zero INV-1 offenders (`element quad` above
 `geomTransf`) and runs clean on the binary. The two S4b refusals remain
 **pre-S1 defence**: today's bridge still cannot write a stage-OWNED gated
-element or a `quad ... -damp`.
+element or a `quad ... -damp`. *(S7 has since deleted the S4b INV-4 arm
+and lifted the write-time staged refusal for the flat path — a
+stage-OWNED gated element now archives to h5 and replays through the
+stage-close mechanism; only the INV-3 refusal remains, its arg-tail scan
+moved into `_replay_staged_into` for the stage-owned records the global
+scan skips.)*
 
 ## Consequences
 
@@ -453,12 +567,21 @@ element or a `quad ... -damp`.
   emit was in this set until S5 hoisted it, and split until S6 moved the
   gated fragments' `source` lines; `per_rank` stays because its span
   writer reorders nothing yet — the remaining fix is S6's source-line
-  move applied post-emit.)* This is a **deliberate breaking
+  move applied post-emit.  S7 removed FLAT staged emit with a
+  stage-owned gated element from the set too — it now emits with the
+  stage-close replay; the staged refusal survives only on the
+  partitioned path.)* This is a **deliberate breaking
   change**, and it is strictly better than the status quo: those decks either
   died 30k lines downstream pointing at the wrong command, or — in the
   `damping` case, which only warns — converged on a wrong answer that nothing
   flagged. A refusal is the smallest honest output for a model we cannot emit
   correctly yet.
+- **INV-1 is amended for the staged Tcl deck (S7).** A stage-activated
+  gated element's bracket is a `model` line that legitimately FOLLOWS
+  the global builder-scoped declarations; the invariant there becomes:
+  every builder-scoped declaration purged by the last `model` line is
+  **re-declared after it**, same lines, same tags. Non-staged decks keep
+  the original reading unchanged.
 - **The flat path's deck line ORDER changes.** Same objects, same tags, same
   results; different positions. Any test pinning absolute deck line numbers
   moves. Content-based and order-insensitive pins are unaffected. The same

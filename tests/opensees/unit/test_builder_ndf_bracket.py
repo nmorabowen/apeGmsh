@@ -25,8 +25,11 @@ Covers:
 * end-to-end py + tcl decks for the flat path (mixed-ndf SixNodeTri +
   beam, FourNodeQuad variant, ungated Tri31, and the no-bracket flat
   ndf=2 case),
-* the stage-activated path (ADR 0099 INV-4: refused, because the
-  bracket would fire mid-deck and destroy the global declarations),
+* the stage-activated path (ADR 0099 S7: the bracket fires mid-deck and
+  destroys the global declarations, so the Tcl deck RE-DECLARES them at
+  bracket close; the py deck's runtime never purges — and re-declaring a
+  still-alive tag hard-errors — so it gets the bracket and no replay;
+  partitioned staged keeps the INV-4 refusal),
 * ADR 0099 INV-1 ordering, and the INV-3 / INV-4 guards,
 * the partitioned path (ADR 0099 S5: per-rank hoisted guard blocks),
 * the split path (ADR 0099 S6: hoisted gated fragment ``source`` lines,
@@ -350,17 +353,19 @@ def test_inv3_gated_element_may_not_depend_on_a_scoped_primitive() -> None:
         ops.build().emit(RecordingEmitter())
 
 
-def test_inv4_stage_activated_gated_element_is_refused(tmp_path) -> None:
-    """A stage-activated gated element brackets INSIDE the stage block —
-    after the global declarations and, past the first stage, after a
-    pattern and a completed analyze.  Hoisting cannot reach it, so it is
-    refused until the declaration-replay slice lands."""
-    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
-    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
-    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+def _add_stage(ops: apeSees, *, pgs: "list[str]", pattern_load=None) -> None:
+    """Attach one stage activating ``pgs``, with the house analysis chain.
 
+    ``pattern_load`` is ``(series, node, forces)`` for an optional
+    stage-scoped pattern — the load that made the RevA deck die, because
+    ``pattern Plain`` resolves its series by tag AFTER the stage bracket.
+    """
     with ops.stage(name="dig") as s:
-        s.activate(pgs=["Rock"])
+        s.activate(pgs=pgs)
+        if pattern_load is not None:
+            series, node, forces = pattern_load
+            with s.pattern(series=series) as pat:
+                pat.load(node=node, forces=forces)
         s.analysis(
             test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
             algorithm=ops.algorithm.Newton(),
@@ -372,8 +377,209 @@ def test_inv4_stage_activated_gated_element_is_refused(tmp_path) -> None:
         )
         s.run(n_increments=2, dt=0.5)
 
+
+def _staged_all_four_kinds() -> apeSees:
+    """The ``_bridge_all_four_kinds`` shape with the gated tri6n
+    STAGE-ACTIVATED and the pattern stage-scoped (ADR 0051 keeps global
+    patterns out of staged models)."""
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    ops.damping.uniform(
+        ratio=0.05, freq_lower=0.2, freq_upper=10.0, on=["Liner"],
+    )
+    ts = ops.timeSeries.Linear()
+    _add_stage(
+        ops, pgs=["Rock"], pattern_load=(ts, 7, (1000.0, 0.0, 0.0)),
+    )
+    return ops
+
+
+def test_s6_stage_activated_gated_element_replays_on_tcl(tmp_path) -> None:
+    """ADR 0099 S7, the mechanism itself.
+
+    A stage-activated gated element brackets INSIDE the stage block —
+    after the global declarations and, past the first stage, after a
+    pattern and a completed analyze.  No hoist can reach it, so on the
+    Tcl deck (the one runtime whose ``model`` re-issue actually purges)
+    the four builder-scoped kinds are RE-DECLARED at bracket close.
+    """
+    lines = _tcl_deck(_staged_all_four_kinds(), tmp_path)
+    stage_open = next(
+        i for i, ln in enumerate(lines) if ln.startswith("# === Stage")
+    )
+    models = [i for i, ln in enumerate(lines) if ln.startswith("model ")]
+    # header + the stage bracket (open + restore); both inside the stage.
+    assert len(models) == 3
+    assert models[1] > stage_open and models[2] > stage_open
+    last_model = models[-1]
+    # The amended INV-1: every builder-scoped kind declared BEFORE the
+    # last model line is declared AGAIN after it — the replay.
+    for tok in _SCOPED_TOKENS:
+        before = [ln for ln in lines[:last_model] if ln.startswith(tok)]
+        after = [ln for ln in lines[last_model:] if ln.startswith(tok)]
+        assert before, f"{tok} missing from the global section"
+        assert after == before, (
+            f"{tok}: the replay must re-declare exactly the purged "
+            f"lines, got {after} vs {before}"
+        )
+    # ...and the stage's pattern (which resolves the series by tag —
+    # the RevA failure line) comes after the replayed timeSeries.
+    replayed_ts = next(
+        i for i in range(last_model, len(lines))
+        if lines[i].startswith("timeSeries")
+    )
+    pat = next(i for i, ln in enumerate(lines) if ln.startswith("pattern "))
+    assert pat > replayed_ts
+
+
+def test_s6_py_deck_brackets_but_does_not_replay(tmp_path) -> None:
+    """The py deck runs under the in-process module, where a ``model``
+    re-issue purges NOTHING and re-declaring a still-alive tag
+    hard-errors (``MapOfTaggedObjects::addComponent - ... similar tag
+    exists``, measured) — so it gets the bracket and NO replay."""
+    lines = _py_deck(_staged_all_four_kinds(), tmp_path)
+    models = [ln for ln in lines if ln.startswith("ops.model(")]
+    assert len(models) == 3  # header + stage bracket open + restore
+    for tok in _SCOPED_TOKENS:
+        decls = [ln for ln in lines if ln.startswith(f"ops.{tok}(")]
+        assert len(decls) == 1, (
+            f"{tok}: a replay on the py deck would collide on the "
+            f"still-alive tag, got {decls}"
+        )
+
+
+def test_s6_gated_hoists_above_the_stage_owned_ungated(tmp_path) -> None:
+    """Hoist first, replay only what's left — WITHIN the stage block.
+
+    A stage that owns both the gated tri6n and the ungated beam must
+    emit the gated bracket first, then the replay, then the beam — whose
+    ``element`` line resolves geomTransf / beamIntegration by tag and
+    would otherwise reference a purged registry.  The beam is registered
+    FIRST so registration order and emitted order are distinguishable.
+    """
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    _add_stage(ops, pgs=["Liner", "Rock"])
+    lines = _tcl_deck(ops, tmp_path)
+
+    stage_open = next(
+        i for i, ln in enumerate(lines) if ln.startswith("# === Stage")
+    )
+    tri = next(i for i, ln in enumerate(lines) if "element tri6n" in ln)
+    beam = next(
+        i for i, ln in enumerate(lines) if "element dispBeamColumn" in ln
+    )
+    last_model = max(
+        i for i, ln in enumerate(lines) if ln.startswith("model ")
+    )
+    replayed_transf = [
+        i for i in range(last_model, len(lines))
+        if lines[i].startswith("geomTransf")
+    ]
+    assert stage_open < tri < last_model < replayed_transf[0] < beam
+
+    # Tag identity: the reorder moves LINES, never tags — the same
+    # registrations WITHOUT the stage (never entering the S7 path)
+    # allocate the identical token -> tag map.
+    def _tag_map(deck_lines: "list[str]") -> "dict[str, int]":
+        return {
+            ln.split()[1]: int(ln.split()[2])
+            for ln in deck_lines if ln.startswith("element ")
+        }
+
+    flat = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    flat_mat = flat.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    flat.element.SixNodeTri(pg="Rock", thickness=1.0, material=flat_mat)
+    assert _tag_map(lines) == _tag_map(_tcl_deck(flat, tmp_path))
+
+
+def test_s6_no_scoped_declaration_no_reorder_no_replay(tmp_path) -> None:
+    """With nothing builder-scoped in the model, INV-1 holds vacuously:
+    the stage keeps registration order (the ungated truss stays ahead of
+    the gated tri6n) and nothing is re-declared."""
+    ops = apeSees(
+        _mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)),
+        default_orientation=None,
+    )
+    ops.model(ndm=2, ndf=3)
+    steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    ops.element.Truss(pg="Liner", A=0.01, material=steel)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    _add_stage(ops, pgs=["Liner", "Rock"])
+    lines = _tcl_deck(ops, tmp_path)
+
+    assert not any(
+        ln.startswith(tok) for ln in lines for tok in _SCOPED_TOKENS
+    )
+    truss = next(i for i, ln in enumerate(lines) if "element Truss" in ln)
+    tri = next(i for i, ln in enumerate(lines) if "element tri6n" in ln)
+    # The tri6n still BRACKETS (that is the ndf gate, untouched), but
+    # with nothing to destroy it must not HOIST past the truss.
+    assert truss < tri
+    assert sum(1 for ln in lines if ln.startswith("model ")) == 3
+
+
+def test_s6_no_bracket_no_replay_under_a_matching_envelope(
+    tmp_path,
+) -> None:
+    """A gated class under an envelope that already matches its builder
+    ndf never brackets — so even with a series in the deck there is
+    nothing to replay and the deck keeps one model line."""
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3, 4, 5, 6],
+            coords=[
+                (0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+                (1.0, 0.0, 0.0), (1.0, 0.5, 0.0), (0.0, 0.5, 0.0),
+            ],
+            node_pgs={},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "Rock": _ElementGroupView(
+                    ids=(1,), connectivity=((1, 2, 3, 4, 5, 6),),
+                ),
+            },
+        ),
+    )
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    ts = ops.timeSeries.Linear()
+    _add_stage(ops, pgs=["Rock"], pattern_load=(ts, 1, (1.0, 0.0)))
+    lines = _tcl_deck(ops, tmp_path)
+
+    assert sum(1 for ln in lines if ln.startswith("model ")) == 1
+    assert sum(1 for ln in lines if ln.startswith("timeSeries")) == 1
+
+
+def test_s6_partitioned_staged_gated_stays_refused() -> None:
+    """The replay is scoped to the FLAT staged path; a stage-activated
+    gated element on the partitioned path keeps the INV-4 refusal (the
+    per-rank stage machinery has no replay yet)."""
+    ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    gated = ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
+    scoped = ops.timeSeries.Linear()
+    _add_stage(ops, pgs=["Rock"])
+    stage_records = ops.build().stage_records
+
     with pytest.raises(BridgeError, match="stage-activated"):
-        _py_deck(ops, tmp_path)
+        validate_builder_scope_ordering(
+            [gated], [scoped], ops.fem,
+            ndm=2, envelope_ndf=3, path="partitioned",
+            stage_records=stage_records,
+        )
+    # ...and the flat path accepts the same shape (the replay owns it).
+    validate_builder_scope_ordering(
+        [gated], [scoped], ops.fem,
+        ndm=2, envelope_ndf=3, path="flat",
+        stage_records=stage_records,
+    )
 
 
 def test_inv4_non_hoisting_paths_are_refused() -> None:
