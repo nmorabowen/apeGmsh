@@ -262,6 +262,31 @@ text rather than over any one emitter.
    `repros/repro4_builder_scoped_wipe.py --partitioned`; the S4a replay
    is `--h5`.
 
+   > **Correction (measured, post-S5).** As shipped, the scoped half of
+   > the gate read `pre_element` alone — and `GeomTransf` is pre-binned
+   > into the separate `transforms` list by `emit` step 3, so it never
+   > reaches `pre_element`. A partitioned deck whose **only**
+   > builder-scoped declaration is a `geomTransf` therefore skipped the
+   > hoist and emitted the INV-1 violation this slice exists to prevent:
+   > measured on a 3-rank fixture (gated `FourNodeQuad` +
+   > `elasticBeamColumn`, no beamIntegration / timeSeries / damping),
+   > rank 0's stream carries `geomTransf Linear 1` above the last of its
+   > three `model` lines while ranks 1 and 2 are clean — the rank-local
+   > asymmetry again, undetected because the S5 fixture bundles all four
+   > kinds and the other three *do* reach `pre_element`. The gate now
+   > counts `transforms` alongside `pre_element`. `pre_scoped` itself
+   > stays `pre_element`-only: it is the hold-back list for step 1c, and
+   > the transform fan-out already emits below the hoist unconditionally.
+   > Both gates still matter — nothing gated means no bracket fires, so a
+   > transform-only deck with no gated row keeps its shape byte for byte.
+   > Pinned by `test_s5_transf_only_deck_hoists_on_every_rank` and
+   > `test_s5_transf_only_deck_does_not_move_without_a_gated_row`.
+   >
+   > The general lesson, which the next emit path should inherit: a gate
+   > over "is any builder-scoped declaration present" must read every
+   > list the pre-bin splits primitives into, not the one that happens to
+   > hold most of them.
+
 **Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
 defect** after S2 — they are not fixed there, they are made **loud** by
 INV-4. *(S5 has since fixed the default partitioned path; what remains
