@@ -19,16 +19,21 @@ Usage::
     python repros/repro4_builder_scoped_wipe.py --h5 [path\\to\\OpenSees.exe]
     python repros/repro4_builder_scoped_wipe.py --partitioned [path\\to\\OpenSees.exe]
     python repros/repro4_builder_scoped_wipe.py --split [path\\to\\OpenSees.exe]
+    python repros/repro4_builder_scoped_wipe.py --staged [path\\to\\OpenSees.exe]
 
-The default arm is the survival table below.  ``--h5``, ``--partitioned``
-and ``--split`` are the ORDERING arms: each builds a real mixed-ndf
-apeGmsh model carrying a gated ``quad`` plus all four scoped kinds, emits
-it down one path, and runs the result on the binary.  ``--h5`` covers the
-archive replay (ADR 0099 S4a); ``--partitioned`` covers the per-rank
-hoist (S5), running the single deck once per rank; ``--split`` covers the
-file-per-module hoist (S6), running the fragment driver and matching its
-displacements against the flat reference deck.  All need apeGmsh
-importable; the default arm needs only the binary.
+The default arm is the survival table below.  ``--h5``, ``--partitioned``,
+``--split`` and ``--staged`` are the ORDERING arms: each builds a real
+mixed-ndf apeGmsh model carrying a gated ``quad`` plus all four scoped
+kinds, emits it down one path, and runs the result on the binary.
+``--h5`` covers the archive replay (ADR 0099 S4a); ``--partitioned``
+covers the per-rank hoist (S5), running the single deck once per rank;
+``--split`` covers the file-per-module hoist (S6), running the fragment
+driver and matching its displacements against the flat reference deck;
+``--staged`` covers the stage-activated case (S7), where the bracket
+fires MID-HISTORY and the Tcl deck re-declares the purged kinds at
+bracket close — that arm also runs a replay-stripped variant to
+prove the replay is load-bearing.  All need apeGmsh importable; the
+default arm needs only the binary.
 
 Measured on Ladruno build ``25a0647f``:
 
@@ -462,6 +467,121 @@ def split_arm(binary: str) -> int:
     return 0 if ok else 1
 
 
+def _bridge_staged():
+    """The S7 shape: the gated quads activate at stage 2, AFTER a stage-1
+    pattern and a completed analyze — so the bracket fires mid-history
+    and every global builder-scoped declaration is already purged when
+    the stage-2 pattern resolves its series by tag.
+    """
+    from apeGmsh.opensees.apesees import apeSees
+
+    ops = apeSees(_fem(False), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2000.0, nu=0.25, rho=0.0)
+    sec = ops.section.Elastic(E=2.0e5, A=0.01, Iz=1.0e-4)
+    transf = ops.geomTransf.Linear()
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+    damp = ops.damping.uniform(ratio=0.05, freq_lower=0.2, freq_upper=10.0)
+    ops.element.dispBeamColumn(
+        pg="Liner", transf=transf, integration=integ, damp=damp)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.fix(pg="Anchor", dofs=(1, 1, 1))
+    ts = ops.timeSeries.Linear()
+
+    def _chain(s):
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1.0e-10, max_iter=25),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=0.5),
+            constraints=ops.constraints.Transformation(),
+            numberer=ops.numberer.Plain(),
+            system=ops.system.BandGeneral(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=2)
+
+    with ops.stage(name="frame") as s1:
+        with s1.pattern(series=ts) as p1:
+            p1.load(pg="Tip", forces=(0.0, -1.0, 0.0))
+        _chain(s1)
+    with ops.stage(name="dig") as s2:
+        s2.activate(pgs=["Rock"])
+        s2.fix(pg="Base", dofs=(1, 1))
+        with s2.pattern(series=ts) as p2:
+            p2.load(pg="Mid", forces=(0.0, -10.0))
+        _chain(s2)
+    return ops
+
+
+def _s7_offenders(stream: "list[str]") -> "list[str]":
+    """Scoped kinds purged by the last model line and NOT re-declared.
+
+    The staged deck legitimately declares the four kinds ABOVE the stage
+    bracket (the global section needs them); the S7-amended INV-1 is
+    that every kind so purged is declared AGAIN after the last ``model``
+    line — the replay.
+    """
+    models = [i for i, ln in enumerate(stream)
+              if ln.strip().startswith("model ")]
+    if len(models) < 2:
+        return []
+    last = models[-1]
+    before = {k for ln in stream[:last]
+              for k in SCOPED_KEYS if ln.strip().startswith(k)}
+    after = {k for ln in stream[last:]
+             for k in SCOPED_KEYS if ln.strip().startswith(k)}
+    return sorted(before - after)
+
+
+def staged_arm(binary: str) -> int:
+    """ADR 0099 S7: stage-activated gated quads, replay at bracket close.
+
+    Three probes: the emitted Tcl deck must re-declare every purged kind
+    and run to the marker; a replay-STRIPPED variant of the same deck
+    must die (the replay is load-bearing, not decoration); and the py
+    deck must carry NO replay at all — its runtime never purges, and
+    re-declaring a still-alive tag hard-errors (measured), so a replay
+    there would kill the deck.
+    """
+    print("--staged: gated quads activate at stage 2; replay at bracket close")
+    ok = True
+    with tempfile.TemporaryDirectory() as d:
+        deck = Path(d) / "staged.tcl"
+        ops = _bridge_staged()
+        ops.tcl(str(deck), progress=False)
+        text = deck.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        ok &= _report("staged tcl deck", _run_deck(binary, text),
+                      _s7_offenders(lines))
+
+        # Load-bearing check: strip the replayed declarations (every
+        # scoped line after the last model line) and the deck must die
+        # at the stage-2 ``pattern Plain`` — the RevA failure, mid-stage.
+        models = [i for i, ln in enumerate(lines)
+                  if ln.strip().startswith("model ")]
+        neutered = lines[: models[-1] + 1] + [
+            ln for ln in lines[models[-1] + 1:]
+            if not any(ln.strip().startswith(k) for k in SCOPED_KEYS)
+        ]
+        out = _run_deck(binary, "\n".join(neutered))
+        died = MARKER not in out and "none found with tag" in out
+        print(f"  {'replay-stripped deck':<22} "
+              f"{'dies as expected' if died else 'UNEXPECTEDLY RAN'}")
+        ok &= died
+
+        # The py deck: bracket, no replay (each kind declared once).
+        py_deck = Path(d) / "staged.py"
+        _bridge_staged().py(str(py_deck))
+        py_lines = py_deck.read_text(encoding="utf-8").splitlines()
+        once = all(
+            sum(1 for ln in py_lines if ln.startswith(f"ops.{k}(")) == 1
+            for k in SCOPED_KEYS
+        )
+        print(f"  {'py deck (no replay)':<22} {'OK' if once else 'FAILED'}")
+        ok &= once
+    return 0 if ok else 1
+
+
 def main() -> int:
     argv = sys.argv[1:]
     arm = argv.pop(0) if argv and argv[0].startswith("--") else None
@@ -475,9 +595,11 @@ def main() -> int:
         return partitioned_arm(binary)
     if arm == "--split":
         return split_arm(binary)
+    if arm == "--staged":
+        return staged_arm(binary)
     if arm is not None:
-        print(f"unknown arm {arm!r}; expected --h5, --partitioned or "
-              "--split")
+        print(f"unknown arm {arm!r}; expected --h5, --partitioned, "
+              "--split or --staged")
         return 2
 
     print(f"{'declaration':<18} {'after a model re-issue'}")

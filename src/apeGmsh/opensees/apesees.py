@@ -82,6 +82,7 @@ from ._internal.build import (
     node_index_lookup,
     open_builder_ndf_bracket,
     primary_owner_map,
+    replay_builder_scoped_declarations,
     runtime_rank_from_partition_record,
     topological_order,
     needs_builder_ndf_bracket,
@@ -1706,11 +1707,37 @@ class BuiltModel:
         for spec, sub in gated_plan:
             _emit_element_block(spec, sub, None)
 
-        # 5b. Builder-scoped declarations.  Safe from here down: the flat
-        # path emits no further ``model`` line.
+        # 5b. Builder-scoped declarations.  Safe from here down for the
+        # NON-staged deck: the flat path emits no further ``model`` line.
+        # A STAGE-ACTIVATED gated element does re-issue one inside its
+        # stage block — that case is handled by the S7 replay below.
         for p in pre_scoped:
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
+
+        # ADR 0099 S7: a stage-activated gated element brackets inside
+        # its stage block, where no hoist can reach — the staged pass
+        # instead re-declares the builder-scoped declarations at bracket
+        # close (``replay_builder_scoped_declarations``).  Armed on the
+        # same two conditions as every 0099 hoist — a stage-owned
+        # bracket-needing element AND a builder-scoped declaration for
+        # the bracket to destroy — so every other deck does not move a
+        # byte.  The transform fan-out allocates per-vecxz tags, so the
+        # replay re-drives a CAPTURE of the emitted lines (a re-run
+        # could not reproduce the tags); ``pre_scoped`` primitives
+        # re-emit deterministically and need no capture.
+        transf_replay_log: "list[tuple] | None" = None
+        if (
+            staged
+            and (pre_scoped or transforms)
+            and any(
+                id(spec) in element_owner_stage
+                and needs_builder_ndf_bracket(
+                    spec, ndm=self.ndm, envelope_ndf=self.ndf)
+                for spec, _sub in element_plan
+            )
+        ):
+            transf_replay_log = []
 
         # 6. GeomTransf fan-out (builder-scoped — same reasoning as 5b).
         overrides = emit_transform_specs(
@@ -1721,6 +1748,7 @@ class BuiltModel:
             tags=tags,
             spec_to_own_tag=self.tag_for,
             ndm=self.ndm,
+            replay_log=transf_replay_log,
         )
 
         # 6b. The ungated elements, in plan order.
@@ -1855,6 +1883,10 @@ class BuiltModel:
                 inferred_ndf=inferred_ndf,
                 overrides=overrides,
                 base_resolver=base_resolver,
+                scoped_replay=(
+                    (pre_scoped, transf_replay_log)
+                    if transf_replay_log is not None else None
+                ),
             )
 
     # -- Split (mode A, ADR 0043 slice 1.1) emit path ---------------------
@@ -2370,6 +2402,7 @@ class BuiltModel:
         inferred_ndf: "dict[int, int]" = {},
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
+        scoped_replay: "tuple[list[Primitive], list[tuple]] | None" = None,
     ) -> None:
         """Phase SSI-2.A / 2.B / 2.D: emit each stage block in registration order.
 
@@ -2383,6 +2416,14 @@ class BuiltModel:
            ``element`` commands for elements whose pg is activated
            by this stage.  Tags come from the global ``element_plan``
            (pre-allocated upfront so cross-stage tag identity holds).
+           **(ADR 0099 S7)** With ``scoped_replay`` armed, the
+           bracket-needing (gated) specs emit FIRST, then — if a
+           bracket actually fired and the emitter's runtime actually
+           purges (``model_reissue_purges``) — the builder-scoped
+           declarations are re-declared, then the ungated specs, whose
+           ``element`` lines may resolve a transform / integration /
+           damping by tag and must see the replayed registry.  Only
+           line positions move; tags come from the same plan.
         4. **(Phase SSI-2.D PR-B)** Stage-bound ``fix`` + ``mass`` —
            emit per-record ``emitter.fix(node, *dofs)`` and
            ``emitter.mass(node, *values)`` for entries in
@@ -2473,8 +2514,10 @@ class BuiltModel:
                 )
 
             # 3. Owned elements.
-            owned_specs = stage_owned_specs.get(stage_idx, [])
-            for spec, sub in owned_specs:
+            def _emit_owned_spec(
+                spec: Element, sub: "ElementPlanRows",
+            ) -> bool:
+                """Emit one stage-owned spec's fan-out; True if it bracketed."""
                 transf_spec = _build_element_transf(spec)
                 # Builder-ndf bracket for gated upstream parsers
                 # (quad/tri6n) under a mixed-ndf envelope — see
@@ -2513,6 +2556,46 @@ class BuiltModel:
                 if bracketed:
                     close_builder_ndf_bracket(
                         emitter, ndm=self.ndm, envelope_ndf=self.ndf)
+                return bracketed
+
+            owned_specs = stage_owned_specs.get(stage_idx, [])
+            if scoped_replay is None:
+                # No stage-owned bracket / nothing builder-scoped to
+                # destroy anywhere in the model: registration order,
+                # byte-identical to the pre-S7 emitter.
+                for spec, sub in owned_specs:
+                    _emit_owned_spec(spec, sub)
+            else:
+                # ADR 0099 S7: hoist first, replay only what's left —
+                # the gated specs bracket at the TOP of the stage block,
+                # then the purged declarations are re-declared (on a
+                # purging runtime only; measured, the in-process module
+                # purges nothing and a replay there collides), then the
+                # ungated specs, whose element lines resolve transforms /
+                # integrations / dampings by tag.
+                gated_owned = [
+                    (spec, sub) for spec, sub in owned_specs
+                    if needs_builder_ndf_bracket(
+                        spec, ndm=self.ndm, envelope_ndf=self.ndf)
+                ]
+                stage_bracket_fired = False
+                for spec, sub in gated_owned:
+                    if _emit_owned_spec(spec, sub):
+                        stage_bracket_fired = True
+                if stage_bracket_fired and getattr(
+                    emitter, "model_reissue_purges", False,
+                ):
+                    scoped_prims, transf_log = scoped_replay
+                    replay_builder_scoped_declarations(
+                        emitter,
+                        scoped_primitives=scoped_prims,
+                        tag_for=self.tag_for,
+                        transform_log=transf_log,
+                    )
+                gated_ids = {id(spec) for spec, _sub in gated_owned}
+                for spec, sub in owned_specs:
+                    if id(spec) not in gated_ids:
+                        _emit_owned_spec(spec, sub)
 
             # Phase SSI-2.E: removals emit BEFORE new BCs so a stage
             # can release a prior-tier support and immediately re-fix
@@ -3234,7 +3317,9 @@ class BuiltModel:
 
         # -- 1c. Builder-scoped declarations.  Safe from here down: the
         # partitioned path emits no further ``model`` line outside a
-        # stage block (a stage-OWNED gated element is refused by INV-4).
+        # stage block (a stage-OWNED gated element is refused by INV-4
+        # on THIS path — the flat staged path replays instead, ADR 0099
+        # S7).
         for p in pre_scoped:
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)

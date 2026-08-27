@@ -277,6 +277,19 @@ class TclEmitter:
     ``__init__``.
     """
 
+    #: ADR 0099 S7 — this deck targets the classic Tcl interpreter, where
+    #: a ``model BasicBuilder`` re-issue runs ``~TclModelBuilder()`` and
+    #: purges the builder-scoped registries (timeSeries / geomTransf /
+    #: beamIntegration / damping).  The staged replay-at-bracket-close
+    #: re-declares them ONLY on emitters carrying this flag.  Measured on
+    #: the fork's in-process module (which runs BOTH ``build('live')``
+    #: and the emitted py deck): ``ops.model()`` purges nothing there, and
+    #: re-declaring a still-alive tag hard-errors
+    #: (``MapOfTaggedObjects::addComponent - ... similar tag exists``) —
+    #: so a replay on any other backend would kill the deck it exists to
+    #: save.  Everyone else takes the ``getattr`` default ``False``.
+    model_reissue_purges: bool = True
+
     def __init__(self) -> None:
         # ``_lines`` is a :class:`_LineBuf` so ``partition_open`` can
         # toggle a per-rank indent without every ``append`` call site

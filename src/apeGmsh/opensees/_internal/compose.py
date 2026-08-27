@@ -521,7 +521,7 @@ def _replay_into(
 
             validate_builder_scope_replay(
                 _gated, ndm=int(ndm), envelope_ndf=int(ndf),
-                scoped_present=True, already_gated=True,
+                already_gated=True,
             )
     if _gated:
         _replay_elements_bracketed(
@@ -876,33 +876,58 @@ def _replay_staged_into(
         int(t) for s in stages for t in s.owned_element_ids
     )
 
-    # ADR 0099 INV-4 (S4b) — a STAGE-OWNED gated element brackets inside
-    # its stage block, after the global builder-scoped declarations and
-    # (past the first stage) after a completed ``analyze``.  Unlike the
-    # global prefix, which the S4a hoist fixes, there is no earlier
-    # position to move it to; refuse rather than emit a deck that runs
-    # undamped or dies mid-history.  Placed HERE, before any emit, and
-    # NOT inside ``_replay_into`` — the H5 re-emit path replays a staged
-    # archive through the flat ``_replay_into`` and must stay able to
-    # rewrite one.  Only a pre-S1 archive can carry this.
-    if owned_element_tags:
-        from .build import validate_builder_scope_replay
+    # ADR 0099 S7 — a STAGE-OWNED gated element brackets inside its stage
+    # block, after the global builder-scoped declarations and (past the
+    # first stage) after a completed ``analyze``.  Unlike the global
+    # prefix, which the S4a hoist fixes, there is no earlier position to
+    # move it to; the fix is a REPLAY of the four declaration kinds at
+    # bracket close (per-stage loop below) — Tcl only: measured, the
+    # in-process module (live AND the emitted py deck's runtime) purges
+    # nothing on a ``model`` re-issue, and re-declaring a still-alive tag
+    # hard-errors, so a replay anywhere else collides.  Gatedness is a
+    # property of the TOKEN at a fixed (ndm, envelope_ndf); resolve it
+    # once per distinct stage-owned token, and only when a builder-scoped
+    # declaration exists for a bracket to destroy (otherwise INV-1 holds
+    # vacuously and the stage keeps its record order to the byte).
+    _scoped_present = bool(
+        replay_kwargs.get("transforms")
+        or replay_kwargs.get("beam_integrations")
+        or replay_kwargs.get("time_series")
+        or replay_kwargs.get("dampings")
+    )
+    _gated_stage_tokens: "set[str]" = set()
+    if owned_element_tags and _scoped_present:
+        from .build import needs_builder_ndf_bracket_for_token
 
         # ``ndm`` / ``ndf`` are required keyword args of ``_replay_into``
         # and always present here — indexed, not ``.get``-defaulted,
         # because a wrong envelope would silently mis-evaluate the gate.
-        validate_builder_scope_replay(
-            replay_kwargs.get("elements", ()),
-            ndm=int(replay_kwargs["ndm"]),
-            envelope_ndf=int(replay_kwargs["ndf"]),
-            scoped_present=bool(
-                replay_kwargs.get("transforms")
-                or replay_kwargs.get("beam_integrations")
-                or replay_kwargs.get("time_series")
-                or replay_kwargs.get("dampings")
-            ),
-            stage_owned_tags=owned_element_tags,
-        )
+        _owned_recs = [
+            r for r in elements if int(r.tag) in owned_element_tags
+        ]
+        _gated_stage_tokens = {
+            tok for tok in {r.type_token for r in _owned_recs}
+            if needs_builder_ndf_bracket_for_token(
+                tok,
+                ndm=int(replay_kwargs["ndm"]),
+                envelope_ndf=int(replay_kwargs["ndf"]),
+            )
+        }
+        if _gated_stage_tokens:
+            # INV-3 still applies and no replay saves it: the purge lands
+            # at bracket OPEN, before the element line parses, so a
+            # ``quad ... -damp N`` record dies at its own line (measured).
+            # The global ``_replay_into`` scan skips stage-owned records,
+            # so scan them here.  Only a pre-S1 archive can carry one.
+            from .build import validate_builder_scope_replay
+
+            validate_builder_scope_replay(
+                [r for r in _owned_recs
+                 if r.type_token in _gated_stage_tokens],
+                ndm=int(replay_kwargs["ndm"]),
+                envelope_ndf=int(replay_kwargs["ndf"]),
+                already_gated=True,
+            )
 
     # ONE allocator threaded across the global prefix AND every stage
     # (the bridge reuses a single ``tags``; a per-stage allocator would
@@ -960,14 +985,46 @@ def _replay_staged_into(
             else:
                 emitter.node(int(nid), *cs, ndf=int(nndf))
         # owned elements (look up the rehydrated record by ops tag).
-        _replay_elements_bracketed(
-            emitter,
-            [
-                rec for etag in st.owned_element_ids
-                if (rec := elem_map.get(int(etag))) is not None
-            ],
-            ndm=_ndm, envelope_ndf=_ndf,
-        )
+        owned_recs = [
+            rec for etag in st.owned_element_ids
+            if (rec := elem_map.get(int(etag))) is not None
+        ]
+        gated_recs = [
+            r for r in owned_recs if r.type_token in _gated_stage_tokens
+        ]
+        if gated_recs:
+            # ADR 0099 S7: hoist first, replay only what's left — the
+            # gated records bracket at the top of the stage block, then
+            # the purged builder-scoped declarations are re-declared (on
+            # a purging runtime only), then the ungated records, whose
+            # element lines resolve transforms / integrations / dampings
+            # by tag.  Tags are the archive's; only line positions move.
+            _replay_elements_bracketed(
+                emitter, gated_recs, ndm=_ndm, envelope_ndf=_ndf,
+            )
+            if getattr(emitter, "model_reissue_purges", False):
+                # Same kind order as the global prefix (steps 5-7b of
+                # ``_replay_into``): transforms, beam integrations, time
+                # series, dampings.
+                for rec in replay_kwargs.get("transforms", ()):
+                    emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec)
+                for rec in replay_kwargs.get("beam_integrations", ()):
+                    emitter.beamIntegration(
+                        rec.type_token, int(rec.tag), *rec.args)
+                for rec in replay_kwargs.get("time_series", ()):
+                    emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args)
+                for rec in replay_kwargs.get("dampings", ()):
+                    emitter.damping(rec.type_token, int(rec.tag), *rec.args)
+            _replay_elements_bracketed(
+                emitter,
+                [r for r in owned_recs
+                 if r.type_token not in _gated_stage_tokens],
+                ndm=_ndm, envelope_ndf=_ndf,
+            )
+        else:
+            _replay_elements_bracketed(
+                emitter, owned_recs, ndm=_ndm, envelope_ndf=_ndf,
+            )
 
         # SSI-2.E removals (before new BCs).
         for n_tag, dof in st.remove_sps:
