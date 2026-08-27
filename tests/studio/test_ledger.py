@@ -209,7 +209,16 @@ def test_a_real_replay_stamps_started_at_and_duration(
         # cannot double as a start time — that is why there are two keys.
         assert rec["started_at"].endswith("Z")
         assert rec["started_at"] <= rec["ts"]
-        assert 0.0 <= rec["duration_s"] <= (wall_after - wall_before)
+        # The inner interval is strictly nested inside the outer one, so
+        # the raw durations satisfy inner <= outer. The recorded value is
+        # not raw: ``append_run`` stores ``round(duration_s, 6)``, which
+        # may round *up* by as much as 5e-7 and land above the wall delta
+        # — on Windows, where ``time.monotonic()`` is ``GetTickCount64``
+        # (15.625 ms), both intervals routinely come from the very same
+        # pair of ticks, so there is no slack to absorb the rounding.
+        # Tolerate one rounding step; the rounding itself is contract
+        # surface (ADR 0095 Amendment 11) and must not be loosened.
+        assert 0.0 <= rec["duration_s"] <= (wall_after - wall_before) + 1e-6
     finally:
         if result.session is not None and result.session.is_active:
             result.session.end()
