@@ -664,6 +664,85 @@ def test_s5_no_hoist_when_either_gate_is_open(tmp_path, kwargs) -> None:
         assert scoped_ix == []
 
 
+def _partitioned_transf_only(*, gated: bool = True) -> apeSees:
+    """Mixed-ndf partitioned model whose ONLY builder-scoped declaration
+    is a ``geomTransf``.
+
+    ``elasticBeamColumn`` takes a transform and nothing else — no
+    beamIntegration, no section, no timeSeries, no damping — which is what
+    makes this the one shape that reads as "unscoped" to a gate looking
+    only at ``pre_element``: ``GeomTransf`` is pre-binned into
+    ``transforms`` by ``emit`` step 3 and never lands there.  A static SSI
+    check is exactly this deck.
+    """
+    ops = apeSees(_partitioned_mixed_ndf_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2000.0, nu=0.25, rho=0.0)
+    if gated:
+        ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    transf = ops.geomTransf.Linear()
+    ops.element.elasticBeamColumn(
+        pg="Liner", E=2.0e5, A=0.01, Iz=1.0e-4, transf=transf,
+    )
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.fix(pg="Anchor", dofs=(1, 1, 1))
+    return ops
+
+
+def test_s5_transf_only_deck_hoists_on_every_rank(tmp_path) -> None:
+    """INV-1 holds when ``geomTransf`` is the ONLY builder-scoped kind.
+
+    The S5 gate originally read ``pre_element`` alone, so this deck
+    skipped the hoist entirely and rank 0 declared ``geomTransf Linear 1``
+    above its own bracket — while ranks 1 and 2, owning no gated element,
+    stayed clean.  That is the rank-local asymmetry S5 exists to kill:
+    the same model passed on 2 ranks and died on 4.  The existing
+    ``_partitioned_bridge`` fixture cannot catch it, because it carries
+    all four scoped kinds at once and the other three DO reach
+    ``pre_element``.
+    """
+    lines = _tcl_deck(_partitioned_transf_only(), tmp_path)
+    streams = _rank_streams(lines)
+    assert sorted(streams) == [0, 1, 2]
+
+    for rank, stream in streams.items():
+        assert _inv1_offenders(stream) == [], (
+            f"rank {rank} declares a builder-scoped kind above its last "
+            f"model line: {_inv1_offenders(stream)}"
+        )
+
+    # Not vacuous: rank 0 really does re-issue ``model`` (it owns the
+    # gated block), and the geomTransf really is in every rank's stream.
+    assert sum(
+        1 for ln in streams[0] if ln.strip().startswith("model ")
+    ) == 3
+    for rank, stream in streams.items():
+        assert any(ln.strip().startswith("geomTransf") for ln in stream), (
+            f"geomTransf missing from rank {rank}'s stream"
+        )
+
+
+def test_s5_transf_only_deck_does_not_move_without_a_gated_row(
+    tmp_path,
+) -> None:
+    """Widening the gate must not hoist a deck that needs no bracket.
+
+    ``transforms`` non-empty is only half the condition — with nothing
+    gated no bracket ever fires, INV-1 holds vacuously, and the deck keeps
+    the shape it had: one guard per rank, the transform declared above the
+    first of them.
+    """
+    lines = _tcl_deck(_partitioned_transf_only(gated=False), tmp_path)
+    for rank in (0, 1, 2):
+        assert _guard_count(lines, rank) == 1
+    first_guard = next(i for i, ln in enumerate(lines) if _GUARD_OPEN.match(ln))
+    transf_ix = [
+        i for i, ln in enumerate(lines) if ln.startswith("geomTransf")
+    ]
+    assert transf_ix and max(transf_ix) < first_guard
+    assert sum(1 for ln in lines if ln.startswith("model ")) == 1
+
+
 def test_s5_per_rank_fragments_are_still_refused(tmp_path) -> None:
     """``per_rank=True`` (ADR 0061) writes file-per-rank fragments, which
     puts a FILE boundary where the single-file deck has only a brace — the

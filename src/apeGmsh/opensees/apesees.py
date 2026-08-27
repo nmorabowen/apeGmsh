@@ -2854,13 +2854,26 @@ class BuiltModel:
         # holds vacuously, and with no OWNED gated row no bracket ever
         # fires; in either case hoisting is pure churn, so the deck keeps
         # the line order it had, byte for byte.
+        #
+        # The scoped gate counts ``transforms`` alongside ``pre_element``.
+        # ``GeomTransf`` is builder-scoped but is pre-binned into its own
+        # list by step 3 of ``emit`` and NEVER reaches ``pre_element``, so
+        # reading ``pre_element`` alone missed the deck whose only scoped
+        # declaration is a geomTransf — gated continuum plus an
+        # ``elasticBeamColumn`` (a transform, but no beamIntegration /
+        # timeSeries / damping).  That deck skipped the hoist and emitted
+        # its ``geomTransf`` above the owning rank's bracket, which is the
+        # rank-local INV-1 violation this whole slice exists to prevent.
+        # ``pre_scoped`` itself stays ``pre_element``-only: it is the
+        # hold-back list for step 1c, and the transform fan-out already
+        # emits below the hoist unconditionally.
         pre_scoped: list[Primitive] = [
             p for p in pre_element if is_builder_scoped(p)
         ]
         hoist_by_rank: "dict[int, list[Element]]" = {}
         hoisted_spec_ids: set[int] = set()
         hoisted_nodes_by_rank: dict[int, set[int]] = {}
-        if pre_scoped:
+        if pre_scoped or transforms:
             gated_specs = [
                 spec for spec, _sub in element_plan
                 if not (staged and id(spec) in element_owner_stage)
