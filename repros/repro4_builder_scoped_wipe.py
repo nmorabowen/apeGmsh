@@ -18,13 +18,16 @@ Usage::
     python repros/repro4_builder_scoped_wipe.py [path\\to\\OpenSees.exe]
     python repros/repro4_builder_scoped_wipe.py --h5 [path\\to\\OpenSees.exe]
     python repros/repro4_builder_scoped_wipe.py --partitioned [path\\to\\OpenSees.exe]
+    python repros/repro4_builder_scoped_wipe.py --split [path\\to\\OpenSees.exe]
 
-The default arm is the survival table below.  ``--h5`` and
-``--partitioned`` are the two ORDERING arms: each builds a real mixed-ndf
+The default arm is the survival table below.  ``--h5``, ``--partitioned``
+and ``--split`` are the ORDERING arms: each builds a real mixed-ndf
 apeGmsh model carrying a gated ``quad`` plus all four scoped kinds, emits
 it down one path, and runs the result on the binary.  ``--h5`` covers the
 archive replay (ADR 0099 S4a); ``--partitioned`` covers the per-rank
-hoist (S5), running the single deck once per rank.  Both need apeGmsh
+hoist (S5), running the single deck once per rank; ``--split`` covers the
+file-per-module hoist (S6), running the fragment driver and matching its
+displacements against the flat reference deck.  All need apeGmsh
 importable; the default arm needs only the binary.
 
 Measured on Ladruno build ``25a0647f``:
@@ -113,7 +116,7 @@ MARKER = "APEGMSH_DECK_OK"
 BRACKET_OPEN = "model BasicBuilder -ndm 2 -ndf 2"
 
 
-def _fem(partitioned: bool):
+def _fem(partitioned: bool, composed: bool = False):
     """Two quads on ndf-2 nodes + two beams on ndf-3 nodes.
 
     The quad parser hard-gates on builder ``ndf == 2`` while the beams
@@ -121,7 +124,9 @@ def _fem(partitioned: bool):
     bracket is what purges the four registries.  When ``partitioned``,
     the quads land on rank 0 and the beams on rank 1: only ONE rank
     executes the bracket, which is why the partitioned failure is
-    rank-local and therefore non-deterministic in ``np``.
+    rank-local and therefore non-deterministic in ``np``.  When
+    ``composed``, the same bodies are tagged as compose modules
+    (``Soil`` / ``Frame``) so the model can emit ``split='parts'``.
     """
     import numpy as np
     from apeGmsh.mesh._element_types import ElementGroup, make_type_info
@@ -169,10 +174,19 @@ def _fem(partitioned: bool):
                       2: {"node_ids": sel([7, 8, 9])}}
         elem_parts = {1: {"element_ids": sel([1, 2])},
                       2: {"element_ids": sel([3, 4])}}
+    node_modules = elem_modules = None
+    if composed:
+        node_modules = np.array(
+            ["Soil"] * 6 + ["Frame"] * 3, dtype=object)
+        elem_modules = {
+            3: np.array(["Soil", "Soil"], dtype=object),
+            1: np.array(["Frame", "Frame"], dtype=object),
+        }
     nodes = NodeComposite(
         node_ids=ids, node_coords=coords,
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
         partitions=node_parts,
+        module_label=node_modules,
     )
     elements = ElementComposite(
         groups={
@@ -186,6 +200,7 @@ def _fem(partitioned: bool):
         },
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
         partitions=elem_parts,
+        module_label=elem_modules,
     )
     return FEMData(
         nodes=nodes, elements=elements,
@@ -194,7 +209,7 @@ def _fem(partitioned: bool):
     )
 
 
-def _bridge(partitioned: bool):
+def _bridge(partitioned: bool, composed: bool = False):
     """The gated quad, all four builder-scoped kinds, and a solvable chain.
 
     Damping rides the ungated beam, not the quad: ``quad(damp=...)`` is
@@ -203,7 +218,7 @@ def _bridge(partitioned: bool):
     """
     from apeGmsh.opensees.apesees import apeSees
 
-    ops = apeSees(_fem(partitioned), default_orientation=None)
+    ops = apeSees(_fem(partitioned, composed), default_orientation=None)
     ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=2000.0, nu=0.25, rho=0.0)
     sec = ops.section.Elastic(E=2.0e5, A=0.01, Iz=1.0e-4)
@@ -368,6 +383,85 @@ def partitioned_arm(binary: str) -> int:
     return 0 if ok else 1
 
 
+def _inline_sources(driver: Path) -> "list[str]":
+    """The line stream Tcl executes for a split driver: the driver with
+    each fragment ``source`` line replaced by the fragment's body.
+
+    INV-1 is a property of THIS stream — the S6 hoist changes nothing
+    but where the fragment bodies land in it.
+    """
+    import re
+    src_re = re.compile(
+        r"^source \[file join \[file dirname \[info script\]\] "
+        r"parts (\S+)\]$"
+    )
+    parts = driver.parent / "parts"
+    out: "list[str]" = []
+    for ln in driver.read_text(encoding="utf-8").splitlines():
+        m = src_re.match(ln)
+        if m is not None:
+            out.extend(
+                (parts / m.group(1)).read_text(encoding="utf-8")
+                .splitlines()
+            )
+        else:
+            out.append(ln)
+    return out
+
+
+def split_arm(binary: str) -> int:
+    """ADR 0099 S6: the same model, file-per-module fragments.
+
+    The hoist moves the gated module's ``source`` line above the four
+    declarations; the fragment itself carries its nodes along unchanged.
+    Pre-S6 this emit was refused (INV-4); before the refusal landed the
+    driver declared all four kinds above the sourced soil fragment,
+    whose bracket destroyed them.  The driver must now run to the
+    marker AND print the same displacements as the flat reference deck.
+    """
+    print("--split: composed model, driver + parts/*.tcl, vs flat reference")
+    ok = True
+    probe = 'puts "PROBE [nodeDisp 5] | [nodeDisp 9]"'
+    with tempfile.TemporaryDirectory() as d:
+        flat = Path(d) / "flat.tcl"
+        _bridge(partitioned=False, composed=True).tcl(
+            str(flat), progress=False, analyze_steps=1)
+        flat_text = flat.read_text(encoding="utf-8") + probe + "\n"
+        flat_out = _run_deck(binary, flat_text)
+        ok &= _report(
+            "flat reference", flat_out,
+            _inv1_offenders(flat_text.splitlines()),
+        )
+
+        drv = Path(d) / "split" / "deck.tcl"
+        drv.parent.mkdir()
+        _bridge(partitioned=False, composed=True).tcl(
+            str(drv), split=True, progress=False, analyze_steps=1)
+        stream = _inline_sources(drv)
+        if not any(ln.strip() == BRACKET_OPEN for ln in stream):
+            print("      WARNING: no bracket in the split stream — the "
+                  "probe is vacuous")
+            ok = False
+        with open(drv, "a", encoding="utf-8") as f:
+            f.write(f'{probe}\nputs "{MARKER}"\n')
+        proc = subprocess.run(
+            [binary, str(drv)], capture_output=True, text=True, timeout=300,
+        )
+        out = proc.stdout + proc.stderr
+        ok &= _report("split driver", out, _inv1_offenders(stream))
+
+        flat_probe = [ln for ln in flat_out.splitlines()
+                      if ln.startswith("PROBE")]
+        split_probe = [ln for ln in out.splitlines()
+                       if ln.startswith("PROBE")]
+        match = bool(flat_probe) and flat_probe == split_probe
+        print(f"  probe match vs flat: {'OK' if match else 'MISMATCH'}")
+        print(f"      flat : {flat_probe}")
+        print(f"      split: {split_probe}")
+        ok &= match
+    return 0 if ok else 1
+
+
 def main() -> int:
     argv = sys.argv[1:]
     arm = argv.pop(0) if argv and argv[0].startswith("--") else None
@@ -379,8 +473,11 @@ def main() -> int:
         return h5_arm(binary)
     if arm == "--partitioned":
         return partitioned_arm(binary)
+    if arm == "--split":
+        return split_arm(binary)
     if arm is not None:
-        print(f"unknown arm {arm!r}; expected --h5 or --partitioned")
+        print(f"unknown arm {arm!r}; expected --h5, --partitioned or "
+              "--split")
         return 2
 
     print(f"{'declaration':<18} {'after a model re-issue'}")

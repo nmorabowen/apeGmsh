@@ -2192,13 +2192,20 @@ def needs_builder_ndf_bracket(
 #:   and the declarations global, outside every guard; a brace is not a
 #:   file boundary, so the flat hoist replicates directly as one extra
 #:   rank-guard block per rank.
+#: ``"split"``       — S6, ``BuiltModel._emit_split``.  File-per-module
+#:   (ADR 0043): the hoist moves each gated module's ``source`` line
+#:   above the declarations, and the fragment carries its nodes along
+#:   unchanged.  A module carrying BOTH a gated element and a
+#:   builder-scoped-dependent one emits as two ordered fragments
+#:   (``<m>_gated`` / ``<m>_rest``), the shape ADR 0061's per-rank
+#:   writer already produces.
 #:
-#: Still refused: ``"split"`` (file-per-module, ADR 0043) and
-#: ``"partitioned per_rank"`` (file-per-rank, ADR 0061) — both need the
-#: fragment's ``source`` line moved rather than its element lines, which
-#: is a different mechanism (ADR 0099 §"How the two deferred paths should
-#: actually be fixed").
-_HOISTING_PATHS = frozenset({"flat", "partitioned"})
+#: Still refused: ``"partitioned per_rank"`` (file-per-rank, ADR 0061) —
+#: it needs the same source-line move ``split`` got, but applied by the
+#: post-emit span writer (``_write_per_rank_tcl``), which slices recorded
+#: guard spans out of a finished buffer and cannot reorder them yet
+#: (ADR 0099 §"How the two deferred paths should actually be fixed").
+_HOISTING_PATHS = frozenset({"flat", "partitioned", "split"})
 
 
 def validate_builder_scope_ordering(
@@ -2236,7 +2243,7 @@ def validate_builder_scope_ordering(
         primitive (``quad(damp=...)``), so no ordering can save it: the
         element's own bracket destroys the declaration it references.
         INV-4 — a gated element brackets on an emit path that cannot
-        satisfy INV-1 (``split`` / ``partitioned`` / stage-activated).
+        satisfy INV-1 (``partitioned per_rank`` / stage-activated).
     """
     from .._element_capabilities import (
         builder_scoped_kind,
@@ -2277,9 +2284,10 @@ def validate_builder_scope_ordering(
 
     fix = (
         "Per ADR 0099 INV-1 every such declaration must follow the LAST "
-        "model line in the deck. The flat (unpartitioned, non-split) and "
-        "the default partitioned emit paths hoist their gated element "
-        "blocks above them; the remaining paths do not yet."
+        "model line in the deck. The flat, split and default partitioned "
+        "emit paths hoist their gated element blocks (for split, the "
+        "gated fragments' source lines) above them; per_rank does not "
+        "yet."
     )
     if path not in _HOISTING_PATHS:
         raise BridgeError(

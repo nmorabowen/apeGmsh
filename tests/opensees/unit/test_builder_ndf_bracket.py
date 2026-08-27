@@ -27,7 +27,11 @@ Covers:
   ndf=2 case),
 * the stage-activated path (ADR 0099 INV-4: refused, because the
   bracket would fire mid-deck and destroy the global declarations),
-* ADR 0099 INV-1 ordering, and the INV-3 / INV-4 guards.
+* ADR 0099 INV-1 ordering, and the INV-3 / INV-4 guards,
+* the partitioned path (ADR 0099 S5: per-rank hoisted guard blocks),
+* the split path (ADR 0099 S6: hoisted gated fragment ``source`` lines,
+  the ``_gated`` / ``_rest`` two-fragment boundary, the two no-hoist
+  gates).
 """
 from __future__ import annotations
 
@@ -375,23 +379,23 @@ def test_inv4_stage_activated_gated_element_is_refused(tmp_path) -> None:
 def test_inv4_non_hoisting_paths_are_refused() -> None:
     """The validator's path arm, unit-tested directly.
 
-    ``split`` and ``partitioned per_rank`` are the two file-per-fragment
-    layouts; both need the fragment's ``source`` line moved rather than
-    its element lines, so neither is fixed by the S2 / S5 hoist."""
+    ``partitioned per_rank`` (ADR 0061) is the file-per-fragment layout
+    still left: it needs the source-line move S6 gave ``split``, but
+    applied by the post-emit span writer, which cannot reorder recorded
+    spans yet — so it keeps the refusal."""
     ops = _bridge_with_beam(_mixed_ndf_fem(soil_conn=(1, 2, 3, 4, 5, 6)))
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     gated = ops.element.SixNodeTri(pg="Rock", thickness=1.0, material=mat)
     scoped = ops.timeSeries.Linear()
 
-    for path in ("split", "partitioned per_rank"):
-        with pytest.raises(BridgeError, match=path):
-            validate_builder_scope_ordering(
-                [gated], [scoped], ops.fem,
-                ndm=2, envelope_ndf=3, path=path,
-            )
+    with pytest.raises(BridgeError, match="per_rank"):
+        validate_builder_scope_ordering(
+            [gated], [scoped], ops.fem,
+            ndm=2, envelope_ndf=3, path="partitioned per_rank",
+        )
 
-    # ...and the two hoisting paths are exactly what S2 / S5 make safe.
-    for path in ("flat", "partitioned"):
+    # ...and the hoisting paths are exactly what S2 / S5 / S6 make safe.
+    for path in ("flat", "partitioned", "split"):
         validate_builder_scope_ordering(
             [gated], [scoped], ops.fem,
             ndm=2, envelope_ndf=3, path=path,
@@ -745,10 +749,342 @@ def test_s5_transf_only_deck_does_not_move_without_a_gated_row(
 
 def test_s5_per_rank_fragments_are_still_refused(tmp_path) -> None:
     """``per_rank=True`` (ADR 0061) writes file-per-rank fragments, which
-    puts a FILE boundary where the single-file deck has only a brace — the
-    fix there is to move the fragment's ``source`` line, the same
-    mechanism ``split`` needs (ADR 0099 §"How the two deferred paths
+    puts a FILE boundary where the single-file deck has only a brace —
+    the fix there is the source-line move S6 gave ``split``, applied by
+    the post-emit span writer (ADR 0099 §"How the two deferred paths
     should actually be fixed").  Deferred, so still refused."""
     ops = _partitioned_bridge()
     with pytest.raises(BridgeError, match="per_rank"):
         ops.tcl(str(tmp_path / "d.tcl"), per_rank=True)
+
+
+# =====================================================================
+# Split emit (ADR 0099 S6)
+# =====================================================================
+
+def _split_mixed_ndf_fem(
+    *,
+    node_labels: "list[str]",
+    elem_labels: "dict[int, str]",
+) -> FEMStub:
+    """Two-quad soil block (ndf-2 nodes 1-6) + a beam (ndf-3 nodes 7-8),
+    tagged as compose modules per the label arguments."""
+    nodes = _NodesStub(
+        ids=[1, 2, 3, 4, 5, 6, 7, 8],
+        coords=[
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0), (1.0, 1.0, 0.0), (2.0, 1.0, 0.0),
+            (0.0, 5.0, 0.0), (1.0, 5.0, 0.0),
+        ],
+        node_pgs={"Base": (1, 2, 3), "Anchor": (7,), "Tip": (8,)},
+        module_label=node_labels,
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "Rock": _ElementGroupView(
+                ids=(1, 2), connectivity=((1, 2, 5, 4), (2, 3, 6, 5)),
+            ),
+            "Liner": _ElementGroupView(ids=(3,), connectivity=((7, 8),)),
+        },
+        module_label=elem_labels,
+    )
+    return FEMStub(nodes=nodes, elements=elements)
+
+
+def _split_bridge(
+    *,
+    gated: bool = True,
+    scoped: bool = True,
+    one_module: bool = False,
+) -> apeSees:
+    """Mixed-ndf composed model; ``gated`` / ``scoped`` toggle the two
+    conditions the S6 hoist is gated on (mirrors ``_partitioned_bridge``).
+
+    ``one_module`` collapses both bodies into a single module ``Mix`` —
+    the genuine boundary case: one module carrying both a gated element
+    and a builder-scoped-dependent one, which must emit as two ordered
+    fragments (``Mix_gated`` / ``Mix_rest``).
+    """
+    if one_module:
+        fem = _split_mixed_ndf_fem(
+            node_labels=["Mix"] * 8,
+            elem_labels={1: "Mix", 2: "Mix", 3: "Mix"},
+        )
+    else:
+        fem = _split_mixed_ndf_fem(
+            node_labels=["Soil"] * 6 + ["Frame"] * 2,
+            elem_labels={1: "Soil", 2: "Soil", 3: "Frame"},
+        )
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=2000.0, nu=0.25, rho=0.0)
+    sec = ops.section.Elastic(E=2.0e5, A=0.01, Iz=1.0e-4)
+    if gated:
+        ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    if scoped:
+        transf = ops.geomTransf.Linear()
+        integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+        ops.element.dispBeamColumn(
+            pg="Liner", transf=transf, integration=integ,
+        )
+        ops.damping.uniform(
+            ratio=0.05, freq_lower=0.2, freq_upper=10.0, on=["Liner"],
+        )
+        ts = ops.timeSeries.Linear()
+        with ops.pattern.Plain(series=ts) as pat:
+            pat.load(node=8, forces=(0.0, -1.0, 0.0))
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.fix(pg="Anchor", dofs=(1, 1, 1))
+    return ops
+
+
+_SOURCE_LINE = re.compile(
+    r"^source \[file join \[file dirname \[info script\]\] parts (\S+)\]$"
+)
+
+
+def _split_driver(ops: apeSees, tmp_path):
+    driver = tmp_path / "deck.tcl"
+    ops.tcl(str(driver), split=True)
+    return driver
+
+
+def _executed_stream(driver) -> list[str]:
+    """The line stream Tcl actually executes: the driver with each
+    ``source`` line replaced by its fragment's body.
+
+    INV-1 is a property of THIS stream, not of any one file — the whole
+    point of the S6 hoist is where the fragment bodies land in it.
+    """
+    parts = driver.parent / "parts"
+    out: list[str] = []
+    for ln in driver.read_text(encoding="utf-8").splitlines():
+        m = _SOURCE_LINE.match(ln)
+        if m is not None:
+            out.extend(
+                (parts / m.group(1)).read_text(encoding="utf-8").splitlines()
+            )
+        else:
+            out.append(ln)
+    return out
+
+
+def test_s6_split_inv1_holds_on_the_executed_stream(tmp_path) -> None:
+    """INV-1 asserted on the stream Tcl executes, driver + fragments.
+
+    Pre-S6 this model was refused outright (INV-4); before the refusal
+    landed it emitted a driver whose four builder-scoped declarations
+    preceded the sourced soil fragment — whose bracket destroyed them.
+    """
+    stream = _executed_stream(_split_driver(_split_bridge(), tmp_path))
+    assert _inv1_offenders(stream) == [], (
+        f"builder-scoped declaration above the last model line: "
+        f"{_inv1_offenders(stream)}"
+    )
+    # ...and this is not vacuous: the soil fragment really does re-issue
+    # ``model`` (header + bracket + restore), and the stream carries all
+    # four declaration kinds.
+    assert sum(
+        1 for ln in stream if ln.strip().startswith("model ")
+    ) == 3
+    for tok in _SCOPED_TOKENS:
+        assert any(ln.strip().startswith(tok) for ln in stream), (
+            f"{tok} missing from the executed stream"
+        )
+
+
+def test_s6_only_the_gated_module_fragment_carries_a_bracket(
+    tmp_path,
+) -> None:
+    """The hoist moves the SOURCE line — bracket ownership does not
+    change.  The soil fragment brackets, the frame fragment does not,
+    and the driver keeps the single header ``model`` line."""
+    driver = _split_driver(_split_bridge(), tmp_path)
+    parts = driver.parent / "parts"
+
+    def _models(text: str) -> int:
+        return sum(
+            1 for ln in text.splitlines() if ln.startswith("model ")
+        )
+
+    assert _models((parts / "Soil.tcl").read_text(encoding="utf-8")) == 2
+    assert _models((parts / "Frame.tcl").read_text(encoding="utf-8")) == 0
+    assert _models(driver.read_text(encoding="utf-8")) == 1
+    # No two-fragment split for a module that hoists wholesale.
+    assert sorted(p.name for p in parts.glob("*.tcl")) == [
+        "Frame.tcl", "Soil.tcl",
+    ]
+
+
+def test_s6_hoisted_source_precedes_the_declarations(tmp_path) -> None:
+    """The mechanism, read off the driver: the gated module's ``source``
+    line moves above the four declarations; the ungated module's stays
+    below them, in the ADR 0043 band."""
+    lines = _split_driver(
+        _split_bridge(), tmp_path,
+    ).read_text(encoding="utf-8").splitlines()
+    soil = next(
+        i for i, ln in enumerate(lines)
+        if (m := _SOURCE_LINE.match(ln)) and m.group(1) == "Soil.tcl"
+    )
+    frame = next(
+        i for i, ln in enumerate(lines)
+        if (m := _SOURCE_LINE.match(ln)) and m.group(1) == "Frame.tcl"
+    )
+    scoped_ix = [
+        i for i, ln in enumerate(lines)
+        if any(ln.startswith(tok) for tok in _SCOPED_TOKENS)
+    ]
+    assert scoped_ix, "fixture lost its builder-scoped declarations"
+    assert soil < min(scoped_ix) and max(scoped_ix) < frame
+
+
+def test_s6_hoist_moves_node_and_element_lines_it_never_adds_or_drops(
+    tmp_path,
+) -> None:
+    """Across driver + fragments: every node exactly once, every element
+    exactly once — the hoist moves fragment positions, nothing else."""
+    stream = _executed_stream(_split_driver(_split_bridge(), tmp_path))
+    node_tags = [
+        int(ln.split()[1]) for ln in stream if ln.startswith("node ")
+    ]
+    assert len(node_tags) == len(set(node_tags)), "a node was duplicated"
+    assert set(node_tags) == {1, 2, 3, 4, 5, 6, 7, 8}
+    elems = [ln for ln in stream if ln.startswith("element ")]
+    assert len(elems) == 3  # two quads + one dispBeamColumn
+    assert len(set(elems)) == 3
+
+
+def test_s6_hoisted_elements_never_forward_reference_a_node(
+    tmp_path,
+) -> None:
+    """Every node an element names is declared earlier in the executed
+    stream — the property the hoist could plausibly break by sourcing a
+    fragment above the others."""
+    for one_module in (False, True):
+        stream = _executed_stream(_split_driver(
+            _split_bridge(one_module=one_module), tmp_path / str(one_module),
+        ))
+        declared: set[int] = set()
+        for ln in stream:
+            s = ln.strip()
+            if s.startswith("node "):
+                declared.add(int(s.split()[1]))
+            elif s.startswith("element quad "):
+                used = {int(t) for t in s.split()[3:7]}
+            elif s.startswith("element dispBeamColumn "):
+                used = {int(t) for t in s.split()[3:5]}
+            else:
+                continue
+            if s.startswith("element "):
+                assert used <= declared, (
+                    f"{s!r} references undeclared nodes "
+                    f"{sorted(used - declared)}"
+                )
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"gated": False}, {"scoped": False}],
+    ids=["nothing-gated", "nothing-scoped"],
+)
+def test_s6_no_hoist_when_either_gate_is_open(tmp_path, kwargs) -> None:
+    """Both gates matter.  With nothing gated no bracket ever fires; with
+    nothing builder-scoped INV-1 holds vacuously.  Either way reordering
+    is pure churn, so the deck keeps the pre-S6 shape byte for byte: no
+    hoist band, no ``_gated`` / ``_rest`` fragments, and (when present)
+    the declarations in the driver preamble above every source line."""
+    driver = _split_driver(_split_bridge(**kwargs), tmp_path)
+    lines = driver.read_text(encoding="utf-8").splitlines()
+    assert not any("hoisted gated fragments" in ln for ln in lines)
+    names = sorted(
+        p.name for p in (driver.parent / "parts").glob("*.tcl")
+    )
+    assert names == ["Frame.tcl", "Soil.tcl"]
+    first_source = next(
+        i for i, ln in enumerate(lines) if _SOURCE_LINE.match(ln)
+    )
+    scoped_ix = [
+        i for i, ln in enumerate(lines)
+        if any(ln.startswith(tok) for tok in _SCOPED_TOKENS)
+    ]
+    if kwargs.get("scoped", True):
+        assert scoped_ix and max(scoped_ix) < first_source
+    else:
+        assert scoped_ix == []
+
+
+def test_s6_single_module_carrying_both_emits_two_ordered_fragments(
+    tmp_path,
+) -> None:
+    """The genuine boundary (ADR 0099 §"How the two deferred paths
+    should actually be fixed"): one module owning both a gated quad and
+    a geomTransf-dependent beam cannot hoist wholesale — the beam would
+    reference a transform not yet declared.  It emits as ``Mix_gated``
+    (nodes + bracketed quads, hoisted) and ``Mix_rest`` (beam + fix,
+    in the ADR 0043 band), the shape ADR 0061's per-rank writer already
+    produces."""
+    driver = _split_driver(_split_bridge(one_module=True), tmp_path)
+    parts = driver.parent / "parts"
+    assert sorted(p.name for p in parts.glob("*.tcl")) == [
+        "Mix_gated.tcl", "Mix_rest.tcl",
+    ]
+
+    gated_body = (parts / "Mix_gated.tcl").read_text(encoding="utf-8")
+    rest_body = (parts / "Mix_rest.tcl").read_text(encoding="utf-8")
+    # The gated half carries ALL the module's nodes (so _rest never
+    # forward-references one) + the bracketed quads, and nothing else.
+    assert sum(
+        1 for ln in gated_body.splitlines() if ln.startswith("node ")
+    ) == 8
+    assert "element quad" in gated_body
+    assert "model BasicBuilder -ndm 2 -ndf 2" in gated_body
+    assert "dispBeamColumn" not in gated_body
+    # The rest half carries the beam + fixes, and no node lines.
+    assert "dispBeamColumn" in rest_body
+    assert not any(
+        ln.startswith("node ") for ln in rest_body.splitlines()
+    )
+    assert "element quad" not in rest_body
+
+    # Driver order: gated source, then the declarations, then rest.
+    lines = driver.read_text(encoding="utf-8").splitlines()
+    gated_ix = next(
+        i for i, ln in enumerate(lines)
+        if (m := _SOURCE_LINE.match(ln)) and m.group(1) == "Mix_gated.tcl"
+    )
+    rest_ix = next(
+        i for i, ln in enumerate(lines)
+        if (m := _SOURCE_LINE.match(ln)) and m.group(1) == "Mix_rest.tcl"
+    )
+    scoped_ix = [
+        i for i, ln in enumerate(lines)
+        if any(ln.startswith(tok) for tok in _SCOPED_TOKENS)
+    ]
+    assert gated_ix < min(scoped_ix) and max(scoped_ix) < rest_ix
+    # And the executed stream satisfies INV-1.
+    assert _inv1_offenders(_executed_stream(driver)) == []
+
+
+def test_s6_py_driver_hoists_the_gated_fragment_call(tmp_path) -> None:
+    """The Py writer mirrors the Tcl one: the gated fragment's
+    ``build(ops)`` call (and the importlib loader it needs) lands above
+    the builder-scoped declarations."""
+    driver = tmp_path / "deck.py"
+    _split_bridge().py(str(driver), split=True)
+    lines = driver.read_text(encoding="utf-8").splitlines()
+    soil = next(i for i, ln in enumerate(lines) if "'Soil.py').build(ops)" in ln)
+    frame = next(
+        i for i, ln in enumerate(lines) if "'Frame.py').build(ops)" in ln
+    )
+    loader = next(
+        i for i, ln in enumerate(lines) if ln.startswith("def _apesees_load(")
+    )
+    scoped_ix = [
+        i for i, ln in enumerate(lines)
+        if any(tok in ln for tok in (
+            "ops.timeSeries(", "ops.geomTransf(", "ops.beamIntegration(",
+            "ops.damping(",
+        ))
+    ]
+    assert scoped_ix, "fixture lost its builder-scoped declarations"
+    assert loader < soil < min(scoped_ix) and max(scoped_ix) < frame

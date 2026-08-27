@@ -62,7 +62,9 @@ bearing. Neither half can be dropped. **The defect is purely ordering.**
 - `_emit_flat` — `apesees.py:1506-1525` (pre_element pass, then
   `emit_transform_specs`), elements at `1530+`, first bracket at `1551`.
 - `_emit_split` — `apesees.py:1806-1821`, then the `_emit_element_subset`
-  bracket at `1991`.
+  bracket at `1991`. *(As-found. Fixed by S6 — the hoist moves the gated
+  fragments' `source` lines, not their element lines; see the
+  implementation plan.)*
 - `_emit_partitioned` — `apesees.py:2688-2716`, then the
   `emit_element_spec_partitioned` bracket at `_internal/build.py:7220`.
 - **H5 replay** — `_internal/compose.py:432-458`. *(As-found. Fixed by
@@ -287,11 +289,81 @@ text rather than over any one emitter.
    > list the pre-bin splits primitives into, not the one that happens to
    > hold most of them.
 
+6. **S6 — the split hoist.** The measured design below ("Split IS
+   hoistable"), implemented as layout reuse: the hoist moves each gated
+   module's **`source` line**, never its element lines.
+   `_emit_split`'s driver-pre splits in two — the surviving definitions,
+   then a HOISTED band of gated-module fragments, then the
+   builder-scoped declarations + the `geomTransf` fan-out — and the
+   Tcl / Py writers place the hoisted band's `source` lines between the
+   two halves.  A module owning only gated (and scoped-independent)
+   elements hoists wholesale: its fragment is exactly what the ADR 0043
+   band would have written, sourced earlier.  A module owning BOTH a
+   gated element and a builder-scoped-dependent one — dependence
+   recognised through the one table, `builder_scoped_kind` over
+   `dependencies()`, per INV-2 — emits as the two ordered fragments the
+   measurement predicted: `<m>_gated` carries ALL the module's nodes
+   plus the bracketed blocks, `<m>_rest` the remaining elements + fix +
+   mass in the ADR 0043 band, so `_rest` never forward-references a
+   node.  (S5 hoisted only the NEEDED nodes into its rank block; here
+   the whole node set rides `_gated` — a fragment is a file, and
+   splitting a module's node list across two files buys nothing but a
+   harder diff.)
+
+   **Gated on both conditions, so unhoisted decks are byte-identical**
+   — with one deliberate widening over S5's gate: scoped-present counts
+   the `transforms` list alongside `pre_element`, because
+   `emit_transform_specs` is itself a builder-scoped declaration pass
+   and GeomTransf primitives are pre-binned OUT of `pre_element`.
+   *Measured while implementing:* S5's gate reads only `pre_element`,
+   so a partitioned deck whose only scoped declarations are geomTransf
+   lines (gated quads + `elasticBeamColumn`, no beamIntegration /
+   timeSeries / damping) skips the S5 hoist and emits a rank-0 stream
+   with `geomTransf Linear 1` above its bracket — an INV-1 violation
+   S5's fixtures never constructed, because every frame there carried a
+   beamIntegration.  Filed as its own follow-up; not fixed here.
+   Byte-identity measured on six no-hoist variants (no elements at all,
+   scoped-only frame, mixed-ndf nothing-gated, mixed-ndf
+   nothing-scoped; tcl + py): driver and every fragment byte-identical
+   against the pre-S6 emitter.
+
+   **Element tag allocation is unaffected**, by the S2/S5 argument:
+   `allocate_element_tags` moved above the driver-pre pass so the
+   hoisted band has a plan; allocation emits nothing, and TagAllocator
+   is per-kind, so the element / geomTransf counters do not interact.
+
+   **Verified on the real binary.** A mixed-ndf split deck — two gated
+   quads (module `Soil`), a damped `dispBeamColumn` (module `Frame`),
+   all four scoped kinds — loads clean, zero INV-1 offenders in the
+   executed stream (the driver with each `source` line inlined), and
+   matches the flat reference deck to every printed digit:
+   `nodeDisp 5` = `0.00000000000000000010 -0.00477430555555555594`,
+   `nodeDisp 9` = `0.00000000000000000000 -0.13333333333333358128
+   -0.10000000000000019984` — identical strings on both decks, i.e.
+   bit-identical doubles.  The one-module boundary variant
+   (`Mix_gated` / `Mix_rest`, the damped beam in the SAME module as the
+   quads) matches identically.  Neutering the hoist reproduces the
+   pre-S6 failure exactly: all four kinds flagged as INV-1 offenders
+   and the driver dying at `pattern Plain` (driver line 19) against the
+   purged `timeSeries`.  That arm is
+   `repros/repro4_builder_scoped_wipe.py --split`.
+
+   *Rejected:* reordering in the WRITER — leave the emit order alone
+   and move only the `source` lines at write time.  The writer would
+   then need its own copy of the gate and of the gated/dependent
+   partition (a second table by another name, against INV-2), and the
+   emitted buffer would stop reading in execution order.  The emit-side
+   restructure keeps the buffer in execution order — the same shape S2
+   and S5 left `_emit_flat` / `_emit_partitioned` in — and the writers
+   stay pure slicers over a `hoisted` band `_SplitLayout` now carries.
+
 **Deferred, plainly.** `_emit_split` and `_emit_partitioned` **keep the
 defect** after S2 — they are not fixed there, they are made **loud** by
-INV-4. *(S5 has since fixed the default partitioned path; what remains
-refused is `_emit_split` and `per_rank=True`, the two file-per-fragment
-layouts — see the section below, which is what S5 was built from.)* And the staged bracket **cannot be fixed by hoisting at all**: a
+INV-4. *(S5 has since fixed the default partitioned path and S6 the
+split path; what remains refused is `per_rank=True` alone — its span
+writer slices recorded guard spans out of a finished buffer post-emit
+and cannot reorder them yet.  The section below is what S5 and S6 were
+built from.)* And the staged bracket **cannot be fixed by hoisting at all**: a
 stage-activated gated element brackets after the pattern blocks and after
 completed `analyze` calls, so there is no earlier position to hoist to.
 That case needs a **replay of the builder-scoped declarations at bracket
@@ -327,7 +399,11 @@ round of design before an adversarial probe measured it.
   module** carries both a gated element and a builder-scoped-dependent
   element, and even then that module can emit as **two ordered fragments**
   (`A_gated` / `A_rest`), a shape ADR 0061's `per_rank` writer already
-  produces. So this is layout reuse, not new machinery.
+  produces. So this is layout reuse, not new machinery. **Implemented in
+  S6**, including the boundary as a regression pin: the one-module
+  fixture carries the gated quads and the transf-dependent beam in the
+  same module, so a hoist that only moved whole fragments would make the
+  beam forward-reference its transform and fail it.
 
 - **Do NOT make the bracket self-healing.** The tempting unification —
   `close_builder_ndf_bracket` re-declaring what it destroyed — is
@@ -371,12 +447,13 @@ element or a `quad ... -damp`.
 ## Consequences
 
 - **Decks that previously emitted and silently ran wrong now raise.** The
-  affected class is split emit, `per_rank=True` emit, or staged emit with
+  affected class is `per_rank=True` emit, or staged emit with
   a **stage-owned** gated element (a globally-activated one is not
   refused), plus any builder-scoped declaration. *(Default partitioned
-  emit was in this set until S5 hoisted it; `per_rank` stays because it
-  turns each rank guard into a separate FILE, which is the `split`
-  problem, not the partitioned one.)* This is a **deliberate breaking
+  emit was in this set until S5 hoisted it, and split until S6 moved the
+  gated fragments' `source` lines; `per_rank` stays because its span
+  writer reorders nothing yet — the remaining fix is S6's source-line
+  move applied post-emit.)* This is a **deliberate breaking
   change**, and it is strictly better than the status quo: those decks either
   died 30k lines downstream pointing at the wrong command, or — in the
   `damping` case, which only warns — converged on a wrong answer that nothing
@@ -385,9 +462,11 @@ element or a `quad ... -damp`.
 - **The flat path's deck line ORDER changes.** Same objects, same tags, same
   results; different positions. Any test pinning absolute deck line numbers
   moves. Content-based and order-insensitive pins are unaffected. The same
-  holds for the partitioned path after S5, and only for decks that carry
-  both a bracket-needing gated element and a builder-scoped declaration —
-  every other partitioned deck is byte-unchanged.
+  holds for the partitioned path after S5 and for the split driver after
+  S6 (fragment `source` positions move; a wholesale-hoisted fragment's
+  own bytes do not), and only for decks that carry both a
+  bracket-needing gated element and a builder-scoped declaration —
+  every other partitioned or split deck is byte-unchanged.
 - **The replayed deck's line ORDER changes too** (`build('tcl')` / `('py')`
   / `('live')`), and only for decks that carry both a bracket-needing gated
   element and at least one builder-scoped declaration — a 20-deck corpus
