@@ -104,7 +104,7 @@ from ._internal.build import (
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
-from ._element_capabilities import is_builder_scoped
+from ._element_capabilities import builder_scoped_kind, is_builder_scoped
 from ._internal.tag_resolution import (
     set_current_fem_element_id,
     set_element_nodes,
@@ -614,18 +614,26 @@ class _MPCOFilterPlan:
 class _SplitLayout:
     """Line-span map produced by :meth:`BuiltModel._emit_split`.
 
-    Carves the single emitter buffer into a contiguous per-module band
-    ``[module_start, module_end)`` and, within it, each module's
-    ``(label, start, end)`` sub-span.  The Tcl / Py writers slice the
-    buffer with this map: ``lines[start:end]`` is module ``label``'s
-    fragment body; ``lines[:module_start]`` is the driver preamble
-    (model + definitions + transforms) and ``lines[module_end:]`` is the
-    driver tail (interface + loads + patterns + recorders).
+    Carves the single emitter buffer into two contiguous fragment bands
+    and, within each, per-fragment ``(label, start, end)`` sub-spans.
+    ``[hoist_start, hoist_end)`` is the ADR 0099 S6 band — the gated
+    modules' fragments, whose ``source`` lines the writers place ABOVE
+    the builder-scoped declarations (empty and zero-width when the hoist
+    is off); ``[module_start, module_end)`` is the ADR 0043 band.  The
+    Tcl / Py writers slice the buffer with this map: ``lines[start:end]``
+    is fragment ``label``'s body; ``lines[:hoist_start]`` is the
+    surviving driver preamble (model + definitions),
+    ``lines[hoist_end:module_start]`` the builder-scoped declarations +
+    transforms, and ``lines[module_end:]`` the driver tail (interface +
+    loads + patterns + recorders).
     """
 
     module_start: int
     module_end: int
     modules: "list[tuple[str, int, int]]"
+    hoist_start: int
+    hoist_end: int
+    hoisted: "list[tuple[str, int, int]]"
 
 
 def _split_safe_name(label: str, used: "set[str]") -> str:
@@ -653,15 +661,18 @@ def _write_split_tcl(
 
     The driver ``source``s each fragment (relative to its own
     location, so the deck runs from any cwd) between the definitions
-    preamble and the interface / loads / recorders tail.
+    preamble and the interface / loads / recorders tail.  Fragments in
+    ``layout.hoisted`` (ADR 0099 S6) are sourced EARLIER — above the
+    builder-scoped declarations — so the gated modules' ``model``
+    re-issues precede every declaration they would otherwise destroy.
     """
     out_dir = os.path.dirname(os.path.abspath(path))
     parts_dir = os.path.join(out_dir, "parts")
     os.makedirs(parts_dir, exist_ok=True)
 
     used: set[str] = set()
-    source_lines: list[str] = []
-    for label, start, end in layout.modules:
+
+    def _fragment(label: str, start: int, end: int) -> str:
         safe = _split_safe_name(label, used)
         body = lines[start:end]
         with open(
@@ -670,13 +681,23 @@ def _write_split_tcl(
             f.write(f"# apeGmsh split fragment: {label or 'host'}\n")
             if body:
                 f.writelines(ln + "\n" for ln in body)
-        source_lines.append(
+        return (
             f"source [file join [file dirname [info script]] "
             f"parts {safe}.tcl]"
         )
 
-    driver = (
-        lines[: layout.module_start]
+    hoist_lines = [_fragment(*mod) for mod in layout.hoisted]
+    source_lines = [_fragment(*mod) for mod in layout.modules]
+
+    driver = lines[: layout.hoist_start]
+    if hoist_lines:
+        driver += (
+            ["", "# --- hoisted gated fragments (ADR 0099 INV-1) ---"]
+            + hoist_lines
+            + [""]
+        )
+    driver += (
+        lines[layout.hoist_end: layout.module_start]
         + ["", "# --- module fragments (ADR 0043 split='parts') ---"]
         + source_lines
         + [""]
@@ -749,15 +770,18 @@ def _write_split_py(
     Each fragment exposes ``def build(ops): ...``; the driver loads
     each fragment by explicit file path via ``importlib`` (no
     ``sys.path`` mutation, no bare-module-name collisions) and calls
-    ``build(ops)`` against the driver's own ``ops`` handle.
+    ``build(ops)`` against the driver's own ``ops`` handle.  Fragments
+    in ``layout.hoisted`` (ADR 0099 S6) are called EARLIER — above the
+    builder-scoped declarations — so the gated modules' ``model``
+    re-issues precede every declaration they would otherwise destroy.
     """
     out_dir = os.path.dirname(os.path.abspath(path))
     parts_dir = os.path.join(out_dir, "parts")
     os.makedirs(parts_dir, exist_ok=True)
 
     used: set[str] = set()
-    call_lines: list[str] = []
-    for label, start, end in layout.modules:
+
+    def _fragment(label: str, start: int, end: int) -> str:
         safe = _split_safe_name(label, used)
         body = lines[start:end]
         with open(
@@ -773,27 +797,40 @@ def _write_split_py(
         # Load each fragment by explicit file path (no sys.path
         # mutation, no bare-module-name collisions) and call its
         # ``build(ops)`` against the driver's own ops handle.
-        call_lines.append(
+        return (
             f"_apesees_load('_apesees_frag_{safe}', '{safe}.py').build(ops)"
         )
 
-    inject = (
-        [
-            "",
-            "# --- module fragments (ADR 0043 split='parts') ---",
-            "import importlib.util as _ilu, os as _os",
-            "def _apesees_load(_name, _file):",
-            "    _path = _os.path.join(_os.path.dirname("
-            "_os.path.abspath(__file__)), 'parts', _file)",
-            "    _spec = _ilu.spec_from_file_location(_name, _path)",
-            "    _mod = _ilu.module_from_spec(_spec)",
-            "    _spec.loader.exec_module(_mod)",
-            "    return _mod",
-        ]
+    hoist_calls = [_fragment(*mod) for mod in layout.hoisted]
+    call_lines = [_fragment(*mod) for mod in layout.modules]
+
+    loader = [
+        "import importlib.util as _ilu, os as _os",
+        "def _apesees_load(_name, _file):",
+        "    _path = _os.path.join(_os.path.dirname("
+        "_os.path.abspath(__file__)), 'parts', _file)",
+        "    _spec = _ilu.spec_from_file_location(_name, _path)",
+        "    _mod = _ilu.module_from_spec(_spec)",
+        "    _spec.loader.exec_module(_mod)",
+        "    return _mod",
+    ]
+    driver = lines[: layout.hoist_start]
+    if hoist_calls:
+        # The loader helper rides the FIRST band that calls a fragment.
+        driver += (
+            ["", "# --- hoisted gated fragments (ADR 0099 INV-1) ---"]
+            + loader
+            + hoist_calls
+            + [""]
+        )
+    driver += (
+        lines[layout.hoist_end: layout.module_start]
+        + ["", "# --- module fragments (ADR 0043 split='parts') ---"]
+        + ([] if hoist_calls else loader)
         + call_lines
         + [""]
+        + lines[layout.module_end:]
     )
-    driver = lines[: layout.module_start] + inject + lines[layout.module_end:]
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(ln + "\n" for ln in driver)
 
@@ -1365,20 +1402,22 @@ class BuiltModel:
         # ADR 0099 (INV-1 / INV-3 / INV-4): a gated element's ndf bracket
         # re-issues ``model BasicBuilder``, which deletes the Tcl model
         # builder and purges the process-global timeSeries / geomTransf /
-        # beamIntegration / damping registries.  The flat (S2) and default
-        # partitioned (S5) paths hoist their gated element blocks above
-        # those declarations; the remaining paths would emit a deck that
-        # dies late — or, for damping, runs to convergence and reports an
-        # undamped answer.  Fail loud here, before any primitive is
-        # emitted, on every path.
+        # beamIntegration / damping registries.  The flat (S2), default
+        # partitioned (S5) and split (S6) paths hoist their gated element
+        # blocks — for split, the gated fragments' ``source`` lines —
+        # above those declarations; the remaining paths would emit a deck
+        # that dies late — or, for damping, runs to convergence and
+        # reports an undamped answer.  Fail loud here, before any
+        # primitive is emitted, on every path.
         #
         # ``per_rank`` (ADR 0061) slices the partitioned fan-out into
         # file-per-rank fragments, which puts a FILE boundary where the
-        # single-file deck has only a brace — the fix there is to move the
-        # fragment's ``source`` line, the same mechanism ``split`` needs,
-        # so it keeps the refusal and carries its own path token.  It is
-        # invisible to the emit call (``tcl`` applies it after / around
-        # this), hence the emitter attribute — the same seam
+        # single-file deck has only a brace — the fix there is the
+        # source-line move S6 gave ``split``, but applied by the
+        # post-emit span writer, which cannot reorder recorded spans
+        # yet — so it keeps the refusal and carries its own path token.
+        # It is invisible to the emit call (``tcl`` applies it after /
+        # around this), hence the emitter attribute — the same seam
         # ``supports_partitions`` uses.
         if split:
             _scope_path = "split"
@@ -1847,8 +1886,20 @@ class BuiltModel:
           MP-constraint interface, the auto constraint handler, then
           patterns + recorders.  All land in the driver.
 
+        ADR 0099 S6: when a module owns a gated element that brackets
+        under this envelope AND the deck carries a builder-scoped
+        declaration, driver-pre splits in two — the surviving
+        definitions, then a HOISTED band of the gated modules'
+        fragments, then the builder-scoped declarations + the
+        ``geomTransf`` fan-out.  The hoist moves each gated fragment's
+        ``source`` line, not its element lines: the fragment carries
+        its nodes along unchanged.  Only a module owning BOTH a gated
+        and a builder-scoped-dependent element emits as two ordered
+        fragments (``<m>_gated`` / ``<m>_rest``).  With either gate
+        open the emitted deck does not move a byte.
+
         Returns the :class:`_SplitLayout` describing the contiguous
-        module band + each module's sub-span.
+        module band + each module's sub-span (and the hoisted band).
 
         Fail-loud for slice-1.1 out-of-scope models (partitioned,
         staged, ``initial_stress``, non-composed): the split seam is a
@@ -1905,29 +1956,12 @@ class BuiltModel:
         # deterministic source order, stable across runs.
         ordered_labels = sorted(present, key=lambda s: (s != "", s))
 
-        # -- driver-pre: definitions + analysis chain (no nodes —
-        #    nodes are per-module).  Mirrors _emit_flat step 4a; staged
-        #    skip is unreachable here (gated out above).  ADR 0092 S5
-        #    open item: hoist the constraint-handler auto-emit before a
-        #    user-declared ``analysis`` directive (see _emit_flat 4a).
-        chain_auto_emitted = False
-        for p in pre_element:
-            if not chain_auto_emitted and isinstance(p, Analysis):
-                self._maybe_auto_emit_constraint_handler(
-                    emitter, pre_element)
-                chain_auto_emitted = True
-            p._emit(emitter, self.tag_for[id(p)])
-
-        overrides = emit_transform_specs(
-            transforms=transforms,
-            elements=elements,
-            emitter=emitter,
-            fem=self.fem,
-            tags=tags,
-            spec_to_own_tag=self.tag_for,
-            ndm=self.ndm,
-        )
-
+        # Element tags are allocated before any line is emitted so the
+        # ADR 0099 hoist below has a plan — the same move ``_emit_flat``
+        # made for S2.  TagAllocator is per-kind, so the element /
+        # geomTransf counters are unaffected by allocating ahead of the
+        # transform fan-out, and allocation itself emits nothing: an
+        # unhoisted deck does not move a byte.
         element_plan = allocate_element_tags(elements, self.fem, tags)
         # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
         fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
@@ -1969,36 +2003,226 @@ class BuiltModel:
                         "fragment that would reference undefined nodes."
                     )
 
-        # -- per-module band.
-        module_start = emitter.line_count()
-        modules: list[tuple[str, int, int]] = []
+        # -- ADR 0099 S6 (INV-1) — plan the hoisted gated fragments. ------
+        # A gated element block is wrapped in a ``model BasicBuilder``
+        # re-issue (:func:`open_builder_ndf_bracket`), and that re-issue
+        # purges the process-global timeSeries / geomTransf /
+        # beamIntegration / damping registries.  Split emit is
+        # file-per-module, so the hoist moves each gated module's
+        # ``source`` line above those declarations — the fragment
+        # carries its nodes along unchanged.  Only a module that ALSO
+        # owns a builder-scoped-DEPENDENT element (a frame referencing a
+        # geomTransf / beamIntegration declared driver-side, below the
+        # hoist point) cannot move wholesale; it emits as two ordered
+        # fragments instead (``<m>_gated`` with the nodes + gated
+        # blocks, ``<m>_rest`` with everything else) — the shape ADR
+        # 0061's per-rank writer already produces.
+        #
+        # Both gates matter.  With no builder-scoped declaration INV-1
+        # holds vacuously, and with no gated module no bracket ever
+        # fires; in either case hoisting is pure churn, so the deck (and
+        # every fragment) keeps the shape it had, byte for byte.  The
+        # scoped gate counts ``transforms`` alongside ``pre_element``:
+        # the geomTransf fan-out is itself a builder-scoped declaration
+        # pass, emitted driver-side below the hoist point.
+        pre_scoped: list[Primitive] = [
+            p for p in pre_element if is_builder_scoped(p)
+        ]
+        gated_spec_ids = {
+            id(spec) for spec, _sub in element_plan
+            if needs_builder_ndf_bracket(
+                spec, ndm=self.ndm, envelope_ndf=self.ndf)
+        }
+        # INV-2: dependence on a builder-scoped declaration is
+        # recognised through the one table (``builder_scoped_kind``
+        # over ``dependencies()``), never a second kind list.  A spec
+        # cannot be in BOTH sets — the INV-3 guard in
+        # ``validate_builder_scope_ordering`` refused that at emit entry.
+        dependent_spec_ids = {
+            id(spec) for spec, _sub in element_plan
+            if any(builder_scoped_kind(d) is not None
+                   for d in spec.dependencies())
+        }
+        gated_labels: set[str] = set()
+        dependent_labels: set[str] = set()
+        for spec, sub in element_plan:
+            sid = id(spec)
+            if sid not in gated_spec_ids and sid not in dependent_spec_ids:
+                continue
+            owners = {elem_label_by_id.get(int(row[0]), "") for row in sub}
+            if sid in gated_spec_ids:
+                gated_labels |= owners
+            else:
+                dependent_labels |= owners
+        if not (pre_scoped or transforms):
+            gated_labels = set()   # nothing to protect — hoist off.
+        if not gated_labels:
+            pre_scoped = []        # hoist off: one topo-ordered pass.
+
+        # -- driver-pre: definitions + analysis chain (no nodes —
+        #    nodes are per-module).  Mirrors _emit_flat step 4a; staged
+        #    skip is unreachable here (gated out above).  ADR 0092 S5
+        #    open item: hoist the constraint-handler auto-emit before a
+        #    user-declared ``analysis`` directive (see _emit_flat 4a).
+        #    ADR 0099 S6 (INV-1): when the hoist is on, this pass emits
+        #    only the declarations that SURVIVE a ``model BasicBuilder``
+        #    re-issue; the builder-scoped ones are held back below the
+        #    hoisted band.  Topo order is preserved within each pass,
+        #    and ``pre_scoped`` is empty (so this IS ``pre_element``)
+        #    whenever the hoist is off.
+        pre_survives: list[Primitive] = (
+            [p for p in pre_element if not is_builder_scoped(p)]
+            if pre_scoped else list(pre_element)
+        )
+        chain_auto_emitted = False
+        for p in pre_survives:
+            if not chain_auto_emitted and isinstance(p, Analysis):
+                self._maybe_auto_emit_constraint_handler(
+                    emitter, pre_element)
+                chain_auto_emitted = True
+            p._emit(emitter, self.tag_for[id(p)])
+
         node_idx = node_index_lookup(self.fem.nodes.ids)  # ADR 0100 D3
-        for label in ordered_labels:
-            span_start = emitter.line_count()
-            owned_nodes = {
+
+        def _emit_module_nodes(label: str) -> set[int]:
+            owned = {
                 nid for nid, lbl in nid_to_label.items() if lbl == label
             }
             # Nodes — FEM-id order for a grep-friendly, stable fragment.
-            for nid in sorted(owned_nodes):
+            for nid in sorted(owned):
                 xyz = self.fem.nodes.coords[node_idx[nid]]
                 _emit_node_with_inferred_ndf(
                     emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
                     self.ndf,
                 )
-            # Elements owned by this module.
-            self._emit_element_subset(
-                emitter,
-                element_plan=element_plan,
-                eid_label=elem_label_by_id,
-                label=label,
-                overrides=overrides,
-                base_resolver=base_resolver,
-            )
+            return owned
+
+        # -- ADR 0099 S6 hoisted band: the gated modules' fragments, in
+        #    band order, sourced ABOVE every builder-scoped declaration.
+        #    A gated parser takes an nDMaterial and nothing else (INV-3
+        #    guards that at emit entry), and nDMaterial survives the
+        #    re-issue, so nothing a hoisted fragment needs has been held
+        #    back.  ``overrides`` is None here by construction: an
+        #    element that consumes a transform override carries a
+        #    GeomTransf dependency, is therefore builder-scoped-
+        #    dependent, and lands in the ``_rest`` fragment below —
+        #    after the fan-out has run.
+        hoist_start = emitter.line_count()
+        hoisted: list[tuple[str, int, int]] = []
+        hoisted_whole: set[str] = set()
+        two_fragment: set[str] = set()
+        for label in ordered_labels:
+            if label not in gated_labels:
+                continue
+            span_start = emitter.line_count()
+            owned_nodes = _emit_module_nodes(label)
+            if label in dependent_labels:
+                # The genuine boundary (ADR 0099 §"How the two deferred
+                # paths should actually be fixed"): this module carries
+                # both.  ``<m>_gated`` takes the nodes + the gated
+                # blocks; ``<m>_rest`` (in the band below) takes the
+                # rest, running after the declarations — and after this
+                # fragment, so its elements never forward-reference a
+                # node.
+                two_fragment.add(label)
+                self._emit_element_subset(
+                    emitter,
+                    element_plan=[
+                        (s, sub) for s, sub in element_plan
+                        if id(s) in gated_spec_ids
+                    ],
+                    eid_label=elem_label_by_id,
+                    label=label,
+                    overrides=None,
+                    base_resolver=base_resolver,
+                )
+                hoisted.append(
+                    ((label or "host") + "_gated",
+                     span_start, emitter.line_count()),
+                )
+            else:
+                # Whole-module hoist: the fragment is EXACTLY what the
+                # band below would have emitted — only its ``source``
+                # line moves.
+                hoisted_whole.add(label)
+                self._emit_element_subset(
+                    emitter,
+                    element_plan=element_plan,
+                    eid_label=elem_label_by_id,
+                    label=label,
+                    overrides=None,
+                    base_resolver=base_resolver,
+                )
+                self._emit_fixes_partitioned(
+                    emitter, owned_nodes, inferred_ndf)
+                self._emit_masses_partitioned(
+                    emitter, owned_nodes, inferred_ndf)
+                hoisted.append((label, span_start, emitter.line_count()))
+        hoist_end = emitter.line_count()
+
+        # -- Builder-scoped declarations + geomTransf fan-out.  Safe
+        #    from here down: no fragment sourced below re-issues
+        #    ``model`` (every bracketing module sits above, whole or as
+        #    its ``_gated`` half).
+        for p in pre_scoped:
+            p._emit(emitter, self.tag_for[id(p)])
+
+        overrides = emit_transform_specs(
+            transforms=transforms,
+            elements=elements,
+            emitter=emitter,
+            fem=self.fem,
+            tags=tags,
+            spec_to_own_tag=self.tag_for,
+            ndm=self.ndm,
+        )
+
+        # -- per-module band.
+        module_start = emitter.line_count()
+        modules: list[tuple[str, int, int]] = []
+        for label in ordered_labels:
+            if label in hoisted_whole:
+                continue
+            span_start = emitter.line_count()
+            if label in two_fragment:
+                # ``<m>_rest``: the nodes already rode ``<m>_gated``
+                # (sourced above), so this fragment holds only the
+                # remaining elements + fix + mass.
+                self._emit_element_subset(
+                    emitter,
+                    element_plan=[
+                        (s, sub) for s, sub in element_plan
+                        if id(s) not in gated_spec_ids
+                    ],
+                    eid_label=elem_label_by_id,
+                    label=label,
+                    overrides=overrides,
+                    base_resolver=base_resolver,
+                )
+                owned_nodes = {
+                    nid for nid, lbl in nid_to_label.items()
+                    if lbl == label
+                }
+            else:
+                owned_nodes = _emit_module_nodes(label)
+                # Elements owned by this module.
+                self._emit_element_subset(
+                    emitter,
+                    element_plan=element_plan,
+                    eid_label=elem_label_by_id,
+                    label=label,
+                    overrides=overrides,
+                    base_resolver=base_resolver,
+                )
             # Intra-part fix + mass (reuse the owned-node-set filter).
             self._emit_fixes_partitioned(emitter, owned_nodes, inferred_ndf)
             self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
-            modules.append((label, span_start, emitter.line_count()))
+            modules.append(
+                ((label or "host") + "_rest" if label in two_fragment
+                 else label,
+                 span_start, emitter.line_count()),
+            )
         module_end = emitter.line_count()
 
         # -- driver-post: regions, interface, patterns, recorders.
@@ -2068,6 +2292,9 @@ class BuiltModel:
             module_start=module_start,
             module_end=module_end,
             modules=modules,
+            hoist_start=hoist_start,
+            hoist_end=hoist_end,
+            hoisted=hoisted,
         )
 
     def _emit_element_subset(
