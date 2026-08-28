@@ -1284,15 +1284,25 @@ class ConstraintsComposite:
             for etype, conn in zip(etypes, enodes):
                 _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(
                     int(etype))
-                if int(npe) != 2:
+                if int(npe) == 2:
+                    rows.extend(
+                        np.asarray(conn, dtype=int).reshape(-1, 2).tolist())
+                elif int(npe) == 3:
+                    # gmsh line3: (end0, end1, mid) → two half-segments.
+                    # Same expansion as ssi face_polyline / RevA FaceWalls
+                    # rebuild.  Dropping to corners would leave midsides
+                    # unsprung and break INV-3 against a coincident quadratic
+                    # slave.  ADR 0093 D2/D3: the mid is a real polyline
+                    # station with its own tributary + normal.
+                    for e0, e1, mid in np.asarray(conn, dtype=int).reshape(-1, 3):
+                        rows.append([int(e0), int(mid)])
+                        rows.append([int(mid), int(e1)])
+                else:
                     raise NotImplementedError(
                         f"interface: master label {label!r} is meshed with "
-                        f"{int(npe)}-node line elements; only linear 2-node "
-                        f"segments are implemented (a higher-order master's "
-                        f"mid-side nodes need their own tributary + normal "
-                        f"model — ADR 0093 D2/D3).")
-                rows.extend(
-                    np.asarray(conn, dtype=int).reshape(-1, 2).tolist())
+                        f"{int(npe)}-node line elements; only line2 and "
+                        f"line3 (expanded to two half-segments) are "
+                        f"implemented (ADR 0093 D2/D3).")
         if not rows:
             raise ValueError(
                 f"interface: master label {label!r} resolved to entities "
@@ -1395,7 +1405,18 @@ class ConstraintsComposite:
 
     def _collect_node_set(self, entities, label, *, kind="contact",
                           role="slave") -> list[int]:
-        """The mesh-node tags of *entities* (unique, first-seen order)."""
+        """The mesh-node tags of *entities* (unique, first-seen order).
+
+        A discrete curve may ``addElements`` that cite nodes classified
+        on another entity (so a FaceWalls sub-chain can be named as
+        ``master_entities`` without ``addNodes`` duplicating those tags
+        in the OpenSees deck). ``getNodes`` is empty on that host;
+        the stretch is the unique connectivity of its line elements.
+        Only used when ``getNodes`` returned nothing — a classified
+        slave (Arch with feet/fuse omitted from ``addNodes``) must
+        NOT expand to element connectivity, or the omitted stations
+        would re-enter the slave set.
+        """
         import gmsh
         seen: dict[int, None] = {}
         for dim, tag in entities:
@@ -1409,6 +1430,14 @@ class ConstraintsComposite:
                     f"(dim={dim}, tag={tag}) of label {label!r}: {exc}") from exc
             for t in nt:
                 seen.setdefault(int(t), None)
+            if len(nt) > 0:
+                continue
+            etypes, _, enodes = gmsh.model.mesh.getElements(
+                int(dim), int(tag))
+            for conn in enodes:
+                for t in np.asarray(conn, dtype=int).ravel():
+                    if int(t) > 0:
+                        seen.setdefault(int(t), None)
         if not seen:
             raise ValueError(
                 f"{kind}: {role} label {label!r} resolved to entities but "
