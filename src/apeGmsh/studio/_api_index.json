@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-26T20:59:39Z",
+  "generated": "2026-08-29T06:22:15Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3907,6 +3907,12 @@
       "signature": "Maxwell(*, K: 'float', C: 'float', alpha: 'float', length: 'float', name: 'str | None' = None) -> 'Maxwell'",
       "skill": "references/opensees-bridge.md",
       "doc": "``uniaxialMaterial Maxwell`` — Maxwell viscoelastic with nonzero"
+    },
+    "ops.uniaxialMaterial.MultiLinear": {
+      "symbol": "ops.uniaxialMaterial.MultiLinear",
+      "signature": "MultiLinear(*, points: 'Sequence[tuple[float, float]]', name: 'str | None' = None) -> 'MultiLinear'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "``uniaxialMaterial MultiLinear`` — piecewise-linear backbone."
     },
     "ops.uniaxialMaterial.Steel01": {
       "symbol": "ops.uniaxialMaterial.Steel01",

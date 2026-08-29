@@ -35,6 +35,7 @@ from apeGmsh.opensees.material.uniaxial import (
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
+    MultiLinear,
     Steel01,
     Steel02,
     Viscous,
@@ -496,6 +497,101 @@ class TestHysteretic:
     def test_third_point_must_extend_positive_envelope(self) -> None:
         with pytest.raises(ValueError, match="monotonic"):
             _hys(s3p=250e3, e3p=0.001, s3n=-250e3, e3n=-0.010)
+
+
+# ---------------------------------------------------------------------------
+# MultiLinear
+# ---------------------------------------------------------------------------
+
+# The characterised trilinear splice-device law from the SEDICA Cerro Lindo
+# fuse (kN, m) that motivated the primitive — also the live acceptance vector.
+_TRILINEAR: tuple[tuple[float, float], ...] = (
+    (0.0012499999999999998, 781.5821391014429),
+    (0.004799999999999999, 942.946692139763),
+    (0.015000000000000081, 1079.7965946244644),
+)
+
+
+class TestMultiLinear:
+    def test_construction(self) -> None:
+        m = MultiLinear(points=_TRILINEAR)
+        assert m.points == _TRILINEAR
+
+    def test_emit_flattens_points_in_strain_stress_order(self) -> None:
+        m = MultiLinear(points=_TRILINEAR)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=7)
+        assert rec.calls == [
+            ("uniaxialMaterial",
+             ("MultiLinear", 7,
+              0.0012499999999999998, 781.5821391014429,
+              0.004799999999999999, 942.946692139763,
+              0.015000000000000081, 1079.7965946244644),
+             {}),
+        ]
+
+    def test_tcl_line(self) -> None:
+        m = MultiLinear(points=((0.001, 100.0), (0.005, 150.0)))
+        e = TclEmitter()
+        m._emit(e, tag=3)
+        assert [ln for ln in e.lines() if "MultiLinear" in ln] == [
+            "uniaxialMaterial MultiLinear 3 0.001 100.0 0.005 150.0",
+        ]
+
+    def test_py_line(self) -> None:
+        m = MultiLinear(points=((0.001, 100.0), (0.005, 150.0)))
+        e = PyEmitter()
+        m._emit(e, tag=3)
+        assert [ln for ln in e.lines() if "MultiLinear" in ln] == [
+            "ops.uniaxialMaterial('MultiLinear', 3, 0.001, 100.0, 0.005, "
+            "150.0)",
+        ]
+
+    def test_two_points_is_enough(self) -> None:
+        assert len(MultiLinear(points=((0.001, 100.0), (0.005, 150.0))).points) == 2
+
+    def test_dependencies_is_empty(self) -> None:
+        assert MultiLinear(points=_TRILINEAR).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "MultiLinear" in repr(MultiLinear(points=_TRILINEAR))
+
+    def test_validation_rejects_single_point(self) -> None:
+        with pytest.raises(ValueError, match=">= 2 breakpoints"):
+            MultiLinear(points=((0.001, 100.0),))
+
+    def test_validation_rejects_flat_value_list(self) -> None:
+        with pytest.raises(ValueError, match="pairs"):
+            MultiLinear(points=(0.001, 100.0, 0.005, 150.0))  # type: ignore[arg-type]
+
+    def test_validation_rejects_nonpositive_strain(self) -> None:
+        # The (0, 0) opening pair of the official OpenSees docs example:
+        # the constructor's s(0)/e(0) initial slope is then 0.0/0.0 = NaN
+        # (MultiLinear.cpp:113). The origin is implicit.
+        with pytest.raises(ValueError, match="must be > 0"):
+            MultiLinear(points=((0.0, 0.0), (0.005, 150.0)))
+
+    def test_validation_rejects_negative_strain(self) -> None:
+        with pytest.raises(ValueError, match="must be > 0"):
+            MultiLinear(points=((-0.001, -100.0), (0.005, 150.0)))
+
+    def test_validation_rejects_non_increasing_strain(self) -> None:
+        # Equal strains divide by zero in the segment slope
+        # (MultiLinear.cpp:121); the fork only warns and continues.
+        with pytest.raises(ValueError, match="STRICTLY increasing"):
+            MultiLinear(
+                points=((0.005, 150.0), (0.005, 160.0), (0.010, 170.0)),
+            )
+
+    def test_validation_rejects_decreasing_strain(self) -> None:
+        with pytest.raises(ValueError, match="STRICTLY increasing"):
+            MultiLinear(points=((0.005, 150.0), (0.001, 100.0)))
+
+    def test_softening_stress_is_allowed(self) -> None:
+        # Only the strains are constrained: a descending force branch is a
+        # legitimate backbone (post-peak softening).
+        m = MultiLinear(points=((0.001, 100.0), (0.005, 40.0)))
+        assert m.points[1][1] == 40.0
 
 
 # ---------------------------------------------------------------------------

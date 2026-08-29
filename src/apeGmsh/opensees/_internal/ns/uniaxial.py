@@ -27,6 +27,7 @@ from ...material.uniaxial import (
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
+    MultiLinear,
     Steel01,
     Steel02,
     Viscous,
@@ -254,6 +255,28 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 damage1=damage1, damage2=damage2,
                 s3p=s3p, e3p=e3p, s3n=s3n, e3n=e3n,
                 beta=beta,
+            ),
+            name=name,
+        )
+
+    def MultiLinear(
+        self, *,
+        points: Sequence[tuple[float, float]],
+        name: str | None = None,
+    ) -> MultiLinear:
+        """``uniaxialMaterial MultiLinear`` — piecewise-linear backbone.
+
+        ``points`` are ``(strain, stress)`` / ``(deformation, force)``
+        breakpoints on the POSITIVE branch, strictly increasing in the
+        first coordinate. The material is odd-symmetric: the negative
+        branch mirrors the positive one.
+
+        Past the last breakpoint the backbone **keeps the last slope** —
+        it does not cap and it does not go flat. See :class:`MultiLinear`.
+        """
+        return self._bridge._register(
+            MultiLinear(
+                points=tuple((float(u), float(f)) for u, f in points),
             ),
             name=name,
         )
