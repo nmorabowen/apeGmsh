@@ -308,7 +308,7 @@ _ANALYSIS_CHAIN_BASES: tuple[type[Primitive], ...] = (
 # in OpenSees, so ``s.update_material_stage`` refuses it instead.  This
 # set grows when the PressureIndepMultiYield / PM4Sand family gets typed.
 STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
-    {"ManzariDafalias", "SAniSandMS"},
+    {"ManzariDafalias", "SAniSandMS", "LadrunoSANISAND"},
 )
 
 

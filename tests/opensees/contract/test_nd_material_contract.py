@@ -23,6 +23,7 @@ from apeGmsh.opensees.material.nd import (
     J2Plasticity,
     LadrunoJ2,
     LadrunoJ2Finite,
+    LadrunoSANISAND,
     ManzariDafalias,
     SAniSandMS,
 )
@@ -36,6 +37,7 @@ ALL_ND: list[type[NDMaterial]] = [
     LadrunoJ2Finite,
     ManzariDafalias,
     SAniSandMS,
+    LadrunoSANISAND,
 ]
 
 
@@ -112,6 +114,28 @@ _MINIMAL_KWARGS: dict[type[NDMaterial], Callable[[], dict[str, Any]]] = {
         "mu0": 260.0,
         "beta": 1.0,
         "rho": 1.6,
+    },
+    # Gorini's calibrated set (ADR 86 §6), stresses in kPa — the fork's own
+    # verification deck for this material.
+    LadrunoSANISAND: lambda: {
+        "G0": 264.32,
+        "nu": 0.3129,
+        "e_init": 0.6944,
+        "Mc": 1.33090,
+        "c": 0.71,
+        "lambda_c": 0.027,
+        "e0": 0.83,
+        "ksi": 0.45,
+        "P_atm": 101.0,
+        "m": 0.005,
+        "h0": 1.3,
+        "Ch": 0.968,
+        "nb": 3.5,
+        "A0": 0.05,
+        "nd": 5.75,
+        "z_max": 12.5,
+        "cz": 1100.0,
+        "rho": 2.0,
     },
 }
 
