@@ -24,6 +24,7 @@ from ...material.nd import (
     LadrunoJ2Finite,
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
+    LadrunoSANISAND,
     LogStrain,
     ManzariDafalias,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
@@ -250,6 +251,84 @@ class _NDMaterialNS(_BridgeNamespace):
                 jaco_type=jaco_type,
                 tol_f=tol_f,
                 tol_r=tol_r,
+            ),
+            name=name,
+        )
+
+    def LadrunoSANISAND(
+        self,
+        *,
+        G0: float,
+        nu: float,
+        e_init: float,
+        Mc: float,
+        c: float,
+        lambda_c: float,
+        e0: float,
+        ksi: float,
+        P_atm: float,
+        m: float,
+        h0: float,
+        Ch: float,
+        nb: float,
+        A0: float,
+        nd: float,
+        z_max: float,
+        cz: float,
+        rho: float,
+        int_scheme: int = 1,
+        tan_type: int = 0,
+        jaco_type: int = 1,
+        tol_f: float = 1e-7,
+        tol_r: float = 1e-7,
+        p_residual: float = 0.0,
+        p_min: float | None = None,
+        honor_tol_r: bool = False,
+        name: str | None = None,
+    ) -> LadrunoSANISAND:
+        """Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material.
+
+        The fork subclass of :meth:`ManzariDafalias` with settable
+        low-stress constants: ``p_residual`` (default ``0.0``,
+        cohesionless) and ``p_min`` (default ``None`` → ``1.0e-3 *
+        P_atm``, resolved at emit time).  The first 18 keywords and the
+        five-argument integration tail are identical to
+        :meth:`ManzariDafalias`, so a deck migrates by swapping the
+        method.  See the class for the deck rules — confine
+        hydrostatically before flipping to stage 1, and never shear
+        during the elastic stage.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoSANISAND(
+                G0=G0,
+                nu=nu,
+                e_init=e_init,
+                Mc=Mc,
+                c=c,
+                lambda_c=lambda_c,
+                e0=e0,
+                ksi=ksi,
+                P_atm=P_atm,
+                m=m,
+                h0=h0,
+                Ch=Ch,
+                nb=nb,
+                A0=A0,
+                nd=nd,
+                z_max=z_max,
+                cz=cz,
+                rho=rho,
+                int_scheme=int_scheme,
+                tan_type=tan_type,
+                jaco_type=jaco_type,
+                tol_f=tol_f,
+                tol_r=tol_r,
+                p_residual=p_residual,
+                p_min=p_min,
+                honor_tol_r=honor_tol_r,
             ),
             name=name,
         )

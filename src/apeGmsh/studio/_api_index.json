@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-08-29T06:22:15Z",
+  "generated": "2026-09-03T17:31:47Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3331,6 +3331,12 @@
       "signature": "LadrunoRCFiniteStrain(*, E: 'float', nu: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, regularize: 'bool' = True, Kc: 'float' = 0.6666666666666666, beta: 'bool' = False, beta_floor: 'float' = 0.1, lubliner_reduced: 'bool' = False, tangent: 'str' = 'consistent', interlock: 'bool' = False, cyclic: 'bool' = False, agg: 'float' = 16.0, crack_strain: 'float' = 0.0, crack_spacing: 'float' = 0.0, lch: 'float' = 0.0, beta_sr_min: 'float' = 0.01, xcrack: 'bool' = False, deg_kappa: 'float' = 0.5, deg_slip_ref: 'float' = 0.01, deg_min: 'float' = 0.1, implex: 'bool' = False, implex_alpha: 'float' = 1.0, implex_control: 'tuple[float, float] | None' = None, shear_retention: 'str' = 'mcft', shear_ret_factor: 'float' = 0.4, tens_stiff: 'str' = 'off', tens_stiff_c: 'float' = 500.0, tens_stiff_alpha: 'float' = 1.0, name: 'str | None' = None) -> 'LadrunoRCFiniteStrain'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`LadrunoRCFiniteStrain` finite-strain RC material."
+    },
+    "ops.nDMaterial.LadrunoSANISAND": {
+      "symbol": "ops.nDMaterial.LadrunoSANISAND",
+      "signature": "LadrunoSANISAND(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', z_max: 'float', cz: 'float', rho: 'float', int_scheme: 'int' = 1, tan_type: 'int' = 0, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, p_residual: 'float' = 0.0, p_min: 'float | None' = None, honor_tol_r: 'bool' = False, name: 'str | None' = None) -> 'LadrunoSANISAND'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material."
     },
     "ops.nDMaterial.LogStrain": {
       "symbol": "ops.nDMaterial.LogStrain",

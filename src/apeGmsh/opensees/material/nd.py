@@ -55,6 +55,7 @@ __all__ = [
     "DruckerPrager",
     "ManzariDafalias",
     "SAniSandMS",
+    "LadrunoSANISAND",
     "SanisandIntegrationWarning",
     "ASDPlasticMaterial3D",
     "MohrCoulombSoil",
@@ -328,6 +329,20 @@ _MANZARI_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
 #: continuum elasto-plastic tangent, unlike ManzariDafalias.
 _SANISANDMS_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
     3, 2, 1, 1e-7, 1e-7
+)
+
+#: Integration schemes whose dispatch actually reaches
+#: ``ManzariDafalias::ModifiedEuler()`` — the ONE site that reads the
+#: ``-honorTolR`` seam.  Mirrors the fork's own
+#: ``LadrunoSANISAND::schemeReachesModifiedEuler`` (read the dispatch, not
+#: the names): 0 (MAXENE_MFE) and 1 (ModifiedEuler) route there; so does
+#: any value the base switch does not enumerate, via
+#: ``explicit_integrator``'s ``default:``.  7 is named INT_MAXSTR_MFE and
+#: does NOT — its inner switch selects ForwardEuler in BOTH branches.  45
+#: already honours ``mTolR`` unconditionally, which is WHY the seam was
+#: needed for ModifiedEuler and not for it.
+_SCHEMES_REACHING_MODIFIED_EULER: frozenset[int] = frozenset({0, 1}) | frozenset(
+    s for s in range(10, 100) if s != 45
 )
 
 
@@ -671,6 +686,214 @@ class SAniSandMS(NDMaterial):
         if tail != _SANISANDMS_TAIL_DEFAULTS:
             args += tail
         emitter.nDMaterial("SAniSandMS", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoSANISAND(NDMaterial):
+    r"""``nDMaterial LadrunoSANISAND`` — SANISAND with settable low-stress constants.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33019** / 33020 3D / 33021 PS)::
+
+        nDMaterial LadrunoSANISAND tag G0 nu e_init Mc c lambda_c e0 ksi \
+            P_atm m h0 ch nb A0 nd z_max cz Rho \
+            [IntScheme TanType JacoType TolF TolR] \
+            [-Presidual pr] [-Pmin pmin] [-honorTolR 0|1]
+
+    The fork's thin C++ subclass of the ``ManzariDafalias`` material
+    (Ghofrani & Arduino, U. Washington, after Dafalias & Manzari 2004).
+    Its only difference from the base is that the two low-stress constants
+    ``m_Presidual`` and ``m_Pmin`` — hardcoded upstream, not settable, and
+    (for the residual) not on the wire — become optional deck arguments,
+    carried across the wire, and echoed at construction.  Defaults ``0.0``
+    and ``1.0e-3 * P_atm``, following ``NTUASand02``: a cohesionless sand
+    has no cohesion.
+
+    The first 18 positionals and the 5-argument tail are **identical to**
+    :class:`ManzariDafalias` (same field names too), so a deck migrates by
+    swapping the class — ``LadrunoSANISAND(**dataclasses.asdict(old))``.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material
+       is unavailable on stock ``openseespy`` and bites only at
+       ``ops.run()``.
+
+    .. warning::
+       ``p_residual=0.0`` is the physically correct value and the **less
+       numerically forgiving** one. A measured leg that converges at 400
+       steps with the vanilla residual needs 1200 with it at zero. Do not
+       assume a step count carried over from a :class:`ManzariDafalias`
+       deck still works. On a perfectly *proportional* strain path it is
+       worse than a convergence failure — the material never yields at all
+       and the analysis reports success (confine hydrostatically first;
+       see ADR 86 and the stage rules on
+       :meth:`~apeGmsh.opensees.apesees.apeSees.stage`).
+
+    Parameters
+    ----------
+    G0, nu, e_init, Mc, c, lambda_c, e0, ksi, P_atm, m, h0, Ch, nb, A0, \
+    nd, z_max, cz, rho
+        The 18 required doubles, identical in name, order, meaning and
+        validation to :class:`ManzariDafalias` — see that class for the
+        full table.
+    int_scheme
+        Integration scheme (``$IntScheme``), default ``1``
+        (ModifiedEuler, error-controlled). Accepted values are ``0..9``
+        and ``45`` (RungeKutta45 after Sloan). Schemes ``3``
+        (RungeKutta4) and ``5`` (ForwardEuler) emit a
+        :class:`SanisandIntegrationWarning` — they integrate with no
+        error control, exactly as on :class:`ManzariDafalias`.
+    tan_type
+        Tangent operator (``$TanType``), default ``0``.
+    jaco_type
+        Jacobian type used inside the implicit schemes (``$JacoType``),
+        default ``1``.
+    tol_f
+        Yield-function tolerance (``$TolF``), default ``1e-7``.
+    tol_r
+        Residual tolerance (``$TolR``), default ``1e-7``.  Unlike
+        :class:`SAniSandMS`, the fork's parser consumes it.
+    p_residual
+        Residual (apparent-cohesion) pressure ``m_Presidual``, added to
+        ``p`` wherever the model divides by it.  Must be ``>= 0``.
+        Default ``0.0`` (cohesionless — the physically correct value;
+        vanilla hardcodes ``1.0e-2 * P_atm``).
+    p_min
+        Minimum-pressure floor ``m_Pmin``.  Must be ``> 0`` if given;
+        ``None`` (default) resolves to ``1.0e-3 * P_atm`` **at emit
+        time** — ten times vanilla's ``1.0e-4 * P_atm``, so any A/B
+        against :class:`ManzariDafalias` must pin ``-Pmin`` in both legs.
+    honor_tol_r
+        When ``True`` the deck's ``tol_r`` drives the ModifiedEuler
+        substep error tolerance instead of vanilla's hardcoded ``1e-4``.
+        Read at exactly one site, inside
+        ``ManzariDafalias::ModifiedEuler()`` — with a scheme that does
+        not route there this flag has no effect and construction warns.
+        If you set it you almost certainly want an explicit ``tol_r``
+        too: the parser default is ``1e-7``, a 1000× tightening against
+        vanilla's ``1e-4``.
+    """
+
+    # 18 positionals — same names and order as ManzariDafalias
+    G0: float
+    nu: float
+    e_init: float
+    Mc: float
+    c: float
+    lambda_c: float
+    e0: float
+    ksi: float
+    P_atm: float
+    m: float
+    h0: float
+    Ch: float          # NOTE: capital-C `Ch`, matching ManzariDafalias
+    nb: float
+    A0: float
+    nd: float
+    z_max: float
+    cz: float
+    rho: float
+
+    # the 5-argument tail — same defaults as ManzariDafalias
+    int_scheme: int = 1
+    tan_type: int = 0
+    jaco_type: int = 1
+    tol_f: float = 1e-7
+    tol_r: float = 1e-7
+
+    # the fork's two constants + the seam flag
+    p_residual: float = 0.0
+    p_min: float | None = None      # None -> resolved to 1.0e-3 * P_atm
+    honor_tol_r: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_sanisand_bounds(
+            "LadrunoSANISAND",
+            G0=self.G0,
+            nu=self.nu,
+            e_init=self.e_init,
+            Mc=self.Mc,
+            lambda_c=self.lambda_c,
+            e0=self.e0,
+            P_atm=self.P_atm,
+            m=self.m,
+            rho=self.rho,
+        )
+        if self.int_scheme not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 45):
+            raise ValueError(
+                "LadrunoSANISAND: int_scheme must be one of "
+                f"(0..9, 45), got {self.int_scheme!r}"
+            )
+        # Same dead-code schemes as the base — the fork subclass shares
+        # the integrator (see ManzariDafalias.__post_init__).
+        if self.int_scheme in (3, 5):
+            warnings.warn(
+                f"LadrunoSANISAND: int_scheme={self.int_scheme} has dead "
+                "adaptive-substep code and no yield-drift correction, so it "
+                "integrates with no error control (a reported triaxial "
+                "characterisation came out 31-46% too strong on scheme 3). "
+                "Use int_scheme=1 (ModifiedEuler) or 45 (RungeKutta45, "
+                "Sloan) for an error-controlled scheme.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
+            )
+
+        # --- new to this class -------------------------------------------
+        if self.p_residual < 0:
+            raise ValueError(
+                f"LadrunoSANISAND: p_residual must be >= 0, got "
+                f"{self.p_residual!r}. It is an apparent cohesion "
+                f"c = p_r*tan(phi); the fork parser also reserves negatives "
+                f"for the -Pmin sentinel."
+            )
+        if self.p_min is not None and self.p_min <= 0:
+            raise ValueError(
+                f"LadrunoSANISAND: p_min must be > 0 if given, got "
+                f"{self.p_min!r}. Pass None for the default 1.0e-3*P_atm."
+            )
+        if (
+            self.honor_tol_r
+            and self.int_scheme not in _SCHEMES_REACHING_MODIFIED_EULER
+        ):
+            warnings.warn(
+                f"LadrunoSANISAND: honor_tol_r=True has NO EFFECT with "
+                f"int_scheme={self.int_scheme}. The base seam it sets is "
+                f"read at exactly one site, inside "
+                f"ManzariDafalias::ModifiedEuler(), and this scheme does "
+                f"not route there. Use int_scheme=1.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [
+            self.G0, self.nu, self.e_init, self.Mc, self.c, self.lambda_c,
+            self.e0, self.ksi, self.P_atm, self.m, self.h0, self.Ch, self.nb,
+            self.A0, self.nd, self.z_max, self.cz, self.rho,
+        ]
+        tail = (
+            self.int_scheme, self.tan_type, self.jaco_type,
+            self.tol_f, self.tol_r,
+        )
+        if tail != _MANZARI_TAIL_DEFAULTS:
+            args += tail
+        # Flags LAST, never interleaved — a positional after a flag is a
+        # hard parse error in OPS_LadrunoSANISAND, by design.  All three
+        # always emit, even at their defaults: the material echoes what it
+        # is running, so an explicit deck makes the log self-documenting —
+        # and -Pmin's default is 10× ManzariDafalias's.  p_min=None
+        # resolves HERE, not via the fork's -1 sentinel: apeGmsh knows
+        # P_atm at build time, so -Pmin stays out of the class of
+        # arguments whose value you must run the model to learn.
+        args += ["-Presidual", self.p_residual]
+        args += [
+            "-Pmin",
+            self.p_min if self.p_min is not None else 1.0e-3 * self.P_atm,
+        ]
+        args += ["-honorTolR", 1 if self.honor_tol_r else 0]
+        emitter.nDMaterial("LadrunoSANISAND", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

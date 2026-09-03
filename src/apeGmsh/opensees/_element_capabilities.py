@@ -1092,9 +1092,13 @@ SIGMA_ZZ_MATERIAL_CLASSES: frozenset[str] = frozenset({
 #: ``p = P_atm`` reference, so the pairing is unsafe there too.
 #: Known upstream ``ssp``
 #: defect; fix deferred (TIMs report item 9), so the pairing only warns.
+#: ``LadrunoSANISAND`` is the fork's C++ subclass of ``ManzariDafalias``;
+#: its ``initialize()`` chains to the base's (``LadrunoSANISAND.cpp:527``),
+#: so the hard-coded ``p = P_atm`` reference carries over unchanged.
 SSP_UNSAFE_MATERIAL_CLASSES: frozenset[str] = frozenset({
     "ManzariDafalias",
     "SAniSandMS",
+    "LadrunoSANISAND",
 })
 
 

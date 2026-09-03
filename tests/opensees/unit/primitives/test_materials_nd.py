@@ -9,6 +9,7 @@ type-system level.
 from __future__ import annotations
 
 import warnings
+from dataclasses import asdict
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -28,6 +29,7 @@ from apeGmsh.opensees.material.nd import (
     LadrunoJ2Finite,
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
+    LadrunoSANISAND,
     LogStrain,
     ManzariDafalias,
     SAniSandMS,
@@ -866,6 +868,20 @@ class TestNDMaterialNamespace:
         assert isinstance(m, LadrunoCohesiveHingeBiaxial)
         assert ops.tag_for(m) == 1
 
+    def test_LadrunoSANISAND_via_namespace_returns_typed_instance(
+        self,
+    ) -> None:
+        ops = _stub_bridge()
+        # _LS_KWARGS is defined below with the other SANISAND constants;
+        # module-level names resolve at call time.
+        m = ops.nDMaterial.LadrunoSANISAND(
+            **_LS_KWARGS, p_residual=1.01, p_min=0.0101)
+        assert isinstance(m, LadrunoSANISAND)
+        assert m.p_residual == 1.01
+        assert m.p_min == 0.0101
+        assert m.honor_tol_r is False
+        assert ops.tag_for(m) == 1
+
 
 # ---------------------------------------------------------------------------
 # LadrunoCohesiveHingeBiaxial (Ladruno fork — coupled Mz-My hinge, ND 33004)
@@ -941,6 +957,31 @@ _MS_KWARGS = {
 _MS_REQUIRED = (
     125.0, 0.05, 0.80, 1.25, 0.712, 0.019, 0.934, 0.7, 101.3, 0.01,
     7.05, 0.968, 1.1, 0.704, 3.5, 0.0005, 260.0, 1.0, 1.6,
+)
+
+#: Gorini's calibrated set (ADR 86 §6), stresses in kPa — the fork's own
+#: verification deck for LadrunoSANISAND.  P_atm = 101.0 exactly: the
+#: D_factor repair (ADR-86 D5b) is a no-op there and only there.
+_LS_KWARGS = {
+    "G0": 264.32, "nu": 0.3129, "e_init": 0.6944, "Mc": 1.33090, "c": 0.71,
+    "lambda_c": 0.027, "e0": 0.83, "ksi": 0.45, "P_atm": 101.0, "m": 0.005,
+    "h0": 1.3, "Ch": 0.968, "nb": 3.5, "A0": 0.05, "nd": 5.75,
+    "z_max": 12.5, "cz": 1100.0, "rho": 2.0,
+}
+
+#: The 18 positionals ``_LS_KWARGS`` must emit, in DECK order — a literal
+#: tuple on purpose (never derived from ``dataclasses.fields``): a field
+#: reorder would still type-check and round-trip while silently permuting
+#: the deck.
+_LS_REQUIRED = (
+    264.32, 0.3129, 0.6944, 1.33090, 0.71, 0.027, 0.83, 0.45, 101.0, 0.005,
+    1.3, 0.968, 3.5, 0.05, 5.75, 12.5, 1100.0, 2.0,
+)
+
+#: The always-emitted flag block at its defaults (p_min resolved from
+#: ``P_atm = 101.0``).
+_LS_FLAGS_DEFAULT = (
+    "-Presidual", 0.0, "-Pmin", 1.0e-3 * 101.0, "-honorTolR", 0,
 )
 
 
@@ -1067,6 +1108,173 @@ class TestSAniSandMS:
         assert SAniSandMS(**_MS_KWARGS).dependencies() == ()
 
 
+class TestLadrunoSANISAND:
+    """ADR 86 acceptance §5.1 — U1..U8 plus the family carry-overs."""
+
+    def test_defaults(self) -> None:
+        m = LadrunoSANISAND(**_LS_KWARGS)
+        assert (m.int_scheme, m.tan_type, m.jaco_type) == (1, 0, 1)
+        assert (m.tol_f, m.tol_r) == (1e-7, 1e-7)
+        assert m.p_residual == 0.0
+        assert m.p_min is None
+        assert m.honor_tol_r is False
+
+    # U1 + U7: 18 positionals in deck order (literal tuple), no tail,
+    # then the three flags in order, even at their defaults.
+    def test_emit_default_is_positionals_then_flags_no_tail(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_FLAGS_DEFAULT, {}),
+        ]
+
+    # U2: the tail is all-or-nothing — a partial tail would misalign every
+    # argument after the gap.
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("int_scheme", 45),
+            ("tan_type", 1),
+            ("jaco_type", 0),
+            ("tol_f", 1e-8),
+            ("tol_r", 1e-9),
+        ],
+    )
+    def test_one_changed_tail_field_emits_all_five(
+        self, field: str, value: "int | float"
+    ) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, **{field: value})._emit(rec, tag=2)
+        tail = {
+            "int_scheme": 1, "tan_type": 0, "jaco_type": 1,
+            "tol_f": 1e-7, "tol_r": 1e-7,
+        }
+        tail[field] = value
+        assert rec.calls[0][1] == (
+            ("LadrunoSANISAND", 2) + _LS_REQUIRED
+            + (tail["int_scheme"], tail["tan_type"], tail["jaco_type"],
+               tail["tol_f"], tail["tol_r"])
+            + _LS_FLAGS_DEFAULT
+        )
+
+    def test_explicit_defaults_still_omit_the_tail(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(
+            **_LS_KWARGS, int_scheme=1, tan_type=0, jaco_type=1,
+            tol_f=1e-7, tol_r=1e-7,
+        )._emit(rec, tag=4)
+        assert rec.calls[0][1] == (
+            ("LadrunoSANISAND", 4) + _LS_REQUIRED + _LS_FLAGS_DEFAULT
+        )
+
+    # U3: every -flag token sits after every numeric positional — a
+    # positional after a flag is a hard parse error in OPS_LadrunoSANISAND.
+    @pytest.mark.parametrize("extra,n_positionals", [({}, 18), ({"tol_f": 1e-9}, 23)])
+    def test_flag_tokens_follow_every_positional(
+        self, extra: dict, n_positionals: int
+    ) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, **extra)._emit(rec, tag=1)
+        args = rec.calls[0][1]
+        flag_idx = [
+            i for i, a in enumerate(args)
+            if isinstance(a, str) and a.startswith("-")
+        ]
+        # (mat_type, tag) occupy indices 0-1; positionals end at
+        # 1 + n_positionals; the first flag token comes right after.
+        assert min(flag_idx) == 2 + n_positionals
+        assert flag_idx == [2 + n_positionals + k for k in (0, 2, 4)]
+
+    # U4: p_min=None resolves to the number IN THE EMITTER — never the
+    # fork's -1 run-time sentinel, never None.
+    def test_p_min_none_emits_the_resolved_number(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=1)
+        args = rec.calls[0][1]
+        assert args[args.index("-Pmin") + 1] == 1.0e-3 * 101.0
+        assert None not in args
+        assert -1.0 not in args
+
+    def test_explicit_p_min_emits_as_given(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, p_min=1.0e-4 * 101.0)._emit(rec, tag=1)
+        args = rec.calls[0][1]
+        assert args[args.index("-Pmin") + 1] == 1.0e-4 * 101.0
+
+    def test_honor_tol_r_true_emits_one(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, honor_tol_r=True)._emit(rec, tag=1)
+        args = rec.calls[0][1]
+        assert args[args.index("-honorTolR") + 1] == 1
+
+    # U5: refuse, never clamp.
+    def test_rejects_p_min_zero(self) -> None:
+        with pytest.raises(ValueError, match="p_min must be > 0"):
+            LadrunoSANISAND(**_LS_KWARGS, p_min=0.0)
+
+    def test_rejects_negative_p_residual(self) -> None:
+        with pytest.raises(ValueError, match="p_residual must be >= 0"):
+            LadrunoSANISAND(**_LS_KWARGS, p_residual=-1.0)
+
+    # U6: honor_tol_r is read at exactly one site, inside ModifiedEuler();
+    # schemes that do not route there make it a silent no-op — warn.
+    # (2 and 45 skip ModifiedEuler; 0 and 1 reach it.  3/5 would ALSO
+    # raise the dead-scheme warning, so they stay out of this test.)
+    @pytest.mark.parametrize("scheme", [2, 45])
+    def test_honor_tol_r_warns_when_scheme_skips_modified_euler(
+        self, scheme: int
+    ) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="NO EFFECT"):
+            LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme, honor_tol_r=True)
+
+    @pytest.mark.parametrize("scheme", [0, 1])
+    def test_honor_tol_r_silent_when_scheme_reaches_modified_euler(
+        self, scheme: int
+    ) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme, honor_tol_r=True)
+
+    # U8: field names match ManzariDafalias exactly (capital-C `Ch`
+    # included), so a deck migrates by swapping the class.
+    def test_constructs_from_manzari_asdict(self) -> None:
+        base = ManzariDafalias(**_MD_KWARGS)
+        m = LadrunoSANISAND(**asdict(base))
+        assert m.Ch == base.Ch
+        assert m.z_max == base.z_max
+        assert m.int_scheme == base.int_scheme
+
+    # Family carry-overs — same machinery as ManzariDafalias.
+    @pytest.mark.parametrize("scheme", [3, 5])
+    def test_uncontrolled_schemes_warn(self, scheme: int) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="error control"):
+            LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme)
+
+    @pytest.mark.parametrize("scheme", [1, 45])
+    def test_error_controlled_schemes_do_not_warn(self, scheme: int) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme)
+
+    def test_rejects_unknown_int_scheme(self) -> None:
+        with pytest.raises(ValueError, match="int_scheme must be one of"):
+            LadrunoSANISAND(**_LS_KWARGS, int_scheme=10)
+
+    def test_rejects_non_positive_G0(self) -> None:
+        with pytest.raises(ValueError, match="G0 must be > 0"):
+            LadrunoSANISAND(**{**_LS_KWARGS, "G0": 0.0})
+
+    def test_tol_r_is_honoured_unlike_sanisandms(self) -> None:
+        # SAniSandMS raises NotImplementedError here (its vanilla parser
+        # never consumes TolR); the fork parser does, so this constructs.
+        m = LadrunoSANISAND(**_LS_KWARGS, tol_r=1e-9)
+        assert m.tol_r == 1e-9
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoSANISAND(**_LS_KWARGS).dependencies() == ()
+
+
 class TestSanisandSspPairing:
     """``ssp`` builds its stabilization from a wrongly referenced tangent."""
 
@@ -1084,6 +1292,16 @@ class TestSanisandSspPairing:
                 pg="soil",
                 material=SAniSandMS(**_MS_KWARGS),
                 thickness=1.0,
+                formulation="ssp",
+            )
+
+    def test_brick_ssp_warns_for_ladruno_sanisand(self) -> None:
+        # LadrunoSANISAND::initialize() chains to the base's, so the
+        # hard-coded p = P_atm reference carries over.
+        with pytest.warns(SanisandIntegrationWarning, match="P_atm"):
+            LadrunoBrick(
+                pg="soil",
+                material=LadrunoSANISAND(**_LS_KWARGS),
                 formulation="ssp",
             )
 
