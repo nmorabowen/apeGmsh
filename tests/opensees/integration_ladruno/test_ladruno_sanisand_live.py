@@ -20,13 +20,21 @@ I4  A proportional strain ramp at ``p_residual=0`` never yields.  The
     flip is radial through the origin — and stage-0's
     ``elastic_integrator`` welded ``α = s/(p + p_r)`` on every step, so
     with ``p_r = 0`` the weld is ``α = r`` exactly and the yield function
-    stays at ``-√(2/3)·m·p < 0`` forever.  Zero plastic strain, with the
-    analysis converging and reporting success throughout.  The test
-    asserts the known freeze so the behaviour is documented rather than
-    discovered (ADR 86 §4.3; the mitigation is a stress-path change —
-    exactly what I1/I3's triaxial deck does).  If a future fork revisits
-    the open formulation questions and the ramp starts yielding, this
-    test fails loudly — rewrite it to assert the yield.
+    stays at ``-√(2/3)·m·p < 0`` forever.  The freeze signature is a
+    bit-frozen ``α`` and exactly zero plastic strain, with the analysis
+    converging and reporting success throughout.  (It is NOT
+    displacement equality with a never-flipped run: the stage-0 and
+    stage-1 *elastic* code paths integrate the pressure-dependent moduli
+    differently, so the two runs differ by a few percent in strain for
+    the same stress — neither has yielded.)  Vanilla's ``p_r > 0`` is the
+    contrast: ``s/(p + p_r)`` drifts along the ray and the cone is
+    eventually crossed.  The test asserts the known freeze so the
+    behaviour is documented rather than discovered (ADR 86 §4.3; the
+    fork pins the same fact as ``test_radial_ramp_with_pr0_never_yields``;
+    the mitigation is a stress-path change — exactly what I1/I3's
+    triaxial deck does).  If a future fork revisits the open formulation
+    questions and the ramp starts yielding, this test fails loudly —
+    rewrite it to assert the yield.
 
 Live-run shape: ``LiveOpsEmitter`` does not execute STAGED decks
 (``stage_open`` raises), so these tests use its hand-rolled multi-step
@@ -78,11 +86,18 @@ _HAS_MATERIAL: bool | None = None
 
 
 def _require_ladruno_sanisand() -> None:
-    """Probe-skip on fork builds that predate the material."""
+    """Probe-skip on fork builds that predate the material.
+
+    Probes the RESOLVED backend (``LiveOpsEmitter.ops``), not a bare
+    ``import openseespy.opensees``: a Ladruno install's venv boot hook
+    binds that name to the installed build at interpreter startup, while
+    ``APEGMSH_OPENSEES_BIN`` can point the resolver at a different
+    ``dist\bin`` — probing the wrong one would skip (or run) the wrong
+    tests.
+    """
     global _HAS_MATERIAL
     if _HAS_MATERIAL is None:
-        import openseespy.opensees as o
-        o.wipe()
+        o = LiveOpsEmitter(wipe=True).ops
         o.model("basic", "-ndm", 3, "-ndf", 3)
         try:
             o.nDMaterial(
@@ -243,7 +258,7 @@ def _oedometer_run(
     sigma_v: float = 200.0,
     n_elastic: int = 10,
     n_plastic: int = 20,
-) -> float:
+) -> dict[str, np.ndarray]:
     """K0 oedometer: confine elastic, flip, CONTINUE the same loading.
 
     Stage-safe (at elastic ``K0 = nu/(1-nu)`` the stress ratio stays well
@@ -251,7 +266,10 @@ def _oedometer_run(
     ``σh/σv`` constant, so the post-flip continuation is radial through
     the origin.  This is the §4.3 freeze deck for I4.  Lateral rollers
     everywhere, base pinned, the top face carries ``sigma_v`` at λ = 1.
-    Returns the mean top settlement.
+
+    Returns Gauss-point-1 state: ``alpha_flip`` (back-stress ratio at the
+    flip), ``alpha_end`` / ``pstrains_end`` after the post-flip leg, and
+    the mean top settlement ``uz``.
     """
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
@@ -271,11 +289,24 @@ def _oedometer_run(
 
     em = LiveOpsEmitter(wipe=True)
     ops.build().emit(em)
+    (etag,) = em.ops.getEleTags()
+
+    def gp1(what: str) -> np.ndarray:
+        return np.asarray(em.ops.eleResponse(etag, "material", 1, what), float)
+
     assert em.analyze(steps=n_elastic) == 0, "elastic confinement diverged"
+    alpha_flip = gp1("alpha")
     if flip:
         em.update_material_stage(ops.tag_for(sand), 1)
     assert em.analyze(steps=n_plastic) == 0, "post-flip leg diverged"
-    return float(np.mean([em.ops.nodeDisp(int(n), 3) for n in top]))
+    return {
+        "alpha_flip": alpha_flip,
+        "alpha_end": gp1("alpha"),
+        "pstrains_end": gp1("pstrains"),
+        "uz": np.asarray(
+            np.mean([em.ops.nodeDisp(int(n), 3) for n in top]), float
+        ),
+    }
 
 
 def _naive_uniaxial_run(
@@ -405,27 +436,41 @@ def test_i4_proportional_ramp_at_zero_p_residual_freezes() -> None:
     # then the same loading continued — the stress path is radial through
     # the origin.  With p_residual = 0 the elastic stage welded α = s/p =
     # r EXACTLY, so after the flip the yield function sits at
-    # -√(2/3)·m·p < 0 and stays there for every further step: the flipped
-    # run and the never-flipped (pure stage-0 elastic) run are the same
-    # run.  Both converge and report success throughout — that is the
-    # trap this test documents.
-    flipped = _oedometer_run(fem, _make_ladruno_default)
-    elastic = _oedometer_run(fem, _make_ladruno_default, flip=False)
-    assert flipped == pytest.approx(elastic, rel=1e-12), (
-        "the proportional ramp yielded after the flip — either the "
-        "freeze was repaired on the fork side (rewrite this test to "
+    # -√(2/3)·m·p < 0 and stays there for every further step.  The run
+    # converges and reports success throughout (asserted inside the
+    # helper) — that is the trap this test documents.
+    frozen = _oedometer_run(fem, _make_ladruno_default)
+    assert np.allclose(
+        frozen["alpha_end"], frozen["alpha_flip"], rtol=0.0, atol=1e-12
+    ), (
+        "α moved after the flip — the proportional ramp yielded: either "
+        "the freeze was repaired on the fork side (rewrite this test to "
         "assert the yield) or the deck is no longer proportional"
     )
+    assert np.allclose(frozen["pstrains_end"], 0.0, atol=1e-14), (
+        "plastic strain accumulated on the proportional ramp at "
+        "p_residual = 0 — the freeze was repaired; rewrite to assert yield"
+    )
 
-    # Contrast, same material, same confinement level: the NON-proportional
-    # triaxial path DOES yield after the flip (I1 asserts the same for the
-    # pinned-constants pair) — the freeze is a property of proportional
-    # decks, not of p_residual = 0 (§4.3: NTUASand02 ships p_r = 0 and is
-    # used for staged foundation work, where the stress direction changes
-    # constantly and the freeze never occurs).
+    # Contrast 1 — vanilla's constants on the SAME deck: with p_r > 0 the
+    # welded ratio s/(p + p_r) drifts along the ray as p grows, the tiny
+    # cone (m = 0.005) is crossed within the leg, and α moves.  The freeze
+    # is a property of p_r = 0 on a proportional deck.
+    vanilla = _oedometer_run(fem, _make_ladruno_pinned)
+    assert not np.allclose(
+        vanilla["alpha_end"], vanilla["alpha_flip"], rtol=0.0, atol=1e-6
+    ), (
+        "vanilla's p_residual should have let α drift off the ray — if "
+        "even this froze, the stage flip is not reaching the material"
+    )
+
+    # Contrast 2 — same material, same confinement level, NON-proportional
+    # path: the triaxial q-ramp rotates the stress ratio and yields at
+    # once (§4.3: NTUASand02 ships p_r = 0 and is used for staged
+    # foundation work, where the stress direction changes constantly and
+    # the freeze never occurs).
     triax_flipped = _triaxial_run(fem, _make_ladruno_default)
     triax_elastic = _triaxial_run(fem, _make_ladruno_default, flip=False)
     assert triax_flipped != pytest.approx(triax_elastic, rel=1e-6), (
-        "the rotating stress path should have yielded — if even this "
-        "froze, the stage flip is not reaching the material"
+        "the rotating stress path should have yielded"
     )
