@@ -104,12 +104,34 @@ If we expose it (a plain `max_substeps: int = 0` field on `LadrunoSANISAND`, emi
    there: if `max_substeps != 0` and any element carrying that material is in the refuse list,
    raise rather than warn — a silently wrong bearing capacity is not a runnable-deck problem.
 
-## 4. Convergence test on SANISAND decks
+## 4. Convergence test on SANISAND decks — confirmed in our own suite
 
 `NormDispIncr` is **unreachable** on this material — the displacement-increment residual stalls
 at a median 6.6e-7 m and never meets a tight tolerance, and it is not mesh-neutral, so the same
 number means different things at different `h`. Emit `NormUnbalance` scaled to the model's own
 weight (`γ'V`) for SANISAND decks; if a caller asks for `NormDispIncr` on one, warn.
+
+**We had one of these decks and did not know it.** The live A/B
+`test_ladruno_sanisand_live.py` asked for `NormDispIncr(tol=1e-8)` on a single-hex triaxial
+driver, with a comment asserting a residual floor "around 1e-9". The measured floor on that
+build is **4.2587e-08** — 4.3× the tolerance, and ~40× the floor the comment claimed — and the
+deviatoric leg never converged, on the *ManzariDafalias* reference leg. The whole file has moved to `NormUnbalance` at a tolerance
+expressed as a fraction of each deck's own applied load
+(`_RESIDUAL_REL = 1e-4`, `tol = _RESIDUAL_REL * ref_force`).
+
+Two numbers worth carrying forward:
+
+- **The force residual is reachable but not tight.** Sweeping that constant and running the
+  four live tests at each value: all pass at `1e-4`, `3e-5` and `1e-5`; three of four fail at
+  `3e-6` and `1e-6`, every one on a `CTestNormUnbalance` stall. The floor is between `3e-6` and
+  `1e-5` **relative to the applied load** — so a deck asking for a 1e-6 relative force residual
+  on this material is asking for something it cannot have.
+- **The floor depends on the tangent.** A probe built on `ManzariDafalias` (elastic tangent)
+  reaches `1e-6` on the same decks that stall there with the consistent tangent. Measure with
+  the material the deck actually carries, or the number is meaningless.
+
+**Still open:** the emitter-side half — warning when a caller pairs `NormDispIncr` with a
+SANISAND deck. Nothing in apeGmsh does that yet.
 
 ## 5. `-Presidual` — unchanged, but emit it explicitly
 
@@ -140,8 +162,5 @@ move it.
   pin `tan_type=0` alongside the low-stress constants, or it A/Bs two different code paths.
 - Nothing about `-maxSubsteps` moves a golden while it is unset.
 
-**Pre-existing red, unrelated but adjacent:** that same I1 test fails on `main` in the
-`opensees_env` fork build — the *ManzariDafalias* reference leg stalls at a `NormDispIncr` norm
-of 4.2587e-08 against the chain's `tol=1e-8` and never converges. That is §4 of this guide
-happening in our own suite. Fixing it means changing that chain's convergence test, which is
-the §4 slice, not this one.
+- The same file's `_bind_chain` moved from `NormDispIncr` to `NormUnbalance` — it was red on
+  `main` for exactly the §4 reason. See §4 for the measurement.
