@@ -64,6 +64,8 @@ build_opensees(fem, model, result, *, ndm=3, ndf=6,
 #   self-mass (ops.mass_from_model), one Linear timeSeries + Plain pattern per load
 #   pattern (p.from_model(name)), and injects non-shell-backed rigid diaphragms as
 #   RIGID_DIAPHRAGM constraints. Returns the apeSees bridge (you choose .tcl()/.py()).
+#   Areas carrying ETABS property modifiers get a LadrunoShellModifier wrapper
+#   around their plate section -- such a deck needs a LADRUNO build, not stock.
 
 solve_and_extract(model, *, case=None, global_size=1.0, ndm=3, ndf=6,
                   tol=1e-6, max_iter=50) -> SolveResult         # interop/solve.py:46
@@ -72,6 +74,45 @@ solve_and_extract(model, *, case=None, global_size=1.0, ndm=3, ndf=6,
 #   results. case= picks a load pattern (default: first; solved in isolation, no
 #   superposition). Finer global_size → closer to the analytical field.
 ```
+
+## Area property modifiers (cracked sections)
+
+An `Area` may carry `modifiers` -- the ten-entry ETABS OAPI array
+`[f11, f22, f12, m11, m22, m12, v13, v23, mass, weight]`, all defaulting to 1.0.
+The producer writes the *effective* modifiers already in force on that object
+(ETABS lets an area object override its section property; resolving that
+override is ETABS-side knowledge).
+
+```json
+{"id": "W1", "nodes": ["1","2","6","5"], "section": "WALL",
+ "modifiers": {"f11": 0.35, "f22": 0.35, "f12": 0.35}}
+```
+
+Three things this changes, all of which were silent bugs before:
+
+- **Areas bucket by `(section, modifiers)`, not by section name.** Two walls on
+  one section can legitimately be cracked differently. A section with more than
+  one distinct modifier set gets `__m1`/`__m2`/... PG suffixes, ordered by the
+  modifier values so they are stable across runs; `AreaGroup.modifiers` records
+  which is which. A section with a single variant keeps its bare name.
+- **The nine stiffness modifiers ride a `LadrunoShellModifier`** wrapper (fork
+  ADR 91) around the plate section. An all-1.0 set is treated as gross and emits
+  no wrapper.
+- **`weight != 1.0` is REFUSED** at import with an actionable message. OpenSees
+  ties shell self-weight to the same density as the mass matrix, so it could
+  only alias `mass`. Scale self-weight at the load level instead.
+
+The `mass` modifier is applied to the *lumped* areal density as well as the
+section, because this path lumps shell mass on the apeGmsh side
+(`g.masses.surface`) and would otherwise ignore it.
+
+Two things NOT to expect from this path. Walls cracked with `m11`/`m22`/`m12`
+come through unchanged in plane — in-plane bending is membrane action, so only
+`f11`/`f22`/`f12` soften a wall (fork gate G10). And results are not expected to
+match ETABS bit-for-bit: the congruence used for the Poisson coupling term is
+not known to match CSI's for strongly unequal `f11`/`f22`, and that parity is
+deliberately not validated. The accepted validation is the fork's frame-vs-shell
+equivalence cross-check.
 
 `SolveResult` (`solve.py:30`): `case`, `displacements: dict[str, Vec6]`
 (etabs joint id → Ux,Uy,Uz,Rx,Ry,Rz), `reactions: dict[str, Vec6]`,

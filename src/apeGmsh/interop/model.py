@@ -44,6 +44,70 @@ class Frame:
     rotation: float = 0.0
 
 
+#: The ten ETABS area property modifiers, in OAPI array order.
+AREA_MODIFIER_NAMES: tuple[str, ...] = (
+    "f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23", "mass", "weight",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AreaModifiers:
+    """ETABS area property modifiers — the ten-entry OAPI array.
+
+    Carried per :class:`Area` as the *effective* modifiers already in
+    force on that object: ETABS lets an area object override its
+    section property's modifiers, and resolving that override is
+    ETABS-side knowledge, so the producer writes the resolved values
+    here rather than making every consumer re-derive them.
+
+    The first nine map straight onto the fork's
+    ``section LadrunoShellModifier`` (Ladruno ADR 91). ``weight`` has no
+    counterpart there — OpenSees derives shell self-weight from the same
+    ``getRho()`` that builds the mass matrix, so a weight modifier could
+    only alias ``mass`` — and the importer refuses a non-unit value
+    rather than dropping it silently.
+    """
+
+    f11:    float = 1.0
+    f22:    float = 1.0
+    f12:    float = 1.0
+    m11:    float = 1.0
+    m22:    float = 1.0
+    m12:    float = 1.0
+    v13:    float = 1.0
+    v23:    float = 1.0
+    mass:   float = 1.0
+    weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in AREA_MODIFIER_NAMES:
+            value = getattr(self, name)
+            if value < 0.0:
+                raise ValueError(
+                    f"AreaModifiers: {name} must be >= 0.0, got {value}."
+                )
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AreaModifiers":
+        unknown = set(d) - set(AREA_MODIFIER_NAMES)
+        if unknown:
+            raise ValueError(
+                f"AreaModifiers: unknown modifier(s) {sorted(unknown)!r}; "
+                f"expected any of {list(AREA_MODIFIER_NAMES)!r}."
+            )
+        return cls(**{k: float(v) for k, v in d.items()})
+
+    @property
+    def is_identity(self) -> bool:
+        """True when every modifier is 1.0 — i.e. gross section."""
+        return all(getattr(self, n) == 1.0 for n in AREA_MODIFIER_NAMES)
+
+    @property
+    def stiffness(self) -> dict[str, float]:
+        """The nine modifiers that map onto ``LadrunoShellModifier``."""
+        return {n: getattr(self, n) for n in AREA_MODIFIER_NAMES[:-1]}
+
+
 @dataclass(frozen=True, slots=True)
 class Area:
     id: str
@@ -53,6 +117,8 @@ class Area:
     thickness: float | None = None
     kind: str | None = None
     local_axis_deg: float = 0.0
+    #: Effective property modifiers; ``None`` means gross (all 1.0).
+    modifiers: AreaModifiers | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +294,10 @@ class StructuralModel:
                     id=a["id"], nodes=tuple(a["nodes"]), section=a["section"],
                     material=a.get("material"), thickness=a.get("thickness"),
                     kind=a.get("kind"), local_axis_deg=a.get("local_axis_deg", 0.0),
+                    modifiers=(
+                        AreaModifiers.from_dict(a["modifiers"])
+                        if a.get("modifiers") else None
+                    ),
                 )
                 for a in d.get("areas", [])
             ],

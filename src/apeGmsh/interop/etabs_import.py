@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 
 from apeGmsh.opensees import apeSees
 
-from .model import StructuralModel
+from .model import AREA_MODIFIER_NAMES, AreaModifiers, StructuralModel
 
 # A unit vecxz for the geomTransf local x-z plane, keyed by member orientation.
 # Vertical members (axis ~ Z) take (1,0,0); everything else takes (0,0,1).
@@ -65,9 +65,19 @@ class FrameGroup:
 
 @dataclass(frozen=True, slots=True)
 class AreaGroup:
-    """All shell surfaces of a section sharing a PG."""
+    """All shell surfaces of a (section, modifiers) pair sharing a PG.
+
+    ETABS modifiers can be assigned per area object, overriding the
+    section property, so two walls on the same section can legitimately
+    be cracked differently. The section name alone is therefore not a
+    sufficient group key — :attr:`modifiers` completes it, and ``pg``
+    carries a disambiguating suffix whenever one section has more than
+    one distinct modifier set (see :func:`_area_pg_names`).
+    """
     pg: str
     section: str
+    #: Effective modifiers for this group; ``None`` means gross.
+    modifiers: AreaModifiers | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +141,65 @@ def _orient(model: StructuralModel, fr) -> str:
     return "v" if dz > horiz else "h"
 
 
+def _refuse_weight_modifiers(model: StructuralModel) -> None:
+    """Refuse a non-unit ETABS ``weight`` modifier.
+
+    OpenSees derives the shell self-weight body force from the same
+    ``getRho()`` that builds the mass matrix, so there is no way to
+    scale weight independently of mass — the fork declines to ship a
+    flag that would silently alias another one (Ladruno ADR 91 §5).
+    Dropping it here instead would reintroduce exactly the class of
+    silent-wrong-stiffness bug this whole path exists to close.
+    """
+    offenders = sorted(
+        ar.id for ar in model.areas
+        if ar.modifiers is not None and ar.modifiers.weight != 1.0
+    )
+    if offenders:
+        shown = ", ".join(offenders[:5])
+        more = f" (+{len(offenders) - 5} more)" if len(offenders) > 5 else ""
+        raise ValueError(
+            f"area(s) {shown}{more} carry an ETABS weight modifier != 1.0, "
+            f"which cannot be represented: OpenSees ties shell self-weight "
+            f"to the same density as the mass matrix, so a weight modifier "
+            f"could only alias the mass modifier. Scale self-weight at the "
+            f"load level instead — the gravity pattern factor, or the "
+            f"eleLoad -type -selfWeight factors — and set weight back to "
+            f"1.0 on these areas."
+        )
+
+
+def _area_pg_names(
+    keys: list[tuple[str, "AreaModifiers | None"]],
+) -> dict[tuple[str, "AreaModifiers | None"], str]:
+    """Assign one PG name per distinct ``(section, modifiers)`` key.
+
+    A section whose areas all share one modifier set keeps its bare
+    section name, so models without modifiers are unchanged. When a
+    section carries more than one distinct set the names gain a stable
+    ``__m1``/``__m2``/... suffix, ordered by the modifier values so the
+    mapping is deterministic across runs. Which suffix means what is
+    recorded on each :class:`AreaGroup`'s ``modifiers``.
+    """
+    by_section: dict[str, list[AreaModifiers | None]] = {}
+    for sec, mods in keys:
+        by_section.setdefault(sec, []).append(mods)
+    names: dict[tuple[str, AreaModifiers | None], str] = {}
+    for sec, variants in by_section.items():
+        if len(variants) == 1:
+            names[(sec, variants[0])] = sec
+            continue
+        ordered = sorted(
+            variants,
+            key=lambda m: tuple(
+                getattr(m, n) for n in AREA_MODIFIER_NAMES
+            ) if m is not None else (1.0,) * len(AREA_MODIFIER_NAMES),
+        )
+        for i, mods in enumerate(ordered, start=1):
+            names[(sec, mods)] = f"{sec}__m{i}"
+    return names
+
+
 def import_structural_model(g, model: StructuralModel, *,
                             self_mass: bool = True) -> ImportResult:
     """Build geometry + physical groups and declare loads / mass on ``g``.
@@ -139,6 +208,8 @@ def import_structural_model(g, model: StructuralModel, *,
     rho*thickness). Has no effect on a static analysis; needed for modal /
     dynamic.
     """
+    _refuse_weight_modifiers(model)
+
     gm = g.model.geometry
 
     # 1. Nodes -> points.
@@ -185,17 +256,28 @@ def import_structural_model(g, model: StructuralModel, *,
         g.physical.add_curve(tags, name=pg)
         frame_groups.append(FrameGroup(pg=pg, section=sec, orient=orient))
 
-    # 2b. Areas -> planar surfaces from shared edges, bucketed by section.
+    # 2b. Areas -> planar surfaces from shared edges, bucketed by
+    #     (section, modifiers). The section name alone is NOT a
+    #     sufficient key: ETABS modifiers can be assigned per area
+    #     object, so two walls on one section can be cracked
+    #     differently, and bucketing on the name would give every wall
+    #     in the group whichever cracking came first.
     area_surf: dict[str, int] = {}
-    area_buckets: dict[str, list[int]] = {}
+    area_buckets: dict[tuple[str, AreaModifiers | None], list[int]] = {}
     for ar in model.areas:
         surf = gm.add_plane_surface([curve_loop(list(ar.nodes))])
         area_surf[ar.id] = surf
-        area_buckets.setdefault(ar.section, []).append(surf)
+        mods = ar.modifiers if (
+            ar.modifiers is not None and not ar.modifiers.is_identity
+        ) else None
+        area_buckets.setdefault((ar.section, mods), []).append(surf)
+    pg_names = _area_pg_names(list(area_buckets))
     area_groups: list[AreaGroup] = []
-    for sec, tags in area_buckets.items():
-        g.physical.add_surface(tags, name=sec)
-        area_groups.append(AreaGroup(pg=sec, section=sec))
+    for key, tags in area_buckets.items():
+        sec, mods = key
+        pg = pg_names[key]
+        g.physical.add_surface(tags, name=pg)
+        area_groups.append(AreaGroup(pg=pg, section=sec, modifiers=mods))
 
     # 3. Restraints -> point PGs, one per distinct DOF mask.
     by_mask: dict[tuple[int, ...], list[int]] = {}
@@ -269,7 +351,15 @@ def import_structural_model(g, model: StructuralModel, *,
             sec = model.section(ag.section)
             mat = model.material(sec.material) if sec.material else None
             if mat and mat.rho and sec.thickness:
-                g.masses.surface(pg=ag.pg, areal_density=mat.rho * sec.thickness)
+                # The mass modifier has to be applied HERE: this path
+                # lumps shell mass on the apeGmsh side, so it never
+                # reads the section's rho and would silently ignore a
+                # -mass flag on the emitted section.
+                mass_mod = ag.modifiers.mass if ag.modifiers else 1.0
+                g.masses.surface(
+                    pg=ag.pg,
+                    areal_density=mat.rho * sec.thickness * mass_mod,
+                )
                 has_masses = True
 
     # 6. Diaphragms -> point PGs; shell-backed ones are flagged for skip.
@@ -518,6 +608,11 @@ def build_opensees(fem, model: StructuralModel, result: ImportResult,
 
     Returns the ``apeSees`` object (not yet exported) so the caller chooses
     ``ops.tcl(path)`` / ``ops.py(path)``.
+
+    Areas carrying ETABS property modifiers emit a
+    ``LadrunoShellModifier`` wrapper around their plate section, which
+    is a **fork** primitive (Ladruno ADR 91) — such a deck needs a
+    Ladruno build of OpenSees, not stock.
     """
     # Rigid-diaphragm records must be on the snapshot before apeSees reads it.
     _inject_diaphragms(fem, result)
@@ -552,6 +647,12 @@ def build_opensees(fem, model: StructuralModel, result: ImportResult,
             raise ValueError(f"shell section {ag.section!r} has no thickness")
         plate = ops.section.ElasticMembranePlateSection(
             E=mat.E, nu=mat.nu, h=sec.thickness, rho=mat.rho or 0.0)
+        if ag.modifiers is not None:
+            # Cracked-section stiffness (ACI 318-25 §6.6.3.1.1 and the
+            # like) rides a LadrunoShellModifier wrapper rather than a
+            # doctored E/h, which cannot express f11 != m11 at all.
+            plate = ops.section.LadrunoShellModifier(
+                inner=plate, **ag.modifiers.stiffness)
         shell_ctor(pg=ag.pg, section=plate)
 
     for rg in result.restraint_groups:
