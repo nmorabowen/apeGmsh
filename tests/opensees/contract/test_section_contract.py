@@ -30,6 +30,7 @@ from apeGmsh.opensees.section.beam import ElasticSection
 from apeGmsh.opensees.section.fiber import Fiber, RectPatch
 from apeGmsh.opensees.section.plate import (
     ElasticMembranePlateSection,
+    LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
     ShellLayer,
@@ -43,6 +44,7 @@ ALL_SECTIONS: list[type[Section]] = [
     LayeredShellFiberSection,
     Fiber,
     Aggregator,
+    LadrunoShellModifier,
 ]
 
 
@@ -76,6 +78,10 @@ def _make_minimal(cls: type[Section]) -> Section:
                     yI=0, zI=0, yJ=1, zJ=1,
                 ),
             )
+        )
+    if cls is LadrunoShellModifier:
+        return LadrunoShellModifier(
+            inner=ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2),
         )
     if cls is Aggregator:
         # Real UniaxialMaterial (not a MagicMock) — Aggregator's

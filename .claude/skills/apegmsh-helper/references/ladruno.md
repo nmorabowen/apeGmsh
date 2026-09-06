@@ -84,6 +84,7 @@ take.
 | **EnergyBalance** | recorder | fork-only |
 | **`.ladruno` recorder** | recorder | `recorder ladruno` — note `.ladruno`, a sibling of the vanilla `.mpco` |
 | **LadrunoPorousOverlay family** | load pattern + driver + recorder channels | fork-only persistent-fluid staggered u-p (PATTERN tag 33022, fork ADR-73, shipped incl. both explicit lanes) — **no typed primitive yet** (follow-up ADR; see the section below) |
+| **LadrunoShellModifier** | section | fork-only ETABS-style stiffness modifiers wrapping any order-8 plate section (fork ADR 91) — typed `ops.section.LadrunoShellModifier` |
 | **stack profiler** | control command | `ops.profiler.*` — brackets the analyze loop; writes `profile.h5` |
 
 The three **explicit integrators** are emittable via typed primitives:
@@ -97,6 +98,71 @@ build (it's just an `integrator <Type> ...` line); the fork is required only to
 Defaults: Bathe `p∈(0,1)`=0.54, LNVD `alpha∈[0,1)`=0.80; `lump` defaults to RowSum
 on the Bathe schemes and Diagonal on CentralDifferenceLadruno (omit to inherit).
 Pair with `ops.system.Diagonal()` (lumped diagonal mass) for explicit runs.
+
+## LadrunoShellModifier (cracked-section stiffness for shells)
+
+`section LadrunoShellModifier $tag $innerSecTag <-f11 v> <-f22 v> <-f12 v>
+<-m11 v> <-m22 v> <-m12 v> <-v13 v> <-v23 v> <-mass v>` — a **decorator**
+section that scales the tangent, resultants and density of any order-8 plate
+section. This is the ETABS/ACI cracked-section idiom expressed without
+disturbing the wrapped section's constitutive law:
+
+```python
+slab = ops.section.ElasticMembranePlateSection(E=25e6, nu=0.2, h=0.3, rho=2.4)
+# Cracked shear wall per ACI 318-25 6.6.3.1.1.
+wall = ops.section.LadrunoShellModifier(inner=slab, f11=0.35, f22=0.35, f12=0.35)
+ops.element.ASDShellQ4(pg="Walls", section=wall)
+```
+
+- **`inner` should be `ElasticMembranePlateSection` — that is the supported
+  case.** The fork accepts any order-8 plate section (it refuses anything else
+  at parse time), but wrapping `LayeredShell` / `LayeredShellFiberSection` or
+  any other path-dependent section raises
+  `ShellModifierNonlinearInnerWarning`. Modifiers are a stiffness fiction: the
+  fork drives the wrapped section at a scaled deformation `S·e`
+  (`scale[i] = sqrt(mod[i])`) and scales its resultants back by `S`. For an
+  elastic inner that is exactly a stiffness scale. For a path-dependent inner
+  the constitutive law integrates at a fictitious strain, so yield and damage
+  land in the wrong place, and per-layer stresses read from the inner materials
+  are the response at `S·e` — no post-hoc scaling recovers the physical values.
+  Model a nonlinear stiffness reduction constitutively instead.
+- Every flag defaults to `1.0` and **only non-default flags are emitted**, so an
+  all-defaults wrap is a no-op and a generator can wrap unconditionally.
+- `0.0` is accepted (ETABS-legal) but leaves the section singular in that
+  response mode; the fork warns once per `section` command. Negative is refused.
+- Modifiers apply as a congruence `D' = S·D·S`, `S = diag(√f11 … √v23)`, so the
+  Poisson coupling moves as `√(f11·f22)`. Indistinguishable from a plain block
+  scale whenever `f11 == f22`. A diagonal-only rescale was rejected (ADR 91 §4):
+  it destroys positive definiteness at exactly the cracked-wall values.
+- **A wall cracked with `m11` is a SILENT NO-OP.** In-plane bending of a wall or
+  deep beam is carried by MEMBRANE action (`sigma_xx` over the depth), so the
+  modifier that softens it is **`f11`**. The `m` modifiers are *out-of-plane*
+  plate bending and the `v` modifiers *out-of-plane* (transverse) shear —
+  neither is in the in-plane load path, and neither warns. Reaching for "the
+  bending ones" to crack a shear wall gets you no cracking at all. The fork
+  pins this as gate G10 rather than leaving it to prose. Corollary: for a member
+  loaded in its own plane, cracking all eight is indistinguishable from cracking
+  only `f11`/`f22`/`f12`.
+- **No weight modifier.** OpenSees derives shell self-weight from the same
+  `getRho()` that builds the mass matrix, so a weight flag could only alias
+  `mass`. Scale self-weight at the load level instead.
+- `Ep_mod` on `ElasticMembranePlateSection` (upstream, optional 5th arg, now
+  exposed) is exactly equivalent to `m11=m22=m12=v13=v23=r`. Prefer this
+  section — it is strictly more expressive.
+
+**Validation status.** The fork's G9/G10 gates cross-check a cracked shell
+against the equivalent cracked FRAME member (a flexure-controlled cantilever,
+`L/d = 10`, built both ways): the shell/frame deflection RATIO is identical
+gross and cracked — 2.8571 = 1/0.35 at every mesh density from 20x2 to 120x24 —
+so the modifier scales straight through the membrane-locking discretisation gap.
+That is the accepted validation. Bit-parity with ETABS itself is **not**
+established and is not being pursued: CSI does not document whether ETABS uses
+the same `D' = S*D*S` congruence, so for strongly unequal `f11`/`f22` the
+Poisson coupling term may differ from ETABS. Equal `f11 == f22` — every standard
+cracked-wall recipe — is unaffected.
+
+The ETABS import path (`apeGmsh.interop`) consumes area modifiers
+automatically; see `references/interop.md`.
 
 ## More fork bridge clusters (all emit on any build, RUN only on the fork)
 

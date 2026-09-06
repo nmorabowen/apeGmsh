@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-06T04:37:59Z",
+  "generated": "2026-09-06T05:40:45Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3574,7 +3574,7 @@
     },
     "ops.section.ElasticMembranePlateSection": {
       "symbol": "ops.section.ElasticMembranePlateSection",
-      "signature": "ElasticMembranePlateSection(*, E: 'float', nu: 'float', h: 'float', rho: 'float' = 0.0, name: 'str | None' = None) -> 'ElasticMembranePlateSection'",
+      "signature": "ElasticMembranePlateSection(*, E: 'float', nu: 'float', h: 'float', rho: 'float' = 0.0, Ep_mod: 'float' = 1.0, name: 'str | None' = None) -> 'ElasticMembranePlateSection'",
       "skill": "references/opensees-bridge.md",
       "doc": "``section ElasticMembranePlateSection`` — single-layer plate."
     },
@@ -3583,6 +3583,12 @@
       "signature": "Fiber(*, patches: \"tuple['RectPatch | CircPatch', ...]\" = (), fibers: 'tuple[FiberPoint, ...]' = (), layers: 'tuple[StraightLayer, ...]' = (), GJ: 'float | None' = None, name: 'str | None' = None) -> '_FiberCls'",
       "skill": "references/opensees-bridge.md",
       "doc": "``section Fiber`` — block-emit fiber section."
+    },
+    "ops.section.LadrunoShellModifier": {
+      "symbol": "ops.section.LadrunoShellModifier",
+      "signature": "LadrunoShellModifier(*, inner: 'Section', f11: 'float' = 1.0, f22: 'float' = 1.0, f12: 'float' = 1.0, m11: 'float' = 1.0, m22: 'float' = 1.0, m12: 'float' = 1.0, v13: 'float' = 1.0, v23: 'float' = 1.0, mass: 'float' = 1.0, name: 'str | None' = None) -> 'LadrunoShellModifier'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "``section LadrunoShellModifier`` — ETABS-style stiffness"
     },
     "ops.section.LayeredShell": {
       "symbol": "ops.section.LayeredShell",
