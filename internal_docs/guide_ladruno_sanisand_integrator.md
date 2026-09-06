@@ -72,7 +72,7 @@ take the symmetrized tangent knowingly.
 The converged answer does **not** change with the tangent (the fork gated that on a free-DOF
 BVP); only the iteration count and the solver requirement do.
 
-## 3. New optional flag: `-maxSubsteps N`
+## 3. `-maxSubsteps N` — DONE
 
 `ModifiedEuler` substeps toward `dT_min = 1e-6` with no bound on substep count, and on reaching
 the floor it *force-accepts* a degraded substep and reports success. Measured on a strip
@@ -81,8 +81,8 @@ told nothing was wrong (0 of 80 subdivisions used). With a cap, the material ref
 increment, the element propagates the refusal, the integrator cuts the load step — 2.1–2.6×
 deeper reach for the same wall clock, worst step 759 s → 94 s, same answer.
 
-If we expose it (a plain `max_substeps: int = 0` field on `LadrunoSANISAND`, emitted as
-`-maxSubsteps N` when non-zero), three rules apply:
+Exposed as `max_substeps: int = 0` on `LadrunoSANISAND`, emitted as `-maxSubsteps N` when
+non-zero. All three rules below are implemented; the third is a **raise**, not a warning.
 
 1. **Default `0` = uncapped = today.** A deck that does not ask for it must be byte-identical.
 2. **It is inert on schemes that never reach `ModifiedEuler`** — exactly the condition
@@ -100,9 +100,13 @@ If we expose it (a plain `max_substeps: int = 0` field on `LadrunoSANISAND`, emi
      (`FourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`) — these have no
      return channel at all (`setTrialStrain` is called inside a `void formResidAndTangent`).
 
-   Since we resolve materials against element assignments at `build()`, this is checkable
-   there: if `max_substeps != 0` and any element carrying that material is in the refuse list,
-   raise rather than warn — a silently wrong bearing capacity is not a runnable-deck problem.
+   `validate_sanisand_substep_cap` raises at the emit seam. It is an **allow-list**
+   (`_REFUSAL_PROPAGATING_ELEMENTS = {LadrunoBrick}`), not the refuse-list sketched above — the
+   operative sentence is the positive one, "only `LadrunoBrick` propagates on every path today",
+   and most of the refuse-list elements are fork elements apeGmsh does not expose at all.
+   `LadrunoBrick20` is a separate C++ class rather than a formulation, so it is off the list
+   until someone reads its return paths. The material graph is walked transitively, so a
+   `PlaneStrain` / `LogStrain` wrapper cannot hide a capped model one level down.
 
 ## 4. Convergence test on SANISAND decks — confirmed in our own suite
 
@@ -130,8 +134,12 @@ Two numbers worth carrying forward:
   reaches `1e-6` on the same decks that stall there with the consistent tangent. Measure with
   the material the deck actually carries, or the number is meaningless.
 
-**Still open:** the emitter-side half — warning when a caller pairs `NormDispIncr` with a
-SANISAND deck. Nothing in apeGmsh does that yet.
+**Done:** `validate_manzari_convergence_test` warns at the emit seam on `NormDispIncr` /
+`RelativeNormDispIncr` under any Manzari-family material, per stage on a staged deck. It is
+keyed on the MATERIAL, not on `tan_type` — the stall is the integrator's, and the leg that
+was actually red ran the elastic tangent, so a tan_type-keyed gate would have stayed quiet on
+exactly the deck that failed. `EnergyIncr` is not flagged: it was measured to converge on the
+same deck.
 
 ## 5. `-Presidual` — unchanged, but emit it explicitly
 
@@ -141,6 +149,9 @@ free-surface Gauss point gets clamped at `s/B ≈ 0.0153` on a coarse dense leg 
 the model author, not to us. Our existing warning about `p_residual=0.0` being the less
 forgiving value stands unchanged; keep emitting `-Presidual` explicitly so an upgrade cannot
 move it.
+
+All of the above is warranted by
+[ADR 0103](../src/apeGmsh/opensees/architecture/decisions/0103-sanisand-integrator-deck-contract.md).
 
 ## 6. What did *not* change
 
