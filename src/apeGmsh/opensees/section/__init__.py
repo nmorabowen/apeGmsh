@@ -10,7 +10,8 @@ under ``material/``). The module is split by section family:
   Elastic`` lowered from a :class:`~apeGmsh.sections.SectionProperties`
   analyzer, ADR 0078)
 * :mod:`.plate` — :class:`ElasticMembranePlateSection`,
-  :class:`LayeredShell`, :class:`LayeredShellFiberSection`
+  :class:`LayeredShell`, :class:`LayeredShellFiberSection`,
+  :class:`LadrunoShellModifier`
 * :mod:`.fiber` — :class:`Fiber`, plus value objects
   :class:`RectPatch`, :class:`StraightLayer`, :class:`FiberPoint`
 
@@ -33,10 +34,13 @@ from .fiber import (
     W_fiber,
 )
 from .plate import (
+    SHELL_MODIFIER_FLAGS,
     ElasticMembranePlateSection,
+    LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
     ShellLayer,
+    ShellModifierNonlinearInnerWarning,
 )
 
 
@@ -51,6 +55,10 @@ __all__ = [
     "LayeredShell",
     "LayeredShellFiberSection",
     "ShellLayer",
+    # plate — fork decorator (Ladruno ADR 91)
+    "LadrunoShellModifier",
+    "SHELL_MODIFIER_FLAGS",
+    "ShellModifierNonlinearInnerWarning",
     # fiber
     "Fiber",
     "FiberPoint",

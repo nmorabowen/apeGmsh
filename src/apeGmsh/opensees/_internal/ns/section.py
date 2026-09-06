@@ -23,6 +23,7 @@ from ...section.fiber import (
 )
 from ...section.plate import (
     ElasticMembranePlateSection,
+    LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
     ShellLayer,
@@ -122,11 +123,20 @@ class _SectionNS(_BridgeNamespace):
         nu: float,
         h: float,
         rho: float = 0.0,
+        Ep_mod: float = 1.0,
         name: str | None = None,
     ) -> ElasticMembranePlateSection:
-        """``section ElasticMembranePlateSection`` — single-layer plate."""
+        """``section ElasticMembranePlateSection`` — single-layer plate.
+
+        ``Ep_mod`` is the upstream out-of-plane stiffness modifier, kept
+        for round-trip fidelity; prefer
+        :meth:`LadrunoShellModifier` for new work.
+        """
         return self._bridge._register(
-            ElasticMembranePlateSection(E=E, nu=nu, h=h, rho=rho), name=name
+            ElasticMembranePlateSection(
+                E=E, nu=nu, h=h, rho=rho, Ep_mod=Ep_mod,
+            ),
+            name=name,
         )
 
     def LayeredShell(
@@ -148,6 +158,41 @@ class _SectionNS(_BridgeNamespace):
         layered plate section."""
         return self._bridge._register(
             LayeredShellFiberSection(layers=layers), name=name
+        )
+
+    def LadrunoShellModifier(
+        self,
+        *,
+        inner: Section,
+        f11:  float = 1.0,
+        f22:  float = 1.0,
+        f12:  float = 1.0,
+        m11:  float = 1.0,
+        m22:  float = 1.0,
+        m12:  float = 1.0,
+        v13:  float = 1.0,
+        v23:  float = 1.0,
+        mass: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoShellModifier:
+        """``section LadrunoShellModifier`` — ETABS-style stiffness
+        modifiers on any order-8 plate section (fork, Ladruno ADR 91).
+
+        ``inner`` is the wrapped plate section; every modifier defaults
+        to ``1.0`` and only non-default flags are emitted, so an
+        all-defaults wrap is a no-op. See
+        :class:`LadrunoShellModifier` for the congruence convention and
+        the deliberate absence of a weight modifier.
+        """
+        return self._bridge._register(
+            LadrunoShellModifier(
+                inner=inner,
+                f11=f11, f22=f22, f12=f12,
+                m11=m11, m22=m22, m12=m12,
+                v13=v13, v23=v23,
+                mass=mass,
+            ),
+            name=name,
         )
 
     # -- Fiber section ---------------------------------------------------

@@ -55,6 +55,7 @@ from ...element.zero_length import (
 )
 from ...section.plate import (
     ElasticMembranePlateSection,
+    LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
 )
@@ -93,6 +94,9 @@ _ShellSection = (
     ElasticMembranePlateSection
     | LayeredShell
     | LayeredShellFiberSection
+    # A LadrunoShellModifier wraps one of the above and is itself a
+    # valid order-8 plate section (fork ADR 91).
+    | LadrunoShellModifier
 )
 
 
