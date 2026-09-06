@@ -288,6 +288,7 @@ class _NDMaterialNS(_BridgeNamespace):
         p_residual: float = 0.0,
         p_min: float | None = None,
         honor_tol_r: bool = False,
+        max_substeps: int = 0,
         name: str | None = None,
     ) -> LadrunoSANISAND:
         """Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material.
@@ -338,6 +339,7 @@ class _NDMaterialNS(_BridgeNamespace):
                 p_residual=p_residual,
                 p_min=p_min,
                 honor_tol_r=honor_tol_r,
+                max_substeps=max_substeps,
             ),
             name=name,
         )

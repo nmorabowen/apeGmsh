@@ -95,7 +95,9 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
+    validate_sanisand_substep_cap,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -1275,6 +1277,27 @@ class BuiltModel:
                 (repr(st.name), st.system) for st in self.stage_records
             ],
         )
+
+        # NormDispIncr is unreachable on a SANISAND deck -- the
+        # displacement-increment residual stalls and is not mesh-neutral
+        # (measured: a 4.2587e-08 floor against a 1e-8 tolerance in our own
+        # live suite). Keyed on the material alone, NOT on tan_type: the
+        # stall belongs to the integrator, and it was measured on an
+        # elastic-tangent leg.
+        validate_manzari_convergence_test(
+            ordered,
+            staged=_staged,
+            flat_tests=[p for p in ordered if isinstance(p, ConvergenceTest)],
+            stage_tests=[
+                (repr(st.name), st.test) for st in self.stage_records
+            ],
+        )
+
+        # A max_substeps cap only helps if the element ACTS on the refusal
+        # it produces; under one that discards the return code the analysis
+        # converges on a partially integrated stress. Raise, not warn --
+        # that is a wrong answer, not a slow run.
+        validate_sanisand_substep_cap(elements)
 
         # ADR 0093 S7: a stage-CLAIMED interface cannot ride the staged
         # H5 archive.  The claim itself is bridge-side state — nothing

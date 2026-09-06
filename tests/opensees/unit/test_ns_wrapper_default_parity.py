@@ -77,7 +77,10 @@ _ALLOWED_DIVERGENCES: dict[str, str] = {}
 #: Floor on the number of (wrapper, target) parameter pairs actually
 #: compared.  Without it a regression in the resolver below would make this
 #: file vacuously green: zero pairs compared, zero mismatches, all passing.
-#: 527 pairs compare today across 190 methods.
+#: A FLOOR, not the current count — the real number grows every time anyone
+#: adds a keyword to a namespace wrapper (it was 527 when this landed and
+#: 538 one PR later), so pinning it exactly would be pure churn.  Raise the
+#: floor only if it ever stops being a meaningful lower bound.
 _MIN_PAIRS_COMPARED = 500
 
 
