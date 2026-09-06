@@ -3402,18 +3402,6 @@ class ManzariTangentSolverWarning(UserWarning):
     """
 
 
-def _manzari_family() -> "tuple[type, ...]":
-    """The nD materials whose optional tail carries ``$TanType``.
-
-    An explicit tuple rather than a ``hasattr(m, "tan_type")`` duck test:
-    the field name is not reserved, and a future unrelated material that
-    happens to carry one must not silently inherit this gate.  Imported
-    lazily, like every other material import in this module.
-    """
-    from ..material.nd import LadrunoSANISAND, ManzariDafalias, SAniSandMS
-
-    return (ManzariDafalias, SAniSandMS, LadrunoSANISAND)
-
 
 def validate_manzari_tangent_solver(
     primitives: "Iterable[object]",
@@ -3439,11 +3427,19 @@ def validate_manzari_tangent_solver(
     is gated on ``enforce`` and skipped for a partitioned deck, which
     rides the ADR-0027 INV-5 general auto-emit.
     """
-    family = _manzari_family()
+    # Lazily imported, like every other material import in this module.
+    # The isinstance tuple is spelled out rather than built by a helper so
+    # the narrowing survives to ``m.tan_type`` -- and it is an explicit
+    # tuple rather than a ``hasattr(m, "tan_type")`` duck test, because the
+    # field name is not reserved and a future unrelated material carrying
+    # one must not silently inherit this gate.
+    from ..material.nd import LadrunoSANISAND, ManzariDafalias, SAniSandMS
+
     offenders = sorted({
         f"{type(m).__name__}(tan_type={m.tan_type})"
         for m in primitives
-        if isinstance(m, family) and m.tan_type != 0
+        if isinstance(m, (ManzariDafalias, SAniSandMS, LadrunoSANISAND))
+        and m.tan_type != 0
     })
     if not offenders:
         return
