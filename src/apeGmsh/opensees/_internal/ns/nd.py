@@ -102,6 +102,8 @@ class _NDMaterialNS(_BridgeNamespace):
         delta2: float,
         H: float,
         theta: float,
+        density: float = 0.0,
+        atm: float | None = None,
         name: str | None = None,
     ) -> DruckerPrager:
         """Register a :class:`DruckerPrager` continuum material."""
@@ -118,6 +120,8 @@ class _NDMaterialNS(_BridgeNamespace):
                 delta2=delta2,
                 H=H,
                 theta=theta,
+                density=density,
+                atm=atm,
             ),
             name=name,
         )

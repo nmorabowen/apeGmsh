@@ -19,7 +19,8 @@ The Tcl signatures these classes emit:
 
 * ``nDMaterial ElasticIsotropic tag E nu rho``
 * ``nDMaterial J2Plasticity tag K G sig0 sigInf delta H eta``
-* ``nDMaterial DruckerPrager tag K G sigmaY rho rhoBar Kinf Ko delta1 delta2 H theta``
+* ``nDMaterial DruckerPrager tag K G sigmaY rho rhoBar Kinf Ko delta1
+  delta2 H theta <density <atm>>``
 """
 from __future__ import annotations
 
@@ -212,7 +213,8 @@ class DruckerPrager(NDMaterial):
     Tcl signature::
 
         nDMaterial DruckerPrager $tag $K $G $sigmaY \\
-            $rho $rhoBar $Kinf $Ko $delta1 $delta2 $H $theta
+            $rho $rhoBar $Kinf $Ko $delta1 $delta2 $H $theta \\
+            <$density <$atm>>
 
     Parameters
     ----------
@@ -243,6 +245,25 @@ class DruckerPrager(NDMaterial):
         Mixed isotropic / kinematic hardening fraction
         (``0`` = purely kinematic, ``1`` = purely isotropic). OpenSees
         accepts ``0 <= theta <= 1``.
+    density
+        Mass density, the optional thirteenth positional argument. The
+        parser's own default is ``0.0``; leaving it at ``0.0`` emits the
+        eleven-double line unchanged. Must be ``>= 0``.
+    atm
+        Atmospheric reference pressure for the pressure-dependent
+        stiffness update, the optional fourteenth positional argument.
+        ``None`` (the default) omits it, which lets the parser apply its
+        own default of ``101.0``. Because the parser reads it
+        positionally, giving ``atm`` also emits ``density``. Must be
+        ``> 0`` when given.
+
+    Notes
+    -----
+    Both trailing arguments are optional in ``OPS_DruckerPragerMaterial``
+    (``UWmaterials/DruckerPrager.cpp``), which accepts 12, 13 or 14
+    arguments. apeGmsh emits the shortest form that carries the requested
+    values, so a material that touches neither keyword produces exactly
+    the line it produced before they existed.
     """
 
     K: float
@@ -256,6 +277,8 @@ class DruckerPrager(NDMaterial):
     delta2: float
     H: float
     theta: float
+    density: float = 0.0
+    atm: float | None = None
 
     def __post_init__(self) -> None:
         if self.K <= 0:
@@ -274,6 +297,7 @@ class DruckerPrager(NDMaterial):
             ("delta1", self.delta1),
             ("delta2", self.delta2),
             ("H", self.H),
+            ("density", self.density),
         ):
             if value < 0:
                 raise ValueError(
@@ -282,6 +306,10 @@ class DruckerPrager(NDMaterial):
         if not (0.0 <= self.theta <= 1.0):
             raise ValueError(
                 f"DruckerPrager: theta must be in [0, 1], got {self.theta!r}"
+            )
+        if self.atm is not None and self.atm <= 0:
+            raise ValueError(
+                f"DruckerPrager: atm must be > 0, got {self.atm!r}"
             )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
@@ -299,7 +327,19 @@ class DruckerPrager(NDMaterial):
             self.delta2,
             self.H,
             self.theta,
+            *self._optional_tail(),
         )
+
+    def _optional_tail(self) -> tuple[float, ...]:
+        """The trailing ``density`` / ``atm`` pair, shortest form first.
+
+        ``atm`` is positional, so asking for it also emits ``density``.
+        """
+        if self.atm is not None:
+            return (self.density, self.atm)
+        if self.density != 0.0:
+            return (self.density,)
+        return ()
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

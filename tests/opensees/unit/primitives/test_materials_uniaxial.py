@@ -627,6 +627,37 @@ class TestElasticMaterial:
         m._emit(rec, tag=5)
         assert rec.calls[0][1] == ("Elastic", 5, 200e9)
 
+    def test_default_tail_reproduces_the_pre_tail_line(self) -> None:
+        """Neither optional given -> byte-identical to the one-double line.
+
+        ``OPS_ElasticMaterial`` reads one, two or three doubles, so the
+        shortest form stays legal and every existing deck keeps the line
+        it had before ``Eneg`` existed.
+        """
+        m = ElasticMaterial(E=200e9)
+        assert m.eta == 0.0
+        assert m.Eneg is None
+        rec = RecordingEmitter()
+        m._emit(rec, tag=5)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("Elastic", 5, 200e9), {}),
+        ]
+
+    def test_emit_appends_Eneg_as_third_double(self) -> None:
+        m = ElasticMaterial(E=200e9, eta=0.05, Eneg=150e9)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=5)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("Elastic", 5, 200e9, 0.05, 150e9), {}),
+        ]
+
+    def test_Eneg_alone_still_emits_eta_first(self) -> None:
+        """``Eneg`` is positional, so it drags the default eta along."""
+        m = ElasticMaterial(E=200e9, Eneg=150e9)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=5)
+        assert rec.calls[0][1] == ("Elastic", 5, 200e9, 0.0, 150e9)
+
     def test_dependencies_is_empty(self) -> None:
         assert ElasticMaterial(E=200e9).dependencies() == ()
 
@@ -642,6 +673,11 @@ class TestElasticMaterial:
     def test_validation_rejects_negative_eta(self) -> None:
         with pytest.raises(ValueError, match="eta"):
             ElasticMaterial(E=200e9, eta=-0.01)
+
+    @pytest.mark.parametrize("bad", [0.0, -200e9])
+    def test_validation_rejects_nonpositive_Eneg(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="Eneg must be > 0"):
+            ElasticMaterial(E=200e9, Eneg=bad)
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +695,42 @@ class TestENT:
             ("uniaxialMaterial", ("ENT", 9, 200e9), {}),
         ]
 
+    def test_default_tail_reproduces_the_pre_tail_line(self) -> None:
+        """Neither optional given -> byte-identical to the one-double line.
+
+        ``OPS_ENTMaterial`` reads up to three doubles into
+        ``{0.0, 0.0, 1.0}``, so the shortest form stays legal and every
+        existing deck keeps the line it had before ``a`` / ``b`` existed.
+        """
+        m = ENT(E=200e9)
+        assert m.a == 0.0
+        assert m.b == 1.0
+        rec = RecordingEmitter()
+        m._emit(rec, tag=9)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("ENT", 9, 200e9), {}),
+        ]
+
+    def test_emit_appends_a_as_second_double(self) -> None:
+        rec = RecordingEmitter()
+        ENT(E=200e9, a=0.1)._emit(rec, tag=9)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("ENT", 9, 200e9, 0.1), {}),
+        ]
+
+    def test_emit_appends_b_as_third_double(self) -> None:
+        rec = RecordingEmitter()
+        ENT(E=200e9, a=0.1, b=250.0)._emit(rec, tag=9)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("ENT", 9, 200e9, 0.1, 250.0), {}),
+        ]
+
+    def test_b_alone_still_emits_a_first(self) -> None:
+        """``b`` is positional, so it drags the default a along."""
+        rec = RecordingEmitter()
+        ENT(E=200e9, b=250.0)._emit(rec, tag=9)
+        assert rec.calls[0][1] == ("ENT", 9, 200e9, 0.0, 250.0)
+
     def test_dependencies_is_empty(self) -> None:
         assert ENT(E=200e9).dependencies() == ()
 
@@ -668,6 +740,15 @@ class TestENT:
     def test_validation_rejects_nonpositive_E(self) -> None:
         with pytest.raises(ValueError, match="E"):
             ENT(E=0.0)
+
+    def test_validation_rejects_negative_a(self) -> None:
+        with pytest.raises(ValueError, match="a must be >= 0"):
+            ENT(E=200e9, a=-0.1)
+
+    @pytest.mark.parametrize("bad", [0.0, -250.0])
+    def test_validation_rejects_nonpositive_b(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="b must be > 0"):
+            ENT(E=200e9, b=bad)
 
 
 # ---------------------------------------------------------------------------

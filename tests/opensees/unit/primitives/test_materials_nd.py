@@ -258,6 +258,75 @@ class TestDruckerPrager:
             )
         ]
 
+    def test_default_tail_reproduces_the_pre_tail_line(self) -> None:
+        """Neither keyword given -> byte-identical to the 12-argument line.
+
+        ``OPS_DruckerPragerMaterial`` accepts 12, 13 or 14 arguments, so
+        the shortest form stays legal and every existing deck keeps the
+        line it had before ``density`` / ``atm`` existed.
+        """
+        m = DruckerPrager(**self._ok_kwargs())
+        assert m.density == 0.0
+        assert m.atm is None
+        emitter = RecordingEmitter()
+        m._emit(emitter, tag=42)
+        (_, args, _), = emitter.calls
+        assert len(args) == 13  # "DruckerPrager", tag, 11 doubles
+        assert args[-1] == 1.0  # theta is still last
+
+    def test_emit_appends_density_in_position_thirteen(self) -> None:
+        m = DruckerPrager(**self._ok_kwargs(), density=2.0e3)
+        emitter = RecordingEmitter()
+        m._emit(emitter, tag=42)
+        assert emitter.calls == [
+            (
+                "nDMaterial",
+                (
+                    "DruckerPrager",
+                    42,
+                    80.0e6,
+                    60.0e6,
+                    20.0e3,
+                    0.0,  # rho
+                    0.0,  # rhoBar
+                    0.0,  # Kinf
+                    0.0,  # Ko
+                    0.0,  # delta1
+                    0.0,  # delta2
+                    0.0,  # H
+                    1.0,  # theta
+                    2.0e3,  # density — thirteenth double
+                ),
+                {},
+            )
+        ]
+
+    def test_emit_appends_atm_in_position_fourteen(self) -> None:
+        m = DruckerPrager(**self._ok_kwargs(), density=2.0e3, atm=101.3)
+        emitter = RecordingEmitter()
+        m._emit(emitter, tag=42)
+        (_, args, _), = emitter.calls
+        assert args[-2:] == (2.0e3, 101.3)
+        assert len(args) == 15
+
+    def test_atm_alone_still_emits_density_first(self) -> None:
+        """``atm`` is positional, so it drags the default density along."""
+        m = DruckerPrager(**self._ok_kwargs(), atm=101.3)
+        emitter = RecordingEmitter()
+        m._emit(emitter, tag=42)
+        (_, args, _), = emitter.calls
+        assert args[-2:] == (0.0, 101.3)
+
+    @pytest.mark.parametrize("bad", [-1.0, -1e-9])
+    def test_validation_rejects_negative_density(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="density must be >= 0"):
+            DruckerPrager(**self._ok_kwargs(), density=bad)
+
+    @pytest.mark.parametrize("bad", [0.0, -101.3])
+    def test_validation_rejects_non_positive_atm(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="atm must be > 0"):
+            DruckerPrager(**self._ok_kwargs(), atm=bad)
+
     def test_dependencies_is_empty_for_leaf(self) -> None:
         m = DruckerPrager(**self._ok_kwargs())
         assert m.dependencies() == ()

@@ -712,16 +712,39 @@ class ElasticMaterial(UniaxialMaterial):
 
     OpenSees command::
 
-        uniaxialMaterial Elastic tag E [eta]
+        uniaxialMaterial Elastic tag E <eta <Eneg>>
 
     Renamed to ``ElasticMaterial`` on the Python side to avoid a name
     clash with the more general "elastic" concept used elsewhere in
     the bridge. The OpenSees type token emitted is the bare
     ``"Elastic"``.
+
+    Parameters
+    ----------
+    E
+        Tension-side (and, unless ``Eneg`` is given, compression-side)
+        Young's modulus. Must be strictly positive.
+    eta
+        Damping tangent. Defaults to ``0.0``. Must be ``>= 0``.
+    Eneg
+        Compression-side modulus, the optional third double. ``None``
+        (the default) omits it, and the parser then sets it to ``E``, so
+        the material is symmetric. Because the parser reads it
+        positionally, giving ``Eneg`` also emits ``eta``. Must be
+        ``> 0`` when given.
+
+    Notes
+    -----
+    ``OPS_ElasticMaterial`` (``uniaxial/ElasticMaterial.cpp``) reads one,
+    two or three doubles, filling ``eta = 0.0`` and ``Eneg = E`` for the
+    shorter forms. This class emits the shortest form that carries the
+    requested values, so a material that touches neither keyword
+    produces exactly the line it produced before ``Eneg`` existed.
     """
 
-    E:   float
-    eta: float = 0.0
+    E:    float
+    eta:  float = 0.0
+    Eneg: float | None = None
 
     def __post_init__(self) -> None:
         if self.E <= 0:
@@ -732,12 +755,26 @@ class ElasticMaterial(UniaxialMaterial):
             raise ValueError(
                 f"ElasticMaterial: eta must be >= 0, got {self.eta!r}"
             )
+        if self.Eneg is not None and self.Eneg <= 0:
+            raise ValueError(
+                f"ElasticMaterial: Eneg must be > 0, got {self.Eneg!r}"
+            )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
-        params: list[float] = [self.E]
+        emitter.uniaxialMaterial(
+            "Elastic", tag, self.E, *self._optional_tail()
+        )
+
+    def _optional_tail(self) -> tuple[float, ...]:
+        """The trailing ``eta`` / ``Eneg`` pair, shortest form first.
+
+        ``Eneg`` is positional, so asking for it also emits ``eta``.
+        """
+        if self.Eneg is not None:
+            return (self.eta, self.Eneg)
         if self.eta != 0.0:
-            params.append(self.eta)
-        emitter.uniaxialMaterial("Elastic", tag, *params)
+            return (self.eta,)
+        return ()
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -749,17 +786,58 @@ class ENT(UniaxialMaterial):
 
     OpenSees command::
 
-        uniaxialMaterial ENT tag E
+        uniaxialMaterial ENT tag E <a <b>>
+
+    Parameters
+    ----------
+    E
+        Compression-side modulus. Must be strictly positive.
+    a
+        Tension-branch amplitude, the optional second double. Defaults
+        to ``0.0``, the parser's own default and the pure no-tension
+        case. Must be ``>= 0``.
+    b
+        Tension-branch rate, the optional third double. Defaults to
+        ``1.0``, the parser's own default. Because the parser reads it
+        positionally, giving ``b`` also emits ``a``. Must be ``> 0``.
+
+    Notes
+    -----
+    ``OPS_ENTMaterial`` (``uniaxial/ENTMaterial.cpp``) reads up to three
+    doubles into ``{0.0, 0.0, 1.0}``. ``a`` and ``b`` turn the bare
+    no-tension law into one with a saturating tension branch: in tension
+    ``getStress()`` returns ``a*E*tanh(strain*b)`` when ``a != 0``, and
+    exactly ``0.0`` when ``a == 0``. Compression is ``E*strain`` either
+    way. This class emits the shortest form that carries the requested
+    values, so a material that touches neither keyword produces exactly
+    the line it produced before they existed.
     """
 
     E: float
+    a: float = 0.0
+    b: float = 1.0
 
     def __post_init__(self) -> None:
         if self.E <= 0:
             raise ValueError(f"ENT: E must be > 0, got {self.E!r}")
+        if self.a < 0:
+            raise ValueError(f"ENT: a must be >= 0, got {self.a!r}")
+        if self.b <= 0:
+            raise ValueError(f"ENT: b must be > 0, got {self.b!r}")
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
-        emitter.uniaxialMaterial("ENT", tag, self.E)
+        emitter.uniaxialMaterial("ENT", tag, self.E, *self._optional_tail())
+
+    def _optional_tail(self) -> tuple[float, ...]:
+        """The trailing ``a`` / ``b`` pair, shortest form first.
+
+        ``b`` is positional, so asking for it also emits ``a``.
+        """
+        if self.b != 1.0:
+            return (self.a, self.b)
+        if self.a != 0.0:
+            return (self.a,)
+        return ()
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

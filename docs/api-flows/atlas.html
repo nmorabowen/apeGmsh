@@ -11039,7 +11039,7 @@
    "id": "apeSees.nDMaterial.DruckerPrager",
    "label": "DruckerPrager",
    "composite": "os.materials",
-   "signature": "DruckerPrager(*, K, G, sigmaY, rho, rhoBar, Kinf, Ko, delta1, delta2, H, theta) -> DruckerPrager",
+   "signature": "DruckerPrager(*, K, G, sigmaY, rho, rhoBar, Kinf, Ko, delta1, delta2, H, theta, density=0.0, atm=None) -> DruckerPrager",
    "summary": "Pressure-dependent Drucker-Prager elasto-plastic continuum material (nDMaterial DruckerPrager); auto-registered.",
    "file": "src/apeGmsh/opensees/material/nd.py:168",
    "flow": [
@@ -12143,7 +12143,7 @@
    "id": "apeSees.uniaxialMaterial.ENT",
    "label": "ENT",
    "composite": "os.materials",
-   "signature": "ENT(*, E) -> ENT",
+   "signature": "ENT(*, E, a=0.0, b=1.0) -> ENT",
    "summary": "Elastic-no-tension uniaxial material (uniaxialMaterial ENT); auto-registered.",
    "file": "src/apeGmsh/opensees/material/uniaxial.py:622",
    "flow": [
@@ -12178,7 +12178,7 @@
    "id": "apeSees.uniaxialMaterial.ElasticMaterial",
    "label": "ElasticMaterial",
    "composite": "os.materials",
-   "signature": "ElasticMaterial(*, E, eta=0.0) -> ElasticMaterial",
+   "signature": "ElasticMaterial(*, E, eta=0.0, Eneg=None) -> ElasticMaterial",
    "summary": "Linear-elastic uniaxial material with optional damping (emits OpenSees token 'Elastic'); auto-registered.",
    "file": "src/apeGmsh/opensees/material/uniaxial.py:585",
    "flow": [
