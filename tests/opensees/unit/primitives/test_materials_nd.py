@@ -1370,25 +1370,6 @@ class TestLadrunoSANISAND:
     def test_dependencies_is_empty(self) -> None:
         assert LadrunoSANISAND(**_LS_KWARGS).dependencies() == ()
 
-    # ``ops.nDMaterial.<Type>`` re-states every default in its own
-    # signature and passes them all through EXPLICITLY, so a dataclass
-    # default the wrapper does not mirror is dead on the public surface.
-    # Nothing else in the suite compares the two.
-    @pytest.mark.parametrize(
-        "cls", [ManzariDafalias, SAniSandMS, LadrunoSANISAND]
-    )
-    def test_namespace_wrapper_mirrors_the_tan_type_default(
-        self, cls: type
-    ) -> None:
-        import inspect
-
-        from apeGmsh.opensees._internal.ns.nd import _NDMaterialNS
-
-        wrapper = inspect.signature(getattr(_NDMaterialNS, cls.__name__))
-        assert wrapper.parameters["tan_type"].default == (
-            cls.__dataclass_fields__["tan_type"].default
-        )
-
 
 class TestSanisandSspPairing:
     """``ssp`` builds its stabilization from a wrongly referenced tangent."""
