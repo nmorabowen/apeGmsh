@@ -786,7 +786,29 @@ class LadrunoSANISAND(NDMaterial):
         :class:`SanisandIntegrationWarning` — they integrate with no
         error control, exactly as on :class:`ManzariDafalias`.
     tan_type
-        Tangent operator (``$TanType``), default ``0``.
+        Tangent operator (``$TanType``), default ``2`` — the
+        **consistent** (continuum elasto-plastic) tangent, unlike
+        :class:`ManzariDafalias`, which keeps vanilla's ``0``.
+
+        ``0`` is the *elastic* tangent: it turns ``algorithm Newton``
+        into a modified Newton, which is invisible on a single-element
+        calibration deck (no global solve) and expensive on a real BVP
+        — the fork measured **800 vs 283 Newton iterations** on a
+        drained triaxial (2.83×), and at a tighter tolerance the
+        elastic-tangent leg could not finish a push the consistent one
+        completed. The converged answer is the same either way; only
+        the iteration count and the solver requirement change.
+
+        .. warning::
+           The consistent tangent of a non-associated model is genuinely
+           **unsymmetric**. Pairing ``tan_type != 0`` with a
+           symmetric-storage solver (``ProfileSPD`` / ``SProfileSPD`` /
+           ``BandSPD`` / ``SparseSYM`` / ``Pardiso`` or ``Mumps`` in a
+           half-storage ``matrix_type``) silently solves a *different*
+           system. apeGmsh warns at emit
+           (:class:`~apeGmsh.opensees._internal.build.ManzariTangentSolverWarning`);
+           use ``UmfPack`` / ``Pardiso`` / ``FullGeneral`` /
+           ``BandGeneral`` / ``SparseGeneral`` / ``Mumps``.
     jaco_type
         Jacobian type used inside the implicit schemes (``$JacoType``),
         default ``1``.
@@ -836,9 +858,10 @@ class LadrunoSANISAND(NDMaterial):
     cz: float
     rho: float
 
-    # the 5-argument tail — same defaults as ManzariDafalias
+    # the 5-argument tail — same defaults as ManzariDafalias, EXCEPT
+    # tan_type: 2 (consistent) rather than vanilla's 0 (elastic).
     int_scheme: int = 1
-    tan_type: int = 0
+    tan_type: int = 2
     jaco_type: int = 1
     tol_f: float = 1e-7
     tol_r: float = 1e-7
@@ -917,8 +940,14 @@ class LadrunoSANISAND(NDMaterial):
             self.int_scheme, self.tan_type, self.jaco_type,
             self.tol_f, self.tol_r,
         )
-        if tail != _MANZARI_TAIL_DEFAULTS:
-            args += tail
+        # The tail ALWAYS emits, unlike ManzariDafalias's. Omitting it
+        # would leave $TanType to the parser, and the two parsers no
+        # longer agree: the fork's default moved 0 → 2 (fork PR #792)
+        # while vanilla ManzariDafalias stayed at 0. An implicit tail
+        # therefore means the same deck integrates differently depending
+        # on which material name it carries, and on which fork build runs
+        # it. Written out, the tangent is a fact of the deck.
+        args += tail
         # Flags LAST, never interleaved — a positional after a flag is a
         # hard parse error in OPS_LadrunoSANISAND, by design.  All three
         # always emit, even at their defaults: the material echoes what it

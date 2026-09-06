@@ -160,9 +160,16 @@ def _make_manzari(ops: apeSees):
 
 
 def _make_ladruno_pinned(ops: apeSees):
-    """LadrunoSANISAND with vanilla's constants pinned — the I1 leg."""
+    """LadrunoSANISAND with vanilla's constants pinned — the I1 leg.
+
+    ``tan_type`` is part of the pin: apeGmsh defaults the subclass to the
+    CONSISTENT tangent (2) and :class:`ManzariDafalias` to vanilla's
+    ELASTIC one (0), so leaving it out would A/B two different code
+    paths and I1 would no longer be testing what it says it tests.
+    """
     return ops.nDMaterial.LadrunoSANISAND(
         **_GORINI,
+        tan_type=0,
         p_residual=_VANILLA_P_RESIDUAL,
         p_min=_VANILLA_P_MIN,
         honor_tol_r=False,
