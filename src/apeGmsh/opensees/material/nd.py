@@ -836,6 +836,31 @@ class LadrunoSANISAND(NDMaterial):
         If you set it you almost certainly want an explicit ``tol_r``
         too: the parser default is ``1e-7``, a 1000× tightening against
         vanilla's ``1e-4``.
+    max_substeps
+        Cap on ``ModifiedEuler``'s substep count (``-maxSubsteps N``).
+        Default ``0`` = uncapped = vanilla's behaviour, and the flag is
+        then not emitted at all, so an unset deck is byte-identical to
+        one built before this argument existed.
+
+        Uncapped, ``ModifiedEuler`` substeps toward ``dT_min = 1e-6``
+        with no bound, and on reaching the floor it **force-accepts** a
+        degraded substep and reports success — the step controller is
+        told nothing is wrong. The fork measured one ``analyze(1)``
+        taking **34.3 minutes** on a strip footing while the controller
+        sat idle (0 of 80 subdivisions used). With a cap the material
+        refuses the increment, the element propagates the refusal and
+        the integrator cuts the load step: 2.1–2.6× deeper reach for the
+        same wall clock, worst step 759 s → 94 s, same answer.
+
+        .. warning::
+           **The element must propagate the refusal.** Under an element
+           that discards the material's return code, a capped material
+           hands back a *partially integrated* stress with a partial
+           tangent and the analysis accepts it as converged — worse than
+           the force-accept it replaces, which at least integrated the
+           whole increment. Only :class:`~apeGmsh.opensees.element.solid.LadrunoBrick`
+           propagates on every path today, so apeGmsh **raises** at
+           ``build()`` if a capped material reaches any other element.
     """
 
     # 18 positionals — same names and order as ManzariDafalias
@@ -870,6 +895,7 @@ class LadrunoSANISAND(NDMaterial):
     p_residual: float = 0.0
     p_min: float | None = None      # None -> resolved to 1.0e-3 * P_atm
     honor_tol_r: bool = False
+    max_substeps: int = 0           # 0 = uncapped = vanilla's behaviour
 
     def __post_init__(self) -> None:
         _validate_sanisand_bounds(
@@ -929,6 +955,26 @@ class LadrunoSANISAND(NDMaterial):
                 SanisandIntegrationWarning,
                 stacklevel=2,
             )
+        if self.max_substeps < 0:
+            raise ValueError(
+                f"LadrunoSANISAND: max_substeps must be >= 0, got "
+                f"{self.max_substeps!r}. 0 means uncapped (vanilla's "
+                f"behaviour); a positive N caps ModifiedEuler's substep "
+                f"count and makes the material REFUSE an increment it "
+                f"cannot integrate."
+            )
+        if (
+            self.max_substeps
+            and self.int_scheme not in _SCHEMES_REACHING_MODIFIED_EULER
+        ):
+            warnings.warn(
+                f"LadrunoSANISAND: max_substeps={self.max_substeps} has NO "
+                f"EFFECT with int_scheme={self.int_scheme}. The cap is read "
+                f"inside ManzariDafalias::ModifiedEuler(), and this scheme "
+                f"does not route there. Use int_scheme=1.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
+            )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | int | str] = [
@@ -962,6 +1008,13 @@ class LadrunoSANISAND(NDMaterial):
             self.p_min if self.p_min is not None else 1.0e-3 * self.P_atm,
         ]
         args += ["-honorTolR", 1 if self.honor_tol_r else 0]
+        # -maxSubsteps is the ONE flag that does not always emit. The other
+        # three echo what the material is running because their defaults
+        # differ from vanilla's; this one's default IS vanilla's (uncapped),
+        # and a deck that never asks for a cap must stay byte-identical to
+        # the one it produced before the flag existed.
+        if self.max_substeps:
+            args += ["-maxSubsteps", self.max_substeps]
         emitter.nDMaterial("LadrunoSANISAND", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:

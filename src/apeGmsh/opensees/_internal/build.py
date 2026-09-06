@@ -3518,6 +3518,150 @@ def validate_manzari_tangent_solver(
     )
 
 
+class ManzariConvergenceTestWarning(UserWarning):
+    """A SANISAND deck asks for a convergence test it cannot reach.
+
+    ``NormDispIncr`` is unreachable on this material: the
+    displacement-increment residual stalls and never meets a tight
+    tolerance.  Measured in apeGmsh's own live suite, a single-hex
+    triaxial driver floored at **4.2587e-08** against the ``1e-8`` it
+    asked for, and the deviatoric leg never converged.  It is not
+    mesh-neutral either, so the same number means different things at
+    different ``h``.
+
+    Fail-soft: a looser tolerance may still be reachable, and only the
+    model author knows what their deck needs.
+    """
+
+
+#: Convergence tests whose residual IS the displacement increment, and so
+#: inherit the stall.  ``EnergyIncr`` mixes the increment with the
+#: unbalance and was measured to converge on the same deck, so it is not
+#: here; the force-residual tests are the recommendation, not the problem.
+_DISP_INCREMENT_TESTS: frozenset[str] = frozenset(
+    {"NormDispIncr", "RelativeNormDispIncr"}
+)
+
+
+def validate_manzari_convergence_test(
+    primitives: "Iterable[object]",
+    *,
+    staged: bool,
+    flat_tests: "Sequence[object]",
+    stage_tests: "Sequence[tuple[str, object | None]]",
+) -> None:
+    """Warn when a SANISAND deck drives on the displacement increment.
+
+    Unlike :func:`validate_manzari_tangent_solver` this does not look at
+    ``tan_type``: the stall is a property of the material's integrator,
+    not of the tangent, and it was measured on a ``ManzariDafalias`` leg
+    running the elastic one.  A missing test is not this gate's business
+    (the analysis-chain validation owns that), so only a DECLARED test is
+    checked, staged decks per stage.
+    """
+    from ..material.nd import LadrunoSANISAND, ManzariDafalias, SAniSandMS
+
+    who = sorted({
+        type(m).__name__
+        for m in primitives
+        if isinstance(m, (ManzariDafalias, SAniSandMS, LadrunoSANISAND))
+    })
+    if not who:
+        return
+    names = ", ".join(who)
+
+    def _check(test: object, where: str) -> None:
+        token = type(test).__name__
+        if token not in _DISP_INCREMENT_TESTS:
+            return
+        warnings.warn(
+            f"{names} with test {token} ({where}): the "
+            f"displacement-increment residual is UNREACHABLE on this "
+            f"material — it stalls (measured: a 4.2587e-08 floor against a "
+            f"1e-8 tolerance, deviatoric leg never converged) and it is not "
+            f"mesh-neutral, so the same tolerance means different things at "
+            f"different mesh sizes. Drive on the force residual instead: "
+            f"ops.test.NormUnbalance(tol=<fraction of the model's own "
+            f"load or weight>, max_iter=...).",
+            ManzariConvergenceTestWarning,
+            stacklevel=2,
+        )
+
+    if staged:
+        for name, test in stage_tests:
+            if test is not None:
+                _check(test, f"stage {name}")
+        return
+    if flat_tests:
+        _check(flat_tests[-1], "global")
+
+
+#: Elements known to propagate a material's refusal on EVERY path, and so
+#: safe to carry a ``max_substeps``-capped SANISAND.  An ALLOW-list, not a
+#: deny-list: under an element that discards the return code a capped
+#: material is WORSE than an uncapped one (a partially integrated stress
+#: accepted as converged, versus a fully integrated degraded one), and the
+#: fork's own finding is that only this element propagates today.
+_REFUSAL_PROPAGATING_ELEMENTS: frozenset[str] = frozenset({"LadrunoBrick"})
+
+
+def _material_graph(prim: object) -> "list[object]":
+    """``prim`` and every material it wraps, transitively.
+
+    ``PlaneStrain(base=...)`` / ``LogStrain(inner=...)`` and friends put
+    the real constitutive model one or more levels down, so a capped
+    SANISAND can reach an element without being its ``material``.
+    """
+    seen: list[object] = []
+    stack = [prim]
+    while stack:
+        cur = stack.pop()
+        if cur is None or any(cur is s for s in seen):
+            continue
+        seen.append(cur)
+        deps = getattr(cur, "dependencies", None)
+        if callable(deps):
+            try:
+                stack.extend(deps())
+            except Exception:                  # pragma: no cover - defensive
+                pass
+    return seen
+
+
+def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
+    """Refuse a ``max_substeps`` cap under an element that swallows refusals.
+
+    The cap only helps because the material REFUSES an increment it cannot
+    integrate and something upstream acts on that.  Under an element that
+    discards the return code the refusal is invisible: the analysis takes a
+    partially integrated stress with a partial tangent and reports
+    convergence.  That is a silently wrong answer, not a slow one, so this
+    raises rather than warns — the same call the ADR-0074 D4 u-p gate makes.
+    """
+    from ..material.nd import LadrunoSANISAND
+
+    for spec in elements:
+        cls = type(spec).__name__
+        if cls in _REFUSAL_PROPAGATING_ELEMENTS:
+            continue
+        for mat in _material_graph(getattr(spec, "material", None)):
+            if not isinstance(mat, LadrunoSANISAND) or not mat.max_substeps:
+                continue
+            raise BridgeError(
+                f"LadrunoSANISAND(max_substeps={mat.max_substeps}) reaches "
+                f"{cls!r} (pg {getattr(spec, 'pg', '?')!r}), which is not "
+                f"known to propagate a material refusal. The cap makes the "
+                f"material REFUSE an increment it cannot integrate; an "
+                f"element that discards that return code hands the analysis "
+                f"a PARTIALLY integrated stress with a partial tangent and "
+                f"it converges on it — worse than the uncapped force-accept, "
+                f"which at least integrates the whole increment. Only "
+                f"{', '.join(sorted(_REFUSAL_PROPAGATING_ELEMENTS))} "
+                f"propagates on every path today. Use that element, or "
+                f"leave max_substeps=0 (uncapped)."
+            )
+
+
 class WarnBodyForceDoubleCount(UserWarning):
     """A continuum element's ``body_force`` overlaps an imported gravity case.
 
