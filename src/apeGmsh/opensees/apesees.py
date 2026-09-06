@@ -95,6 +95,7 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_manzari_tangent_solver,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -1248,6 +1249,24 @@ class BuiltModel:
         )
         validate_ladruno_up_solver(
             elements,
+            enforce=_has_analysis_chain and not _emitter_is_archival,
+            staged=_staged,
+            partitioned=_will_partition,
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
+
+        # A Manzari-family material with the CONSISTENT tangent
+        # (tan_type != 0 — now the LadrunoSANISAND default, and the fork
+        # parser's own default since PR #792) has a genuinely UNSYMMETRIC
+        # tangent.  Same physics as the u-p gate above, same scope rules,
+        # but fail-SOFT: the deck runs, it is the answer that is not
+        # trustworthy.  Reuses the same _staged / enforce / partitioned
+        # facts computed for D4.
+        validate_manzari_tangent_solver(
+            ordered,
             enforce=_has_analysis_chain and not _emitter_is_archival,
             staged=_staged,
             partitioned=_will_partition,

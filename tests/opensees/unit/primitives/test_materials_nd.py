@@ -1047,6 +1047,12 @@ _LS_REQUIRED = (
     1.3, 0.968, 3.5, 0.05, 5.75, 12.5, 1100.0, 2.0,
 )
 
+#: The 5-argument tail at its defaults. Unlike ManzariDafalias's, it is
+#: ALWAYS written: the fork parser's ``$TanType`` default moved 0 -> 2
+#: (fork PR #792) while vanilla's stayed 0, so an omitted tail would make
+#: the tangent a property of the build rather than of the deck.
+_LS_TAIL_DEFAULT = (1, 2, 1, 1e-7, 1e-7)
+
 #: The always-emitted flag block at its defaults (p_min resolved from
 #: ``P_atm = 101.0``).
 _LS_FLAGS_DEFAULT = (
@@ -1182,20 +1188,25 @@ class TestLadrunoSANISAND:
 
     def test_defaults(self) -> None:
         m = LadrunoSANISAND(**_LS_KWARGS)
-        assert (m.int_scheme, m.tan_type, m.jaco_type) == (1, 0, 1)
+        # tan_type=2 (CONSISTENT), not ManzariDafalias's 0 (elastic): the
+        # elastic tangent turns `algorithm Newton` into modified Newton
+        # (fork measured 800 vs 283 iterations on a drained triaxial).
+        assert (m.int_scheme, m.tan_type, m.jaco_type) == (1, 2, 1)
         assert (m.tol_f, m.tol_r) == (1e-7, 1e-7)
         assert m.p_residual == 0.0
         assert m.p_min is None
         assert m.honor_tol_r is False
 
-    # U1 + U7: 18 positionals in deck order (literal tuple), no tail,
+    # U1 + U7: 18 positionals in deck order (literal tuple), then the
+    # tail — written even at its defaults, unlike ManzariDafalias's —
     # then the three flags in order, even at their defaults.
-    def test_emit_default_is_positionals_then_flags_no_tail(self) -> None:
+    def test_emit_default_is_positionals_tail_then_flags(self) -> None:
         rec = RecordingEmitter()
         LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
         assert rec.calls == [
             ("nDMaterial",
-             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_FLAGS_DEFAULT, {}),
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+             + _LS_FLAGS_DEFAULT, {}),
         ]
 
     # U2: the tail is all-or-nothing — a partial tail would misalign every
@@ -1204,6 +1215,7 @@ class TestLadrunoSANISAND:
         "field,value",
         [
             ("int_scheme", 45),
+            ("tan_type", 0),
             ("tan_type", 1),
             ("jaco_type", 0),
             ("tol_f", 1e-8),
@@ -1216,7 +1228,7 @@ class TestLadrunoSANISAND:
         rec = RecordingEmitter()
         LadrunoSANISAND(**_LS_KWARGS, **{field: value})._emit(rec, tag=2)
         tail = {
-            "int_scheme": 1, "tan_type": 0, "jaco_type": 1,
+            "int_scheme": 1, "tan_type": 2, "jaco_type": 1,
             "tol_f": 1e-7, "tol_r": 1e-7,
         }
         tail[field] = value
@@ -1227,19 +1239,34 @@ class TestLadrunoSANISAND:
             + _LS_FLAGS_DEFAULT
         )
 
-    def test_explicit_defaults_still_omit_the_tail(self) -> None:
+    # The tail is never omitted — not at our defaults, not at vanilla's.
+    # Leaving it to the parser would mean the same deck integrates
+    # differently on a pre- vs post-#792 fork build.
+    def test_explicit_defaults_still_write_the_tail(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(
+            **_LS_KWARGS, int_scheme=1, tan_type=2, jaco_type=1,
+            tol_f=1e-7, tol_r=1e-7,
+        )._emit(rec, tag=4)
+        assert rec.calls[0][1] == (
+            ("LadrunoSANISAND", 4) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+            + _LS_FLAGS_DEFAULT
+        )
+
+    def test_vanilla_tail_values_are_written_not_omitted(self) -> None:
         rec = RecordingEmitter()
         LadrunoSANISAND(
             **_LS_KWARGS, int_scheme=1, tan_type=0, jaco_type=1,
             tol_f=1e-7, tol_r=1e-7,
         )._emit(rec, tag=4)
         assert rec.calls[0][1] == (
-            ("LadrunoSANISAND", 4) + _LS_REQUIRED + _LS_FLAGS_DEFAULT
+            ("LadrunoSANISAND", 4) + _LS_REQUIRED + (1, 0, 1, 1e-7, 1e-7)
+            + _LS_FLAGS_DEFAULT
         )
 
     # U3: every -flag token sits after every numeric positional — a
     # positional after a flag is a hard parse error in OPS_LadrunoSANISAND.
-    @pytest.mark.parametrize("extra,n_positionals", [({}, 18), ({"tol_f": 1e-9}, 23)])
+    @pytest.mark.parametrize("extra,n_positionals", [({}, 23), ({"tol_f": 1e-9}, 23)])
     def test_flag_tokens_follow_every_positional(
         self, extra: dict, n_positionals: int
     ) -> None:

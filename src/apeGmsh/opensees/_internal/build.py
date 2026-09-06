@@ -3134,8 +3134,10 @@ class _StubTypeInfo:
 #: stores only one triangle (BandSPD / ProfileSPD / SProfileSPD /
 #: ParallelProfileSPD / SparseSYM — one Q coupling block is silently
 #: dropped at assembly) or solves only the diagonal (Diagonal /
-#: MPIDiagonal — ALL coupling dropped).
-_UP_LEGAL_SYSTEM_CLASSES: frozenset[str] = frozenset(
+#: MPIDiagonal — ALL coupling dropped).  Shared by every gate that needs
+#: a solver able to hold a genuinely unsymmetric tangent: the u-p one
+#: below, and the Manzari consistent-tangent one after it.
+_UNSYMMETRIC_SAFE_SYSTEMS: frozenset[str] = frozenset(
     {"UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps",
      "Pardiso"}
 )
@@ -3252,7 +3254,7 @@ def validate_ladruno_up_pressure_dof(
             )
 
 
-_UP_SOLVER_ALLOWED_MSG = (
+_GENERAL_SOLVER_MSG = (
     "ops.system.UmfPack() (serial first choice), Pardiso (fork + MKL, "
     "threaded), SparseGeneral, FullGeneral, BandGeneral, or Mumps "
     "(MPI, SYM=0)"
@@ -3311,14 +3313,14 @@ def validate_ladruno_up_solver(
 
     def _check(system: object, where: str) -> None:
         token = type(system).__name__
-        if token not in _UP_LEGAL_SYSTEM_CLASSES:
+        if token not in _UNSYMMETRIC_SAFE_SYSTEMS:
             raise BridgeError(
                 f"LadrunoUP (pg {up_pg!r}) with system {token!r} ({where}): "
                 f"the honest-p tangent is UNSYMMETRIC and {token} does not "
                 f"store the full matrix — one u-p coupling block is silently "
                 f"dropped at assembly and the run returns plausible garbage "
                 f"pore pressures (measured ~1e88 with rc=0; fork guide §2). "
-                f"Declare a general solver: {_UP_SOLVER_ALLOWED_MSG}."
+                f"Declare a general solver: {_GENERAL_SOLVER_MSG}."
             )
         # Pardiso / Mumps are legal only in their UNSYMMETRIC mode (fork
         # ADR-75 P1d).  A class-name-only check would pass
@@ -3359,7 +3361,7 @@ def validate_ladruno_up_solver(
                         f"wipeAnalysis — which silently drops a u-p coupling "
                         f"block and returns garbage pore pressures (fork guide "
                         f"§2). Give every stage its own general solver in "
-                        f"s.analysis(system=...): {_UP_SOLVER_ALLOWED_MSG}."
+                        f"s.analysis(system=...): {_GENERAL_SOLVER_MSG}."
                     )
         return
 
@@ -3379,7 +3381,140 @@ def validate_ladruno_up_solver(
         f"no-`system`-command OpenSees default is ProfileSPD, which silently "
         f"drops one u-p coupling block and returns plausible garbage pore "
         f"pressures (fork guide §2, the #1 u-p footgun). Declare a general "
-        f"solver before build: {_UP_SOLVER_ALLOWED_MSG}."
+        f"solver before build: {_GENERAL_SOLVER_MSG}."
+    )
+
+
+class ManzariTangentSolverWarning(UserWarning):
+    """A Manzari-family consistent tangent met a symmetric-storage solver.
+
+    ``TanType != 0`` selects the continuum elasto-plastic tangent, and the
+    tangent of a **non-associated** model is genuinely unsymmetric.  A
+    half-storage solver reads only the ``col >= row`` half of each element
+    matrix — no averaging, no detection — so the run solves a *different*
+    system and converges to a plausible-looking wrong answer.
+
+    Fail-soft, unlike the u-p gate: the deck is still runnable, and there
+    are legitimate reasons to take the symmetrized tangent knowingly (a
+    calibration deck with no global solve, an associated-flow parameter
+    set).  It is the *answer* that is not trustworthy, so this is a
+    warning the author must weigh, not a build-stopper.
+    """
+
+
+
+def validate_manzari_tangent_solver(
+    primitives: "Iterable[object]",
+    *,
+    enforce: bool,
+    staged: bool,
+    partitioned: bool,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> None:
+    """Warn when a consistent Manzari tangent will be solved symmetrically.
+
+    ``LadrunoSANISAND`` defaults to ``tan_type=2`` (the fork measured 800
+    vs 283 Newton iterations against the elastic tangent), and the fork
+    parser's own default moved ``0 -> 2`` in PR #792, so a deck can also
+    reach the consistent tangent through a tail apeGmsh did not write.
+    That tangent is unsymmetric; nothing else in the bridge checks the
+    solver against it.
+
+    Scope mirrors :func:`validate_ladruno_up_solver` exactly — a DECLARED
+    symmetric system is wrong whether or not this emit solves, while the
+    MISSING-system branch (OpenSees' no-``system`` default is ProfileSPD)
+    is gated on ``enforce`` and skipped for a partitioned deck, which
+    rides the ADR-0027 INV-5 general auto-emit.
+    """
+    # Lazily imported, like every other material import in this module.
+    # The isinstance tuple is spelled out rather than built by a helper so
+    # the narrowing survives to ``m.tan_type`` -- and it is an explicit
+    # tuple rather than a ``hasattr(m, "tan_type")`` duck test, because the
+    # field name is not reserved and a future unrelated material carrying
+    # one must not silently inherit this gate.
+    from ..material.nd import LadrunoSANISAND, ManzariDafalias, SAniSandMS
+
+    offenders = sorted({
+        f"{type(m).__name__}(tan_type={m.tan_type})"
+        for m in primitives
+        if isinstance(m, (ManzariDafalias, SAniSandMS, LadrunoSANISAND))
+        and m.tan_type != 0
+    })
+    if not offenders:
+        return
+    who = ", ".join(offenders)
+
+    def _why(token: str, where: str, detail: str) -> str:
+        return (
+            f"{who} with system {token} ({where}): {detail} The consistent "
+            f"tangent (TanType != 0) of a non-associated model is "
+            f"UNSYMMETRIC, so the solve would use only half of it and "
+            f"converge to a plausible but WRONG answer. Declare a general "
+            f"solver: {_GENERAL_SOLVER_MSG} — or set tan_type=0 (the "
+            f"elastic tangent, symmetric but ~2.8x the Newton iterations)."
+        )
+
+    def _check(system: object, where: str) -> None:
+        token = type(system).__name__
+        if token not in _UNSYMMETRIC_SAFE_SYSTEMS:
+            warnings.warn(
+                _why(
+                    repr(token), where,
+                    f"{token} does not store the full matrix.",
+                ),
+                ManzariTangentSolverWarning,
+                stacklevel=2,
+            )
+            return
+        # Pardiso / Mumps are safe only in their unsymmetric mode — the
+        # half-storage modes are exactly the silent-drop this gate exists
+        # to surface (fork ADR-75 P1d).
+        mtype = getattr(system, "matrix_type", "unsymmetric")
+        if mtype != "unsymmetric":
+            warnings.warn(
+                _why(
+                    f"{token}(matrix_type={mtype!r})", where,
+                    "this mode stores only the upper triangle.",
+                ),
+                ManzariTangentSolverWarning,
+                stacklevel=2,
+            )
+
+    if staged:
+        for name, system in stage_systems:
+            if system is not None:
+                _check(system, f"stage {name}")
+        if enforce:
+            for name, system in stage_systems:
+                if system is None:
+                    warnings.warn(
+                        _why(
+                            "ProfileSPD", f"stage {name}, undeclared",
+                            "the stage analyzes with no linear system, so it "
+                            "runs on the OpenSees ProfileSPD default after "
+                            "the prior stage's wipeAnalysis.",
+                        ),
+                        ManzariTangentSolverWarning,
+                        stacklevel=2,
+                    )
+        return
+
+    if flat_systems:
+        _check(flat_systems[-1], "global")
+        return
+    if not enforce or partitioned:
+        # Never solves (archival / eigen-only / model-only), or rides the
+        # ADR-0027 INV-5 general auto-emit.
+        return
+    warnings.warn(
+        _why(
+            "ProfileSPD", "undeclared",
+            "no linear system is declared, so the deck runs on the "
+            "OpenSees no-`system` default, ProfileSPD.",
+        ),
+        ManzariTangentSolverWarning,
+        stacklevel=2,
     )
 
 

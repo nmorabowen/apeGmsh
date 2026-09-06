@@ -140,13 +140,37 @@ def _plane(fem, axis: int, value: float) -> list[int]:
     ]
 
 
-def _bind_chain(ops: apeSees, *, dlam: float) -> None:
+#: Force-residual tolerance as a fraction of the deck's own applied load.
+#:
+#: NOT ``NormDispIncr``, which is UNREACHABLE on this material (integrator
+#: guide §4): measured on this build, the displacement-increment norm
+#: floors at 4.2587e-08 against the 1e-8 it used to ask for, and the
+#: deviatoric leg simply never converges.  The residual is not
+#: mesh-neutral either, so the same number means different things at
+#: different ``h``.
+#:
+#: The FORCE residual is reachable, but not tightly.  Measured by sweeping
+#: this constant and running I1/I2/I3/I4 at each value: all four pass at
+#: ``1e-4``, ``3e-5`` and ``1e-5``; at ``3e-6`` and ``1e-6`` three of the
+#: four fail, every one of them on a ``CTestNormUnbalance`` stall.  So the
+#: floor sits between ``3e-6`` and ``1e-5`` on all three decks, and
+#: ``1e-4`` is one decade of margin above it.  (Sweep the constant, not a
+#: hand-built chain: the floor depends on the tangent, so a probe using
+#: ``ManzariDafalias`` reads a floor these ``LadrunoSANISAND`` decks —
+#: which default to the consistent tangent — do not have.)
+#:
+#: Scale it by each deck's applied load rather than pinning an absolute
+#: number: these decks load in kPa on 1 m² faces, and an absolute
+#: tolerance would silently mean something different if a load or a unit
+#: system changed.
+_RESIDUAL_REL = 1.0e-4
+
+
+def _bind_chain(ops: apeSees, *, dlam: float, ref_force: float) -> None:
     ops.constraints.Plain()
     ops.numberer.RCM()
     ops.system.UmfPack()
-    # 1e-8, not tighter: the SANISAND consistent tangent leaves a residual
-    # floor around 1e-9 on these single-element decks.
-    ops.test.NormDispIncr(tol=1e-8, max_iter=200)
+    ops.test.NormUnbalance(tol=_RESIDUAL_REL * ref_force, max_iter=200)
     ops.algorithm.Newton()
     ops.integrator.LoadControl(dlam=dlam)
     ops.analysis.Static()
@@ -160,9 +184,16 @@ def _make_manzari(ops: apeSees):
 
 
 def _make_ladruno_pinned(ops: apeSees):
-    """LadrunoSANISAND with vanilla's constants pinned — the I1 leg."""
+    """LadrunoSANISAND with vanilla's constants pinned — the I1 leg.
+
+    ``tan_type`` is part of the pin: apeGmsh defaults the subclass to the
+    CONSISTENT tangent (2) and :class:`ManzariDafalias` to vanilla's
+    ELASTIC one (0), so leaving it out would A/B two different code
+    paths and I1 would no longer be testing what it says it tests.
+    """
     return ops.nDMaterial.LadrunoSANISAND(
         **_GORINI,
+        tan_type=0,
         p_residual=_VANILLA_P_RESIDUAL,
         p_min=_VANILLA_P_MIN,
         honor_tol_r=False,
@@ -239,7 +270,9 @@ def _triaxial_run(
     with ops.pattern.Plain(series=ts_dev) as p:
         for nid in top:
             p.load(node=nid, forces=(0.0, 0.0, -dq / len(top)))
-    _bind_chain(ops, dlam=1.0 / (n_confine + n_dev))
+    _bind_chain(
+        ops, dlam=1.0 / (n_confine + n_dev), ref_force=max(p_c, dq),
+    )
 
     em = LiveOpsEmitter(wipe=True)
     ops.build().emit(em)
@@ -285,7 +318,9 @@ def _oedometer_run(
     with ops.pattern.Plain(series=ts) as p:
         for nid in top:
             p.load(node=nid, forces=(0.0, 0.0, -per_node))
-    _bind_chain(ops, dlam=1.0 / (n_elastic + n_plastic))
+    _bind_chain(
+        ops, dlam=1.0 / (n_elastic + n_plastic), ref_force=sigma_v,
+    )
 
     em = LiveOpsEmitter(wipe=True)
     ops.build().emit(em)
@@ -327,10 +362,11 @@ def _naive_uniaxial_run(
     top = _plane(fem, 2, 1.0)
     ops.fix(nodes=bottom, dofs=(1, 1, 1))
     ts = ops.timeSeries.Linear()
+    f_total = 50.0
     with ops.pattern.Plain(series=ts) as p:
         for nid in top:
-            p.load(node=nid, forces=(0.0, 0.0, -50.0 / len(top)))
-    _bind_chain(ops, dlam=1.0 / n_elastic)
+            p.load(node=nid, forces=(0.0, 0.0, -f_total / len(top)))
+    _bind_chain(ops, dlam=1.0 / n_elastic, ref_force=f_total)
 
     em = LiveOpsEmitter(wipe=True)
     ops.build().emit(em)

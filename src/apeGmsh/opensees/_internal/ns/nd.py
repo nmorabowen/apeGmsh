@@ -281,7 +281,7 @@ class _NDMaterialNS(_BridgeNamespace):
         cz: float,
         rho: float,
         int_scheme: int = 1,
-        tan_type: int = 0,
+        tan_type: int = 2,
         jaco_type: int = 1,
         tol_f: float = 1e-7,
         tol_r: float = 1e-7,
@@ -297,10 +297,15 @@ class _NDMaterialNS(_BridgeNamespace):
         cohesionless) and ``p_min`` (default ``None`` → ``1.0e-3 *
         P_atm``, resolved at emit time).  The first 18 keywords and the
         five-argument integration tail are identical to
-        :meth:`ManzariDafalias`, so a deck migrates by swapping the
-        method.  See the class for the deck rules — confine
-        hydrostatically before flipping to stage 1, and never shear
-        during the elastic stage.
+        :meth:`ManzariDafalias` — except ``tan_type``, which defaults to
+        ``2`` (the CONSISTENT tangent) rather than vanilla's ``0`` (the
+        elastic one, which turns ``algorithm Newton`` into modified
+        Newton: 800 vs 283 iterations on the fork's drained triaxial).
+        The consistent tangent is **unsymmetric**, so the deck needs a
+        general solver; apeGmsh warns at emit if it does not have one.
+        A deck otherwise migrates by swapping the method.  See the class
+        for the deck rules — confine hydrostatically before flipping to
+        stage 1, and never shear during the elastic stage.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
