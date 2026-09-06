@@ -283,16 +283,23 @@ class _UniaxialMaterialNS(_BridgeNamespace):
 
     def ElasticMaterial(
         self, *,
-        E:   float,
-        eta: float = 0.0,
+        E:    float,
+        eta:  float = 0.0,
+        Eneg: float | None = None,
         name: str | None = None,
     ) -> ElasticMaterial:
         return self._bridge._register(
-            ElasticMaterial(E=E, eta=eta), name=name
+            ElasticMaterial(E=E, eta=eta, Eneg=Eneg), name=name
         )
 
-    def ENT(self, *, E: float, name: str | None = None) -> ENT:
-        return self._bridge._register(ENT(E=E), name=name)
+    def ENT(
+        self, *,
+        E: float,
+        a: float = 0.0,
+        b: float = 1.0,
+        name: str | None = None,
+    ) -> ENT:
+        return self._bridge._register(ENT(E=E, a=a, b=b), name=name)
 
     def ElasticPP(
         self, *,
