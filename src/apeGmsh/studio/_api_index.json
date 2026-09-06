@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-03T17:31:47Z",
+  "generated": "2026-09-06T03:49:20Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3274,7 +3274,7 @@
     },
     "ops.nDMaterial.DruckerPrager": {
       "symbol": "ops.nDMaterial.DruckerPrager",
-      "signature": "DruckerPrager(*, K: 'float', G: 'float', sigmaY: 'float', rho: 'float', rhoBar: 'float', Kinf: 'float', Ko: 'float', delta1: 'float', delta2: 'float', H: 'float', theta: 'float', name: 'str | None' = None) -> 'DruckerPrager'",
+      "signature": "DruckerPrager(*, K: 'float', G: 'float', sigmaY: 'float', rho: 'float', rhoBar: 'float', Kinf: 'float', Ko: 'float', delta1: 'float', delta2: 'float', H: 'float', theta: 'float', density: 'float' = 0.0, atm: 'float | None' = None, name: 'str | None' = None) -> 'DruckerPrager'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`DruckerPrager` continuum material."
     },
@@ -3850,13 +3850,13 @@
     },
     "ops.uniaxialMaterial.ENT": {
       "symbol": "ops.uniaxialMaterial.ENT",
-      "signature": "ENT(*, E: 'float', name: 'str | None' = None) -> 'ENT'",
+      "signature": "ENT(*, E: 'float', a: 'float' = 0.0, b: 'float' = 1.0, name: 'str | None' = None) -> 'ENT'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },
     "ops.uniaxialMaterial.ElasticMaterial": {
       "symbol": "ops.uniaxialMaterial.ElasticMaterial",
-      "signature": "ElasticMaterial(*, E: 'float', eta: 'float' = 0.0, name: 'str | None' = None) -> 'ElasticMaterial'",
+      "signature": "ElasticMaterial(*, E: 'float', eta: 'float' = 0.0, Eneg: 'float | None' = None, name: 'str | None' = None) -> 'ElasticMaterial'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },
