@@ -478,6 +478,251 @@ class _Structured:
         return self
 
     # ------------------------------------------------------------------
+    # Mechanism block + geometric grading (PM-01 D14)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _graded_cells(span: float, h: float, r: float) -> int:
+        """Cells crossing ``span`` starting at ``h`` and growing by ``r``.
+
+        Smallest ``n`` with ``h·(1 + r + … + r^{n-1}) >= span``, so the
+        cell touching the uniform block is never coarser than ``h``.
+        """
+        if span <= 0.0:
+            return 0
+        # Absorb float noise when span/h is exactly integral.
+        slack = 1e-9
+        if abs(r - 1.0) <= 1e-12:
+            n = math.ceil(span / h - slack)
+        else:
+            n = math.ceil(math.log1p(span * (r - 1.0) / h) / math.log(r) - slack)
+        return max(1, int(n))
+
+    def build_graded_box(
+        self,
+        *,
+        extent     : tuple[float, float, float],
+        footprint  : tuple[float, float],
+        h          : float,
+        l_mech     : float,
+        d_mech     : float,
+        r          : float,
+        orientation: float = 0.0,
+    ) -> list[int]:
+        """Build a soil box with a uniform mechanism block and graded far field.
+
+        One call for the footing-on-soil discretisation of PM-01 D14:
+        a **uniform block** at cell size ``h`` around the footprint, a
+        **geometric growth ratio** ``r`` per cell from there to the
+        boundary, and the footprint edges guaranteed to be **mesh
+        lines** so the footing width is exact.
+
+        Unlike the other ``structured`` verbs this one *creates the
+        geometry* — a 3×3×2 arrangement of boxes, fragmented conformal
+        — because a single box cannot carry a uniform interior and a
+        graded exterior on one transfinite curve.  It then combines
+        :meth:`set_transfinite_curve` (uniform inside the block,
+        ``Progression`` outside), :meth:`set_transfinite_surface`,
+        :meth:`set_recombine` and :meth:`set_transfinite_volume` over
+        the 18 sub-volumes.  It does **not** call ``generate()``.
+
+        The box is centred on the origin in plan and hangs below it:
+        ``x ∈ [-bx/2, bx/2]``, ``y ∈ [-ly/2, ly/2]``, ``z ∈ [-hz, 0]``,
+        with the footprint centred at the origin on the ``z = 0`` face.
+
+        Parameters
+        ----------
+        extent : (bx, ly, hz)
+            Full domain width, depth (in plan) and height.
+        footprint : (B, L)
+            Footing plan dimensions.  ``h`` must divide both **exactly**
+            — that is the invariant that puts a mesh line on each
+            footprint edge.
+        h : float
+            Near-field cell size.  Used uniformly inside the block and
+            as the first far-field cell.
+        l_mech : float
+            Lateral extent of the uniform block measured **from the
+            footing edge**.  Rounded to a whole number of cells.
+        d_mech : float
+            Depth of the uniform block below ``z = 0``.  Rounded to a
+            whole number of cells (at least one).
+        r : float
+            Geometric growth ratio per cell outside the block,
+            ``r >= 1``.  ``r = 1`` grades nothing (uniform far field).
+        orientation : float, default ``0.0``
+            Rotation of the whole grid about the ``z`` axis, in
+            **degrees**.  The mesh is laid out axis-aligned and then
+            rotated rigidly, so the footprint rotates with it and stays
+            on mesh lines, and the element/node counts are identical at
+            every angle.  This is the parameter the two-orientation
+            refinement study varies (PM-01 §10, ADR 65 D3): it changes
+            the grid direction relative to a *load* direction, not
+            relative to the footing.
+
+        Returns
+        -------
+        list[int]
+            Tags of the 18 sub-volumes, ready for
+            ``g.physical.add_volume(...)``.
+
+        Raises
+        ------
+        ValueError
+            If ``h`` does not divide ``B`` or ``L`` exactly, if ``r < 1``,
+            or if the block does not fit strictly inside the domain
+            (there would be no far field to grade).
+
+        Examples
+        --------
+        The PM-01 reference case — 1.5 m square footing, 15B × 15B × 12B
+        domain, block 1B out and 1B deep, ratio 1.3::
+
+            vols = g.mesh.structured.build_graded_box(
+                extent=(22.5, 22.5, 18.0), footprint=(1.5, 1.5),
+                h=0.1875, l_mech=1.5, d_mech=1.5, r=1.3,
+            )
+            g.physical.add_volume(vols, name="soil")
+            g.mesh.generation.generate(dim=3)
+        """
+        self._guard("build_graded_box")
+
+        bx, ly, hz = (float(v) for v in extent)
+        bf, lf     = (float(v) for v in footprint)
+        h          = float(h)
+        r          = float(r)
+
+        if h <= 0.0:
+            raise ValueError(f"h must be > 0 (got {h}).")
+        if r < 1.0:
+            raise ValueError(
+                f"r must be >= 1 — a ratio below 1 shrinks cells away from "
+                f"the block (got {r})."
+            )
+        if min(bx, ly, hz) <= 0.0 or min(bf, lf) <= 0.0:
+            raise ValueError(
+                f"extent and footprint must be positive "
+                f"(got extent={extent!r}, footprint={footprint!r})."
+            )
+
+        def _exact_cells(length: float, name: str) -> int:
+            n = round(length / h)
+            if n < 1 or abs(n * h - length) > 1e-9 * max(length, h):
+                raise ValueError(
+                    f"h={h} does not divide {name}={length} exactly "
+                    f"({length / h} cells) — the footprint edge would not "
+                    f"land on a mesh line (PM-01 D14)."
+                )
+            return int(n)
+
+        n_bf = _exact_cells(bf, "B")
+        n_lf = _exact_cells(lf, "L")
+
+        n_l  = max(0, round(float(l_mech) / h))
+        n_d  = max(1, round(float(d_mech) / h))
+        a_x  = bf / 2.0 + n_l * h
+        a_y  = lf / 2.0 + n_l * h
+        d_z  = n_d * h
+
+        if a_x >= bx / 2.0 or a_y >= ly / 2.0 or d_z >= hz:
+            raise ValueError(
+                f"the mechanism block (half-extents {a_x} × {a_y}, depth "
+                f"{d_z}) must fit strictly inside the domain "
+                f"({bx / 2.0} × {ly / 2.0}, depth {hz}) — there is no far "
+                f"field left to grade."
+            )
+
+        n_far_x = self._graded_cells(bx / 2.0 - a_x, h, r)
+        n_far_y = self._graded_cells(ly / 2.0 - a_y, h, r)
+        n_far_z = self._graded_cells(hz - d_z, h, r)
+
+        xs = (-bx / 2.0, -a_x, a_x, bx / 2.0)
+        ys = (-ly / 2.0, -a_y, a_y, ly / 2.0)
+        zs = (-hz, -d_z, 0.0)
+
+        # Per-axis slabs: (lo, hi, n_cells, block_side).  ``block_side``
+        # names the end the grading starts from; None means uniform.
+        slabs: list[list[tuple[float, float, int, str | None]]] = [
+            [(xs[0], xs[1], n_far_x, "hi"),
+             (xs[1], xs[2], n_bf + 2 * n_l, None),
+             (xs[2], xs[3], n_far_x, "lo")],
+            [(ys[0], ys[1], n_far_y, "hi"),
+             (ys[1], ys[2], n_lf + 2 * n_l, None),
+             (ys[2], ys[3], n_far_y, "lo")],
+            [(zs[0], zs[1], n_far_z, "hi"),
+             (zs[1], zs[2], n_d, None)],
+        ]
+
+        model = self._mesh._parent.model
+        boxes: list[int] = []
+        for i in range(3):
+            for j in range(3):
+                for k in range(2):
+                    boxes.append(model.geometry.add_box(
+                        xs[i], ys[j], zs[k],
+                        xs[i + 1] - xs[i], ys[j + 1] - ys[j],
+                        zs[k + 1] - zs[k],
+                        sync=False,
+                    ))
+        vols = model.boolean.fragment(boxes[:1], boxes[1:], dim=3)
+
+        # Rotate BEFORE reading any curve: ``occ.rotate`` preserves the
+        # tags of the entities it is handed (the volumes) but re-tags
+        # their boundary curves and surfaces, so constraints set first
+        # would be silently dropped.
+        ang = math.radians(float(orientation))
+        if ang:
+            model.transforms.rotate(vols, ang, az=1.0, dim=3)
+
+        # Classify every curve by the axis it spans and the slab it sits
+        # in, in the un-rotated frame the slabs were laid out in.
+        ca, sa = math.cos(-ang), math.sin(-ang)
+
+        def _local(ptag: int) -> tuple[float, float, float]:
+            x, y, z = gmsh.model.getValue(0, ptag, [])[:3]
+            return (x * ca - y * sa, x * sa + y * ca, z)
+
+        tol = 1e-6 * max(bx, ly, hz)
+        for _, ctag in gmsh.model.getEntities(1):
+            ends  = gmsh.model.getBoundary(
+                [(1, ctag)], oriented=True, combined=False)
+            p_beg = _local(abs(ends[0][1]))
+            p_end = _local(abs(ends[-1][1]))
+            axis  = max(range(3), key=lambda a: abs(p_end[a] - p_beg[a]))
+            lo, hi = sorted((p_beg[axis], p_end[axis]))
+            for s_lo, s_hi, n_cells, side in slabs[axis]:
+                if abs(lo - s_lo) <= tol and abs(hi - s_hi) <= tol:
+                    break
+            else:                                     # pragma: no cover
+                raise RuntimeError(
+                    f"curve {ctag} spanning [{lo}, {hi}] on axis {axis} "
+                    f"matches no slab — the fragment did not produce the "
+                    f"expected 3×3×2 grid."
+                )
+            coef = 1.0
+            if side is not None and r != 1.0:
+                # Progression grows from the curve's start toward its end.
+                near = s_lo if side == "lo" else s_hi
+                coef = r if abs(p_beg[axis] - near) <= tol else 1.0 / r
+            self.set_transfinite_curve(ctag, n_cells + 1, coef=coef)
+
+        for vtag in vols:
+            for _, stag in model.queries.boundary(vtag, oriented=False):
+                self.set_transfinite_surface(stag)
+                self.set_recombine(stag, dim=2)
+            self.set_transfinite_volume(vtag)
+
+        self._mesh._log(
+            f"build_graded_box(extent={extent!r}, footprint={footprint!r}, "
+            f"h={h}, l_mech={l_mech}, d_mech={d_mech}, r={r}, "
+            f"orientation={orientation}) — block {n_bf + 2 * n_l} × "
+            f"{n_lf + 2 * n_l} × {n_d} cells at h, far field "
+            f"{n_far_x} / {n_far_y} / {n_far_z} cells, "
+            f"{len(vols)} volume(s)"
+        )
+        return list(vols)
+
+    # ------------------------------------------------------------------
     # Unified high-level entry point
     # ------------------------------------------------------------------
 
