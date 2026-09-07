@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.strategy.Substep: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8879,6 +8890,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.strategy.Substep: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
       
     </span>
   </a>
@@ -14220,6 +14242,81 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b">ADDED — <code>ops.strategy.Substep</code>: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)<a class="headerlink" href="#added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b" title="Permanent link">&para;</a></h3>
+<p><code>ops.strategy.Ladder</code> has escalated the solution <em>algorithm</em> since ADR 0057
+Phase A and nothing else — the step size was fixed at declaration time, so the
+only answer to a stalled increment was a different <code>algorithm</code> command against
+the same increment. That is the wrong lever for the failure this project keeps
+meeting: on a push into plasticity the Newton radius of convergence collapses
+at the knee and no algorithm converges at the declared step. Measured on the
+TIMs response-curve harness, cell U-V: the coupled Newton's radius at the
+reference state lies between 3.125e-6 and 6.25e-6 m of control-node settlement,
+<strong>an eighth of the declared 2.5e-5</strong>, and above it every rung of the ladder
+returns <code>rc = -3</code>.</p>
+<p><code>ops.strategy.Substep(node=, dof=, target=, ds=, ds_min=, ...)</code> is that lever,
+ported from the harness's <code>stage_S5_push</code>: a base step, a cap, halving on a
+failed increment, regrow by <code>regrow</code> after <code>regrow_after</code> consecutive good
+steps, a floor, a subdivision budget and a wall-clock budget — plus
+<strong>run-to-criterion</strong> termination, so a push declares what it wants rather than a
+step count guessed in advance. Either a <code>target</code> advance at the control
+node/DOF, or (with <code>plateau=</code> + <code>plateau_window=</code>) a tail slope that has fallen
+to a declared fraction of the initial tangent, both least-squares fits over the
+committed curve, guarded by the harness's own rules: at least 8 rows, and the
+window must be covered by the curve's own range. <code>ds_use = min(ds, target - u)</code>
+lands <strong>exactly</strong> on the target and never overshoots, the <code>loadConst</code> contract
+ADR 0057 evidence point 4 wrote down. It runs against a three-method
+<code>SubstepDriver</code> protocol (<code>analyze(ds)</code>, <code>disp(node, dof)</code>, <code>load()</code>), so
+whichever integrator idiom carries the increment — <code>DisplacementControl</code> on the
+control node, or the fork's <code>sp</code> platen under <code>LoadControl(-ds)</code> — stays behind
+that seam and the controller owns the step-size policy and nothing else.</p>
+<p><strong>Verdict semantics are the point.</strong> <code>TARGET</code> and <code>PLATEAU</code> are successes;
+<code>BUDGET</code>, <code>FLOOR</code> and <code>WALL</code> are failures, and <code>SubstepResult.ok</code> is derived
+from the verdict and from nothing else — a spent budget is never dressed up as
+success, however many good steps preceded it. This diverges on purpose from the
+harness, whose <code>_verdict</code> promotes a guard-terminated leg to
+<code>limit_point_then_guard</code> when the tangent criterion had already been met.
+Ordering handles that case instead: both success criteria are tested at the top
+of every attempt, so a run that met its criterion has already exited before a
+budget can be spent, and the #587 fail-loud floor holds unbroken.</p>
+<p>Two exclusions are deliberate. The harness's <code>_try_step</code> relaxes the
+<em>convergence test</em> (<code>tol * rung["tol_factor"]</code>) as it escalates — ADR 0057 §6
+excludes that outright, so only the rc-checking skeleton was taken. And
+<code>_push_dr</code>, the dynamic-relaxation driver, is <strong>not</strong> ported: it wipes the whole
+chain to <code>system Diagonal</code> / <code>algorithm Linear</code> / <code>LadrunoDynamicRelaxation</code> /
+Transient, a wholesale integrator identity change that §6 also excludes, and it
+was defective for state-memory materials (every pseudo-step of its fictitious
+transient is a strain increment a path-dependent material commits, so the state
+at rest is not the state the static path would have produced).</p>
+<p>One knob deviates from the harness on measured evidence: <code>budget</code> counts
+<strong>consecutive</strong> halvings spent rescuing one increment — ADR 0057's own
+<code>max_halvings</code> — not a run-wide total. Ported verbatim as a total, the budget
+was spent by <em>probing</em> rather than by failure: regrow doubles the step every
+<code>regrow_after</code> good steps, so past a knee it re-fails by construction and a run
+died on <code>BUDGET</code> after roughly <code>2 × budget</code> perfectly healthy steps with a
+converging step size in hand. <code>SubstepResult.subdivisions</code> still reports the run
+total so the probing cost stays visible.</p>
+<p>An adversarial probe on degenerate inputs found two further defects, both now
+fixed and pinned: a <strong>NaN control displacement made the controller spin
+forever</strong> (a NaN fails <em>every</em> comparison in the loop — target, floor and the
+step-1 fidelity tripwire alike — and <code>min(ds, target - nan)</code> returns <code>ds</code>; the
+probe ran 5000 <code>analyze</code> calls before its own cap fired), and a <strong>NaN load
+silently disabled a declared plateau criterion</strong> (the initial tangent fits to
+NaN and the criterion's own guard then turns it off). Both are now loud
+refusals, the load check scoped to runs that actually declared a plateau.</p>
+<p>Deck emission of the substep loop is <strong>deferred</strong>, and is named rather than
+papered over: <code>Ladder.to_spec()</code> <strong>refuses</strong> a Substep-carrying ladder instead
+of resolving it to the Phase A fixed-step spec, because emitting the algorithm
+rungs alone would ship a deck that quietly ignores the declared step policy —
+the silent-no-op class this project has a documented history of. A <code>Ladder</code> may
+carry at most one <code>Substep</code>, reachable as <code>Ladder.substep</code>; Phase A emission is
+byte-identical when none is present. Because that in-process run is for now the
+only way to drive one, <code>ops.strategy.OpenSeesPyDriver(ops_module, node=, dof=,
+sign=-1.0)</code> ships as the stock driver for the <code>DisplacementControl</code> case — it
+re-issues <code>integrator DisplacementControl $node $dof $sign*ds</code> and takes one
+step per attempt, since the step size has to be pushed into the integrator every
+time it changes, and it covers that case only (under the sp platen <code>getTime()</code>
+is a settlement, not a force, so that driver is three methods written against
+the <code>SubstepDriver</code> Protocol).</p>
 <h3 id="added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8">ADDED — <code>s.profile(deep=, memory=, per_step=)</code> brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)<a class="headerlink" href="#added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8" title="Permanent link">&para;</a></h3>
 <p><code>ops.profiler.*</code> brackets the <em>whole</em> deck's appended <code>analyze</code> call —
 useful for a flat model, useless for a staged one, where each
