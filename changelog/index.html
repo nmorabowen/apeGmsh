@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-szero_velocities-the-transient-static-handover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — s.zero_velocities(): the transient → static handover
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8835,6 +8846,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-szero_velocities-the-transient-static-handover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — s.zero_velocities(): the transient → static handover
       
     </span>
   </a>
@@ -14132,6 +14154,33 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-szero_velocities-the-transient-static-handover">ADDED — <code>s.zero_velocities()</code>: the transient → static handover<a class="headerlink" href="#added-szero_velocities-the-transient-static-handover" title="Permanent link">&para;</a></h3>
+<p>A static stage inherits the previous transient stage's committed nodal
+velocities and accelerations — a static integrator writes neither — so
+<code>reactions -dynamic</code> in the static stage keeps reporting the previous
+stage's inertia and damping as if they were live. <code>s.zero_velocities()</code>
+(whole domain) / <code>s.zero_velocities(nodes=[...])</code> hands the stage a
+quiescent kinematic state.</p>
+<p>Emits, per node and per DOF of the node's <strong>effective</strong> ndf (a u–p node
+gets DOFs 1..4), <code>setNodeVel &lt;n&gt; &lt;dof&gt; 0.0 -commit</code> and
+<code>setNodeAccel &lt;n&gt; &lt;dof&gt; 0.0 -commit</code> — stock commands, so both emit
+targets (Tcl + openseespy) and any build run it. <code>-commit</code> is
+load-bearing, not decoration: <code>OPS_setNodeVel</code> rebuilds the vector from
+the node's <strong>committed</strong> state (<code>Node::getVel</code> returns <code>commitVel</code>) and
+writes only the <strong>trial</strong> vector, so without committing each call the
+next DOF reads the old value back and only the last DOF ends up zeroed.
+The fork's <code>ladrunoSetNodeTrial</code> cannot substitute — it writes the trial
+vectors and never commits — and neither stock nor the fork ships a
+domain-wide zeroing command, so the deck cost is <code>2 × Σ ndf</code> lines;
+scope it with <code>nodes=</code> when that matters.</p>
+<p>Emit slot is LAST in the stage block: after the stage's domain
+mutations, analysis chain, patterns and the optional <code>s.reset()</code> (which
+reverts the Domain to the last <code>setTime</code> and would restore the very
+velocities being removed), immediately before <code>analyze</code>. Wired on both
+the flat and the partitioned emit paths — under MP each rank emits only
+the slice of the target set it owns (INV-4). H5 archival of the verb is
+deferred and fail-loud: the staged archive raises <code>NotImplementedError</code>
+rather than write a deck that silently replays the artefact.</p>
 <h3 id="added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2">ADDED — a build-time pressure-datum check for static u-p decks (A2)<a class="headerlink" href="#added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2" title="Permanent link">&para;</a></h3>
 <p>A saturated (u-p) region whose pore-pressure DOFs are <strong>all free</strong> is
 impervious, and its <strong>static</strong> tangent is singular in <code>p</code>. Nothing downstream
