@@ -1472,6 +1472,11 @@ class StageRecord:
     set_time: float | None = None
     set_creep_on: bool | None = None
     pre_analyze_reset: bool = False
+    # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+    # ``None`` (default) keeps existing construction sites and tests
+    # working unmodified — no bracket emits for a stage that never
+    # calls ``s.profile``.
+    profile: "ProfileRecord | None" = None
     # ADR 0054 AB-3: ASDAbsorbingBoundary stage flip (``s.activate_absorbing``).
     # Emitted after the analysis chain is established (so the domain holds the
     # stage's elements) — one-shot ``parameter`` / ``addToParameter ... stage`` /
@@ -1560,6 +1565,30 @@ class ActivateAbsorbingRecord:
 
     pg: str | None
     elements: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileRecord:
+    """One ``s.profile(...)`` directive (TIMs A8) — brackets THIS
+    stage's ``analyze`` loop with the Ladruno fork's stack profiler,
+    reported under the stage's own name.
+
+    ``deep`` / ``memory`` / ``per_step`` mirror the three ``start``
+    flags on :class:`~apeGmsh.opensees._internal.ns.profiler._ProfilerNS`
+    (``-deep`` / ``-memory`` / ``-perStep``) — the bridge-level
+    ``ops.profiler.*`` verbs bracket the WHOLE deck's appended
+    ``analyze`` call; this record reuses the same
+    ``Emitter.profiler(*args)`` Protocol method to bracket a SINGLE
+    stage's ``analyze`` loop instead. Emitted as ``profiler start
+    [flags]`` immediately before the stage's analyze loop and
+    ``profiler stop`` + ``profiler report <stage name>.h5`` immediately after (before
+    ``stage_close``) — filename derived from the stage's name so no
+    extra kwarg is needed.
+    """
+
+    deep: bool = False
+    memory: bool = False
+    per_step: bool = False
 
 
 # ---------------------------------------------------------------------------
