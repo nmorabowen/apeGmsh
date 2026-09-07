@@ -333,6 +333,37 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `s.imposed_path(...)`: prescribed motion on any DOF, inside a stage
+
+`ops.imposed_displacement` maps `ux` / `uy` / `uz` onto DOFs 1-3 and
+builds a **global** pattern, which ADR 0051 §5 forbids mixing with
+stages — so a staged model could not prescribe a rotation at all without
+hand-authoring `p.sp` rows. `s.imposed_path(node=, ratios=(r1..r6),
+series=)` closes that: `ratios` is positional over the node's DOFs, so
+4..6 (the rotations) are reachable, and the pattern is stage-scoped.
+
+Creates a stage `Plain` via `s.pattern(series=)` and records one `sp` per
+**non-zero** ratio:
+
+```
+sp <node> <i> <ratios[i-1]>
+```
+
+Zeros are skipped rather than emitted as `sp … 0.0` — a prescribed zero
+is a *constraint* (it pins the DOF), not the absence of one, so emitting
+it would silently clamp DOFs the caller meant to leave free; `s.fix` /
+`s.support` are the verbs for pinning. The ratios are shape only: the
+magnitude and history come from `series`, so a unit direction plus a
+`Path` gives a fault-slip or support-settlement path. The pattern is
+returned, so ordinary `p.load` rows on other DOFs of the same node
+coexist in the same stage.
+
+`ratios` longer than the model's `ndf` is refused at the call site
+(`ValueError`, matching `ops.imposed_displacement`'s existing check). The
+bound is the `ops.model(ndf=)` **envelope**, an upper bound on any node's
+ndf — the per-node *effective* map (ADR 0048) resolves at build time from
+every declared element's PG fan-out and cannot be probed per call without
+a full mesh walk. `ops.imposed_displacement` is untouched.
 ### ADDED — `s.update_parameter(...)`: a typed pass-through over `updateParameter`
 
 `s.initial_stress` and `s.activate_absorbing` already drive the OpenSees

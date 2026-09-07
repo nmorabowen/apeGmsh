@@ -852,6 +852,9 @@ ops.damping.uniform|sec_stif|urd|urd_beta(*, ..., on=None, activate_time=, facto
 # case-list (no WarnUnconsumedModelLoads). A case you don't import is not
 # applied; an import of a non-existent case is a no-op.
 # NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
+# Staged prescribed motion (rotations included, zeros skipped):
+#   s.imposed_path(node=, ratios=(r1..r6), series=) -> Plain
+#   ops.imposed_displacement(...) stays the non-staged, translations-only path.
 
 # staged analysis (ADR 0034) — domainChange between stages:
 with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py
