@@ -3663,6 +3663,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — kinematic_coupling refuses a u–p slave under dofs=None (TIMs A1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-flaky-suite-segfault-the-cyclic-gc-was-finalizing-qt-off-the-ui-thread-1080" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8791,6 +8802,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — kinematic_coupling refuses a u–p slave under dofs=None (TIMs A1)
       
     </span>
   </a>
@@ -14050,6 +14072,23 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1">FIXED — <code>kinematic_coupling</code> refuses a u–p slave under <code>dofs=None</code> (TIMs A1)<a class="headerlink" href="#fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.kinematic_coupling(..., dofs=None)</code> emits the fork element
+with no <code>-dof</code> list, and the fork's default — "every DOF the slave has" —
+gates on DOF <strong>count</strong> only (<code>LadrunoKinematicCoupling.cpp:260-275</code>): it
+walks components <code>1..ndm+nrot</code> and keeps each one the slave carries. For an
+ndf-4 u–p slave in 3D, component 4 is kept as a <em>rotation</em> row and <code>buildB</code>
+(<code>:335-350</code>) ties the node's pore pressure to the master's θx, with a
+penalty of order <code>K_t·ℓ²</code> — silently; the only warning sits behind
+<code>!useDefault</code>. The bridge's constraint-side ndf gate (G2,
+<code>validate_constraint_master_ndf</code>) now refuses the default at emit when any
+slave's ndf is neither <code>ndm</code> (translations) nor <code>ndm + nrot</code> (translations
++ rotations), naming the node and telling the user to pass <code>dofs=</code>
+explicitly (<code>dofs=[1, 2, 3]</code> for translations only). The docstring that
+recommended <code>dofs=None</code> "for mixed sets" now says what the default really
+does. The gate is count-based, so a 2D u–p node (ndf 3, the same count as
+<code>(u, v, θ)</code>) is not distinguishable here; the pressure-node identification
+by element class belongs to the pressure-datum check (TIMs A2).</p>
 <h3 id="fixed-the-flaky-suite-segfault-the-cyclic-gc-was-finalizing-qt-off-the-ui-thread-1080">FIXED — the flaky <code>suite</code> segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)<a class="headerlink" href="#fixed-the-flaky-suite-segfault-the-cyclic-gc-was-finalizing-qt-off-the-ui-thread-1080" title="Permanent link">&para;</a></h3>
 <p>The Linux <code>suite</code> job had been dying with <strong>exit 139 and no failing test</strong>,
 hitting <code>main</code> and three PR branches on 2026-08-25/26 including docs-only
