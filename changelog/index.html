@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.mesh.structured.build_graded_box — mechanism block + geometric grading in one call (PM-01 A9)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8890,6 +8901,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.mesh.structured.build_graded_box — mechanism block + geometric grading in one call (PM-01 A9)
       
     </span>
   </a>
@@ -14242,6 +14264,50 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9">ADDED — <code>g.mesh.structured.build_graded_box</code> — mechanism block + geometric grading in one call (PM-01 A9)<a class="headerlink" href="#added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9" title="Permanent link">&para;</a></h3>
+<p>A footing-on-soil model wants three things at once from its mesh, and
+until now had to hand-assemble them from <code>set_transfinite_box</code>,
+<code>set_transfinite_curve(mesh_type="Progression")</code> and
+<code>set_transfinite_volume</code>: a <strong>uniform block</strong> at cell size <code>h</code> around the
+footing where the collapse mechanism lives, a declared <strong>geometric growth
+ratio</strong> <code>r</code> per cell from there out to the boundary, and the footprint's
+edges landing exactly on <strong>mesh lines</strong> so the footing width is not fuzzy.
+<code>build_graded_box(extent=(bx, ly, hz), footprint=(B, L), h=…, l_mech=…,
+d_mech=…, r=…, orientation=0.0)</code> produces all three and returns the 18
+sub-volume tags, ready for <code>g.physical.add_volume(...)</code>; it sets the
+constraints only and leaves <code>generate()</code> to the caller.</p>
+<p>It is the one <code>structured</code> verb that <strong>creates geometry</strong>, and
+deliberately so: a single box cannot carry a uniform interior and a graded
+exterior on one transfinite curve, so the verb lays out a 3×3×2
+arrangement of boxes, fragments them conformal, and then combines the
+existing primitives over the result — uniform curves inside the block,
+<code>Progression</code> outside with the ratio oriented to grow <em>away</em> from the
+block on both sides of every axis.</p>
+<p>Two invariants are enforced rather than assumed. <code>h</code> must divide <code>B</code> and
+<code>L</code> exactly (a loud <code>ValueError</code> otherwise): that, plus rounding <code>l_mech</code>
+and <code>d_mech</code> to whole cells, is what guarantees a node on each footprint
+edge — the "fuzzy footing width" error is excluded by construction, not by
+luck. And the block must fit <em>strictly</em> inside the domain, so a block as
+wide or as deep as the box — which would leave no far field to grade and
+silently produce a uniform mesh — is refused with the numbers in the
+message. <code>r = 1</code> is legal and grades nothing; <code>r &lt; 1</code> is refused, since a
+ratio below one refines <em>toward</em> the boundary.</p>
+<p><code>orientation</code> is a rotation of the whole grid about <code>z</code>, in degrees. It is
+applied to the fragmented volumes <strong>before</strong> any curve is read, because
+<code>occ.rotate</code> preserves the tags of the entities it is handed but re-tags
+their boundary curves and surfaces — constraints set first would be
+silently dropped, and the curves are classified in the un-rotated frame
+instead. Because the rotation is rigid the element and node counts are
+identical at every angle, which is what makes it usable as the
+two-orientation axis of a refinement study.</p>
+<p>The far-field cell count is the smallest <code>n</code> with
+<code>h·(1 + r + … + r^{n-1}) ≥ span</code>, so the cell touching the block is never
+coarser than <code>h</code>. That law reproduces the published element/node table of
+the PM-01 domain-cost study exactly for its three geometric-grading rows
+when fed the same far-field seed; the verb itself seeds at <code>h</code>, the
+declared near-field cell, which buys a denser far field (51×51×26 grid
+lines at <code>r = 1.2</code> against the study's 49×49×24) rather than a coarser
+one.</p>
 <h3 id="added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b">ADDED — <code>ops.strategy.Substep</code>: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)<a class="headerlink" href="#added-opsstrategysubstep-an-adaptive-step-controller-that-runs-to-criterion-adr-0104-adr-0057-phase-b" title="Permanent link">&para;</a></h3>
 <p><code>ops.strategy.Ladder</code> has escalated the solution <em>algorithm</em> since ADR 0057
 Phase A and nothing else — the step size was fixed at declaration time, so the
