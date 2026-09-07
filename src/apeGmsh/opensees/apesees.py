@@ -12910,6 +12910,108 @@ class _StageBuilder:
         self._pattern_specs.append(plain)
         return plain
 
+    def imposed_path(
+        self,
+        *,
+        node: "int | Node",
+        ratios: "Sequence[float]",
+        series: "TimeSeries | str",
+    ) -> "Plain":
+        """Drive ONE node along a prescribed multi-DOF path in this stage.
+
+        The rotational / staged counterpart to
+        :meth:`apeSees.imposed_displacement`, which is translations-only
+        (``ux`` / ``uy`` / ``uz`` → DOFs 1-3) and global (ADR 0051 §5
+        forbids mixing a global pattern with stages).  Here ``ratios``
+        is positional over the node's DOFs, so DOFs 4..6 — the rotations
+        — are reachable, and the pattern is stage-scoped.
+
+        Creates a stage-scoped ``Plain`` via :meth:`pattern` and records
+        one ``sp`` per NON-ZERO ratio::
+
+            sp <node> <i> <ratios[i-1]>
+
+        Zero ratios are skipped, not emitted as ``sp … 0.0``: a
+        prescribed zero is a *constraint* (it pins the DOF), not the
+        absence of one, so emitting it would silently clamp DOFs the
+        caller meant to leave free.  Use ``s.fix`` / ``s.support`` when
+        pinning is what you want.
+
+        The ratios are shape only — the magnitude and history come from
+        ``series``.  The applied value on DOF ``i`` at time ``t`` is
+        ``ratios[i-1] * series(t)``, so a unit-direction vector plus a
+        ``Path`` series gives a fault-slip or support-settlement path,
+        and the same pattern may carry ordinary ``p.load`` lines on
+        other DOFs of the same node (they coexist — a prescribed SP and
+        a nodal load are different rows in the same pattern).
+
+        Returns the pattern, so more can be added to it::
+
+            with ops.stage("slip") as s:
+                p = s.imposed_path(
+                    node=99, ratios=(0.0, 0.0, 0.0, 0.0, 0.0, 0.01),
+                    series=ops.timeSeries.Linear(),
+                )
+                p.load(node=99, forces=(0.0, 0.0, -5e3, 0.0, 0.0, 0.0))
+
+        Parameters
+        ----------
+        node
+            The node to drive — a tag or a :class:`Node`.
+        ratios
+            Per-DOF ratios, positional from DOF 1.  At most the model's
+            ``ndf`` entries; at least one must be non-zero.
+        series
+            The :class:`~apeGmsh.opensees._internal.types.TimeSeries`
+            scaling the path — a handle, or the ``name=`` a series was
+            registered under (dual-mode, same as :meth:`pattern`).
+
+        Raises
+        ------
+        ValueError
+            ``ratios`` is empty, is all zeros (an inert directive), or
+            is longer than the model's ``ndf``.
+
+        Notes
+        -----
+        The length check is against the ``ops.model(ndf=)`` **envelope**,
+        which is an upper bound on any node's ndf — the per-node
+        *effective* ndf map (ADR 0048) is only resolved at build time,
+        from every declared element's PG fan-out, so it cannot be probed
+        per call without a full mesh walk.  A ratio past the envelope is
+        therefore refused here; a ratio past a particular node's lower
+        effective ndf reaches OpenSees, which rejects the ``sp`` line.
+        """
+        ratios_t = tuple(float(r) for r in ratios)
+        if not ratios_t:
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: ratios= must "
+                "contain at least one entry."
+            )
+        model_ndf = self._bridge._ndf
+        if model_ndf is not None and len(ratios_t) > model_ndf:
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: ratios= has "
+                f"{len(ratios_t)} entries but the model's ndf is "
+                f"{model_ndf} — DOF {len(ratios_t)} does not exist.  "
+                f"Trim ratios= or call ops.model(..., "
+                f"ndf={len(ratios_t)}) first."
+            )
+        if not any(ratios_t):
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: every ratio is "
+                "zero, so the pattern would emit no sp lines at all.  "
+                "Supply at least one non-zero ratio (a prescribed zero "
+                "is a fixity — use s.fix / s.support for that)."
+            )
+        plain = self.pattern(series=series)
+        node_tag = int(_iter_tags([node])[0])
+        with plain:
+            for dof, ratio in enumerate(ratios_t, start=1):
+                if ratio:
+                    plain.sp(node=node_tag, dof=dof, value=ratio)
+        return plain
+
     def activate(self, *, pgs: "Iterable[str]") -> None:
         """Mark element PGs as activated by this stage (Phase SSI-2.B).
 

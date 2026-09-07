@@ -990,7 +990,15 @@ ops.py("out/model.py")
   a staged model must keep every pattern stage-scoped
   (`s.pattern(series=...)`); don't register a global `ops.pattern.Plain`
   (or `ops.imposed_displacement`, which builds one) alongside
-  `ops.stage(...)`.
+  `ops.stage(...)`. The staged prescribed-motion verb is
+  `s.imposed_path(node=, ratios=(r1..r6), series=)` — one `sp` per
+  NON-ZERO ratio (zeros are skipped, since a prescribed zero is a
+  fixity), positional from DOF 1 so the rotations 4..6 are reachable,
+  inside a stage-scoped `Plain` it returns for further `p.load` /
+  `p.sp` rows. `ops.imposed_displacement` stays the non-staged,
+  translations-only path.
+  <!-- verified: tests/opensees/unit/test_stage_imposed_path.py -->
+
 - **Ambiguous `pg=`** — same name at multiple dimensions. Keep PG
   names dimension-unique.
 - **`len(dofs) != ndf`** — `ops.fix` needs a mask no longer than the node
