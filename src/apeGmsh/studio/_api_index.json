@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-06T05:52:58Z",
+  "generated": "2026-09-07T07:11:00Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -1207,6 +1207,12 @@
       "signature": "set_size_sources(*, from_points: 'bool | None' = None, from_curvature: 'bool | None' = None, extend_from_boundary: 'bool | None' = None) -> \"'_Sizing'\"",
       "skill": "references/api-cheatsheet.md",
       "doc": "Control *which* size sources Gmsh consults when meshing."
+    },
+    "g.mesh.structured.build_graded_box": {
+      "symbol": "g.mesh.structured.build_graded_box",
+      "signature": "build_graded_box(*, extent: 'tuple[float, float, float]', footprint: 'tuple[float, float]', h: 'float', l_mech: 'float', d_mech: 'float', r: 'float', orientation: 'float' = 0.0) -> 'list[int]'",
+      "skill": "references/api-cheatsheet.md",
+      "doc": "Build a soil box with a uniform mechanism block and graded far field."
     },
     "g.mesh.structured.recombine": {
       "symbol": "g.mesh.structured.recombine",

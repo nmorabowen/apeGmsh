@@ -315,6 +315,56 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `g.mesh.structured.build_graded_box` — mechanism block + geometric grading in one call (PM-01 A9)
+
+A footing-on-soil model wants three things at once from its mesh, and
+until now had to hand-assemble them from `set_transfinite_box`,
+`set_transfinite_curve(mesh_type="Progression")` and
+`set_transfinite_volume`: a **uniform block** at cell size `h` around the
+footing where the collapse mechanism lives, a declared **geometric growth
+ratio** `r` per cell from there out to the boundary, and the footprint's
+edges landing exactly on **mesh lines** so the footing width is not fuzzy.
+`build_graded_box(extent=(bx, ly, hz), footprint=(B, L), h=…, l_mech=…,
+d_mech=…, r=…, orientation=0.0)` produces all three and returns the 18
+sub-volume tags, ready for `g.physical.add_volume(...)`; it sets the
+constraints only and leaves `generate()` to the caller.
+
+It is the one `structured` verb that **creates geometry**, and
+deliberately so: a single box cannot carry a uniform interior and a graded
+exterior on one transfinite curve, so the verb lays out a 3×3×2
+arrangement of boxes, fragments them conformal, and then combines the
+existing primitives over the result — uniform curves inside the block,
+`Progression` outside with the ratio oriented to grow *away* from the
+block on both sides of every axis.
+
+Two invariants are enforced rather than assumed. `h` must divide `B` and
+`L` exactly (a loud `ValueError` otherwise): that, plus rounding `l_mech`
+and `d_mech` to whole cells, is what guarantees a node on each footprint
+edge — the "fuzzy footing width" error is excluded by construction, not by
+luck. And the block must fit *strictly* inside the domain, so a block as
+wide or as deep as the box — which would leave no far field to grade and
+silently produce a uniform mesh — is refused with the numbers in the
+message. `r = 1` is legal and grades nothing; `r < 1` is refused, since a
+ratio below one refines *toward* the boundary.
+
+`orientation` is a rotation of the whole grid about `z`, in degrees. It is
+applied to the fragmented volumes **before** any curve is read, because
+`occ.rotate` preserves the tags of the entities it is handed but re-tags
+their boundary curves and surfaces — constraints set first would be
+silently dropped, and the curves are classified in the un-rotated frame
+instead. Because the rotation is rigid the element and node counts are
+identical at every angle, which is what makes it usable as the
+two-orientation axis of a refinement study.
+
+The far-field cell count is the smallest `n` with
+`h·(1 + r + … + r^{n-1}) ≥ span`, so the cell touching the block is never
+coarser than `h`. That law reproduces the published element/node table of
+the PM-01 domain-cost study exactly for its three geometric-grading rows
+when fed the same far-field seed; the verb itself seeds at `h`, the
+declared near-field cell, which buys a denser far field (51×51×26 grid
+lines at `r = 1.2` against the study's 49×49×24) rather than a coarser
+one.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,
