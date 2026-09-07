@@ -33,6 +33,7 @@ import pytest
 from apeGmsh.opensees.analysis.algorithm import KrylovNewton, Newton
 from apeGmsh.opensees.analysis.strategy import (
     Ladder,
+    OpenSeesPyDriver,
     Substep,
     SubstepResult,
 )
@@ -465,3 +466,99 @@ def test_provenance_is_printed_loud(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "apeGmsh substep: subdivision 1/8" in out
     assert "apeGmsh substep: TARGET after" in out
+
+
+# ---------------------------------------------------------------------------
+# 7. The OpenSeesPyDriver adapter (ADR 0104 D1)
+# ---------------------------------------------------------------------------
+
+
+class StubOps:
+    """A stand-in for the openseespy module: no live backend.
+
+    Records every ``integrator`` line so a test can see the step size
+    the controller pushed in, and fails any increment above ``radius``
+    once the DOF is past ``knee`` — the same stiff-then-soft shape the
+    fixed-vs-substep test uses, driven through the real adapter.
+    """
+
+    def __init__(self, *, knee: float = 1e9, radius: float = 1e9) -> None:
+        self.knee, self.radius = knee, radius
+        self.u = 0.0
+        self.t = 0.0
+        self.integrators: list[tuple[object, ...]] = []
+        self.steps = 0
+        self._incr = 0.0
+
+    def integrator(self, *args: object) -> None:
+        self.integrators.append(args)
+        self._incr = float(args[3])  # type: ignore[arg-type]
+
+    def analyze(self, n: int) -> int:
+        assert n == 1, "the driver must take exactly one step per attempt"
+        if abs(self.u) >= self.knee and abs(self._incr) > self.radius:
+            return -3
+        self.u += self._incr
+        self.t += abs(self._incr) * 100.0
+        self.steps += 1
+        return 0
+
+    def nodeDisp(self, node: int, dof: int) -> float:
+        return self.u
+
+    def getTime(self) -> float:
+        return self.t
+
+
+def test_adapter_issues_displacement_control_then_one_step() -> None:
+    ops = StubOps()
+    drv = OpenSeesPyDriver(ops, node=7, dof=3)
+    assert drv.analyze(0.25) == 0
+    assert ops.integrators == [("DisplacementControl", 7, 3, -0.25)]
+    assert ops.steps == 1
+
+
+def test_adapter_forwards_the_rc_unchanged() -> None:
+    ops = StubOps(knee=0.0, radius=0.0)     # every increment fails
+    assert OpenSeesPyDriver(ops, node=7, dof=3).analyze(0.25) == -3
+
+
+def test_adapter_reads_disp_and_load_from_the_module() -> None:
+    ops = StubOps()
+    ops.u, ops.t = -1.5, 42.0
+    drv = OpenSeesPyDriver(ops, node=7, dof=3)
+    assert drv.disp(7, 3) == -1.5
+    assert drv.load() == 42.0
+
+
+def test_adapter_sign_drives_the_declared_direction() -> None:
+    ops = StubOps()
+    OpenSeesPyDriver(ops, node=7, dof=3, sign=1.0).analyze(0.25)
+    assert ops.integrators[-1] == ("DisplacementControl", 7, 3, 0.25)
+    assert ops.u == pytest.approx(0.25)
+
+
+def test_adapter_refuses_a_sign_that_is_not_a_direction() -> None:
+    with pytest.raises(ValueError, match="sign must be -1.0 or 1.0"):
+        OpenSeesPyDriver(StubOps(), node=7, dof=3, sign=0.5)
+
+
+def test_adapter_plugs_into_drive_end_to_end() -> None:
+    # The whole loop through the real adapter: stiff to |u| = 1.0, then
+    # only |ds| <= 0.125 converges.  The controller must subdivide,
+    # land on the target, and every integrator line must be the
+    # DisplacementControl one it pushed the current step into.
+    ops = StubOps(knee=1.0, radius=0.125)
+    res = _policy(target=2.0, ds=0.5, budget=8).drive(
+        OpenSeesPyDriver(ops, node=7, dof=3),
+    )
+
+    assert res.verdict == "target"
+    assert res.ok
+    assert res.subdivisions >= 2
+    assert ops.u == pytest.approx(-2.0)          # driven NEGATIVE...
+    assert res.disp == pytest.approx(2.0)        # ...measured as advance
+    assert all(a[0] == "DisplacementControl" for a in ops.integrators)
+    assert len(ops.integrators) == ops.steps + res.subdivisions
+    # the rescue step is on the record, halved twice from the base
+    assert any(a[3] == pytest.approx(-0.125) for a in ops.integrators)

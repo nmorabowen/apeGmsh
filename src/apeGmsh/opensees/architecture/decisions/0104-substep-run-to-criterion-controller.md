@@ -112,6 +112,28 @@ starts from a settled gravity state therefore measures its own advance —
 the harness's `s_now = -(nodeDisp(CTRL, 3) - u0)` idiom (line 3546),
 generalised and sign-free.
 
+**One adapter ships with it**, since the in-process run is the only way
+to drive a `Substep` until D6 lands and hand-writing the Protocol for
+the common case is pure ceremony. `ops.strategy.OpenSeesPyDriver(
+ops_module, *, node, dof, sign=-1.0)` wraps a live openseespy module —
+or anything exposing `analyze` / `nodeDisp` / `getTime`, the same
+duck-typed binding `LiveOpsEmitter` uses, so `analysis/strategy.py` still
+never imports openseespy. The caller has already declared the chain and
+the unit reference load at the control node; the adapter issues exactly
+one command of its own per attempt, because **the step size has to be
+pushed into the integrator every time it changes**: `analyze(ds)`
+re-issues `integrator DisplacementControl $node $dof $sign*ds` and then
+takes one step, returning the rc unchanged (the harness's own line,
+3564 — no `wipeAnalysis`, no fresh `analysis` command). `disp` is
+`nodeDisp`, `load` is `getTime()`. `sign` is the direction of the
+*integrator increment*, not of the measured advance, and is refused
+unless it is exactly ±1. Only the `DisplacementControl` case is covered:
+under the sp platen driven by `LoadControl(-ds)` pseudo-time IS the
+settlement, so `getTime()` would be "a metre pretending to be a
+kilonewton" (lines 3382–3386) and `load()` would have to sum the platen
+reactions instead — that driver is three methods written against the
+Protocol, and guessing it here is how silent wrong answers start.
+
 ### D2 — Termination is checked at the top, success criteria first
 
 ```
@@ -252,11 +274,13 @@ better engineering. Emitting the loop into py + tcl is the next slice.
   lands, a substep push is an in-process run, and `to_spec` refuses.
   This is a real gap against ADR 0057's deck-is-authoritative
   constraint and is the top of the follow-up list.
-- The driver seam is one more thing to write per push (about ten lines
-  wrapping `ops.integrator` + `ops.analyze` + `ops.nodeDisp`). A
-  bridge-supplied default driver is deliberately *not* shipped here —
-  the integrator idiom differs per push and guessing it is how silent
-  wrong answers start.
+- The driver seam is one more thing to write per push, for every push
+  that is *not* `DisplacementControl` against a unit reference load —
+  `ops.strategy.OpenSeesPyDriver` covers that one case and no other.
+  Anything else (the sp platen, a transient rate ramp) is about ten
+  lines against the Protocol, and is deliberately left to the caller:
+  the integrator idiom and the meaning of `load()` differ per push, and
+  guessing them is how silent wrong answers start.
 - `regrow` probing costs one failed `analyze` per `regrow_after` good
   steps once the model is past a knee. Priced and accepted (F1): the
   alternative is a step that never recovers from one hard increment.

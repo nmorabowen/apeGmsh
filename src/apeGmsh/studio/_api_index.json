@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-07T07:09:23Z",
+  "generated": "2026-09-07T07:26:24Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3625,6 +3625,12 @@
       "signature": "Ladder(*, rungs: 'Sequence[SolutionAlgorithm | _Substep]', name: 'str' = 'custom') -> '_Ladder'",
       "skill": "references/opensees-bridge.md",
       "doc": "Declare a bespoke escalation ladder."
+    },
+    "ops.strategy.OpenSeesPyDriver": {
+      "symbol": "ops.strategy.OpenSeesPyDriver",
+      "signature": "OpenSeesPyDriver(ops_module: 'Any', *, node: 'int', dof: 'int', sign: 'float' = -1.0) -> '_OpenSeesPyDriver'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "The stock ``DisplacementControl`` driver for :meth:`Substep`."
     },
     "ops.strategy.Substep": {
       "symbol": "ops.strategy.Substep",

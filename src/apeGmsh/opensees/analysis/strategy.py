@@ -38,7 +38,7 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from .._internal.types import SolutionAlgorithm
 from ..emitter.base import StrategySpec
@@ -52,6 +52,7 @@ from .algorithm import (
 
 __all__ = [
     "Ladder",
+    "OpenSeesPyDriver",
     "Substep",
     "SubstepDriver",
     "SubstepResult",
@@ -137,6 +138,70 @@ class SubstepDriver(Protocol):
         force; the plateau criterion reads its slope.
         """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class OpenSeesPyDriver:
+    """The one obvious :class:`SubstepDriver` — DisplacementControl.
+
+    Wraps a live openseespy module (or **any** object exposing
+    ``analyze``, ``nodeDisp`` and ``getTime`` — the same duck-typed
+    binding :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter`
+    uses), so this module never imports openseespy itself.
+
+    **The caller has already declared the analysis.** Constraints,
+    numberer, system, test, algorithm and ``analysis("Static")`` are
+    the caller's, and so is the unit reference load at the control
+    node — the load factor is then the push force, which is what
+    makes :meth:`load` meaningful. This driver issues exactly ONE
+    command of its own per attempt: the step size has to be pushed
+    into the integrator every time it changes, so
+    ``analyze(ds)`` re-issues ``integrator DisplacementControl $node
+    $dof $sign*ds`` and then takes **one step** (``ops.analyze(1)``),
+    returning its rc unchanged. That is the harness's own line
+    (``stages.py:3564``), and re-issuing the integrator mid-analysis
+    needs no ``wipeAnalysis`` and no fresh ``analysis`` command.
+
+    ``sign`` is the sign of the integrator increment, not of the
+    measured advance (:class:`Substep` measures a magnitude): the
+    default ``-1.0`` drives the control DOF negative, the downward
+    push the harness runs. ``node`` / ``dof`` are the DOF this driver
+    *drives*; normally they are the ones the :class:`Substep`
+    measures, and a mismatch is caught by its step-1 tripwire.
+
+    **The sp-platen path is deliberately not covered here.** Under a
+    prescribed-displacement platen driven by ``LoadControl(-ds)``,
+    pseudo-time IS the settlement, so ``getTime()`` would be a metre
+    pretending to be a kilonewton (``stages.py:3382-3386``) and
+    :meth:`load` would have to sum the platen reactions instead.
+    Write that driver against :class:`SubstepDriver` directly — it is
+    three methods.
+    """
+
+    ops_module: Any
+    node: int = field(kw_only=True)
+    dof: int = field(kw_only=True)
+    sign: float = field(default=-1.0, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.sign not in (-1.0, 1.0):
+            raise ValueError(
+                f"OpenSeesPyDriver: sign must be -1.0 or 1.0, got "
+                f"{self.sign!r} — it is the direction of the integrator "
+                "increment, not a scale factor on the step size."
+            )
+
+    def analyze(self, ds: float) -> int:
+        self.ops_module.integrator(
+            "DisplacementControl", self.node, self.dof, self.sign * ds,
+        )
+        return int(self.ops_module.analyze(1))
+
+    def disp(self, node: int, dof: int) -> float:
+        return float(self.ops_module.nodeDisp(node, dof))
+
+    def load(self) -> float:
+        return float(self.ops_module.getTime())
 
 
 @dataclass(frozen=True, slots=True)

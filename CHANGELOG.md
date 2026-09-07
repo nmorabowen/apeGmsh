@@ -389,7 +389,14 @@ of resolving it to the Phase A fixed-step spec, because emitting the algorithm
 rungs alone would ship a deck that quietly ignores the declared step policy —
 the silent-no-op class this project has a documented history of. A `Ladder` may
 carry at most one `Substep`, reachable as `Ladder.substep`; Phase A emission is
-byte-identical when none is present.
+byte-identical when none is present. Because that in-process run is for now the
+only way to drive one, `ops.strategy.OpenSeesPyDriver(ops_module, node=, dof=,
+sign=-1.0)` ships as the stock driver for the `DisplacementControl` case — it
+re-issues `integrator DisplacementControl $node $dof $sign*ds` and takes one
+step per attempt, since the step size has to be pushed into the integrator every
+time it changes, and it covers that case only (under the sp platen `getTime()`
+is a settlement, not a force, so that driver is three methods written against
+the `SubstepDriver` Protocol).
 
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 

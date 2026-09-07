@@ -11,10 +11,11 @@ topological emit pass to order.  H5 persistence is ADR 0057 Phase C.
 """
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 from ...analysis.strategy import PROFILE_NAMES, profile as _profile
 from ...analysis.strategy import Ladder as _Ladder
+from ...analysis.strategy import OpenSeesPyDriver as _OpenSeesPyDriver
 from ...analysis.strategy import Substep as _Substep
 from ..types import SolutionAlgorithm
 from ._base import _BridgeNamespace
@@ -75,6 +76,30 @@ class _StrategyNS(_BridgeNamespace):
             ds_max=ds_max, regrow=regrow, regrow_after=regrow_after,
             budget=budget, wall_budget=wall_budget, plateau=plateau,
             plateau_window=plateau_window,
+        )
+
+    def OpenSeesPyDriver(
+        self,
+        ops_module: Any,
+        *,
+        node: int,
+        dof: int,
+        sign: float = -1.0,
+    ) -> _OpenSeesPyDriver:
+        """The stock ``DisplacementControl`` driver for :meth:`Substep`.
+
+        ``ops_module`` is a live openseespy module (or anything with
+        ``analyze`` / ``nodeDisp`` / ``getTime``).  The analysis chain
+        and the unit reference load at the control node are ALREADY
+        the caller's; each attempt re-issues ``integrator
+        DisplacementControl $node $dof $sign*ds`` and takes one step.
+        ``sign=-1.0`` (the default) drives the DOF negative.  See ADR
+        0104 D1 — the sp-platen path needs its own three-method
+        driver, because there ``getTime()`` is a settlement, not a
+        force.
+        """
+        return _OpenSeesPyDriver(
+            ops_module, node=node, dof=dof, sign=sign,
         )
 
     def profile(self, name: str) -> _Ladder:
