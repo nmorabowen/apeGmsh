@@ -3425,7 +3425,7 @@ class H5Emitter:
                     "stage-claimed phantom-node constraints is "
                     "deferred.  Use ops.tcl(path) / ops.py(path)."
                 )
-            if rec.profile is not None:
+            if getattr(rec, "profile", None) is not None:
                 raise NotImplementedError(
                     f"H5Emitter.set_stage_records: stage {rec.name!r} "
                     "declares a profiler bracket (s.profile(...), "
