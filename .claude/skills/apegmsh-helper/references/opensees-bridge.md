@@ -558,12 +558,44 @@ The three semantics are distinct (don't confuse them):
 
 <!-- verified: tests/opensees/unit/test_stage_bound_fix_mass.py::test_s_fix_populates_stage_record_fix_records, tests/opensees/unit/test_stage_embedded_claim.py::test_embedded_claim_populates_stage_pool, tests/opensees/unit/test_stage_initial_stress_push.py -->
 
+`s.update_parameter(name, value, *, pg=|elements=, material=None)` is the
+typed pass-through over the `parameter` / `addToParameter` /
+`updateParameter` primitive `s.initial_stress` and `s.activate_absorbing`
+drive internally. Emits `parameter $pid` / one
+`addToParameter $pid element $eid <name> [<mat_tag>]` per element /
+`updateParameter $pid <value>` / `remove parameter $pid`.
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an ELEMENT
+parameter; `s.update_parameter("poissonRatio", 0.35, pg="soil",
+material=sand)` changes a MATERIAL one — the tag rides as the trailing
+argv because the element forwards it to its GP materials, which match on
+their own tag.
+<!-- verified: tests/opensees/unit/test_stage_update_parameter.py -->
+
 Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
 `s.set_creep(on)`, `s.reset()`.
 
+Transient → static handover: `s.zero_velocities(nodes=None)` zeroes the
+inherited nodal velocity AND acceleration state (`nodes=None` = whole
+domain). A static stage inherits the previous transient stage's committed
+velocities — a static integrator writes neither — so `-dynamic` reactions
+keep reporting the previous stage's inertia/damping. Emits, per node and
+per DOF of the node's *effective* ndf (a u-p node gets 1..4),
+`setNodeVel <n> <dof> 0.0 -commit` + `setNodeAccel <n> <dof> 0.0 -commit`,
+LAST in the stage block (after `s.reset()`, immediately before `analyze`).
+<!-- verified: tests/opensees/unit/test_stage_zero_velocities.py -->
+
+
 ### Stage gotchas
 
+- **`s.zero_velocities()` writes `2 * sum(ndf)` deck lines** — there is no
+  domain-wide zeroing command in stock OpenSees or the fork (the fork's
+  `ladrunoSetNodeTrial` writes the TRIAL vectors only and never commits).
+  Pass `nodes=` to scope it. The `-commit` flag is mandatory, not
+  cosmetic: `OPS_setNodeVel` rebuilds from the COMMITTED vector and sets
+  only TRIAL, so without it each DOF re-reads the old value and only the
+  last DOF ends up zeroed. H5 archival of the verb is deferred — the
+  staged archive raises `NotImplementedError`; emit Tcl / openseespy.
 - **`s.remove_sp` `dofs=` are 1-based DOF INDICES** (one `remove sp
   $node $dof` line each), **not** the 0/1 fixity-flag vector that
   `s.fix` / `s.mass` use. Same kwarg name, different meaning.
@@ -577,6 +609,12 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
   `fem.elements.contacts` (the serial-only `emit_contacts` subsystem),
   not a claimable MP record.
   <!-- verified: tests/opensees/unit/test_stage_tied_contact_claim.py::test_tied_contact_claim_populates_stage_pool -->
+- **`s.update_parameter` has no `material=`-only form.** OpenSees
+  `parameter` / `addToParameter` address `node` / `element` / `region` /
+  `loadPattern` and nothing else, so a material is unreachable without an
+  element hosting it — always pass `pg=` or `elements=`, and add
+  `material=` only to append the tag the material matches on. H5 archival
+  of the verb is deferred (the staged archive raises).
 - **Live execution refuses staged models.** `ops.analyze()` and
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
@@ -586,6 +624,16 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 - `s.mass` re-applying mass to a node already massed in another tier
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).
+- **`s.profile(deep=False, memory=False, per_step=False)` brackets ONE
+  stage** (TIMs A8): `profiler start [-deep] [-memory] [-perStep]`
+  right before that stage's `analyze` loop, `profiler stop` +
+  `profiler report <stage name>.h5` right after — the same
+  `Emitter.profiler(*args)` machinery as the bridge-level
+  `ops.profiler.*`, reported under the stage's own name so each
+  stage's cost is a distinct HDF5 run. Sibling stages stay
+  unbracketed. H5 archival of `s.profile` refuses loudly; emit
+  `ops.tcl(path)` / `ops.py(path)`.
+  <!-- verified: tests/opensees/unit/test_stage_profiler.py -->
 
 ## Solution-algorithm & stock-integrator options (PR #786)
 
@@ -990,7 +1038,15 @@ ops.py("out/model.py")
   a staged model must keep every pattern stage-scoped
   (`s.pattern(series=...)`); don't register a global `ops.pattern.Plain`
   (or `ops.imposed_displacement`, which builds one) alongside
-  `ops.stage(...)`.
+  `ops.stage(...)`. The staged prescribed-motion verb is
+  `s.imposed_path(node=, ratios=(r1..r6), series=)` — one `sp` per
+  NON-ZERO ratio (zeros are skipped, since a prescribed zero is a
+  fixity), positional from DOF 1 so the rotations 4..6 are reachable,
+  inside a stage-scoped `Plain` it returns for further `p.load` /
+  `p.sp` rows. `ops.imposed_displacement` stays the non-staged,
+  translations-only path.
+  <!-- verified: tests/opensees/unit/test_stage_imposed_path.py -->
+
 - **Ambiguous `pg=`** — same name at multiple dimensions. Keep PG
   names dimension-unique.
 - **`len(dofs) != ndf`** — `ops.fix` needs a mask no longer than the node

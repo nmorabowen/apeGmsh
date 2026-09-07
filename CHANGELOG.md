@@ -2,6 +2,24 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### FIXED — contact + `rigid_body(as_element=True)` now trips the MP-handler guard (A11)
+
+`_fem_has_handler_requiring_mp` (the predicate behind the contact
+handler-conflict guard, `apesees.py` #7) wrongly exempted
+`rigid_body(as_element=True)` as "handler-independent" alongside
+`kinematic_coupling`. It isn't: the fork's `LadrunoRigidBody::setDomain`
+still adds one `MP_Constraint` per slave (`LadrunoRigidBody.cpp:339,
+360-362`), and `LadrunoContactHandler` only WARNS about MP constraints
+without enforcing them (`LadrunoContactHandler.cpp:706-713`). A model
+combining contact and `rigid_body(as_element=True)` therefore silently
+dropped the rigid-body enforcement on its slaves. The exemption is
+removed — contact + `rigid_body(as_element=True)` now fails loud via the
+same `BridgeError` as `rigid_body(as_element=False)`, `equalDOF`, etc.
+`kinematic_coupling` (`LadrunoKinematicCoupling`, a true penalty element
+with no MP emit path) is unaffected and still coexists with contact.
+Docstring and guard message corrected to match. Locked by
+`tests/opensees/unit/test_contact_emit.py::test_handler_requiring_mp_predicate`.
+
 ### ADDED — `ops.uniaxialMaterial.MultiLinear` (piecewise-linear backbone)
 
 `uniaxialMaterial MultiLinear` is now a typed primitive:
@@ -325,6 +343,309 @@ guard (`ZeroLength.cpp:611-673`; a phantom at either ndf would either
 mismatch or hand the spring a pore-pressure slot), and the slice order once
 that lands (3D per-facet frames and surface tributary, the gates, per-pair
 `-orient` with two tangents, a rotated 2D verification case). No code change.
+### ADDED — `g.mesh.structured.build_graded_box` — mechanism block + geometric grading in one call (PM-01 A9)
+
+A footing-on-soil model wants three things at once from its mesh, and
+until now had to hand-assemble them from `set_transfinite_box`,
+`set_transfinite_curve(mesh_type="Progression")` and
+`set_transfinite_volume`: a **uniform block** at cell size `h` around the
+footing where the collapse mechanism lives, a declared **geometric growth
+ratio** `r` per cell from there out to the boundary, and the footprint's
+edges landing exactly on **mesh lines** so the footing width is not fuzzy.
+`build_graded_box(extent=(bx, ly, hz), footprint=(B, L), h=…, l_mech=…,
+d_mech=…, r=…, orientation=0.0)` produces all three and returns the 18
+sub-volume tags, ready for `g.physical.add_volume(...)`; it sets the
+constraints only and leaves `generate()` to the caller.
+
+It is the one `structured` verb that **creates geometry**, and
+deliberately so: a single box cannot carry a uniform interior and a graded
+exterior on one transfinite curve, so the verb lays out a 3×3×2
+arrangement of boxes, fragments them conformal, and then combines the
+existing primitives over the result — uniform curves inside the block,
+`Progression` outside with the ratio oriented to grow *away* from the
+block on both sides of every axis.
+
+Two invariants are enforced rather than assumed. `h` must divide `B` and
+`L` exactly (a loud `ValueError` otherwise): that, plus rounding `l_mech`
+and `d_mech` to whole cells, is what guarantees a node on each footprint
+edge — the "fuzzy footing width" error is excluded by construction, not by
+luck. And the block must fit *strictly* inside the domain, so a block as
+wide or as deep as the box — which would leave no far field to grade and
+silently produce a uniform mesh — is refused with the numbers in the
+message. `r = 1` is legal and grades nothing; `r < 1` is refused, since a
+ratio below one refines *toward* the boundary.
+
+`orientation` is a rotation of the whole grid about `z`, in degrees. It is
+applied to the fragmented volumes **before** any curve is read, because
+`occ.rotate` preserves the tags of the entities it is handed but re-tags
+their boundary curves and surfaces — constraints set first would be
+silently dropped, and the curves are classified in the un-rotated frame
+instead. Because the rotation is rigid the element and node counts are
+identical at every angle, which is what makes it usable as the
+two-orientation axis of a refinement study.
+
+The far-field cell count is the smallest `n` with
+`h·(1 + r + … + r^{n-1}) ≥ span`, so the cell touching the block is never
+coarser than `h`. That law reproduces the published element/node table of
+the PM-01 domain-cost study exactly for its three geometric-grading rows
+when fed the same far-field seed; the verb itself seeds at `h`, the
+declared near-field cell, which buys a denser far field (51×51×26 grid
+lines at `r = 1.2` against the study's 49×49×24) rather than a coarser
+one.
+### ADDED — `ops.strategy.Substep`: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
+
+`ops.strategy.Ladder` has escalated the solution *algorithm* since ADR 0057
+Phase A and nothing else — the step size was fixed at declaration time, so the
+only answer to a stalled increment was a different `algorithm` command against
+the same increment. That is the wrong lever for the failure this project keeps
+meeting: on a push into plasticity the Newton radius of convergence collapses
+at the knee and no algorithm converges at the declared step. Measured on the
+TIMs response-curve harness, cell U-V: the coupled Newton's radius at the
+reference state lies between 3.125e-6 and 6.25e-6 m of control-node settlement,
+**an eighth of the declared 2.5e-5**, and above it every rung of the ladder
+returns `rc = -3`.
+
+`ops.strategy.Substep(node=, dof=, target=, ds=, ds_min=, ...)` is that lever,
+ported from the harness's `stage_S5_push`: a base step, a cap, halving on a
+failed increment, regrow by `regrow` after `regrow_after` consecutive good
+steps, a floor, a subdivision budget and a wall-clock budget — plus
+**run-to-criterion** termination, so a push declares what it wants rather than a
+step count guessed in advance. Either a `target` advance at the control
+node/DOF, or (with `plateau=` + `plateau_window=`) a tail slope that has fallen
+to a declared fraction of the initial tangent, both least-squares fits over the
+committed curve, guarded by the harness's own rules: at least 8 rows, and the
+window must be covered by the curve's own range. `ds_use = min(ds, target - u)`
+lands **exactly** on the target and never overshoots, the `loadConst` contract
+ADR 0057 evidence point 4 wrote down. It runs against a three-method
+`SubstepDriver` protocol (`analyze(ds)`, `disp(node, dof)`, `load()`), so
+whichever integrator idiom carries the increment — `DisplacementControl` on the
+control node, or the fork's `sp` platen under `LoadControl(-ds)` — stays behind
+that seam and the controller owns the step-size policy and nothing else.
+
+**Verdict semantics are the point.** `TARGET` and `PLATEAU` are successes;
+`BUDGET`, `FLOOR` and `WALL` are failures, and `SubstepResult.ok` is derived
+from the verdict and from nothing else — a spent budget is never dressed up as
+success, however many good steps preceded it. This diverges on purpose from the
+harness, whose `_verdict` promotes a guard-terminated leg to
+`limit_point_then_guard` when the tangent criterion had already been met.
+Ordering handles that case instead: both success criteria are tested at the top
+of every attempt, so a run that met its criterion has already exited before a
+budget can be spent, and the #587 fail-loud floor holds unbroken.
+
+Two exclusions are deliberate. The harness's `_try_step` relaxes the
+*convergence test* (`tol * rung["tol_factor"]`) as it escalates — ADR 0057 §6
+excludes that outright, so only the rc-checking skeleton was taken. And
+`_push_dr`, the dynamic-relaxation driver, is **not** ported: it wipes the whole
+chain to `system Diagonal` / `algorithm Linear` / `LadrunoDynamicRelaxation` /
+Transient, a wholesale integrator identity change that §6 also excludes, and it
+was defective for state-memory materials (every pseudo-step of its fictitious
+transient is a strain increment a path-dependent material commits, so the state
+at rest is not the state the static path would have produced).
+
+One knob deviates from the harness on measured evidence: `budget` counts
+**consecutive** halvings spent rescuing one increment — ADR 0057's own
+`max_halvings` — not a run-wide total. Ported verbatim as a total, the budget
+was spent by *probing* rather than by failure: regrow doubles the step every
+`regrow_after` good steps, so past a knee it re-fails by construction and a run
+died on `BUDGET` after roughly `2 × budget` perfectly healthy steps with a
+converging step size in hand. `SubstepResult.subdivisions` still reports the run
+total so the probing cost stays visible.
+
+An adversarial probe on degenerate inputs found two further defects, both now
+fixed and pinned: a **NaN control displacement made the controller spin
+forever** (a NaN fails *every* comparison in the loop — target, floor and the
+step-1 fidelity tripwire alike — and `min(ds, target - nan)` returns `ds`; the
+probe ran 5000 `analyze` calls before its own cap fired), and a **NaN load
+silently disabled a declared plateau criterion** (the initial tangent fits to
+NaN and the criterion's own guard then turns it off). Both are now loud
+refusals, the load check scoped to runs that actually declared a plateau.
+
+Deck emission of the substep loop is **deferred**, and is named rather than
+papered over: `Ladder.to_spec()` **refuses** a Substep-carrying ladder instead
+of resolving it to the Phase A fixed-step spec, because emitting the algorithm
+rungs alone would ship a deck that quietly ignores the declared step policy —
+the silent-no-op class this project has a documented history of. A `Ladder` may
+carry at most one `Substep`, reachable as `Ladder.substep`; Phase A emission is
+byte-identical when none is present. Because that in-process run is for now the
+only way to drive one, `ops.strategy.OpenSeesPyDriver(ops_module, node=, dof=,
+sign=-1.0)` ships as the stock driver for the `DisplacementControl` case — it
+re-issues `integrator DisplacementControl $node $dof $sign*ds` and takes one
+step per attempt, since the step size has to be pushed into the integrator every
+time it changes, and it covers that case only (under the sp platen `getTime()`
+is a settlement, not a force, so that driver is three methods written against
+the `SubstepDriver` Protocol).
+### ADDED — `s.profile(deep=, memory=, per_step=)` brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
+
+`ops.profiler.*` brackets the *whole* deck's appended `analyze` call —
+useful for a flat model, useless for a staged one, where each
+`with ops.stage(...) as s:` block owns its own analyze loop and the question
+is "which stage is expensive," not "is the run expensive."
+
+`_StageBuilder.profile(deep=False, memory=False, per_step=False)` reuses the
+same `Emitter.profiler(*args)` machinery — not a second implementation — to
+bracket just THAT stage: `profiler start [-deep] [-memory] [-perStep]`
+immediately before the stage's analyze loop, `profiler stop` + `profiler report
+<stage name>.h5` immediately after (filename derived from the stage's own
+name, so no extra kwarg is needed). A sibling stage that never calls
+`s.profile` stays unbracketed. `Mumps(stats=True)` still emits its `-stats`
+flag on the stage's own `system Mumps` line, unaffected by the bracket.
+
+H5 archival of `s.profile` refuses loudly (mirrors the existing
+`phantom_node_tags` refusal in `H5Emitter.set_stage_records`) rather than
+silently dropping the declaration on a `to_h5` round-trip — use
+`ops.tcl(path)` / `ops.py(path)` for a profiled staged deck.
+### ADDED — `s.imposed_path(...)`: prescribed motion on any DOF, inside a stage
+
+`ops.imposed_displacement` maps `ux` / `uy` / `uz` onto DOFs 1-3 and
+builds a **global** pattern, which ADR 0051 §5 forbids mixing with
+stages — so a staged model could not prescribe a rotation at all without
+hand-authoring `p.sp` rows. `s.imposed_path(node=, ratios=(r1..r6),
+series=)` closes that: `ratios` is positional over the node's DOFs, so
+4..6 (the rotations) are reachable, and the pattern is stage-scoped.
+
+Creates a stage `Plain` via `s.pattern(series=)` and records one `sp` per
+**non-zero** ratio:
+
+```
+sp <node> <i> <ratios[i-1]>
+```
+
+Zeros are skipped rather than emitted as `sp … 0.0` — a prescribed zero
+is a *constraint* (it pins the DOF), not the absence of one, so emitting
+it would silently clamp DOFs the caller meant to leave free; `s.fix` /
+`s.support` are the verbs for pinning. The ratios are shape only: the
+magnitude and history come from `series`, so a unit direction plus a
+`Path` gives a fault-slip or support-settlement path. The pattern is
+returned, so ordinary `p.load` rows on other DOFs of the same node
+coexist in the same stage.
+
+`ratios` longer than the model's `ndf` is refused at the call site
+(`ValueError`, matching `ops.imposed_displacement`'s existing check). The
+bound is the `ops.model(ndf=)` **envelope**, an upper bound on any node's
+ndf — the per-node *effective* map (ADR 0048) resolves at build time from
+every declared element's PG fan-out and cannot be probed per call without
+a full mesh walk. `ops.imposed_displacement` is untouched.
+### ADDED — `s.update_parameter(...)`: a typed pass-through over `updateParameter`
+
+`s.initial_stress` and `s.activate_absorbing` already drive the OpenSees
+`parameter` / `addToParameter` / `updateParameter` primitive internally,
+each for one fixed response. `s.update_parameter(name, value, *,
+pg=|elements=, material=None)` exposes the general form, emitting
+
+```
+parameter $pid
+addToParameter $pid element $eid <name> [<mat_tag>]   # one per element
+updateParameter $pid <value>
+remove parameter $pid
+```
+
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an **element**
+parameter (fork `LadrunoUP::setParameter` matches `xPerm` / `yPerm` /
+`zPerm` on `argv[0]`, `LadrunoUP.cpp:1932-1943`).
+`s.update_parameter("poissonRatio", 0.35, pg="soil", material=sand)`
+changes a **material** parameter: the element forwards the unmatched argv
+to its integration-point materials (`LadrunoUP.cpp:1962-1971`) and
+ManzariDafalias matches on `argv[0] == name` **and** `argv[1] == its own
+tag` (`ManzariDafalias.cpp:820-857`) — which is why `material=` *appends*
+the tag rather than replacing the element target.
+
+There is deliberately no `material=`-only form: `OPS_Parameter` /
+`OPS_addToParameter` accept `node` / `element` / `region` / `loadPattern`
+and nothing else (`OpenSeesParameterCommands.cpp`), so a material is
+unreachable without an element that hosts it. No registry of "known"
+parameter names either — the target's own `setParameter` is the
+authority, and a name it does not recognise already errors there.
+
+Emits right after the absorbing-boundary flip, on both the flat and the
+partitioned path (per rank, same element-ownership filter). A fresh
+`parameter` tag per record and per rank keeps each block self-contained,
+so a later stage may re-declare. H5 archival of the verb is deferred and
+fail-loud.
+### ADDED — `s.zero_velocities()`: the transient → static handover
+
+A static stage inherits the previous transient stage's committed nodal
+velocities and accelerations — a static integrator writes neither — so
+`reactions -dynamic` in the static stage keeps reporting the previous
+stage's inertia and damping as if they were live. `s.zero_velocities()`
+(whole domain) / `s.zero_velocities(nodes=[...])` hands the stage a
+quiescent kinematic state.
+
+Emits, per node and per DOF of the node's **effective** ndf (a u–p node
+gets DOFs 1..4), `setNodeVel <n> <dof> 0.0 -commit` and
+`setNodeAccel <n> <dof> 0.0 -commit` — stock commands, so both emit
+targets (Tcl + openseespy) and any build run it. `-commit` is
+load-bearing, not decoration: `OPS_setNodeVel` rebuilds the vector from
+the node's **committed** state (`Node::getVel` returns `commitVel`) and
+writes only the **trial** vector, so without committing each call the
+next DOF reads the old value back and only the last DOF ends up zeroed.
+The fork's `ladrunoSetNodeTrial` cannot substitute — it writes the trial
+vectors and never commits — and neither stock nor the fork ships a
+domain-wide zeroing command, so the deck cost is `2 × Σ ndf` lines;
+scope it with `nodes=` when that matters.
+
+Emit slot is LAST in the stage block: after the stage's domain
+mutations, analysis chain, patterns and the optional `s.reset()` (which
+reverts the Domain to the last `setTime` and would restore the very
+velocities being removed), immediately before `analyze`. Wired on both
+the flat and the partitioned emit paths — under MP each rank emits only
+the slice of the target set it owns (INV-4). H5 archival of the verb is
+deferred and fail-loud: the staged archive raises `NotImplementedError`
+rather than write a deck that silently replays the artefact.
+### ADDED — a build-time pressure-datum check for static u-p decks (A2)
+
+A saturated (u-p) region whose pore-pressure DOFs are **all free** is
+impervious, and its **static** tangent is singular in `p`. Nothing downstream
+says so: the fork measured (2026-07-11) that every serial general solver —
+UmfPack, FullGeneral, BandGeneral, SparseGeneral — factorises the sealed
+system through round-off and returns `rc = 0` with an arbitrary,
+solver-dependent pressure level, because the p-RHS is consistent and no solver
+sees the rank deficiency. That refuted "it fails loudly" claim is pinned by a
+`strict` xfail in the fork
+(`tests/test_ladruno_up_element_analytic.py:533-548`); on the apeGmsh side
+nothing looked for it at all. A silent wrong answer, so it is now a gate.
+
+`validate_up_pressure_datum` runs beside the ADR 0049 G1–G3 gates, after the
+ADR 0074 D4 solver gate. It walks the pressure-**carrier** nodes of every
+`LadrunoUP` spec — every node of an equal-order shape, the vertex slots only
+of a Taylor–Hood tri6/tet10 — unions them through shared elements into
+connected components (union-find, `O(N α(N))`, measured ≈5 µs/element on a
+47k-quad column), and requires each component to hold at least one node whose
+pressure DOF (slot `ndm+1`) is pinned. A datum is any single-point constraint
+on that slot: a broker or stage-claimed `fix`, an `s.support`, or a pattern
+`sp`. Dropping the mid-edge nodes is what keeps a Taylor–Hood mesh one region
+instead of shattering it, and it also means a mid-edge node can never serve as
+the datum.
+
+The gate is scoped to decks that declare `ops.analysis.Static()` (flat or
+per-stage) and are not H5 archival — the same "does this actually solve"
+scope D4 uses. A sealed region is physically *correct* under
+`ops.analysis.Transient()`: undrained loading puts the storage term `1/Q̄` on
+the p diagonal, so the tangent is regular, and that is what the fork's own
+Terzaghi lane runs. Refusing it there would be a false positive.
+
+The `BridgeError` names a node of the offending region, how many of the
+model's u-p regions are sealed, and the fix — pin the pressure DOF of one
+node of that region, typically a drained surface. On a Taylor–Hood mesh it
+also names the vertex-node idiom, because the obvious whole-pg mask over-runs
+the mid-edge nodes' `ndf` and G3 refuses it.
+### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
+
+`g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
+with no `-dof` list, and the fork's default — "every DOF the slave has" —
+gates on DOF **count** only (`LadrunoKinematicCoupling.cpp:260-275`): it
+walks components `1..ndm+nrot` and keeps each one the slave carries. For an
+ndf-4 u–p slave in 3D, component 4 is kept as a *rotation* row and `buildB`
+(`:335-350`) ties the node's pore pressure to the master's θx, with a
+penalty of order `K_t·ℓ²` — silently; the only warning sits behind
+`!useDefault`. The bridge's constraint-side ndf gate (G2,
+`validate_constraint_master_ndf`) now refuses the default at emit when any
+slave's ndf is neither `ndm` (translations) nor `ndm + nrot` (translations
++ rotations), naming the node and telling the user to pass `dofs=`
+explicitly (`dofs=[1, 2, 3]` for translations only). The docstring that
+recommended `dofs=None` "for mixed sets" now says what the default really
+does. The gate is count-based, so a 2D u–p node (ndf 3, the same count as
+`(u, v, θ)`) is not distinguishable here; the pressure-node identification
+by element class belongs to the pressure-datum check (TIMs A2).
 
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
