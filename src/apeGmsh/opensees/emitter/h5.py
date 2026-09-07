@@ -2272,6 +2272,31 @@ class H5Emitter:
         per-stage ``activate_absorbing`` sub-table (ADR 0055 Phase 2)."""
         del pid, ele_tags
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        """Deferred — ``s.update_parameter`` has no per-stage sub-table.
+
+        Unlike :meth:`flip_element_stage`, whose declarative record IS
+        re-attached in :meth:`set_stage_records`, this verb has nowhere
+        to persist to.  Refuse rather than write an archive that replays
+        the stage with the parameter left at its declared value.
+        """
+        del pid, ele_tags, value
+        if self._stage_current is None:
+            return
+        raise NotImplementedError(
+            f"H5Emitter: stage {self._stage_current.name!r} emits "
+            f"updateParameter for {args[0]!r} (s.update_parameter).  The "
+            "stage block has no store for it, so the archive would be "
+            "irreplayable — H5 archival of s.update_parameter is "
+            "deferred.  Use ops.tcl(path) / ops.py(path)."
+        )
+
     def step_hook_ramp(
         self,
         name: str,

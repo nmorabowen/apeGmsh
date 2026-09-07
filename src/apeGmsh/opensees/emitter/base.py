@@ -502,6 +502,23 @@ class Emitter(Protocol):
         self, pid: int, ele_tags: "tuple[int, ...]",
     ) -> None: ...
 
+    # ``update_parameter`` emits the general one-shot form of the same
+    # primitive (``s.update_parameter``): ``parameter $pid`` / one
+    # ``addToParameter $pid element $eid <args...>`` per tag /
+    # ``updateParameter $pid $value`` / ``remove parameter $pid``.
+    # ``args`` is the argv tail the element's ``setParameter`` matches on
+    # — ``("xPerm",)`` for an element parameter, ``("poissonRatio",
+    # <mat_tag>)`` for a material one (the element forwards the tail to
+    # its integration-point materials, which match on their own tag).
+    # Called once per (record, rank).
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: "tuple[int, ...]",
+        args: "tuple[str | int, ...]",
+        value: float,
+    ) -> None: ...
+
     # ``step_hook_ramp`` emits the multi-line bundle that materializes
     # one ``InitialStress`` composite into the deck:
     #

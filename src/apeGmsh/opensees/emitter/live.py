@@ -1298,6 +1298,19 @@ class LiveOpsEmitter:
         self._ops.updateParameter(int(pid), 1)
         self._ops.remove("parameter", int(pid))
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self._ops.parameter(int(pid))
+        for et in ele_tags:
+            self._ops.addToParameter(int(pid), "element", int(et), *args)
+        self._ops.updateParameter(int(pid), float(value))
+        self._ops.remove("parameter", int(pid))
+
     def step_hook_ramp(
         self,
         name: str,

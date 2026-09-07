@@ -858,6 +858,8 @@ with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apese
     s.activate(...); s.fix(...); s.mass(...); s.region(...); s.recorder(...)
     s.damping.rayleigh(...); s.damping.uniform(..., on=)   # stage-bound (D5); no s.damping.modal
     with s.pattern(series=ts) as p: p.from_model("live")   # stage-scoped pattern (ADR 0051 BL-3)
+    s.update_parameter("xPerm", 1e-5, pg="soil")               # element parameter
+    s.update_parameter("poissonRatio", .35, pg="soil", material=sand)  # material param
     s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
     s.zero_velocities(nodes=None)     # transient -> static handover; None = whole domain

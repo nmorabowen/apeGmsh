@@ -33,6 +33,7 @@ from ._internal.build import (
     MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
+    UpdateParameterRecord,
     RayleighRecord,
     RegionAssignmentRecord,
     SPRemovalRecord,
@@ -53,6 +54,7 @@ from ._internal.build import (
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
     emit_reinforce_ties,
+    emit_update_parameters,
     emit_embed_ties,
     emit_contacts,
     emit_contact_planes,
@@ -2835,6 +2837,18 @@ class BuiltModel:
                     tags=tags,
                 )
 
+            # 6c. ``s.update_parameter`` — the general form of the same
+            # primitive, so it shares 6b's slot rationale: the stage's
+            # elements are in the Domain and the analyze loop has not
+            # started, so the new value is what this stage steps with.
+            if stage.update_parameter_records:
+                emit_update_parameters(
+                    stage.update_parameter_records,
+                    emitter, self.fem,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    tags=tags,
+                )
+
             # 7. Analysis chain.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
@@ -4525,6 +4539,25 @@ class BuiltModel:
                     try:
                         emit_activate_absorbing(
                             stage.activate_absorbing_records,
+                            emitter, self.fem,
+                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                            tags=tags,
+                            element_owner=element_owner,
+                            partition_rank=rank,
+                        )
+                    finally:
+                        emitter.partition_close()
+
+            # 4c. ``s.update_parameter`` — per rank, same ownership
+            # filter as 4b (only the rank owning an element may address
+            # it; an unowned eid is skipped, not an error).
+            if stage.update_parameter_records:
+                for idx, _part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(_part, idx)
+                    emitter.partition_open(rank)
+                    try:
+                        emit_update_parameters(
+                            stage.update_parameter_records,
                             emitter, self.fem,
                             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                             tags=tags,
@@ -11684,6 +11717,8 @@ class _StageBuilder:
         "_remove_sp_records",
         "_remove_element_records",
         "_update_material_stage_records",
+        # Typed pass-through over parameter / updateParameter.
+        "_update_parameter_records",
         "_set_time",
         "_set_creep_on",
         "_pre_analyze_reset",
@@ -11733,6 +11768,8 @@ class _StageBuilder:
         self._remove_sp_records: list[SPRemovalRecord] = []
         self._remove_element_records: list[ElementRemovalRecord] = []
         self._update_material_stage_records: list[MaterialStageRecord] = []
+        # Typed pass-through over parameter / updateParameter.
+        self._update_parameter_records: list[UpdateParameterRecord] = []
         self._set_time: float | None = None
         self._set_creep_on: bool | None = None
         self._pre_analyze_reset: bool = False
@@ -11812,6 +11849,7 @@ class _StageBuilder:
             update_material_stage_records=tuple(
                 self._update_material_stage_records,
             ),
+            update_parameter_records=tuple(self._update_parameter_records),
             set_time=self._set_time,
             set_creep_on=self._set_creep_on,
             pre_analyze_reset=self._pre_analyze_reset,
@@ -12863,6 +12901,120 @@ class _StageBuilder:
         self._update_material_stage_records.append(
             MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i),
         )
+
+    def update_parameter(
+        self,
+        name: str,
+        value: float,
+        *,
+        pg: str | None = None,
+        elements: "Iterable[int] | None" = None,
+        material: "Primitive | None" = None,
+    ) -> "UpdateParameterRecord":
+        """Change one element (or element-hosted material) parameter at
+        this stage's boundary — a typed pass-through over the same
+        ``parameter`` / ``addToParameter`` / ``updateParameter``
+        primitive that :meth:`initial_stress` and
+        :meth:`activate_absorbing` drive internally.
+
+        Emits, once per record::
+
+            parameter $pid
+            addToParameter $pid element $eleTag <name> [<mat_tag>]   # per element
+            updateParameter $pid <value>
+            remove parameter $pid
+
+        Two target shapes, both addressed through elements:
+
+        * **an element parameter** — ``s.update_parameter("xPerm", 1e-5,
+          pg="soil")``.  ``LadrunoUP::setParameter`` matches ``xPerm`` /
+          ``yPerm`` / ``zPerm`` directly (fork
+          ``LadrunoUP.cpp:1932-1943``; ``zPerm`` is 3-D only).
+        * **a material parameter** — ``s.update_parameter("poissonRatio",
+          0.35, pg="soil", material=sand)``.  The element forwards the
+          unmatched argv to its integration-point materials (the
+          catch-all at ``LadrunoUP.cpp:1962-1971``) and the material
+          matches on ``argv[0] == name`` **and** ``argv[1] == its own
+          tag`` (``ManzariDafalias::setParameter``
+          ``ManzariDafalias.cpp:820-857``) — which is why ``material=``
+          appends the tag rather than replacing the element target.
+
+        There is deliberately no ``material=``-only form: OpenSees
+        ``parameter`` / ``addToParameter`` accept ``node`` / ``element``
+        / ``region`` / ``loadPattern`` and nothing else
+        (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter`` /
+        ``OPS_addToParameter``), so a material is unreachable without an
+        element that hosts it.
+
+        No registry of known parameter names — the element's /
+        material's own ``setParameter`` is the authority, and a name it
+        does not recognise already errors there.
+
+        Parameters
+        ----------
+        name
+            The parameter name the target's ``setParameter`` matches
+            (e.g. ``"xPerm"``, ``"poissonRatio"``).
+        value
+            The value passed to ``updateParameter``.
+        pg
+            Physical group whose elements carry the parameter.  XOR with
+            ``elements``.
+        elements
+            Explicit list of FEM element ids (NOT OpenSees ops tags —
+            same convention as :meth:`remove_element` /
+            :meth:`activate_absorbing`).  XOR with ``pg``.
+        material
+            Optional material handle.  When given, its bridge-allocated
+            tag is appended to the ``addToParameter`` argv so the
+            element forwards the update to THAT material.  Omit for a
+            parameter the element owns itself.
+
+        Raises
+        ------
+        ValueError
+            Empty ``name``; both or neither of ``pg`` / ``elements``.
+        BridgeError
+            ``material=`` was never registered on this bridge (so it has
+            no tag, and the argv would name nothing).
+        """
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.update_parameter: name= must be "
+                "non-empty."
+            )
+        if (pg is None) == (elements is None):
+            raise ValueError(
+                f"Stage {self._name!r}.update_parameter: supply exactly "
+                f"one of pg= or elements= (got pg={pg!r}, "
+                f"elements={elements!r})."
+            )
+        mat_tag: int | None = None
+        if material is not None:
+            tag = self._bridge.tag_for(material)
+            if tag is None:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter: "
+                    f"{type(material).__name__} was never registered on "
+                    "this bridge, so it has no tag — the addToParameter "
+                    "argv would name nothing and the update would be a "
+                    "silent no-op.  Create it via ops.nDMaterial.<Class>"
+                    "(...) / ops.uniaxialMaterial.<Class>(...) (or "
+                    "register it with ops.register(mat)) first."
+                )
+            mat_tag = int(tag)
+        record = UpdateParameterRecord(
+            name=str(name),
+            value=float(value),
+            pg=pg,
+            elements=(
+                None if elements is None
+                else tuple(int(e) for e in elements)
+            ),
+            mat_tag=mat_tag,
+        )
+        self._update_parameter_records.append(record)
+        return record
 
     def set_time(self, t: float) -> None:
         """Override the stage's starting pseudo-time (Phase SSI-2.E).

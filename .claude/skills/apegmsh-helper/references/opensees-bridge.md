@@ -558,6 +558,19 @@ The three semantics are distinct (don't confuse them):
 
 <!-- verified: tests/opensees/unit/test_stage_bound_fix_mass.py::test_s_fix_populates_stage_record_fix_records, tests/opensees/unit/test_stage_embedded_claim.py::test_embedded_claim_populates_stage_pool, tests/opensees/unit/test_stage_initial_stress_push.py -->
 
+`s.update_parameter(name, value, *, pg=|elements=, material=None)` is the
+typed pass-through over the `parameter` / `addToParameter` /
+`updateParameter` primitive `s.initial_stress` and `s.activate_absorbing`
+drive internally. Emits `parameter $pid` / one
+`addToParameter $pid element $eid <name> [<mat_tag>]` per element /
+`updateParameter $pid <value>` / `remove parameter $pid`.
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an ELEMENT
+parameter; `s.update_parameter("poissonRatio", 0.35, pg="soil",
+material=sand)` changes a MATERIAL one — the tag rides as the trailing
+argv because the element forwards it to its GP materials, which match on
+their own tag.
+<!-- verified: tests/opensees/unit/test_stage_update_parameter.py -->
+
 Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
 `s.set_creep(on)`, `s.reset()`.
@@ -596,6 +609,12 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   `fem.elements.contacts` (the serial-only `emit_contacts` subsystem),
   not a claimable MP record.
   <!-- verified: tests/opensees/unit/test_stage_tied_contact_claim.py::test_tied_contact_claim_populates_stage_pool -->
+- **`s.update_parameter` has no `material=`-only form.** OpenSees
+  `parameter` / `addToParameter` address `node` / `element` / `region` /
+  `loadPattern` and nothing else, so a material is unreachable without an
+  element hosting it — always pass `pg=` or `elements=`, and add
+  `material=` only to append the tag the material matches on. H5 archival
+  of the verb is deferred (the staged archive raises).
 - **Live execution refuses staged models.** `ops.analyze()` and
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
