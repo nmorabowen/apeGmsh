@@ -1370,6 +1370,22 @@ class TclEmitter:
         self._lines.append("reset")
         self._lines.indent = prev_indent
 
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            _join("setNodeVel", int(node), int(dof), float(value), "-commit")
+        )
+        self._lines.indent = prev_indent
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            _join("setNodeAccel", int(node), int(dof), float(value), "-commit")
+        )
+        self._lines.indent = prev_indent
+
     def remove_sp(self, node: int, dof: int) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""

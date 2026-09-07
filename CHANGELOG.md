@@ -315,6 +315,37 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `s.zero_velocities()`: the transient → static handover
+
+A static stage inherits the previous transient stage's committed nodal
+velocities and accelerations — a static integrator writes neither — so
+`reactions -dynamic` in the static stage keeps reporting the previous
+stage's inertia and damping as if they were live. `s.zero_velocities()`
+(whole domain) / `s.zero_velocities(nodes=[...])` hands the stage a
+quiescent kinematic state.
+
+Emits, per node and per DOF of the node's **effective** ndf (a u–p node
+gets DOFs 1..4), `setNodeVel <n> <dof> 0.0 -commit` and
+`setNodeAccel <n> <dof> 0.0 -commit` — stock commands, so both emit
+targets (Tcl + openseespy) and any build run it. `-commit` is
+load-bearing, not decoration: `OPS_setNodeVel` rebuilds the vector from
+the node's **committed** state (`Node::getVel` returns `commitVel`) and
+writes only the **trial** vector, so without committing each call the
+next DOF reads the old value back and only the last DOF ends up zeroed.
+The fork's `ladrunoSetNodeTrial` cannot substitute — it writes the trial
+vectors and never commits — and neither stock nor the fork ships a
+domain-wide zeroing command, so the deck cost is `2 × Σ ndf` lines;
+scope it with `nodes=` when that matters.
+
+Emit slot is LAST in the stage block: after the stage's domain
+mutations, analysis chain, patterns and the optional `s.reset()` (which
+reverts the Domain to the last `setTime` and would restore the very
+velocities being removed), immediately before `analyze`. Wired on both
+the flat and the partitioned emit paths — under MP each rank emits only
+the slice of the target set it owns (INV-4). H5 archival of the verb is
+deferred and fail-loud: the staged archive raises `NotImplementedError`
+rather than write a deck that silently replays the artefact.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,

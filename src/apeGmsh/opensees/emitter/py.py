@@ -761,6 +761,22 @@ class PyEmitter:
         self._lines.append(_ops_call("reset"))
         self._lines.indent = prev_indent
 
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call(
+            "setNodeVel", int(node), int(dof), float(value), "-commit",
+        ))
+        self._lines.indent = prev_indent
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call(
+            "setNodeAccel", int(node), int(dof), float(value), "-commit",
+        ))
+        self._lines.indent = prev_indent
+
     def remove_sp(self, node: int, dof: int) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""

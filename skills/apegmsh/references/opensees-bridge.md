@@ -562,8 +562,27 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
 `s.set_creep(on)`, `s.reset()`.
 
+Transient → static handover: `s.zero_velocities(nodes=None)` zeroes the
+inherited nodal velocity AND acceleration state (`nodes=None` = whole
+domain). A static stage inherits the previous transient stage's committed
+velocities — a static integrator writes neither — so `-dynamic` reactions
+keep reporting the previous stage's inertia/damping. Emits, per node and
+per DOF of the node's *effective* ndf (a u-p node gets 1..4),
+`setNodeVel <n> <dof> 0.0 -commit` + `setNodeAccel <n> <dof> 0.0 -commit`,
+LAST in the stage block (after `s.reset()`, immediately before `analyze`).
+<!-- verified: tests/opensees/unit/test_stage_zero_velocities.py -->
+
+
 ### Stage gotchas
 
+- **`s.zero_velocities()` writes `2 * sum(ndf)` deck lines** — there is no
+  domain-wide zeroing command in stock OpenSees or the fork (the fork's
+  `ladrunoSetNodeTrial` writes the TRIAL vectors only and never commits).
+  Pass `nodes=` to scope it. The `-commit` flag is mandatory, not
+  cosmetic: `OPS_setNodeVel` rebuilds from the COMMITTED vector and sets
+  only TRIAL, so without it each DOF re-reads the old value and only the
+  last DOF ends up zeroed. H5 archival of the verb is deferred — the
+  staged archive raises `NotImplementedError`; emit Tcl / openseespy.
 - **`s.remove_sp` `dofs=` are 1-based DOF INDICES** (one `remove sp
   $node $dof` line each), **not** the 0/1 fixity-flag vector that
   `s.fix` / `s.mass` use. Same kwarg name, different meaning.

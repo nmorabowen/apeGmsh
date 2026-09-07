@@ -38,6 +38,7 @@ from ._internal.build import (
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
+    ZeroVelocityRecord,
     _emit_node_with_inferred_ndf,
     allocate_element_tags,
     bucket_primary_nodes_by_rank,
@@ -57,6 +58,8 @@ from ._internal.build import (
     emit_contact_planes,
     emit_interfaces,
     emit_rebar_elements,
+    emit_zero_velocities,
+    zero_velocity_target_nodes,
     emit_ghost_sp_ops,
     emit_stage_interfaces,
     allocate_interface_tags,
@@ -2839,6 +2842,21 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # 8b. Transient → static handover: zero the inherited nodal
+            # velocity / acceleration state.  LAST before ``analyze``,
+            # and specifically AFTER ``reset`` — ``reset`` reverts the
+            # Domain to the last ``setTime``, which would restore the
+            # very velocities this is removing.
+            if stage.zero_velocity_records:
+                emit_zero_velocities(
+                    zero_velocity_target_nodes(
+                        stage.zero_velocity_records, self.fem.nodes.ids,
+                    ),
+                    emitter,
+                    effective_ndf=inferred_ndf,
+                    envelope_ndf=self.ndf,
+                )
+
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             # Deck emitters return 0 (their per-increment loops fail
             # loud at RUN time); the live emitter returns the first
@@ -4548,6 +4566,34 @@ class BuiltModel:
             # outside any partition block — each rank applies locally).
             if stage.pre_analyze_reset:
                 emitter.reset()
+
+            # 6b. Transient → static handover: zero the inherited nodal
+            # velocity / acceleration state.  Per-rank (INV-4): a rank
+            # can only reach the nodes in its own subdomain, so each
+            # rank emits its owned slice; a node held by two ranks is
+            # zeroed on both (idempotent).  Emitted after ``reset``
+            # and immediately before ``analyze``, same as the flat path.
+            if stage.zero_velocity_records:
+                zero_vel_nodes = zero_velocity_target_nodes(
+                    stage.zero_velocity_records, self.fem.nodes.ids,
+                )
+                for idx, part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(part, idx)
+                    rank_owned = rank_owned_nodes[rank]
+                    rank_zero_vel = [
+                        nid for nid in zero_vel_nodes if nid in rank_owned
+                    ]
+                    if not rank_zero_vel:
+                        continue
+                    emitter.partition_open(rank)
+                    try:
+                        emit_zero_velocities(
+                            rank_zero_vel, emitter,
+                            effective_ndf=inferred_ndf,
+                            envelope_ndf=self.ndf,
+                        )
+                    finally:
+                        emitter.partition_close()
 
             # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             # See the flat path: deck emitters fail loud at RUN time;
@@ -11561,6 +11607,8 @@ class _StageBuilder:
         "_initial_stress_records",
         "_activate_absorbing_records",
         "_activated_pgs",
+        # Transient → static handover: ``s.zero_velocities`` pool.
+        "_zero_velocity_records",
         # Phase SSI-2.D (PR-B + PR-C): stage-bound BC + recorder pools.
         "_fix_records",
         "_mass_records",
@@ -11610,6 +11658,8 @@ class _StageBuilder:
         self._initial_stress_records: list[InitialStressRecord] = []
         self._activate_absorbing_records: list[ActivateAbsorbingRecord] = []
         self._activated_pgs: list[str] = []
+        # Transient → static handover: nodal vel / accel zeroing pool.
+        self._zero_velocity_records: list[ZeroVelocityRecord] = []
         # Phase SSI-2.D PR-B: stage-bound BC pools (fix + mass).
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
@@ -11701,6 +11751,7 @@ class _StageBuilder:
             dt=None if self._dt is None else float(self._dt),
             strategy=self._strategy,
             activated_pgs=tuple(self._activated_pgs),
+            zero_velocity_records=tuple(self._zero_velocity_records),
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
@@ -11837,6 +11888,79 @@ class _StageBuilder:
             ),
         )
         self._activate_absorbing_records.append(record)
+        return record
+
+    def zero_velocities(
+        self, nodes: "Iterable[int | Node] | None" = None,
+    ) -> "ZeroVelocityRecord":
+        """Zero the nodal velocity AND acceleration state at this stage's
+        boundary — the transient → static handover.
+
+        A static stage inherits the previous transient stage's committed
+        nodal velocities and accelerations (a static integrator never
+        writes either), so ``recorder Node ... -dynamic`` /
+        ``reactions -dynamic`` in the static stage keeps reporting the
+        previous stage's inertial and damping terms as if they were
+        live.  Call this on the static stage to hand it a quiescent
+        kinematic state.
+
+        Emits, per targeted node and per DOF of that node's *effective*
+        ndf (a u-p node has 4, so it gets DOFs 1..4)::
+
+            setNodeVel   <node> <dof> 0.0 -commit
+            setNodeAccel <node> <dof> 0.0 -commit
+
+        ``-commit`` is load-bearing, not decoration.  The stock handler
+        (``OpenSeesMiscCommands.cpp`` ``OPS_setNodeVel`` /
+        ``OPS_setNodeAccel``) rebuilds the vector from the node's
+        COMMITTED state (``Node::getVel`` returns ``commitVel``) and
+        writes only the TRIAL vector.  Without committing each call, the
+        next DOF's call reads the OLD committed vector back and only the
+        last DOF ends up zeroed — and the committed state a static stage
+        actually reads is never touched at all.
+
+        Emit slot: LAST in the stage block — after the stage's domain
+        mutations, its analysis chain, its patterns and the optional
+        ``s.reset()``, immediately before ``analyze``.  ``reset`` reverts
+        the Domain to the last ``setTime`` (restoring the velocities),
+        so the zeroing has to follow it; and nothing else may run between
+        the zeroing and the step that would otherwise read the stale
+        state.
+
+        There is no cheaper mechanism.  The Ladruno fork adds
+        ``ladrunoSetNodeTrial`` (``OpenSeesMiscCommands.cpp``
+        ``OPS_LadrunoSetNodeTrial``), but it writes the TRIAL vectors
+        only and never commits, so it cannot express this; neither stock
+        nor the fork ships a domain-wide zeroing command.  The deck is
+        therefore ``2 x sum(ndf)`` lines — proportional to the model.
+        Pass ``nodes=`` to scope it when the whole domain is too many.
+
+        Parameters
+        ----------
+        nodes
+            The nodes to quiet.  ``None`` (default) means the whole
+            domain — every node in ``fem.nodes.ids``.  Accepts a mix of
+            plain integer tags and :class:`Node` instances, same as
+            :meth:`fix`.
+
+        Raises
+        ------
+        ValueError
+            If ``nodes=`` is supplied but empty (an inert directive is
+            almost always a mistake; omit the argument for the whole
+            domain).
+        """
+        if nodes is None:
+            record = ZeroVelocityRecord(nodes=None)
+        else:
+            nodes_tuple = _iter_tags(nodes)
+            if not nodes_tuple:
+                raise ValueError(
+                    f"Stage {self._name!r}.zero_velocities: nodes= is "
+                    "empty — omit the argument to zero the whole domain."
+                )
+            record = ZeroVelocityRecord(nodes=nodes_tuple)
+        self._zero_velocity_records.append(record)
         return record
 
     # -- Stage-bound constraints (CLAIM by name) -------------------------

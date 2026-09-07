@@ -434,6 +434,16 @@ class RecordingEmitter:
     def reset(self) -> None:
         self.calls.append(("reset", (), {}))
 
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        self.calls.append(
+            ("set_node_vel", (int(node), int(dof), float(value)), {}),
+        )
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        self.calls.append(
+            ("set_node_accel", (int(node), int(dof), float(value)), {}),
+        )
+
     def remove_sp(self, node: int, dof: int) -> None:
         self.calls.append(("remove_sp", (int(node), int(dof)), {}))
 
