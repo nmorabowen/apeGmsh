@@ -394,6 +394,19 @@ class RecordingEmitter:
             ("flip_element_stage", (pid, tuple(ele_tags)), {})
         )
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self.calls.append((
+            "update_parameter",
+            (int(pid), tuple(ele_tags), tuple(args), float(value)),
+            {},
+        ))
+
     def step_hook_ramp(
         self,
         name: str,
@@ -433,6 +446,16 @@ class RecordingEmitter:
 
     def reset(self) -> None:
         self.calls.append(("reset", (), {}))
+
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        self.calls.append(
+            ("set_node_vel", (int(node), int(dof), float(value)), {}),
+        )
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        self.calls.append(
+            ("set_node_accel", (int(node), int(dof), float(value)), {}),
+        )
 
     def remove_sp(self, node: int, dof: int) -> None:
         self.calls.append(("remove_sp", (int(node), int(dof)), {}))
