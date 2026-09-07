@@ -105,6 +105,7 @@ from ._internal.build import (
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
     validate_sanisand_substep_cap,
+    validate_asdplastic_host,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -1310,6 +1311,12 @@ class BuiltModel:
         # converges on a partially integrated stress. Raise, not warn --
         # that is a wrong answer, not a slow run.
         validate_sanisand_substep_cap(elements)
+
+        # ADR 0105 D4: an ASDPlasticMaterial3D whose host discards the
+        # material return code (stdBrick, fork ADR-94 B2) never sees its
+        # own strict_convergence refusal. Warn, not raise -- the vanilla
+        # host is legal and was the SSI-1 default.
+        validate_asdplastic_host(elements)
 
         # ADR 0093 S7: a stage-CLAIMED interface cannot ride the staged
         # H5 archive.  The claim itself is bridge-side state — nothing
