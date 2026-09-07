@@ -383,9 +383,13 @@ line, so none moved; `src/apeGmsh/studio/_api_index.json` was rebuilt for the
 new signatures. Unit tests that built the generic class with a partial MC
 block now supply the full schema. Readers are unchanged; a new live assertion
 in `test_ladruno_gauss_generic_columns.py` pins that the ADR-94 build still
-labels the `stress` / `strain` Gauss columns for an ASDP deck on
-`LadrunoBrick` (and records that `pstrain` is a material-level response on
-this build). Acceptance gate: `tests/opensees/integration_ladruno/
+labels the `stress` / `strain` Gauss columns and the `material.pstrain` /
+`material.eqpstrain` plastic-strain columns for an ASDP deck on
+`LadrunoBrick`. Recorder side: a bare `pstrain` (or any known material-level
+token — `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`,
+`J2Strain`) in `elem_responses` records NOTHING on the fork, silently;
+`ops.recorder.Ladruno` / `MPCO` now refuse it at construction and name the
+`material.<token>` spelling that reaches the Gauss-point materials. Acceptance gate: `tests/opensees/integration_ladruno/
 test_asdplastic_live.py` (`ladruno_fork`; seven cases, each a fresh
 subprocess printing `ops.ladrunoBuild()`), 7/7 on build `3622d6214`. Guide:
 `internal_docs/guide_ladruno_asdplastic.md`; fork asks:

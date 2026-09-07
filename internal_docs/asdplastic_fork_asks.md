@@ -108,8 +108,8 @@ function; the constant is a table those branches read from.
   `2 required model parameter(s) were never given a value: MC_phi, MC_phi`
   (`MohrCoulomb_YF` and `MohrCoulomb_PF` both declare it). Cosmetic; the
   count is misleading.
-- `pstrain` is a material-level response on this build
-  (`eleResponse(tag, "material", k, "pstrain")`); the bare element token
-  records nothing through a `.ladruno` recorder. apeGmsh's reader maps
-  `pstrain → plastic_strain_*` but nothing produces it at the element
-  level today.
+- A bare `-E pstrain` (or any other material-level token) records nothing,
+  silently — no warning, no bucket. The `material.pstrain` spelling works
+  and is now the only one apeGmsh emits. The recorder's "silent-drop
+  diagnostics" counter (`num_request_answers`) could name the token in a
+  warning when it stays at zero.

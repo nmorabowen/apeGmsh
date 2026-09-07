@@ -117,12 +117,22 @@ model drives a VonMises combination through it).
 ## 7. What did *not* change
 
 The four-string dispatch header and the three keyed blocks; the `PlaneStrain` wrapper;
-`InitialP0` and the `setParameter` initial-stress workflows; the readers. One measured fact worth
-knowing: on this build `pstrain` is a **material-level** response
-(`eleResponse(tag, "material", k, "pstrain")` answers six values); the bare element token through
-`ops.recorder.Ladruno(elem_responses=("pstrain",))` records nothing, so the reader's
-`pstrain → plastic_strain_*` mapping has no `.ladruno` producer today. Pinned as measured in
-`test_ladruno_gauss_generic_columns.py`.
+`InitialP0` and the `setParameter` initial-stress workflows; the readers.
+
+**Recorder side — the `material.` prefix.** Plastic strain and the other ASDP scalars are
+**material-level** responses. The fork recorder forwards a dotted `material.<token>` request to
+every Gauss point's material (`LadrunoRecorder.cpp` splits it into `material <k> <token>` and
+iterates `k`); the material tags the columns (`epsP11 … epsP13`, `eqpstrain`, `p`, `J2stress`,
+`epsVol`, `J2strain`, `BackStress_1..6`) and the reader lands `material.pstrain` on
+`plastic_strain_*` and `material.eqpstrain` on `equivalent_plastic_strain` — verified
+engine-checked in `test_ladruno_gauss_generic_columns.py`. A **bare** `pstrain` token never
+reaches the material and records nothing, silently (the fork's own `setResponse` comment says
+so). `ops.recorder.Ladruno` / `MPCO` now refuse the bare spelling of the known material-only
+tokens (`pstrain`, `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`, `J2Strain`) at
+construction, naming the `material.<token>` form. Still open (A12 territory, not this ADR): the
+reader drops `material.PStress` / `J2Stress` / `VolStrain` / `J2Strain` / `BackStress` buckets
+without a warning — the tensor-derived `mean_stress`, `j2_stress`, `volumetric_strain`,
+`j2_strain` cover the first four, `BackStress` has no reader today.
 
 ## 8. Goldens — what actually moved
 
@@ -133,6 +143,8 @@ knowing: on this build `pstrain` is a **material-level** response
   `f_relative_tol 0.0`, `strict_convergence 1`, `tangent_type Continuum`.
 - Unit tests that built the generic class with a partial MC parameter block now supply the full
   schema (they were exercising the old silent-zero contract).
+- A recorder deck that asked for a bare `pstrain` element token was recording nothing; it is now
+  refused at construction — spell it `material.pstrain`.
 
 ## 9. Measurements — the live battery (`test_asdplastic_live.py`, 7/7 on `3622d6214`)
 
@@ -173,5 +185,7 @@ Two things measured on the way that shape the deck rules below:
    50 MPa; `1e-7` completed the MC problem at ×1e9 in the battery).
 6. **Keep `MC_ds > 0`** on Mohr–Coulomb decks that reach a corner.
 7. **`Backward_Euler`** only; the explicit schemes warn, the two refused ones raise.
-8. **Minimum fork build `bbf657d49`**; older parsers silently drop `strict_convergence` and
+8. **Plastic strain is `material.pstrain`** (and `material.eqpstrain`) in `elem_responses`; the
+   bare token is refused because the fork records nothing for it.
+9. **Minimum fork build `bbf657d49`**; older parsers silently drop `strict_convergence` and
    `f_relative_tol`. The battery prints the build hash it ran against.

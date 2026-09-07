@@ -241,15 +241,12 @@ def _plane(fem, axis: int, value: float) -> list[int]:
 def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
     """Fork ADR-94 rewrote the material, not its response tokens: the
     ``stress`` / ``strain`` element responses of a ``MohrCoulombSoil`` deck
-    on ``LadrunoBrick`` still land on the six neutral names each, one column
+    on ``LadrunoBrick`` still land on the six neutral names each, and the
+    material-level ``material.pstrain`` / ``material.eqpstrain`` requests
+    (the recorder forwards ``material.<token>`` to every Gauss point) still
+    land on ``plastic_strain_*`` / ``equivalent_plastic_strain`` — one column
     per (element, GP), engine-checked.  Pinned here because the ADR-94 build
     is the first one apeGmsh's ASDP decks are contracted against.
-
-    ``pstrain`` is a MATERIAL-level response on this build
-    (``eleResponse(tag, "material", k, "pstrain")`` answers 6 values; the
-    bare element token records nothing), so the reader's ``pstrain ->
-    plastic_strain_*`` mapping has no ``.ladruno`` producer through
-    ``elem_responses`` today — pinned as measured rather than assumed.
     """
     fem = _single_hex_fem()
     ops = apeSees(fem)
@@ -271,7 +268,9 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
             p.sp(node=n, dof=3, value=-0.01)
     path = str(tmp_path / "asdp_hex.ladruno")
     ops.recorder.Ladruno(
-        file=path, elem_responses=("stress", "strain", "pstrain"),
+        file=path,
+        elem_responses=("stress", "strain", "material.pstrain",
+                        "material.eqpstrain"),
     )
     ops.constraints.Transformation()
     ops.numberer.Plain()
@@ -289,28 +288,41 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
     tags = o.getEleTags()
     eid = int(tags if isinstance(tags, int) else tags[0])
     o.eleResponse(eid, "forces")
-    live = np.asarray(o.eleResponse(eid, "stresses"), dtype=np.float64)
+    n_gp = 8
+    live_stress = np.asarray(o.eleResponse(eid, "stresses"), dtype=np.float64)
+    live_pstrain = np.array([
+        np.asarray(o.eleResponse(eid, "material", k, "pstrain"), dtype=np.float64)
+        for k in range(1, n_gp + 1)
+    ])
     o.remove("recorders")
 
     r = Results.from_ladruno(path)
     available = r.elements.gauss.available_components()
-    missing = [c for c in SOLID_GAUSS if c not in available]
+    wanted = SOLID_GAUSS + (
+        "plastic_strain_xx", "plastic_strain_yy", "plastic_strain_zz",
+        "plastic_strain_xy", "plastic_strain_yz", "plastic_strain_xz",
+        "equivalent_plastic_strain",
+    )
+    missing = [c for c in wanted if c not in available]
     assert not missing, f"{missing} absent from {sorted(available)}"
-    n_gp = 8
-    for component in SOLID_GAUSS:
+    for component in wanted:
         slab = r.elements.gauss.get(component=component)
         assert slab.values.shape[1] == n_gp, component
         assert np.all(np.isfinite(slab.values)), component
-    # Values against the engine: the recorded stress_zz is the engine's
-    # own GP vector, slot 2 of each 6-block.
+    # Values against the engine: stress_zz is slot 2 of each 6-block of the
+    # element's own vector; plastic_strain_zz is slot 2 of each GP
+    # material's own `pstrain`.
+    assert live_stress.size == 6 * n_gp
     slab = r.elements.gauss.get(component="stress_zz")
-    assert live.size == 6 * n_gp
     np.testing.assert_allclose(
-        np.sort(slab.values[-1]), np.sort(live.reshape(n_gp, 6)[:, 2]),
+        np.sort(slab.values[-1]), np.sort(live_stress.reshape(n_gp, 6)[:, 2]),
         rtol=1e-6, atol=1e-9,
     )
-    # The leg yielded (a plastic column would be non-zero if it existed):
-    # the bare `pstrain` element token produced no columns on this build.
-    assert "plastic_strain_zz" not in available
-    pstrain = np.asarray(o.eleResponse(eid, "material", 1, "pstrain"))
-    assert pstrain.size == 6 and np.max(np.abs(pstrain)) > 1e-4
+    assert live_pstrain.shape == (n_gp, 6)
+    slab = r.elements.gauss.get(component="plastic_strain_zz")
+    np.testing.assert_allclose(
+        np.sort(slab.values[-1]), np.sort(live_pstrain[:, 2]),
+        rtol=1e-6, atol=1e-12,
+    )
+    # The leg yielded: the plastic strain is not a column of zeros.
+    assert np.max(np.abs(slab.values[-1])) > 1e-4
