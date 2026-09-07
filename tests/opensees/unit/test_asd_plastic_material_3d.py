@@ -12,20 +12,66 @@ Covers:
 4. The bridge namespace methods (``ops.nDMaterial.ASDPlasticMaterial3D``,
    ``ops.nDMaterial.MohrCoulombSoil``, ``ops.nDMaterial.PlaneStrain``)
    construct + register + emit correctly.
+5. ADR 0105 D1 — the per-combination parameter schema
+   (:func:`asdp_parameter_schema`) resolves every one of the fork's 46
+   registered combinations (pinned fixture, captured from the fork's
+   ``list`` verb on build ``3622d6214``), the fail-loud ``__post_init__``
+   (foreign name / missing name / unknown component), and
+   :func:`MohrCoulombSoil` emitting exactly its schema.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.nd import (
+    _ASDP_OPTIONAL_PARAMS,
+    _ASDP_PARAMS_BY_COMPONENT,
     ASDPlasticMaterial3D,
     MohrCoulombSoil,
     PlaneStrain,
+    asdp_parameter_schema,
 )
 
 from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+_MC_IV = "BackStress(NullHardeningTensorFunction):"
+
+#: The full MohrCoulomb_YF / _PF + LinearIsotropic3D_EL schema — what the
+#: fork's ADR-94 parser requires (minus the two optional names).
+_MC_SCHEMA = frozenset({
+    "YoungsModulus", "PoissonsRatio", "MC_phi", "MC_c", "MC_ds", "MC_psi",
+    "MassDensity", "InitialP0",
+})
+_MC_PARAMS = (
+    ("YoungsModulus", 1e6), ("PoissonsRatio", 0.25), ("MC_phi", 30.0),
+    ("MC_c", 100.0), ("MC_ds", 0.0), ("MC_psi", 30.0),
+)
+
+#: The pre-ADR-0105 ``MohrCoulombSoil`` parameter block, verbatim (the
+#: 21-name superset the helper used to zero-fill).  Kept as a fixture,
+#: not regenerated: it is what the fork's ADR-94 parser refuses.
+_PRE_ADR94_SUPERSET = (
+    ("AF_cr", 0.0), ("AF_ha", 0.0), ("DP_eta", 0.0), ("DP_etabar", 0.0),
+    ("DP_xi_c", 0.0), ("Dilatancy", 0.0), ("DuncanChang_MaxSigma3", 0.0),
+    ("DuncanChang_n", 0.0), ("InitialP0", 0.0), ("MC_c", 1014.0),
+    ("MC_ds", 1e-5), ("MC_phi", 45.95), ("MC_psi", 11.49),
+    ("MassDensity", 4.5), ("PoissonsRatio", 0.18),
+    ("ReferencePressure", 0.0), ("ReferenceYoungsModulus", 0.0),
+    ("ScalarLinearHardeningParameter", 0.0), ("TC_min_stress", 0.0),
+    ("TensorLinearHardeningParameter", 0.0), ("YoungsModulus", 4080000.0),
+)
+
+
+def _mc(**kw) -> ASDPlasticMaterial3D:
+    kw.setdefault("model_parameters", _MC_PARAMS)
+    return ASDPlasticMaterial3D(
+        yf="MohrCoulomb_YF", pf="MohrCoulomb_PF",
+        el="LinearIsotropic3D_EL", iv=_MC_IV, **kw,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -52,13 +98,9 @@ def test_asd_plastic_material_3d_validates_type_strings() -> None:
 
 
 def test_asd_plastic_material_3d_emit_shape() -> None:
-    mat = ASDPlasticMaterial3D(
-        yf="MohrCoulomb_YF",
-        pf="MohrCoulomb_PF",
-        el="LinearIsotropic3D_EL",
-        iv="BackStress(NullHardeningTensorFunction):",
+    mat = _mc(
         internal_variables=(("BackStress", (0.0,) * 6),),
-        model_parameters=(("MC_c", 1000.0), ("MC_phi", 30.0)),
+        model_parameters=_MC_PARAMS,
         integration_options=(
             ("integration_method", "Backward_Euler"),
             ("n_max_iterations", 50),
@@ -74,7 +116,10 @@ def test_asd_plastic_material_3d_emit_shape() -> None:
     assert "BackStress(NullHardeningTensorFunction):" in line
     # Blocks.
     assert "Begin_Internal_Variables BackStress 0.0 0.0 0.0 0.0 0.0 0.0 End_Internal_Variables" in line
-    assert "Begin_Model_Parameters MC_c 1000.0 MC_phi 30.0 End_Model_Parameters" in line
+    assert (
+        "Begin_Model_Parameters YoungsModulus 1000000.0 PoissonsRatio 0.25 "
+        "MC_phi 30.0 MC_c 100.0 MC_ds 0.0 MC_psi 30.0 End_Model_Parameters"
+    ) in line
     # Integration options: float, int, and string enum render correctly.
     assert "Begin_Integration_Options" in line
     assert "integration_method Backward_Euler" in line
@@ -83,12 +128,155 @@ def test_asd_plastic_material_3d_emit_shape() -> None:
 
 
 def test_asd_plastic_material_3d_no_dependencies() -> None:
-    mat = ASDPlasticMaterial3D(
-        yf="MohrCoulomb_YF", pf="MohrCoulomb_PF",
-        el="LinearIsotropic3D_EL",
-        iv="BackStress(NullHardeningTensorFunction):",
+    assert _mc().dependencies() == ()
+
+
+# ---------------------------------------------------------------------------
+# 1b. ADR 0105 D1 — the per-combination parameter schema
+# ---------------------------------------------------------------------------
+
+_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures" / "asdp_registered_combinations_3622d6214.txt"
+)
+
+
+def _registered_combinations() -> list[tuple[str, str, str, str]]:
+    """The 46 ``(yf, pf, el, iv)`` tuples the fork's ``list`` verb printed.
+
+    Captured once against fork build ``3622d6214`` (ADR-94 closeout,
+    ASDP-equivalent to ``bbf657d49``) and pinned: the verb prints the four
+    type strings only, never the parameter names, which is why the table
+    under test exists at all (ADR 0105 D8 asks the fork for the names).
+    """
+    lines = _FIXTURE.read_text(encoding="utf-8").splitlines()
+    out: list[tuple[str, str, str, str]] = []
+    for i in range(0, len(lines), 4):
+        block = dict(line.split(" = ", 1) for line in lines[i:i + 4])
+        out.append((block["YF"], block["PF"], block["EL"], block["IV"]))
+    return out
+
+
+def test_fixture_carries_the_forks_46_registered_combinations() -> None:
+    combos = _registered_combinations()
+    assert len(combos) == 46
+    assert len(set(combos)) == 46
+    by_yf: dict[str, int] = {}
+    for yf, _pf, _el, _iv in combos:
+        by_yf[yf] = by_yf.get(yf, 0) + 1
+    # The fork's _adr94_inventory.md §(b) grouping, verbatim.
+    assert by_yf == {
+        "VonMises_YF": 14, "DruckerPrager_YF": 14, "MohrCoulomb_YF": 7,
+        "HoekBrown_YF": 7, "StiffSoilCap_YF": 2,
+        "MohrCoulombTensionCutoff_YF": 1, "StiffSoilShear_YF": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("yf", "pf", "el", "iv"), _registered_combinations(),
+    ids=lambda v: v if isinstance(v, str) and "_" in v and "(" not in v else None,
+)
+def test_schema_resolves_every_registered_combination(
+    yf: str, pf: str, el: str, iv: str,
+) -> None:
+    """Every registered combination resolves without error.
+
+    The StiffSoil family (3 of the 46) is outside the table by design and
+    resolves to ``None`` — the escape hatch; every other one resolves to
+    a set that carries the two optional names and the elastic pair.
+    """
+    schema = asdp_parameter_schema(yf, pf, el, iv)
+    if el == "StiffSoil_EL":
+        assert schema is None
+        assert yf.startswith("StiffSoil")
+        return
+    assert schema is not None, (yf, pf, el, iv)
+    assert _ASDP_OPTIONAL_PARAMS <= schema
+    assert {"YoungsModulus", "PoissonsRatio"} <= schema
+    # Every name is one the table knows — no component can smuggle in a
+    # name that is not attributable to it.
+    known = set().union(*_ASDP_PARAMS_BY_COMPONENT.values())
+    assert schema - _ASDP_OPTIONAL_PARAMS <= known
+
+
+def test_schema_is_the_union_of_the_components() -> None:
+    # MohrCoulomb_YF (3) ∪ MohrCoulomb_PF (+MC_psi) ∪ LinearIsotropic3D_EL
+    # ∪ NullHardeningTensorFunction (none) ∪ the two optional names.
+    assert asdp_parameter_schema(
+        "MohrCoulomb_YF", "MohrCoulomb_PF", "LinearIsotropic3D_EL", _MC_IV,
+    ) == _MC_SCHEMA
+    # A hardening policy contributes its parameters ONCE however many IVs
+    # carry it; a repeated IV name with different policies contributes
+    # each policy's set.
+    iv = (
+        "BackStress(TensorLinearHardeningFunction):"
+        "YieldStress(ScalarLinearHardeningFunction):"
+        "BackStress(ArmstrongFrederickHardeningFunction):"
+        "DP_cohesion(ScalarLinearHardeningFunction):"
     )
-    assert mat.dependencies() == ()
+    assert asdp_parameter_schema(
+        "VonMises_YF", "DruckerPrager_PF", "LinearIsotropic3D_EL", iv,
+    ) == frozenset({
+        "YoungsModulus", "PoissonsRatio", "DP_etabar",
+        "TensorLinearHardeningParameter", "ScalarLinearHardeningParameter",
+        "AF_ha", "AF_cr", "MassDensity", "InitialP0",
+    })
+
+
+def test_schema_is_none_for_an_unknown_component_or_malformed_iv() -> None:
+    assert asdp_parameter_schema(
+        "RoundedMohrCoulomb_YF", "MohrCoulomb_PF", "LinearIsotropic3D_EL",
+        _MC_IV,
+    ) is None
+    assert asdp_parameter_schema(
+        "MohrCoulomb_YF", "MohrCoulomb_PF", "LinearIsotropic3D_EL",
+        "BackStress(SomeFuturePolicy):",
+    ) is None
+    assert asdp_parameter_schema(
+        "MohrCoulomb_YF", "MohrCoulomb_PF", "LinearIsotropic3D_EL",
+        "BackStress:",
+    ) is None
+
+
+def test_pre_adr94_superset_deck_is_refused_naming_the_first_foreign_name() -> None:
+    """The old helper's 21-name block: refused at construction, naming the
+    first foreign name (``AF_cr``, in the block's own order) and the schema."""
+    with pytest.raises(ValueError) as exc:
+        _mc(model_parameters=_PRE_ADR94_SUPERSET)
+    msg = str(exc.value)
+    assert "'AF_cr' is not a parameter of" in msg
+    assert "DuncanChang_n" in msg          # every foreign name is listed
+    assert "TC_min_stress" in msg
+    assert "Schema for this combination" in msg
+    assert "MC_psi" in msg
+
+
+def test_missing_required_parameter_is_refused_listing_the_names() -> None:
+    with pytest.raises(ValueError) as exc:
+        _mc(model_parameters=(("YoungsModulus", 1e6), ("PoissonsRatio", 0.25)))
+    msg = str(exc.value)
+    assert "4 required model parameter(s) missing" in msg
+    assert "MC_c, MC_ds, MC_phi, MC_psi" in msg
+    # The optional pair is never reported missing.
+    assert "MassDensity" not in msg.split("missing for")[1].split(".")[0]
+    assert "InitialP0" not in msg.split("missing for")[1].split(".")[0]
+
+
+def test_optional_parameters_may_be_omitted_or_given() -> None:
+    _mc()                                              # neither
+    _mc(model_parameters=_MC_PARAMS + (("MassDensity", 2.0),))
+    _mc(model_parameters=_MC_PARAMS + (("InitialP0", -50.0),))
+
+
+def test_unknown_component_is_accepted_unchanged() -> None:
+    """The escape hatch: a combination the table does not cover is not
+    validated here — the fork validates.  Foreign AND missing alike."""
+    mat = ASDPlasticMaterial3D(
+        yf="StiffSoilCap_YF", pf="StiffSoilCap_PF", el="StiffSoil_EL",
+        iv="CapPressure(StiffSoilCapHardening):",
+        model_parameters=(("WhateverTheForkAccepts", 1.0),),
+    )
+    assert dict(mat.model_parameters) == {"WhateverTheForkAccepts": 1.0}
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +309,9 @@ def test_mohr_coulomb_soil_builds_correct_generic_shape() -> None:
     assert mp_dict["YoungsModulus"] == 4080000.0
     assert mp_dict["PoissonsRatio"] == 0.18
     assert mp_dict["MassDensity"] == 4.5
-    # Defensive zero-fills for non-MC parameter families.
-    assert mp_dict["AF_cr"] == 0.0
-    assert mp_dict["DP_eta"] == 0.0
+    # ADR 0105 D1: EXACTLY the schema — the 21-name superset is gone.
+    assert set(mp_dict) == _MC_SCHEMA
+    assert len(mat.model_parameters) == len(_MC_SCHEMA)
 
     io_dict = dict(mat.integration_options)
     assert io_dict["integration_method"] == "Backward_Euler"
@@ -211,7 +399,7 @@ def test_ndmaterial_namespace_asd_plastic_material_3d() -> None:
         el="LinearIsotropic3D_EL",
         iv="BackStress(NullHardeningTensorFunction):",
         internal_variables={"BackStress": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)},
-        model_parameters={"MC_c": 1014.0, "MC_phi": 45.95},
+        model_parameters=dict(_MC_PARAMS),
         integration_options={"integration_method": "Backward_Euler"},
     )
     assert isinstance(mat, ASDPlasticMaterial3D)

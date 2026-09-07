@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import re
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -1049,10 +1050,110 @@ class LadrunoSANISAND(NDMaterial):
 # Valid combinations are produced by
 # ``SRC/material/nD/ASDPlasticMaterial3D/gen_ASD_material_definitions_CPP.py``;
 # unsupported triples cause an OpenSees runtime error (the factory
-# returns ``nullptr``).  apeGmsh does not enforce client-side: any
-# ``(yf, pf, el, iv)`` shape is accepted at registration time; the
-# OpenSees binary is the source of truth on which combinations exist
-# in this build.
+# returns ``nullptr``).  apeGmsh does not enforce the COMBINATION
+# client-side: any ``(yf, pf, el, iv)`` shape is accepted at registration
+# time; the OpenSees binary is the source of truth on which combinations
+# exist in this build.
+#
+# ADR 0105 (fork ADR-94): the fork parser fails loud.  An unknown model-
+# parameter name aborts the ``nDMaterial`` command, and every parameter
+# of the instantiated combination except ``MassDensity`` / ``InitialP0``
+# is REQUIRED (an unset one used to run silently at 0 -- a typo'd
+# ``MC_phi`` ran at phi = 0, fork finding B1).  The fork's ``list`` verb
+# prints only the four type strings, so the per-combination schema is
+# carried HERE, composed from the component headers'
+# ``using parameters_t`` tuples as
+# ``EL ∪ YF ∪ PF ∪ (one set per IV hardening policy) ∪ {MassDensity,
+# InitialP0}``.  :func:`asdp_parameter_schema` resolves it;
+# :meth:`ASDPlasticMaterial3D.__post_init__` validates against it when
+# every component is in the table and leaves anything else to the fork
+# (the escape hatch for combinations the table does not cover, e.g. the
+# StiffSoil family).  Pinned against the fork's 46 registered
+# combinations by ``tests/opensees/unit/test_asd_plastic_material_3d.py``.
+
+#: Model-parameter names per ASDPlasticMaterial3D component (fork headers
+#: ``SRC/material/nD/ASDPlasticMaterial3D/**/*.h``, ``using parameters_t``).
+#: Keys are the tokens as they appear in the four-string header and in the
+#: IV string's ``Name(Policy)`` policies.  A component absent from this
+#: table makes :func:`asdp_parameter_schema` return ``None``.
+_ASDP_PARAMS_BY_COMPONENT: dict[str, frozenset[str]] = {
+    # -- elasticity ------------------------------------------------------
+    "LinearIsotropic3D_EL": frozenset({"YoungsModulus", "PoissonsRatio"}),
+    "StiffSoil_EL": frozenset({
+        "SS_Eur_ref", "PoissonsRatio", "SS_pref", "SS_m", "MC_phi", "MC_c",
+    }),
+    # -- yield functions -------------------------------------------------
+    "VonMises_YF": frozenset(),          # yield stress is the YieldStress IV
+    "DruckerPrager_YF": frozenset({"DP_xi_c", "DP_eta"}),
+    "MohrCoulomb_YF": frozenset({"MC_phi", "MC_c", "MC_ds"}),
+    "MohrCoulombTensionCutoff_YF": frozenset({
+        "MC_phi", "MC_c", "MC_ds", "MC_psi", "TC_min_stress",
+    }),
+    "HoekBrown_YF": frozenset({"HB_sigci", "HB_mb", "HB_s", "HB_a", "HB_ds"}),
+    # -- plastic-flow directions -----------------------------------------
+    "VonMises_PF": frozenset(),
+    "DruckerPrager_PF": frozenset({"DP_etabar"}),
+    "MohrCoulomb_PF": frozenset({"MC_phi", "MC_c", "MC_ds", "MC_psi"}),
+    "MohrCoulombTensionCutoff_PF": frozenset({
+        "MC_phi", "MC_c", "MC_ds", "MC_psi", "TC_min_stress",
+    }),
+    "HoekBrown_PF": frozenset({
+        "HB_sigci", "HB_mb_psi", "HB_s", "HB_a", "HB_ds",
+    }),
+    # -- internal-variable hardening policies (the ``(Policy)`` in the IV
+    #    string; one parameter set per policy, whatever IV carries it) -----
+    "TensorLinearHardeningFunction": frozenset({
+        "TensorLinearHardeningParameter",
+    }),
+    "ScalarLinearHardeningFunction": frozenset({
+        "ScalarLinearHardeningParameter",
+    }),
+    "ArmstrongFrederickHardeningFunction": frozenset({"AF_ha", "AF_cr"}),
+    "NullHardeningTensorFunction": frozenset(),
+    "NullHardeningScalarFunction": frozenset(),
+}
+
+#: Accepted by every combination and never required (fork parser: ``0`` =
+#: no mass, no geostatic seed).
+_ASDP_OPTIONAL_PARAMS: frozenset[str] = frozenset({"MassDensity", "InitialP0"})
+
+_ASDP_IV_TOKEN = re.compile(r"^\s*(?P<name>\w+)\((?P<policy>\w+)\)\s*$")
+
+
+def asdp_parameter_schema(
+    yf: str, pf: str, el: str, iv: str,
+) -> frozenset[str] | None:
+    """Model-parameter names the fork parser accepts for a combination.
+
+    The set is ``EL ∪ YF ∪ PF ∪ (parameters of every hardening policy
+    named in ``iv``) ∪ {MassDensity, InitialP0}``; every name except the
+    last two is REQUIRED by the ADR-94 parser.  ``iv`` is the
+    ``Name(Policy):Name(Policy):...`` string of the Tcl header (the same
+    IV name may appear more than once with different policies -- the
+    fork registers e.g. ``BackStress(TensorLinearHardeningFunction):
+    YieldStress(ScalarLinearHardeningFunction):BackStress(NullHardening
+    TensorFunction):``).
+
+    Returns ``None`` when any component -- a type string or an IV policy
+    -- is outside :data:`_ASDP_PARAMS_BY_COMPONENT`, or when ``iv`` does
+    not parse: apeGmsh then does not validate and the fork does
+    (ADR 0105 D1, the escape hatch).
+    """
+    components = [yf, pf, el]
+    for token in iv.split(":"):
+        if not token.strip():
+            continue
+        m = _ASDP_IV_TOKEN.match(token)
+        if m is None:
+            return None
+        components.append(m.group("policy"))
+    names: set[str] = set(_ASDP_OPTIONAL_PARAMS)
+    for comp in components:
+        params = _ASDP_PARAMS_BY_COMPONENT.get(comp)
+        if params is None:
+            return None
+        names |= params
+    return frozenset(names)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1096,10 +1197,16 @@ class ASDPlasticMaterial3D(NDMaterial):
         value or a 1-tuple).
     model_parameters
         ``{name: scalar}`` — model-parameter dictionary.  All values
-        are stored as floats.  Unknown keys are silently consumed by
-        the OpenSees parser (it forwards via ``setParameterByName``);
-        prefer the typed :class:`MohrCoulombSoil` helper for the SSI
-        case.
+        are stored as floats.  When every component of the combination
+        is in :data:`_ASDP_PARAMS_BY_COMPONENT` the names are validated
+        against :func:`asdp_parameter_schema` at construction: a name
+        outside the schema and a missing required name are both
+        ``ValueError`` (the fork's ADR-94 parser would refuse the deck
+        at run time; ADR 0105 D1 fails at build time instead).  A
+        combination with a component outside the table is accepted
+        unchanged and the fork validates.  Prefer the typed
+        :func:`MohrCoulombSoil` / :func:`MohrCoulombTensionCutoffSoil` /
+        :func:`HoekBrownRock` helpers, which emit exactly their schema.
     integration_options
         ``{name: scalar | str}`` — keyed by parser option name.
         Mixed types: ``f_absolute_tol`` / ``stress_absolute_tol`` /
@@ -1140,6 +1247,33 @@ class ASDPlasticMaterial3D(NDMaterial):
                     "ASDPlasticMaterial3D: internal_variables "
                     f"{name!r} must have at least one value"
                 )
+        self._validate_parameter_schema()
+
+    def _validate_parameter_schema(self) -> None:
+        """ADR 0105 D1 — the fork's fail-loud parameter contract, client-side."""
+        schema = asdp_parameter_schema(self.yf, self.pf, self.el, self.iv)
+        if schema is None:
+            return  # a component outside the table: the fork validates
+        combo = f"{self.yf} / {self.pf} / {self.el} / {self.iv}"
+        given = [name for name, _ in self.model_parameters]
+        foreign = [name for name in given if name not in schema]
+        if foreign:
+            raise ValueError(
+                f"ASDPlasticMaterial3D: model parameter {foreign[0]!r} is "
+                f"not a parameter of {combo} (foreign: "
+                f"{', '.join(foreign)}). The fork's ADR-94 parser refuses an "
+                f"unknown name and aborts the nDMaterial command. Schema for "
+                f"this combination: {', '.join(sorted(schema))}."
+            )
+        missing = sorted(schema - _ASDP_OPTIONAL_PARAMS - set(given))
+        if missing:
+            raise ValueError(
+                f"ASDPlasticMaterial3D: {len(missing)} required model "
+                f"parameter(s) missing for {combo}: {', '.join(missing)}. "
+                f"Every parameter except MassDensity and InitialP0 is "
+                f"required by the fork's ADR-94 parser (an unset one used "
+                f"to run silently at 0)."
+            )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[float | int | str] = [self.yf, self.pf, self.el, self.iv]
@@ -1181,11 +1315,10 @@ class ASDPlasticMaterial3D(NDMaterial):
 #
 # Constructs an ASDPlasticMaterial3D with the standard
 # MohrCoulomb_YF + MohrCoulomb_PF + LinearIsotropic3D_EL
-# + BackStress(NullHardeningTensorFunction): composition.  Zero-fills
-# the non-MohrCoulomb model parameters (AF_*, DP_*, DuncanChang_*,
-# etc.) defensively — STKO's emit does the same; the OpenSees parser
-# accepts unknown names without erroring (forwarded via
-# ``setParameterByName``).
+# + BackStress(NullHardeningTensorFunction): composition and emits
+# EXACTLY that combination's schema (ADR 0105 D1).  It used to zero-fill
+# a 21-name superset (AF_*, DP_*, DuncanChang_*, ...) the way STKO does;
+# the fork's ADR-94 parser refuses the deck at the first foreign name.
 
 
 def MohrCoulombSoil(
@@ -1292,28 +1425,16 @@ def MohrCoulombSoil(
             ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
         ),
         model_parameters=(
-            # Required MohrCoulomb + elastic + density.
-            ("AF_cr", 0.0),
-            ("AF_ha", 0.0),
-            ("DP_eta", 0.0),
-            ("DP_etabar", 0.0),
-            ("DP_xi_c", 0.0),
-            ("Dilatancy", 0.0),
-            ("DuncanChang_MaxSigma3", 0.0),
-            ("DuncanChang_n", 0.0),
-            ("InitialP0", initial_p0),
+            # Exactly the MohrCoulomb_YF / _PF + LinearIsotropic3D_EL
+            # schema (ADR 0105 D1); nothing foreign, nothing missing.
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("MC_phi", phi),
             ("MC_c", c),
             ("MC_ds", ds),
-            ("MC_phi", phi),
             ("MC_psi", psi),
             ("MassDensity", rho),
-            ("PoissonsRatio", nu),
-            ("ReferencePressure", 0.0),
-            ("ReferenceYoungsModulus", 0.0),
-            ("ScalarLinearHardeningParameter", 0.0),
-            ("TC_min_stress", 0.0),
-            ("TensorLinearHardeningParameter", 0.0),
-            ("YoungsModulus", E),
+            ("InitialP0", initial_p0),
         ),
         integration_options=(
             ("f_absolute_tol", f_absolute_tol),
