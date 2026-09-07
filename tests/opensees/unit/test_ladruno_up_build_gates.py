@@ -13,6 +13,10 @@ Covers, without gmsh / openseespy:
 * the D4 solver gate (``validate_ladruno_up_solver``): missing system,
   symmetric-storage / diagonal systems, the general-solver allow-list,
   and per-stage checking.
+* the A2 pressure-datum gate (``up_pressure_components`` /
+  ``validate_up_pressure_datum``): the union-find component walk over
+  pressure-carrier connectivity, what counts as a datum (fix / sp /
+  s.support on slot ``ndm+1``), and the per-region requirement.
 """
 from __future__ import annotations
 
@@ -21,13 +25,18 @@ import pytest
 
 from apeGmsh.opensees._internal.build import (
     BridgeError,
+    FixRecord,
+    SupportRecord,
     infer_node_ndf,
+    up_pressure_components,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
     validate_ladruno_up_specs,
+    validate_up_pressure_datum,
 )
 from apeGmsh.opensees.element.solid import LadrunoUP
 from apeGmsh.opensees.material.nd import ElasticIsotropic
+from apeGmsh.opensees.pattern.pattern import _SPRecord
 
 
 # ── lightweight FEM stub (element PG walk + nodal coords) ────────────────────
@@ -541,3 +550,184 @@ class TestPressureDofAliasing:
         elements = [_up(pg="Soil"), _spec("elasticBeamColumn", "Frame")]
         # No raise from THIS guard (node 5 is a mid-edge, not a carrier).
         validate_ladruno_up_pressure_dof(fem, elements, ndm=2)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# A2 — the pressure-datum connectivity gate (validate_up_pressure_datum)
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestUpPressureComponents:
+    """The component walk itself, on hand-built carrier connectivity."""
+
+    def test_single_chain_is_one_component(self) -> None:
+        comps = up_pressure_components([(1, 2, 5, 4), (2, 3, 6, 5)])
+        assert comps == {1: [1, 2, 3, 4, 5, 6]}
+
+    def test_disjoint_blocks_are_two_components(self) -> None:
+        comps = up_pressure_components([(1, 2, 3), (7, 8, 9)])
+        assert comps == {1: [1, 2, 3], 7: [7, 8, 9]}
+
+    def test_shared_node_merges_components(self) -> None:
+        """Order-independent merge: the third element bridges the first two."""
+        comps = up_pressure_components([(1, 2), (3, 4), (2, 3)])
+        assert comps == {1: [1, 2, 3, 4]}
+
+    def test_key_is_the_min_tag_of_the_component(self) -> None:
+        comps = up_pressure_components([(9, 4), (4, 6)])
+        assert comps == {4: [4, 6, 9]}
+
+    def test_empty_input_is_no_components(self) -> None:
+        assert up_pressure_components([]) == {}
+
+    def test_th_midedge_exclusion_keeps_one_region(self) -> None:
+        """Two tri6 cells sharing edge (2,4): the carrier rows are the VERTEX
+        slots only, and the shared vertices still tie them into one region —
+        dropping the mid-edge nodes must not shatter the walk."""
+        comps = up_pressure_components([(1, 2, 4), (2, 3, 4)])
+        assert comps == {1: [1, 2, 3, 4]}
+        assert 7 not in comps[1]   # a mid-edge node never enters the graph
+
+
+class TestUpPressureDatumGate:
+    """The gate over a stubbed mesh: what counts as a datum, and what is
+    exempt.  Node-targeted records only (no pg fan-out), so the stub FEM
+    needs no node index."""
+
+    #: One Q4 column, two cells, nodes 1-6 (equal-order → every node has p).
+    _COLUMN = {"Soil": [[(1, (1, 2, 4, 3)), (2, (3, 4, 6, 5))]]}
+
+    @staticmethod
+    def _fix(nodes, dofs):
+        return FixRecord(pg=None, nodes=tuple(nodes), dofs=tuple(dofs))
+
+    def test_sealed_column_refused(self) -> None:
+        with pytest.raises(BridgeError) as ei:
+            validate_up_pressure_datum(
+                _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=True,
+            )
+        msg = str(ei.value)
+        assert "node 1" in msg
+        assert "1 of 1 u-p region(s)" in msg
+        assert "slot 3" in msg
+
+    def test_pressure_fix_is_a_datum(self) -> None:
+        validate_up_pressure_datum(
+            _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=True,
+            fix_records=[self._fix([5], (0, 0, 1))],
+        )
+
+    def test_displacement_only_fix_is_not_a_datum(self) -> None:
+        """A mask that stops short of slot ndm+1 — or leaves it 0 — pins no
+        pressure, so the region is still sealed."""
+        for dofs in ((1, 1), (1, 1, 0)):
+            with pytest.raises(BridgeError):
+                validate_up_pressure_datum(
+                    _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2,
+                    enforce=True, fix_records=[self._fix([1, 2], dofs)],
+                )
+
+    def test_sp_on_the_pressure_dof_is_a_datum(self) -> None:
+        validate_up_pressure_datum(
+            _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=True,
+            sp_records=[_SPRecord(
+                target_kind="node", target="6", dof=3, value=0.0,
+            )],
+        )
+
+    def test_sp_on_a_displacement_dof_is_not_a_datum(self) -> None:
+        with pytest.raises(BridgeError):
+            validate_up_pressure_datum(
+                _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=True,
+                sp_records=[_SPRecord(
+                    target_kind="node", target="6", dof=2, value=0.0,
+                )],
+            )
+
+    def test_stage_support_on_the_pressure_dof_is_a_datum(self) -> None:
+        validate_up_pressure_datum(
+            _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=True,
+            support_records=[SupportRecord(
+                pg=None, nodes=(6,), dofs=(0, 0, 1),
+            )],
+        )
+
+    def test_enforce_false_is_a_full_bypass(self) -> None:
+        validate_up_pressure_datum(
+            _StubFem(self._COLUMN), [_up(pg="Soil")], ndm=2, enforce=False,
+        )
+
+    def test_no_up_element_is_untouched(self) -> None:
+        validate_up_pressure_datum(
+            _StubFem({"Frame": [[(1, (1, 2))]]}),
+            [_spec("elasticBeamColumn", "Frame")], ndm=2, enforce=True,
+        )
+
+    def test_each_disjoint_region_needs_its_own_datum(self) -> None:
+        fem = _StubFem({
+            "SoilA": [[(1, (1, 2, 4, 3))]],
+            "SoilB": [[(2, (11, 12, 14, 13))]],
+        })
+        elements = [_up(pg="SoilA"), _up(pg="SoilB")]
+        # Neither grounded → both regions counted.
+        with pytest.raises(BridgeError, match=r"2 of 2 u-p region\(s\)"):
+            validate_up_pressure_datum(fem, elements, ndm=2, enforce=True)
+        # Only region A grounded → still refused, naming region B's min node.
+        with pytest.raises(BridgeError) as ei:
+            validate_up_pressure_datum(
+                fem, elements, ndm=2, enforce=True,
+                fix_records=[self._fix([1], (0, 0, 1))],
+            )
+        assert "node 11" in str(ei.value)
+        assert "1 of 2 u-p region(s)" in str(ei.value)
+        # Both grounded → passes.
+        validate_up_pressure_datum(
+            fem, elements, ndm=2, enforce=True,
+            fix_records=[self._fix([1, 11], (0, 0, 1))],
+        )
+
+    def test_non_pressure_element_does_not_bridge_two_regions(self) -> None:
+        """An elastic quad spanning a node of each u-p column carries no
+        pressure DOF, so it cannot conduct: the two regions stay separate and
+        each still needs its own datum."""
+        fem = _StubFem({
+            "SoilA": [[(1, (1, 2, 4, 3))]],
+            "SoilB": [[(2, (11, 12, 14, 13))]],
+            "Rock":  [[(3, (4, 11, 12, 3))]],   # elastic, ndf 2 — no p
+        })
+        elements = [
+            _up(pg="SoilA"), _up(pg="SoilB"), _spec("quad", "Rock"),
+        ]
+        with pytest.raises(BridgeError) as ei:
+            validate_up_pressure_datum(
+                fem, elements, ndm=2, enforce=True,
+                fix_records=[self._fix([1], (0, 0, 1))],
+            )
+        assert "1 of 2 u-p region(s)" in str(ei.value)
+        assert "node 11" in str(ei.value)
+
+    def test_midedge_node_is_not_a_datum_candidate(self) -> None:
+        """A tri6 cell whose ONLY pressure-flagged fix lands on a mid-edge
+        node (which carries no p) is still sealed."""
+        fem = _StubFem({"Soil": [[(1, (1, 2, 3, 4, 5, 6))]]})
+        with pytest.raises(BridgeError, match="node 1"):
+            validate_up_pressure_datum(
+                fem, [_up(pg="Soil")], ndm=2, enforce=True,
+                fix_records=[self._fix([5], (0, 0, 1))],
+            )
+        # ... while a vertex-slot fix on the same cell grounds it.
+        validate_up_pressure_datum(
+            fem, [_up(pg="Soil")], ndm=2, enforce=True,
+            fix_records=[self._fix([3], (0, 0, 1))],
+        )
+
+    def test_3d_pressure_slot_is_dof_4(self) -> None:
+        fem = _StubFem({"Soil": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]]})
+        with pytest.raises(BridgeError, match="slot 4"):
+            validate_up_pressure_datum(
+                fem, [_up(pg="Soil", dim=3)], ndm=3, enforce=True,
+                fix_records=[self._fix([1], (1, 1, 1))],
+            )
+        validate_up_pressure_datum(
+            fem, [_up(pg="Soil", dim=3)], ndm=3, enforce=True,
+            fix_records=[self._fix([1], (0, 0, 0, 1))],
+        )

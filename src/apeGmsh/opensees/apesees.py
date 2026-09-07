@@ -98,6 +98,7 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_up_pressure_datum,
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
     validate_sanisand_substep_cap,
@@ -470,9 +471,8 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     broader :func:`_fem_has_mp_constraints` (which also counts penalty-element
     interpolation ties). Node-side records emit MP_Constraints EXCEPT
     ``kinematic_coupling`` (→ ``LadrunoKinematicCoupling`` element) and
-    ``rigid_body(as_element=True)`` (→ ``LadrunoRigidBody`` element) and
     ``penalty`` (g.constraints.penalty → a stiff spring element, NOT an
-    MP_Constraint — it has no MP emit path in build.py), which are all
+    MP_Constraint — it has no MP emit path in build.py), which are
     handler-independent. The interpolation ties (``tie`` / ``embedded`` /
     ``distributing``) all emit penalty/coupling ELEMENTS — handler-independent
     too; their only handler-requiring route is ``enforce="equation"``, caught
@@ -480,6 +480,15 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     those element-emitting kinds, requires a handler. Unknown node kinds
     default to handler-requiring (conservative — better a false fail-loud than
     a silently-unenforced MP constraint).
+
+    ``rigid_body(as_element=True)`` is NOT handler-independent, despite
+    emitting a ``LadrunoRigidBody`` element: ``LadrunoRigidBody::setDomain``
+    adds one ``MP_Constraint`` per slave (fork
+    ``LadrunoRigidBody.cpp:339,360-362``), and ``LadrunoContactHandler`` only
+    WARNS about MP constraints — it does not enforce them (fork
+    ``LadrunoContactHandler.cpp:706-713``). So contact + rigid_body
+    (as_element=True) would silently leave those slaves unconstrained; this
+    counts as handler-requiring like the ``as_element=False`` form.
 
     ADR 0093: a **mixed-ndf** ``g.constraints.interface()`` pair emits a
     real ``equalDOF`` from its own pass, so it counts here too —
@@ -508,9 +517,6 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
         for rec in node_constraints:
             kind = getattr(rec, "kind", None)
             if kind in _HANDLER_INDEPENDENT:
-                continue
-            if (kind == ConstraintKind.RIGID_BODY
-                    and getattr(rec, "as_element", False)):
                 continue
             return True
     except TypeError:
@@ -1430,6 +1436,38 @@ class BuiltModel:
                 *(r for st in self.stage_records for r in st.mass_records),
             ),
             load_records=tuple(ld for p in _plains for ld in p.loads),
+            sp_records=tuple(sp for p in _plains for sp in p.sps),
+            support_records=tuple(
+                r for st in self.stage_records for r in st.support_records
+            ),
+        )
+
+        # G4 — a STATIC u-p deck whose pressure DOFs are all free is
+        # singular in p and factorises through round-off with rc = 0 and an
+        # arbitrary pressure level (fork xfail
+        # test_ladruno_up_element_analytic.py:533-548).  Walk the pressure
+        # regions and require a datum in each.  Scoped to Static: a sealed
+        # region is physically correct under Transient (the storage term
+        # regularises the p rows), and archival emits never solve — the
+        # same two facts D4 above is scoped on.  Runs AFTER D4 so the
+        # solver footgun still reports first on a deck with both.
+        from .analysis.analysis import Static as _StaticAnalysis
+        validate_up_pressure_datum(
+            self.fem, elements, self.ndm,
+            enforce=(
+                not _emitter_is_archival
+                and (
+                    any(isinstance(p, _StaticAnalysis) for p in ordered)
+                    or any(
+                        isinstance(st.analysis, _StaticAnalysis)
+                        for st in self.stage_records
+                    )
+                )
+            ),
+            fix_records=(
+                *self.fix_records,
+                *(r for st in self.stage_records for r in st.fix_records),
+            ),
             sp_records=tuple(sp for p in _plains for sp in p.sps),
             support_records=tuple(
                 r for st in self.stage_records for r in st.support_records
@@ -7392,21 +7430,27 @@ class BuiltModel:
             # contact and a handler-requiring MP constraint would silently drop
             # the MP enforcement. Fail loud rather than emit a silently-wrong
             # deck. NB this checks only HANDLER-REQUIRING constraints: penalty/
-            # penalty_al ties + kinematic/distributing couplings + rigid_body
-            # (as_element) emit handler-INDEPENDENT elements and coexist with
-            # contact fine; equation ties are caught above.
+            # penalty_al ties + kinematic/distributing couplings emit
+            # handler-INDEPENDENT elements and coexist with contact fine;
+            # equation ties are caught above. rigid_body(as_element=True) is
+            # NOT handler-independent — LadrunoRigidBody::setDomain still adds
+            # one MP_Constraint per slave, which LadrunoContact only warns
+            # about instead of enforcing (fork LadrunoContactHandler.cpp:
+            # 706-713) — so it trips this guard the same as as_element=False.
             if _fem_has_handler_requiring_mp(self.fem):
                 raise BridgeError(
                     "Contact interactions and a handler-requiring MP "
                     "constraint (equalDOF / equalDOF_mixed / rigidLink / "
-                    "rigidDiaphragm) are both present, but the LadrunoContact "
-                    "handler required for contact is Plain-style for MP "
-                    "constraints (fork P1a) — the MP constraint would NOT be "
-                    "enforced. Only one constraint handler can be active. Split "
-                    "the model into separate runs, or remove the MP constraint "
-                    "from the contact run. (Penalty/penalty_al ties, "
-                    "kinematic/distributing couplings, and rigid_body "
-                    "as_element are handler-independent elements and are fine "
+                    "rigidDiaphragm / rigid_body, including "
+                    "rigid_body(as_element=True) — LadrunoRigidBody still "
+                    "emits an MP_Constraint per slave) are both present, but "
+                    "the LadrunoContact handler required for contact is "
+                    "Plain-style for MP constraints (fork P1a) — the MP "
+                    "constraint would NOT be enforced. Only one constraint "
+                    "handler can be active. Split the model into separate "
+                    "runs, or remove the MP constraint from the contact run. "
+                    "(Penalty/penalty_al ties and kinematic/distributing "
+                    "couplings are handler-independent elements and are fine "
                     "with contact.)"
                 )
             from .analysis.constraint_handler import (
