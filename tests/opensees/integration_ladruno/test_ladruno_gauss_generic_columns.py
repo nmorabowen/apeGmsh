@@ -207,3 +207,110 @@ def test_both_stress_tokens_in_one_recorder_do_not_double_count(
     np.testing.assert_allclose(
         slabs["von_mises_stress"].values[-1], hand, rtol=1e-10, atol=1e-9,
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR 0105 D6 — the ADR-94 build still labels the same Gauss columns for an
+# ASDPlasticMaterial3D on LadrunoBrick.
+# ---------------------------------------------------------------------------
+
+SOLID_GAUSS = (
+    "stress_xx", "stress_yy", "stress_zz", "stress_xy", "stress_yz", "stress_xz",
+    "strain_xx", "strain_yy", "strain_zz", "strain_xy", "strain_yz", "strain_xz",
+)
+
+
+def _single_hex_fem():
+    with apeGmsh(model_name="gc_hex", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="rock")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def _plane(fem, axis: int, value: float) -> list[int]:
+    ids = np.asarray(fem.nodes.ids)
+    xyz = np.asarray(fem.nodes.coords)
+    return [
+        int(n) for n, p in zip(ids, xyz) if abs(float(p[axis]) - value) < 1e-9
+    ]
+
+
+def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
+    """Fork ADR-94 rewrote the material, not its response tokens: the
+    ``stress`` / ``strain`` element responses of a ``MohrCoulombSoil`` deck
+    on ``LadrunoBrick`` still land on the six neutral names each, one column
+    per (element, GP), engine-checked.  Pinned here because the ADR-94 build
+    is the first one apeGmsh's ASDP decks are contracted against.
+
+    ``pstrain`` is a MATERIAL-level response on this build
+    (``eleResponse(tag, "material", k, "pstrain")`` answers 6 values; the
+    bare element token records nothing), so the reader's ``pstrain ->
+    plastic_strain_*`` mapping has no ``.ladruno`` producer through
+    ``elem_responses`` today — pinned as measured rather than assumed.
+    """
+    fem = _single_hex_fem()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.MohrCoulombSoil(
+        c=100.0, phi=30.0, psi=30.0, E=1.0e6, nu=0.25,
+    )
+    ops.element.LadrunoBrick(pg="rock", material=mat)
+    ops.fix(nodes=_plane(fem, 0, 0.0), dofs=(1, 0, 0))
+    ops.fix(nodes=_plane(fem, 1, 0.0), dofs=(0, 1, 0))
+    ops.fix(nodes=_plane(fem, 2, 0.0), dofs=(0, 0, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        for n in _plane(fem, 0, 1.0):
+            p.sp(node=n, dof=1, value=0.002)
+        for n in _plane(fem, 1, 1.0):
+            p.sp(node=n, dof=2, value=0.003)
+        for n in _plane(fem, 2, 1.0):
+            p.sp(node=n, dof=3, value=-0.01)
+    path = str(tmp_path / "asdp_hex.ladruno")
+    ops.recorder.Ladruno(
+        file=path, elem_responses=("stress", "strain", "pstrain"),
+    )
+    ops.constraints.Transformation()
+    ops.numberer.Plain()
+    ops.system.UmfPack()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.05)
+    ops.analysis.Static()
+
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    for _ in range(20):
+        assert emitter.analyze(steps=1) == 0
+    o = emitter.ops
+    tags = o.getEleTags()
+    eid = int(tags if isinstance(tags, int) else tags[0])
+    o.eleResponse(eid, "forces")
+    live = np.asarray(o.eleResponse(eid, "stresses"), dtype=np.float64)
+    o.remove("recorders")
+
+    r = Results.from_ladruno(path)
+    available = r.elements.gauss.available_components()
+    missing = [c for c in SOLID_GAUSS if c not in available]
+    assert not missing, f"{missing} absent from {sorted(available)}"
+    n_gp = 8
+    for component in SOLID_GAUSS:
+        slab = r.elements.gauss.get(component=component)
+        assert slab.values.shape[1] == n_gp, component
+        assert np.all(np.isfinite(slab.values)), component
+    # Values against the engine: the recorded stress_zz is the engine's
+    # own GP vector, slot 2 of each 6-block.
+    slab = r.elements.gauss.get(component="stress_zz")
+    assert live.size == 6 * n_gp
+    np.testing.assert_allclose(
+        np.sort(slab.values[-1]), np.sort(live.reshape(n_gp, 6)[:, 2]),
+        rtol=1e-6, atol=1e-9,
+    )
+    # The leg yielded (a plastic column would be non-zero if it existed):
+    # the bare `pstrain` element token produced no columns on this build.
+    assert "plastic_strain_zz" not in available
+    pstrain = np.asarray(o.eleResponse(eid, "material", 1, "pstrain"))
+    assert pstrain.size == 6 and np.max(np.abs(pstrain)) > 1e-4
