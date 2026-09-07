@@ -723,6 +723,99 @@ def test_handler_requiring_mp_predicate():
 
 
 # --------------------------------------------------------------------------
+# Contact + handler-requiring MP guard (#7) — end to end through the build
+#
+# No pre-existing test anywhere under tests/ exercised the actual guard
+# raise (grepped for "handler-requiring MP constraint" and "Only one
+# constraint handler can be active" — no hits outside this file's own
+# predicate test above and apesees.py itself), so these two are new. Unlike
+# the rest of this file (text-only, no live gmsh) they build a real,
+# minimal apeGmsh session — the smallest fixture found in the repo that
+# reaches ``_maybe_auto_emit_constraint_handler``'s #7 guard: a 1x1x1 box
+# with a rigid-plane contact on the bottom face, and a decoupled work-point
+# driving the top face (mirrors ``tests/test_decoupled_constraint_master.py``
+# ``_box_session`` + ``tests/opensees/integration/test_contact_partition_
+# fail_loud.py`` ``_contact_plane_fem_partitioned``, combined). The
+# rigid_body(as_element=True) case can't reuse the decoupled work-point as
+# its master — ``rigid_body`` doesn't accept a decoupled-node master role
+# (ADR 0049 OQ2 restricts that to kinematic_coupling / distributing_coupling)
+# — so it targets the "floor" face instead (the node nearest master_point).
+# --------------------------------------------------------------------------
+def _contact_plus_master_box(g):
+    """1x1x1 box: rigid-plane contact on the bottom face + a decoupled
+    work-point node driving the top face. Returns the decoupled handle."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="body")
+    g.model.sync()
+    g.physical.add_volume("body", name="Body")
+    g.model.select(dim=2).on_plane(
+        (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), tol=1e-3,
+    ).to_physical("floor")
+    g.model.select(dim=2).on_plane(
+        (0.0, 0.0, 1.0), (0.0, 0.0, 1.0), tol=1e-3,
+    ).to_physical("end_face")
+    h = g.decouple_node(coords=(0.5, 0.5, 1.0), label="work_pt")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    g.constraints.contact_plane(
+        "floor", normal=(0, 0, 1), point=(0, 0, 0), kn=1.0e7)
+    return h
+
+
+def test_contact_and_rigid_body_as_element_guard_raises(tmp_path):
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    g = apeGmsh(model_name="contact_rb_guard", verbose=False)
+    g.begin()
+    try:
+        # rigid_body (unlike kinematic_coupling / distributing_coupling)
+        # does not accept a decoupled-node master (ADR 0049 OQ2 restricts
+        # decoupled roles to _DECOUPLED_ROLE_TYPES) — so its master here is
+        # the "floor" face used by contact_plane, picking the node nearest
+        # master_point=(0,0,0), one of its own corners.
+        _contact_plus_master_box(g)
+        g.constraints.rigid_body(
+            "floor", "end_face", master_point=(0.0, 0.0, 0.0),
+            as_element=True,
+        )
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=6)
+        with pytest.raises(BridgeError) as excinfo:
+            ops.tcl(str(tmp_path / "deck.tcl"))
+        msg = str(excinfo.value)
+        assert "handler-requiring MP" in msg
+        assert "rigid_body(as_element=True)" in msg
+    finally:
+        g.end()
+
+
+def test_contact_and_kinematic_coupling_guard_does_not_raise(tmp_path):
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import apeSees
+
+    g = apeGmsh(model_name="contact_kc_ok", verbose=False)
+    g.begin()
+    try:
+        h = _contact_plus_master_box(g)
+        g.constraints.kinematic_coupling(
+            "work_pt", "end_face", master_point=(0.5, 0.5, 1.0),
+        )
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.ndf(h, ndf=6)
+        deck = tmp_path / "deck.tcl"
+        ops.tcl(str(deck))                                # no BridgeError
+        text = deck.read_text(encoding="utf-8")
+        assert "LadrunoKinematicCoupling" in text
+        assert "constraints LadrunoContact" in text        # handler emitted
+    finally:
+        g.end()
+
+
+# --------------------------------------------------------------------------
 # H5 deck-zone contact behavior (silent no-op + name-consume + handler skip)
 # --------------------------------------------------------------------------
 def test_h5_deck_contact_behavior():
