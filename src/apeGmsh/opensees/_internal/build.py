@@ -709,6 +709,35 @@ def validate_constraint_master_ndf(
     def ndf_of(n: int) -> int:
         return int(effective.get(int(n), int(envelope_ndf)))
 
+    # A1 — ``kinematic_coupling`` with ``dofs=None`` ties EVERY DOF the
+    # slave has, by COUNT: ``LadrunoKinematicCoupling.cpp:260-275`` walks
+    # c = 1..ndm+nrot and keeps each c the slave carries, so an ndf-4 u-p
+    # slave in 3D has its pore pressure (slot 4) tied to the master's θx
+    # by ``buildB`` (:335-350) — silently (the only warning sits behind
+    # ``!useDefault``).  Only a pure translation (ndm) or translation +
+    # rotation (ndm + nrot) layout is safe under the default; anything
+    # else must name its ``dofs=``.  A 2D u-p node (ndf 3) is
+    # indistinguishable BY COUNT from a (u, v, θ) node — this gate does
+    # not see it.
+    nrot = 3 if int(ndm) == 3 else 1
+    rigid_layouts = frozenset({int(ndm), int(ndm) + nrot})
+
+    def _check_default_coupling_slave(slave: int, name: object) -> None:
+        k = ndf_of(slave)
+        if k in rigid_layouts:
+            return
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"kinematic_coupling{label}: slave node {slave} has ndf {k}, "
+            f"which is neither a translation-only ({int(ndm)}) nor a "
+            f"translation+rotation ({int(ndm) + nrot}) layout in "
+            f"{int(ndm)}D — e.g. a u-p node whose DOF {int(ndm) + 1} is "
+            f"pore pressure. With dofs=None the fork ties every DOF the "
+            f"slave has BY COUNT (LadrunoKinematicCoupling.cpp:260-275), "
+            f"so that DOF would be tied to the master's rotation. Pass "
+            f"dofs= explicitly (e.g. dofs=[1, 2, 3] for translations only)."
+        )
+
     def _check_diaphragm(master: int) -> None:
         if ndf_of(master) != floor:
             raise BridgeError(
@@ -754,6 +783,12 @@ def validate_constraint_master_ndf(
                         _check_pair(
                             int(rec.master_node), int(slave), rec.dofs,
                             rec.kind,
+                        )
+                elif rec.kind == _CK.KINEMATIC_COUPLING:
+                    # empty dofs ⇒ the element's count-based default (A1)
+                    for slave in rec.slave_nodes:
+                        _check_default_coupling_slave(
+                            int(slave), getattr(rec, "name", None),
                         )
             elif isinstance(rec, NodePairRecord):
                 if rec.kind in dof_selective and rec.dofs:
