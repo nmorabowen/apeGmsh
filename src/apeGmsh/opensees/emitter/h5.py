@@ -2272,6 +2272,31 @@ class H5Emitter:
         per-stage ``activate_absorbing`` sub-table (ADR 0055 Phase 2)."""
         del pid, ele_tags
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        """Deferred — ``s.update_parameter`` has no per-stage sub-table.
+
+        Unlike :meth:`flip_element_stage`, whose declarative record IS
+        re-attached in :meth:`set_stage_records`, this verb has nowhere
+        to persist to.  Refuse rather than write an archive that replays
+        the stage with the parameter left at its declared value.
+        """
+        del pid, ele_tags, value
+        if self._stage_current is None:
+            return
+        raise NotImplementedError(
+            f"H5Emitter: stage {self._stage_current.name!r} emits "
+            f"updateParameter for {args[0]!r} (s.update_parameter).  The "
+            "stage block has no store for it, so the archive would be "
+            "irreplayable — H5 archival of s.update_parameter is "
+            "deferred.  Use ops.tcl(path) / ops.py(path)."
+        )
+
     def step_hook_ramp(
         self,
         name: str,
@@ -2343,6 +2368,33 @@ class H5Emitter:
     def reset(self) -> None:
         if self._stage_current is not None:
             self._stage_current.pre_analyze_reset = True
+
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        self._refuse_node_kinematics_archival("setNodeVel")
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        self._refuse_node_kinematics_archival("setNodeAccel")
+
+    def _refuse_node_kinematics_archival(self, command: str) -> None:
+        """``s.zero_velocities`` has no H5 stage-block store yet.
+
+        Fail loud rather than write an archive that silently drops the
+        zeroing — replaying it would run the static stage on the
+        transient stage's inherited velocities, which is exactly the
+        artefact the verb exists to remove.  Mirrors the deferred
+        stage-claimed phantom-node archival refusal in
+        :meth:`set_stage_records`.
+        """
+        if self._stage_current is None:
+            return
+        raise NotImplementedError(
+            f"H5Emitter: stage {self._stage_current.name!r} emits "
+            f"{command} (s.zero_velocities).  The stage block has no "
+            "store for nodal velocity / acceleration zeroing, so the "
+            "archive would be irreplayable — H5 archival of "
+            "s.zero_velocities is deferred.  Use ops.tcl(path) / "
+            "ops.py(path)."
+        )
 
     def remove_sp(self, node: int, dof: int) -> None:
         if self._stage_current is not None:
@@ -3372,6 +3424,18 @@ class H5Emitter:
                     "archive would be irreplayable — H5 archival of "
                     "stage-claimed phantom-node constraints is "
                     "deferred.  Use ops.tcl(path) / ops.py(path)."
+                )
+            if getattr(rec, "profile", None) is not None:
+                raise NotImplementedError(
+                    f"H5Emitter.set_stage_records: stage {rec.name!r} "
+                    "declares a profiler bracket (s.profile(...), "
+                    "TIMs A8) — the emitted ``profiler start``/"
+                    "``report`` lines are runtime telemetry with no "
+                    "model-definition store (see the bridge-level "
+                    "``profiler`` no-op above), so a re-emit from this "
+                    "archive would silently drop the bracket.  H5 "
+                    "archival of ``s.profile`` is deferred.  Use "
+                    "ops.tcl(path) / ops.py(path)."
                 )
             blk.activated_pgs = tuple(rec.activated_pgs)
             blk.initial_stress_records = tuple(rec.initial_stress_records)

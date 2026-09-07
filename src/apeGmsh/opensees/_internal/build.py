@@ -709,6 +709,35 @@ def validate_constraint_master_ndf(
     def ndf_of(n: int) -> int:
         return int(effective.get(int(n), int(envelope_ndf)))
 
+    # A1 — ``kinematic_coupling`` with ``dofs=None`` ties EVERY DOF the
+    # slave has, by COUNT: ``LadrunoKinematicCoupling.cpp:260-275`` walks
+    # c = 1..ndm+nrot and keeps each c the slave carries, so an ndf-4 u-p
+    # slave in 3D has its pore pressure (slot 4) tied to the master's θx
+    # by ``buildB`` (:335-350) — silently (the only warning sits behind
+    # ``!useDefault``).  Only a pure translation (ndm) or translation +
+    # rotation (ndm + nrot) layout is safe under the default; anything
+    # else must name its ``dofs=``.  A 2D u-p node (ndf 3) is
+    # indistinguishable BY COUNT from a (u, v, θ) node — this gate does
+    # not see it.
+    nrot = 3 if int(ndm) == 3 else 1
+    rigid_layouts = frozenset({int(ndm), int(ndm) + nrot})
+
+    def _check_default_coupling_slave(slave: int, name: object) -> None:
+        k = ndf_of(slave)
+        if k in rigid_layouts:
+            return
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"kinematic_coupling{label}: slave node {slave} has ndf {k}, "
+            f"which is neither a translation-only ({int(ndm)}) nor a "
+            f"translation+rotation ({int(ndm) + nrot}) layout in "
+            f"{int(ndm)}D — e.g. a u-p node whose DOF {int(ndm) + 1} is "
+            f"pore pressure. With dofs=None the fork ties every DOF the "
+            f"slave has BY COUNT (LadrunoKinematicCoupling.cpp:260-275), "
+            f"so that DOF would be tied to the master's rotation. Pass "
+            f"dofs= explicitly (e.g. dofs=[1, 2, 3] for translations only)."
+        )
+
     def _check_diaphragm(master: int) -> None:
         if ndf_of(master) != floor:
             raise BridgeError(
@@ -754,6 +783,12 @@ def validate_constraint_master_ndf(
                         _check_pair(
                             int(rec.master_node), int(slave), rec.dofs,
                             rec.kind,
+                        )
+                elif rec.kind == _CK.KINEMATIC_COUPLING:
+                    # empty dofs ⇒ the element's count-based default (A1)
+                    for slave in rec.slave_nodes:
+                        _check_default_coupling_slave(
+                            int(slave), getattr(rec, "name", None),
                         )
             elif isinstance(rec, NodePairRecord):
                 if rec.kind in dof_selective and rec.dofs:
@@ -1096,6 +1131,22 @@ class SPRemovalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ZeroVelocityRecord:
+    """One ``s.zero_velocities(...)`` directive — zeroes the nodal
+    velocity AND acceleration state at a stage boundary.
+
+    Stage-bound only — no top-level ``apeSees.zero_velocities``.
+    ``nodes=None`` means the whole domain (every node in
+    ``fem.nodes.ids``); an explicit tuple restricts the fan-out to that
+    node set.  Emit expands to one ``setNodeVel``/``setNodeAccel`` pair
+    per (node, DOF), with the DOF range taken from the node's effective
+    ndf (a u-p node has 4), immediately before the stage's ``analyze``.
+    """
+
+    nodes: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
 class ElementRemovalRecord:
     """One ``s.remove_element`` directive — drops elements from the
     Domain mid-analysis (Phase SSI-2.E).
@@ -1140,6 +1191,39 @@ class MaterialStageRecord:
 
     mat_tags: tuple[int, ...]
     stage: int
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateParameterRecord:
+    """One ``s.update_parameter`` directive — a typed pass-through over
+    the OpenSees ``parameter`` / ``addToParameter`` / ``updateParameter``
+    primitive that ``s.initial_stress`` and ``s.activate_absorbing``
+    already drive internally.
+
+    Stage-bound only.  Exactly one of ``pg`` / ``elements`` is non-None
+    (validated at the call site) — the target is ALWAYS an element,
+    because ``parameter`` / ``addToParameter`` only address ``node`` /
+    ``element`` / ``region`` / ``loadPattern``
+    (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter``,
+    ``OPS_addToParameter``).  A *material* parameter is reached THROUGH
+    an element: the element forwards the unmatched argv to its
+    integration-point materials (``LadrunoUP::setParameter``
+    ``LadrunoUP.cpp:1948-1971``), and the material matches on
+    ``argv[0] == name`` plus ``argv[1] == its own tag``
+    (``ManzariDafalias::setParameter`` ``ManzariDafalias.cpp:820-857``).
+    ``mat_tag`` carries that trailing tag; ``None`` means the parameter
+    is the element's own (``xPerm`` / ``yPerm`` / ``zPerm``).
+
+    No registry of "known" parameter names — the element / material
+    ``setParameter`` is the authority, and an unrecognised name is
+    already loud there.
+    """
+
+    name: str
+    value: float
+    pg: str | None
+    elements: tuple[int, ...] | None
+    mat_tag: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1292,6 +1376,14 @@ class StageRecord:
     # build time).  An element whose PG is not activated by any
     # stage stays global (emitted before stage 1).
     activated_pgs: tuple[str, ...] = ()
+    # Transient → static handover: nodal velocity / acceleration
+    # zeroing (``s.zero_velocities``).  Emitted LAST inside the stage
+    # block — after the analysis chain, the stage patterns and the
+    # optional ``reset``, immediately before ``analyze`` — so nothing
+    # can restore the kinematic state between the zeroing and the step
+    # that would otherwise read it.  Default ``()`` keeps existing
+    # construction sites working unmodified.
+    zero_velocity_records: tuple["ZeroVelocityRecord", ...] = ()
     # Phase SSI-2.D: stage-bound BC + recorder pools.  Populated by
     # ``_StageBuilder.fix / .mass / .region / .recorder`` (PR-B/C).
     # PR-A ships the dataclass slots + the validator surface; emit
@@ -1380,12 +1472,25 @@ class StageRecord:
     set_time: float | None = None
     set_creep_on: bool | None = None
     pre_analyze_reset: bool = False
+    # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+    # ``None`` (default) keeps existing construction sites and tests
+    # working unmodified — no bracket emits for a stage that never
+    # calls ``s.profile``.
+    profile: "ProfileRecord | None" = None
     # ADR 0054 AB-3: ASDAbsorbingBoundary stage flip (``s.activate_absorbing``).
     # Emitted after the analysis chain is established (so the domain holds the
     # stage's elements) — one-shot ``parameter`` / ``addToParameter ... stage`` /
     # ``updateParameter 1`` per record.  Default ``()`` keeps existing
     # construction sites working unmodified.
     activate_absorbing_records: tuple["ActivateAbsorbingRecord", ...] = ()
+    # ``s.update_parameter`` — the typed pass-through over the same
+    # ``parameter`` / ``addToParameter`` / ``updateParameter`` primitive
+    # the two records above drive internally.  Emitted right after the
+    # absorbing flip (same slot rationale: the stage's elements are in
+    # the Domain, the chain is established, the analyze loop has not
+    # started).  Default ``()`` keeps existing construction sites
+    # working unmodified.
+    update_parameter_records: tuple["UpdateParameterRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1460,6 +1565,30 @@ class ActivateAbsorbingRecord:
 
     pg: str | None
     elements: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileRecord:
+    """One ``s.profile(...)`` directive (TIMs A8) — brackets THIS
+    stage's ``analyze`` loop with the Ladruno fork's stack profiler,
+    reported under the stage's own name.
+
+    ``deep`` / ``memory`` / ``per_step`` mirror the three ``start``
+    flags on :class:`~apeGmsh.opensees._internal.ns.profiler._ProfilerNS`
+    (``-deep`` / ``-memory`` / ``-perStep``) — the bridge-level
+    ``ops.profiler.*`` verbs bracket the WHOLE deck's appended
+    ``analyze`` call; this record reuses the same
+    ``Emitter.profiler(*args)`` Protocol method to bracket a SINGLE
+    stage's ``analyze`` loop instead. Emitted as ``profiler start
+    [flags]`` immediately before the stage's analyze loop and
+    ``profiler stop`` + ``profiler report <stage name>.h5`` immediately after (before
+    ``stage_close``) — filename derived from the stage's name so no
+    extra kwarg is needed.
+    """
+
+    deep: bool = False
+    memory: bool = False
+    per_step: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -3143,19 +3272,22 @@ _UNSYMMETRIC_SAFE_SYSTEMS: frozenset[str] = frozenset(
 )
 
 
-def _ladruno_up_carrier_nodes(
+def _ladruno_up_carrier_blocks(
     fem: "FEMData", up_specs: "Sequence[Element]",
-) -> "set[int]":
-    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+) -> "Iterator[np.ndarray]":
+    """Yield ``(n_elem, n_carrier)`` pressure-CARRIER connectivity blocks.
 
-    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
-    it only on the vertex slots (mid-edge nodes are pure displacement).  The
-    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    One block per mesh element group of each LadrunoUP spec, sliced down to
+    the slots that actually carry ``p``: equal-order shapes carry it on every
+    node, Taylor–Hood shapes only on the leading vertex slots (mid-edge nodes
+    are pure displacement).  SINGLE SOURCE of the carrier-slot rule — both
+    :func:`_ladruno_up_carrier_nodes` (which wants the flat set) and
+    :func:`validate_up_pressure_datum` (which wants per-element rows, to walk
+    connectivity) read it from here.
     """
     from .._element_capabilities import LADRUNO_UP_TH_ETYPES
 
     th_vertex_count = {6: 3, 10: 4}
-    carrier: set[int] = set()
     for spec in up_specs:
         result = fem.elements.select(pg=spec.pg).groups()  # type: ignore[attr-defined]
         for group in _iter_element_groups(result):
@@ -3166,10 +3298,23 @@ def _ladruno_up_carrier_nodes(
             code = int(getattr(group.element_type, "code", -1))
             k = gconn.shape[1]
             if code in LADRUNO_UP_TH_ETYPES or k in th_vertex_count:
-                nv = th_vertex_count.get(k, k)
-                carrier.update(int(t) for t in gconn[:, :nv].ravel())
+                yield gconn[:, :th_vertex_count.get(k, k)]
             else:
-                carrier.update(int(t) for t in gconn.ravel())
+                yield gconn
+
+
+def _ladruno_up_carrier_nodes(
+    fem: "FEMData", up_specs: "Sequence[Element]",
+) -> "set[int]":
+    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+
+    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
+    it only on the vertex slots (mid-edge nodes are pure displacement).  The
+    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    """
+    carrier: set[int] = set()
+    for block in _ladruno_up_carrier_blocks(fem, up_specs):
+        carrier.update(int(t) for t in block.ravel())
     return carrier
 
 
@@ -3252,6 +3397,176 @@ def validate_ladruno_up_pressure_dof(
                 f"mixed-ndf / structure-on-soil idiom, ADR 0069 / fork guide "
                 f"§6.3)."
             )
+
+
+def up_pressure_components(
+    element_carriers: "Iterable[Sequence[int]]",
+) -> "dict[int, list[int]]":
+    """Connected components of the pressure graph, keyed by root node tag.
+
+    *element_carriers* is one sequence of pressure-CARRIER node tags per
+    element (mid-edge / non-pressure slots already dropped — dropping them is
+    what keeps a Taylor–Hood mesh ONE region instead of shattering it).  Two
+    carrier nodes are connected when some element carries both, which is
+    exactly the sparsity of the ``H`` seepage / ``S`` storage blocks: a
+    pressure DOF is coupled only to the pressure DOFs it shares an element
+    with.  Union-find, so the walk is ``O(N α(N))`` in the carrier count.
+
+    Returns ``{min node tag of the component: sorted node tags}``.
+    """
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    for conn in element_carriers:
+        head: int | None = None
+        for raw in conn:
+            tag = int(raw)
+            parent.setdefault(tag, tag)
+            if head is None:
+                head = tag
+                continue
+            ra, rb = find(head), find(tag)
+            if ra != rb:
+                parent[rb] = ra
+
+    groups: dict[int, list[int]] = {}
+    for tag in parent:
+        groups.setdefault(find(tag), []).append(tag)
+    return {min(members): sorted(members) for members in groups.values()}
+
+
+def validate_up_pressure_datum(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    *,
+    enforce: bool,
+    fix_records: "Iterable[FixRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    support_records: "Iterable[SupportRecord]" = (),
+) -> None:
+    """Refuse a STATIC u-p deck in which some pressure region has no datum.
+
+    A saturated (u-p) region whose pressure DOFs are ALL free is impervious:
+    its static tangent is singular in ``p`` (the ``H`` seepage block has the
+    constant-pressure vector in its null space, exactly like an all-Neumann
+    Laplacian, and static has no ``S/Δt`` storage term to regularise it).
+    Nothing downstream reports it: the fork MEASURED (2026-07-11) that every
+    serial general solver — UmfPack / FullGeneral / BandGeneral /
+    SparseGeneral — factorises the singular sealed system through round-off
+    and returns ``rc = 0`` with an arbitrary, solver-dependent pressure level,
+    because the p-RHS is consistent so no solver sees the rank deficiency
+    (``tests/test_ladruno_up_element_analytic.py:533-548``, a ``strict``
+    xfail pinning the refuted "it fails loudly" claim of fork ADR-71
+    §3.2/§7).  A silent wrong answer, so this is a build-time gate.
+
+    Contract:
+
+    * **Pressure node** — a LadrunoUP pressure CARRIER node
+      (:func:`_ladruno_up_carrier_blocks`): every node of an equal-order
+      shape, the vertex slots only of a Taylor–Hood shape.  LadrunoUP is the
+      only u-p element class in the capability registry, so it is the only
+      one walked; a stock ``quadUP`` / ``brickUP`` cannot reach emit at all
+      (:func:`infer_node_ndf` refuses an unregistered class).
+    * **Datum** — any single-point constraint on DOF ``ndm+1`` of a carrier
+      node: a broker or stage-claimed ``fix`` / ``s.support`` whose 0/1 mask
+      flags that slot, or a pattern ``sp`` whose 1-based DOF index is that
+      slot.  All three make the DOF constrained, which is what removes the
+      null space; ``fix`` alone would false-refuse the ``sp``-datum idiom.
+    * **Exempt** — everything the caller does not mark ``enforce``: H5
+      archival, and any deck that does not declare ``ops.analysis.Static()``.
+      A sealed region is PHYSICALLY CORRECT under Transient (undrained
+      loading: the storage term ``1/Q̄`` puts a nonzero diagonal on the p
+      rows, so the sealed tangent is regular — that is what the fork's own
+      Terzaghi lane runs), so refusing it there would be a false positive.
+
+    Known limitation (not enforced): a datum contributed only by a
+    stage-scoped ``s.support`` is counted for the whole model, though it holds
+    the DOF only inside its own stage; and a pressure DOF grounded indirectly
+    through ``equal_dof`` to a fixed one is not traced.
+    """
+    from ..element.solid import LadrunoUP
+
+    if not enforce:
+        return
+    up_specs = [s for s in elements if isinstance(s, LadrunoUP)]
+    if not up_specs:
+        return
+
+    components = up_pressure_components(
+        conn
+        for block in _ladruno_up_carrier_blocks(fem, up_specs)
+        for conn in block
+    )
+    if not components:
+        return
+
+    p_dof = int(ndm) + 1
+    carriers = {n for members in components.values() for n in members}
+
+    def _pg_or_nodes(rec: "FixRecord | SupportRecord") -> "list[int]":
+        if rec.nodes is not None:
+            return [int(n) for n in rec.nodes]
+        if rec.pg is not None:
+            return list(expand_pg_to_nodes(fem, rec.pg))
+        return []
+
+    datum: set[int] = set()
+    fix_like: "list[FixRecord | SupportRecord]" = [
+        *fix_records, *support_records,
+    ]
+    for frec in fix_like:
+        flags = frec.dofs
+        if len(flags) < p_dof or not flags[p_dof - 1]:
+            continue
+        datum.update(_pg_or_nodes(frec))
+    for srec in sp_records:
+        if int(srec.dof) != p_dof:
+            continue
+        if srec.target_kind == "pg":
+            datum.update(int(n) for n in expand_pg_to_nodes(fem, srec.target))
+        else:
+            datum.add(int(srec.target))
+    # A fix on a TH mid-edge node addresses a slot that node does not carry —
+    # it is not a pressure datum (G3 already refuses the over-long mask).
+    datum &= carriers
+
+    sealed = sorted(
+        root for root, members in components.items()
+        if not datum.intersection(members)
+    )
+    if not sealed:
+        return
+
+    mask = "(" + "0, " * int(ndm) + "1)"
+    raise BridgeError(
+        f"LadrunoUP node {sealed[0]}: its pressure region has NO fixed "
+        f"pressure DOF ({len(sealed)} of {len(components)} u-p region(s) in "
+        f"this model are sealed). A STATIC solve on an all-impervious "
+        f"region is SINGULAR in p, and it does not fail loudly: every serial "
+        f"general solver (UmfPack / FullGeneral / BandGeneral / "
+        f"SparseGeneral) factorises it through round-off and returns rc = 0 "
+        f"with an arbitrary, solver-dependent pressure level (fork "
+        f"tests/test_ladruno_up_element_analytic.py:533-548, MEASURED "
+        f"2026-07-11) — a silent wrong answer. Fix the pressure DOF (slot "
+        f"{p_dof}) of at least one carrier node of that region, typically a "
+        f"drained surface: ops.fix(pg=\"Top\", dofs={mask}). On a "
+        f"Taylor-Hood mesh (tri6 / tet10) that pg mask over-runs the "
+        f"mid-edge nodes' ndf={ndm} and G3 refuses it, so pass the VERTEX "
+        f"nodes of the drained surface as ops.fix(nodes=[...], dofs={mask}) "
+        f"instead. Each element-disconnected u-p region needs its own datum. "
+        f"(A sealed "
+        f"region is legitimate under ops.analysis.Transient() — the storage "
+        f"term regularises the p rows — and this gate only runs for a deck "
+        f"that declares ops.analysis.Static().)"
+    )
 
 
 _GENERAL_SOLVER_MSG = (
@@ -8028,6 +8343,60 @@ def emit_initial_stress_addtoparameter(
                 )
 
 
+def emit_update_parameters(
+    records: "Iterable[UpdateParameterRecord]",
+    emitter: "Emitter",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    tags: TagAllocator,
+    element_owner: "SortedIntToInt | None" = None,
+    partition_rank: int | None = None,
+) -> None:
+    """Emit ``s.update_parameter`` for each record.
+
+    Same element-resolution and per-rank contract as
+    :func:`emit_activate_absorbing` — the two verbs drive the same
+    OpenSees primitive, only the argv tail and the value differ.  A
+    fresh ``parameter`` tag is allocated per (record, rank) so each
+    block is self-contained and a later stage may re-declare.
+    """
+    is_partitioned_mode = partition_rank is not None
+    for rec in records:
+        if rec.elements is not None:
+            eids: tuple[int, ...] = rec.elements
+        elif rec.pg is not None:
+            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
+        else:  # pragma: no cover — validated at the call site
+            eids = ()
+        ops_tags: list[int] = []
+        for eid in eids:
+            if is_partitioned_mode and element_owner is not None:
+                owner = element_owner.get(int(eid))
+                if owner is None or owner != partition_rank:
+                    continue
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                if is_partitioned_mode:
+                    continue  # owned by another rank; silent skip OK.
+                raise BridgeError(
+                    f"update_parameter {rec.name!r}: element id {int(eid)} "
+                    "is not registered with any Element primitive (the "
+                    "updateParameter would silently no-op).  Either drop it "
+                    "from elements= or declare the matching Element "
+                    "primitive via ops.element.<Type>(pg=...)."
+                )
+            ops_tags.append(int(ops_tag))
+        if ops_tags:
+            pid = tags.allocate("parameter")
+            args: tuple[str | int, ...] = (
+                (rec.name,) if rec.mat_tag is None
+                else (rec.name, int(rec.mat_tag))
+            )
+            emitter.update_parameter(
+                pid, tuple(ops_tags), args, float(rec.value),
+            )
+
+
 def emit_activate_absorbing(
     records: "Iterable[ActivateAbsorbingRecord]",
     emitter: "Emitter",
@@ -8080,6 +8449,58 @@ def emit_activate_absorbing(
         if ops_tags:
             pid = tags.allocate("parameter")
             emitter.flip_element_stage(pid, tuple(ops_tags))
+
+
+def zero_velocity_target_nodes(
+    records: "Iterable[ZeroVelocityRecord]",
+    all_node_ids: "Iterable[int]",
+) -> "list[int]":
+    """Resolve a stage's ``s.zero_velocities`` pool to its node list.
+
+    ``nodes=None`` expands to ``all_node_ids`` (the whole domain).
+    Order is first-seen; duplicates across records collapse, so calling
+    the verb twice on overlapping sets does not double the deck.
+    """
+    out: list[int] = []
+    seen: set[int] = set()
+    domain: tuple[int, ...] | None = None
+    for rec in records:
+        if rec.nodes is None:
+            if domain is None:
+                domain = tuple(int(n) for n in all_node_ids)
+            targets: "Iterable[int]" = domain
+        else:
+            targets = rec.nodes
+        for nid in targets:
+            n = int(nid)
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+
+def emit_zero_velocities(
+    nodes: "Iterable[int]",
+    emitter: "Emitter",
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+) -> None:
+    """Emit the nodal velocity / acceleration zeroing for ``nodes``.
+
+    Per node, one ``setNodeVel`` then one ``setNodeAccel`` per DOF of
+    that node's effective ndf (``effective_ndf`` is the ADR 0048
+    inferred map; nodes absent from it fall back to the ``ops.model``
+    envelope).  Both commands carry ``-commit`` — see
+    :meth:`Emitter.set_node_vel` for why that is mandatory rather than
+    cosmetic.
+    """
+    for nid in nodes:
+        node = int(nid)
+        ndf = int(effective_ndf.get(node, envelope_ndf))
+        for dof in range(1, ndf + 1):
+            emitter.set_node_vel(node, dof, 0.0)
+        for dof in range(1, ndf + 1):
+            emitter.set_node_accel(node, dof, 0.0)
 
 
 def _plan_owner_ranks(
