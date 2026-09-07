@@ -1,8 +1,11 @@
 # ADR 0105 — The ASDPlasticMaterial3D deck contract after fork ADR-94
 
-**Status:** Proposed (2026-09-07). Implementation plan; flips to Accepted
-when the live `ladruno_fork` battery in §D7 is green against a fork build
-at or after `bbf657d49` (ladruno, 2026-09-07).
+**Status:** Accepted (2026-09-07). The live `ladruno_fork` battery in §D7
+is 7/7 green against fork build
+`3622d6214ef4cdeb8cf65a102ee35f6cd9973337` (the ADR-94 closeout,
+ASDP-equivalent to `bbf657d49`, ladruno, 2026-09-07); measurements in
+`internal_docs/guide_ladruno_asdplastic.md` §9. Numbered 0105: 0104 was
+taken by the Substep controller ADR (#1107) after this draft was written.
 
 **Extends:** the Phase SSI-1 primitives in
 [`material/nd.py`](../../material/nd.py) — `ASDPlasticMaterial3D`,
