@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — s.profile(deep=, memory=, per_step=) brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-simposed_path-prescribed-motion-on-any-dof-inside-a-stage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8868,6 +8879,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — s.profile(deep=, memory=, per_step=) brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
       
     </span>
   </a>
@@ -14198,6 +14220,23 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8">ADDED — <code>s.profile(deep=, memory=, per_step=)</code> brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)<a class="headerlink" href="#added-sprofiledeep-memory-per_step-brackets-a-single-stages-analyze-loop-with-the-ladruno-profiler-tims-a8" title="Permanent link">&para;</a></h3>
+<p><code>ops.profiler.*</code> brackets the <em>whole</em> deck's appended <code>analyze</code> call —
+useful for a flat model, useless for a staged one, where each
+<code>with ops.stage(...) as s:</code> block owns its own analyze loop and the question
+is "which stage is expensive," not "is the run expensive."</p>
+<p><code>_StageBuilder.profile(deep=False, memory=False, per_step=False)</code> reuses the
+same <code>Emitter.profiler(*args)</code> machinery — not a second implementation — to
+bracket just THAT stage: <code>profiler start [-deep] [-memory] [-perStep]</code>
+immediately before the stage's analyze loop, <code>profiler stop</code> + <code>profiler report
+&lt;stage name&gt;.h5</code> immediately after (filename derived from the stage's own
+name, so no extra kwarg is needed). A sibling stage that never calls
+<code>s.profile</code> stays unbracketed. <code>Mumps(stats=True)</code> still emits its <code>-stats</code>
+flag on the stage's own <code>system Mumps</code> line, unaffected by the bracket.</p>
+<p>H5 archival of <code>s.profile</code> refuses loudly (mirrors the existing
+<code>phantom_node_tags</code> refusal in <code>H5Emitter.set_stage_records</code>) rather than
+silently dropping the declaration on a <code>to_h5</code> round-trip — use
+<code>ops.tcl(path)</code> / <code>ops.py(path)</code> for a profiled staged deck.</p>
 <h3 id="added-simposed_path-prescribed-motion-on-any-dof-inside-a-stage">ADDED — <code>s.imposed_path(...)</code>: prescribed motion on any DOF, inside a stage<a class="headerlink" href="#added-simposed_path-prescribed-motion-on-any-dof-inside-a-stage" title="Permanent link">&para;</a></h3>
 <p><code>ops.imposed_displacement</code> maps <code>ux</code> / <code>uy</code> / <code>uz</code> onto DOFs 1-3 and
 builds a <strong>global</strong> pattern, which ADR 0051 §5 forbids mixing with
