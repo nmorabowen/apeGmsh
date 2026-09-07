@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-07T20:59:02Z",
+  "generated": "2026-09-07T23:30:09Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3290,6 +3290,12 @@
       "skill": "references/opensees-bridge.md",
       "doc": "Register an :class:`ElasticIsotropic` continuum material."
     },
+    "ops.nDMaterial.HoekBrownRock": {
+      "symbol": "ops.nDMaterial.HoekBrownRock",
+      "signature": "HoekBrownRock(*, E: 'float', nu: 'float', sigci: 'float', mb: 'float', s: 'float', a: 'float', mb_psi: 'float | None' = None, ds: 'float' = 0.0, rho: 'float' = 0.0, initial_p0: 'float' = 0.0, integration_method: 'str' = 'Backward_Euler', tangent_type: 'str' = 'Continuum', f_absolute_tol: 'float' = 1e-06, f_relative_tol: 'float' = 0.0, stress_absolute_tol: 'float' = 1e-06, n_max_iterations: 'int' = 100, strict_convergence: 'bool' = True, return_to_yield_surface: 'str' = 'Disabled', rk45_dT_min: 'float' = 0.01, rk45_niter_max: 'int' = 100, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a generalized Hoek-Brown ASDPlasticMaterial3D."
+    },
     "ops.nDMaterial.InitDefGrad": {
       "symbol": "ops.nDMaterial.InitDefGrad",
       "signature": "InitDefGrad(*, inner: 'NDMaterial | str', no_init_f: 'bool' = False, F0: 'tuple[float, ...] | None' = None, name: 'str | None' = None) -> 'InitDefGrad'",
@@ -3358,9 +3364,15 @@
     },
     "ops.nDMaterial.MohrCoulombSoil": {
       "symbol": "ops.nDMaterial.MohrCoulombSoil",
-      "signature": "MohrCoulombSoil(*, c: 'float', phi: 'float', psi: 'float', E: 'float', nu: 'float', rho: 'float' = 0.0, ds: 'float' = 1e-05, yield_stress: 'float' = 10000000000.0, initial_p0: 'float' = 0.0, integration_method: 'str' = 'Backward_Euler', tangent_type: 'str' = 'Secant', f_absolute_tol: 'float' = 1e-06, stress_absolute_tol: 'float' = 1e-06, n_max_iterations: 'int' = 100, return_to_yield_surface: 'str' = 'Disabled', rk45_dT_min: 'float' = 0.01, rk45_niter_max: 'int' = 100, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
+      "signature": "MohrCoulombSoil(*, c: 'float', phi: 'float', psi: 'float', E: 'float', nu: 'float', rho: 'float' = 0.0, ds: 'float' = 1e-05, yield_stress: 'float' = 10000000000.0, initial_p0: 'float' = 0.0, integration_method: 'str' = 'Backward_Euler', tangent_type: 'str' = 'Continuum', f_absolute_tol: 'float' = 1e-06, f_relative_tol: 'float' = 0.0, stress_absolute_tol: 'float' = 1e-06, n_max_iterations: 'int' = 100, strict_convergence: 'bool' = True, return_to_yield_surface: 'str' = 'Disabled', rk45_dT_min: 'float' = 0.01, rk45_niter_max: 'int' = 100, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register an ASDPlasticMaterial3D wired for Mohr-Coulomb soil/rock."
+    },
+    "ops.nDMaterial.MohrCoulombTensionCutoffSoil": {
+      "symbol": "ops.nDMaterial.MohrCoulombTensionCutoffSoil",
+      "signature": "MohrCoulombTensionCutoffSoil(*, c: 'float', phi: 'float', psi: 'float', tension_cutoff: 'float', E: 'float', nu: 'float', rho: 'float' = 0.0, ds: 'float' = 1e-05, initial_p0: 'float' = 0.0, integration_method: 'str' = 'Backward_Euler', tangent_type: 'str' = 'Continuum', f_absolute_tol: 'float' = 1e-06, f_relative_tol: 'float' = 0.0, stress_absolute_tol: 'float' = 1e-06, n_max_iterations: 'int' = 100, strict_convergence: 'bool' = True, return_to_yield_surface: 'str' = 'Disabled', rk45_dT_min: 'float' = 0.01, rk45_niter_max: 'int' = 100, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a Mohr-Coulomb + tension cut-off ASDPlasticMaterial3D."
     },
     "ops.nDMaterial.PlaneStrain": {
       "symbol": "ops.nDMaterial.PlaneStrain",

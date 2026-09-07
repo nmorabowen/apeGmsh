@@ -61,6 +61,8 @@ __all__ = [
     "SanisandIntegrationWarning",
     "ASDPlasticMaterial3D",
     "MohrCoulombSoil",
+    "MohrCoulombTensionCutoffSoil",
+    "HoekBrownRock",
     "PlaneStrain",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
@@ -1414,6 +1416,32 @@ class ASDPlasticMaterial3D(NDMaterial):
 # the fork's ADR-94 parser refuses the deck at the first foreign name.
 
 
+def _validate_mc_inputs(who: str, *, c: float, phi: float, psi: float) -> None:
+    if c < 0:
+        raise ValueError(f"{who}: c must be >= 0, got {c!r}")
+    if not (0.0 <= phi < 90.0):
+        raise ValueError(
+            f"{who}: phi must be in [0, 90) degrees, got {phi!r}"
+        )
+    if not (0.0 <= psi <= phi):
+        raise ValueError(
+            f"{who}: psi must be in [0, phi] (associated flow "
+            f"is psi=phi; non-associated requires psi<phi). Got "
+            f"psi={psi!r}, phi={phi!r}."
+        )
+
+
+def _validate_elastic_inputs(
+    who: str, *, E: float, nu: float, rho: float,
+) -> None:
+    if E <= 0:
+        raise ValueError(f"{who}: E must be > 0, got {E!r}")
+    if not (0.0 <= nu < 0.5):
+        raise ValueError(f"{who}: nu must be in [0, 0.5), got {nu!r}")
+    if rho < 0:
+        raise ValueError(f"{who}: rho must be >= 0, got {rho!r}")
+
+
 def _asdp_integration_tail(
     *,
     integration_method: str,
@@ -1540,26 +1568,8 @@ def MohrCoulombSoil(
         ``ops.nDMaterial.ASDPlasticMaterial3D(...)`` or to pass
         directly to ``ops.register(...)``.
     """
-    if c < 0:
-        raise ValueError(f"MohrCoulombSoil: c must be >= 0, got {c!r}")
-    if not (0.0 <= phi < 90.0):
-        raise ValueError(
-            f"MohrCoulombSoil: phi must be in [0, 90) degrees, got {phi!r}"
-        )
-    if not (0.0 <= psi <= phi):
-        raise ValueError(
-            "MohrCoulombSoil: psi must be in [0, phi] (associated flow "
-            f"is psi=phi; non-associated requires psi<phi). Got "
-            f"psi={psi!r}, phi={phi!r}."
-        )
-    if E <= 0:
-        raise ValueError(f"MohrCoulombSoil: E must be > 0, got {E!r}")
-    if not (0.0 <= nu < 0.5):
-        raise ValueError(
-            f"MohrCoulombSoil: nu must be in [0, 0.5), got {nu!r}"
-        )
-    if rho < 0:
-        raise ValueError(f"MohrCoulombSoil: rho must be >= 0, got {rho!r}")
+    _validate_mc_inputs("MohrCoulombSoil", c=c, phi=phi, psi=psi)
+    _validate_elastic_inputs("MohrCoulombSoil", E=E, nu=nu, rho=rho)
 
     return ASDPlasticMaterial3D(
         yf="MohrCoulomb_YF",
@@ -1584,6 +1594,201 @@ def MohrCoulombSoil(
             ("MC_c", c),
             ("MC_ds", ds),
             ("MC_psi", psi),
+            ("MassDensity", rho),
+            ("InitialP0", initial_p0),
+        ),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# MohrCoulombTensionCutoffSoil / HoekBrownRock — the two other typed helpers
+# (ADR 0105 D5).  Same build as MohrCoulombSoil: exact schema, D2 defaults,
+# PlaneStrain-wrappable.  DruckerPrager / VonMises stay on the generic class.
+# ---------------------------------------------------------------------------
+
+
+def MohrCoulombTensionCutoffSoil(
+    *,
+    c: float,
+    phi: float,
+    psi: float,
+    tension_cutoff: float,
+    E: float,
+    nu: float,
+    rho: float = 0.0,
+    ds: float = 1e-5,
+    initial_p0: float = 0.0,
+    integration_method: str = "Backward_Euler",
+    tangent_type: str = "Continuum",
+    f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
+    stress_absolute_tol: float = 1e-6,
+    n_max_iterations: int = 100,
+    strict_convergence: bool = True,
+    return_to_yield_surface: str = "Disabled",
+    rk45_dT_min: float = 0.01,
+    rk45_niter_max: int = 100,
+) -> ASDPlasticMaterial3D:
+    """Mohr-Coulomb with a Rankine tension cut-off (fork ADR-84 composite).
+
+    ``MohrCoulombTensionCutoff_YF / _PF + LinearIsotropic3D_EL +
+    BackStress(NullHardeningTensorFunction):`` — the Cerro Lindo rock-mass
+    material.  Emits exactly the combination's schema (``MohrCoulombSoil``'s
+    eight names plus ``TC_min_stress``) with the ADR 0105 defaults; the
+    same fork-build and host requirements as :func:`MohrCoulombSoil`.
+
+    Parameters
+    ----------
+    c, phi, psi, E, nu, rho, ds, initial_p0
+        As :func:`MohrCoulombSoil`.
+    tension_cutoff
+        The Rankine limit on the major principal stress, **tension
+        positive** (``f_TC = sigma_max - TC_min_stress`` in the fork).
+        Must be ``>= 0``; the fork caps the effective cut-off at the
+        Mohr-Coulomb apex, ``min(tension_cutoff, c * cot(phi))``.
+    integration_method, tangent_type, ..., rk45_niter_max
+        As :func:`MohrCoulombSoil`.
+    """
+    _validate_mc_inputs("MohrCoulombTensionCutoffSoil", c=c, phi=phi, psi=psi)
+    _validate_elastic_inputs("MohrCoulombTensionCutoffSoil", E=E, nu=nu, rho=rho)
+    if tension_cutoff < 0:
+        raise ValueError(
+            "MohrCoulombTensionCutoffSoil: tension_cutoff must be >= 0 "
+            f"(tension positive), got {tension_cutoff!r}"
+        )
+    return ASDPlasticMaterial3D(
+        yf="MohrCoulombTensionCutoff_YF",
+        pf="MohrCoulombTensionCutoff_PF",
+        el="LinearIsotropic3D_EL",
+        iv="BackStress(NullHardeningTensorFunction):",
+        internal_variables=(
+            ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        ),
+        model_parameters=(
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("MC_phi", phi),
+            ("MC_c", c),
+            ("MC_ds", ds),
+            ("MC_psi", psi),
+            ("TC_min_stress", tension_cutoff),
+            ("MassDensity", rho),
+            ("InitialP0", initial_p0),
+        ),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
+        ),
+    )
+
+
+def HoekBrownRock(
+    *,
+    E: float,
+    nu: float,
+    sigci: float,
+    mb: float,
+    s: float,
+    a: float,
+    mb_psi: float | None = None,
+    ds: float = 0.0,
+    rho: float = 0.0,
+    initial_p0: float = 0.0,
+    integration_method: str = "Backward_Euler",
+    tangent_type: str = "Continuum",
+    f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
+    stress_absolute_tol: float = 1e-6,
+    n_max_iterations: int = 100,
+    strict_convergence: bool = True,
+    return_to_yield_surface: str = "Disabled",
+    rk45_dT_min: float = 0.01,
+    rk45_niter_max: int = 100,
+) -> ASDPlasticMaterial3D:
+    """Generalized Hoek-Brown rock mass (``HoekBrown_YF / HoekBrown_PF``).
+
+    ``HoekBrown_YF / HoekBrown_PF + LinearIsotropic3D_EL +
+    BackStress(NullHardeningTensorFunction):``, emitting exactly the
+    combination's schema with the ADR 0105 defaults.  Takes the rock-mass
+    constants ``mb, s, a`` directly: deriving them from ``mi, GSI, D``
+    (Hoek & Brown 2018) is the caller's job — the fork's
+    ``HoekBrown_Utils.h`` formulas are one-liners and are not duplicated
+    here.  In net tension the fork yields at the textbook tensile
+    strength ``-s * sigci / mb`` (fork PR #806).
+
+    Parameters
+    ----------
+    E, nu, rho, initial_p0
+        As :func:`MohrCoulombSoil`.
+    sigci
+        Unconfined compressive strength of the intact rock (stress units,
+        ``> 0``).
+    mb, s, a
+        Rock-mass Hoek-Brown constants (``mb > 0``, ``0 < s <= 1``,
+        ``0 < a <= 1``).
+    mb_psi
+        The ``mb`` of the plastic potential.  ``None`` (default) uses
+        ``mb`` — associated flow.
+    ds
+        Perturbation of the yield function's numerical derivative
+        (``HB_ds``); ``0.0`` is the fork's own test value.
+    f_relative_tol
+        Rock-scale decks should set it — ``1e-8`` is the fork's suggested
+        start for Hoek-Brown at 50 MPa (fork ADR-94 M5): the absolute
+        tolerance alone is a verdict on the unit system.
+    integration_method, tangent_type, ..., rk45_niter_max
+        As :func:`MohrCoulombSoil`.
+    """
+    _validate_elastic_inputs("HoekBrownRock", E=E, nu=nu, rho=rho)
+    if sigci <= 0:
+        raise ValueError(f"HoekBrownRock: sigci must be > 0, got {sigci!r}")
+    if mb <= 0:
+        raise ValueError(f"HoekBrownRock: mb must be > 0, got {mb!r}")
+    if not (0.0 < s <= 1.0):
+        raise ValueError(f"HoekBrownRock: s must be in (0, 1], got {s!r}")
+    if not (0.0 < a <= 1.0):
+        raise ValueError(f"HoekBrownRock: a must be in (0, 1], got {a!r}")
+    if mb_psi is None:
+        mb_psi = mb
+    elif mb_psi <= 0:
+        raise ValueError(f"HoekBrownRock: mb_psi must be > 0, got {mb_psi!r}")
+    return ASDPlasticMaterial3D(
+        yf="HoekBrown_YF",
+        pf="HoekBrown_PF",
+        el="LinearIsotropic3D_EL",
+        iv="BackStress(NullHardeningTensorFunction):",
+        internal_variables=(
+            ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        ),
+        model_parameters=(
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("HB_sigci", sigci),
+            ("HB_mb", mb),
+            ("HB_s", s),
+            ("HB_a", a),
+            ("HB_mb_psi", mb_psi),
+            ("HB_ds", ds),
             ("MassDensity", rho),
             ("InitialP0", initial_p0),
         ),

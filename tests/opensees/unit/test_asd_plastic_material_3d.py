@@ -34,7 +34,9 @@ from apeGmsh.opensees.material.nd import (
     _ASDP_TANGENT_TYPES,
     ASDPlasticIntegrationWarning,
     ASDPlasticMaterial3D,
+    HoekBrownRock,
     MohrCoulombSoil,
+    MohrCoulombTensionCutoffSoil,
     PlaneStrain,
     asdp_parameter_schema,
 )
@@ -451,18 +453,152 @@ def test_backward_euler_and_every_valid_token_are_silent() -> None:
                 ))
 
 
-def test_namespace_wrapper_mirrors_the_helper_defaults() -> None:
-    """``ops.nDMaterial.MohrCoulombSoil`` re-states every default in its
-    own signature (the second site the SANISAND guide warns about)."""
+@pytest.mark.parametrize(
+    "helper", [MohrCoulombSoil, MohrCoulombTensionCutoffSoil, HoekBrownRock],
+    ids=lambda f: f.__name__,
+)
+def test_namespace_wrapper_mirrors_the_helper_defaults(helper) -> None:
+    """``ops.nDMaterial.<helper>`` re-states every default in its own
+    signature (the second site the SANISAND guide warns about)."""
     import inspect
 
     from apeGmsh.opensees._internal.ns.nd import _NDMaterialNS
 
-    helper = inspect.signature(MohrCoulombSoil).parameters
-    wrapper = inspect.signature(_NDMaterialNS.MohrCoulombSoil).parameters
-    for key, param in helper.items():
+    params = inspect.signature(helper).parameters
+    wrapper = inspect.signature(getattr(_NDMaterialNS, helper.__name__)).parameters
+    for key, param in params.items():
         assert key in wrapper, key
         assert wrapper[key].default == param.default, key
+    assert set(wrapper) - set(params) == {"self", "name"}
+
+
+# ---------------------------------------------------------------------------
+# 2c. ADR 0105 D5 — MohrCoulombTensionCutoffSoil / HoekBrownRock
+# ---------------------------------------------------------------------------
+
+_HB = dict(E=5.0e7, nu=0.25, sigci=50000.0, mb=0.5741, s=0.0117, a=0.5028)
+
+
+def test_mohr_coulomb_tension_cutoff_soil_emits_exactly_its_schema() -> None:
+    mat = MohrCoulombTensionCutoffSoil(
+        c=100.0, phi=30.0, psi=10.0, tension_cutoff=50.0, E=1e6, nu=0.3,
+        rho=2.0,
+    )
+    assert (mat.yf, mat.pf, mat.el) == (
+        "MohrCoulombTensionCutoff_YF", "MohrCoulombTensionCutoff_PF",
+        "LinearIsotropic3D_EL",
+    )
+    assert mat.iv == _MC_IV
+    assert dict(mat.internal_variables) == {"BackStress": (0.0,) * 6}
+    assert set(dict(mat.model_parameters)) == _MC_SCHEMA | {"TC_min_stress"}
+    assert set(dict(mat.model_parameters)) == asdp_parameter_schema(
+        mat.yf, mat.pf, mat.el, mat.iv,
+    )
+    line = _emitted(mat)
+    assert (
+        "Begin_Model_Parameters YoungsModulus 1000000.0 PoissonsRatio 0.3 "
+        "MC_phi 30.0 MC_c 100.0 MC_ds 1e-05 MC_psi 10.0 TC_min_stress 50.0 "
+        "MassDensity 2.0 InitialP0 0.0 End_Model_Parameters"
+    ) in line
+    assert "strict_convergence 1" in line
+    assert "tangent_type Continuum" in line
+    assert "f_relative_tol 0.0" in line
+
+
+def test_mohr_coulomb_tension_cutoff_soil_validates_inputs() -> None:
+    with pytest.raises(ValueError, match="tension_cutoff must be >= 0"):
+        MohrCoulombTensionCutoffSoil(
+            c=100, phi=30, psi=0, tension_cutoff=-1.0, E=1e6, nu=0.3,
+        )
+    with pytest.raises(ValueError, match=r"MohrCoulombTensionCutoffSoil: psi"):
+        MohrCoulombTensionCutoffSoil(
+            c=100, phi=30, psi=40, tension_cutoff=1.0, E=1e6, nu=0.3,
+        )
+    with pytest.raises(ValueError, match="MohrCoulombTensionCutoffSoil: E"):
+        MohrCoulombTensionCutoffSoil(
+            c=100, phi=30, psi=0, tension_cutoff=1.0, E=0, nu=0.3,
+        )
+
+
+def test_hoek_brown_rock_emits_exactly_its_schema() -> None:
+    mat = HoekBrownRock(**_HB, rho=2.6)
+    assert (mat.yf, mat.pf, mat.el) == (
+        "HoekBrown_YF", "HoekBrown_PF", "LinearIsotropic3D_EL",
+    )
+    assert mat.iv == _MC_IV
+    mp = dict(mat.model_parameters)
+    assert set(mp) == asdp_parameter_schema(mat.yf, mat.pf, mat.el, mat.iv)
+    assert set(mp) == {
+        "YoungsModulus", "PoissonsRatio", "HB_sigci", "HB_mb", "HB_s",
+        "HB_a", "HB_mb_psi", "HB_ds", "MassDensity", "InitialP0",
+    }
+    assert mp["HB_mb_psi"] == mp["HB_mb"] == 0.5741      # associated by default
+    assert mp["HB_ds"] == 0.0
+    line = _emitted(mat)
+    assert (
+        "Begin_Model_Parameters YoungsModulus 50000000.0 PoissonsRatio 0.25 "
+        "HB_sigci 50000.0 HB_mb 0.5741 HB_s 0.0117 HB_a 0.5028 "
+        "HB_mb_psi 0.5741 HB_ds 0.0 MassDensity 2.6 InitialP0 0.0 "
+        "End_Model_Parameters"
+    ) in line
+    assert "strict_convergence 1" in line
+    assert "tangent_type Continuum" in line
+
+
+def test_hoek_brown_rock_non_associated_and_validation() -> None:
+    mat = HoekBrownRock(**_HB, mb_psi=0.2)
+    assert dict(mat.model_parameters)["HB_mb_psi"] == 0.2
+    for bad in (
+        dict(sigci=0.0), dict(mb=0.0), dict(s=0.0), dict(s=1.5),
+        dict(a=0.0), dict(a=1.2),
+    ):
+        with pytest.raises(ValueError, match="HoekBrownRock"):
+            HoekBrownRock(**{**_HB, **bad})
+    with pytest.raises(ValueError, match="mb_psi must be > 0"):
+        HoekBrownRock(**_HB, mb_psi=0.0)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: MohrCoulombTensionCutoffSoil(
+            c=100, phi=30, psi=0, tension_cutoff=10.0, E=1e6, nu=0.3,
+        ),
+        lambda: HoekBrownRock(**_HB),
+    ],
+    ids=["MohrCoulombTensionCutoffSoil", "HoekBrownRock"],
+)
+def test_d5_helpers_are_plane_strain_wrappable(make) -> None:
+    base = make()
+    wrapper = PlaneStrain(base=base)
+    assert wrapper.dependencies() == (base,)
+
+
+def test_ndmaterial_namespace_mohr_coulomb_tension_cutoff_soil() -> None:
+    fem = make_two_node_beam()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.MohrCoulombTensionCutoffSoil(
+        c=1014.0, phi=45.95, psi=11.49, tension_cutoff=100.0,
+        E=4080000.0, nu=0.18, rho=4.5,
+    )
+    assert isinstance(mat, ASDPlasticMaterial3D)
+    assert mat.yf == "MohrCoulombTensionCutoff_YF"
+    assert dict(mat.model_parameters)["TC_min_stress"] == 100.0
+    assert ops.tag_for(mat) == 1
+    wrapper = ops.nDMaterial.PlaneStrain(base=mat)
+    assert ops.tag_for(wrapper) == 2
+
+
+def test_ndmaterial_namespace_hoek_brown_rock() -> None:
+    fem = make_two_node_beam()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.HoekBrownRock(**_HB, f_relative_tol=1e-8)
+    assert isinstance(mat, ASDPlasticMaterial3D)
+    assert mat.yf == "HoekBrown_YF"
+    assert dict(mat.integration_options)["f_relative_tol"] == 1e-8
+    assert ops.tag_for(mat) == 1
 
 
 # ---------------------------------------------------------------------------
