@@ -1265,6 +1265,12 @@ class LiveOpsEmitter:
     def reset(self) -> None:
         self._ops.reset()
 
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        self._ops.setNodeVel(int(node), int(dof), float(value), "-commit")
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        self._ops.setNodeAccel(int(node), int(dof), float(value), "-commit")
+
     def remove_sp(self, node: int, dof: int) -> None:
         self._ops.remove("sp", int(node), int(dof))
 

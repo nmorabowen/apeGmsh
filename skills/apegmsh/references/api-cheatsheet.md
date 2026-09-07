@@ -860,6 +860,7 @@ with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apese
     with s.pattern(series=ts) as p: p.from_model("live")   # stage-scoped pattern (ADR 0051 BL-3)
     s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
+    s.zero_velocities(nodes=None)     # transient -> static handover; None = whole domain
 ```
 
 Flat emit / run verbs (each builds internally):

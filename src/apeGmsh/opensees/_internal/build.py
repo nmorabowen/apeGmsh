@@ -1131,6 +1131,22 @@ class SPRemovalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ZeroVelocityRecord:
+    """One ``s.zero_velocities(...)`` directive — zeroes the nodal
+    velocity AND acceleration state at a stage boundary.
+
+    Stage-bound only — no top-level ``apeSees.zero_velocities``.
+    ``nodes=None`` means the whole domain (every node in
+    ``fem.nodes.ids``); an explicit tuple restricts the fan-out to that
+    node set.  Emit expands to one ``setNodeVel``/``setNodeAccel`` pair
+    per (node, DOF), with the DOF range taken from the node's effective
+    ndf (a u-p node has 4), immediately before the stage's ``analyze``.
+    """
+
+    nodes: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
 class ElementRemovalRecord:
     """One ``s.remove_element`` directive — drops elements from the
     Domain mid-analysis (Phase SSI-2.E).
@@ -1327,6 +1343,14 @@ class StageRecord:
     # build time).  An element whose PG is not activated by any
     # stage stays global (emitted before stage 1).
     activated_pgs: tuple[str, ...] = ()
+    # Transient → static handover: nodal velocity / acceleration
+    # zeroing (``s.zero_velocities``).  Emitted LAST inside the stage
+    # block — after the analysis chain, the stage patterns and the
+    # optional ``reset``, immediately before ``analyze`` — so nothing
+    # can restore the kinematic state between the zeroing and the step
+    # that would otherwise read it.  Default ``()`` keeps existing
+    # construction sites working unmodified.
+    zero_velocity_records: tuple["ZeroVelocityRecord", ...] = ()
     # Phase SSI-2.D: stage-bound BC + recorder pools.  Populated by
     # ``_StageBuilder.fix / .mass / .region / .recorder`` (PR-B/C).
     # PR-A ships the dataclass slots + the validator surface; emit
@@ -8301,6 +8325,58 @@ def emit_activate_absorbing(
         if ops_tags:
             pid = tags.allocate("parameter")
             emitter.flip_element_stage(pid, tuple(ops_tags))
+
+
+def zero_velocity_target_nodes(
+    records: "Iterable[ZeroVelocityRecord]",
+    all_node_ids: "Iterable[int]",
+) -> "list[int]":
+    """Resolve a stage's ``s.zero_velocities`` pool to its node list.
+
+    ``nodes=None`` expands to ``all_node_ids`` (the whole domain).
+    Order is first-seen; duplicates across records collapse, so calling
+    the verb twice on overlapping sets does not double the deck.
+    """
+    out: list[int] = []
+    seen: set[int] = set()
+    domain: tuple[int, ...] | None = None
+    for rec in records:
+        if rec.nodes is None:
+            if domain is None:
+                domain = tuple(int(n) for n in all_node_ids)
+            targets: "Iterable[int]" = domain
+        else:
+            targets = rec.nodes
+        for nid in targets:
+            n = int(nid)
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+
+def emit_zero_velocities(
+    nodes: "Iterable[int]",
+    emitter: "Emitter",
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+) -> None:
+    """Emit the nodal velocity / acceleration zeroing for ``nodes``.
+
+    Per node, one ``setNodeVel`` then one ``setNodeAccel`` per DOF of
+    that node's effective ndf (``effective_ndf`` is the ADR 0048
+    inferred map; nodes absent from it fall back to the ``ops.model``
+    envelope).  Both commands carry ``-commit`` — see
+    :meth:`Emitter.set_node_vel` for why that is mandatory rather than
+    cosmetic.
+    """
+    for nid in nodes:
+        node = int(nid)
+        ndf = int(effective_ndf.get(node, envelope_ndf))
+        for dof in range(1, ndf + 1):
+            emitter.set_node_vel(node, dof, 0.0)
+        for dof in range(1, ndf + 1):
+            emitter.set_node_accel(node, dof, 0.0)
 
 
 def _plan_owner_ranks(
