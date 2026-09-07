@@ -706,10 +706,16 @@ def test_handler_requiring_mp_predicate():
     assert _fem_has_handler_requiring_mp(fem([NS(kind=K.RIGID_DIAPHRAGM)]))
     assert _fem_has_handler_requiring_mp(
         fem([NS(kind=K.RIGID_BODY, as_element=False)]))
+    # rigid_body(as_element=True) too: LadrunoRigidBody::setDomain adds one
+    # MP_Constraint per slave (fork LadrunoRigidBody.cpp:339,360-362), and
+    # LadrunoContactHandler only WARNS about MP constraints — it does not
+    # enforce them (fork LadrunoContactHandler.cpp:706-713). So this is NOT
+    # handler-independent; contact + rigid_body(as_element=True) must trip
+    # the guard.
+    assert _fem_has_handler_requiring_mp(
+        fem([NS(kind=K.RIGID_BODY, as_element=True)]))
     # Handler-independent elements — must NOT trip the guard
     assert not _fem_has_handler_requiring_mp(fem([NS(kind=K.KINEMATIC_COUPLING)]))
-    assert not _fem_has_handler_requiring_mp(
-        fem([NS(kind=K.RIGID_BODY, as_element=True)]))
     # g.constraints.penalty → a stiff spring element, NOT an MP_Constraint:
     # must NOT trip the guard (else contact + penalty wrongly fails loud).
     assert not _fem_has_handler_requiring_mp(fem([NS(kind=K.PENALTY)]))
