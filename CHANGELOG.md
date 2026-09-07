@@ -315,6 +315,17 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### DOCS — `interface()` in 3D scoped, not built (TIMs A10)
+
+`internal_docs/plan_interface_3d.md` records where `g.constraints.interface()`
+refuses a 3D model today (declaration and resolve gates in
+`core/ConstraintsComposite.py`), why no apeGmsh-side emission can be correct
+before the fork relaxes `ZeroLength::setDomain`'s equal-ndf / ndf-3-or-6
+guard (`ZeroLength.cpp:611-673`; a phantom at either ndf would either
+mismatch or hand the spring a pore-pressure slot), and the slice order once
+that lands (3D per-facet frames and surface tributary, the gates, per-pair
+`-orient` with two tangents, a rotated 2D verification case). No code change.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,
