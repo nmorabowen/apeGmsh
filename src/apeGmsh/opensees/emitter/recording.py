@@ -394,6 +394,19 @@ class RecordingEmitter:
             ("flip_element_stage", (pid, tuple(ele_tags)), {})
         )
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self.calls.append((
+            "update_parameter",
+            (int(pid), tuple(ele_tags), tuple(args), float(value)),
+            {},
+        ))
+
     def step_hook_ramp(
         self,
         name: str,

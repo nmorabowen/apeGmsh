@@ -672,6 +672,25 @@ class PyEmitter:
         self._lines.append(_ops_call("updateParameter", int(pid), 1))
         self._lines.append(_ops_call("remove", "parameter", int(pid)))
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self._lines.append(_ops_call("parameter", int(pid)))
+        for et in ele_tags:
+            self._lines.append(
+                _ops_call(
+                    "addToParameter", int(pid), "element", int(et), *args,
+                )
+            )
+        self._lines.append(
+            _ops_call("updateParameter", int(pid), float(value))
+        )
+        self._lines.append(_ops_call("remove", "parameter", int(pid)))
+
     def step_hook_ramp(
         self,
         name: str,

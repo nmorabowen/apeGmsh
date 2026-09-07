@@ -1143,6 +1143,39 @@ class MaterialStageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class UpdateParameterRecord:
+    """One ``s.update_parameter`` directive — a typed pass-through over
+    the OpenSees ``parameter`` / ``addToParameter`` / ``updateParameter``
+    primitive that ``s.initial_stress`` and ``s.activate_absorbing``
+    already drive internally.
+
+    Stage-bound only.  Exactly one of ``pg`` / ``elements`` is non-None
+    (validated at the call site) — the target is ALWAYS an element,
+    because ``parameter`` / ``addToParameter`` only address ``node`` /
+    ``element`` / ``region`` / ``loadPattern``
+    (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter``,
+    ``OPS_addToParameter``).  A *material* parameter is reached THROUGH
+    an element: the element forwards the unmatched argv to its
+    integration-point materials (``LadrunoUP::setParameter``
+    ``LadrunoUP.cpp:1948-1971``), and the material matches on
+    ``argv[0] == name`` plus ``argv[1] == its own tag``
+    (``ManzariDafalias::setParameter`` ``ManzariDafalias.cpp:820-857``).
+    ``mat_tag`` carries that trailing tag; ``None`` means the parameter
+    is the element's own (``xPerm`` / ``yPerm`` / ``zPerm``).
+
+    No registry of "known" parameter names — the element / material
+    ``setParameter`` is the authority, and an unrecognised name is
+    already loud there.
+    """
+
+    name: str
+    value: float
+    pg: str | None
+    elements: tuple[int, ...] | None
+    mat_tag: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class RegionAssignmentRecord:
     """One ``apeSees.region(name=...)`` directive — assigns nodes to a
     named OpenSees Region.
@@ -1386,6 +1419,14 @@ class StageRecord:
     # ``updateParameter 1`` per record.  Default ``()`` keeps existing
     # construction sites working unmodified.
     activate_absorbing_records: tuple["ActivateAbsorbingRecord", ...] = ()
+    # ``s.update_parameter`` — the typed pass-through over the same
+    # ``parameter`` / ``addToParameter`` / ``updateParameter`` primitive
+    # the two records above drive internally.  Emitted right after the
+    # absorbing flip (same slot rationale: the stage's elements are in
+    # the Domain, the chain is established, the analyze loop has not
+    # started).  Default ``()`` keeps existing construction sites
+    # working unmodified.
+    update_parameter_records: tuple["UpdateParameterRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -8026,6 +8067,60 @@ def emit_initial_stress_addtoparameter(
                 emitter.addToParameter(
                     int(param_tags[idx]), int(ops_tag), response,
                 )
+
+
+def emit_update_parameters(
+    records: "Iterable[UpdateParameterRecord]",
+    emitter: "Emitter",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    tags: TagAllocator,
+    element_owner: "SortedIntToInt | None" = None,
+    partition_rank: int | None = None,
+) -> None:
+    """Emit ``s.update_parameter`` for each record.
+
+    Same element-resolution and per-rank contract as
+    :func:`emit_activate_absorbing` — the two verbs drive the same
+    OpenSees primitive, only the argv tail and the value differ.  A
+    fresh ``parameter`` tag is allocated per (record, rank) so each
+    block is self-contained and a later stage may re-declare.
+    """
+    is_partitioned_mode = partition_rank is not None
+    for rec in records:
+        if rec.elements is not None:
+            eids: tuple[int, ...] = rec.elements
+        elif rec.pg is not None:
+            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
+        else:  # pragma: no cover — validated at the call site
+            eids = ()
+        ops_tags: list[int] = []
+        for eid in eids:
+            if is_partitioned_mode and element_owner is not None:
+                owner = element_owner.get(int(eid))
+                if owner is None or owner != partition_rank:
+                    continue
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                if is_partitioned_mode:
+                    continue  # owned by another rank; silent skip OK.
+                raise BridgeError(
+                    f"update_parameter {rec.name!r}: element id {int(eid)} "
+                    "is not registered with any Element primitive (the "
+                    "updateParameter would silently no-op).  Either drop it "
+                    "from elements= or declare the matching Element "
+                    "primitive via ops.element.<Type>(pg=...)."
+                )
+            ops_tags.append(int(ops_tag))
+        if ops_tags:
+            pid = tags.allocate("parameter")
+            args: tuple[str | int, ...] = (
+                (rec.name,) if rec.mat_tag is None
+                else (rec.name, int(rec.mat_tag))
+            )
+            emitter.update_parameter(
+                pid, tuple(ops_tags), args, float(rec.value),
+            )
 
 
 def emit_activate_absorbing(

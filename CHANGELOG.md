@@ -315,6 +315,43 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `s.update_parameter(...)`: a typed pass-through over `updateParameter`
+
+`s.initial_stress` and `s.activate_absorbing` already drive the OpenSees
+`parameter` / `addToParameter` / `updateParameter` primitive internally,
+each for one fixed response. `s.update_parameter(name, value, *,
+pg=|elements=, material=None)` exposes the general form, emitting
+
+```
+parameter $pid
+addToParameter $pid element $eid <name> [<mat_tag>]   # one per element
+updateParameter $pid <value>
+remove parameter $pid
+```
+
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an **element**
+parameter (fork `LadrunoUP::setParameter` matches `xPerm` / `yPerm` /
+`zPerm` on `argv[0]`, `LadrunoUP.cpp:1932-1943`).
+`s.update_parameter("poissonRatio", 0.35, pg="soil", material=sand)`
+changes a **material** parameter: the element forwards the unmatched argv
+to its integration-point materials (`LadrunoUP.cpp:1962-1971`) and
+ManzariDafalias matches on `argv[0] == name` **and** `argv[1] == its own
+tag` (`ManzariDafalias.cpp:820-857`) — which is why `material=` *appends*
+the tag rather than replacing the element target.
+
+There is deliberately no `material=`-only form: `OPS_Parameter` /
+`OPS_addToParameter` accept `node` / `element` / `region` / `loadPattern`
+and nothing else (`OpenSeesParameterCommands.cpp`), so a material is
+unreachable without an element that hosts it. No registry of "known"
+parameter names either — the target's own `setParameter` is the
+authority, and a name it does not recognise already errors there.
+
+Emits right after the absorbing-boundary flip, on both the flat and the
+partitioned path (per rank, same element-ownership filter). A fresh
+`parameter` tag per record and per rank keeps each block self-contained,
+so a later stage may re-declare. H5 archival of the verb is deferred and
+fail-loud.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,
