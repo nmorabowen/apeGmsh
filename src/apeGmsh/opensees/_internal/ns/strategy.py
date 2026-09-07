@@ -15,6 +15,7 @@ from typing import Sequence
 
 from ...analysis.strategy import PROFILE_NAMES, profile as _profile
 from ...analysis.strategy import Ladder as _Ladder
+from ...analysis.strategy import Substep as _Substep
 from ..types import SolutionAlgorithm
 from ._base import _BridgeNamespace
 
@@ -27,17 +28,54 @@ class _StrategyNS(_BridgeNamespace):
     def Ladder(
         self,
         *,
-        rungs: Sequence[SolutionAlgorithm],
+        rungs: Sequence[SolutionAlgorithm | _Substep],
         name: str = "custom",
     ) -> _Ladder:
         """Declare a bespoke escalation ladder.
 
         ``rungs`` lists solution-algorithm primitives
-        (``ops.algorithm.*``) in escalation order; the analysis
-        chain's own algorithm is implicitly rung 0.  See ADR 0057 §2
-        for the per-increment walk semantics.
+        (``ops.algorithm.*``) in escalation order, optionally with one
+        :meth:`Substep`; the analysis chain's own algorithm is
+        implicitly rung 0.  See ADR 0057 §2 for the per-increment walk
+        semantics.
         """
         return _Ladder(rungs=tuple(rungs), name=name)
+
+    def Substep(
+        self,
+        *,
+        node: int,
+        dof: int,
+        target: float,
+        ds: float,
+        ds_min: float,
+        ds_max: float | None = None,
+        regrow: float = 2.0,
+        regrow_after: int = 2,
+        budget: int = 8,
+        wall_budget: float | None = None,
+        plateau: float | None = None,
+        plateau_window: float | None = None,
+    ) -> _Substep:
+        """Declare the adaptive step-size rung (ADR 0104).
+
+        Runs to criterion at ``node`` / ``dof`` — either the ``target``
+        advance, or (with ``plateau`` + ``plateau_window``) a tail
+        slope that has fallen to ``plateau`` × the initial tangent.
+        The step starts at ``ds``, halves on a failed increment,
+        regrows by ``regrow`` after ``regrow_after`` consecutive good
+        steps up to ``ds_max`` (default: ``ds``), and stops on the
+        ``ds_min`` floor, the ``budget`` of consecutive halvings spent
+        on one increment, or the ``wall_budget`` in seconds — each of
+        those three a FAILURE verdict.  Drive it with
+        :meth:`~apeGmsh.opensees.analysis.strategy.Substep.drive`.
+        """
+        return _Substep(
+            node=node, dof=dof, target=target, ds=ds, ds_min=ds_min,
+            ds_max=ds_max, regrow=regrow, regrow_after=regrow_after,
+            budget=budget, wall_budget=wall_budget, plateau=plateau,
+            plateau_window=plateau_window,
+        )
 
     def profile(self, name: str) -> _Ladder:
         """Return an established profile ladder by name.

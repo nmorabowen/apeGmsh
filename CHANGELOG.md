@@ -315,6 +315,82 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ops.strategy.Substep`: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
+
+`ops.strategy.Ladder` has escalated the solution *algorithm* since ADR 0057
+Phase A and nothing else — the step size was fixed at declaration time, so the
+only answer to a stalled increment was a different `algorithm` command against
+the same increment. That is the wrong lever for the failure this project keeps
+meeting: on a push into plasticity the Newton radius of convergence collapses
+at the knee and no algorithm converges at the declared step. Measured on the
+TIMs response-curve harness, cell U-V: the coupled Newton's radius at the
+reference state lies between 3.125e-6 and 6.25e-6 m of control-node settlement,
+**an eighth of the declared 2.5e-5**, and above it every rung of the ladder
+returns `rc = -3`.
+
+`ops.strategy.Substep(node=, dof=, target=, ds=, ds_min=, ...)` is that lever,
+ported from the harness's `stage_S5_push`: a base step, a cap, halving on a
+failed increment, regrow by `regrow` after `regrow_after` consecutive good
+steps, a floor, a subdivision budget and a wall-clock budget — plus
+**run-to-criterion** termination, so a push declares what it wants rather than a
+step count guessed in advance. Either a `target` advance at the control
+node/DOF, or (with `plateau=` + `plateau_window=`) a tail slope that has fallen
+to a declared fraction of the initial tangent, both least-squares fits over the
+committed curve, guarded by the harness's own rules: at least 8 rows, and the
+window must be covered by the curve's own range. `ds_use = min(ds, target - u)`
+lands **exactly** on the target and never overshoots, the `loadConst` contract
+ADR 0057 evidence point 4 wrote down. It runs against a three-method
+`SubstepDriver` protocol (`analyze(ds)`, `disp(node, dof)`, `load()`), so
+whichever integrator idiom carries the increment — `DisplacementControl` on the
+control node, or the fork's `sp` platen under `LoadControl(-ds)` — stays behind
+that seam and the controller owns the step-size policy and nothing else.
+
+**Verdict semantics are the point.** `TARGET` and `PLATEAU` are successes;
+`BUDGET`, `FLOOR` and `WALL` are failures, and `SubstepResult.ok` is derived
+from the verdict and from nothing else — a spent budget is never dressed up as
+success, however many good steps preceded it. This diverges on purpose from the
+harness, whose `_verdict` promotes a guard-terminated leg to
+`limit_point_then_guard` when the tangent criterion had already been met.
+Ordering handles that case instead: both success criteria are tested at the top
+of every attempt, so a run that met its criterion has already exited before a
+budget can be spent, and the #587 fail-loud floor holds unbroken.
+
+Two exclusions are deliberate. The harness's `_try_step` relaxes the
+*convergence test* (`tol * rung["tol_factor"]`) as it escalates — ADR 0057 §6
+excludes that outright, so only the rc-checking skeleton was taken. And
+`_push_dr`, the dynamic-relaxation driver, is **not** ported: it wipes the whole
+chain to `system Diagonal` / `algorithm Linear` / `LadrunoDynamicRelaxation` /
+Transient, a wholesale integrator identity change that §6 also excludes, and it
+was defective for state-memory materials (every pseudo-step of its fictitious
+transient is a strain increment a path-dependent material commits, so the state
+at rest is not the state the static path would have produced).
+
+One knob deviates from the harness on measured evidence: `budget` counts
+**consecutive** halvings spent rescuing one increment — ADR 0057's own
+`max_halvings` — not a run-wide total. Ported verbatim as a total, the budget
+was spent by *probing* rather than by failure: regrow doubles the step every
+`regrow_after` good steps, so past a knee it re-fails by construction and a run
+died on `BUDGET` after roughly `2 × budget` perfectly healthy steps with a
+converging step size in hand. `SubstepResult.subdivisions` still reports the run
+total so the probing cost stays visible.
+
+An adversarial probe on degenerate inputs found two further defects, both now
+fixed and pinned: a **NaN control displacement made the controller spin
+forever** (a NaN fails *every* comparison in the loop — target, floor and the
+step-1 fidelity tripwire alike — and `min(ds, target - nan)` returns `ds`; the
+probe ran 5000 `analyze` calls before its own cap fired), and a **NaN load
+silently disabled a declared plateau criterion** (the initial tangent fits to
+NaN and the criterion's own guard then turns it off). Both are now loud
+refusals, the load check scoped to runs that actually declared a plateau.
+
+Deck emission of the substep loop is **deferred**, and is named rather than
+papered over: `Ladder.to_spec()` **refuses** a Substep-carrying ladder instead
+of resolving it to the Phase A fixed-step spec, because emitting the algorithm
+rungs alone would ship a deck that quietly ignores the declared step policy —
+the silent-no-op class this project has a documented history of. A `Ladder` may
+carry at most one `Substep`, reachable as `Ladder.substep`; Phase A emission is
+byte-identical when none is present.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,

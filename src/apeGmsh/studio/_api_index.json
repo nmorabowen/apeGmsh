@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-06T05:52:58Z",
+  "generated": "2026-09-07T07:09:23Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3622,9 +3622,15 @@
     },
     "ops.strategy.Ladder": {
       "symbol": "ops.strategy.Ladder",
-      "signature": "Ladder(*, rungs: 'Sequence[SolutionAlgorithm]', name: 'str' = 'custom') -> '_Ladder'",
+      "signature": "Ladder(*, rungs: 'Sequence[SolutionAlgorithm | _Substep]', name: 'str' = 'custom') -> '_Ladder'",
       "skill": "references/opensees-bridge.md",
       "doc": "Declare a bespoke escalation ladder."
+    },
+    "ops.strategy.Substep": {
+      "symbol": "ops.strategy.Substep",
+      "signature": "Substep(*, node: 'int', dof: 'int', target: 'float', ds: 'float', ds_min: 'float', ds_max: 'float | None' = None, regrow: 'float' = 2.0, regrow_after: 'int' = 2, budget: 'int' = 8, wall_budget: 'float | None' = None, plateau: 'float | None' = None, plateau_window: 'float | None' = None) -> '_Substep'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Declare the adaptive step-size rung (ADR 0104)."
     },
     "ops.strategy.profile": {
       "symbol": "ops.strategy.profile",
