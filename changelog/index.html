@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#docs-interface-in-3d-scoped-not-built-tims-a10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DOCS — interface() in 3D scoped, not built (TIMs A10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8901,6 +8912,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-interface-in-3d-scoped-not-built-tims-a10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DOCS — interface() in 3D scoped, not built (TIMs A10)
       
     </span>
   </a>
@@ -14264,6 +14286,15 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="docs-interface-in-3d-scoped-not-built-tims-a10">DOCS — <code>interface()</code> in 3D scoped, not built (TIMs A10)<a class="headerlink" href="#docs-interface-in-3d-scoped-not-built-tims-a10" title="Permanent link">&para;</a></h3>
+<p><code>internal_docs/plan_interface_3d.md</code> records where <code>g.constraints.interface()</code>
+refuses a 3D model today (declaration and resolve gates in
+<code>core/ConstraintsComposite.py</code>), why no apeGmsh-side emission can be correct
+before the fork relaxes <code>ZeroLength::setDomain</code>'s equal-ndf / ndf-3-or-6
+guard (<code>ZeroLength.cpp:611-673</code>; a phantom at either ndf would either
+mismatch or hand the spring a pore-pressure slot), and the slice order once
+that lands (3D per-facet frames and surface tributary, the gates, per-pair
+<code>-orient</code> with two tangents, a rotated 2D verification case). No code change.</p>
 <h3 id="added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9">ADDED — <code>g.mesh.structured.build_graded_box</code> — mechanism block + geometric grading in one call (PM-01 A9)<a class="headerlink" href="#added-gmeshstructuredbuild_graded_box-mechanism-block-geometric-grading-in-one-call-pm-01-a9" title="Permanent link">&para;</a></h3>
 <p>A footing-on-soil model wants three things at once from its mesh, and
 until now had to hand-assemble them from <code>set_transfinite_box</code>,
