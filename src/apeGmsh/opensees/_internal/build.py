@@ -1380,17 +1380,17 @@ class StageRecord:
     set_time: float | None = None
     set_creep_on: bool | None = None
     pre_analyze_reset: bool = False
+    # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+    # ``None`` (default) keeps existing construction sites and tests
+    # working unmodified — no bracket emits for a stage that never
+    # calls ``s.profile``.
+    profile: "ProfileRecord | None" = None
     # ADR 0054 AB-3: ASDAbsorbingBoundary stage flip (``s.activate_absorbing``).
     # Emitted after the analysis chain is established (so the domain holds the
     # stage's elements) — one-shot ``parameter`` / ``addToParameter ... stage`` /
     # ``updateParameter 1`` per record.  Default ``()`` keeps existing
     # construction sites working unmodified.
     activate_absorbing_records: tuple["ActivateAbsorbingRecord", ...] = ()
-    # TIMs A8: optional per-stage profiler bracket (``s.profile``).
-    # ``None`` (default) keeps existing construction sites and tests
-    # working unmodified — no bracket emits for a stage that never
-    # calls ``s.profile``.
-    profile: "ProfileRecord | None" = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1481,7 +1481,7 @@ class ProfileRecord:
     ``Emitter.profiler(*args)`` Protocol method to bracket a SINGLE
     stage's ``analyze`` loop instead. Emitted as ``profiler start
     [flags]`` immediately before the stage's analyze loop and
-    ``profiler report <stage name>.h5`` immediately after (before
+    ``profiler stop`` + ``profiler report <stage name>.h5`` immediately after (before
     ``stage_close``) — filename derived from the stage's name so no
     extra kwarg is needed.
     """

@@ -325,7 +325,7 @@ is "which stage is expensive," not "is the run expensive."
 `_StageBuilder.profile(deep=False, memory=False, per_step=False)` reuses the
 same `Emitter.profiler(*args)` machinery — not a second implementation — to
 bracket just THAT stage: `profiler start [-deep] [-memory] [-perStep]`
-immediately before the stage's analyze loop, `profiler report
+immediately before the stage's analyze loop, `profiler stop` + `profiler report
 <stage name>.h5` immediately after (filename derived from the stage's own
 name, so no extra kwarg is needed). A sibling stage that never calls
 `s.profile` stays unbracketed. `Mumps(stats=True)` still emits its `-stats`

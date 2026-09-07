@@ -33,9 +33,9 @@ from ._internal.build import (
     MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
-    ProfileRecord,
     RayleighRecord,
     RegionAssignmentRecord,
+    ProfileRecord,
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
@@ -2840,17 +2840,16 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
-            # TIMs A8: per-stage profiler bracket (``s.profile``) —
-            # ``profiler start [flags]`` immediately before THIS
-            # stage's analyze loop only.
-            if stage.profile is not None:
-                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
-
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             # Deck emitters return 0 (their per-increment loops fail
             # loud at RUN time); the live emitter returns the first
             # failing rc — raise rather than run the next stage on a
             # silently partial state.
+            # TIMs A8: per-stage profiler bracket (``s.profile``) —
+            # ``profiler start [flags]`` immediately before THIS
+            # stage's analyze loop only.
+            if stage.profile is not None:
+                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -2862,10 +2861,13 @@ class BuiltModel:
                     f"partial state is almost never intended."
                 )
 
-            # TIMs A8: close the bracket — ``profiler report
-            # <stage name>.h5`` immediately after THIS stage's analyze
-            # loop, reported under the stage's own name.
+            # TIMs A8: close the bracket — ``profiler stop`` then
+            # ``profiler report <stage name>.h5`` immediately after
+            # THIS stage's analyze loop, reported under the stage's own
+            # name (``stop`` ends the run the way ``ops.profiler.stop``
+            # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
 
             # 10. Stage close — loadConst + wipeAnalysis + hook clear.
@@ -4562,16 +4564,15 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # 7. Analyze loop (auto-wraps with hook dispatcher calls).
+            # See the flat path: deck emitters fail loud at RUN time;
+            # a live rc != 0 raises here rather than running the next
+            # stage on a silently partial state.
             # TIMs A8: per-stage profiler bracket (``s.profile``) —
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
             if stage.profile is not None:
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
-
-            # 7. Analyze loop (auto-wraps with hook dispatcher calls).
-            # See the flat path: deck emitters fail loud at RUN time;
-            # a live rc != 0 raises here rather than running the next
-            # stage on a silently partial state.
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -4583,10 +4584,13 @@ class BuiltModel:
                     f"partial state is almost never intended."
                 )
 
-            # TIMs A8: close the bracket — ``profiler report
-            # <stage name>.h5`` immediately after THIS stage's analyze
-            # loop, reported under the stage's own name.
+            # TIMs A8: close the bracket — ``profiler stop`` then
+            # ``profiler report <stage name>.h5`` immediately after
+            # THIS stage's analyze loop, reported under the stage's own
+            # name (``stop`` ends the run the way ``ops.profiler.stop``
+            # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.

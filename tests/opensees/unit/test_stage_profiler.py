@@ -178,9 +178,10 @@ def test_flat_profiler_brackets_only_the_profiled_stage() -> None:
     stage0_profiler = [c for c in buckets.get(0, []) if c[0] == "profiler"]
     stage1_profiler = [c for c in buckets.get(1, []) if c[0] == "profiler"]
     assert stage0_profiler == [], "unprofiled stage must carry no profiler calls"
-    assert len(stage1_profiler) == 2
+    assert len(stage1_profiler) == 3
     assert stage1_profiler[0] == ("profiler", ("start", "-deep"), {})
-    assert stage1_profiler[1] == ("profiler", ("report", "profiled.h5"), {})
+    assert stage1_profiler[1] == ("profiler", ("stop",), {})
+    assert stage1_profiler[2] == ("profiler", ("report", "profiled.h5"), {})
 
 
 def test_flat_profiler_start_brackets_immediately_around_analyze() -> None:
@@ -198,8 +199,9 @@ def test_flat_profiler_start_brackets_immediately_around_analyze() -> None:
     analyze_i = names.index("analyze")
     report_i = len(names) - 1 - names[::-1].index("profiler")
     assert start_i + 1 == analyze_i
-    assert analyze_i + 1 == report_i
+    assert analyze_i + 2 == report_i
     assert rec.calls[start_i] == ("profiler", ("start",), {})
+    assert rec.calls[analyze_i + 1] == ("profiler", ("stop",), {})
     assert rec.calls[report_i] == ("profiler", ("report", "dyn.h5"), {})
 
 
@@ -222,6 +224,7 @@ def test_tcl_emit_profiler_bracket_lines() -> None:
     lines = emitter.lines()
     text = "\n".join(lines)
     assert "profiler start -deep -memory -perStep" in text
+    assert "profiler stop" in text
     assert "profiler report profiled.h5" in text
     # The unprofiled stage's block carries no ``profiler`` line at all.
     quiet_i = lines.index("# === Stage: quiet ===")
@@ -240,6 +243,7 @@ def test_py_emit_profiler_bracket_lines() -> None:
     ops.build().emit(emitter)
     text = "\n".join(emitter.lines())
     assert "ops.profiler('start', '-deep')" in text
+    assert "ops.profiler('stop')" in text
     assert "ops.profiler('report', 'profiled.h5')" in text
 
 

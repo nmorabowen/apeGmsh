@@ -562,17 +562,6 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
 `s.set_creep(on)`, `s.reset()`.
 
-`s.profile(deep=False, memory=False, per_step=False)` (TIMs A8) brackets
-THIS stage's `analyze` loop with the Ladruno fork's stack profiler —
-`profiler start [-deep] [-memory] [-perStep]` before, `profiler report
-<stage name>.h5` after — reusing the same `Emitter.profiler(*args)`
-machinery as the bridge-level `ops.profiler.*` (see above), reported
-under the stage's own name so each stage's cost is a distinct HDF5 run.
-A sibling stage that never calls it stays unbracketed. H5 archival of
-`s.profile` is deferred (refuses loudly); use `ops.tcl(path)` /
-`ops.py(path)` for a profiled staged deck.
-<!-- verified: tests/opensees/unit/test_stage_profiler.py -->
-
 ### Stage gotchas
 
 - **`s.remove_sp` `dofs=` are 1-based DOF INDICES** (one `remove sp
@@ -597,6 +586,16 @@ A sibling stage that never calls it stays unbracketed. H5 archival of
 - `s.mass` re-applying mass to a node already massed in another tier
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).
+- **`s.profile(deep=False, memory=False, per_step=False)` brackets ONE
+  stage** (TIMs A8): `profiler start [-deep] [-memory] [-perStep]`
+  right before that stage's `analyze` loop, `profiler stop` +
+  `profiler report <stage name>.h5` right after — the same
+  `Emitter.profiler(*args)` machinery as the bridge-level
+  `ops.profiler.*`, reported under the stage's own name so each
+  stage's cost is a distinct HDF5 run. Sibling stages stay
+  unbracketed. H5 archival of `s.profile` refuses loudly; emit
+  `ops.tcl(path)` / `ops.py(path)`.
+  <!-- verified: tests/opensees/unit/test_stage_profiler.py -->
 
 ## Solution-algorithm & stock-integrator options (PR #786)
 
