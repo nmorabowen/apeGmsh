@@ -1,0 +1,68 @@
+# `interface()` in 3D — scope only (TIMs A10)
+
+**Status (2026-09-07):** scoped, not built. Blocked on the fork's `ZeroLength`
+ndf relaxation (TIMs fork ask F1). Nothing here changes code.
+
+## What the model needs
+
+Rung 1 of PM-01's footing interface slot: per coincident pair between the
+ndf-3 footing skin and the ndf-4 u–p soil, one `zeroLength` with an `ENT`
+normal law and a Coulomb shear law — `g.constraints.interface()` (ADR 0093)
+as it exists in 2D, on a 3D surface master.
+
+## Where it is refused today (verified 2026-09-07)
+
+| gate | where | what it says |
+|---|---|---|
+| declaration | `core/ConstraintsComposite.py:1169-1191` `_refuse_3d_interface` | `gmsh.model.getDimension() == 3` → `NotImplementedError`, cites ADR 0093 D2 |
+| resolve | `core/ConstraintsComposite.py:1217-1221` `resolve_interfaces` | `model_dim != 2` → `NotImplementedError` |
+| resolve | `:1236-1240` | any master entity of dim ≠ 1 → `NotImplementedError` (surface masters deferred, D2) |
+
+## The two blockers, in dependency order
+
+1. **Fork — `ZeroLength::setDomain` (F1).** `SRC/element/zeroLength/ZeroLength.cpp:611-673`
+   requires `dofNd1 == dofNd2` (`:615`) and, in 3D, accepts only ndf 3
+   (`:659`) or ndf 6 (`:665`); an ndf-4 u–p node hits the error at `:673`.
+   In 2D the bridge sidesteps this with the D4 phantom bridge (a phantom at
+   the LOWER ndf + nested `equalDOF`), which works because both sides carry
+   DOFs 1–2 as translations. In 3D the soil side is ndf 4 with DOF 4 = pore
+   pressure: a phantom at ndf 3 against a 4-DOF node is still a mismatch for
+   `:615`, and a phantom at ndf 4 would give the spring a pressure "DOF" it
+   must not touch. The relaxation asked of the fork is: accept `dofNd1 ≠
+   dofNd2` in 3D as long as both are ≥ 3, and act on DOFs 1–3 only (a
+   count-blind element would repeat exactly the A1 failure: tying pressure
+   as if it were a rotation). Until that lands, no apeGmsh-side emission
+   can be correct — approximating it (e.g. an ndf-4 phantom + a 4-DOF
+   `zeroLength` with a dummy material on slot 4) would silently couple the
+   soil's pore pressure to the skin.
+2. **apeGmsh — ADR 0093 D2/D3 in 3D.** Per-pair outward normals from the
+   adjacent surface facets (the 3D analogue of the edge-normal average with
+   the centroid sign-fix; corner/edge nodes averaged and renormalised, fail
+   loud on a reentrant fold), and a surface tributary model (`A_trib` from
+   the facet-area accumulation — the sibling of `_tributary_areas` that
+   `distributing_coupling(weighting="area")` already uses — with no
+   `thickness` kwarg in 3D). The Coulomb shear law needs TWO in-plane
+   tangent directions per pair (2D has one), so the material bundle per
+   pair becomes normal + t1 + t2 with the `zeroLength -orient` frame
+   emitted per pair.
+
+## Slices once F1 lands (each PR-able, in the ADR 0093 register)
+
+- S1 — kernel: 3D per-facet frames + surface tributary in
+  `_kernel/resolvers/_interface_resolver.py`; unit-tested on a flat patch,
+  a box corner, and a reentrant fold (fail loud).
+- S2 — composite: lift the three gates above for dim-2 masters; the D4
+  phantom bridge parameterised by the fork's accepted ndf pairs (read from
+  the fork build's capability, not assumed).
+- S3 — emit: per-pair `-orient` with two tangents; the Coulomb law as the
+  existing 2D material bundle plus the second tangent; MPCO/Ladruno
+  recorder channels per pair as in 2D.
+- S4 — verification: the 2D ADR 0093 convergence case rotated into 3D
+  (a strip footing on a plane-strain slab meshed as one element deep must
+  reproduce the 2D result), then a u–p soil with the pressure datum (A2)
+  showing the pore pressure is untouched by the interface.
+
+## Not asked / explicitly out
+
+- A mortar or `contact()`-based 3D interface — already available and is rung 2.
+- Any approximation that lets the deck emit before F1.
