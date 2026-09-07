@@ -599,6 +599,21 @@ class Emitter(Protocol):
     # surface so unusual workflows don't have to drop to raw Tcl.
     def reset(self) -> None: ...
 
+    # ``set_node_vel(node, dof, value)`` emits
+    # ``setNodeVel $node $dof $value -commit`` (Tcl) /
+    # ``ops.setNodeVel(node, dof, value, '-commit')`` (Py / Live).
+    # ``set_node_accel`` is the same command for the acceleration vector.
+    # ``-commit`` is NOT optional: the stock handler builds its new vector
+    # from the node's COMMITTED state and only sets the TRIAL vector
+    # (``OpenSeesMiscCommands.cpp`` ``OPS_setNodeVel``, and
+    # ``Node::getVel`` returns ``commitVel``), so without committing each
+    # call the previous DOF's zero is read back as the old value and only
+    # the last DOF ends up zeroed.  Emitted per (node, DOF) by
+    # ``s.zero_velocities`` immediately before the stage's ``analyze``.
+    def set_node_vel(self, node: int, dof: int, value: float) -> None: ...
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None: ...
+
     # ``remove_sp(node, dof)`` emits ``remove sp $node $dof`` (Tcl) /
     # ``ops.remove('sp', node, dof)`` (Py / Live).  Removes one homogeneous
     # SP constraint.  Stage builders call this once per ``(node, dof)``

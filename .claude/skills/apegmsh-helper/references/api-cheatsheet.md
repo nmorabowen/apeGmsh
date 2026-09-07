@@ -862,6 +862,7 @@ with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apese
     s.update_parameter("poissonRatio", .35, pg="soil", material=sand)  # material param
     s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
+    s.zero_velocities(nodes=None)     # transient -> static handover; None = whole domain
 ```
 
 Flat emit / run verbs (each builds internally):

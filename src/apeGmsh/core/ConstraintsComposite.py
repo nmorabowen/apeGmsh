@@ -2191,10 +2191,15 @@ class ConstraintsComposite:
             coordinates are used.
         dofs : list[int], optional
             1-based dependent components tied on each slave (``-dof``).
-            ``None`` (default) ties *every DOF the slave has* — the right
-            choice for a mixed 3/6-DOF slave set; pass an explicit list to
-            restrict, e.g. ``[1, 2, 3]`` for translations only or
-            ``[3]`` for a vertical-only follower.
+            ``None`` (default) ties *every DOF the slave has*, **by
+            count** — fine for a mixed 3/6-DOF slave set (translations,
+            or translations + rotations), but the fork cannot tell a
+            pressure DOF from a rotation slot: an ndf-4 u–p slave would
+            get its pore pressure tied to the master's θx. The bridge
+            therefore refuses ``None`` at emit when any slave's ndf is
+            not ``ndm`` or ``ndm + n_rot``; pass an explicit list then,
+            e.g. ``[1, 2, 3]`` for translations only or ``[3]`` for a
+            vertical-only follower.
         k : float | ``"auto"``, optional
             Translational penalty stiffness (``-k``). ``None`` ⇒ the fork
             default (``1e12``). ``"auto"`` scales it off a representative

@@ -2,6 +2,24 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### FIXED — contact + `rigid_body(as_element=True)` now trips the MP-handler guard (A11)
+
+`_fem_has_handler_requiring_mp` (the predicate behind the contact
+handler-conflict guard, `apesees.py` #7) wrongly exempted
+`rigid_body(as_element=True)` as "handler-independent" alongside
+`kinematic_coupling`. It isn't: the fork's `LadrunoRigidBody::setDomain`
+still adds one `MP_Constraint` per slave (`LadrunoRigidBody.cpp:339,
+360-362`), and `LadrunoContactHandler` only WARNS about MP constraints
+without enforcing them (`LadrunoContactHandler.cpp:706-713`). A model
+combining contact and `rigid_body(as_element=True)` therefore silently
+dropped the rigid-body enforcement on its slaves. The exemption is
+removed — contact + `rigid_body(as_element=True)` now fails loud via the
+same `BridgeError` as `rigid_body(as_element=False)`, `equalDOF`, etc.
+`kinematic_coupling` (`LadrunoKinematicCoupling`, a true penalty element
+with no MP emit path) is unaffected and still coexists with contact.
+Docstring and guard message corrected to match. Locked by
+`tests/opensees/unit/test_contact_emit.py::test_handler_requiring_mp_predicate`.
+
 ### ADDED — `ops.uniaxialMaterial.MultiLinear` (piecewise-linear backbone)
 
 `uniaxialMaterial MultiLinear` is now a typed primitive:
@@ -351,6 +369,91 @@ partitioned path (per rank, same element-ownership filter). A fresh
 `parameter` tag per record and per rank keeps each block self-contained,
 so a later stage may re-declare. H5 archival of the verb is deferred and
 fail-loud.
+### ADDED — `s.zero_velocities()`: the transient → static handover
+
+A static stage inherits the previous transient stage's committed nodal
+velocities and accelerations — a static integrator writes neither — so
+`reactions -dynamic` in the static stage keeps reporting the previous
+stage's inertia and damping as if they were live. `s.zero_velocities()`
+(whole domain) / `s.zero_velocities(nodes=[...])` hands the stage a
+quiescent kinematic state.
+
+Emits, per node and per DOF of the node's **effective** ndf (a u–p node
+gets DOFs 1..4), `setNodeVel <n> <dof> 0.0 -commit` and
+`setNodeAccel <n> <dof> 0.0 -commit` — stock commands, so both emit
+targets (Tcl + openseespy) and any build run it. `-commit` is
+load-bearing, not decoration: `OPS_setNodeVel` rebuilds the vector from
+the node's **committed** state (`Node::getVel` returns `commitVel`) and
+writes only the **trial** vector, so without committing each call the
+next DOF reads the old value back and only the last DOF ends up zeroed.
+The fork's `ladrunoSetNodeTrial` cannot substitute — it writes the trial
+vectors and never commits — and neither stock nor the fork ships a
+domain-wide zeroing command, so the deck cost is `2 × Σ ndf` lines;
+scope it with `nodes=` when that matters.
+
+Emit slot is LAST in the stage block: after the stage's domain
+mutations, analysis chain, patterns and the optional `s.reset()` (which
+reverts the Domain to the last `setTime` and would restore the very
+velocities being removed), immediately before `analyze`. Wired on both
+the flat and the partitioned emit paths — under MP each rank emits only
+the slice of the target set it owns (INV-4). H5 archival of the verb is
+deferred and fail-loud: the staged archive raises `NotImplementedError`
+rather than write a deck that silently replays the artefact.
+### ADDED — a build-time pressure-datum check for static u-p decks (A2)
+
+A saturated (u-p) region whose pore-pressure DOFs are **all free** is
+impervious, and its **static** tangent is singular in `p`. Nothing downstream
+says so: the fork measured (2026-07-11) that every serial general solver —
+UmfPack, FullGeneral, BandGeneral, SparseGeneral — factorises the sealed
+system through round-off and returns `rc = 0` with an arbitrary,
+solver-dependent pressure level, because the p-RHS is consistent and no solver
+sees the rank deficiency. That refuted "it fails loudly" claim is pinned by a
+`strict` xfail in the fork
+(`tests/test_ladruno_up_element_analytic.py:533-548`); on the apeGmsh side
+nothing looked for it at all. A silent wrong answer, so it is now a gate.
+
+`validate_up_pressure_datum` runs beside the ADR 0049 G1–G3 gates, after the
+ADR 0074 D4 solver gate. It walks the pressure-**carrier** nodes of every
+`LadrunoUP` spec — every node of an equal-order shape, the vertex slots only
+of a Taylor–Hood tri6/tet10 — unions them through shared elements into
+connected components (union-find, `O(N α(N))`, measured ≈5 µs/element on a
+47k-quad column), and requires each component to hold at least one node whose
+pressure DOF (slot `ndm+1`) is pinned. A datum is any single-point constraint
+on that slot: a broker or stage-claimed `fix`, an `s.support`, or a pattern
+`sp`. Dropping the mid-edge nodes is what keeps a Taylor–Hood mesh one region
+instead of shattering it, and it also means a mid-edge node can never serve as
+the datum.
+
+The gate is scoped to decks that declare `ops.analysis.Static()` (flat or
+per-stage) and are not H5 archival — the same "does this actually solve"
+scope D4 uses. A sealed region is physically *correct* under
+`ops.analysis.Transient()`: undrained loading puts the storage term `1/Q̄` on
+the p diagonal, so the tangent is regular, and that is what the fork's own
+Terzaghi lane runs. Refusing it there would be a false positive.
+
+The `BridgeError` names a node of the offending region, how many of the
+model's u-p regions are sealed, and the fix — pin the pressure DOF of one
+node of that region, typically a drained surface. On a Taylor–Hood mesh it
+also names the vertex-node idiom, because the obvious whole-pg mask over-runs
+the mid-edge nodes' `ndf` and G3 refuses it.
+### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
+
+`g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
+with no `-dof` list, and the fork's default — "every DOF the slave has" —
+gates on DOF **count** only (`LadrunoKinematicCoupling.cpp:260-275`): it
+walks components `1..ndm+nrot` and keeps each one the slave carries. For an
+ndf-4 u–p slave in 3D, component 4 is kept as a *rotation* row and `buildB`
+(`:335-350`) ties the node's pore pressure to the master's θx, with a
+penalty of order `K_t·ℓ²` — silently; the only warning sits behind
+`!useDefault`. The bridge's constraint-side ndf gate (G2,
+`validate_constraint_master_ndf`) now refuses the default at emit when any
+slave's ndf is neither `ndm` (translations) nor `ndm + nrot` (translations
++ rotations), naming the node and telling the user to pass `dofs=`
+explicitly (`dofs=[1, 2, 3]` for translations only). The docstring that
+recommended `dofs=None` "for mixed sets" now says what the default really
+does. The gate is count-based, so a 2D u–p node (ndf 3, the same count as
+`(u, v, θ)`) is not distinguishable here; the pressure-node identification
+by element class belongs to the pressure-datum check (TIMs A2).
 
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
