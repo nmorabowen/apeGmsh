@@ -315,6 +315,25 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
+
+`g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
+with no `-dof` list, and the fork's default — "every DOF the slave has" —
+gates on DOF **count** only (`LadrunoKinematicCoupling.cpp:260-275`): it
+walks components `1..ndm+nrot` and keeps each one the slave carries. For an
+ndf-4 u–p slave in 3D, component 4 is kept as a *rotation* row and `buildB`
+(`:335-350`) ties the node's pore pressure to the master's θx, with a
+penalty of order `K_t·ℓ²` — silently; the only warning sits behind
+`!useDefault`. The bridge's constraint-side ndf gate (G2,
+`validate_constraint_master_ndf`) now refuses the default at emit when any
+slave's ndf is neither `ndm` (translations) nor `ndm + nrot` (translations
++ rotations), naming the node and telling the user to pass `dofs=`
+explicitly (`dofs=[1, 2, 3]` for translations only). The docstring that
+recommended `dofs=None` "for mixed sets" now says what the default really
+does. The gate is count-based, so a 2D u–p node (ndf 3, the same count as
+`(u, v, θ)`) is not distinguishable here; the pressure-node identification
+by element class belongs to the pressure-datum check (TIMs A2).
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,
