@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — a build-time pressure-datum check for static u-p decks (A2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8824,6 +8835,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — a build-time pressure-datum check for static u-p decks (A2)
       
     </span>
   </a>
@@ -14110,6 +14132,39 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2">ADDED — a build-time pressure-datum check for static u-p decks (A2)<a class="headerlink" href="#added-a-build-time-pressure-datum-check-for-static-u-p-decks-a2" title="Permanent link">&para;</a></h3>
+<p>A saturated (u-p) region whose pore-pressure DOFs are <strong>all free</strong> is
+impervious, and its <strong>static</strong> tangent is singular in <code>p</code>. Nothing downstream
+says so: the fork measured (2026-07-11) that every serial general solver —
+UmfPack, FullGeneral, BandGeneral, SparseGeneral — factorises the sealed
+system through round-off and returns <code>rc = 0</code> with an arbitrary,
+solver-dependent pressure level, because the p-RHS is consistent and no solver
+sees the rank deficiency. That refuted "it fails loudly" claim is pinned by a
+<code>strict</code> xfail in the fork
+(<code>tests/test_ladruno_up_element_analytic.py:533-548</code>); on the apeGmsh side
+nothing looked for it at all. A silent wrong answer, so it is now a gate.</p>
+<p><code>validate_up_pressure_datum</code> runs beside the ADR 0049 G1–G3 gates, after the
+ADR 0074 D4 solver gate. It walks the pressure-<strong>carrier</strong> nodes of every
+<code>LadrunoUP</code> spec — every node of an equal-order shape, the vertex slots only
+of a Taylor–Hood tri6/tet10 — unions them through shared elements into
+connected components (union-find, <code>O(N α(N))</code>, measured ≈5 µs/element on a
+47k-quad column), and requires each component to hold at least one node whose
+pressure DOF (slot <code>ndm+1</code>) is pinned. A datum is any single-point constraint
+on that slot: a broker or stage-claimed <code>fix</code>, an <code>s.support</code>, or a pattern
+<code>sp</code>. Dropping the mid-edge nodes is what keeps a Taylor–Hood mesh one region
+instead of shattering it, and it also means a mid-edge node can never serve as
+the datum.</p>
+<p>The gate is scoped to decks that declare <code>ops.analysis.Static()</code> (flat or
+per-stage) and are not H5 archival — the same "does this actually solve"
+scope D4 uses. A sealed region is physically <em>correct</em> under
+<code>ops.analysis.Transient()</code>: undrained loading puts the storage term <code>1/Q̄</code> on
+the p diagonal, so the tangent is regular, and that is what the fork's own
+Terzaghi lane runs. Refusing it there would be a false positive.</p>
+<p>The <code>BridgeError</code> names a node of the offending region, how many of the
+model's u-p regions are sealed, and the fix — pin the pressure DOF of one
+node of that region, typically a drained surface. On a Taylor–Hood mesh it
+also names the vertex-node idiom, because the obvious whole-pg mask over-runs
+the mid-edge nodes' <code>ndf</code> and G3 refuses it.</p>
 <h3 id="fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1">FIXED — <code>kinematic_coupling</code> refuses a u–p slave under <code>dofs=None</code> (TIMs A1)<a class="headerlink" href="#fixed-kinematic_coupling-refuses-a-up-slave-under-dofsnone-tims-a1" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.kinematic_coupling(..., dofs=None)</code> emits the fork element
 with no <code>-dof</code> list, and the fork's default — "every DOF the slave has" —
