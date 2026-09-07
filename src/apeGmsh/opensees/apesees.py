@@ -33,6 +33,7 @@ from ._internal.build import (
     MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
+    ProfileRecord,
     RayleighRecord,
     RegionAssignmentRecord,
     SPRemovalRecord,
@@ -2839,6 +2840,12 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # TIMs A8: per-stage profiler bracket (``s.profile``) —
+            # ``profiler start [flags]`` immediately before THIS
+            # stage's analyze loop only.
+            if stage.profile is not None:
+                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             # Deck emitters return 0 (their per-increment loops fail
             # loud at RUN time); the live emitter returns the first
@@ -2854,6 +2861,12 @@ class BuiltModel:
                     f"aborting; running the remaining stages on a "
                     f"partial state is almost never intended."
                 )
+
+            # TIMs A8: close the bracket — ``profiler report
+            # <stage name>.h5`` immediately after THIS stage's analyze
+            # loop, reported under the stage's own name.
+            if stage.profile is not None:
+                emitter.profiler("report", f"{stage.name}.h5")
 
             # 10. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
@@ -4549,6 +4562,12 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # TIMs A8: per-stage profiler bracket (``s.profile``) —
+            # ``profiler start [flags]`` immediately before THIS
+            # stage's analyze loop only.
+            if stage.profile is not None:
+                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+
             # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             # See the flat path: deck emitters fail loud at RUN time;
             # a live rc != 0 raises here rather than running the next
@@ -4563,6 +4582,12 @@ class BuiltModel:
                     f"aborting; running the remaining stages on a "
                     f"partial state is almost never intended."
                 )
+
+            # TIMs A8: close the bracket — ``profiler report
+            # <stage name>.h5`` immediately after THIS stage's analyze
+            # loop, reported under the stage's own name.
+            if stage.profile is not None:
+                emitter.profiler("report", f"{stage.name}.h5")
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             set_stage_owned_node_tags(emitter, None)
@@ -11602,6 +11627,8 @@ class _StageBuilder:
         # stage's analyze loop (set via ``s.run(strategy=)``).
         "_strategy",
         "_analysis_set", "_run_set",
+        # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+        "_profile",
     )
 
     def __init__(self, bridge: "apeSees", name: str) -> None:
@@ -11654,6 +11681,8 @@ class _StageBuilder:
         self._strategy: "Ladder | None" = None
         self._analysis_set: bool = False
         self._run_set: bool = False
+        # TIMs A8: optional per-stage profiler bracket.
+        self._profile: "ProfileRecord | None" = None
 
     def __enter__(self) -> "_StageBuilder":
         return self
@@ -11721,6 +11750,7 @@ class _StageBuilder:
             set_creep_on=self._set_creep_on,
             pre_analyze_reset=self._pre_analyze_reset,
             activate_absorbing_records=tuple(self._activate_absorbing_records),
+            profile=self._profile,
         )
         self._bridge._stage_records.append(record)
 
@@ -13005,6 +13035,60 @@ class _StageBuilder:
         self._dt = None if dt is None else float(dt)
         self._strategy = strategy
         self._run_set = True
+
+    def profile(
+        self, *,
+        deep: bool = False,
+        memory: bool = False,
+        per_step: bool = False,
+    ) -> None:
+        """Bracket THIS stage's ``analyze`` loop with the Ladruno
+        fork's stack profiler (TIMs A8), reported under this stage's
+        own name.
+
+        Reuses the same ``Emitter.profiler(*args)`` machinery the
+        bridge-level ``ops.profiler.*`` verbs drive (see
+        ``_ProfilerNS.start`` / ``.report``) — NOT a second
+        implementation.  Emits ``profiler start [-deep] [-memory]
+        [-perStep]`` immediately before this stage's analyze loop and
+        ``profiler report <stage name>.h5`` immediately after it
+        (before ``stage_close``); the filename is derived from the
+        stage's name, so no filename kwarg is needed here.
+
+        ``deep`` / ``memory`` / ``per_step`` mirror
+        ``ops.profiler.start``'s three flags exactly. Deck emission
+        works on any build; running the deck requires the Ladruno
+        fork (stock ``openseespy``/``OpenSees.exe`` rejects the
+        ``profiler`` command at run time).
+        """
+        if self._profile is not None:
+            raise ValueError(
+                f"Stage {self._name!r}.profile: already called; "
+                "stages support one profiler bracket each."
+            )
+        self._profile = ProfileRecord(
+            deep=bool(deep), memory=bool(memory), per_step=bool(per_step),
+        )
+
+
+# ---------------------------------------------------------------------------
+# TIMs A8 — per-stage profiler bracket
+# ---------------------------------------------------------------------------
+
+def _stage_profile_start_flags(profile: "ProfileRecord") -> list[str]:
+    """Build the ``profiler start`` flag list for a stage's bracket.
+
+    Mirrors ``_ProfilerNS.start`` exactly (``-deep`` / ``-memory`` /
+    ``-perStep``) — see ``_internal/ns/profiler.py``.
+    """
+    flags: list[str] = []
+    if profile.deep:
+        flags.append("-deep")
+    if profile.memory:
+        flags.append("-memory")
+    if profile.per_step:
+        flags.append("-perStep")
+    return flags
 
 
 # ---------------------------------------------------------------------------

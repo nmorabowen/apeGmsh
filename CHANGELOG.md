@@ -315,6 +315,27 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `s.profile(deep=, memory=, per_step=)` brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
+
+`ops.profiler.*` brackets the *whole* deck's appended `analyze` call —
+useful for a flat model, useless for a staged one, where each
+`with ops.stage(...) as s:` block owns its own analyze loop and the question
+is "which stage is expensive," not "is the run expensive."
+
+`_StageBuilder.profile(deep=False, memory=False, per_step=False)` reuses the
+same `Emitter.profiler(*args)` machinery — not a second implementation — to
+bracket just THAT stage: `profiler start [-deep] [-memory] [-perStep]`
+immediately before the stage's analyze loop, `profiler report
+<stage name>.h5` immediately after (filename derived from the stage's own
+name, so no extra kwarg is needed). A sibling stage that never calls
+`s.profile` stays unbracketed. `Mumps(stats=True)` still emits its `-stats`
+flag on the stage's own `system Mumps` line, unaffected by the bracket.
+
+H5 archival of `s.profile` refuses loudly (mirrors the existing
+`phantom_node_tags` refusal in `H5Emitter.set_stage_records`) rather than
+silently dropping the declaration on a `to_h5` round-trip — use
+`ops.tcl(path)` / `ops.py(path)` for a profiled staged deck.
+
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 
 The Linux `suite` job had been dying with **exit 139 and no failing test**,

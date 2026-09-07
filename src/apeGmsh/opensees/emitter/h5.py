@@ -3373,6 +3373,18 @@ class H5Emitter:
                     "stage-claimed phantom-node constraints is "
                     "deferred.  Use ops.tcl(path) / ops.py(path)."
                 )
+            if rec.profile is not None:
+                raise NotImplementedError(
+                    f"H5Emitter.set_stage_records: stage {rec.name!r} "
+                    "declares a profiler bracket (s.profile(...), "
+                    "TIMs A8) — the emitted ``profiler start``/"
+                    "``report`` lines are runtime telemetry with no "
+                    "model-definition store (see the bridge-level "
+                    "``profiler`` no-op above), so a re-emit from this "
+                    "archive would silently drop the bracket.  H5 "
+                    "archival of ``s.profile`` is deferred.  Use "
+                    "ops.tcl(path) / ops.py(path)."
+                )
             blk.activated_pgs = tuple(rec.activated_pgs)
             blk.initial_stress_records = tuple(rec.initial_stress_records)
             blk.activate_absorbing_records = tuple(
