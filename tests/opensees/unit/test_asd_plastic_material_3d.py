@@ -30,6 +30,9 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.nd import (
     _ASDP_OPTIONAL_PARAMS,
     _ASDP_PARAMS_BY_COMPONENT,
+    _ASDP_RETURN_TO_YIELD_SURFACE,
+    _ASDP_TANGENT_TYPES,
+    ASDPlasticIntegrationWarning,
     ASDPlasticMaterial3D,
     MohrCoulombSoil,
     PlaneStrain,
@@ -315,7 +318,10 @@ def test_mohr_coulomb_soil_builds_correct_generic_shape() -> None:
 
     io_dict = dict(mat.integration_options)
     assert io_dict["integration_method"] == "Backward_Euler"
-    assert io_dict["tangent_type"] == "Secant"
+    # ADR 0105 D2 / D3 defaults: strict on, relative tol off, Continuum.
+    assert io_dict["tangent_type"] == "Continuum"
+    assert io_dict["strict_convergence"] is True
+    assert io_dict["f_relative_tol"] == 0.0
     assert io_dict["return_to_yield_surface"] == "Disabled"
 
 
@@ -335,18 +341,128 @@ def test_mohr_coulomb_soil_validates_inputs() -> None:
 
 
 def test_mohr_coulomb_soil_passes_integration_overrides() -> None:
-    mat = MohrCoulombSoil(
-        c=100, phi=30, psi=10, E=1e6, nu=0.3,
-        integration_method="Modified_Euler_Error_Control",
-        tangent_type="Continuum",
-        n_max_iterations=200,
-        f_absolute_tol=1e-8,
-    )
+    with pytest.warns(ASDPlasticIntegrationWarning, match="experimental"):
+        mat = MohrCoulombSoil(
+            c=100, phi=30, psi=10, E=1e6, nu=0.3,
+            integration_method="Modified_Euler_Error_Control",
+            tangent_type="Secant",
+            n_max_iterations=200,
+            f_absolute_tol=1e-8,
+            f_relative_tol=1e-7,
+            strict_convergence=False,
+        )
     io_dict = dict(mat.integration_options)
     assert io_dict["integration_method"] == "Modified_Euler_Error_Control"
-    assert io_dict["tangent_type"] == "Continuum"
+    assert io_dict["tangent_type"] == "Secant"
     assert io_dict["n_max_iterations"] == 200
     assert io_dict["f_absolute_tol"] == 1e-8
+    assert io_dict["f_relative_tol"] == 1e-7
+    assert io_dict["strict_convergence"] is False
+
+
+# ---------------------------------------------------------------------------
+# 2b. ADR 0105 D2 / D3 — option defaults, emitted shape, token validation
+# ---------------------------------------------------------------------------
+
+
+def _emitted(mat: ASDPlasticMaterial3D) -> str:
+    e = TclEmitter()
+    mat._emit(e, tag=7)
+    return e.lines()[-1]
+
+
+def test_mohr_coulomb_soil_emits_the_d2_d3_shape() -> None:
+    line = _emitted(MohrCoulombSoil(c=100, phi=30, psi=10, E=1e6, nu=0.3))
+    assert (
+        "Begin_Model_Parameters YoungsModulus 1000000.0 PoissonsRatio 0.3 "
+        "MC_phi 30.0 MC_c 100.0 MC_ds 1e-05 MC_psi 10.0 MassDensity 0.0 "
+        "InitialP0 0.0 End_Model_Parameters"
+    ) in line
+    assert "strict_convergence 1" in line          # bool -> int token
+    assert "f_relative_tol 0.0" in line
+    assert "tangent_type Continuum" in line
+    assert "integration_method Backward_Euler" in line
+    for foreign in ("AF_cr", "DP_eta", "DuncanChang", "TC_min_stress",
+                    "ReferencePressure", "LinearHardeningParameter"):
+        assert foreign not in line
+
+
+def test_strict_convergence_off_emits_zero() -> None:
+    line = _emitted(MohrCoulombSoil(
+        c=100, phi=30, psi=10, E=1e6, nu=0.3, strict_convergence=False,
+    ))
+    assert "strict_convergence 0" in line
+
+
+@pytest.mark.parametrize(
+    ("method", "reason"),
+    [
+        ("Backward_Euler_LineSearch", "ADR-94 M7"),
+        ("Runge_Kutta_45_Error_Control_old", "ADR-94 M8"),
+    ],
+)
+def test_refused_integrators_raise_with_the_forks_reason(
+    method: str, reason: str,
+) -> None:
+    with pytest.raises(ValueError, match=f"REFUSED by the fork \\({reason}\\)"):
+        MohrCoulombSoil(
+            c=100, phi=30, psi=10, E=1e6, nu=0.3, integration_method=method,
+        )
+    # Same on the generic class — the check lives in __post_init__.
+    with pytest.raises(ValueError, match=reason):
+        _mc(integration_options=(("integration_method", method),))
+
+
+def test_unknown_tokens_raise_naming_the_valid_set() -> None:
+    with pytest.raises(ValueError, match="unknown integration_method 'Euler'"):
+        _mc(integration_options=(("integration_method", "Euler"),))
+    with pytest.raises(ValueError, match="unknown tangent_type 'Consistent'"):
+        _mc(integration_options=(("tangent_type", "Consistent"),))
+    with pytest.raises(
+        ValueError, match="unknown return_to_yield_surface 'Always'",
+    ):
+        _mc(integration_options=(("return_to_yield_surface", "Always"),))
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "Forward_Euler", "Forward_Euler_Subincrement",
+        "Modified_Euler_Error_Control", "Runge_Kutta_45_Error_Control",
+    ],
+)
+def test_explicit_integrators_are_accepted_with_a_warning(method: str) -> None:
+    with pytest.warns(ASDPlasticIntegrationWarning, match="experimental"):
+        mat = _mc(integration_options=(("integration_method", method),))
+    assert dict(mat.integration_options)["integration_method"] == method
+
+
+def test_backward_euler_and_every_valid_token_are_silent() -> None:
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for tangent in sorted(_ASDP_TANGENT_TYPES):
+            for ret in sorted(_ASDP_RETURN_TO_YIELD_SURFACE):
+                _mc(integration_options=(
+                    ("integration_method", "Backward_Euler"),
+                    ("tangent_type", tangent),
+                    ("return_to_yield_surface", ret),
+                ))
+
+
+def test_namespace_wrapper_mirrors_the_helper_defaults() -> None:
+    """``ops.nDMaterial.MohrCoulombSoil`` re-states every default in its
+    own signature (the second site the SANISAND guide warns about)."""
+    import inspect
+
+    from apeGmsh.opensees._internal.ns.nd import _NDMaterialNS
+
+    helper = inspect.signature(MohrCoulombSoil).parameters
+    wrapper = inspect.signature(_NDMaterialNS.MohrCoulombSoil).parameters
+    for key, param in helper.items():
+        assert key in wrapper, key
+        assert wrapper[key].default == param.default, key
 
 
 # ---------------------------------------------------------------------------

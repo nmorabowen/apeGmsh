@@ -64,6 +64,9 @@ __all__ = [
     "PlaneStrain",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
+    "ASDPlasticIntegrationWarning",
+    "ASDP_MIN_FORK_BUILD",
+    "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
     "LadrunoConcrete3D",
@@ -1156,6 +1159,50 @@ def asdp_parameter_schema(
     return frozenset(names)
 
 
+# The fork parser's token lists after ADR-94 (``OPS_AllASDPlasticMaterial3Ds
+# .cpp``; ADR 0105 D3).  An unknown token aborts the command there; here it
+# is a ``ValueError`` at construction.
+_ASDP_INTEGRATION_METHODS: frozenset[str] = frozenset({
+    "Forward_Euler", "Forward_Euler_Subincrement", "Backward_Euler",
+    "Modified_Euler_Error_Control", "Runge_Kutta_45_Error_Control",
+})
+#: Selectable before ADR-94, refused by name since — with the fork's reason.
+_ASDP_REFUSED_INTEGRATION_METHODS: dict[str, str] = {
+    "Backward_Euler_LineSearch": (
+        "REFUSED by the fork (ADR-94 M7): it ignores n_max_iterations, its "
+        "line search cannot cut the step, and its substepping returns "
+        "success for a strain increment the element never asked for "
+        "(measured 2/20 steps where plain Backward_Euler does 20/20). Use "
+        "Backward_Euler."
+    ),
+    "Runge_Kutta_45_Error_Control_old": (
+        "REFUSED by the fork (ADR-94 M8): its yield-drift check is dead "
+        "code and its NaN guard calls exit() on the whole process. Use "
+        "Runge_Kutta_45_Error_Control or Backward_Euler."
+    ),
+}
+_ASDP_TANGENT_TYPES: frozenset[str] = frozenset({
+    "Elastic", "Continuum", "Secant",
+    "Numerical_Algorithmic_FirstOrder", "Numerical_Algorithmic_SecondOrder",
+})
+_ASDP_RETURN_TO_YIELD_SURFACE: frozenset[str] = frozenset({
+    "Disabled", "One_Step_Return", "Iterative_Return",
+})
+#: Minimum fork build for the ADR-94 contract (``ops.ladrunoBuild()``).
+#: An older parser silently drops ``strict_convergence`` / ``f_relative_tol``.
+ASDP_MIN_FORK_BUILD = "bbf657d49"
+
+
+class ASDPlasticIntegrationWarning(UserWarning):
+    """An ``ASDPlasticMaterial3D`` deck selects an explicit integrator.
+
+    After fork ADR-94 ``Backward_Euler`` is the only integrator the fork
+    documents as supported; the explicit schemes remain selectable but
+    carry no active yield-drift correction.  Fail-soft: the fork still
+    accepts them.
+    """
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ASDPlasticMaterial3D(NDMaterial):
     """Generic templated ASD plasticity material (Abell / Petracca / Camata).
@@ -1209,13 +1256,21 @@ class ASDPlasticMaterial3D(NDMaterial):
         :func:`HoekBrownRock` helpers, which emit exactly their schema.
     integration_options
         ``{name: scalar | str}`` — keyed by parser option name.
-        Mixed types: ``f_absolute_tol`` / ``stress_absolute_tol`` /
-        ``rk45_dT_min`` are floats; ``n_max_iterations`` /
-        ``rk45_niter_max`` are ints; ``integration_method`` /
-        ``tangent_type`` / ``return_to_yield_surface`` are string
-        enums (see the OpenSees source for valid tokens).  Empty
-        dict = all defaults (Backward_Euler / Secant / 1e-6 /
-        100 / Disabled / 0.01 / 110).
+        Mixed types: ``f_absolute_tol`` / ``f_relative_tol`` /
+        ``stress_absolute_tol`` / ``rk45_dT_min`` are floats;
+        ``n_max_iterations`` / ``rk45_niter_max`` are ints;
+        ``strict_convergence`` is a bool (emitted ``1`` / ``0``);
+        ``integration_method`` / ``tangent_type`` /
+        ``return_to_yield_surface`` are string enums validated at
+        construction against the fork's post-ADR-94 token lists
+        (``Backward_Euler_LineSearch`` and
+        ``Runge_Kutta_45_Error_Control_old`` are refused with the
+        fork's reason; any non-``Backward_Euler`` method warns
+        :class:`ASDPlasticIntegrationWarning`).  Empty dict = all fork
+        defaults (Backward_Euler / Secant / 1e-6 / 100 / Disabled /
+        0.01 / 110 / strict off / relative tol off).  ``strict_convergence``
+        and ``f_relative_tol`` need a fork build at or after
+        :data:`ASDP_MIN_FORK_BUILD`; an older parser drops them silently.
     """
 
     yf: str
@@ -1248,6 +1303,44 @@ class ASDPlasticMaterial3D(NDMaterial):
                     f"{name!r} must have at least one value"
                 )
         self._validate_parameter_schema()
+        self._validate_integration_options()
+
+    def _validate_integration_options(self) -> None:
+        """ADR 0105 D3 — the fork's token lists, client-side."""
+        opts = dict(self.integration_options)
+        method = opts.get("integration_method")
+        if method is not None:
+            reason = _ASDP_REFUSED_INTEGRATION_METHODS.get(str(method))
+            if reason is not None:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: integration_method {method!r} is "
+                    f"{reason}"
+                )
+            if method not in _ASDP_INTEGRATION_METHODS:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: unknown integration_method "
+                    f"{method!r}; valid: "
+                    f"{', '.join(sorted(_ASDP_INTEGRATION_METHODS))}."
+                )
+            if method != "Backward_Euler":
+                warnings.warn(
+                    f"ASDPlasticMaterial3D: integration_method {method!r} is "
+                    f"experimental on the fork after ADR-94 (no active "
+                    f"yield-drift correction); Backward_Euler is the only "
+                    f"integrator the fork documents as supported.",
+                    ASDPlasticIntegrationWarning,
+                    stacklevel=3,
+                )
+        for key, valid in (
+            ("tangent_type", _ASDP_TANGENT_TYPES),
+            ("return_to_yield_surface", _ASDP_RETURN_TO_YIELD_SURFACE),
+        ):
+            value = opts.get(key)
+            if value is not None and value not in valid:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: unknown {key} {value!r}; valid: "
+                    f"{', '.join(sorted(valid))}."
+                )
 
     def _validate_parameter_schema(self) -> None:
         """ADR 0105 D1 — the fork's fail-loud parameter contract, client-side."""
@@ -1321,6 +1414,34 @@ class ASDPlasticMaterial3D(NDMaterial):
 # the fork's ADR-94 parser refuses the deck at the first foreign name.
 
 
+def _asdp_integration_tail(
+    *,
+    integration_method: str,
+    tangent_type: str,
+    f_absolute_tol: float,
+    f_relative_tol: float,
+    stress_absolute_tol: float,
+    n_max_iterations: int,
+    strict_convergence: bool,
+    return_to_yield_surface: str,
+    rk45_dT_min: float,
+    rk45_niter_max: int,
+) -> tuple[tuple[str, float | int | str], ...]:
+    """The ``Begin_Integration_Options`` block every typed helper emits."""
+    return (
+        ("f_absolute_tol", f_absolute_tol),
+        ("f_relative_tol", f_relative_tol),
+        ("stress_absolute_tol", stress_absolute_tol),
+        ("n_max_iterations", n_max_iterations),
+        ("strict_convergence", bool(strict_convergence)),
+        ("rk45_dT_min", rk45_dT_min),
+        ("rk45_niter_max", rk45_niter_max),
+        ("return_to_yield_surface", return_to_yield_surface),
+        ("integration_method", integration_method),
+        ("tangent_type", tangent_type),
+    )
+
+
 def MohrCoulombSoil(
     *,
     c: float,
@@ -1333,10 +1454,12 @@ def MohrCoulombSoil(
     yield_stress: float = 1e10,
     initial_p0: float = 0.0,
     integration_method: str = "Backward_Euler",
-    tangent_type: str = "Secant",
+    tangent_type: str = "Continuum",
     f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
     stress_absolute_tol: float = 1e-6,
     n_max_iterations: int = 100,
+    strict_convergence: bool = True,
     return_to_yield_surface: str = "Disabled",
     rk45_dT_min: float = 0.01,
     rk45_niter_max: int = 100,
@@ -1345,7 +1468,14 @@ def MohrCoulombSoil(
 
     Replaces the ~30-line dict-of-parameters call to the generic
     :class:`ASDPlasticMaterial3D` for the SSI Cerro Lindo / rock-mass
-    case.
+    case.  Emits exactly the combination's parameter schema and the
+    ADR 0105 defaults (``strict_convergence`` on, ``Continuum``
+    tangent); the deck needs a fork build at or after
+    :data:`ASDP_MIN_FORK_BUILD` for ``strict_convergence`` /
+    ``f_relative_tol`` to take effect (an older parser drops them
+    silently) and a refusal-propagating host (``LadrunoBrick`` /
+    ``TenNodeTetrahedron``) for ``strict_convergence`` to reach the
+    analysis at all — ``stdBrick`` swallows it (fork ADR-94 B2).
 
     Parameters
     ----------
@@ -1365,16 +1495,37 @@ def MohrCoulombSoil(
     initial_p0
         Initial confining pressure offset.  Defaults to ``0.0``.
     integration_method
-        One of ``"Forward_Euler"``, ``"Forward_Euler_Subincrement"``,
+        One of ``"Backward_Euler"`` (default; the only integrator the
+        fork documents as supported after ADR-94), ``"Forward_Euler"``,
+        ``"Forward_Euler_Subincrement"``,
         ``"Modified_Euler_Error_Control"``,
-        ``"Runge_Kutta_45_Error_Control"``, ``"Backward_Euler"``
-        (default), ``"Backward_Euler_LineSearch"``.
+        ``"Runge_Kutta_45_Error_Control"`` (the explicit ones warn
+        :class:`ASDPlasticIntegrationWarning`).
+        ``"Backward_Euler_LineSearch"`` and
+        ``"Runge_Kutta_45_Error_Control_old"`` are refused with the
+        fork's reason (ADR-94 M7 / M8).
     tangent_type
-        One of ``"Elastic"``, ``"Continuum"``, ``"Secant"`` (default),
-        ``"Numerical_Algorithmic_FirstOrder"``,
+        One of ``"Continuum"`` (default — fork ADR-84 §9.4; measured
+        5.3x fewer global iterations than ``"Secant"`` with identical
+        results at convergence, fork ADR-94 M3), ``"Elastic"``,
+        ``"Secant"``, ``"Numerical_Algorithmic_FirstOrder"``,
         ``"Numerical_Algorithmic_SecondOrder"``.
     f_absolute_tol, stress_absolute_tol, n_max_iterations
         Integration solver tolerances + iteration cap.
+    f_relative_tol
+        ``0.0`` (default) keeps the absolute tolerance alone — the fork's
+        own default.  When set, the yield-function tolerance becomes
+        ``max(f_absolute_tol, f_relative_tol * strength scale)`` so the
+        same problem converges in kPa and in Pa (fork ADR-94 M5 measured
+        the kPa deck passing 20/20 and the Pa deck refused on step 1
+        with the absolute default).  Rock-scale decks should set it;
+        ``1e-8`` is the fork's suggested start for Hoek-Brown at
+        50 MPa.
+    strict_convergence
+        ``True`` (default): a non-converged or inadmissible state is
+        REFUSED instead of committed (fork ADR-84 P2a, effective on
+        every integrator and failure path since ADR-94).  A deck that
+        used to finish with wrong stresses now fails at the step.
     return_to_yield_surface
         ``"Disabled"`` (default — STKO behavior), ``"One_Step_Return"``,
         or ``"Iterative_Return"``.
@@ -1436,15 +1587,17 @@ def MohrCoulombSoil(
             ("MassDensity", rho),
             ("InitialP0", initial_p0),
         ),
-        integration_options=(
-            ("f_absolute_tol", f_absolute_tol),
-            ("stress_absolute_tol", stress_absolute_tol),
-            ("n_max_iterations", n_max_iterations),
-            ("rk45_dT_min", rk45_dT_min),
-            ("rk45_niter_max", rk45_niter_max),
-            ("return_to_yield_surface", return_to_yield_surface),
-            ("integration_method", integration_method),
-            ("tangent_type", tangent_type),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
         ),
     )
 

@@ -818,10 +818,12 @@ class _NDMaterialNS(_BridgeNamespace):
         yield_stress: float = 1e10,
         initial_p0: float = 0.0,
         integration_method: str = "Backward_Euler",
-        tangent_type: str = "Secant",
+        tangent_type: str = "Continuum",
         f_absolute_tol: float = 1e-6,
+        f_relative_tol: float = 0.0,
         stress_absolute_tol: float = 1e-6,
         n_max_iterations: int = 100,
+        strict_convergence: bool = True,
         return_to_yield_surface: str = "Disabled",
         rk45_dT_min: float = 0.01,
         rk45_niter_max: int = 100,
@@ -833,7 +835,8 @@ class _NDMaterialNS(_BridgeNamespace):
         SSI case: MohrCoulomb_YF + MohrCoulomb_PF + LinearIsotropic3D_EL
         + BackStress(NullHardeningTensorFunction).  See
         :func:`apeGmsh.opensees.material.nd.MohrCoulombSoil` for the
-        parameter docstring.
+        parameter docstring (ADR 0105: exact schema, ``strict_convergence``
+        on and ``Continuum`` tangent by default).
         """
         return self._bridge._register(
             _build_mohr_coulomb_soil(
@@ -842,8 +845,10 @@ class _NDMaterialNS(_BridgeNamespace):
                 integration_method=integration_method,
                 tangent_type=tangent_type,
                 f_absolute_tol=f_absolute_tol,
+                f_relative_tol=f_relative_tol,
                 stress_absolute_tol=stress_absolute_tol,
                 n_max_iterations=n_max_iterations,
+                strict_convergence=strict_convergence,
                 return_to_yield_surface=return_to_yield_surface,
                 rk45_dT_min=rk45_dT_min,
                 rk45_niter_max=rk45_niter_max,
