@@ -502,6 +502,23 @@ class Emitter(Protocol):
         self, pid: int, ele_tags: "tuple[int, ...]",
     ) -> None: ...
 
+    # ``update_parameter`` emits the general one-shot form of the same
+    # primitive (``s.update_parameter``): ``parameter $pid`` / one
+    # ``addToParameter $pid element $eid <args...>`` per tag /
+    # ``updateParameter $pid $value`` / ``remove parameter $pid``.
+    # ``args`` is the argv tail the element's ``setParameter`` matches on
+    # — ``("xPerm",)`` for an element parameter, ``("poissonRatio",
+    # <mat_tag>)`` for a material one (the element forwards the tail to
+    # its integration-point materials, which match on their own tag).
+    # Called once per (record, rank).
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: "tuple[int, ...]",
+        args: "tuple[str | int, ...]",
+        value: float,
+    ) -> None: ...
+
     # ``step_hook_ramp`` emits the multi-line bundle that materializes
     # one ``InitialStress`` composite into the deck:
     #
@@ -581,6 +598,21 @@ class Emitter(Protocol):
     # stage builder.  Rarely needed — kept for parity with the OpenSees
     # surface so unusual workflows don't have to drop to raw Tcl.
     def reset(self) -> None: ...
+
+    # ``set_node_vel(node, dof, value)`` emits
+    # ``setNodeVel $node $dof $value -commit`` (Tcl) /
+    # ``ops.setNodeVel(node, dof, value, '-commit')`` (Py / Live).
+    # ``set_node_accel`` is the same command for the acceleration vector.
+    # ``-commit`` is NOT optional: the stock handler builds its new vector
+    # from the node's COMMITTED state and only sets the TRIAL vector
+    # (``OpenSeesMiscCommands.cpp`` ``OPS_setNodeVel``, and
+    # ``Node::getVel`` returns ``commitVel``), so without committing each
+    # call the previous DOF's zero is read back as the old value and only
+    # the last DOF ends up zeroed.  Emitted per (node, DOF) by
+    # ``s.zero_velocities`` immediately before the stage's ``analyze``.
+    def set_node_vel(self, node: int, dof: int, value: float) -> None: ...
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None: ...
 
     # ``remove_sp(node, dof)`` emits ``remove sp $node $dof`` (Tcl) /
     # ``ops.remove('sp', node, dof)`` (Py / Live).  Removes one homogeneous

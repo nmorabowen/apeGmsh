@@ -852,14 +852,20 @@ ops.damping.uniform|sec_stif|urd|urd_beta(*, ..., on=None, activate_time=, facto
 # case-list (no WarnUnconsumedModelLoads). A case you don't import is not
 # applied; an import of a non-existent case is a no-op.
 # NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
+# Staged prescribed motion (rotations included, zeros skipped):
+#   s.imposed_path(node=, ratios=(r1..r6), series=) -> Plain
+#   ops.imposed_displacement(...) stays the non-staged, translations-only path.
 
 # staged analysis (ADR 0034) — domainChange between stages:
 with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py
     s.activate(...); s.fix(...); s.mass(...); s.region(...); s.recorder(...)
     s.damping.rayleigh(...); s.damping.uniform(..., on=)   # stage-bound (D5); no s.damping.modal
     with s.pattern(series=ts) as p: p.from_model("live")   # stage-scoped pattern (ADR 0051 BL-3)
+    s.update_parameter("xPerm", 1e-5, pg="soil")               # element parameter
+    s.update_parameter("poissonRatio", .35, pg="soil", material=sand)  # material param
     s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
+    s.zero_velocities(nodes=None)     # transient -> static handover; None = whole domain
 ```
 
 Flat emit / run verbs (each builds internally):
