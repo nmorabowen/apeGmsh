@@ -95,6 +95,7 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_up_pressure_datum,
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
     validate_sanisand_substep_cap,
@@ -1432,6 +1433,38 @@ class BuiltModel:
                 *(r for st in self.stage_records for r in st.mass_records),
             ),
             load_records=tuple(ld for p in _plains for ld in p.loads),
+            sp_records=tuple(sp for p in _plains for sp in p.sps),
+            support_records=tuple(
+                r for st in self.stage_records for r in st.support_records
+            ),
+        )
+
+        # G4 — a STATIC u-p deck whose pressure DOFs are all free is
+        # singular in p and factorises through round-off with rc = 0 and an
+        # arbitrary pressure level (fork xfail
+        # test_ladruno_up_element_analytic.py:533-548).  Walk the pressure
+        # regions and require a datum in each.  Scoped to Static: a sealed
+        # region is physically correct under Transient (the storage term
+        # regularises the p rows), and archival emits never solve — the
+        # same two facts D4 above is scoped on.  Runs AFTER D4 so the
+        # solver footgun still reports first on a deck with both.
+        from .analysis.analysis import Static as _StaticAnalysis
+        validate_up_pressure_datum(
+            self.fem, elements, self.ndm,
+            enforce=(
+                not _emitter_is_archival
+                and (
+                    any(isinstance(p, _StaticAnalysis) for p in ordered)
+                    or any(
+                        isinstance(st.analysis, _StaticAnalysis)
+                        for st in self.stage_records
+                    )
+                )
+            ),
+            fix_records=(
+                *self.fix_records,
+                *(r for st in self.stage_records for r in st.fix_records),
+            ),
             sp_records=tuple(sp for p in _plains for sp in p.sps),
             support_records=tuple(
                 r for st in self.stage_records for r in st.support_records

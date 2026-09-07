@@ -3178,19 +3178,22 @@ _UNSYMMETRIC_SAFE_SYSTEMS: frozenset[str] = frozenset(
 )
 
 
-def _ladruno_up_carrier_nodes(
+def _ladruno_up_carrier_blocks(
     fem: "FEMData", up_specs: "Sequence[Element]",
-) -> "set[int]":
-    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+) -> "Iterator[np.ndarray]":
+    """Yield ``(n_elem, n_carrier)`` pressure-CARRIER connectivity blocks.
 
-    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
-    it only on the vertex slots (mid-edge nodes are pure displacement).  The
-    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    One block per mesh element group of each LadrunoUP spec, sliced down to
+    the slots that actually carry ``p``: equal-order shapes carry it on every
+    node, Taylor–Hood shapes only on the leading vertex slots (mid-edge nodes
+    are pure displacement).  SINGLE SOURCE of the carrier-slot rule — both
+    :func:`_ladruno_up_carrier_nodes` (which wants the flat set) and
+    :func:`validate_up_pressure_datum` (which wants per-element rows, to walk
+    connectivity) read it from here.
     """
     from .._element_capabilities import LADRUNO_UP_TH_ETYPES
 
     th_vertex_count = {6: 3, 10: 4}
-    carrier: set[int] = set()
     for spec in up_specs:
         result = fem.elements.select(pg=spec.pg).groups()  # type: ignore[attr-defined]
         for group in _iter_element_groups(result):
@@ -3201,10 +3204,23 @@ def _ladruno_up_carrier_nodes(
             code = int(getattr(group.element_type, "code", -1))
             k = gconn.shape[1]
             if code in LADRUNO_UP_TH_ETYPES or k in th_vertex_count:
-                nv = th_vertex_count.get(k, k)
-                carrier.update(int(t) for t in gconn[:, :nv].ravel())
+                yield gconn[:, :th_vertex_count.get(k, k)]
             else:
-                carrier.update(int(t) for t in gconn.ravel())
+                yield gconn
+
+
+def _ladruno_up_carrier_nodes(
+    fem: "FEMData", up_specs: "Sequence[Element]",
+) -> "set[int]":
+    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+
+    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
+    it only on the vertex slots (mid-edge nodes are pure displacement).  The
+    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    """
+    carrier: set[int] = set()
+    for block in _ladruno_up_carrier_blocks(fem, up_specs):
+        carrier.update(int(t) for t in block.ravel())
     return carrier
 
 
@@ -3287,6 +3303,176 @@ def validate_ladruno_up_pressure_dof(
                 f"mixed-ndf / structure-on-soil idiom, ADR 0069 / fork guide "
                 f"§6.3)."
             )
+
+
+def up_pressure_components(
+    element_carriers: "Iterable[Sequence[int]]",
+) -> "dict[int, list[int]]":
+    """Connected components of the pressure graph, keyed by root node tag.
+
+    *element_carriers* is one sequence of pressure-CARRIER node tags per
+    element (mid-edge / non-pressure slots already dropped — dropping them is
+    what keeps a Taylor–Hood mesh ONE region instead of shattering it).  Two
+    carrier nodes are connected when some element carries both, which is
+    exactly the sparsity of the ``H`` seepage / ``S`` storage blocks: a
+    pressure DOF is coupled only to the pressure DOFs it shares an element
+    with.  Union-find, so the walk is ``O(N α(N))`` in the carrier count.
+
+    Returns ``{min node tag of the component: sorted node tags}``.
+    """
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    for conn in element_carriers:
+        head: int | None = None
+        for raw in conn:
+            tag = int(raw)
+            parent.setdefault(tag, tag)
+            if head is None:
+                head = tag
+                continue
+            ra, rb = find(head), find(tag)
+            if ra != rb:
+                parent[rb] = ra
+
+    groups: dict[int, list[int]] = {}
+    for tag in parent:
+        groups.setdefault(find(tag), []).append(tag)
+    return {min(members): sorted(members) for members in groups.values()}
+
+
+def validate_up_pressure_datum(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    *,
+    enforce: bool,
+    fix_records: "Iterable[FixRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    support_records: "Iterable[SupportRecord]" = (),
+) -> None:
+    """Refuse a STATIC u-p deck in which some pressure region has no datum.
+
+    A saturated (u-p) region whose pressure DOFs are ALL free is impervious:
+    its static tangent is singular in ``p`` (the ``H`` seepage block has the
+    constant-pressure vector in its null space, exactly like an all-Neumann
+    Laplacian, and static has no ``S/Δt`` storage term to regularise it).
+    Nothing downstream reports it: the fork MEASURED (2026-07-11) that every
+    serial general solver — UmfPack / FullGeneral / BandGeneral /
+    SparseGeneral — factorises the singular sealed system through round-off
+    and returns ``rc = 0`` with an arbitrary, solver-dependent pressure level,
+    because the p-RHS is consistent so no solver sees the rank deficiency
+    (``tests/test_ladruno_up_element_analytic.py:533-548``, a ``strict``
+    xfail pinning the refuted "it fails loudly" claim of fork ADR-71
+    §3.2/§7).  A silent wrong answer, so this is a build-time gate.
+
+    Contract:
+
+    * **Pressure node** — a LadrunoUP pressure CARRIER node
+      (:func:`_ladruno_up_carrier_blocks`): every node of an equal-order
+      shape, the vertex slots only of a Taylor–Hood shape.  LadrunoUP is the
+      only u-p element class in the capability registry, so it is the only
+      one walked; a stock ``quadUP`` / ``brickUP`` cannot reach emit at all
+      (:func:`infer_node_ndf` refuses an unregistered class).
+    * **Datum** — any single-point constraint on DOF ``ndm+1`` of a carrier
+      node: a broker or stage-claimed ``fix`` / ``s.support`` whose 0/1 mask
+      flags that slot, or a pattern ``sp`` whose 1-based DOF index is that
+      slot.  All three make the DOF constrained, which is what removes the
+      null space; ``fix`` alone would false-refuse the ``sp``-datum idiom.
+    * **Exempt** — everything the caller does not mark ``enforce``: H5
+      archival, and any deck that does not declare ``ops.analysis.Static()``.
+      A sealed region is PHYSICALLY CORRECT under Transient (undrained
+      loading: the storage term ``1/Q̄`` puts a nonzero diagonal on the p
+      rows, so the sealed tangent is regular — that is what the fork's own
+      Terzaghi lane runs), so refusing it there would be a false positive.
+
+    Known limitation (not enforced): a datum contributed only by a
+    stage-scoped ``s.support`` is counted for the whole model, though it holds
+    the DOF only inside its own stage; and a pressure DOF grounded indirectly
+    through ``equal_dof`` to a fixed one is not traced.
+    """
+    from ..element.solid import LadrunoUP
+
+    if not enforce:
+        return
+    up_specs = [s for s in elements if isinstance(s, LadrunoUP)]
+    if not up_specs:
+        return
+
+    components = up_pressure_components(
+        conn
+        for block in _ladruno_up_carrier_blocks(fem, up_specs)
+        for conn in block
+    )
+    if not components:
+        return
+
+    p_dof = int(ndm) + 1
+    carriers = {n for members in components.values() for n in members}
+
+    def _pg_or_nodes(rec: "FixRecord | SupportRecord") -> "list[int]":
+        if rec.nodes is not None:
+            return [int(n) for n in rec.nodes]
+        if rec.pg is not None:
+            return list(expand_pg_to_nodes(fem, rec.pg))
+        return []
+
+    datum: set[int] = set()
+    fix_like: "list[FixRecord | SupportRecord]" = [
+        *fix_records, *support_records,
+    ]
+    for frec in fix_like:
+        flags = frec.dofs
+        if len(flags) < p_dof or not flags[p_dof - 1]:
+            continue
+        datum.update(_pg_or_nodes(frec))
+    for srec in sp_records:
+        if int(srec.dof) != p_dof:
+            continue
+        if srec.target_kind == "pg":
+            datum.update(int(n) for n in expand_pg_to_nodes(fem, srec.target))
+        else:
+            datum.add(int(srec.target))
+    # A fix on a TH mid-edge node addresses a slot that node does not carry —
+    # it is not a pressure datum (G3 already refuses the over-long mask).
+    datum &= carriers
+
+    sealed = sorted(
+        root for root, members in components.items()
+        if not datum.intersection(members)
+    )
+    if not sealed:
+        return
+
+    mask = "(" + "0, " * int(ndm) + "1)"
+    raise BridgeError(
+        f"LadrunoUP node {sealed[0]}: its pressure region has NO fixed "
+        f"pressure DOF ({len(sealed)} of {len(components)} u-p region(s) in "
+        f"this model are sealed). A STATIC solve on an all-impervious "
+        f"region is SINGULAR in p, and it does not fail loudly: every serial "
+        f"general solver (UmfPack / FullGeneral / BandGeneral / "
+        f"SparseGeneral) factorises it through round-off and returns rc = 0 "
+        f"with an arbitrary, solver-dependent pressure level (fork "
+        f"tests/test_ladruno_up_element_analytic.py:533-548, MEASURED "
+        f"2026-07-11) — a silent wrong answer. Fix the pressure DOF (slot "
+        f"{p_dof}) of at least one carrier node of that region, typically a "
+        f"drained surface: ops.fix(pg=\"Top\", dofs={mask}). On a "
+        f"Taylor-Hood mesh (tri6 / tet10) that pg mask over-runs the "
+        f"mid-edge nodes' ndf={ndm} and G3 refuses it, so pass the VERTEX "
+        f"nodes of the drained surface as ops.fix(nodes=[...], dofs={mask}) "
+        f"instead. Each element-disconnected u-p region needs its own datum. "
+        f"(A sealed "
+        f"region is legitimate under ops.analysis.Transient() — the storage "
+        f"term regularises the p rows — and this gate only runs for a deck "
+        f"that declares ops.analysis.Static().)"
+    )
 
 
 _GENERAL_SOLVER_MSG = (

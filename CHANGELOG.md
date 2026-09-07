@@ -333,6 +333,43 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — a build-time pressure-datum check for static u-p decks (A2)
+
+A saturated (u-p) region whose pore-pressure DOFs are **all free** is
+impervious, and its **static** tangent is singular in `p`. Nothing downstream
+says so: the fork measured (2026-07-11) that every serial general solver —
+UmfPack, FullGeneral, BandGeneral, SparseGeneral — factorises the sealed
+system through round-off and returns `rc = 0` with an arbitrary,
+solver-dependent pressure level, because the p-RHS is consistent and no solver
+sees the rank deficiency. That refuted "it fails loudly" claim is pinned by a
+`strict` xfail in the fork
+(`tests/test_ladruno_up_element_analytic.py:533-548`); on the apeGmsh side
+nothing looked for it at all. A silent wrong answer, so it is now a gate.
+
+`validate_up_pressure_datum` runs beside the ADR 0049 G1–G3 gates, after the
+ADR 0074 D4 solver gate. It walks the pressure-**carrier** nodes of every
+`LadrunoUP` spec — every node of an equal-order shape, the vertex slots only
+of a Taylor–Hood tri6/tet10 — unions them through shared elements into
+connected components (union-find, `O(N α(N))`, measured ≈5 µs/element on a
+47k-quad column), and requires each component to hold at least one node whose
+pressure DOF (slot `ndm+1`) is pinned. A datum is any single-point constraint
+on that slot: a broker or stage-claimed `fix`, an `s.support`, or a pattern
+`sp`. Dropping the mid-edge nodes is what keeps a Taylor–Hood mesh one region
+instead of shattering it, and it also means a mid-edge node can never serve as
+the datum.
+
+The gate is scoped to decks that declare `ops.analysis.Static()` (flat or
+per-stage) and are not H5 archival — the same "does this actually solve"
+scope D4 uses. A sealed region is physically *correct* under
+`ops.analysis.Transient()`: undrained loading puts the storage term `1/Q̄` on
+the p diagonal, so the tangent is regular, and that is what the fork's own
+Terzaghi lane runs. Refusing it there would be a false positive.
+
+The `BridgeError` names a node of the offending region, how many of the
+model's u-p regions are sealed, and the fix — pin the pressure DOF of one
+node of that region, typically a drained surface. On a Taylor–Hood mesh it
+also names the vertex-node idiom, because the obvious whole-pg mask over-runs
+the mid-edge nodes' `ndf` and G3 refuses it.
 ### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
 
 `g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
