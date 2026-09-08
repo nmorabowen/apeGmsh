@@ -3718,6 +3718,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4092,6 +4103,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
       
     </span>
   </a>
@@ -4682,6 +4704,41 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting">FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)<a class="headerlink" href="#fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting" title="Permanent link">&para;</a></h3>
+<p>Three small hygiene fixes to the OpenSees bridge, bundled in one PR.</p>
+<p><code>resolve_opensees_binary</code> now accepts a directory at every precedence
+level (explicit <code>bin=</code>, <code>OpenSeesTarget.binary</code>, <code>$OPENSEES_BIN</code>): a
+<code>dist/bin</code>-style folder is searched for <code>OpenSees.exe</code> / <code>OpenSees</code>
+inside it, raising <code>FileNotFoundError</code> naming the directory when the
+binary is not there. Previously <code>apeSees.tcl(run=True, bin=&lt;dir&gt;)</code>
+handed the directory straight to <code>CreateProcess</code>, which fails with an
+opaque <code>WinError 5</code> — the test-suite's own <code>APEGMSH_OPENSEES_BIN</code> env
+var is a directory, resolved by each test itself rather than by the
+bridge. <code>resolve_python_binary</code> is unchanged: its <code>explicit=</code> /
+<code>target.python</code> are always meant to be a python interpreter path, not
+a venv directory (the venv-directory case is already handled
+separately via <code>$OPENSEES_VENV</code>), so it does not share this shape.</p>
+<p><code>ops.element.&lt;X&gt;(pg=...)</code> declared against a physical group with no
+elements of that dimension in the FEM snapshot (e.g. the group's cells
+were excluded by <code>get_fem_data(dim=...)</code>) used to silently allocate
+zero element tags and emit nothing — the section/material lines still
+went out, but the element declaration itself vanished with no error.
+<code>allocate_element_tags</code> — the single choke point every emit path
+(live/tcl/py/h5, staged/unstaged, partitioned/unpartitioned) funnels
+<code>Element</code> specs through — now raises <code>BridgeError</code> naming the
+primitive, the <code>pg=</code>, and what the snapshot's physical-group registry
+knows about it (registered cell count and dimension, when available).
+A node-pair element spec (<code>pg=None</code>) is unaffected — it always fans
+out to exactly one synthetic element.</p>
+<p>The failed-increment banner's <code>label=</code> / strategy-name normalisation
+(<code>analyze()</code> in both the tcl and py emitters) only swapped <code>"</code> -&gt; <code>'</code>
+(plus <code>[</code>/<code>]</code> in tcl), leaving <code>$</code> (Tcl variable substitution), <code>\</code>
+(an escape in both generated-source dialects) and embedded newlines
+free to corrupt the emitted <code>puts</code> / <code>print</code> banner. Both sites in both
+emitters now route through the same <code>stage_marker_name</code> the
+<code>APEGMSH_STAGE</code> marker already used (ADR 0106 D2), so a strategy or
+stage name can no longer smuggle a stray substitution, escape, or
+extra logical line into the deck.</p>
 <h3 id="fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table">FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table<a class="headerlink" href="#fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table" title="Permanent link">&para;</a></h3>
 <p><code>_MATERIAL_BUCKET_TOKENS</code> resolves <code>.ladruno</code> material-level Gauss
 buckets BY POSITION on purpose (older fork builds write generic
