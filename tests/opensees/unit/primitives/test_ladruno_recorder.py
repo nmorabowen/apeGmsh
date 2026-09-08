@@ -522,7 +522,8 @@ class TestMaterialLevelTokens:
          "VolStrain", "J2Strain",
          "psi", "stateParameter", "yieldDistance", "yieldFunction",
          "implexError", "avgImplexError", "substeps", "substepsME",
-         "ladrunoSubsteps", "implexDetail", "implexRefusals"],
+         "ladrunoSubsteps", "implexDetail", "implexRefusals",
+         "implexGuards", "ImplexGuards"],
     )
     def test_bare_material_token_is_refused_naming_the_prefix(
         self, token: str,
@@ -538,7 +539,7 @@ class TestMaterialLevelTokens:
         )
         assert "material.pstrain" in r.elem_responses
 
-    @pytest.mark.parametrize("token", ["psi", "implexRefusals"])
+    @pytest.mark.parametrize("token", ["psi", "implexRefusals", "implexGuards"])
     def test_prefixed_sanisand_tokens_pass(self, token: str) -> None:
         r = Ladruno(file="x.ladruno", elem_responses=(f"material.{token}",))
         assert f"material.{token}" in r.elem_responses

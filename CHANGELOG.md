@@ -56,6 +56,27 @@ fields are left at their defaults, namespace reachability end to end, and
 each refusal above. Out of scope for this change: an
 `implexGuards`/`implexDetail` response reader and an `ops.ladrunoBuild()`
 runtime check — both deferred slices.
+### ADDED — `LadrunoSANISAND` `implexGuards` is readable and recordable (ADR 92 P2-9, TIMs A12 follow-up)
+
+The fork's 7-slot `implexGuards` guard census now has canonical component
+names in the `.ladruno` reader's by-position table
+(`src/apeGmsh/results/readers/_ladruno_element_io.py`), and both fork
+spellings (`implexGuards`, `ImplexGuards`) join the material-level token
+guard in `src/apeGmsh/opensees/recorder.py` — a bare token was neither
+refused nor recorded before, so a deck asking for it got silence.
+
+`implexGuards` is the one fork response that carries **no** `ResponseType`:
+`LadrunoSANISAND::setResponse` returns a bare `MaterialResponse`, so every
+build writes `C1..C7` and these names are the only ones there will be. The
+slot order is taken from the fork's fill site, not from the adoption
+guide's suggested list — the guide's names transpose the P2-2 `f = 0` guard
+(slot 1) with the P2-5 reversal-noise census (slot 3). A by-position map
+with a transposed order mislabels data silently, so the order is pinned by
+its own test and mutation-checked against that exact swap.
+
+Slots, in fill order: floor fallback (P2-1), `f = 0` guard (P2-2), hold
+preserved (P2-3), reversal noise (P2-5), trial-time `f = 0` (P2-6),
+hold-skip commit (P2-5c), control back-off (P2-9, `f* < 0.5*f_max`).
 
 ### FIXED — rubber-band selection crashed on VTK 9.7 (`AddActor2D` is gone)
 
