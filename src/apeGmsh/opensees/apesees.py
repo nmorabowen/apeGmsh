@@ -1278,12 +1278,14 @@ class BuiltModel:
         # partitioned) deck is refused at build time. The fork's desktop
         # targets never compile the serial MumpsSolver, so it would
         # silently answer "unknown system type" and leave the run on
-        # whatever SOE was already in place instead of stopping. Reuses
-        # the same flat/staged/partitioned facts computed for D4.
+        # whatever SOE was already in place instead of stopping. Gates on
+        # the FEM's partition count (D5's `len(fem.partitions) <= 1`), not
+        # on `_will_partition`: a partitioned mesh emitted flat carries
+        # the parallel chain by design (the ADR 0027 twin decks).
         validate_serial_mumps(
             enforce=_has_analysis_chain and not _emitter_is_archival,
             staged=_staged,
-            partitioned=_will_partition,
+            partitioned=is_partitioned(self.fem),
             flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
             stage_systems=[
                 (repr(st.name), st.system) for st in self.stage_records
