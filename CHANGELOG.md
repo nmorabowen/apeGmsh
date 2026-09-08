@@ -333,6 +333,20 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — an explicit `system Mumps` on a serial deck is refused at build time (ADR 0106 S4)
+
+The Ladruno fork's desktop targets (`OpenSees.exe`, the desktop openseespy
+build) never compile the serial `MumpsSolver`: a declared `system Mumps`
+answers *unknown system type* at runtime, and a rejected `system` command
+does not abort the deck, so the model silently solves on whatever SOE was
+already in place instead of stopping. A new `validate_serial_mumps` in
+`_internal/build.py`, sitting beside `validate_ladruno_up_solver` and
+reusing its flat/staged/partitioned seam, now refuses an explicit `Mumps`
+declared on a serial (non-partitioned) deck, naming the offending stage on
+a staged deck. Partitioned decks, the ADR 0027 auto-emitted `Mumps`/`UmfPack`
+fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
+Independently revertable.
+
 ### ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
 
 Same trap as ADR 0105, on the fork's SANISAND family this time: `LadrunoSANISAND`

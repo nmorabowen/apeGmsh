@@ -11,7 +11,7 @@ Covers:
 - Tcl / py deck text: locks the literal ``profiler start [flags]`` /
   ``profiler report <stage name>.h5`` lines and their flag variants
   (mirrors ``ops.profiler.start``'s three flags exactly).
-- ``Mumps(stats=True)`` still emits ``-stats`` on its ``system Mumps``
+- ``Pardiso(stats=True)`` still emits ``-stats`` on its ``system Pardiso``
   line inside a stage, with and without ``s.profile`` on that stage.
 - H5 archival of ``s.profile`` refuses loudly (mirrors the
   ``phantom_node_tags`` refusal in ``H5Emitter.set_stage_records``).
@@ -277,43 +277,44 @@ def test_tcl_start_flags_match_each_kwarg(
 
 
 # ===========================================================================
-# Mumps(stats=True) — lock the -stats flag inside a stage
+# Pardiso(stats=True) — lock the -stats flag inside a stage
+# (was Mumps: ADR 0106 D5 refuses an explicit Mumps on a serial deck)
 # ===========================================================================
 
 
-def _mumps_chain(ops: apeSees) -> dict[str, object]:
+def _pardiso_chain(ops: apeSees) -> dict[str, object]:
     chain = _full_chain(ops)
-    chain["system"] = ops.system.Mumps(stats=True)
+    chain["system"] = ops.system.Pardiso(stats=True)
     return chain
 
 
-def test_mumps_stats_emits_inside_stage_without_profile() -> None:
+def test_pardiso_stats_emits_inside_stage_without_profile() -> None:
     ops = _two_stage_ops()
     with ops.stage(name="dyn") as s:
-        s.analysis(**_mumps_chain(ops))
+        s.analysis(**_pardiso_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
     ops.build().emit(emitter)
     text = "\n".join(emitter.lines())
     assert "-stats" in text
-    assert "system Mumps" in text
+    assert "system Pardiso" in text
 
 
-def test_mumps_stats_emits_inside_stage_with_profile() -> None:
+def test_pardiso_stats_emits_inside_stage_with_profile() -> None:
     """``s.profile`` must not interfere with the stage's own
-    ``system Mumps ... -stats`` line."""
+    ``system Pardiso ... -stats`` line."""
     ops = _two_stage_ops()
     with ops.stage(name="dyn") as s:
         s.profile(deep=True)
-        s.analysis(**_mumps_chain(ops))
+        s.analysis(**_pardiso_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
     ops.build().emit(emitter)
     lines = emitter.lines()
     text = "\n".join(lines)
     assert "-stats" in text
-    mumps_line = next(ln for ln in lines if ln.startswith("system Mumps"))
-    assert "-stats" in mumps_line
+    pardiso_line = next(ln for ln in lines if ln.startswith("system Pardiso"))
+    assert "-stats" in pardiso_line
     # And the profiler bracket is still there, distinct from the chain line.
     assert "profiler start -deep" in text
     assert "profiler report dyn.h5" in text

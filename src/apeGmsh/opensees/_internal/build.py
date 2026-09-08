@@ -3700,6 +3700,73 @@ def validate_ladruno_up_solver(
     )
 
 
+_SERIAL_MUMPS_MSG = (
+    "`system Mumps` declared on a serial deck (`len(fem.partitions) <= 1`): "
+    "the Ladruno fork's desktop targets do not compile the serial "
+    "`MumpsSolver`, so `system Mumps` answers *unknown system type* on "
+    "`OpenSees.exe` and on the desktop openseespy build — leaving the run "
+    "on whatever SOE was already in place (ProfileSPD by default) rather "
+    "than stopping. Declare `ops.system.Pardiso()` for a threaded desktop "
+    "solve, or partition the mesh (`g.mesh.partitioning`) and run under "
+    "`OpenSeesMP`."
+)
+
+#: Class names emitting ``system Mumps``. apeGmsh's typed system primitives
+#: (``analysis/system.py``) expose a single :class:`Mumps`; ADR 0106 D5 also
+#: names a ``MumpsParallel`` that does not exist as a Python type.
+_SERIAL_MUMPS_CLASSES = frozenset({"Mumps"})
+
+
+def validate_serial_mumps(
+    *,
+    enforce: bool,
+    staged: bool,
+    partitioned: bool,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> None:
+    """ADR 0106 D5 — refuse an explicit ``Mumps`` system on a serial deck.
+
+    The Ladruno fork's desktop targets (``OpenSees.exe``, the desktop
+    openseespy build) never compile the serial ``MumpsSolver``: a
+    declared ``system Mumps`` answers *unknown system type* at runtime,
+    and a rejected ``system`` command does not abort the deck
+    (``OpenSees.exe`` exits 0 on a Tcl error) — the model silently solves
+    on whatever SOE was already in place instead. Refusing at build time
+    turns that wrong answer into a sentence.
+
+    Scope, mirroring :func:`validate_ladruno_up_solver`'s seam:
+
+    * ``enforce`` is False for emits that never drive a solve — H5
+      archival, model-only export, eigen-only decks — so those are
+      skipped entirely.
+    * **partitioned** decks are untouched: that is what Mumps is for
+      (ADR 0027 INV-5's auto-emitted fallback and ADR 0077 INV-8's
+      parallel-ARPACK requirement both only fire under partitioning).
+    * **staged**: each stage owns its analysis chain, so every stage's
+      own declared system is checked independently; a stage with no
+      declared system is not this gate's concern (that is
+      ``validate_ladruno_up_solver``'s missing-system case).
+    * **flat**: the effective (last-declared) system is the one
+      OpenSees uses at analyze; only it is checked.
+
+    Deliberately NO escape hatch — the declared solver does not exist on
+    these targets, so there is no reading under which the deck does what
+    it says.
+    """
+    if not enforce or partitioned:
+        return
+
+    if staged:
+        for name, system in stage_systems:
+            if system is not None and type(system).__name__ in _SERIAL_MUMPS_CLASSES:
+                raise BridgeError(f"{_SERIAL_MUMPS_MSG} (stage {name})")
+        return
+
+    if flat_systems and type(flat_systems[-1]).__name__ in _SERIAL_MUMPS_CLASSES:
+        raise BridgeError(_SERIAL_MUMPS_MSG)
+
+
 class ManzariTangentSolverWarning(UserWarning):
     """A Manzari-family consistent tangent met a symmetric-storage solver.
 

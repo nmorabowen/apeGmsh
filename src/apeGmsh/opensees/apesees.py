@@ -101,6 +101,7 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_serial_mumps,
     validate_up_pressure_datum,
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
@@ -1264,6 +1265,22 @@ class BuiltModel:
         )
         validate_ladruno_up_solver(
             elements,
+            enforce=_has_analysis_chain and not _emitter_is_archival,
+            staged=_staged,
+            partitioned=_will_partition,
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
+
+        # ADR 0106 D5: an explicit `system Mumps` on a serial (non-
+        # partitioned) deck is refused at build time. The fork's desktop
+        # targets never compile the serial MumpsSolver, so it would
+        # silently answer "unknown system type" and leave the run on
+        # whatever SOE was already in place instead of stopping. Reuses
+        # the same flat/staged/partitioned facts computed for D4.
+        validate_serial_mumps(
             enforce=_has_analysis_chain and not _emitter_is_archival,
             staged=_staged,
             partitioned=_will_partition,
