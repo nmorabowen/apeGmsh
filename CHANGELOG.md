@@ -28,18 +28,34 @@ rule.
 A new `SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"` constant documents
 (does not enforce, matching `ASDP_MIN_FORK_BUILD`'s convention) the
 minimum fork build for `-implexFactor`: an older build's parser does not
-silently ignore the token — its flag loop falls through to the
-positional-optional branch, tries to parse `-implexFactor` as a
-`$TolR`-tail double, fails, and hard-refuses construction.
+silently ignore the token — an unrecognised flag falls through to the
+positional-optional branch and hard-refuses construction. The message an
+apeGmsh deck gets there is *not* `unrecognized option`: because the
+five-argument tail always emits, that branch trips its `nPos >= 5` guard
+first and reports `too many positional optional arguments`, naming
+`-implexFactor` as the offending token.
 
-Four new tests in `tests/opensees/unit/primitives/test_materials_nd.py`
-(`TestLadrunoSANISAND`) cover: full-seam emit ordering, a regression lock
-proving the fields inert by default, and the two construction-time
-`ValueError` guards. Out of scope for this change: an
-`implexGuards`/`implexDetail` response reader, an `ops.ladrunoBuild()`
-runtime check, and exposing the new fields on the
-`ops.nDMaterial.LadrunoSANISAND` namespace wrapper (`_internal/ns/nd.py`)
-— all deferred slices.
+The three fields are also forwarded by the typed namespace wrapper
+(`_internal/ns/nd.py`), so `ops.nDMaterial.LadrunoSANISAND(...,
+implex_factor=...)` reaches the deck; `studio/_api_index.json` is rebuilt
+for the changed signature.
+
+Construction refuses every deck the fork's parser would reject: either
+companion without `implex=True`; an `implex_factor` outside the three
+accepted tokens (the `Literal` is a type hint, not a runtime check, and a
+mis-cased `"Control"` would otherwise have evaded the `implex_control`
+requirement too); an `implex_control` that is not a 2-tuple of numbers (a
+1-tuple emits a deck in which the *next flag name* is read as the missing
+number); and a control mode without `implex_control`. The fork's
+lower-case alias `controliter` is refused in favour of the canonical
+`controlIter`, so the annotation and the runtime agree.
+
+New tests in `tests/opensees/unit/primitives/test_materials_nd.py` cover
+full-seam emit ordering, the absence of any `-implex*` token when the
+fields are left at their defaults, namespace reachability end to end, and
+each refusal above. Out of scope for this change: an
+`implexGuards`/`implexDetail` response reader and an `ops.ladrunoBuild()`
+runtime check — both deferred slices.
 
 ### FIXED — rubber-band selection crashed on VTK 9.7 (`AddActor2D` is gone)
 

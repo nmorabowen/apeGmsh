@@ -1409,14 +1409,46 @@ class TestLadrunoSANISAND:
     # Regression lock: with the three new fields left at their defaults the
     # emitted deck is byte-identical to a pre-implex build's output — the
     # fields are inert unless opted into.
-    def test_implex_fields_default_off_do_not_change_emit(self) -> None:
+    def test_implex_fields_default_off_emit_no_implex_token(self) -> None:
+        # Deliberately NOT another equality against the default tuple --
+        # test_emit_default_is_positionals_tail_then_flags already pins that,
+        # and a second copy of it locks nothing the first does not.  What is
+        # new here is the absence claim: the seam is inert unless opted into.
         rec = RecordingEmitter()
         LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
-        assert rec.calls == [
-            ("nDMaterial",
-             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
-             + _LS_FLAGS_DEFAULT, {}),
-        ]
+        args = rec.calls[0][1]
+        assert not [a for a in args
+                    if isinstance(a, str) and a.startswith("-implex")]
+
+    def test_rejects_implex_control_without_implex(self) -> None:
+        # F1: the fork refuses ANY -implex* flag without the base -implex,
+        # and -implexControl is one of them.
+        with pytest.raises(ValueError, match="requires implex=True"):
+            LadrunoSANISAND(**_LS_KWARGS, implex_control=(1e-4, 0.5))
+
+    @pytest.mark.parametrize("bad", ["Control", "controliter", "bogus", "", "CONTROLITER"])
+    def test_rejects_unknown_implex_factor_token(self, bad: str) -> None:
+        # F2: Literal is a hint, not a check.  "Control" is the nastiest --
+        # it would also have slipped past the implex_control requirement,
+        # which keys on the value.  "controliter" is the fork's own alias,
+        # refused here so the annotation and the runtime agree.
+        with pytest.raises(ValueError, match="is not one of"):
+            LadrunoSANISAND(**_LS_KWARGS, implex=True,
+                            implex_control=(1e-4, 0.5), implex_factor=bad)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("bad", [(1.0,), (1.0, 2.0, 3.0), [1e-4, 0.5], "ab", (1e-4, "x")])
+    def test_rejects_malformed_implex_control(self, bad: object) -> None:
+        # F3: the 1-tuple is the dangerous shape -- it emits
+        # "-implexControl 1.0 -implexFactor control", where the fork reads
+        # the flag NAME as reductionLimit and runs on it.
+        with pytest.raises(ValueError, match="must be a 2-tuple"):
+            LadrunoSANISAND(**_LS_KWARGS, implex=True, implex_control=bad)  # type: ignore[arg-type]
+
+    def test_implex_factor_fixed_does_not_require_implex_control(self) -> None:
+        # The requirement is control-mode-only: "fixed" is the fork default
+        # and stands alone.
+        m = LadrunoSANISAND(**_LS_KWARGS, implex=True, implex_factor="fixed")
+        assert m.implex_control is None
 
     def test_rejects_implex_factor_without_implex(self) -> None:
         with pytest.raises(ValueError, match="requires implex=True"):
