@@ -755,10 +755,13 @@ def test_overlapping_tokens_that_disagree_raise() -> None:
 #
 # ``ASDPlasticMaterial3D`` writes one bucket per ``material.<token>``
 # request, each a per-Gauss-point block labelled with the MATERIAL's own
-# names (``p``, ``J2stress``, ``BackStress_1``…). Synthesised here from the
-# quad fixture — same bucket shape the fork writes, provably fork-free —
-# because the mapping and the drop-warning are reader behaviour, not fork
-# behaviour. The live round-trip is
+# private names (``p``, ``J2stress``, ``BackStress_1``…). The reader maps
+# those buckets by TOKEN and by column POSITION — the labels are not
+# unique across levels (``p`` is the section axial force ``P`` under
+# case-insensitive matching), so they cannot be the key. Synthesised here
+# from the quad fixture — same bucket shape the fork writes, provably
+# fork-free — because the mapping and the drop-warning are reader
+# behaviour, not fork behaviour. The live round-trip is
 # ``tests/opensees/integration_ladruno/test_ladruno_gauss_generic_columns.py``.
 
 
@@ -813,6 +816,7 @@ def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
         "material.VolStrain": ("epsVol",),
         "material.J2Strain": ("J2strain",),
         "material.BackStress": tuple(f"BackStress_{i}" for i in range(1, 7)),
+        "material.YieldStress": ("YieldStress",),
     })
     with LadrunoReader(path) as r:
         comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
@@ -821,6 +825,7 @@ def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
             "material_volumetric_strain", "material_j2_strain",
             "back_stress_xx", "back_stress_yy", "back_stress_zz",
             "back_stress_xy", "back_stress_yz", "back_stress_xz",
+            "yield_stress",
         } <= comps
         # One column per (element, GP) — 1 element × 4 GPs, 2 steps.
         slab = r.read_gauss("stage_0", "material_mean_stress")
@@ -833,7 +838,7 @@ def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
         )
 
 
-def test_unknown_material_label_warns_and_names_it(tmp_path: Path) -> None:
+def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
     path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
     with LadrunoReader(path) as r:
         with pytest.warns(GaussColumnDroppedWarning) as rec:
@@ -870,3 +875,27 @@ def test_one_warning_per_bucket(tmp_path: Path) -> None:
     joined = " ".join(str(w.message) for w in rec)
     for label in ("WhoKnows", "NorMe", "Neither"):
         assert label in joined
+
+
+def test_material_bucket_labels_are_not_matched_as_labels(tmp_path: Path) -> None:
+    # Same labels, a token nobody maps: the columns must NOT resolve.
+    # Proves the mapping is keyed by token, not by label.
+    path = _quad_with(tmp_path, {"material.Mystery": ("p", "J2stress")})
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning):
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "material_mean_stress" not in comps
+    assert "material_j2_stress" not in comps
+
+
+def test_section_axial_force_is_not_a_gauss_mean_stress() -> None:
+    # The collision the token key exists to avoid: a section.force station
+    # labels its axial force ``P``, and canonicalisation is
+    # case-insensitive, so a label-keyed ``p`` would surface every
+    # force-based beam station as material_mean_stress at the Gauss level.
+    with LadrunoReader(FIBERBEAM) as r:
+        assert r.available_components("stage_0", ResultLevel.GAUSS) == []
+        # …while the station itself still reads at its own level.
+        assert "axial_force" in r.available_components(
+            "stage_0", ResultLevel.LINE_STATIONS,
+        )

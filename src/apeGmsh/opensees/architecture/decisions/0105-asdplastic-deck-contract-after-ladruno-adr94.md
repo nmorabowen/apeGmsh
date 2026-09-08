@@ -285,10 +285,29 @@ columns was dropped by `_ladruno_element_io.continuum_canonical`
 not list them, which is indistinguishable from a material that never
 wrote them.
 
+**Keyed by the bucket TOKEN, not the column label.** The first cut
+keyed the mapping on the labels the material writes, and that is wrong:
+`material.PStress` labels its single column `p`, canonicalisation is
+case-insensitive, and the section axial force of every force-based beam
+is labelled `P`. A label key therefore turned each `section.force`
+station into a Gauss `material_mean_stress` — the fiber/section leak
+test caught it, and the workaround (excluding `LEVELS == 2` blocks from
+the Gauss paths) treated the symptom. The bucket token is the unambiguous
+key: one request, one bucket, one known column set. `material.PStress`
+→ `material_mean_stress`, `material.J2Stress` → `material_j2_stress`,
+`material.VolStrain` → `material_volumetric_strain`,
+`material.J2Strain` → `material_j2_strain`,
+`material.BackStress` → the six `back_stress_*` by column position, and
+one name each for `material.YieldStress` / `material.DP_cohesion` /
+`material.CapPressure` / `material.EpsQpShear`. The self-describing
+buckets (`material.stress`, `material.strain`, `material.pstrain`,
+`material.eqpstrain`) are absent from the table and keep the existing
+label path (`sigma11`, `epsP11`, `eqpstrain`) untouched.
+
 **Naming.** The four invariants land on provenance-distinct names —
-`p`→`material_mean_stress`, `J2stress`→`material_j2_stress`,
-`epsVol`→`material_volumetric_strain`, `J2strain`→`material_j2_strain`
-— and are deliberately NOT aliased onto the tensor-derived
+`material_mean_stress`, `material_j2_stress`,
+`material_volumetric_strain`, `material_j2_strain` — and are
+deliberately NOT aliased onto the tensor-derived
 `mean_stress` / `j2_stress` / `volumetric_strain` / `j2_strain` of
 `results/_derived.py`. On fork build `3622d6214` a `MohrCoulombSoil`
 deck measures them EQUAL (same sign, factor 1: both `trace/3`, both
@@ -299,20 +318,21 @@ its arithmetic (`VoigtVector::meanStress()` is tension-positive; the
 yield functions negate it at their call sites). Two names, both
 readable, tell the user which one they are looking at.
 
-`BackStress_1..6` → `back_stress_{xx,yy,zz,xy,yz,xz}` (the material's
-Voigt order 11, 22, 33, 12, 23, 13 — the order the `epsP1..` columns
-already use). Scalar internal variables map by an explicit table
-(`YieldStress`, `DP_cohesion`, `CapPressure`, `EpsQpShear`); there is
-no generic pass-through, so an IV nobody has mapped stays visible as a
-dropped column rather than being guessed into a canonical.
+`material.BackStress`'s six columns are read positionally in the
+material's Voigt order 11, 22, 33, 12, 23, 13 — the order the `epsP1..`
+columns already use. Scalar internal variables map by an explicit
+table; there is no generic pass-through, so an IV nobody has mapped
+stays visible as a dropped column rather than being guessed into a
+canonical.
 
 **The drop is loud now.** `gauss_available` raises one
-`GaussColumnDroppedWarning` per bucket, naming the bucket, the dropped
-labels and the element class. Buckets that map completely never warn,
-and section stations (`LEVELS == 2`) are excluded from the Gauss paths
-entirely — a `section.force` block carries `GAUSS_ID >= 0` but is a
-line station, and its axial force `P` would otherwise collide with the
-material's mean stress `p` under the case-insensitive match.
+`GaussColumnDroppedWarning` per `material.<Token>` bucket that neither
+the token table nor the label map can name, naming the bucket, the
+dropped labels and the element class. Buckets that map completely never
+warn, and the warning is scoped to `material.` buckets on purpose:
+elsewhere a label the Gauss level cannot name is routinely another
+level's business — a `section.force` station carries `P`/`Mz`, which
+`section_canonical` owns — so warning there would be noise, not news.
 
 **Nothing else needed registering.** The `.ladruno` read path is
 file-driven end to end: the new names reach `available_components()`
