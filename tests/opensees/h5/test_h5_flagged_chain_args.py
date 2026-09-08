@@ -18,13 +18,21 @@ from pathlib import Path
 from apeGmsh.opensees import OpenSeesModel
 from apeGmsh.opensees.apesees import apeSees
 
+from tests.opensees.h5.test_h5_partitions_roundtrip import (
+    build_partitioned_two_quad_fem,
+)
 from tests.opensees.h5.test_h5_stages_reader import build_two_quad_fem
 
 
-def _bridge(system_kwargs: "dict[str, object]") -> apeSees:
+def _bridge(
+    system_kwargs: "dict[str, object]", *, partitioned: bool = False,
+) -> apeSees:
     """Two-quad model whose chain carries flag-and-value args in both
-    the ``system`` and the ``integrator`` slot."""
-    ops = apeSees(build_two_quad_fem(), default_orientation=None)
+    the ``system`` and the ``integrator`` slot.  ``partitioned`` picks
+    the two-rank twin — ``Mumps`` is refused on a serial deck (ADR 0106
+    D5) and it is the only system carrying an int beside a float."""
+    fem = build_partitioned_two_quad_fem() if partitioned else build_two_quad_fem()
+    ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
@@ -47,13 +55,18 @@ def _chain_lines(deck: str) -> list[str]:
     ]
 
 
-def _round_trip(system_kwargs: "dict[str, object]", tmp_path: Path) -> None:
+def _round_trip(
+    system_kwargs: "dict[str, object]", tmp_path: Path,
+    *, partitioned: bool = False,
+) -> None:
     tcl = tmp_path / "bridge.tcl"
-    _bridge(dict(system_kwargs)).tcl(str(tcl), progress=False)
+    _bridge(dict(system_kwargs), partitioned=partitioned).tcl(
+        str(tcl), progress=False)
     expected = _chain_lines(tcl.read_text(encoding="utf-8"))
+    assert expected, "no system/integrator lines found — comparison is vacuous"
 
     h5 = tmp_path / "model.h5"
-    _bridge(dict(system_kwargs)).h5(str(h5))
+    _bridge(dict(system_kwargs), partitioned=partitioned).h5(str(h5))
     replayed = _chain_lines(OpenSeesModel.from_h5(str(h5)).build("tcl"))
 
     # Byte-exact, so an int that came back as a float is a failure.
@@ -74,7 +87,7 @@ def test_mumps_mixed_int_and_float_options_round_trip(tmp_path: Path) -> None:
     _round_trip(
         {"_name": "Mumps", "icntl14": 200, "matrix_type": "symmetric",
          "cntl7": 1e-9, "stats": True},
-        tmp_path,
+        tmp_path, partitioned=True,
     )
 
 
