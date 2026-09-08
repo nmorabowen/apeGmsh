@@ -333,6 +333,51 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
+
+The fork recorder forwards `elem_responses=("material.<token>",)` to every Gauss
+point's material, and ADR-94's `setResponse` labels the columns it returns. The
+`.ladruno` reader knew the plastic-strain tensor and `eqpstrain` and nothing
+else, so recording `material.PStress` / `J2Stress` / `VolStrain` / `J2Strain` /
+`BackStress` wrote five full buckets into the file that
+`Results.elements.gauss.available_components()` never listed — dropped with no
+warning, indistinguishable from a material that never wrote them.
+
+They now land on canonical names:
+
+| Bucket | Column label | apeGmsh component |
+|---|---|---|
+| `material.PStress` | `p` | `material_mean_stress` |
+| `material.J2Stress` | `J2stress` | `material_j2_stress` |
+| `material.VolStrain` | `epsVol` | `material_volumetric_strain` |
+| `material.J2Strain` | `J2strain` | `material_j2_strain` |
+| `material.BackStress` | `BackStress_1..6` | `back_stress_xx/yy/zz/xy/yz/xz` |
+
+plus the known scalar internal variables (`YieldStress` → `yield_stress`,
+`DP_cohesion` → `dp_cohesion`, `CapPressure` → `cap_pressure`, `EpsQpShear` →
+`eps_qp_shear`).
+
+The `material_*` names are **provenance-distinct on purpose**: they are what the
+material computed, under its own definition and sign, and are NOT aliased onto
+the tensor-derived `mean_stress` / `j2_stress` / `volumetric_strain` /
+`j2_strain`. On fork build `3622d6214` a `MohrCoulombSoil` deck measures them
+equal (same sign, factor 1 — both `trace/3`, both J2 = 1/2 s:s, both
+`trace(eps)`), and the live test asserts that measurement to 1e-6; aliasing them
+would need a per-material audit instead.
+
+Back-stress components arrive in the material's Voigt order 11, 22, 33, 12, 23,
+13 — the order the `epsP1..` plastic-strain columns already use.
+
+**A dropped Gauss column now warns instead of vanishing.**
+`gauss_available` raises one `GaussColumnDroppedWarning` per bucket, naming the
+bucket, the labels it could not map and the element class, whenever a
+per-Gauss-point column is discarded because no canonical component matches its
+label. Buckets that map completely never warn. Section stations (`LEVELS == 2`,
+`section.force` / `section.deformation`) are excluded from the Gauss paths
+outright — they carry a station index but are line stations, and their axial
+force `P` would otherwise collide with the material's mean stress `p` under the
+case-insensitive label match.
+
 ### CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, `strict_convergence` on, `Continuum` tangent, swallowing-host gate, `MohrCoulombTensionCutoffSoil` + `HoekBrownRock` (ADR 0105)
 
 The Ladruno fork's ADR-94 fix wave (`ladruno` at or after `bbf657d49`) made the

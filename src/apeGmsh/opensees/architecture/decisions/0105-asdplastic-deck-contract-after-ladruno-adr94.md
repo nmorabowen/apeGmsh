@@ -271,3 +271,54 @@ rejections; helper emit shapes; the D4 gate.
   contracts), `internal_docs/guide_ladruno_sanisand_integrator.md` (the
   measurement-log format to reuse as `guide_ladruno_asdplastic.md`),
   `tests/conftest.py` (`ladruno_fork` auto-skip), `APEGMSH_OPENSEES_BIN`.
+
+## Amendment 1 — the material-level Gauss buckets (2026-09-07)
+
+D6's "readers do not change" is **superseded for the material-level
+buckets**. It was measured against `material.pstrain` /
+`material.eqpstrain` only, and those two do map. The other five
+`material.<token>` requests the ADR-94 `setResponse` answers —
+`PStress`, `J2Stress`, `VolStrain`, `J2Strain`, `BackStress` — write a
+full bucket per token into the `.ladruno` file, and every one of their
+columns was dropped by `_ladruno_element_io.continuum_canonical`
+(returning `None`) **in silence**: `available_components()` simply did
+not list them, which is indistinguishable from a material that never
+wrote them.
+
+**Naming.** The four invariants land on provenance-distinct names —
+`p`→`material_mean_stress`, `J2stress`→`material_j2_stress`,
+`epsVol`→`material_volumetric_strain`, `J2strain`→`material_j2_strain`
+— and are deliberately NOT aliased onto the tensor-derived
+`mean_stress` / `j2_stress` / `volumetric_strain` / `j2_strain` of
+`results/_derived.py`. On fork build `3622d6214` a `MohrCoulombSoil`
+deck measures them EQUAL (same sign, factor 1: both `trace/3`, both
+J2 = ½·s:s, both `trace(ε)`) — but that is one material on one build,
+not a contract. Aliasing would need a per-material sign/definition
+audit, and the fork header's own comment on `p`'s sign does not match
+its arithmetic (`VoigtVector::meanStress()` is tension-positive; the
+yield functions negate it at their call sites). Two names, both
+readable, tell the user which one they are looking at.
+
+`BackStress_1..6` → `back_stress_{xx,yy,zz,xy,yz,xz}` (the material's
+Voigt order 11, 22, 33, 12, 23, 13 — the order the `epsP1..` columns
+already use). Scalar internal variables map by an explicit table
+(`YieldStress`, `DP_cohesion`, `CapPressure`, `EpsQpShear`); there is
+no generic pass-through, so an IV nobody has mapped stays visible as a
+dropped column rather than being guessed into a canonical.
+
+**The drop is loud now.** `gauss_available` raises one
+`GaussColumnDroppedWarning` per bucket, naming the bucket, the dropped
+labels and the element class. Buckets that map completely never warn,
+and section stations (`LEVELS == 2`) are excluded from the Gauss paths
+entirely — a `section.force` block carries `GAUSS_ID >= 0` but is a
+line station, and its axial force `P` would otherwise collide with the
+material's mean stress `p` under the case-insensitive match.
+
+**Nothing else needed registering.** The `.ladruno` read path is
+file-driven end to end: the new names reach `available_components()`
+and `elements.gauss.get(...)` with no entry in `_vocabulary.py`, and
+adding them to `DERIVED_SCALARS` would advertise them as
+capture-declarable while `spec/_emit.py`'s MPCO token table has no
+token for them — a capture that silently records nothing. Recording
+them stays an explicit `elem_responses=("material.PStress", …)` on
+`ops.recorder.Ladruno`.

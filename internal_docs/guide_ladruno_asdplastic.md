@@ -129,10 +129,15 @@ engine-checked in `test_ladruno_gauss_generic_columns.py`. A **bare** `pstrain` 
 reaches the material and records nothing, silently (the fork's own `setResponse` comment says
 so). `ops.recorder.Ladruno` / `MPCO` now refuse the bare spelling of the known material-only
 tokens (`pstrain`, `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`, `J2Strain`) at
-construction, naming the `material.<token>` form. Still open (A12 territory, not this ADR): the
-reader drops `material.PStress` / `J2Stress` / `VolStrain` / `J2Strain` / `BackStress` buckets
-without a warning — the tensor-derived `mean_stress`, `j2_stress`, `volumetric_strain`,
-`j2_strain` cover the first four, `BackStress` has no reader today.
+construction, naming the `material.<token>` form. Resolved since, in ADR 0105 Amendment 1: the
+reader now keeps those five buckets — `p` → `material_mean_stress`, `J2stress` →
+`material_j2_stress`, `epsVol` → `material_volumetric_strain`, `J2strain` →
+`material_j2_strain`, `BackStress_1..6` → `back_stress_{xx,yy,zz,xy,yz,xz}` — kept
+provenance-distinct from the tensor-derived `mean_stress` / `j2_stress` / `volumetric_strain` /
+`j2_strain` (measured equal on build `3622d6214`, but that is a measurement, not a contract).
+Known scalar internal variables (`YieldStress`, `DP_cohesion`, `CapPressure`, `EpsQpShear`) map
+too, and any label that still has no canonical now raises a `GaussColumnDroppedWarning` naming
+the bucket instead of vanishing.
 
 ## 8. Goldens — what actually moved
 
