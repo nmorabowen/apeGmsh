@@ -28,7 +28,7 @@ import warnings
 from dataclasses import dataclass
 import re
 import sys
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     # `Self` is 3.11+, but this module must import on the 3.10 that
@@ -867,6 +867,28 @@ class LadrunoSANISAND(NDMaterial):
            whole increment. Only :class:`~apeGmsh.opensees.element.solid.LadrunoBrick`
            propagates on every path today, so apeGmsh **raises** at
            ``build()`` if a capped material reaches any other element.
+    implex
+        Enables the fork's IMPL-EX (implicit/explicit) integration seam
+        (``-implex``). Default ``False`` = off = vanilla's behaviour, and
+        the flag is then not emitted, so an unset deck is byte-identical
+        to one built before this argument existed. ``implex_control`` and
+        ``implex_factor`` both require this to be ``True`` — the fork
+        refuses any ``-implex*`` flag without ``-implex`` first.
+    implex_control
+        ``(err_tol, reduction_limit)`` pair for the IMPL-EX step-size
+        control (``-implexControl err_tol reduction_limit``). ``None``
+        (default) omits the flag. Required when ``implex_factor`` is
+        ``"control"`` or ``"controlIter"``.
+    implex_factor
+        Selects the IMPL-EX extrapolation factor scheme
+        (``-implexFactor {fixed|control|controlIter}``). ``None``
+        (default) **omits** the token entirely, so the deck falls
+        through to the fork's own ``fixed`` default and stays
+        byte-identical to a deck built before this field existed (same
+        rationale as ``max_substeps=0`` above). ``"control"`` is
+        MEASURED-REFUTED on the fork's R3 registered arm; ``"controlIter"``
+        is TIMs-campaign-only. Neither is a general recommendation —
+        pick one only with a specific, sourced reason to.
     """
 
     # 18 positionals — same names and order as ManzariDafalias
@@ -902,6 +924,11 @@ class LadrunoSANISAND(NDMaterial):
     p_min: float | None = None      # None -> resolved to 1.0e-3 * P_atm
     honor_tol_r: bool = False
     max_substeps: int = 0           # 0 = uncapped = vanilla's behaviour
+
+    # the IMPL-EX seam
+    implex: bool = False
+    implex_control: tuple[float, float] | None = None   # (err_tol, reduction_limit); None = off
+    implex_factor: Literal["fixed", "control", "controlIter"] | None = None
 
     def __post_init__(self) -> None:
         _validate_sanisand_bounds(
@@ -981,6 +1008,17 @@ class LadrunoSANISAND(NDMaterial):
                 SanisandIntegrationWarning,
                 stacklevel=2,
             )
+        if self.implex_factor is not None and not self.implex:
+            raise ValueError(
+                f"LadrunoSANISAND: implex_factor={self.implex_factor!r} requires implex=True "
+                f"(the fork refuses any -implex* flag without -implex)."
+            )
+        if self.implex_factor in ("control", "controlIter") and self.implex_control is None:
+            raise ValueError(
+                f"LadrunoSANISAND: implex_factor={self.implex_factor!r} requires implex_control "
+                f"(err_tol, reduction_limit) -- the fork's own message: '-implexFactor control "
+                f"REQUIRES -implexControl' (LadrunoSANISAND.cpp:1983)."
+            )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | int | str] = [
@@ -1021,6 +1059,12 @@ class LadrunoSANISAND(NDMaterial):
         # the one it produced before the flag existed.
         if self.max_substeps:
             args += ["-maxSubsteps", self.max_substeps]
+        if self.implex:
+            args.append("-implex")
+        if self.implex_control is not None:
+            args += ["-implexControl", *self.implex_control]
+        if self.implex_factor is not None:
+            args += ["-implexFactor", self.implex_factor]
         emitter.nDMaterial("LadrunoSANISAND", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
@@ -1193,6 +1237,15 @@ _ASDP_RETURN_TO_YIELD_SURFACE: frozenset[str] = frozenset({
 #: Minimum fork build for the ADR-94 contract (``ops.ladrunoBuild()``).
 #: An older parser silently drops ``strict_convergence`` / ``f_relative_tol``.
 ASDP_MIN_FORK_BUILD = "bbf657d49"
+
+#: Minimum fork build for ``LadrunoSANISAND``'s ``-implexFactor`` argument
+#: (``ops.ladrunoBuild()``, ADR 92 P2-9, fork PR #822). Documented, not
+#: enforced (same as :data:`ASDP_MIN_FORK_BUILD` — a bare hash cannot prove
+#: ancestry). An older fork build does not silently ignore the token: its
+#: flag loop falls through to the positional-optional branch, which tries
+#: to parse ``-implexFactor`` as a ``$TolR``-tail double, fails, and
+#: HARD-REFUSES construction (``WARNING ... unrecognized option``).
+SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
 
 
 class ASDPlasticIntegrationWarning(UserWarning):

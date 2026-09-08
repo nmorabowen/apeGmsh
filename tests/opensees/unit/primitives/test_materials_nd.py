@@ -1370,6 +1370,42 @@ class TestLadrunoSANISAND:
     def test_dependencies_is_empty(self) -> None:
         assert LadrunoSANISAND(**_LS_KWARGS).dependencies() == ()
 
+    # ADR 92 P2-9: the -implex/-implexControl/-implexFactor seam.
+    def test_implex_seam_emits_after_every_positional_tail_and_flag(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(
+            **_LS_KWARGS,
+            implex=True, implex_control=(1e-4, 0.5), implex_factor="controlIter",
+        )._emit(rec, tag=9)
+        assert rec.calls[0][1] == (
+            ("LadrunoSANISAND", 9) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+            + _LS_FLAGS_DEFAULT
+            + ("-implex", "-implexControl", 1e-4, 0.5, "-implexFactor", "controlIter")
+        )
+
+    # Regression lock: with the three new fields left at their defaults the
+    # emitted deck is byte-identical to a pre-implex build's output — the
+    # fields are inert unless opted into.
+    def test_implex_fields_default_off_do_not_change_emit(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+             + _LS_FLAGS_DEFAULT, {}),
+        ]
+
+    def test_rejects_implex_factor_without_implex(self) -> None:
+        with pytest.raises(ValueError, match="requires implex=True"):
+            LadrunoSANISAND(**_LS_KWARGS, implex_factor="fixed", implex=False)
+
+    def test_rejects_implex_factor_control_without_implex_control(self) -> None:
+        with pytest.raises(ValueError, match="requires implex_control"):
+            LadrunoSANISAND(
+                **_LS_KWARGS, implex=True, implex_control=None,
+                implex_factor="control",
+            )
+
 
 class TestSanisandSspPairing:
     """``ssp`` builds its stabilization from a wrongly referenced tangent."""
