@@ -9,13 +9,14 @@ related:
   - "[[LadrunoSANISAND_implex_guide]]"
   - "[[92_ladruno_sanisand_implex_adr]]"
   - "[[_adr92_p2_9_r3_results]]"
+  - "[[_adr92_p2_9_esmeralda_results]]"
   - "[[86_ladruno_sanisand_apegmsh_emitter_guide]]"
   - "[[ladruno_apegmsh_contract]]"
   - "[[ladruno_apegmsh_adoption_guide_2026-09-07]]"
 tags: [apegmsh, adoption, sanisand, implex, manzari-dafalias, recorder]
 ---
 
-> [!note] Copied verbatim from the Ladruno fork, `Ladruno_implementation/ladruno_apegmsh_adoption_guide_2026-09-08.md` (fork PR #828, feature merged in fork PR #822, ladruno `179da6ffb`). The fork copy is the source of truth; edit there and re-copy.
+> [!note] Copied verbatim from the Ladruno fork, `Ladruno_implementation/ladruno_apegmsh_adoption_guide_2026-09-08.md` (fork PRs #828 and #833; feature merged in fork PR #822, ladruno `179da6ffb`). The fork copy is the source of truth; edit there and re-copy.
 
 # apeGmsh adoption guide — ADR 92 / P2-9
 
@@ -166,9 +167,9 @@ and matches the order the command-line synopsis in
   `..._trialGuard`, `..._holdSkip`, `..._controlBackoff`) rather than expecting `COMP_NAMES` from
   the wire — the fork will not emit them.
 
-### (d) Measured verdicts
+### (d) Measured verdicts — CLOSED 2026-09-08
 
-Per the fork's Fork R3 registered arm, the decisive measurement
+Per the fork's Fork R3 registered arm, the first decisive measurement
 (`_adr92_p2_9_r3_results.md`; also summarised in `LadrunoSANISAND_implex_guide.md` §12 "R3
 verdict"):
 
@@ -176,7 +177,7 @@ verdict"):
 |---|---|---|---|---|---|---|
 | `fixed` | — (baseline) | — (baseline) | 17.97 | — | — | shipped default |
 | `control` | 0.0521 — fails | 11.12% — REFUTED | 2.31 | 141.6 s | 1 | **REFUTED** |
-| `controlIter` | 0.1149 — passes | 1.70% — PASSES | 7.39 | 1858.4 s (~13x) | 89 | **PASSES bars, not shipped** |
+| `controlIter` | 0.1149 — passes | 1.70% — PASSES | 7.39 | 1858.4 s (~13x) | 89 | **PASSES R3 bars** |
 
 The numpy oracle independently found the same mechanism (`GD.4`, cited in
 `LadrunoSANISAND_implex_guide.md` §12): `control`'s first-trial freeze is the elastic predictor,
@@ -185,13 +186,29 @@ steps where the real history matters — the oracle measured this made the path 
 worse than `fixed`; recomputed on the converged `d_eps` (i.e. `controlIter`'s anchor) it was
 **1.0-2.1x better**.
 
-**Guidance: do not default to any control mode.** `control` is refuted and should be surfaced,
-if at all, only behind an explicit opt-in with a loud warning quoting the R3 numbers above — never
-silently offered as an alternative to `fixed`. `controlIter` clears both R3 bars and is the
-candidate the TIMs campaign wants to keep exercising, but it is explicitly **not shipped as
-default**: `LadrunoSANISAND_implex_guide.md` §12 states its own Esmeralda dense-refuse arm is
-"the outstanding gate before any shipping decision." Treat `implex_factor="controlIter"` in
-apeGmsh as an opt-in for that campaign, not a recommended setting for ordinary decks.
+R3 was not the final gate, though — the pre-registered decision rule's actual gate is the
+Esmeralda dense-refuse arm. TIMs reported it 2026-09-08 (`_adr92_p2_9_esmeralda_results.md`,
+engine `179da6ffb`): dense honest wall on `controlIter` (control 0.1/0.01) = **0.01755**, against
+a P2-7c fixed-f reference wall of 0.01689 (+3.9 % reach) and a ship bar of `>= 0.0177`. That
+clears the refutation bar (`< 0.0169`) but misses ship by 0.85 % — neither branch of the rule's
+`if` fires, so the **otherwise branch is decisive: P2-9 does not ship as a default.**
+`-implexFactor fixed` remains the fork default (no code change, since `fixed` was already
+default); `controlIter` is recorded as a graded guard with its measured gain (refusal churn
+42 545 -> 102, failed attempts 248 -> 11, overlay comparable-to-better at +0.28 % mean) against
+its measured cost (~2.9x wall time on this deck — **not** the R3 leg's ~13x, which does not
+generalise). `control` stays REFUTED. P2-8's fixed threshold (`-implexGuardKp`, listed, not
+built) remains the ADR's documented fallback.
+
+**Guidance: do not default to any control mode — this is now the settled verdict, not an
+interim one.** `control` is refuted and should be surfaced, if at all, only behind an explicit
+opt-in with a loud warning quoting the R3 numbers above — never silently offered as an
+alternative to `fixed`. `controlIter` clears both R3 bars and delivers a real, measured gain
+(reach, overlay, refusal-churn collapse) on Esmeralda, but it explicitly **does not ship as
+default**: it missed the pre-registered ship bar (0.01755 vs 0.0177) and costs ~2.9x wall time
+on a production-scale deck. Treat `implex_factor="controlIter"` in apeGmsh as an opt-in for
+deep, dense pushes toward a softening seat where refusal churn (not wall time) is the binding
+cost — not a recommended setting for ordinary decks, and not a candidate for becoming the
+default in a future PR without a new decision.
 
 ### (e) Golden-file note
 
@@ -202,10 +219,11 @@ the fork default is `fixed`, **no apeGmsh golden file needs regenerating** for t
 unlike the `IntScheme 45` shift documented in `86_ladruno_sanisand_apegmsh_emitter_guide.md` §3.1,
 which did move existing regression files.
 
-Docs: `LadrunoSANISAND_implex_guide.md` §1 (flag table), §6 (responses), §12 (P2-9 in full);
-`92_ladruno_sanisand_implex_adr.md` (P2-9 row, plan/decisions); `_adr92_p2_9_r3_results.md`
-(the verdict measurements); `SRC/material/nD/LadrunoSANISAND.cpp` (parser, lines 442-481 and
-1982-1989).
+Docs: `LadrunoSANISAND_implex_guide.md` §1 (flag table), §6 (responses), §12 (P2-9 in full,
+including "When to reach for `controlIter`"); `92_ladruno_sanisand_implex_adr.md` (P2-9 row,
+plan/decisions); `_adr92_p2_9_r3_results.md` (the R3 arm measurements);
+`_adr92_p2_9_esmeralda_results.md` (the closing dense/loose-refuse arm and the CLOSED verdict);
+`SRC/material/nD/LadrunoSANISAND.cpp` (parser, lines 442-481 and 1982-1989).
 
 ---
 
