@@ -349,7 +349,8 @@ class Element(Recorder):
 #: / LadrunoSANISAND ``setResponse``): a bare ``-E <token>`` records nothing
 #: on the fork; the recorder reaches the material only as ``material.<token>``
 #: (ADR 0105; TIMs A12 for the SANISAND IMPL-EX/state responses, fork PR
-#: #805/#820).
+#: #805/#820; fork ADR-95 for the two read-only ``DruckerPrager``
+#: diagnostics, fork PR #803 merged as ``61b3efa04``).
 _MATERIAL_ONLY_ELEM_TOKENS: frozenset[str] = frozenset({
     "pstrain", "pstrains", "eqpstrain",
     "PStress", "J2Stress", "VolStrain", "J2Strain",
@@ -359,6 +360,7 @@ _MATERIAL_ONLY_ELEM_TOKENS: frozenset[str] = frozenset({
     "substeps", "substepsME", "ladrunoSubsteps",
     "implexDetail", "implexRefusals",
     "implexGuards", "ImplexGuards",
+    "ladrunoBranch", "ladrunoTangent",
 })
 
 

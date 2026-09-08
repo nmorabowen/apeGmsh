@@ -523,7 +523,8 @@ class TestMaterialLevelTokens:
          "psi", "stateParameter", "yieldDistance", "yieldFunction",
          "implexError", "avgImplexError", "substeps", "substepsME",
          "ladrunoSubsteps", "implexDetail", "implexRefusals",
-         "implexGuards", "ImplexGuards"],
+         "implexGuards", "ImplexGuards",
+         "ladrunoBranch", "ladrunoTangent"],
     )
     def test_bare_material_token_is_refused_naming_the_prefix(
         self, token: str,
@@ -538,6 +539,13 @@ class TestMaterialLevelTokens:
                             "material.eqpstrain", "material.stress"),
         )
         assert "material.pstrain" in r.elem_responses
+
+    @pytest.mark.parametrize("token", ["ladrunoBranch", "ladrunoTangent"])
+    def test_prefixed_drucker_prager_tokens_pass(self, token: str) -> None:
+        # Fork ADR-95 (PR #803): both DruckerPrager diagnostics answer at
+        # material level only, so the prefixed spelling is the usable one.
+        r = Ladruno(file="x.ladruno", elem_responses=(f"material.{token}",))
+        assert f"material.{token}" in r.elem_responses
 
     @pytest.mark.parametrize("token", ["psi", "implexRefusals", "implexGuards"])
     def test_prefixed_sanisand_tokens_pass(self, token: str) -> None:

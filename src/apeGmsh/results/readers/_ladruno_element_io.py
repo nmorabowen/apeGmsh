@@ -319,6 +319,26 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
         "implex_guards_hold_skip_commit",   # 5  P2-5c hold-skip commits
         "implex_guards_control_backoff",    # 6  P2-9 f* < 0.5*f_max
     ),
+    # Fork ADR-95 (PR #803). Same shape as implexGuards: the fork returns a
+    # bare ``MaterialResponse(this, 95, Vector(8))`` with NO ResponseType
+    # (DruckerPrager.cpp:1004-1005), so the file always writes C1..C8 and
+    # this map is the only authority on what they mean. Order is the fill
+    # site, ``DruckerPrager::getLadrunoBranch()``, DruckerPrager.cpp:960-970.
+    # The map wins over the file's own labels whenever the widths match, so
+    # re-check this entry if ``DruckerPrager::setResponse`` ever starts
+    # emitting a ResponseType for responseID 95.
+    # ``ladrunoTangent`` (36 entries, responseID 96) is refused bare by the
+    # recorder but deliberately NOT named here -- nothing reads it yet.
+    "ladrunobranch": (
+        "dp_branch",            # 0  0 elastic / 1 cone / 2 cutoff / 3 corner
+        "dp_gamma_cone",        # 1  gamma(0), the f1 plastic multiplier
+        "dp_gamma_cutoff",      # 2  gamma(1), the f2 plastic multiplier
+        "dp_f1_trial",          # 3  f1 at the TRIAL state
+        "dp_f2_trial",          # 4  f2 at the TRIAL state
+        "dp_forced_accept",     # 5  1 when the count > 3 bailout fired
+        "dp_i1",                # 6  I1 of the RETURNED stress
+        "dp_det_a_min",         # 7  min_n det(n.D_ep.n) / (2G)^3
+    ),
 }
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")

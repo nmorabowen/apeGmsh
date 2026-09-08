@@ -1,10 +1,12 @@
 # apeGmsh ← Ladruno ASDPlasticMaterial3D: the fork-side change request
 
-> **STATUS (2026-09-07).** Two asks, neither filed yet. apeGmsh ADR 0105 is
-> Accepted against fork build `3622d6214` with both worked around on the
-> apeGmsh side (a hand-maintained schema table pinned by a 46-combination
-> fixture; a hand-copied refused-integrator list). Nothing here is
-> implemented on the fork; this page is the request.
+> **STATUS (2026-09-08).** Three asks, none filed yet. apeGmsh ADR 0105 is
+> Accepted against fork build `3622d6214` with the first two worked around
+> on the apeGmsh side (a hand-maintained schema table pinned by a
+> 46-combination fixture; a hand-copied refused-integrator list); Ask 3 has
+> no apeGmsh-side fix at all, only a material to steer users away from
+> (ADR 0105 Amendment 2). Nothing here is implemented on the fork; this
+> page is the request.
 
 Fork ADR-94 made the `ASDPlasticMaterial3D` parser fail loud, which is what
 apeGmsh wanted — a typo'd `MC_phi` no longer runs at φ = 0. It also moved two
@@ -88,6 +90,36 @@ older builds.
 
 **Cost on the fork.** The tokens and reasons are string literals in one
 function; the constant is a table those branches read from.
+
+### Ask 3 — make `DruckerPrager_YF`'s apex-region test exact at `etabar = 0`
+
+**The problem.** `ASDPlasticMaterial3D` + `DruckerPrager_YF` has no tension
+cutoff, and the apex projection PR #815 added classifies the trial state
+with the Euclidean test `p − p_apex ≥ η·q`. At ψ = 0 (`DP_etabar = 0`, the
+zero-dilatancy case every frictional collapse deck uses) the exact test is
+`p ≥ p_apex`, so an over-apex state with small shear is classified as a
+flank return and handed to a map that cannot move `p`. The state never
+reaches the apex. Measured on the fork's Prandtl–Reissner strip-footing
+deck (fork ADR-95 campaign): the quadratic leg walls at the same station
+regardless of element — predicted on the fork side and then confirmed. The
+linear control leg matches the vanilla UW `nDMaterial DruckerPrager` to the
+printed digit after #815, so this is the over-apex path only.
+
+**The ask.** Classify with the elastic metric rather than the Euclidean
+one, or — cheaper — fall back to the apex map when the flank map returns a
+state whose `p` did not move but should have. Either makes ASD-DP usable at
+`etabar = 0` on footing, heave and bearing-capacity decks. The fork already
+records this as an ADR-94 follow-up.
+
+**Cost on the fork.** One region test in `DruckerPrager_YF`, or one
+post-condition on the flank return in the ASD return map; no parser, tag or
+state-layout change.
+
+**apeGmsh's position meanwhile.** There is no emitter workaround. ADR 0105
+Amendment 2 records the caveat and points zero-dilatancy collapse decks at
+the UW `DruckerPrager` primitive, whose cutoff return map fork PR #803
+repairs — that route needs a build at or after `61b3efa04` (the 2026-09-08
+merge of #803), so a local rebuild comes first.
 
 ## B. Not asked, on purpose
 

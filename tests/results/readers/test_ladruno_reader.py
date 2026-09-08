@@ -934,6 +934,56 @@ def test_implex_guards_slot_order_matches_the_fork_fill_site() -> None:
             == material_bucket_canonicals("material.implexGuards"))
 
 
+def test_ladruno_branch_eight_slots_resolve_by_position(tmp_path: Path) -> None:
+    # Fork ADR-95 (PR #803). Like implexGuards, the fork returns a bare
+    # MaterialResponse with no ResponseType (DruckerPrager.cpp:1004-1005),
+    # so C1..C8 is what every build writes and the by-position map is the
+    # only thing that can name these columns.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.ladrunoBranch": tuple(f"C{i}" for i in range(1, 9)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert {
+        "dp_branch", "dp_gamma_cone", "dp_gamma_cutoff",
+        "dp_f1_trial", "dp_f2_trial", "dp_forced_accept",
+        "dp_i1", "dp_det_a_min",
+    } <= comps
+
+
+def test_ladruno_branch_slot_order_matches_the_fork_fill_site() -> None:
+    # Pinned to DruckerPrager::getLadrunoBranch(), DruckerPrager.cpp:960-970.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.ladrunoBranch") == (
+        "dp_branch",            # mLadBranch
+        "dp_gamma_cone",        # mLadGamma0
+        "dp_gamma_cutoff",      # mLadGamma1
+        "dp_f1_trial",          # mLadF1Trial
+        "dp_f2_trial",          # mLadF2Trial
+        "dp_forced_accept",     # mLadForcedAccept
+        "dp_i1",                # I1 of the returned stress
+        "dp_det_a_min",         # detAmin
+    )
+
+
+def test_ladruno_tangent_is_not_named_yet(tmp_path: Path) -> None:
+    # The 36-entry `ladrunoTangent` (responseID 96) is refused bare by the
+    # recorder but has no by-position map: nothing reads it yet, so it takes
+    # the documented unknown-bucket route rather than inventing 36 names.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.ladrunoTangent") is None
+
+
 def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
     path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
     with LadrunoReader(path) as r:
