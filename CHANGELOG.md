@@ -360,9 +360,18 @@ this also works on fork builds old enough to still write `C1..Cn` instead of the
 named `COMP_NAMES` (fork PR #820) — the reason the ASDPlasticMaterial3D buckets
 are keyed this way too.
 
-Not done: `implexGuards` (6 slots, untagged in the fork) stays unregistered —
-there is no token to key it by. None of the new canonical names were added to
-`_vocabulary.ALL_CANONICAL`, matching the existing `material_*` names.
+Not done, named for the runway: `implexGuards` (6 slots, no `ResponseType`
+tags in the fork, so its slot meanings are not established) stays
+unregistered. None of the new canonical names were added to
+`_vocabulary.ALL_CANONICAL`, matching the existing `material_*` names. The
+MPCO reader's material-state path knows only `damage` /
+`equivalentPlasticStrain` / `plasticStrain` and drops these buckets, as it
+already does the ADR 0105 ones. And by-position resolution means a file whose
+`COMP_NAMES` disagree with the table (measured: `substeps_capHit, substeps_me`
+reads as `me, capHit`; a `material.psi` bucket labelled `yieldDistance` reads
+as `state_parameter`) is renamed **silently** — that predates this entry, but
+#820 makes the file's names authoritative, so the disagreement is now
+detectable and should warn.
 
 ### ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
 
