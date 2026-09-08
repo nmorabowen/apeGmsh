@@ -215,11 +215,26 @@ def test_node_pair_spring_emits_inode_jnode(tmp_path: Path) -> None:
 def test_node_pair_g1_fires_on_ndf_mismatch(tmp_path: Path) -> None:
     g, fem, h = _box_with_ground()
     try:
-        # ground stated at ndf 4 while the tet structural end infers 3 ->
-        # G1 (equal-endpoint gate) must raise.
-        ops, _ = _spring_ops(fem, h, ground_ndf=4)
+        # ground stated at ndf 2 while the tet structural end infers 3 ->
+        # G1 (equal-endpoint gate) must raise: one end below 3 is outside
+        # the fork's 3D relaxation at any build.
+        ops, _ = _spring_ops(fem, h, ground_ndf=2)
         with pytest.raises(BridgeError, match="differing"):
             ops.tcl(str(tmp_path / "x.tcl"))
+    finally:
+        g.end()
+
+
+def test_node_pair_g1_allows_a_3d_pair_with_both_ends_at_least_three():
+    """Fork #808 / ADR 96: in 3D a zeroLength takes any pair whose ends
+    both carry ndf >= 3, acting on DOFs 1-3 with the rest untouched
+    passengers. A ground stated at ndf 4 against a 3-dof tet end is that
+    case — G1 used to refuse it, and refusing it now would block the
+    u-p interfaces TIMs A10 exists for."""
+    g, fem, h = _box_with_ground()
+    try:
+        ops, _ = _spring_ops(fem, h, ground_ndf=4)
+        ops.build()          # G1 runs at build; no raise is the assertion
     finally:
         g.end()
 

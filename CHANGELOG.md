@@ -422,6 +422,30 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — interface() 3D S3: a 3D interface emits a deck
+
+S2 resolved a 3D surface master and stopped there. It now emits: one
+`zeroLength` per coincident pair, the normal law on the pair's outward
+normal and the tangential law on both in-plane tangents, with the pair's
+own local frame written per element. There is no phantom bridge in 3D —
+the fork joins a mixed pair directly — so an `ndf`-3 footing skin sits on
+`ndf`-4 u–p soil and the pore pressure is left alone; a pair the fork
+would not take is refused before a line is written rather than emitted
+and quietly disabled. The frame is checked, not trusted: OpenSees derives
+the third local direction itself, so a record whose third vector is not
+the cross product of the first two is refused by name instead of putting
+the second slider on the wrong tangent.
+
+One thing to know before trusting a 3D number. The two tangential
+directions are **independent** sliders, each capped at the full bond
+strength, not a single circular slip surface. Sliding along one tangent
+behaves exactly as in 2D; sliding on the diagonal between them can carry
+up to √2 the intended shear. That is a deliberate choice — the laws
+translate to uniaxial materials, and a coupled cone is a different
+material — and measuring what it costs, together with reproducing the 2D
+convergence case in 3D and showing the pore pressure untouched, is the
+verification slice that follows.
+
 ### CHANGED — interface() 3D S2: a surface master resolves, emission still refuses
 
 `g.constraints.interface()` used to refuse a 3D model at the call. It now

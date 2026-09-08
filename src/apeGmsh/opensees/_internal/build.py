@@ -554,6 +554,16 @@ def validate_adaptive_element_endpoints(
                 for n in node_tags
             }
             if len(set(eff.values())) > 1:
+                # Fork #808 / ADR 96: a 3-D zeroLength-family element now
+                # takes ANY pair whose two ends both carry ndf >= 3. It
+                # acts on DOFs 1-3 and every DOF past the third — a u-p
+                # node's pore pressure, a shell node's rotations — rides
+                # as an untouched passenger. In 2-D, and below the
+                # minimum build, the mismatch is still a warning plus an
+                # inert element: the silent no-spring this guard exists
+                # to catch.
+                if int(ndm) == 3 and min(eff.values()) >= 3:
+                    continue
                 raise BridgeError(
                     f"{cls} element {eid} connects nodes with differing "
                     f"effective ndf {eff} — OpenSees requires equal ndf at "
@@ -564,7 +574,10 @@ def validate_adaptive_element_endpoints(
                     f"end infers a different value. Fix: set the model "
                     f"envelope to match the structural side, attach an "
                     f"element to the ground node, or use separate coincident "
-                    f"nodes + g.constraints.equal_dof on the shared DOFs."
+                    f"nodes + g.constraints.equal_dof on the shared DOFs. "
+                    f"(The one exemption is a 3-D pair whose ends BOTH "
+                    f"carry ndf >= 3 — fork #808 / ADR 96, minimum build "
+                    f"TIMS_FORK_BATCH_MIN_BUILD — which this pair is not.)"
                 )
 
 
@@ -5994,6 +6007,22 @@ def _interface_tangential_material(a_trib: float, law: object) -> "UniaxialMater
     )
 
 
+def _interface_is_3d(rec: object) -> bool:
+    """Is this a 3-D (dim-2 surface master) interface record?
+
+    Read off the record's OWN frame width, never off ``ndm``: six floats
+    is the 2-D line master's ``-orient`` argument, nine is the 3-D
+    surface master's ``(n, t1, t2)`` triad (ADR 0093 D2 / TIMs A10 S2).
+    The record is what carries the dimension, so a record reaching emit
+    through ``g.compose``, an h5 reload or a stage claim is classified
+    the same way on every route — and a record whose width disagrees
+    with the model's ``ndm`` is refused by :func:`_validate_interface_ndf`
+    rather than silently emitting the other dimension's element shape.
+    """
+    orient = getattr(rec, "orient", None)
+    return orient is not None and len(orient) == 9
+
+
 def _validate_interface_ndf(
     rec: object,
     effective_ndf: "Mapping[int, int]",
@@ -6016,21 +6045,35 @@ def _validate_interface_ndf(
     * ``slave_ndf=3`` declared against a 2-dof slave — the phantom and
       its equalDOF are pure noise, and the `equalDOF` would tie dofs the
       user never meant to bridge.
+
+    In 3-D (a nine-float record, TIMs A10 S3) there is no phantom to
+    declare — fork #808 / ADR 96 joins the mixed pair directly — so the
+    gate becomes the accepted-pair table itself, mirrored from the
+    resolver's ``_ACCEPTED_3D_NDF_PAIRS`` rather than restated here.
     """
     name = getattr(rec, "name", None)
     label = f" {name!r}" if name else ""
-    if int(ndm) != 2:
-        raise BridgeError(
-            f"interface{label}: interface records only exist for 2D line "
-            f"masters (ADR 0093 D2), but the model is ndm={int(ndm)}."
-        )
-
     master = int(getattr(rec, "master_node"))
     slave = int(getattr(rec, "slave_node"))
     phantom = getattr(rec, "phantom_node", None)
 
     def ndf_of(n: int) -> int:
         return int(effective_ndf.get(int(n), int(envelope_ndf)))
+
+    if _interface_is_3d(rec):
+        _validate_interface_ndf_3d(
+            label, master, slave, phantom,
+            ndf_of(master), ndf_of(slave), ndm,
+        )
+        return
+
+    if int(ndm) != 2:
+        raise BridgeError(
+            f"interface{label}: this record carries a six-float frame, "
+            f"i.e. a 2D dim-1 line master (ADR 0093 D2), but the model is "
+            f"ndm={int(ndm)}. A 3D interface resolves a dim-2 surface "
+            f"master and carries a nine-float (n, t1, t2) frame."
+        )
 
     m_ndf, s_ndf = ndf_of(master), ndf_of(slave)
     if m_ndf != 2:
@@ -6073,32 +6116,104 @@ def _validate_interface_ndf(
         )
 
 
-def _refuse_3d_interface_emission(rec: object) -> None:
-    """Refuse to emit a 3D interface record (TIMs A10 S2 / S3 boundary).
+def _validate_interface_ndf_3d(
+    label: str,
+    master: int,
+    slave: int,
+    phantom: "int | None",
+    m_ndf: int,
+    s_ndf: int,
+    ndm: int,
+) -> None:
+    """The 3-D half of :func:`_validate_interface_ndf` (TIMs A10 S3).
 
-    S2 lifted the resolver's gates, so a dim-2 surface master in a 3D
-    model now RESOLVES: the records exist, carrying a nine-float
-    ``(n, t1, t2)`` frame and a facet-area ``A_trib``. Emission is S3 —
-    :func:`_emit_interface_record` still hard-codes ``-dir 1 2`` and a
-    six-float ``-orient``, which on a 3D pair would spring two of the
-    three translations in a frame the record does not mean. That is a
-    silently wrong model, so the width of ``orient`` is read here and
-    the whole pool refused before a line is written.
+    The accepted ``(ndf_i, ndf_j)`` table is IMPORTED from the resolver
+    (``_ACCEPTED_3D_NDF_PAIRS``), never restated: the resolver's
+    ``slave_ndf`` gate and this emit-time gate must agree by
+    construction, and a second copy is a second thing to drift. The
+    fork joins any 3-D pair with both ends ndf >= 3, acting on DOFs 1-3
+    with every DOF past the third an untouched passenger (fork #808 /
+    ADR 96); a pair outside the table is a warning plus an inert
+    element there, so it is refused here, before a line is written.
 
-    Keyed on the RECORD, not on ``ndm``: the record is what carries the
-    3D frame, so a 3D interface composed into a model, read back from
-    h5, or claimed into a stage is refused on every route.
+    D4 does not cross over: in 3-D no phantom is minted at all (that is
+    what the fork's relaxation retires), so a record carrying one is a
+    resolver-contract violation rather than a user mistake.
     """
-    orient = getattr(rec, "orient", None)
-    if orient is None or len(orient) != 9:
-        return
-    name = getattr(rec, "name", None)
-    label = name if name else f"master {int(getattr(rec, 'master_node'))}"
-    raise BridgeError(
-        f"interface '{label}': 3-D interface emission is not built yet "
-        f"(TIMs A10 S3 — per-pair -orient with two tangents, ADR 0093 "
-        f"register); the records resolved, nothing was emitted"
+    from apeGmsh._kernel.resolvers._interface_resolver import (
+        _ACCEPTED_3D_NDF_PAIRS,
     )
+    from .._target import TIMS_FORK_BATCH_MIN_BUILD
+
+    if int(ndm) != 3:
+        raise BridgeError(
+            f"interface{label}: this record carries a nine-float "
+            f"(n, t1, t2) frame, i.e. a 3D dim-2 surface master (ADR 0093 "
+            f"D2 / TIMs A10), but the model is ndm={int(ndm)}. A 2D "
+            f"interface carries six floats."
+        )
+    if phantom is not None:
+        raise BridgeError(
+            f"interface{label}: pair (master={master}, slave={slave}) "
+            f"carries phantom node {int(phantom)}, but a 3D interface "
+            f"mints no phantom — fork #808 / ADR 96 joins the mixed pair "
+            f"directly, which is what retires the ADR 0093 D4 bridge in "
+            f"3D. A phantom here means the record and the resolver "
+            f"disagree."
+        )
+    if (m_ndf, s_ndf) not in _ACCEPTED_3D_NDF_PAIRS:
+        raise BridgeError(
+            f"interface{label}: pair (master={master}, slave={slave}) has "
+            f"ndf=({m_ndf}, {s_ndf}), which no 3D zeroLength accepts. The "
+            f"fork joins a 3D pair whose ends BOTH carry ndf >= 3, acting "
+            f"on DOFs 1-3 with every DOF past the third an untouched "
+            f"passenger (fork #808 / ADR 96, minimum build "
+            f"{TIMS_FORK_BATCH_MIN_BUILD} = TIMS_FORK_BATCH_MIN_BUILD); "
+            f"the accepted pairs are "
+            f"{sorted(_ACCEPTED_3D_NDF_PAIRS)}. Outside that table the "
+            f"engine warns and leaves the element inert, so the interface "
+            f"would silently do nothing."
+        )
+
+
+#: How far the record's ``t2`` may sit from ``n x t1`` before the 3-D
+#: frame is refused (TIMs A10 S3).  Tight, because the resolver builds
+#: the triad exactly and ``g.compose`` only rotates it — anything looser
+#: would be tolerating a real error rather than float noise.
+_ORIENT_TRIAD_TOL = 1e-9
+
+
+def _validate_interface_orient_triad(rec: "InterfaceRecord") -> None:
+    """A 3-D record's third frame vector must BE ``n x t1``.
+
+    ``zeroLength -orient x1 x2 x3 yp1 yp2 yp3`` takes only TWO vectors
+    and derives the third itself: local-1 is ``x``, local-2 is the part
+    of ``yp`` orthogonal to ``x``, local-3 is ``1 x 2``
+    (``ZeroLength::setUp``).  So emitting the record's ``(n, t1)`` gives
+    the element ``(n, t1, n x t1)`` — which is the record's own ``t2``
+    only if the record's triad is right-handed.  S1's ``_tangent_pair``
+    builds it that way; asserted here rather than trusted, because a
+    record can reach emit through ``g.compose`` (which rotates every
+    stacked vector), an h5 reload or a hand build, and a flipped ``t2``
+    would put the ``-dir 3`` slider on the opposite tangent with no
+    other symptom in the deck.
+    """
+    frame = np.asarray(rec.orient, dtype=float).reshape(3, 3)
+    n, t1, t2 = frame[0], frame[1], frame[2]
+    err = float(np.linalg.norm(np.cross(n, t1) - t2))
+    if err > _ORIENT_TRIAD_TOL:
+        name = getattr(rec, "name", None)
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"interface{label}: pair (master={int(rec.master_node)}, "
+            f"slave={int(rec.slave_node)}) carries a frame whose t2="
+            f"{tuple(t2)} is not n x t1={tuple(np.cross(n, t1))} "
+            f"(off by {err:.3e} > {_ORIENT_TRIAD_TOL:g}). The zeroLength "
+            f"-orient argument is only (n, t1) and the engine derives "
+            f"local-3 as 1 x 2, so a left-handed record would put the "
+            f"second tangential slider on -t2 while the record says t2 "
+            f"(ADR 0093 D2 / TIMs A10 S3)."
+        )
 
 
 def _validate_interface_records(
@@ -6115,11 +6230,9 @@ def _validate_interface_records(
     the WHOLE side-list including stage-claimed rows), the stage pass
     (:func:`emit_stage_interfaces`) and the partitioned owner-rank plan
     — so a refusal here reaches every route into
-    :func:`_emit_interface_record`, which is the whole point of the 3D
-    refusal below.
+    :func:`_emit_interface_record`, on every dimension.
     """
     for rec in records:
-        _refuse_3d_interface_emission(rec)
         _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
         if rec.orient is None:
             raise BridgeError(
@@ -6130,6 +6243,8 @@ def _validate_interface_records(
                 f"frame, i.e. a normal law acting along global x — the "
                 f"silent sign error ADR 0093 INV-1 exists to kill."
             )
+        if _interface_is_3d(rec):
+            _validate_interface_orient_triad(rec)
         if rec.phantom_node is not None and rec.phantom_coords is None:
             raise BridgeError(
                 f"interface: record for pair (master="
@@ -6337,6 +6452,15 @@ def _emit_interface_record(
     owner-rank pass (ADR 0093 S8), so the D1 translation table and
     INV-1's node order exist in exactly one place.
 
+    Two element shapes, chosen off the record's frame width
+    (:func:`_interface_is_3d`) — never off ``ndm``, which the record may
+    outlive: a 2-D line master emits ``-mat mN mT -dir 1 2`` with the
+    record's six-float ``-orient``, a 3-D surface master (TIMs A10 S3)
+    emits ``-mat mN mT mT -dir 1 2 3`` with the first six of its nine.
+    See the comment at the ``args`` fork for why the tangential tag is
+    repeated rather than minted twice, and for what "two uncoupled
+    sliders" costs.
+
     ``pre_allocated`` is this record's ``(normal_mat_tag,
     tangential_mat_tag, element_tag)`` triple from
     :func:`allocate_interface_tags` — allocation is separated from
@@ -6385,12 +6509,43 @@ def _emit_interface_record(
     m_normal._emit(emitter, n_tag)
     m_tangential._emit(emitter, t_tag)
 
-    args: "list[int | float | str]" = [
-        int(rec.master_node), j_node,
-        "-mat", n_tag, t_tag,
-        "-dir", 1, 2,
-        "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
-    ]
+    args: "list[int | float | str]"
+    if _interface_is_3d(rec):
+        # TWO UNCOUPLED COULOMB SLIDERS, not a circular slip surface:
+        # dir 2 and dir 3 each carry the tangential law in full, so
+        # sliding along t1 and along t2 yield independently at
+        # ``tau_b * A_trib`` rather than on a combined
+        # ``|tau| <= tau_b * A_trib`` radius (the slip locus is a square
+        # in the tangent plane, not a circle, and is up to sqrt(2) too
+        # strong on the diagonal). That is the plan's own choice for S3
+        # — a uniaxial bundle is what ADR 0093 D1 translates to — and
+        # S4 measures what it costs.
+        #
+        # ONE tangential tag on both slots, not two: ZeroLength deep-
+        # copies every ``-mat`` entry (``ZeroLength.cpp:405``,
+        # ``theMaterial1d[i] = theMat[i]->getCopy()``), so the two
+        # sliders carry fully independent state from a single declared
+        # material — a second identical uniaxialMaterial line would buy
+        # nothing and double the deck's material count.
+        #
+        # Only the first six floats go out: ``-orient`` IS (n, t1), and
+        # the engine derives local-3 as ``1 x 2``, which
+        # :func:`_validate_interface_orient_triad` has already proven
+        # equals the record's t2.
+        args = [
+            int(rec.master_node), j_node,
+            "-mat", n_tag, t_tag, t_tag,
+            "-dir", 1, 2, 3,
+            "-orient",
+            *(float(v) for v in rec.orient[:6]),  # type: ignore[index]
+        ]
+    else:
+        args = [
+            int(rec.master_node), j_node,
+            "-mat", n_tag, t_tag,
+            "-dir", 1, 2,
+            "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
+        ]
     # ADR 0049 node-pair convention for a minted (mesh-less) element:
     # sentinel fem_eid + the TRUE endpoint pair.  Without this the H5
     # emitter's sticky side channels leak the last mesh row's fem_eid
