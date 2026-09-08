@@ -74,11 +74,13 @@ dxf = ["ezdxf"]
 # trame-vuetify provides trame.ui.vuetify3 / trame.widgets.vuetify3 — the
 # SinglePageLayout + widgets for the standalone web app (results.serve_web);
 # it is NOT pulled transitively by trame, so it must be listed explicitly.
+# trame-pyvista: since pyvista 0.49 `pyvista.trame` imports PyVistaLocalView
+# from it and pyvista does not declare it as a base dependency.
 # Folded into [viewer] rather than a hard base dep or a separate [web]
 # extra — the whole render stack (pyvista/vtk/PySide6) is already an
 # opt-in here, so one render-install story stays consistent.
 viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
-          "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
+          "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6", "trame-pyvista",
           "ipywidgets>=8.0", "nest_asyncio2"]
 animation = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
 # ADR 0095 S4a: Cursor stdio adapter (`python -m apeGmsh.studio.mcp`).
@@ -126,7 +128,7 @@ docs = [
 #   docs, section-oracle  build/CI-only, never a user runtime dep.
 all = ["matplotlib", "scipy", "openseespy", "ezdxf",
        "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
-       "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
+       "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6", "trame-pyvista",
        "ipywidgets>=8.0", "nest_asyncio2",
        "mcp>=1.2"]
 
