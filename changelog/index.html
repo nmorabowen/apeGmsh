@@ -3685,6 +3685,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 S2: the APEGMSH_STAGE open|close &lt;name&gt; runtime marker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-the-system-pardiso-stats-parser-alone-adr-0106-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3938,6 +3949,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 S2: the APEGMSH_STAGE open|close &lt;name&gt; runtime marker
       
     </span>
   </a>
@@ -4327,6 +4349,26 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker">ADDED — ADR 0106 S2: the <code>APEGMSH_STAGE open|close &lt;name&gt;</code> runtime marker<a class="headerlink" href="#added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker" title="Permanent link">&para;</a></h3>
+<p>The first executable slice of ADR 0106 (S1 landed the pure parser separately).
+<code>stage_open</code> / <code>stage_close</code> on the Tcl and Python emitters now drop a runtime
+<code>puts "APEGMSH_STAGE open|close &lt;name&gt;"</code> / <code>print("APEGMSH_STAGE open|close
+&lt;name&gt;", flush=True)</code> pair around each stage, name last on the line so a name
+with spaces survives the S1 parser's <code>APEGMSH_STAGE (open|close) (.+)$</code>.
+Quoting is normalised the same way <code>analyze</code> already normalises a strategy
+name, so a name carrying a literal quote or bracket cannot break the
+enclosing source line or, in Tcl, trigger command substitution.</p>
+<p>The marker is gated on a new build-level predicate, <code>deck_requests_solver_stats</code>,
+which resolves the flat/staged system declarations the same way
+<code>validate_ladruno_up_solver</code> already does and answers whether any declared
+<code>Pardiso</code> or <code>Mumps</code> asked for <code>-stats</code>. A deck that never does emits
+byte-identically to today in both emitters — the existing staged golden decks
+are unchanged, proving INV-1. The live emitter is untouched (D3), and the H5 /
+recording emitters never see the marker as a primitive — no measurement
+reaches a declaration. Under a partitioned staged deck the marker rides the
+same global scope <code>stage_open</code> and <code>analyze</code> already use, so it runs once per
+rank's own process without disturbing a byte of any <code>if {[getPID] == K} { ...
+}</code> rank guard.</p>
 <h3 id="added-the-system-pardiso-stats-parser-alone-adr-0106-s1">ADDED — the <code>system Pardiso -stats</code> parser, alone (ADR 0106 S1)<a class="headerlink" href="#added-the-system-pardiso-stats-parser-alone-adr-0106-s1" title="Permanent link">&para;</a></h3>
 <p>A new pure, stdlib-only <code>apeGmsh.opensees._solver_stats</code> module: the fork
 PR #821 <code>PARDISO stats:</code> block (five-line, one per numeric factorisation)
