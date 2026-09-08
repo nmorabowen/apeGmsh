@@ -355,6 +355,24 @@ reaches a declaration. Under a partitioned staged deck the marker rides the
 same global scope `stage_open` and `analyze` already use, so it runs once per
 rank's own process without disturbing a byte of any `if {[getPID] == K} { ...
 }` rank guard.
+### FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and `pyvista.trame` needs `trame-pyvista`
+
+pyvista 0.49.0 pulls VTK 9.7.0, which removed `vtkRenderer.AddActor2D` /
+`RemoveActor2D` outright (deprecated since 9.5). The horizontal legend draws
+its own title actor through them (`viewers/backends/pyvista_qt.py`); the
+`AttributeError` was swallowed by the surrounding `except Exception: pass`,
+so the backend never recorded the bar it had just added and
+`remove_scalar_bar()` found nothing to remove — a title-less legend that
+could never be dismissed. `tests/viewers/test_legend_layout.py` caught it
+(`assert ['vm'] == []`). The title now goes through the generic `AddActor` /
+`RemoveActor`, which bucket a `vtkActor2D` correctly on VTK 9.6 and 9.7
+alike. The `except Exception: pass` that hid it is left as is and named here.
+
+Also: since 0.49 `pyvista.trame` imports `PyVistaLocalView` from the separate
+`trame-pyvista` package, which pyvista does not declare; the `viewer` and
+`all` extras now list it (four `test_trame_backend.py` tests were failing on
+`ModuleNotFoundError`). Both were CI-only until the release; main went red
+on `92643dde` for these five tests and nothing else.
 
 ### ADDED — an explicit `system Mumps` on a serial deck is refused at build time (ADR 0106 S4)
 
