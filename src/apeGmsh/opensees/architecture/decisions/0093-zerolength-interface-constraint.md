@@ -564,10 +564,50 @@ D1–D4.
     `test_interface_resolver.py`, the frame's h5 round-trip, and the
     refusal read off a real `apeSees` deck attempt.)* *Landed
     2026-09-08.*
-14. **S3 (3D) — emit**: per-pair `-orient` from the widened record, the
-    Coulomb law as the 2D material bundle plus the second tangent,
-    recorder channels per pair as in 2D. Its entry point is the refusal
-    S2 left standing, `_refuse_3d_interface_emission`.
+14. **S3 (3D) — emit: three directions, one frame, two uncoupled
+    sliders.** The refusal S2 left standing is gone; a nine-float record
+    emits `element zeroLength <tag> <master> <slave> -mat mN mT mT
+    -dir 1 2 3 -orient n t1`. Three things are decided here. **The frame
+    is the record's first six floats, not its nine**: `-orient` takes
+    only `(x, yp)` and the engine derives local-3 as `1 x 2`
+    (`ZeroLength::setUp`), so sending `(n, t1)` yields exactly
+    `(n, t1, n x t1)` — which is the record's own `t2` only if the triad
+    is right-handed. That is *asserted* before emission
+    (`_validate_interface_orient_triad`, 1e-9) rather than trusted,
+    because a record can arrive through `g.compose` (which rotates every
+    stacked vector), an h5 reload or a hand build, and a flipped `t2`
+    would put the second slider on the opposite tangent with no other
+    symptom in the deck. **The tangential tag is repeated, not minted
+    twice**: `ZeroLength` deep-copies every `-mat` slot
+    (`ZeroLength.cpp:405`, `theMat[i]->getCopy()`), so the two sliders
+    carry independent state from one declared material and a second
+    identical `uniaxialMaterial` line would only inflate the deck.
+    **The two tangential sliders are UNCOUPLED** — dir 2 and dir 3 each
+    carry the full `tau_b * A_trib`, so the slip locus in the tangent
+    plane is a square, not the circle a real Coulomb cone would give,
+    and is up to sqrt(2) too strong on the diagonal. That is the plan's
+    own choice (D1 translates to a uniaxial bundle, and a coupled
+    surface is a different material); S4 measures what it costs. The
+    emit-time ndf gate grows a 3D branch that mirrors the resolver's
+    `_ACCEPTED_3D_NDF_PAIRS` by **importing** it — one table, so the
+    declaration gate and the emit gate cannot drift — and refuses a
+    phantom in 3D outright, since D4 has nothing left to bridge there.
+    `validate_adaptive_element_endpoints`, the generic equal-ndf guard
+    on the whole zeroLength family, gains the same exemption stated the
+    fork's way: unequal ndf is accepted iff `ndm == 3` and both ends
+    carry ndf >= 3 (fork #808 / ADR 96, `TIMS_FORK_BATCH_MIN_BUILD`);
+    every 2D mismatch is still refused, because there the fork still
+    only warns and leaves the element inert. Nothing was needed on the
+    recorder side: `n_springs` is per-element metadata read from
+    `META/NUM_COMPONENTS`, so a 3-spring pair comes back as
+    `spring_force_0..2` with no catalog change. *(tests: the golden
+    Tcl/Py lines, the left-handed-frame refusal, the accepted-pair table
+    parametrised both ways, staged and partitioned 3D emission byte-
+    compared against flat, the two-box e2e deck counted against the
+    mesh's own coincident pairs, and a live fork smoke on both a `(3,3)`
+    and a `(4,3)` u-p deck — mutation-checked by emitting `-dir 1 2 4`,
+    which makes the fork print "passenger mode … element disabled".)*
+    *Landed 2026-09-08.*
 15. **S4 (3D) — verification**: the 2D convergence case rotated into 3D
     (one element deep must reproduce the 2D answer), then a u–p soil
     showing the pore pressure is untouched. The `tie` comparison S10

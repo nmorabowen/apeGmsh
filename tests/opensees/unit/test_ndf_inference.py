@@ -160,12 +160,43 @@ def test_adaptive_endpoint_mismatch_fails_loud():
     mismatched ndf and OpenSees silently drops the spring — fail loud."""
     fem = _StubFem({"Spring": [[(9, (20, 21))]]})
     elements = [_spec("ZeroLength", "Spring")]
-    # node 20 is structural (inferred 3 elsewhere); node 21 is element-less
-    # (absent → envelope). Envelope 6 → 20 emits 3, 21 emits 6 → mismatch.
+    # node 20 is structural (inferred 2 here); node 21 is element-less
+    # (absent → envelope). Envelope 6 → 20 emits 2, 21 emits 6 → mismatch,
+    # and an end below ndf 3 is outside the fork's 3D relaxation.
     with pytest.raises(BridgeError, match="differing effective ndf"):
         validate_adaptive_element_endpoints(
-            fem, elements, ndm=3, inferred={20: 3}, envelope_ndf=6,
+            fem, elements, ndm=3, inferred={20: 2}, envelope_ndf=6,
         )
+
+
+def test_adaptive_endpoint_mismatch_in_2d_fails_loud():
+    """The 2D lane is untouched by fork #808 / ADR 96 — the engine still
+    only warns and leaves the element inert there, so every mismatch is
+    refused before emission."""
+    fem = _StubFem({"Spring": [[(9, (20, 21))]]})
+    elements = [_spec("ZeroLength", "Spring")]
+    with pytest.raises(BridgeError, match="differing effective ndf"):
+        validate_adaptive_element_endpoints(
+            fem, elements, ndm=2, inferred={20: 2}, envelope_ndf=3,
+        )
+
+
+@pytest.mark.parametrize("structural, envelope", [
+    (3, 4),      # u-p soil ground against a 3-dof continuum end
+    (3, 6),      # shell / beam ground
+    (6, 4),
+])
+def test_adaptive_endpoint_mixed_ndf_ok_in_3d(structural, envelope):
+    """Fork #808 / ADR 96: a 3D zeroLength-family element takes ANY pair
+    whose ends both carry ndf >= 3 — it acts on DOFs 1-3 and every DOF
+    past the third rides as an untouched passenger. Refusing these would
+    block the 3D interfaces of TIMs A10."""
+    fem = _StubFem({"Spring": [[(9, (20, 21))]]})
+    elements = [_spec("ZeroLength", "Spring")]
+    validate_adaptive_element_endpoints(
+        fem, elements, ndm=3, inferred={20: structural},
+        envelope_ndf=envelope,
+    )
 
 
 def test_adaptive_endpoint_match_ok():

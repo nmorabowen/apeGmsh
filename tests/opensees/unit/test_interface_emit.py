@@ -484,40 +484,262 @@ def test_interface_tags_continue_the_shared_namespaces():
 
 
 # ==========================================================================
-# The S2 / S3 boundary (TIMs A10)
+# 3D surface masters (TIMs A10 S3)
 # ==========================================================================
-def test_3d_record_refuses_to_emit_and_names_S3():
-    """S2 resolves a 3D surface master into records; S3 emits them.
+# The record's frame is (n, t1, t2) with t2 = n x t1: here the master
+# face's outward normal is +z, so the two tangents are +x and +y.
+ORIENT_3D = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
 
-    Between the two, ``_emit_interface_record`` still hard-codes
-    ``-dir 1 2`` and a six-float ``-orient``, which on a 3D pair would
-    spring two of three translations in a frame the record does not
-    mean. The whole pool is refused before a line is written, loudly and
-    by slice name — a silently 2D-shaped element is exactly what ADR
-    0093 exists to prevent.
-    """
-    rec = _rec(10, 20, a_trib=0.25, name="SoilFooting",
-               orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+
+def _rec3d(master: int, slave: int, **kw) -> InterfaceRecord:
+    kw.setdefault("orient", ORIENT_3D)
+    return _rec(master, slave, **kw)
+
+
+def _emit3d(records, *, ndf=None, envelope=3, emitter=None):
+    if ndf is None:
+        ndf = {}
+        for r in records:
+            ndf[int(r.master_node)] = 3
+            ndf[int(r.slave_node)] = 3
+    return _emit(records, ndf=ndf, envelope=envelope, ndm=3, emitter=emitter)
+
+
+def test_3d_golden_tcl():
+    """The whole S3 contract on one line: three ``-mat`` slots against
+    ``-dir 1 2 3``, and an ``-orient`` that is the record's ``(n, t1)``
+    verbatim — six floats, not nine. The engine derives local-3 as
+    ``1 x 2``, which is exactly the record's ``t2``."""
+    assert _golden(
+        [_rec3d(10, 20, a_trib=0.25)], TclEmitter(), ndm=3, envelope=3,
+        ndf={10: 3, 20: 3},
+    ) == [
+        "uniaxialMaterial ENT 1 250000.0",
+        "uniaxialMaterial ElasticPP 2 25000.0 0.0025",
+        "element zeroLength 1 10 20 -mat 1 2 2 -dir 1 2 3 "
+        "-orient 0.0 0.0 1.0 1.0 0.0 0.0",
+    ]
+
+
+def test_3d_golden_py():
+    assert _golden(
+        [_rec3d(10, 20, a_trib=0.25)], PyEmitter(), ndm=3, envelope=3,
+        ndf={10: 3, 20: 3},
+    ) == [
+        "ops.uniaxialMaterial('ENT', 1, 250000.0)",
+        "ops.uniaxialMaterial('ElasticPP', 2, 25000.0, 0.0025)",
+        "ops.element('zeroLength', 1, 10, 20, '-mat', 1, 2, 2, "
+        "'-dir', 1, 2, 3, '-orient', 0.0, 0.0, 1.0, 1.0, 0.0, 0.0)",
+    ]
+
+
+def test_3d_emits_one_zerolength_per_pair_and_no_phantom():
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25),
+                  _rec3d(11, 21, a_trib=0.5)])
+    assert [c[0] for c in em.calls] == [
+        "uniaxialMaterial", "uniaxialMaterial", "element",
+        "uniaxialMaterial", "uniaxialMaterial", "element",
+    ]
+    assert not [c for c in em.calls if c[0] in ("node", "equalDOF")]
+    eles = [c[1] for c in em.calls if c[0] == "element"]
+    assert [(e[2], e[3]) for e in eles] == [(10, 20), (11, 21)]
+
+
+def test_3d_orient_is_the_records_n_and_t1_verbatim():
+    # A tilted frame, so nothing here could pass by accident on an
+    # axis-aligned record.
+    n = np.array([0.6, 0.0, 0.8])
+    t1 = np.array([-0.8, 0.0, 0.6])
+    t2 = np.cross(n, t1)
+    orient = (*n, *t1, *t2)
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25, orient=orient)])
+    ele = [c for c in em.calls if c[0] == "element"][0][1]
+    i = ele.index("-orient")
+    assert tuple(ele[i + 1:]) == pytest.approx(tuple(orient[:6]))
+    assert len(ele) == i + 7          # SIX floats — never the nine
+
+
+def test_3d_third_material_is_the_tangential_law_again():
+    """dir 2 and dir 3 are two UNCOUPLED sliders — the same tangential
+    law twice, not a coupled circular slip surface (S4 measures it).
+    The tag is repeated rather than minted twice because ZeroLength
+    deep-copies every ``-mat`` slot (``ZeroLength.cpp:405``), so the two
+    sliders carry independent state from one declared material."""
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25)])
+    mats = [c[1] for c in em.calls if c[0] == "uniaxialMaterial"]
+    assert len(mats) == 2                      # normal + ONE tangential
+    ele = [c for c in em.calls if c[0] == "element"][0][1]
+    i = ele.index("-mat")
+    n_tag, t_tag, t2_tag = ele[i + 1:i + 4]
+    assert ele[i + 4] == "-dir"
+    assert (n_tag, t_tag) == (mats[0][1], mats[1][1])
+    assert t2_tag == t_tag                     # dir 3 reuses dir 2's law
+
+
+def test_3d_material_scaling_follows_a_trib():
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25),
+                  _rec3d(11, 21, a_trib=0.5)])
+    mats = [c[1] for c in em.calls if c[0] == "uniaxialMaterial"]
+    n0, t0, n1, t1 = mats
+    assert n1[2] == pytest.approx(2.0 * n0[2])     # ENT E ∝ A_trib
+    assert t1[2] == pytest.approx(2.0 * t0[2])     # ElasticPP E ∝ A_trib
+    assert t1[3] == pytest.approx(t0[3])           # epsyP constant
+
+
+def test_3d_per_pair_material_tags_are_distinct():
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25),
+                  _rec3d(11, 21, a_trib=0.5)])
+    assert [c[1][1] for c in em.calls if c[0] == "uniaxialMaterial"] == [
+        1, 2, 3, 4]
+    eles = [c[1] for c in em.calls if c[0] == "element"]
+    assert list(eles[0][4:9]) == ["-mat", 1, 2, 2, "-dir"]
+    assert list(eles[1][4:9]) == ["-mat", 3, 4, 4, "-dir"]
+
+
+def test_3d_left_handed_frame_is_refused_by_name():
+    """``-orient`` carries only ``(n, t1)`` and the engine derives
+    local-3 as ``1 x 2``; a record whose ``t2`` is not ``n x t1`` would
+    put the second slider on the opposite tangent with no other symptom.
+    Refused before a line is written."""
+    flipped = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 0.0)
     em = RecordingEmitter()
     em.model(ndm=3, ndf=3)
     em.calls.clear()
+    with pytest.raises(BridgeError, match=r"n x t1"):
+        _emit3d([_rec3d(10, 20, a_trib=0.25, orient=flipped)], emitter=em)
+    assert em.calls == []
+
+
+def test_3d_frame_tolerance_admits_float_noise_only():
+    nudged = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0 - 1e-12, 0.0)
+    _emit3d([_rec3d(10, 20, a_trib=0.25, orient=nudged)])   # passes
+    coarse = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0 - 1e-6, 0.0)
+    with pytest.raises(BridgeError, match=r"n x t1"):
+        _emit3d([_rec3d(10, 20, a_trib=0.25, orient=coarse)])
+
+
+# --------------------------------------------------------------------------
+# The 3D ndf gate — ADR 96's rule (both ends ndf >= 3), not its examples
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("m_ndf, s_ndf", [
+    (3, 3), (6, 6),                            # vanilla
+    (3, 4), (4, 3), (4, 4), (3, 6), (6, 4),    # fork #808 / ADR 96, by name
+    # Over the ndf >= 3 floor but NOT among ADR 96's named examples. The
+    # fork takes each of these — measured deck by deck on build
+    # 1652f945c (adversarial review F1); (4, 6) is a u-p soil master
+    # under a shell raft, which the resolver's slave_ndf=6 already
+    # promises.
+    (4, 6), (6, 3), (3, 5), (5, 3), (4, 5), (3, 7),
+])
+def test_3d_accepted_ndf_pairs_emit(m_ndf, s_ndf):
+    em = _emit3d([_rec3d(10, 20, a_trib=0.25)],
+                 ndf={10: m_ndf, 20: s_ndf})
+    assert [c[0] for c in em.calls] == [
+        "uniaxialMaterial", "uniaxialMaterial", "element"]
+
+
+@pytest.mark.parametrize("m_ndf, s_ndf", [
+    (2, 3),          # a 2-dof node cannot carry a 3D translation triad
+    (3, 2),
+    (1, 3), (3, 1),
+])
+def test_3d_unaccepted_ndf_pairs_are_refused_naming_adr_96(m_ndf, s_ndf):
     with pytest.raises(BridgeError) as exc:
-        emit_interfaces(
-            em, _Fem([rec]), TagAllocator(),
-            effective_ndf={10: 3, 20: 3}, envelope_ndf=3, ndm=3,
-        )
+        _emit3d([_rec3d(10, 20, a_trib=0.25)], ndf={10: m_ndf, 20: s_ndf})
     msg = str(exc.value)
-    assert "TIMs A10 S3" in msg
-    assert "SoilFooting" in msg
-    assert "nothing was emitted" in msg
-    assert em.calls == []            # and nothing was, in fact, emitted
+    assert "ADR 96" in msg
+    assert "TIMS_FORK_BATCH_MIN_BUILD" in msg
 
 
-def test_the_3d_refusal_precedes_the_2d_ndf_gate():
-    # Keyed on the RECORD's own frame width, not on ndm — so a 3D record
-    # reaching emit through compose / h5 / a stage claim is refused with
-    # the S3 message rather than the 2D-only ndm complaint.
-    rec = _rec(10, 20, a_trib=0.25,
-               orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
-    with pytest.raises(BridgeError, match="TIMs A10 S3"):
-        _emit([rec], ndf={10: 2, 20: 2}, envelope=2, ndm=2)
+def test_3d_gate_mirrors_the_resolvers_rule():
+    # Imported, never restated — the resolver's slave_ndf gate and this
+    # emit-time gate must agree by construction. Every (master ndf,
+    # slave_ndf) combination the resolver ADVERTISES must reach a deck:
+    # a resolver that accepts what emit refuses is the F1 defect.
+    from apeGmsh._kernel.resolvers._interface_resolver import (
+        _SLAVE_NDF_VALUES_3D,
+        accepts_3d_ndf_pair,
+    )
+
+    for m_ndf in (3, 4):                       # stdBrick / LadrunoUP master
+        for s in _SLAVE_NDF_VALUES_3D:
+            s_ndf = 3 if s is None else int(s)
+            assert accepts_3d_ndf_pair(m_ndf, s_ndf)
+            _emit3d([_rec3d(10, 20, a_trib=0.25)],
+                    ndf={10: m_ndf, 20: s_ndf})
+
+
+def test_3d_record_carrying_a_phantom_is_refused():
+    # D4 does not cross over: the fork joins the mixed 3D pair directly,
+    # so a phantom here means record and resolver disagree.
+    rec = _rec3d(10, 20, a_trib=0.25, phantom=101, phantom_ndf=3)
+    with pytest.raises(BridgeError, match="mints no phantom"):
+        _emit3d([rec], ndf={10: 3, 20: 3, 101: 3})
+
+
+def test_3d_record_in_a_2d_model_is_refused():
+    # Keyed on the RECORD's own frame width, not on ndm — a 3D record
+    # reaching emit through compose / h5 / a stage claim into a 2D model
+    # is refused rather than emitting the other dimension's shape.
+    with pytest.raises(BridgeError, match=r"nine-float"):
+        _emit([_rec3d(10, 20, a_trib=0.25)],
+              ndf={10: 3, 20: 3}, envelope=3, ndm=2)
+
+
+# --------------------------------------------------------------------------
+# Staged / partitioned 3D emission is the SAME per-pair unit
+# --------------------------------------------------------------------------
+def _flat_3d_lines(records):
+    em = TclEmitter()
+    em.model(ndm=3, ndf=3)
+    before = len(em.lines())
+    _emit3d(records, emitter=em)
+    return em.lines()[before:]
+
+
+def test_3d_staged_emit_matches_the_flat_lines():
+    from apeGmsh.opensees._internal.build import emit_stage_interfaces
+
+    recs = [_rec3d(10, 20, a_trib=0.25), _rec3d(11, 21, a_trib=0.5)]
+    em = TclEmitter()
+    em.model(ndm=3, ndf=3)
+    before = len(em.lines())
+    emit_stage_interfaces(
+        recs, em, TagAllocator(),
+        effective_ndf={10: 3, 20: 4, 11: 3, 21: 4}, envelope_ndf=3, ndm=3,
+    )
+    assert em.lines()[before:] == _flat_3d_lines(recs)
+
+
+def test_3d_partitioned_emit_matches_the_flat_lines():
+    from dataclasses import dataclass
+
+    from apeGmsh.opensees._internal.build import (
+        _emit_interface_record, _plan_rank_interfaces,
+        allocate_interface_tags,
+    )
+
+    @dataclass
+    class _Part:
+        id: int
+        node_ids: tuple
+        element_ids: tuple
+
+    recs = [_rec3d(10, 20, a_trib=0.25), _rec3d(11, 21, a_trib=0.5)]
+    recs[0].backing_element = 100
+    recs[1].backing_element = 200
+    parts = [
+        _Part(id=1, node_ids=(10, 20), element_ids=(100,)),
+        _Part(id=2, node_ids=(11, 21), element_ids=(200,)),
+    ]
+    plan = _plan_rank_interfaces(recs, parts)
+    assert sorted(plan) == [0, 1]          # runtime ranks, 0-based
+
+    tag_plan = allocate_interface_tags(recs, TagAllocator())
+    em = TclEmitter()
+    em.model(ndm=3, ndf=3)
+    before = len(em.lines())
+    for rank in sorted(plan):
+        for rec, _ghosts in plan[rank]:
+            _emit_interface_record(em, rec, tag_plan[id(rec)])
+    assert em.lines()[before:] == _flat_3d_lines(recs)

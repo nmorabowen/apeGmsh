@@ -432,12 +432,21 @@ whether your wire becomes a truss or a beam. Declare it wrong and the
 bridge refuses at emit, naming the ndf it actually found.
 
 The master's dimension follows the model's: a boundary curve in 2D, a
-boundary surface in 3D. The 3D lane resolves — per-pair frames from the
-adjacent facets, an `A_trib` that is a real area, so `thickness` is
-refused there by name — but it does not emit yet; that is the next
-slice, and the build says so rather than writing a two-direction
-element into a three-direction model. Give it the wrong dimension for
-the model and it raises at resolve, naming the label. So does an
+boundary surface in 3D. The 3D lane emits. Per-pair frames come from the
+adjacent facets, `A_trib` is a real area — so `thickness` is refused
+there by name — and each pair becomes one `zeroLength` acting on all
+three translations: the normal law on local 1, the tangential law on
+local 2 **and** local 3. In 3D there is no phantom bridge and none is
+wanted: the engine joins a mixed pair directly, so an `ndf`-3 footing
+skin sits on `ndf`-4 u–p soil with the pore pressure left alone. What to
+know before trusting a 3D answer: the two tangential directions are
+**independent** sliders, each capped at the full `tau_b`. Sliding along
+one behaves exactly as in 2D; sliding on the diagonal between them can
+carry up to √2 the intended shear, because the yield locus in the
+tangent plane is a square rather than the circle a true Coulomb cone
+would draw. Verification against the 2D result — and the measurement of
+that corner — is the slice after this one. Give the verb the wrong
+dimension for the model and it raises at resolve, naming the label. So does an
 interior face — material on both sides, so no outward direction
 exists. All of it is loud; none of it degrades into a guess.
 Partitioned (MPI) emit is

@@ -422,6 +422,52 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — interface() 3D adversarial review: a u–p soil under a shell raft emits again
+
+The 3D emit gate refused an `ndf` `(4, 6)` pair — a `LadrunoUP` soil
+master under a shell/beam slave — even though `interface(slave_ndf=6)`
+accepts exactly that model at resolve time. The gate had transcribed the
+fork's adoption note, which spells out *examples* of the pairs its
+`zeroLength` takes, as if that list were exhaustive; the note's actual
+rule is "any pair with both `ndf` >= 3", which is also the rule the
+generic zeroLength-family endpoint guard next door already applies. So a
+raft-on-saturated-soil model resolved, saved and reloaded fine and then
+died at deck time with a `BridgeError` naming a table it satisfied on the
+engine. The gate is now that rule, declared once beside the resolver's
+`slave_ndf` contract; the named pairs survive only as examples inside the
+refusal text, so the message still reads in the note's own words. Nothing
+that emitted before changes, and a pair with an end below `ndf` 3 is
+refused exactly as before — the fork leaves such an element inert, which
+is the silent no-spring the gate exists for.
+
+Measured against fork build `1652f945c`: `(4, 6)`, and every other pair
+over the floor that was probed, runs with no `differing dof` /
+`passenger mode` / `element disabled` line in the log.
+
+### ADDED — interface() 3D S3: a 3D interface emits a deck
+
+S2 resolved a 3D surface master and stopped there. It now emits: one
+`zeroLength` per coincident pair, the normal law on the pair's outward
+normal and the tangential law on both in-plane tangents, with the pair's
+own local frame written per element. There is no phantom bridge in 3D —
+the fork joins a mixed pair directly — so an `ndf`-3 footing skin sits on
+`ndf`-4 u–p soil and the pore pressure is left alone; a pair the fork
+would not take is refused before a line is written rather than emitted
+and quietly disabled. The frame is checked, not trusted: OpenSees derives
+the third local direction itself, so a record whose third vector is not
+the cross product of the first two is refused by name instead of putting
+the second slider on the wrong tangent.
+
+One thing to know before trusting a 3D number. The two tangential
+directions are **independent** sliders, each capped at the full bond
+strength, not a single circular slip surface. Sliding along one tangent
+behaves exactly as in 2D; sliding on the diagonal between them can carry
+up to √2 the intended shear. That is a deliberate choice — the laws
+translate to uniaxial materials, and a coupled cone is a different
+material — and measuring what it costs, together with reproducing the 2D
+convergence case in 3D and showing the pore pressure untouched, is the
+verification slice that follows.
+
 ### CHANGED — interface() 3D S2: a surface master resolves, emission still refuses
 
 `g.constraints.interface()` used to refuse a 3D model at the call. It now

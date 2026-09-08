@@ -45,11 +45,18 @@ pressure penetration.
 
 ## What this does and does not unblock here
 
-It clears blocker 1 of `plan_interface_3d.md` (TIMs A10). Blocker 2 —
+It cleared blocker 1 of `plan_interface_3d.md` (TIMs A10). Blocker 2 —
 per-facet frames, the surface tributary model and the second tangent of
-ADR 0093 D2/D3 in 3-D — is ours and untouched, so `g.constraints.interface()`
-still refuses a 3-D model at the call. The S1–S4 slices in that plan are
-the route; S2 is where the phantom bridge learns the pairs above.
+ADR 0093 D2/D3 in 3-D — was ours, and S1–S3 closed it: `interface()` on a
+3-D surface master now resolves *and* emits, one `zeroLength` per pair
+with `-mat mN mT mT -dir 1 2 3` and the pair's own `-orient`. The pairs
+above are taken directly, with no phantom bridge — that table
+(`_ACCEPTED_3D_NDF_PAIRS`) is declared once in the resolver and imported
+by the emit-time gate. Only **S4** remains: the 2-D convergence case
+rotated into 3-D, the u-p pressure datum shown untouched, and the cost of
+the two uncoupled tangential sliders measured. A live smoke on a `(4, 3)`
+u-p deck already reads this note's three warnings out of the fork's log
+and fails on them.
 
 `LadrunoKinematicCoupling` is the other 3-D u-p touchpoint: fork #814 now
 refuses an ambiguous slave ndf without `-dof` at the parser, which is the
