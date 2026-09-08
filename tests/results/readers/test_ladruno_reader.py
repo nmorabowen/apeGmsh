@@ -14,7 +14,9 @@ import pytest
 
 from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_element_io import (
+    ElementWidthMismatchWarning,
     GaussColumnDroppedWarning,
+    read_element_slab,
 )
 from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
 
@@ -950,3 +952,79 @@ def test_section_axial_force_is_not_a_gauss_mean_stress() -> None:
         assert "axial_force" in r.available_components(
             "stage_0", ResultLevel.LINE_STATIONS,
         )
+
+
+# =====================================================================
+# Mixed-width buckets under one response token
+#
+# The fork sizes a zeroLength `force` response by ndf1 + ndf2, so a 3-D
+# model pairing (3,3) nodes with u-p (3,4) nodes writes 6- and 7-column
+# buckets under ONE token. They cannot share a dense (T, E, ncol) slab;
+# the first width wins. That is a deliberate choice -- but it used to be
+# a silent one, and a short read is indistinguishable from elements that
+# never recorded the quantity.
+# =====================================================================
+
+
+def _mixed_width_on_elements(path: Path) -> "object":
+    """An ON_ELEMENTS group with 6- and 7-column buckets under `force`."""
+    import h5py
+
+    f = h5py.File(path, "w")
+    tok = f.create_group("ON_ELEMENTS").create_group("force")
+    # Alphabetical iteration puts the 6-column bucket first, so it wins.
+    a = tok.create_group("a_pairs_3_3")
+    a.create_dataset("ID", data=np.array([11, 12], dtype=np.int64))
+    a.create_dataset("DATA", data=np.zeros((2, 2, 6), dtype=np.float64))
+    b = tok.create_group("b_pairs_3_4")
+    b.create_dataset("ID", data=np.array([21, 22], dtype=np.int64))
+    b.create_dataset("DATA", data=np.ones((2, 2, 7), dtype=np.float64))
+    return f
+
+
+def test_mixed_width_buckets_drop_elements_and_say_so(tmp_path: Path) -> None:
+    f = _mixed_width_on_elements(tmp_path / "mixed.h5")
+    try:
+        with pytest.warns(ElementWidthMismatchWarning) as rec:
+            out = read_element_slab(
+                f["ON_ELEMENTS"], "force",
+                t_idx=np.array([0, 1]), element_ids=None,
+            )
+        assert out is not None
+        values, ids = out
+        # The drop itself: the 7-column pair is gone from the result.
+        assert values.shape == (2, 2, 6)
+        assert ids.tolist() == [11, 12]
+        assert 21 not in ids.tolist() and 22 not in ids.tolist()
+        # …and it is no longer silent. The message must carry what the
+        # caller needs to act: both widths, and WHICH elements are absent.
+        msg = str(rec[0].message)
+        assert "6-column" in msg and "has 7" in msg
+        assert "21" in msg and "22" in msg
+        assert "force" in msg
+    finally:
+        f.close()
+
+
+def test_uniform_width_buckets_do_not_warn(tmp_path: Path) -> None:
+    # The common case stays quiet -- a warning on every homogeneous read
+    # would be noise, and noise is how a real one gets ignored.
+    import warnings
+
+    import h5py
+
+    with h5py.File(tmp_path / "uniform.h5", "w") as f:
+        tok = f.create_group("ON_ELEMENTS").create_group("force")
+        for name, eids in (("a", [11, 12]), ("b", [21, 22])):
+            g = tok.create_group(name)
+            g.create_dataset("ID", data=np.array(eids, dtype=np.int64))
+            g.create_dataset("DATA", data=np.zeros((2, 2, 6), dtype=np.float64))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ElementWidthMismatchWarning)
+            out = read_element_slab(
+                f["ON_ELEMENTS"], "force",
+                t_idx=np.array([0, 1]), element_ids=None,
+            )
+        assert out is not None
+        assert out[1].tolist() == [11, 12, 21, 22]
+

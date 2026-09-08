@@ -2341,7 +2341,9 @@ _LAYER_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 # expose per-spring force under MPCO ``basicForce`` and per-spring
 # deformation under ``deformation``. STKO's plain ``force`` group for
 # zeroLength stores the global element resisting force vector
-# (``2*ndf`` columns: P1_x, P1_y, P1_z, P2_x, P2_y, P2_z), not
+# (``ndf1 + ndf2`` columns — P1_x, P1_y, P1_z, P2_x, P2_y, P2_z for a
+# 3+3 pair; a mixed (3,4) u-p pair is 7 wide, so this is NOT ``2*ndf``
+# in general), not
 # per-spring scalars — so it is *not* the right token for
 # ``spring_force``. ``basicForce`` is the matching companion to
 # ``deformation``: both write one column per spring with a header_idx

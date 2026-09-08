@@ -12,10 +12,13 @@ family members.  The bucket holds the standard
 
 Note that ``basicForce`` (not the plain ``force`` token) carries
 per-spring forces.  The ``force`` group instead writes the element's
-global resisting force vector — ``2*ndf`` columns
-(``P1_x, P1_y, P1_z, P2_x, P2_y, P2_z`` in 3D), one row per element,
-with all spring counts merged into a single bucket — which is not
-the per-spring layout this reader expects.
+global resisting force vector — ``ndf1 + ndf2`` columns
+(``P1_x, P1_y, P1_z, P2_x, P2_y, P2_z`` for the 3+3 case), one row per
+element, with all spring counts merged into a single bucket — which is
+not the per-spring layout this reader expects.  It is ``ndf1 + ndf2``,
+not ``2*ndf``: the two are equal only when both nodes carry the same
+ndf, and the fork accepts mixed pairs such as (3,4) u-p, where the width
+is 7 (``internal_docs/contact_3d_passenger_dof_adoption.md``).
 
 Spring-specific conventions
 ---------------------------
