@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-08T04:58:35Z",
+  "generated": "2026-09-08T05:53:50Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3346,7 +3346,7 @@
     },
     "ops.nDMaterial.LadrunoSANISAND": {
       "symbol": "ops.nDMaterial.LadrunoSANISAND",
-      "signature": "LadrunoSANISAND(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', z_max: 'float', cz: 'float', rho: 'float', int_scheme: 'int' = 1, tan_type: 'int' = 2, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, p_residual: 'float' = 0.0, p_min: 'float | None' = None, honor_tol_r: 'bool' = False, max_substeps: 'int' = 0, name: 'str | None' = None) -> 'LadrunoSANISAND'",
+      "signature": "LadrunoSANISAND(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', z_max: 'float', cz: 'float', rho: 'float', int_scheme: 'int' = 1, tan_type: 'int' = 2, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, p_residual: 'float' = 0.0, p_min: 'float | None' = None, honor_tol_r: 'bool' = False, max_substeps: 'int' = 0, implex: 'bool' = False, implex_control: 'tuple[float, float] | None' = None, implex_factor: \"Literal['fixed', 'control', 'controlIter'] | None\" = None, name: 'str | None' = None) -> 'LadrunoSANISAND'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material."
     },
