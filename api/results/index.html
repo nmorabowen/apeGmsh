@@ -4053,6 +4053,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.GaussCensus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GaussCensus
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GaussCensus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.GaussCensus.global_coords" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        global_coords
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh.results._slabs.FiberSlab" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5610,6 +5638,34 @@
         
           <li class="md-nav__item">
   <a href="#apeGmsh.results._slabs.GaussSlab.global_coords" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        global_coords
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.GaussCensus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GaussCensus
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GaussCensus">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.GaussCensus.global_coords" class="md-nav__link">
     <span class="md-ellipsis">
       
         global_coords
@@ -9731,6 +9787,9 @@ FiberSlab         <code>(T, sum_F)</code>            <code>element_index, gp_ind
 LayerSlab         <code>(T, sum_L)</code>            <code>element_index, gp_index, layer_index,
                                             sub_gp_index, thickness: (sum_L,)</code>
 ================  ========================  =================================================</p>
+<p><code>GaussCensus</code> is not a slab: it is the subset of ONE <code>GaussSlab</code>
+time row that met a predicate (see <code>Results.elements.gauss</code>'s
+<code>tension_census</code> / <code>corner_census</code>).</p>
 <p>For a single time step (<code>time_slice</code> was a scalar), <code>T</code> is 1 and
 the leading axis is preserved — the caller can squeeze if desired.</p>
 
@@ -10133,23 +10192,131 @@ others — visualization-faithful for axis-aligned elements.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/results/_slabs.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-145">145</a></span>
-<span class="normal"><a href="#__codelineno-0-146">146</a></span>
-<span class="normal"><a href="#__codelineno-0-147">147</a></span>
-<span class="normal"><a href="#__codelineno-0-148">148</a></span>
-<span class="normal"><a href="#__codelineno-0-149">149</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-149">149</a></span>
 <span class="normal"><a href="#__codelineno-0-150">150</a></span>
 <span class="normal"><a href="#__codelineno-0-151">151</a></span>
 <span class="normal"><a href="#__codelineno-0-152">152</a></span>
-<span class="normal"><a href="#__codelineno-0-153">153</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-145"><a id="__codelineno-0-145" name="__codelineno-0-145"></a><span class="k">def</span><span class="w"> </span><span class="nf">global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-0-146"><a id="__codelineno-0-146" name="__codelineno-0-146"></a><span class="w">    </span><span class="sd">"""Map per-GP natural coords to ``(sum_GP, 3)`` world coords.</span>
-</span><span id="__span-0-147"><a id="__codelineno-0-147" name="__codelineno-0-147"></a>
-</span><span id="__span-0-148"><a id="__codelineno-0-148" name="__codelineno-0-148"></a><span class="sd">    Uses element shape functions for supported types (hex8, quad4);</span>
-</span><span id="__span-0-149"><a id="__codelineno-0-149" name="__codelineno-0-149"></a><span class="sd">    falls back to ``centroid + 0.5 * bbox_span * natural`` for</span>
-</span><span id="__span-0-150"><a id="__codelineno-0-150" name="__codelineno-0-150"></a><span class="sd">    others — visualization-faithful for axis-aligned elements.</span>
-</span><span id="__span-0-151"><a id="__codelineno-0-151" name="__codelineno-0-151"></a><span class="sd">    """</span>
-</span><span id="__span-0-152"><a id="__codelineno-0-152" name="__codelineno-0-152"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._gauss_world_coords</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_global_coords</span>
-</span><span id="__span-0-153"><a id="__codelineno-0-153" name="__codelineno-0-153"></a>    <span class="k">return</span> <span class="n">compute_global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-153">153</a></span>
+<span class="normal"><a href="#__codelineno-0-154">154</a></span>
+<span class="normal"><a href="#__codelineno-0-155">155</a></span>
+<span class="normal"><a href="#__codelineno-0-156">156</a></span>
+<span class="normal"><a href="#__codelineno-0-157">157</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-149"><a id="__codelineno-0-149" name="__codelineno-0-149"></a><span class="k">def</span><span class="w"> </span><span class="nf">global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-150"><a id="__codelineno-0-150" name="__codelineno-0-150"></a><span class="w">    </span><span class="sd">"""Map per-GP natural coords to ``(sum_GP, 3)`` world coords.</span>
+</span><span id="__span-0-151"><a id="__codelineno-0-151" name="__codelineno-0-151"></a>
+</span><span id="__span-0-152"><a id="__codelineno-0-152" name="__codelineno-0-152"></a><span class="sd">    Uses element shape functions for supported types (hex8, quad4);</span>
+</span><span id="__span-0-153"><a id="__codelineno-0-153" name="__codelineno-0-153"></a><span class="sd">    falls back to ``centroid + 0.5 * bbox_span * natural`` for</span>
+</span><span id="__span-0-154"><a id="__codelineno-0-154" name="__codelineno-0-154"></a><span class="sd">    others — visualization-faithful for axis-aligned elements.</span>
+</span><span id="__span-0-155"><a id="__codelineno-0-155" name="__codelineno-0-155"></a><span class="sd">    """</span>
+</span><span id="__span-0-156"><a id="__codelineno-0-156" name="__codelineno-0-156"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._gauss_world_coords</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_global_coords</span>
+</span><span id="__span-0-157"><a id="__codelineno-0-157" name="__codelineno-0-157"></a>    <span class="k">return</span> <span class="n">compute_global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="apeGmsh.results._slabs.GaussCensus" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">GaussCensus</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.GaussCensus" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">GaussCensus</span><span class="p">(</span><span class="n">component</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">predicate</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">examined</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">element_index</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">natural_coords</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">time</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>The Gauss points of a :class:<code>GaussSlab</code> that met a predicate.</p>
+<p>A census answers "how many, and where" at ONE instant — the count
+plus the location metadata needed to draw or tabulate the matching
+points. It carries the same <code>element_index</code> / <code>natural_coords</code>
+pair a :class:<code>GaussSlab</code> does, so
+:meth:<code>global_coords</code> behaves identically.</p>
+<p><code>count</code> is <code>element_index.size</code>; <code>examined</code> is how many Gauss
+points the predicate ran over, so <code>count / examined</code> is the
+fraction without a second read. Both are needed: a census of 12 is
+a different fact at 40 Gauss points than at 40 000.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="apeGmsh.results._slabs.GaussCensus.global_coords" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">global_coords</span>
+
+
+<a href="#apeGmsh.results._slabs.GaussCensus.global_coords" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">global_coords</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Map the matching GPs to <code>(count, 3)</code> world coords.</p>
+<p>Same reconstruction (and same
+:class:<code>~apeGmsh.results._gauss_world_coords.WarnGaussCoordsApproximate</code>
+caveat) as :meth:<code>GaussSlab.global_coords</code>.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/apeGmsh/results/_slabs.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-184">184</a></span>
+<span class="normal"><a href="#__codelineno-0-185">185</a></span>
+<span class="normal"><a href="#__codelineno-0-186">186</a></span>
+<span class="normal"><a href="#__codelineno-0-187">187</a></span>
+<span class="normal"><a href="#__codelineno-0-188">188</a></span>
+<span class="normal"><a href="#__codelineno-0-189">189</a></span>
+<span class="normal"><a href="#__codelineno-0-190">190</a></span>
+<span class="normal"><a href="#__codelineno-0-191">191</a></span>
+<span class="normal"><a href="#__codelineno-0-192">192</a></span>
+<span class="normal"><a href="#__codelineno-0-193">193</a></span>
+<span class="normal"><a href="#__codelineno-0-194">194</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-184"><a id="__codelineno-0-184" name="__codelineno-0-184"></a><span class="k">def</span><span class="w"> </span><span class="nf">global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-185"><a id="__codelineno-0-185" name="__codelineno-0-185"></a><span class="w">    </span><span class="sd">"""Map the matching GPs to ``(count, 3)`` world coords.</span>
+</span><span id="__span-0-186"><a id="__codelineno-0-186" name="__codelineno-0-186"></a>
+</span><span id="__span-0-187"><a id="__codelineno-0-187" name="__codelineno-0-187"></a><span class="sd">    Same reconstruction (and same</span>
+</span><span id="__span-0-188"><a id="__codelineno-0-188" name="__codelineno-0-188"></a><span class="sd">    :class:`~apeGmsh.results._gauss_world_coords.WarnGaussCoordsApproximate`</span>
+</span><span id="__span-0-189"><a id="__codelineno-0-189" name="__codelineno-0-189"></a><span class="sd">    caveat) as :meth:`GaussSlab.global_coords`.</span>
+</span><span id="__span-0-190"><a id="__codelineno-0-190" name="__codelineno-0-190"></a><span class="sd">    """</span>
+</span><span id="__span-0-191"><a id="__codelineno-0-191" name="__codelineno-0-191"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._gauss_world_coords</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_global_coords_from_arrays</span>
+</span><span id="__span-0-192"><a id="__codelineno-0-192" name="__codelineno-0-192"></a>    <span class="k">return</span> <span class="n">compute_global_coords_from_arrays</span><span class="p">(</span>
+</span><span id="__span-0-193"><a id="__codelineno-0-193" name="__codelineno-0-193"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">element_index</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">natural_coords</span><span class="p">,</span> <span class="n">fem</span><span class="p">,</span>
+</span><span id="__span-0-194"><a id="__codelineno-0-194" name="__codelineno-0-194"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

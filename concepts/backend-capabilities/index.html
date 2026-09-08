@@ -2221,6 +2221,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Materials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-minimum-useful-build-and-how-to-check-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The minimum useful build, and how to check it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3783,6 +3800,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Materials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-minimum-useful-build-and-how-to-check-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The minimum useful build, and how to check it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -4000,6 +4034,54 @@ solid elements hit a false collapse floor. Its two read-only diagnostics,
 <code>material.ladrunoBranch</code> and <code>material.ladrunoTangent</code>, need that build
 too: an empty <code>ops.eleResponse(e, "material", gp, "ladrunoBranch")</code> is
 the probe for an older one.</p>
+<p><code>ASDPlasticMaterial3D</code> with a <code>DruckerPrager_YF</code> yield function has a
+<em>second</em>, later floor — <code>67474aeb7</code> — for its apex classification (fork
+ADR-94 wp/94f). The two floors are independent: <code>61b3efa04</code> fixes the UW
+material's cutoff, <code>67474aeb7</code> fixes the ASD one's region test, and a
+build can have the first without the second. Unlike the UW material, the
+ASD one exposes no response token, so there is nothing to probe — compare
+the build stamp instead.</p>
+<h4 id="the-minimum-useful-build-and-how-to-check-it">The minimum useful build, and how to check it<a class="headerlink" href="#the-minimum-useful-build-and-how-to-check-it" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Want</th>
+<th>Minimum fork build</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A believable UW <code>DruckerPrager</code> tension cutoff, and the <code>ladrunoBranch</code> diagnostic</td>
+<td><code>61b3efa04</code></td>
+</tr>
+<tr>
+<td>A believable <code>ASDPlasticMaterial3D</code> + <code>DruckerPrager_YF</code> apex</td>
+<td><code>67474aeb7</code></td>
+</tr>
+</tbody>
+</table>
+<p>Neither is enforced — a bare hash cannot prove ancestry, and an older
+engine parses the identical deck. What it gets wrong is the answer, so
+there is nothing to refuse at construction. Two ways to find out where
+you stand:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees._element_capabilities</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_ladruno_branch</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees.emitter.live</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_backend_build</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">get_backend_build</span><span class="p">()</span>                      <span class="c1"># the exact commit, or None off-fork</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">probe_ladruno_branch</span><span class="p">(</span><span class="n">ops_module</span><span class="p">,</span> <span class="n">e_tag</span><span class="p">)</span>  <span class="c1"># False on a pre-61b3efa04 engine</span>
+</span></code></pre></div>
+<p>The probe must be aimed at an element of a class that forwards
+<code>material &lt;gp&gt; &lt;token&gt;</code> to its NDMaterial — <code>LadrunoBrick</code>,
+<code>LadrunoBrick20</code>, <code>BezierTet10</code>, <code>TenNodeTetrahedron</code> — using a UW
+<code>DruckerPrager</code>. Anywhere else it answers <code>False</code> for reasons that have
+nothing to do with the build.</p>
+<p>Once the response is there, <code>results.elements.gauss</code> reads it back under
+eight names (<code>dp_branch</code>, <code>dp_gamma_cone</code>, <code>dp_gamma_cutoff</code>,
+<code>dp_f1_trial</code>, <code>dp_f2_trial</code>, <code>dp_forced_accept</code>, <code>dp_i1</code>,
+<code>dp_det_a_min</code>) and offers two censuses over it — <code>corner_census()</code> for
+<code>dp_branch == 3</code>, and the material-agnostic <code>tension_census()</code> for
+<code>mean_stress &gt;= 0</code>. See
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0108-ladruno-branch-read-back.md">ADR 0108</a>.</p>
 <h3 id="recorders">Recorders<a class="headerlink" href="#recorders" title="Permanent link">&para;</a></h3>
 <p><code>recorder ladruno</code> (the HDF5 <code>.ladruno</code> recorder) and <code>recorder Monitor</code>
 (live SWMR telemetry). Every other recorder — including the plain text
@@ -4056,7 +4138,7 @@ pulls only <code>gmsh</code>, <code>h5py</code>, <code>numpy</code> and <code>pa
 </table>
 <p><code>all</code> covers everything that installs cleanly everywhere, Studio
 included:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span>
 </span></code></pre></div>
 <p><code>scripts/make-venv.bat</code> builds a venv this way under <code>C:\venv\&lt;name&gt;</code>.</p>
 <div class="admonition note">
@@ -4071,7 +4153,7 @@ by name when you need them.</p>
 through <code>mcp</code> a small server stack (<code>uvicorn</code>, <code>starlette</code>,
 <code>pydantic</code>, <code>opentelemetry-api</code>). Narrow it when you do not need all
 of that:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[viewer,opensees]"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[viewer,opensees]"</span>
 </span></code></pre></div>
 <p>Before 2026-08 <code>all</code> also omitted <code>mcp</code>, installing the Studio package
 without the SDK to start it. On an older release, add <code>"mcp&gt;=1.2"</code>
