@@ -343,19 +343,29 @@ else, so recording `material.PStress` / `J2Stress` / `VolStrain` / `J2Strain` /
 `Results.elements.gauss.available_components()` never listed — dropped with no
 warning, indistinguishable from a material that never wrote them.
 
-They now land on canonical names:
+They now land on canonical names, keyed by the **bucket token** and resolved by
+column position:
 
-| Bucket | Column label | apeGmsh component |
-|---|---|---|
-| `material.PStress` | `p` | `material_mean_stress` |
-| `material.J2Stress` | `J2stress` | `material_j2_stress` |
-| `material.VolStrain` | `epsVol` | `material_volumetric_strain` |
-| `material.J2Strain` | `J2strain` | `material_j2_strain` |
-| `material.BackStress` | `BackStress_1..6` | `back_stress_xx/yy/zz/xy/yz/xz` |
+| Bucket | apeGmsh component(s) |
+|---|---|
+| `material.PStress` | `material_mean_stress` |
+| `material.J2Stress` | `material_j2_stress` |
+| `material.VolStrain` | `material_volumetric_strain` |
+| `material.J2Strain` | `material_j2_strain` |
+| `material.BackStress` | `back_stress_xx/yy/zz/xy/yz/xz` (6 columns) |
+| `material.YieldStress` | `yield_stress` |
+| `material.DP_cohesion` | `dp_cohesion` |
+| `material.CapPressure` | `cap_pressure` |
+| `material.EpsQpShear` | `eps_qp_shear` |
 
-plus the known scalar internal variables (`YieldStress` → `yield_stress`,
-`DP_cohesion` → `dp_cohesion`, `CapPressure` → `cap_pressure`, `EpsQpShear` →
-`eps_qp_shear`).
+**The token is the key, not the column label**, because the labels the material
+writes are not unique across levels: `material.PStress` labels its column `p`,
+canonicalisation is case-insensitive, and the section axial force of every
+force-based beam is labelled `P` — a label-keyed map turned each `section.force`
+station into a Gauss `material_mean_stress`. The self-describing buckets
+(`material.stress`, `material.strain`, `material.pstrain`, `material.eqpstrain`)
+are not in the token table and keep the existing label path (`sigma11`,
+`epsP11`, `eqpstrain`) unchanged.
 
 The `material_*` names are **provenance-distinct on purpose**: they are what the
 material computed, under its own definition and sign, and are NOT aliased onto
@@ -368,15 +378,13 @@ would need a per-material audit instead.
 Back-stress components arrive in the material's Voigt order 11, 22, 33, 12, 23,
 13 — the order the `epsP1..` plastic-strain columns already use.
 
-**A dropped Gauss column now warns instead of vanishing.**
-`gauss_available` raises one `GaussColumnDroppedWarning` per bucket, naming the
-bucket, the labels it could not map and the element class, whenever a
-per-Gauss-point column is discarded because no canonical component matches its
-label. Buckets that map completely never warn. Section stations (`LEVELS == 2`,
-`section.force` / `section.deformation`) are excluded from the Gauss paths
-outright — they carry a station index but are line stations, and their axial
-force `P` would otherwise collide with the material's mean stress `p` under the
-case-insensitive label match.
+**A dropped material column now warns instead of vanishing.**
+`gauss_available` raises one `GaussColumnDroppedWarning` per `material.<Token>`
+bucket that neither the token table nor the label map can name, naming the
+bucket, the labels it could not map and the element class. Buckets that map
+completely never warn, and the warning is scoped to `material.` buckets: a label
+the Gauss level cannot name elsewhere is routinely another level's business (a
+`section.force` station carries `P`/`Mz`), so warning there would be noise.
 
 ### CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, `strict_convergence` on, `Continuum` tangent, swallowing-host gate, `MohrCoulombTensionCutoffSoil` + `HoekBrownRock` (ADR 0105)
 

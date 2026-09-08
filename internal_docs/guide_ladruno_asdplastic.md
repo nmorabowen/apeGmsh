@@ -130,14 +130,17 @@ reaches the material and records nothing, silently (the fork's own `setResponse`
 so). `ops.recorder.Ladruno` / `MPCO` now refuse the bare spelling of the known material-only
 tokens (`pstrain`, `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`, `J2Strain`) at
 construction, naming the `material.<token>` form. Resolved since, in ADR 0105 Amendment 1: the
-reader now keeps those five buckets — `p` → `material_mean_stress`, `J2stress` →
-`material_j2_stress`, `epsVol` → `material_volumetric_strain`, `J2strain` →
-`material_j2_strain`, `BackStress_1..6` → `back_stress_{xx,yy,zz,xy,yz,xz}` — kept
-provenance-distinct from the tensor-derived `mean_stress` / `j2_stress` / `volumetric_strain` /
-`j2_strain` (measured equal on build `3622d6214`, but that is a measurement, not a contract).
-Known scalar internal variables (`YieldStress`, `DP_cohesion`, `CapPressure`, `EpsQpShear`) map
-too, and any label that still has no canonical now raises a `GaussColumnDroppedWarning` naming
-the bucket instead of vanishing.
+reader now keeps those five buckets, mapped by BUCKET TOKEN (never by column label —
+`material.PStress` labels its column `p`, which collides case-insensitively with the section
+axial force `P`): `material.PStress` → `material_mean_stress`, `material.J2Stress` →
+`material_j2_stress`, `material.VolStrain` → `material_volumetric_strain`,
+`material.J2Strain` → `material_j2_strain`, `material.BackStress` →
+`back_stress_{xx,yy,zz,xy,yz,xz}` by column position — kept provenance-distinct from the
+tensor-derived `mean_stress` / `j2_stress` / `volumetric_strain` / `j2_strain` (measured equal
+on build `3622d6214`, but that is a measurement, not a contract). The scalar internal-variable
+buckets (`material.YieldStress`, `material.DP_cohesion`, `material.CapPressure`,
+`material.EpsQpShear`) map too, and a `material.<Token>` bucket nothing can name now raises a
+`GaussColumnDroppedWarning` naming the bucket instead of vanishing.
 
 ## 8. Goldens — what actually moved
 

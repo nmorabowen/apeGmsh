@@ -10,7 +10,10 @@ mapping so the fork side and apeGmsh side stay in agreement.
 """
 from __future__ import annotations
 
-from apeGmsh.results.readers._ladruno_element_io import continuum_canonical
+from apeGmsh.results.readers._ladruno_element_io import (
+    continuum_canonical,
+    material_bucket_canonicals,
+)
 
 
 def test_sigma33_digit_form_maps_to_stress_zz():
@@ -83,56 +86,101 @@ def test_accumulated_peeq_scalar_labels_map():
 
 
 # ---------------------------------------------------------------------------
-# ADR 0105 Amendment 1 — the material-level buckets
+# ADR 0105 Amendment 1 — the material-level buckets, keyed by TOKEN
 # ---------------------------------------------------------------------------
 #
 # ``ASDPlasticMaterial3D::setResponse`` labels its material-level scalars
-# with the material's own names. Every one of them was unmapped, so the
-# column was dropped in silence: recording ``material.PStress`` and the
-# four siblings produced buckets in the file that no reader surfaced.
+# with the material's own private names. Every one of them was unmapped,
+# so the column was dropped in silence: recording ``material.PStress``
+# and its siblings produced buckets in the file that no reader surfaced.
+#
+# The mapping is keyed by the BUCKET TOKEN, never by the label, because
+# the labels are not unique across levels: ``material.PStress`` labels
+# its column ``p``, and the section axial force is ``P`` —
+# canonicalisation is case-insensitive, so a label key would turn every
+# force-based beam station into a Gauss mean stress.
 
 
-def test_material_level_invariants_map():
+def test_material_bucket_invariants_map_by_token():
     # Provenance-distinct names: these are what the MATERIAL computed,
     # NOT the reader's tensor-derived mean_stress / j2_stress / ... .
-    assert continuum_canonical("p") == "material_mean_stress"
-    assert continuum_canonical("J2stress") == "material_j2_stress"
-    assert continuum_canonical("epsVol") == "material_volumetric_strain"
-    assert continuum_canonical("J2strain") == "material_j2_strain"
+    assert material_bucket_canonicals("material.PStress") == (
+        "material_mean_stress",
+    )
+    assert material_bucket_canonicals("material.J2Stress") == (
+        "material_j2_stress",
+    )
+    assert material_bucket_canonicals("material.VolStrain") == (
+        "material_volumetric_strain",
+    )
+    assert material_bucket_canonicals("material.J2Strain") == (
+        "material_j2_strain",
+    )
 
 
-def test_material_level_invariants_case_insensitive():
-    assert continuum_canonical("P") == "material_mean_stress"
-    assert continuum_canonical("J2STRESS") == "material_j2_stress"
-    assert continuum_canonical("EPSVOL") == "material_volumetric_strain"
-    assert continuum_canonical(" j2strain ") == "material_j2_strain"
+def test_material_bucket_token_is_case_insensitive():
+    assert material_bucket_canonicals("MATERIAL.PSTRESS") == (
+        "material_mean_stress",
+    )
+    assert material_bucket_canonicals(" material.j2strain ") == (
+        "material_j2_strain",
+    )
 
 
-def test_backstress_tensor_iv_maps_in_voigt_order():
-    # BackStress_1..6 in the material's Voigt order 11, 22, 33, 12, 23, 13
-    # — the same order the epsP1.. plastic-strain columns already use.
-    assert continuum_canonical("BackStress_1") == "back_stress_xx"
-    assert continuum_canonical("BackStress_2") == "back_stress_yy"
-    assert continuum_canonical("BackStress_3") == "back_stress_zz"
-    assert continuum_canonical("BackStress_4") == "back_stress_xy"
-    assert continuum_canonical("BackStress_5") == "back_stress_yz"
-    assert continuum_canonical("BackStress_6") == "back_stress_xz"
-    assert continuum_canonical("backstress_1") == "back_stress_xx"
-    # Out of range / unindexed: not a component.
-    assert continuum_canonical("BackStress_7") is None
-    assert continuum_canonical("BackStress") is None
+def test_backstress_bucket_maps_in_voigt_order():
+    # Six columns, positional, in the material's Voigt order
+    # 11, 22, 33, 12, 23, 13 — the order the epsP1.. columns already use.
+    assert material_bucket_canonicals("material.BackStress") == (
+        "back_stress_xx", "back_stress_yy", "back_stress_zz",
+        "back_stress_xy", "back_stress_yz", "back_stress_xz",
+    )
 
 
-def test_scalar_internal_variables_map():
-    assert continuum_canonical("YieldStress") == "yield_stress"
-    assert continuum_canonical("DP_cohesion") == "dp_cohesion"
-    assert continuum_canonical("CapPressure") == "cap_pressure"
-    assert continuum_canonical("EpsQpShear") == "eps_qp_shear"
+def test_scalar_internal_variable_buckets_map():
+    assert material_bucket_canonicals("material.YieldStress") == (
+        "yield_stress",
+    )
+    assert material_bucket_canonicals("material.DP_cohesion") == (
+        "dp_cohesion",
+    )
+    assert material_bucket_canonicals("material.CapPressure") == (
+        "cap_pressure",
+    )
+    assert material_bucket_canonicals("material.EpsQpShear") == (
+        "eps_qp_shear",
+    )
 
 
-def test_unknown_internal_variable_still_none():
-    # No generic pass-through: an IV nobody mapped must stay None so the
+def test_unknown_material_bucket_is_none():
+    # No generic pass-through: a bucket nobody mapped stays None so the
     # dropped column surfaces as a GaussColumnDroppedWarning instead of
     # being guessed into a canonical.
-    assert continuum_canonical("SomeNewIV") is None
-    assert continuum_canonical("SomeNewIV_1") is None
+    assert material_bucket_canonicals("material.SomeNewIV") is None
+
+
+def test_material_labels_are_not_in_the_label_map():
+    # The whole point of keying by token. ``p`` is the section axial
+    # force ``P`` under case-insensitive matching; the label map must not
+    # claim it (or any material-private label) at the Gauss level.
+    assert continuum_canonical("p") is None
+    assert continuum_canonical("P") is None
+    assert continuum_canonical("J2stress") is None
+    assert continuum_canonical("epsVol") is None
+    assert continuum_canonical("BackStress_1") is None
+    assert continuum_canonical("YieldStress") is None
+
+
+def test_self_describing_material_buckets_keep_the_label_path():
+    # ``material.stress`` / ``material.strain`` / ``material.pstrain`` /
+    # ``material.eqpstrain`` label their own columns, so they are not in
+    # the token table and their labels still map.
+    assert material_bucket_canonicals("material.stress") is None
+    assert material_bucket_canonicals("material.eqpstrain") is None
+    assert continuum_canonical("sigma11") == "stress_xx"
+    assert continuum_canonical("epsP11") == "plastic_strain_xx"
+    assert continuum_canonical("eqpstrain") == "equivalent_plastic_strain"
+
+
+def test_non_material_tokens_are_never_token_mapped():
+    assert material_bucket_canonicals("section.force") is None
+    assert material_bucket_canonicals("stress") is None
