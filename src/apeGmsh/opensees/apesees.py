@@ -101,6 +101,7 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    deck_requests_solver_stats,
     validate_up_pressure_datum,
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
@@ -1285,6 +1286,18 @@ class BuiltModel:
             enforce=_has_analysis_chain and not _emitter_is_archival,
             staged=_staged,
             partitioned=_will_partition,
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
+
+        # ADR 0106 D2: gate the tcl/py runtime stage marker on whether
+        # THIS deck asks a solver for ``-stats`` anywhere (flat or in
+        # any stage) — reuses the same flat/staged system resolution as
+        # the two validators above. A deck with no ``stats=True``
+        # anywhere emits byte-identically to today (INV-1).
+        emitter._emit_stage_markers = deck_requests_solver_stats(  # type: ignore[attr-defined]
             flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
             stage_systems=[
                 (repr(st.name), st.system) for st in self.stage_records

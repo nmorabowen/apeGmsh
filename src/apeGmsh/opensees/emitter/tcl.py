@@ -24,6 +24,8 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
+from .._internal.build import stage_marker_name
+
 import os
 from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
@@ -331,6 +333,17 @@ class TclEmitter:
         # APEGMSH_PROGRESS`` in the loop so the run=True streamer can
         # render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
+        # ADR 0106 D2 — stage-marker injection, set by
+        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
+        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ``puts APEGMSH_STAGE open|close <name>`` so a solver-stats
+        # block on stderr can be attributed to the stage that paid for
+        # it. Default off keeps a deck with no ``stats=True`` anywhere
+        # byte-identical to today (INV-1). Tracks the name of the
+        # currently-open stage so ``stage_close`` (which takes no
+        # argument) can name it too.
+        self._emit_stage_markers: bool = False
+        self._current_stage_name: str | None = None
         # Streaming sink state (ADR 0065 Tier 2 /
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
         # (the default, byte-identical to before).
@@ -985,6 +998,20 @@ class TclEmitter:
         self._lines.indent = prev_indent + "    "
         self._lines.append("}")
 
+    def _emit_stage_marker(self, phase: str, name: str) -> None:
+        """ADR 0106 D2 — ``puts APEGMSH_STAGE open|close <name>`` at the
+        current (outer) indent, name LAST so a name with spaces survives
+        the S1 parser's ``r"APEGMSH_STAGE (open|close) (.+)$"``.
+
+        Quoting normalised the same way ``analyze`` already normalises a
+        strategy name (line ~913): ``"`` -> ``'`` so the name cannot
+        close the ``puts`` string early, ``[``/``]`` -> ``(``/``)`` so it
+        cannot trigger Tcl command substitution inside it.
+        """
+        sname = stage_marker_name(name)
+        self._lines.append(f'puts "APEGMSH_STAGE {phase} {sname}"')
+        self._lines.append("flush stdout")
+
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
@@ -1338,6 +1365,9 @@ class TclEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
+        if self._emit_stage_markers:
+            self._current_stage_name = name
+            self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
 
     def domain_change(self) -> None:
@@ -1349,6 +1379,9 @@ class TclEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
+        if self._emit_stage_markers and self._current_stage_name is not None:
+            self._emit_stage_marker("close", self._current_stage_name)
+            self._current_stage_name = None
         self._lines.append("loadConst -time 0.0")
         self._lines.append("wipeAnalysis")
         if self._step_hooks_registered:
