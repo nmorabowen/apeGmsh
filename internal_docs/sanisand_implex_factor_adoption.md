@@ -196,7 +196,10 @@ clears the refutation bar (`< 0.0169`) but misses ship by 0.85 % — neither bra
 default); `controlIter` is recorded as a graded guard with its measured gain (refusal churn
 42 545 -> 102, failed attempts 248 -> 11, overlay comparable-to-better at +0.28 % mean) against
 its measured cost (~2.9x wall time on this deck — **not** the R3 leg's ~13x, which does not
-generalise). `control` stays REFUTED. P2-8's fixed threshold (`-implexGuardKp`, listed, not
+generalise; per committed step it is ~8x the Newton iterations of `fixed`, 2.2 -> 17.2, with
+the vanilla implicit twin at 52.4, so `controlIter` sits nearer the implicit twin than to
+`fixed` and keeps only ~3x of IMPL-EX's per-step edge where `fixed` keeps ~24x).
+`control` stays REFUTED. P2-8's fixed threshold (`-implexGuardKp`, listed, not
 built) remains the ADR's documented fallback.
 
 **Guidance: do not default to any control mode — this is now the settled verdict, not an
