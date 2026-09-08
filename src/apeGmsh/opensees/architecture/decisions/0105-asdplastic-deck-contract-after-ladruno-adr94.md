@@ -242,11 +242,10 @@ rejections; helper emit shapes; the D4 gate.
   not drift when the fork refuses more.
 - `stdBrick` propagation is by design on the fork; apeGmsh keeps D4 until
   the fork decides otherwise.
-- Make `DruckerPrager_YF`'s apex-region test exact at `etabar = 0` — an
-  elastic-metric classification, or a flank-then-apex fallback when the
-  flank map cannot move `p`. Today the Euclidean test added with the #815
-  apex projection sends over-apex, low-shear states to a flank map that
-  cannot return them (Amendment 2).
+- ~~Make `DruckerPrager_YF`'s apex-region test exact at `etabar = 0`~~ —
+  **DONE on the fork**, ADR-94 wp/94f (PR #832, merged `67474aeb7`,
+  2026-09-08): both remedies shipped, an elastic-metric classification with
+  a flank-then-apex fallback behind it (Amendment 3).
 
 ## Consequences
 
@@ -380,3 +379,27 @@ projection was already there. The UW workaround therefore needs a build at
 or after `61b3efa04` — our venv build `1652f945c` is pre-fix, so it takes a
 rebuild before the workaround is available locally. Measurements in
 `internal_docs/guide_ladruno_adr95_druckerprager_fix.md` §4.
+
+## Amendment 3 — the apex wall is fixed; Amendment 2's deck guidance lapses (2026-09-08)
+
+Fork ADR-94 **wp/94f** (PR #832, merged `67474aeb7`) closes Amendment 2. The
+apex region test now runs in the **elastic metric** — it reuses ADR-97's
+closest-point apex utility, so it needs no dilatancy accessor, and it is
+gated by a trait specialised for `DruckerPrager_YF` alone — with a
+**flank-first apex fallback** behind it at the four sites that previously
+returned `LADRUNO_MATERIAL_REFUSED`.
+
+Re-measured on the same Prandtl–Reissner deck, staged post-fix build: the
+quadratic `h20uri` leg reaches **TARGET at s/B 0.15, q/q_exact 0.9758**
+against the repaired UW `DruckerPrager`'s 0.9757, with **zero** "scalar
+Newton exhausted" refusals (pre-fix: FLOOR at s/B 0.01122 with 435). The
+linear control is unchanged at 1.0850. `Backward_Euler` stays
+byte-identical on all 23 ADR-97 baseline decks, and the new fork gate fails
+on the pre-fix binary, so it gates the fix rather than merely passing.
+
+**Deck guidance (supersedes Amendment 2).** ASD-DP with `etabar = 0` is
+usable on zero-dilatancy frictional collapse decks from `67474aeb7` on; the
+UW `DruckerPrager` workaround is no longer required and the two materials
+now agree on this deck to within 1e-4 of the exact load. On a **pre-#832**
+engine Amendment 2 still applies, so emitters that pin an older build keep
+the workaround. D8's matching ask is struck.
