@@ -951,6 +951,29 @@ class TestNDMaterialNamespace:
         assert m.honor_tol_r is False
         assert ops.tag_for(m) == 1
 
+    def test_LadrunoSANISAND_implex_seam_is_reachable_via_namespace(
+        self,
+    ) -> None:
+        # A field on the primitive is NOT the same as a field a user can
+        # set: ops.nDMaterial.* has an exhaustive explicit signature and
+        # forwards field by field, so a field added to the dataclass alone
+        # is invisible to every deck written through the namespace -- the
+        # way every deck in the docs is written.  ADR 92 P2-9.
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoSANISAND(
+            **_LS_KWARGS,
+            implex=True, implex_control=(1e-4, 0.5),
+            implex_factor="controlIter")
+        assert m.implex is True
+        assert m.implex_control == (1e-4, 0.5)
+        assert m.implex_factor == "controlIter"
+        # ... and the round trip reaches the deck, not just the object.
+        rec = RecordingEmitter()
+        m._emit(rec, tag=3)
+        assert rec.calls[0][1][-6:] == (
+            "-implex", "-implexControl", 1e-4, 0.5,
+            "-implexFactor", "controlIter")
+
 
 # ---------------------------------------------------------------------------
 # LadrunoCohesiveHingeBiaxial (Ladruno fork — coupled Mz-My hinge, ND 33004)
