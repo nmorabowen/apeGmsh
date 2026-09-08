@@ -343,7 +343,7 @@ do `apeSees.tcl(run=True)` and `apeSees.py(run=True)` — there is no
 run-result object in the bridge to hang a measurement on, and the stream
 carries no stage boundaries to attribute one to.
 
-[ADR 0106](src/apeGmsh/opensees/architecture/decisions/0106-pardiso-stats-capture.md)
+`ADR 0106`
 is the plan for closing that (TIMs slice A8-parse). A new run-side
 `_solver_stats.py` holds one pure parser and three frozen records; the
 per-stage reduction takes the **maximum** of the five capacity numbers
