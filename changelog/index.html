@@ -3674,10 +3674,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed-the-2026-09-07-fork-batch-is-recorded-minimum-build-a240b9183-the-adr-96-passenger-dof-contract-and-the-per-factorisation-pardiso-stats-block" class="md-nav__link">
+  <a href="#added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CHANGED — the 2026-09-07 fork batch is recorded: minimum build a240b9183, the ADR 96 passenger-DOF contract, and the per-factorisation Pardiso -stats block
+        ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
       
     </span>
   </a>
@@ -3868,10 +3868,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed-the-2026-09-07-fork-batch-is-recorded-minimum-build-a240b9183-the-adr-96-passenger-dof-contract-and-the-per-factorisation-pardiso-stats-block" class="md-nav__link">
+  <a href="#added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CHANGED — the 2026-09-07 fork batch is recorded: minimum build a240b9183, the ADR 96 passenger-DOF contract, and the per-factorisation Pardiso -stats block
+        ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
       
     </span>
   </a>
@@ -4184,6 +4184,70 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12">ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)<a class="headerlink" href="#added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12" title="Permanent link">&para;</a></h3>
+<p>Same trap as ADR 0105, on the fork's SANISAND family this time: <code>LadrunoSANISAND</code>
+answers seven more material-level responses (state parameter, yield-surface
+distance, IMPL-EX error tracking) only under the <code>material.&lt;token&gt;</code> prefix — a
+bare <code>-E psi</code> (or any of its siblings) reaches no material and records nothing,
+no error. They now land on canonical names, keyed by the <strong>bucket token</strong> exactly
+like the ASDPlasticMaterial3D buckets, and a bare token is refused up front
+naming the fix:</p>
+<table>
+<thead>
+<tr>
+<th>Bucket (aliases)</th>
+<th>apeGmsh component(s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>material.psi</code> (<code>stateParameter</code>)</td>
+<td><code>state_parameter</code></td>
+</tr>
+<tr>
+<td><code>material.yieldDistance</code> (<code>yieldFunction</code>)</td>
+<td><code>yield_distance</code></td>
+</tr>
+<tr>
+<td><code>material.implexError</code></td>
+<td><code>implex_error</code></td>
+</tr>
+<tr>
+<td><code>material.avgImplexError</code></td>
+<td><code>avg_implex_error</code></td>
+</tr>
+<tr>
+<td><code>material.substeps</code> (<code>substepsME</code>, <code>ladrunoSubsteps</code>)</td>
+<td><code>substeps_me</code>, <code>substeps_cap_hit</code></td>
+</tr>
+<tr>
+<td><code>material.implexDetail</code></td>
+<td><code>implex_detail_total/dev/vol/clamp_fired/clamp_count/f</code></td>
+</tr>
+<tr>
+<td><code>material.implexRefusals</code></td>
+<td><code>implex_refusals_total/sign_change/control/companion</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every fork alias for a token resolves to the same canonical columns as its
+primary spelling, since the recorder forwards whichever one the deck used
+straight through. Registering by token (positional), not by column label, means
+this also works on fork builds old enough to still write <code>C1..Cn</code> instead of the
+named <code>COMP_NAMES</code> (fork PR #820) — the reason the ASDPlasticMaterial3D buckets
+are keyed this way too.</p>
+<p>Not done, named for the runway: <code>implexGuards</code> (6 slots, no <code>ResponseType</code>
+tags in the fork, so its slot meanings are not established) stays
+unregistered. None of the new canonical names were added to
+<code>_vocabulary.ALL_CANONICAL</code>, matching the existing <code>material_*</code> names. The
+MPCO reader's material-state path knows only <code>damage</code> /
+<code>equivalentPlasticStrain</code> / <code>plasticStrain</code> and drops these buckets, as it
+already does the ADR 0105 ones. And by-position resolution means a file whose
+<code>COMP_NAMES</code> disagree with the table (measured: <code>substeps_capHit, substeps_me</code>
+reads as <code>me, capHit</code>; a <code>material.psi</code> bucket labelled <code>yieldDistance</code> reads
+as <code>state_parameter</code>) is renamed <strong>silently</strong> — that predates this entry, but</p>
+<h1 id="820-makes-the-files-names-authoritative-so-the-disagreement-is-now">820 makes the file's names authoritative, so the disagreement is now<a class="headerlink" href="#820-makes-the-files-names-authoritative-so-the-disagreement-is-now" title="Permanent link">&para;</a></h1>
+<p>detectable and should warn.</p>
 <h3 id="changed-the-2026-09-07-fork-batch-is-recorded-minimum-build-a240b9183-the-adr-96-passenger-dof-contract-and-the-per-factorisation-pardiso-stats-block">CHANGED — the 2026-09-07 fork batch is recorded: minimum build <code>a240b9183</code>, the ADR 96 passenger-DOF contract, and the per-factorisation <code>Pardiso -stats</code> block<a class="headerlink" href="#changed-the-2026-09-07-fork-batch-is-recorded-minimum-build-a240b9183-the-adr-96-passenger-dof-contract-and-the-per-factorisation-pardiso-stats-block" title="Permanent link">&para;</a></h3>
 <p>The fork merged eight PRs on 2026-09-07 (#805, #808, #810, #811, #812, #814,</p>
 <h1 id="820-821-against-the-tims-proposed-model-asks-this-is-the-docs-half-of">820, #821) against the TIMs proposed-model asks. This is the docs half of<a class="headerlink" href="#820-821-against-the-tims-proposed-model-asks-this-is-the-docs-half-of" title="Permanent link">&para;</a></h1>
