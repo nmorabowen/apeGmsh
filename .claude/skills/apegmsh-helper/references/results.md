@@ -73,7 +73,9 @@ Notes:
   key (`basicForce`/`localForce`/`force`/`globalForce`) returning the raw
   block. Beam diagrams orient from the recorder's `MODEL/LOCAL_AXES`
   (`results.elements.local_axes(...)`; `line_force` uses it for true
-  cross-section roll). Energy: `results.energy(region=)`. See
+  cross-section roll). Energy: `results.energy(region=)`. ASDPlasticMaterial3D's
+  material-level responses (`material.pstrain`, `material.PStress`, …) land on
+  `results.elements.gauss` under canonical names too (ADR 0105 Amendment 1) — see
   `references/ladruno.md` for the fork-only details.
 - Zero-setup: `Results.demo()` / `make_demo_results(...)` — see §6.
 

@@ -269,3 +269,34 @@ interface use `g.constraints.contact()` (unilateral, fork-only) or `tie()`
 apeGmsh cannot know which, because element classes are assigned at
 `ops.element` time, *after* resolve; get it wrong and emit refuses with a
 `BridgeError` naming the ndf it actually found.
+
+## ASDPlasticMaterial3D deck contract (ADR 0105 / fork ADR-94)
+
+### ❌ Bare `pstrain`/`eqpstrain`/`PStress`/`J2Stress`/`VolStrain`/`J2Strain` in `elem_responses` → ✅ `material.<Token>`
+Plastic strain and the other ASDPlasticMaterial3D scalars are MATERIAL-level
+responses; the fork forwards them only under the `material.` prefix
+(`LadrunoRecorder.cpp` splits `material.<token>` into `material <k> <token>`
+per Gauss point). A bare token never reaches the material and records
+nothing — no error, no bucket, silently. `ops.recorder.Ladruno` / `MPCO` now
+refuse the bare spelling at construction, naming the `material.<token>` form
+to use instead.
+
+### ❌ `ASDPlasticMaterial3D` on `stdBrick`, trusting `strict_convergence` → ✅ `LadrunoBrick` / `TenNodeTetrahedron`
+`strict_convergence=True` (the ADR 0105 default on every typed helper) only
+reaches the analysis on a host MEASURED to propagate a material refusal.
+`stdBrick` swallows it unconditionally (fork ADR-94 B2: `Brick::update()`
+returns 0 regardless — measured 20/20 "success" on a deck `LadrunoBrick`
+refuses 0/20). The build warns `ASDPlasticHostWarning` once per deck, but a
+vanilla-host deck stays legal (it was the SSI-1 default) — it just means the
+fail-loud contract never reaches it.
+
+### ❌ Hand-building `MohrCoulombSoil`'s old 21-name parameter superset → ✅ let the helper emit exactly the schema
+Post fork ADR-94 the parser fails loud: an unknown model-parameter name
+aborts the `nDMaterial` command, and every parameter except `MassDensity` /
+`InitialP0` is required. The pre-ADR-94 21-name superset (twelve names
+foreign to the Mohr-Coulomb combination) is refused by the fork. Use
+`MohrCoulombSoil` / `MohrCoulombTensionCutoffSoil` / `HoekBrownRock`, or the
+generic `ASDPlasticMaterial3D(..., model_parameters=(...))` — apeGmsh
+validates the schema client-side (`ValueError` at construction, naming the
+foreign or missing names) for any combination in
+`_ASDP_PARAMS_BY_COMPONENT`.
