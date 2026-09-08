@@ -14338,46 +14338,62 @@ else, so recording <code>material.PStress</code> / <code>J2Stress</code> / <code
 <code>BackStress</code> wrote five full buckets into the file that
 <code>Results.elements.gauss.available_components()</code> never listed — dropped with no
 warning, indistinguishable from a material that never wrote them.</p>
-<p>They now land on canonical names:</p>
+<p>They now land on canonical names, keyed by the <strong>bucket token</strong> and resolved by
+column position:</p>
 <table>
 <thead>
 <tr>
 <th>Bucket</th>
-<th>Column label</th>
-<th>apeGmsh component</th>
+<th>apeGmsh component(s)</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>material.PStress</code></td>
-<td><code>p</code></td>
 <td><code>material_mean_stress</code></td>
 </tr>
 <tr>
 <td><code>material.J2Stress</code></td>
-<td><code>J2stress</code></td>
 <td><code>material_j2_stress</code></td>
 </tr>
 <tr>
 <td><code>material.VolStrain</code></td>
-<td><code>epsVol</code></td>
 <td><code>material_volumetric_strain</code></td>
 </tr>
 <tr>
 <td><code>material.J2Strain</code></td>
-<td><code>J2strain</code></td>
 <td><code>material_j2_strain</code></td>
 </tr>
 <tr>
 <td><code>material.BackStress</code></td>
-<td><code>BackStress_1..6</code></td>
-<td><code>back_stress_xx/yy/zz/xy/yz/xz</code></td>
+<td><code>back_stress_xx/yy/zz/xy/yz/xz</code> (6 columns)</td>
+</tr>
+<tr>
+<td><code>material.YieldStress</code></td>
+<td><code>yield_stress</code></td>
+</tr>
+<tr>
+<td><code>material.DP_cohesion</code></td>
+<td><code>dp_cohesion</code></td>
+</tr>
+<tr>
+<td><code>material.CapPressure</code></td>
+<td><code>cap_pressure</code></td>
+</tr>
+<tr>
+<td><code>material.EpsQpShear</code></td>
+<td><code>eps_qp_shear</code></td>
 </tr>
 </tbody>
 </table>
-<p>plus the known scalar internal variables (<code>YieldStress</code> → <code>yield_stress</code>,
-<code>DP_cohesion</code> → <code>dp_cohesion</code>, <code>CapPressure</code> → <code>cap_pressure</code>, <code>EpsQpShear</code> →
-<code>eps_qp_shear</code>).</p>
+<p><strong>The token is the key, not the column label</strong>, because the labels the material
+writes are not unique across levels: <code>material.PStress</code> labels its column <code>p</code>,
+canonicalisation is case-insensitive, and the section axial force of every
+force-based beam is labelled <code>P</code> — a label-keyed map turned each <code>section.force</code>
+station into a Gauss <code>material_mean_stress</code>. The self-describing buckets
+(<code>material.stress</code>, <code>material.strain</code>, <code>material.pstrain</code>, <code>material.eqpstrain</code>)
+are not in the token table and keep the existing label path (<code>sigma11</code>,
+<code>epsP11</code>, <code>eqpstrain</code>) unchanged.</p>
 <p>The <code>material_*</code> names are <strong>provenance-distinct on purpose</strong>: they are what the
 material computed, under its own definition and sign, and are NOT aliased onto
 the tensor-derived <code>mean_stress</code> / <code>j2_stress</code> / <code>volumetric_strain</code> /
@@ -14387,15 +14403,13 @@ equal (same sign, factor 1 — both <code>trace/3</code>, both J2 = 1/2 s:s, bot
 would need a per-material audit instead.</p>
 <p>Back-stress components arrive in the material's Voigt order 11, 22, 33, 12, 23,
 13 — the order the <code>epsP1..</code> plastic-strain columns already use.</p>
-<p><strong>A dropped Gauss column now warns instead of vanishing.</strong>
-<code>gauss_available</code> raises one <code>GaussColumnDroppedWarning</code> per bucket, naming the
-bucket, the labels it could not map and the element class, whenever a
-per-Gauss-point column is discarded because no canonical component matches its
-label. Buckets that map completely never warn. Section stations (<code>LEVELS == 2</code>,
-<code>section.force</code> / <code>section.deformation</code>) are excluded from the Gauss paths
-outright — they carry a station index but are line stations, and their axial
-force <code>P</code> would otherwise collide with the material's mean stress <code>p</code> under the
-case-insensitive label match.</p>
+<p><strong>A dropped material column now warns instead of vanishing.</strong>
+<code>gauss_available</code> raises one <code>GaussColumnDroppedWarning</code> per <code>material.&lt;Token&gt;</code>
+bucket that neither the token table nor the label map can name, naming the
+bucket, the labels it could not map and the element class. Buckets that map
+completely never warn, and the warning is scoped to <code>material.</code> buckets: a label
+the Gauss level cannot name elsewhere is routinely another level's business (a
+<code>section.force</code> station carries <code>P</code>/<code>Mz</code>), so warning there would be noise.</p>
 <h3 id="changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105">CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, <code>strict_convergence</code> on, <code>Continuum</code> tangent, swallowing-host gate, <code>MohrCoulombTensionCutoffSoil</code> + <code>HoekBrownRock</code> (ADR 0105)<a class="headerlink" href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" title="Permanent link">&para;</a></h3>
 <p>The Ladruno fork's ADR-94 fix wave (<code>ladruno</code> at or after <code>bbf657d49</code>) made the
 <code>ASDPlasticMaterial3D</code> parser fail loud: an unknown model-parameter name aborts
