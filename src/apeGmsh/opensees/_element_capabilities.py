@@ -1184,3 +1184,80 @@ def cpp_class_name_for_pgs(
     if len(names) == 1:
         return next(iter(names))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Runtime capability probes (ADR 0108)
+# ---------------------------------------------------------------------------
+
+#: How many floats the fork's ``ladrunoBranch`` material response returns —
+#: ``[branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1,
+#: detAmin]`` (``DruckerPrager::getLadrunoBranch()``, fork ADR-95).  The
+#: names of those eight columns live on the READ side
+#: (``results.readers._ladruno_element_io._MATERIAL_BUCKET_TOKENS``); the
+#: bridge deliberately knows only the width, so the layering stays
+#: results -> opensees and not back.
+LADRUNO_BRANCH_WIDTH = 8
+
+#: Element classes whose ``setResponse`` forwards ``material <gp> <token>``
+#: to the NDMaterial, so the probe below can be aimed at one of their
+#: elements (fork ADR-95 forwards ``ladrunoBranch`` on exactly these).
+LADRUNO_BRANCH_ELEMENT_CLASSES: frozenset[str] = frozenset({
+    "LadrunoBrick",
+    "LadrunoBrick20",
+    "BezierTet10",
+    "TenNodeTetrahedron",
+})
+
+
+def probe_ladruno_branch(
+    ops: Any, element_tag: int, *, gauss_point: int = 1,
+) -> bool:
+    """True when this engine answers the ADR-95 DruckerPrager diagnostic.
+
+    Calls ``ops.eleResponse(element_tag, "material", "<gp>",
+    "ladrunoBranch")`` on a live domain and reports whether it came back
+    with the documented :data:`LADRUNO_BRANCH_WIDTH` floats.
+
+    **An empty reply is the capability probe.**  Every engine older than
+    fork build ``61b3efa04``
+    (:data:`~apeGmsh.opensees.material.nd.DP_ADR95_MIN_FORK_BUILD`) — and
+    every stock openseespy — parses a ``DruckerPrager`` deck identically
+    and answers ``[]`` here, because the response did not exist.  That
+    same engine also gets the tension-cutoff return map wrong, so the
+    empty list is not just "no diagnostic": it is "do not believe this
+    run's collapse load on quadratic solid elements".  The ASD-DP sibling
+    (``ASDPlasticMaterial3D`` + ``DruckerPrager_YF``) needs a second,
+    later floor, ``67474aeb7``, for its apex classification; there is no
+    response token for that one, so it cannot be probed this way —
+    compare :func:`apeGmsh.opensees.emitter.live.get_backend_build`.
+
+    ``element_tag`` must name an element of a class in
+    :data:`LADRUNO_BRANCH_ELEMENT_CLASSES` using a UW ``DruckerPrager``
+    material; anything else answers ``[]`` for reasons that have nothing
+    to do with the build, and the caller would misread it as an old
+    engine.  ``gauss_point`` is 1-based, as OpenSees counts them.
+
+    Raises ``ValueError`` on a reply that is neither empty nor exactly
+    eight long: a third width means the fork changed the response and
+    every by-position name downstream is now wrong — louder is better
+    than a mislabelled census.
+    """
+    vals = ops.eleResponse(
+        int(element_tag), "material", str(int(gauss_point)), "ladrunoBranch",
+    )
+    n = len(vals)
+    if n == 0:
+        return False
+    if n != LADRUNO_BRANCH_WIDTH:
+        raise ValueError(
+            f"ops.eleResponse({element_tag}, 'material', "
+            f"'{gauss_point}', 'ladrunoBranch') returned {n} values; fork "
+            f"ADR-95 documents exactly {LADRUNO_BRANCH_WIDTH} "
+            f"([branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, "
+            f"I1, detAmin]). Refusing to answer the probe: a changed width "
+            f"means the by-position column names in the .ladruno reader "
+            f"(material.ladrunoBranch) no longer describe what the engine "
+            f"writes."
+        )
+    return True

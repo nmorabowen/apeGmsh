@@ -70,7 +70,7 @@ semantics, the `theta` tension-softening parameter, hardening.
    Any per-Gauss-point census (`ladrunoBranch`, tangent SVD) at every station multiplies the wall
    by ~5–8×; sample at stations, not at steps.
 
-## 3. Read-back: the `ladrunoBranch` census (recorder/file half ADOPTED)
+## 3. Read-back: the `ladrunoBranch` census (ADOPTED except the live capture path)
 
 **Adoption status (apeGmsh, 2026-09-08).** The recorder/file half is done. `ladrunoBranch` and
 `ladrunoTangent` joined `_MATERIAL_ONLY_ELEM_TOKENS` (`opensees/recorder.py`), so a bare token is
@@ -82,12 +82,21 @@ position — `dp_branch`, `dp_gamma_cone`, `dp_gamma_cutoff`, `dp_f1_trial`, `dp
 `MaterialResponse(this, 95, Vector(8))` with no ResponseType and the file therefore writes `C1..C8`.
 The 36-entry `ladrunoTangent` takes the documented unknown-bucket route rather than inventing names.
 
-**Not adopted.** The LIVE path. `Results` is a pure file/array reader with no ops handle, so the
-`Results.from_native(...).gauss_point_branch(...)` sketched below cannot exist as written; the only
-live seam is `DomainCapture`, whose per-material routing still hard-codes `catalog_token ==
-"strain"` (`opensees/_response_catalog.py::needs_per_material_strain`). Generalising that table is
-its own slice, and it needs a post-`61b3efa04` build to verify. The tension and corner censuses
-below are likewise not built.
+**Adopted since, ADR 0108 (2026-09-08).** The two censuses below are built, on the file route:
+`results.elements.gauss.tension_census()` (`mean_stress >= 0`, from the ordinary `stress` response,
+so material-agnostic) and `.corner_census()` (`dp_branch == 3`), both returning a `GaussCensus`
+with count + locations. The capability probe is
+`opensees._element_capabilities.probe_ladruno_branch`, and `docs/concepts/backend-capabilities.md`
+now carries both build floors. Live gate:
+`tests/opensees/integration_ladruno/test_ladruno_dp_branch_live.py` — written and gated, but its
+post-fix half has NOT been run to green, because the venv's engine is still `1652f945c`.
+
+**Still not adopted.** The LIVE capture path. `Results` is a pure file/array reader with no ops
+handle, so the `Results.from_native(...).gauss_point_branch(...)` sketched below cannot exist as
+written; the only live seam is `DomainCapture`, whose per-material routing still hard-codes
+`catalog_token == "strain"` (`opensees/_response_catalog.py::needs_per_material_strain`).
+Generalising that table is its own slice (ADR 0108 D5 names what it needs), and it needs a
+post-`61b3efa04` build to verify.
 
 The original ask, for reference:
 
