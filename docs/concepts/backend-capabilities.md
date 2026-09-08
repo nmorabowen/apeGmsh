@@ -143,6 +143,48 @@ solid elements hit a false collapse floor. Its two read-only diagnostics,
 too: an empty `ops.eleResponse(e, "material", gp, "ladrunoBranch")` is
 the probe for an older one.
 
+`ASDPlasticMaterial3D` with a `DruckerPrager_YF` yield function has a
+*second*, later floor — `67474aeb7` — for its apex classification (fork
+ADR-94 wp/94f). The two floors are independent: `61b3efa04` fixes the UW
+material's cutoff, `67474aeb7` fixes the ASD one's region test, and a
+build can have the first without the second. Unlike the UW material, the
+ASD one exposes no response token, so there is nothing to probe — compare
+the build stamp instead.
+
+#### The minimum useful build, and how to check it
+
+| Want | Minimum fork build |
+|---|---|
+| A believable UW `DruckerPrager` tension cutoff, and the `ladrunoBranch` diagnostic | `61b3efa04` |
+| A believable `ASDPlasticMaterial3D` + `DruckerPrager_YF` apex | `67474aeb7` |
+
+Neither is enforced — a bare hash cannot prove ancestry, and an older
+engine parses the identical deck. What it gets wrong is the answer, so
+there is nothing to refuse at construction. Two ways to find out where
+you stand:
+
+```python
+from apeGmsh.opensees._element_capabilities import probe_ladruno_branch
+from apeGmsh.opensees.emitter.live import get_backend_build
+
+get_backend_build()                      # the exact commit, or None off-fork
+probe_ladruno_branch(ops_module, e_tag)  # False on a pre-61b3efa04 engine
+```
+
+The probe must be aimed at an element of a class that forwards
+`material <gp> <token>` to its NDMaterial — `LadrunoBrick`,
+`LadrunoBrick20`, `BezierTet10`, `TenNodeTetrahedron` — using a UW
+`DruckerPrager`. Anywhere else it answers `False` for reasons that have
+nothing to do with the build.
+
+Once the response is there, `results.elements.gauss` reads it back under
+eight names (`dp_branch`, `dp_gamma_cone`, `dp_gamma_cutoff`,
+`dp_f1_trial`, `dp_f2_trial`, `dp_forced_accept`, `dp_i1`,
+`dp_det_a_min`) and offers two censuses over it — `corner_census()` for
+`dp_branch == 3`, and the material-agnostic `tension_census()` for
+`mean_stress >= 0`. See
+[ADR 0108](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0108-ladruno-branch-read-back.md).
+
 ### Recorders
 
 `recorder ladruno` (the HDF5 `.ladruno` recorder) and `recorder Monitor`

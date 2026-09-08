@@ -17,6 +17,7 @@ from . import _derived, _expr, _shell_thickness
 from ._slabs import (
     ElementSlab,
     FiberSlab,
+    GaussCensus,
     GaussSlab,
     LayerSlab,
     LineStationSlab,
@@ -1345,6 +1346,125 @@ class GaussResultsComposite(
             d for d in _derived.available_derived(stored) if d not in stored
         ]
         return stored + derived
+
+    # ------------------------------------------------------------------
+    # Censuses (ADR 0108) — count + locate the Gauss points that matter
+    # ------------------------------------------------------------------
+
+    def _census(
+        self, *, component: str, predicate, predicate_text: str,
+        pg, label, selection, ids, time: TimeSlice, stage: str | None,
+    ) -> GaussCensus:
+        """Read ``component``, apply ``predicate`` to its LAST time row.
+
+        Refuses a component this results file cannot serve. The reader
+        answers a missing Gauss component with an EMPTY slab, which a
+        census would report as ``count=0`` — "no such point" and "never
+        recorded" would be the same answer, and for ``dp_branch`` the
+        second one is what a pre-``61b3efa04`` engine produces.
+        """
+        available = self.available_components(stage=stage)
+        if component not in available:
+            raise ValueError(
+                f"Cannot take this census: {component!r} is not in these "
+                f"results (available: {sorted(available)}). "
+                + (
+                    "Record 'material.ladrunoBranch' on a UW DruckerPrager "
+                    "deck — and note that a fork build older than "
+                    "DP_ADR95_MIN_FORK_BUILD ('61b3efa04') answers the "
+                    "token with an empty list, so it writes no bucket "
+                    "either."
+                    if component == "dp_branch"
+                    else "Record component='stress' to derive it."
+                )
+            )
+        slab = self.get(
+            pg=pg, label=label, selection=selection, ids=ids,
+            component=component, time=time, stage=stage,
+        )
+        row = np.asarray(slab.values, dtype=np.float64)[-1]
+        keep = np.flatnonzero(predicate(row))
+        return GaussCensus(
+            component=component,
+            predicate=predicate_text,
+            count=int(keep.size),
+            examined=int(row.size),
+            values=row[keep],
+            element_index=np.asarray(slab.element_index)[keep],
+            natural_coords=np.asarray(slab.natural_coords)[keep],
+            time=float(np.asarray(slab.time)[-1]),
+        )
+
+    def tension_census(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> GaussCensus:
+        """Gauss points in tension — ``mean_stress >= 0`` — at one instant.
+
+        Mean stress is ``I1 / 3`` in apeGmsh's tension-positive
+        convention (:mod:`apeGmsh.results._derived`), so ``>= 0`` is
+        "not in compression". Built from the ordinary ``stress``
+        response through the ``mean_stress`` derived scalar, so it works
+        on **any** material — unlike :meth:`corner_census`, which reads
+        a UW-DruckerPrager-specific diagnostic.
+
+        This is the census the fork's ADR-95 campaign used to find where
+        a frictional collapse deck gets into trouble: the first tensile
+        Gauss points beside a footing edge, which only quadratic
+        elements resolve. Record ``component="stress"`` to have it.
+
+        ``time`` selects the slab as elsewhere; the census is taken at
+        the LAST step of that slice and reports its time.
+        """
+        return self._census(
+            component="mean_stress",
+            predicate=lambda row: row >= 0.0,
+            predicate_text="mean_stress >= 0",
+            pg=pg, label=label, selection=selection, ids=ids,
+            time=time, stage=stage,
+        )
+
+    def corner_census(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> GaussCensus:
+        """Gauss points on the DruckerPrager CORNER — ``dp_branch == 3``.
+
+        Reads ``dp_branch``, slot 0 of the fork's ``ladrunoBranch``
+        material response (0 elastic / 1 cone / 2 tension cutoff / 3
+        corner). Record ``material.ladrunoBranch`` on a UW
+        ``DruckerPrager`` deck to have it — the bare ``ladrunoBranch``
+        spelling records nothing and the recorder refuses it by name.
+
+        **UW-DruckerPrager-specific.** The branch codes are that return
+        map's, not a shared vocabulary: no other material writes this
+        token, and a build older than fork ``61b3efa04``
+        (:data:`~apeGmsh.opensees.material.nd.DP_ADR95_MIN_FORK_BUILD`)
+        answers an empty list for it. Raises ``ValueError`` naming
+        ``dp_branch`` when the results carry no such component, which is
+        also what a pre-fix engine's file looks like.
+
+        ``time`` behaves as in :meth:`tension_census`.
+        """
+        return self._census(
+            component="dp_branch",
+            predicate=lambda row: row == 3.0,
+            predicate_text="dp_branch == 3 (corner)",
+            pg=pg, label=label, selection=selection, ids=ids,
+            time=time, stage=stage,
+        )
 
 
 # =====================================================================

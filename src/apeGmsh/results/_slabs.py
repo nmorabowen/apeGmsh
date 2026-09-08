@@ -22,6 +22,10 @@ LayerSlab         ``(T, sum_L)``            ``element_index, gp_index, layer_ind
                                             sub_gp_index, thickness: (sum_L,)``
 ================  ========================  =================================================
 
+``GaussCensus`` is not a slab: it is the subset of ONE ``GaussSlab``
+time row that met a predicate (see ``Results.elements.gauss``'s
+``tension_census`` / ``corner_census``).
+
 For a single time step (``time_slice`` was a scalar), ``T`` is 1 and
 the leading axis is preserved — the caller can squeeze if desired.
 """
@@ -151,6 +155,43 @@ class GaussSlab:
         """
         from ._gauss_world_coords import compute_global_coords
         return compute_global_coords(self, fem)
+
+
+@dataclass(frozen=True)
+class GaussCensus:
+    """The Gauss points of a :class:`GaussSlab` that met a predicate.
+
+    A census answers "how many, and where" at ONE instant — the count
+    plus the location metadata needed to draw or tabulate the matching
+    points. It carries the same ``element_index`` / ``natural_coords``
+    pair a :class:`GaussSlab` does, so
+    :meth:`global_coords` behaves identically.
+
+    ``count`` is ``element_index.size``; ``examined`` is how many Gauss
+    points the predicate ran over, so ``count / examined`` is the
+    fraction without a second read. Both are needed: a census of 12 is
+    a different fact at 40 Gauss points than at 40 000.
+    """
+    component: str               # the component the predicate ran on
+    predicate: str               # human-readable, e.g. "mean_stress >= 0"
+    count: int
+    examined: int
+    values: ndarray              # (count,) the matching values
+    element_index: ndarray       # (count,)
+    natural_coords: ndarray      # (count, dim)
+    time: float                  # the instant the census was taken at
+
+    def global_coords(self, fem) -> ndarray:
+        """Map the matching GPs to ``(count, 3)`` world coords.
+
+        Same reconstruction (and same
+        :class:`~apeGmsh.results._gauss_world_coords.WarnGaussCoordsApproximate`
+        caveat) as :meth:`GaussSlab.global_coords`.
+        """
+        from ._gauss_world_coords import compute_global_coords_from_arrays
+        return compute_global_coords_from_arrays(
+            self.element_index, self.natural_coords, fem,
+        )
 
 
 @dataclass(frozen=True)

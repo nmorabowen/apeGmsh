@@ -26,6 +26,7 @@ from ._plane_recovery import OutOfPlaneRecoveryWarning
 from ._slabs import (
     ElementSlab,
     FiberSlab,
+    GaussCensus,
     GaussSlab,
     LayerSlab,
     LineStationSlab,
@@ -62,6 +63,7 @@ __all__ = [
     "NodeSlab",
     "ElementSlab",
     "LineStationSlab",
+    "GaussCensus",
     "GaussSlab",
     "FiberSlab",
     "LayerSlab",

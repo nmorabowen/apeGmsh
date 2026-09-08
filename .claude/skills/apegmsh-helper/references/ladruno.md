@@ -406,8 +406,19 @@ responses: `ladrunoBranch` (8 floats — branch 0 elastic / 1 cone / 2 cutoff /
 `BezierTet10` and `TenNodeTetrahedron`. Record them the ADR 0105 way,
 `material.ladrunoBranch` — the bare token records nothing and the recorder
 refuses it — and read an empty reply as the capability probe for a pre-#803
-engine. A per-Gauss-point census at every station multiplies wall time ~5–8×:
-sample at stations, not steps. The live `DomainCapture` path is not adopted.
+engine; `opensees._element_capabilities.probe_ladruno_branch(ops, tag)` wraps
+that check (aim it at one of those four classes on a UW `DruckerPrager`, or it
+answers `False` for the wrong reason). The reader names the eight columns
+`dp_branch` / `dp_gamma_cone` / `dp_gamma_cutoff` / `dp_f1_trial` /
+`dp_f2_trial` / `dp_forced_accept` / `dp_i1` / `dp_det_a_min`, and
+`results.elements.gauss` offers two censuses over them (ADR 0108):
+`corner_census()` for `dp_branch == 3`, and the material-agnostic
+`tension_census()` for `mean_stress >= 0`, built from the ordinary `stress`
+response — the one the fork's campaign actually leaned on. Both return a
+`GaussCensus` (count, `examined`, values, `element_index`, `natural_coords`,
+`global_coords(fem)`) at one instant. A per-Gauss-point census at every station
+multiplies wall time ~5–8×: sample at stations, not steps. The live
+`DomainCapture` path is still not adopted (ADR 0108 D5 names the seam).
 
 ## LadrunoBrick (unified 8-node hex)
 

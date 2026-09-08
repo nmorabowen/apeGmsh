@@ -2,6 +2,61 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### ADDED — the `ladrunoBranch` read-back contract: two Gauss censuses, a capability probe, and a live gate (ADR 0108, fork ADR-95)
+
+The recorder/file half of fork ADR-95 landed earlier: the `61b3efa04` build
+floor, the recorder's refusal of the bare token, and the eight by-position
+reader column names. This is the rest — what turns those columns into
+something a user can act on. ADR 0108 records the response layout as the
+contract, and the fact that the branch codes are UW-DruckerPrager's rather
+than a shared vocabulary.
+
+- `results.elements.gauss.tension_census()` and `.corner_census()` return a
+  new `apeGmsh.results.GaussCensus` — count, `examined`, the matching
+  values, and the `element_index` / `natural_coords` pair that carries a
+  `global_coords(fem)` identical to `GaussSlab`'s. Both take the standard
+  `pg=` / `label=` / `selection=` / `ids=` / `time=` / `stage=` selectors
+  and answer for one instant, the last step of the selected slice.
+- `tension_census()` counts `mean_stress >= 0`, built from the ordinary
+  `stress` response through the existing derived scalar, so it works on any
+  material and any build — it is the census the fork's campaign leaned on.
+  `corner_census()` counts `dp_branch == 3` and is UW-DruckerPrager-only.
+  `>= 0`, not `> 0`: a point returned exactly to the apex sits at `I1 = T`
+  and is the whole point.
+- A census over a component the file does not carry is **refused**, naming
+  the component and the build floor. An absent Gauss component reads back
+  as an empty slab, so counting it would report `count = 0` — "no corner
+  points" where the truth is "pre-`61b3efa04` engine, never recorded".
+- `apeGmsh.opensees._element_capabilities.probe_ladruno_branch(ops, tag)` —
+  the empty reply IS the probe. An older engine parses the identical deck
+  and answers `[]` with no exception, and gets the return map wrong too, so
+  the empty list means "do not believe this run's collapse load on
+  quadratic solids". It knows the response WIDTH only, never the eight
+  names (those live on the read side; the dependency runs results →
+  opensees), and raises on any third width rather than letting a changed
+  response silently re-label the by-position columns.
+- `docs/concepts/backend-capabilities.md` gains the two independent build
+  floors — `61b3efa04` for the UW `DruckerPrager` cutoff, `67474aeb7` for
+  the `ASDPlasticMaterial3D` + `DruckerPrager_YF` apex — and says why only
+  the first can be probed: the ASD material exposes no response token.
+- New `ladruno_fork` gate,
+  `tests/opensees/integration_ladruno/test_ladruno_dp_branch_live.py`: a
+  one-hex material driver under prescribed hydrostatic tension, with the
+  reader cross-checked against `ops.eleResponse` on the live domain.
+- **`RESPONSE_CATALOG` is deliberately untouched.** That seam
+  (`resolve_generic_gauss_blocks`) splits the single element-level `C1..Cn`
+  block an untagged *element* response produces; `ladrunoBranch` is a
+  *material* response and reaches the file already split per Gauss point.
+  A catalog row would be read by nobody — and `_class_int_rule` returns
+  `None` once a class has two non-`Custom` rules, so a mismatched row would
+  silently drop every element of that class from DomainCapture, stress
+  included. ADR 0108 D2.
+- **Partially verified.** The installed fork build (`1652f945c`) predates
+  the fix, so the five post-fix assertions are written and gated but have
+  not been run to green. What did run measured the defect directly: the
+  driver deck ends at `I1 = 8.08` against a cutoff of `0.4487` — never
+  returned — the probe answers `False`, and the recorder writes no bucket.
+  Mutating the probe kills 6 of 6 tests in the gate.
 ### FIXED — `tail_monitor` walked off the end of a half-appended SWMR frame
 
 Appending one frame to a Monitor sink is three separate writes on the
