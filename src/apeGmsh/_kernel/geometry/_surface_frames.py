@@ -1,4 +1,4 @@
-﻿"""Boundary-surface geometry â€” per-node outward frames + tributary areas.
+"""Boundary-surface geometry â€” per-node outward frames + tributary areas.
 
 The 3D sibling of :mod:`_boundary_chain`, for ``g.constraints.interface()``
 on a dim-2 master (ADR 0093 D2/D3, 3D slice S1).  Where the 2D lane walks
