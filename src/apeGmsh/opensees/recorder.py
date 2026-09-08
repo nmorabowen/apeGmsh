@@ -346,11 +346,18 @@ class Element(Recorder):
 
 
 #: Element-response tokens that only a MATERIAL answers (ASDPlasticMaterial3D
-#: ``setResponse``): a bare ``-E <token>`` records nothing on the fork; the
-#: recorder reaches the material only as ``material.<token>`` (ADR 0105).
+#: / LadrunoSANISAND ``setResponse``): a bare ``-E <token>`` records nothing
+#: on the fork; the recorder reaches the material only as ``material.<token>``
+#: (ADR 0105; TIMs A12 for the SANISAND IMPL-EX/state responses, fork PR
+#: #805/#820).
 _MATERIAL_ONLY_ELEM_TOKENS: frozenset[str] = frozenset({
     "pstrain", "pstrains", "eqpstrain",
     "PStress", "J2Stress", "VolStrain", "J2Strain",
+    "psi", "stateParameter",
+    "yieldDistance", "yieldFunction",
+    "implexError", "avgImplexError",
+    "substeps", "substepsME", "ladrunoSubsteps",
+    "implexDetail", "implexRefusals",
 })
 
 
@@ -419,9 +426,9 @@ class FilterableRecorder(Recorder):
         never reaches the material and records nothing — no error, no
         bucket (fork ``ASDPlasticMaterial3D::setResponse`` says so in its
         own comment; measured on build ``3622d6214``, ADR 0105).  The known
-        ASDPlasticMaterial3D ones are refused here with the spelling that
-        works.  ``stress`` / ``strain`` are legitimately element-level and
-        are not touched.
+        ASDPlasticMaterial3D and LadrunoSANISAND tokens (and their fork
+        aliases) are refused here with the spelling that works.  ``stress``
+        / ``strain`` are legitimately element-level and are not touched.
         """
         kind = type(self).__name__
         for token in self.elem_responses:
