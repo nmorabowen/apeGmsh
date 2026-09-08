@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — an explicit system Mumps on a serial deck is refused at build time (ADR 0106 S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-interface-3d-s1-per-node-outward-frames-and-tributary-areas-on-a-surface-master" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3883,6 +3894,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — an explicit system Mumps on a serial deck is refused at build time (ADR 0106 S4)
       
     </span>
   </a>
@@ -4228,6 +4250,18 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4">ADDED — an explicit <code>system Mumps</code> on a serial deck is refused at build time (ADR 0106 S4)<a class="headerlink" href="#added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4" title="Permanent link">&para;</a></h3>
+<p>The Ladruno fork's desktop targets (<code>OpenSees.exe</code>, the desktop openseespy
+build) never compile the serial <code>MumpsSolver</code>: a declared <code>system Mumps</code>
+answers <em>unknown system type</em> at runtime, and a rejected <code>system</code> command
+does not abort the deck, so the model silently solves on whatever SOE was
+already in place instead of stopping. A new <code>validate_serial_mumps</code> in
+<code>_internal/build.py</code>, sitting beside <code>validate_ladruno_up_solver</code> and
+reusing its flat/staged/partitioned seam, now refuses an explicit <code>Mumps</code>
+declared on a serial (non-partitioned) deck, naming the offending stage on
+a staged deck. Partitioned decks, the ADR 0027 auto-emitted <code>Mumps</code>/<code>UmfPack</code>
+fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
+Independently revertable.</p>
 <h3 id="added-interface-3d-s1-per-node-outward-frames-and-tributary-areas-on-a-surface-master">ADDED — interface() 3D S1: per-node outward frames and tributary areas on a surface master<a class="headerlink" href="#added-interface-3d-s1-per-node-outward-frames-and-tributary-areas-on-a-surface-master" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.interface()</code> still refuses a 3D model, exactly as before.
 What lands here is the geometry it will stand on: <code>surface_frames()</code> in
