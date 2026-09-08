@@ -52,10 +52,22 @@ ADR 0093 D2/D3 in 3-D — was ours, and S1–S3 closed it: `interface()` on a
 with `-mat mN mT mT -dir 1 2 3` and the pair's own `-orient`. The pairs
 above are taken directly, with no phantom bridge — that table
 (`_ACCEPTED_3D_NDF_PAIRS`) is declared once in the resolver and imported
-by the emit-time gate. Only **S4** remains: the 2-D convergence case
-rotated into 3-D, the u-p pressure datum shown untouched, and the cost of
-the two uncoupled tangential sliders measured. A live smoke on a `(4, 3)`
-u-p deck already reads this note's three warnings out of the fork's log
+by the emit-time gate. **S4 has landed too, so A10 is COMPLETE**: the
+2-D acceptance case reproduces in 3-D to 1.4e-16 (settlement) / 1.6e-16
+(normal-spring sum) on a one-element-deep twin, the three springs read
+back per pair through `Results.from_mpco`, a master wrapping a convex
+corner runs while its reentrant mirror is refused, and the two uncoupled
+tangential sliders were measured at 1.40 on the diagonal against the
+√2 the square locus predicts.
+
+This note's own G2 assertion — the passenger DOF is neither read nor
+written — is now reproduced at model scale, not only on the fork's hand
+deck: on a `(4, 3)` pair under a real `LadrunoUP` soil with `p = 1e6`
+imposed on an interface node, `eleResponse force` is 7 wide with the
+master's DOF-4 slot exactly `0.0` on every pair, and the pore-pressure
+field is identical (rel 1.5e-17) to the same model tied with
+`equalDOF 1 2 3` instead — this note's G3 twin. A live smoke on a
+`(4, 3)` u-p deck reads this note's three warnings out of the fork's log
 and fails on them.
 
 `LadrunoKinematicCoupling` is the other 3-D u-p touchpoint: fork #814 now

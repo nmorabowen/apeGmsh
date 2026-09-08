@@ -18,6 +18,8 @@ records in, emitter calls out. What is pinned here:
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -616,6 +618,37 @@ def test_3d_frame_tolerance_admits_float_noise_only():
     coarse = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0 - 1e-6, 0.0)
     with pytest.raises(BridgeError, match=r"n x t1"):
         _emit3d([_rec3d(10, 20, a_trib=0.25, orient=coarse)])
+
+
+def test_3d_skewed_tangent_is_refused_as_non_orthonormal():
+    """TIMs A10 S4 hardening. ``t2 == n x t1`` alone is not enough: a
+    ``t1`` tilted 10 degrees OUT of the tangent plane, with ``t2``
+    built from that same skewed ``t1``, satisfies it exactly. The S3
+    adversarial review measured what happens then — ``ZeroLength::
+    setUp`` re-orthogonalises the frame silently and the run gives a
+    plausible answer for a triad the record does not describe. Refused
+    on ``n.t1``, before a line is written.
+    """
+    a = math.radians(10.0)
+    n = np.array([0.0, 0.0, 1.0])
+    t1 = np.array([math.cos(a), 0.0, math.sin(a)])       # unit, but skewed
+    skew = (*n, *t1, *np.cross(n, t1))
+    em = RecordingEmitter()
+    em.model(ndm=3, ndf=3)
+    em.calls.clear()
+    with pytest.raises(BridgeError, match=r"not ORTHONORMAL"):
+        _emit3d([_rec3d(10, 20, a_trib=0.25, orient=skew)], emitter=em)
+    assert em.calls == []
+
+
+def test_3d_degenerate_frame_is_refused_as_non_orthonormal():
+    """The other off-contract frame the review built: ``t1 == n`` with
+    ``t2 == 0``. It too satisfies ``t2 == n x t1``; on the engine it
+    fails to converge instead of lying, but a refusal that names the
+    frame beats an ``analyze`` returning -3."""
+    degenerate = (0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+    with pytest.raises(BridgeError, match=r"not ORTHONORMAL"):
+        _emit3d([_rec3d(10, 20, a_trib=0.25, orient=degenerate)])
 
 
 # --------------------------------------------------------------------------

@@ -471,6 +471,90 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
+
+S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
+those said the 3D `g.constraints.interface()` is *right* — a deck with
+the correct shape and a wrong frame, a wrong tributary or a spring on
+the wrong DOF runs on the fork and exits 0. S4 is the measurement, and
+it closes the A10 ladder. No production code changes except one
+hardening refusal (below); everything else is tests and docs.
+
+**The 2D case, rotated into 3D.** The ADR 0093 acceptance geometry (a
+strip footing bearing on a slab, `ENT` normal + `epp` Coulomb
+tangential) solved once as plane strain of thickness `t = 0.5` and once
+as its 3D twin extruded ONE element deep to the same `t`, every node's
+out-of-plane DOF fixed. The twin is exact by construction: each 2D pair
+splits into the two z-layer pairs above and below it, each carrying
+half its `A_trib` (measured exactly half; both models close on
+`L x t = 0.5`), and each nodal load splits evenly over the same two
+nodes. Measured on fork build `1652f945c`: cap settlement
+`-6.34596966103573388e-03` (2D) against `-6.34596966103573475e-03`
+(3D), **relative 1.4e-16**; interface normal-spring sum
+`-2.99999999999999953e+06` against `-3.00000000000000000e+06`,
+**relative 1.6e-16**, both equal to the applied `-3.0e6` — equilibrium
+across the interface. The asserted tolerance is 1e-12 relative, four
+orders looser, to leave room only for a different solver's summation
+order. Mutation-checked: doubling a 3D record's `A_trib` at emit fails
+the settlement and the per-pair force checks while the *total* still
+balances, which is exactly why an equilibrium check alone cannot verify
+a tributary.
+
+**Three springs, read back (adversarial-review row 16).** S3 claimed a
+3D pair comes back as `spring_force_0..2` with no results-catalog
+change because `n_springs` is per-element `META/NUM_COMPONENTS`;
+measured now through `Results.from_mpco`, matched against the engine's
+own `eleResponse basicForce` to 1e-12. Under the vertical load the
+normal channel is compressive on every pair (ENT's sign), the in-plane
+tangent carries only the Poisson mismatch (`180.4` N against `747296` N
+normal, 2.4e-4), and the out-of-plane tangent — whose DOF the
+plane-strain fixities hold — is exactly `0.0`.
+
+**The u-p passenger DOF at model scale.** The `(4, 3)` pair the campaign
+has, with a real `LadrunoUP` soil, a pressure datum declared the way the
+ADR 0074 / A2 gate requires (the deck PASSES `validate_up_pressure_datum`
+— drop the DOF-4 flag from the base `fix` and the same deck is refused
+by name, which is asserted) and a non-zero pore pressure imposed on an
+interface node. The pore-pressure field is the `equalDOF 1 2 3` twin's
+to **1.5e-17 relative** (worst `1.455e-11` on `1.0e6`) even though the
+two ties have completely different mechanics; the interface element's
+force vector is 7 wide (`ndf1 + ndf2`) with the master's DOF-4 slot
+exactly `0.0` on every pair — the fork's own G2 assertion reproduced
+through apeGmsh. And with `p == 0` everywhere the `(4, 3)` deck
+reproduces the all-brick `(3, 3)` twin to **1.4e-16 relative**, so the
+mixed-ndf join costs nothing.
+
+**A master that wraps a corner (adversarial-review row 4).** The review
+could not reach the box-corner or reentrant-fold rules through the verb
+and left it to S4; it IS reachable — the slave just has to be ONE
+conformal mesh across the corner, which a fragment of three boxes
+gives. A master spanning two adjacent faces of a soil block now
+resolves to 15 pairs, the 3 on the shared edge carrying the averaged
+`(1,0,1)/sqrt(2)` normal, tributary closing on `2.0` with the seam
+nodes taking a quarter cell from each side, and the deck runs on the
+fork with zero refusals and every pair in compression under a diagonal
+push. The mirror case — an L-shaped soil whose notch is the master — is
+refused at resolve, naming the node, both facets and the 270-degree
+dihedral.
+
+**Hardening: `_validate_interface_orient_triad` now also refuses a frame
+that is not orthonormal.** The `t2 == n x t1` rule alone passes a `t1`
+tilted out of the tangent plane as long as `t2` was built from that same
+skewed `t1`; the S3 review measured a 10-degree skew sailing through and
+then being silently re-orthogonalised by `ZeroLength::setUp`, which
+gives the right answer for a frame the record does not describe — so a
+per-pair `spring_force_1` stops meaning what the record says. `|n|`,
+`|t1|` and `n . t1` are now checked on the same 1e-9 budget, before the
+cross-product rule, and the refusal names them. No reachable route
+produces such a record, so nothing that emitted before changes.
+
+Also pinned, closing the plan's named coverage gap: the staged
+(`s.interface(name=)`) and partitioned (`per_rank=True` included) routes
+gain 3D deck-level tests — the whole per-pair unit inside the claiming
+stage exactly once and before its `domainChange`, and the owner rank's
+block byte-identical to the flat deck's with each unit in exactly one
+rank fragment.
+
 ### FIXED — interface() 3D adversarial review: a u–p soil under a shell raft emits again
 
 The 3D emit gate refused an `ndf` `(4, 6)` pair — a `LadrunoUP` soil
