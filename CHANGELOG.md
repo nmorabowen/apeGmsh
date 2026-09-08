@@ -355,6 +355,19 @@ multi-block-reduction ones.
 Not wired anywhere (S2/S3): no emitter emits `APEGMSH_STAGE` yet, nothing
 calls this parser, and `apeSees.tcl` / `apeSees.py` still return `None`.
 Nothing changes for any run.
+### ADDED — an explicit `system Mumps` on a serial deck is refused at build time (ADR 0106 S4)
+
+The Ladruno fork's desktop targets (`OpenSees.exe`, the desktop openseespy
+build) never compile the serial `MumpsSolver`: a declared `system Mumps`
+answers *unknown system type* at runtime, and a rejected `system` command
+does not abort the deck, so the model silently solves on whatever SOE was
+already in place instead of stopping. A new `validate_serial_mumps` in
+`_internal/build.py`, sitting beside `validate_ladruno_up_solver` and
+reusing its flat/staged/partitioned seam, now refuses an explicit `Mumps`
+declared on a serial (non-partitioned) deck, naming the offending stage on
+a staged deck. Partitioned decks, the ADR 0027 auto-emitted `Mumps`/`UmfPack`
+fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
+Independently revertable.
 ### ADDED — interface() 3D S1: per-node outward frames and tributary areas on a surface master
 
 `g.constraints.interface()` still refuses a 3D model, exactly as before.
