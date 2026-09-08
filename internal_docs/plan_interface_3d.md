@@ -1,17 +1,22 @@
 # `interface()` in 3D — scope only (TIMs A10)
 
-**Status (2026-09-08):** S1, S2 and S3 built; only S4 (verification) is
-open. A 3D surface master resolves into records AND emits a complete
-deck — the three gates in the table below are gone, and so is the
-emission refusal S2 left standing. **Blocker 1
+**Status (2026-09-08):** **COMPLETE — S1, S2, S3 and S4 all built.** A 3D
+surface master resolves into records, emits a complete deck, and that
+deck is now *verified*: it reproduces the 2D acceptance case to
+round-off, its three springs read back per pair, its u-p pressure DOF is
+a measured passenger, and a master wrapping a corner runs. The three
+gates in the table below are gone, and so is the emission refusal S2
+left standing. **Blocker 1
 (F1) is cleared** — fork #808 / ADR 96, minimum build `a240b9183`
 (`TIMS_FORK_BATCH_MIN_BUILD`): `zeroLength` accepts any 3-D pair with both
 ndf ≥ 3, acts on DOFs 1–3 only, only `-dir 1 2 3` exist on a mixed pair, the
 `force` response is element-sized (`ndf1 + ndf2`), and the differing-dof
 case is a warning plus an inert element, not a crash. Contract recorded in
-`contact_3d_passenger_dof_adoption.md`. **Blocker 2 is still open** and is
-entirely ours; the three refusal gates below still fire. Nothing here
-changes code.
+`contact_3d_passenger_dof_adoption.md`. **Blocker 2 is closed too** — it
+was entirely ours, and S1–S3 paid it; the three refusal gates below no
+longer fire. What survives as a refusal is only what SHOULD refuse: a
+quadratic master facet, a reentrant fold, a non-orthonormal frame, an
+end below ndf 3.
 
 ## What the model needs
 
@@ -101,7 +106,70 @@ as it exists in 2D, on a 3D surface master.
   reproduce the 2D result), then a u–p soil with the pressure datum (A2)
   showing the pore pressure is untouched by the interface. S3 adds one
   item: measure the square-vs-circular slip locus of the two uncoupled
-  tangential sliders on a case that slides off-axis.
+  tangential sliders on a case that slides off-axis. **Done 2026-09-08 —
+  the ladder is complete.** Everything below was MEASURED on fork build
+  `1652f945c`; the tests are
+  `tests/opensees/integration_ladruno/test_interface_3d_verification.py`
+  (fork-gated) plus the record-level halves in
+  `tests/mesh/test_interface_verb.py`.
+
+  * **2D ↔ 3D twin.** The twin is exact by construction, not
+    approximately so: one element deep to the 2D thickness splits every
+    2D pair into the two z-layer pairs above and below it, each carrying
+    *half* its `A_trib` (asserted), and splits every nodal load the same
+    way, so the only residual is summation order. Cap settlement
+    `-6.34596966103573388e-03` (2D) vs `-6.34596966103573475e-03` (3D),
+    **rel 1.4e-16**; interface normal-spring sum `-2.9999999999999995e+06`
+    vs `-3.0000000000000000e+06`, **rel 1.6e-16**, both equal to the
+    applied `-3.0e6`. Asserted at 1e-12 relative. Mutation-checked:
+    doubling a 3D record's `A_trib` at emit fails the settlement and the
+    per-pair force checks while the *total* still balances — which is
+    why equilibrium alone cannot verify a tributary.
+  * **Spring read-back (row 16).** `Results.from_mpco` returns
+    `spring_force_0..2` and no fourth channel, matched against
+    `eleResponse basicForce` to 1e-12. Normal compressive on every pair;
+    in-plane tangent `180.4` N against `747296` N normal (2.4e-4, the
+    Poisson mismatch between the two bodies); out-of-plane tangent
+    exactly `0.0` — its DOF is held by the plane-strain fixities, so
+    `0.0` is a prediction, not a coincidence.
+  * **u–p passenger DOF.** The `(4,3)` deck PASSES
+    `validate_up_pressure_datum` through its own mechanism (a `fix` on
+    DOF 4 of a carrier node); dropping that flag refuses the same deck
+    by name, asserted. With `p = 1e6` imposed on an interface node, the
+    pore-pressure field equals the `equalDOF 1 2 3` twin's to
+    **rel 1.5e-17** (worst `1.455e-11` on `1.0e6`) although the two ties
+    have completely different mechanics, and `eleResponse force` is 7
+    wide with the master's DOF-4 slot exactly `0.0` on every pair (the
+    fork's G2 assertion, reproduced through apeGmsh). With `p = 0` the
+    `(4,3)` deck reproduces the all-brick `(3,3)` twin to **rel 1.4e-16**.
+  * **Corner wrap (row 4) — reachable after all.** The blocker was the
+    *slave*, not the verb: two separate slave bodies put two nodes at the
+    corner and the ambiguity refusal fires first. A slave that is ONE
+    conformal mesh across the corner — three boxes (side plate, top
+    plate, corner block) FRAGMENTED together — expresses it. 15 pairs
+    over two faces, the 3 seam nodes carrying `(1,0,1)/sqrt(2)`,
+    tributary closing on `2.0` with a seam node taking a quarter cell
+    from each side, deck runs with zero fork refusals and every pair in
+    compression under a diagonal push. The reentrant mirror (L-shaped
+    soil, notch as master) is refused at resolve naming the node, both
+    facets and the 270° dihedral.
+  * **Row 13 closed as hardening.** `_validate_interface_orient_triad`
+    now refuses a non-orthonormal `(n, t1)` on the same 1e-9 budget,
+    *before* the cross-product rule, so the silently-re-orthogonalised
+    10° skew and the degenerate `t1 == n` are both named instead of
+    running.
+  * **Row 9's unpinned routes closed.** `test_interface_staged_emit.py`
+    and `test_interface_partitioned_emit.py` gain 3D deck-level cases —
+    the unit inside the claiming stage once and before its
+    `domainChange`; the owner rank's block byte-identical to the flat
+    deck's, with `per_rank=True` fragments carrying each unit exactly
+    once.
+  * **Still owed, and named as such:** the square-vs-circular slip locus
+    was *measured* by the review (row 12 — axis capacity `2.5e5 N`
+    exactly `tau_b * A`, diagonal `1.40` against `sqrt(2)`), so the
+    number S3 asked for exists; it is documented there rather than
+    re-run as a test, because the ratio is a property of the documented
+    uncoupled-slider choice, not a regression surface.
 
 ## Runway (named, not fixed here)
 
@@ -131,7 +199,7 @@ is part of the result.
 | 1 | tilted interface: rotation invariance of the frame, `A_trib` and the answer | both boxes rotated 37 deg about `(0.3,-0.7,0.5)` via `g.model.transforms.rotate` before meshing; records compared to the flat model, then both decks run and the cap displacements compared | `max abs(n - R z) = 2.8e-16`; triad orthonormal to `2.2e-16`; `n x t1 - t2` exactly 0; `sum(A_trib)` `1.0` vs `1.0` (delta `1.1e-16`), per-node share delta `2.8e-17`; both decks 0 fork refusals; `max abs(u_rot - R u_flat) = 7.0e-11` on `u ~ 9.8e-5` (rel `7e-7`, at the recorder's own 6-figure output width) | DISCARDED - the frame is rotation-invariant |
 | 2 | non-uniform master mesh mis-weights `A_trib` | transfinite `n=(5,3,3)`: a 4x2 division of the unit face | 15 pairs, closure error exactly `0.0`; shares `{0.03125 (corner), 0.0625 (edge), 0.125 (interior)}` = the hand-computed quarters of the `0.25 x 0.5` cells | DISCARDED |
 | 3 | tri3 master facets (tet soil + tet footing, `recombine=False`) | same fixture, `set_transfinite(..., recombine=False)`, deck run | 9 pairs, closure error exactly `0.0`, shares `1/24` / `1/12` / `1/8` / `1/4`, deck runs with 0 refusals | DISCARDED |
-| 4 | corner-wrapping / reentrant masters | not reached through the verb: a master spanning two box faces needs a slave that is ONE mesh across the corner, which the un-fragmented two-body fixture cannot express (the two slave bodies put two nodes at the corner and the resolver's ambiguity refusal fires first). The kernel cases (box corner, reentrant fold) are already pinned in `tests/_kernel/geometry/test_surface_frames.py` | - | NOT PROBED end-to-end; the kernel half is covered, the composite half belongs to S4 |
+| 4 | corner-wrapping / reentrant masters | not reached through the verb: a master spanning two box faces needs a slave that is ONE mesh across the corner, which the un-fragmented two-body fixture cannot express (the two slave bodies put two nodes at the corner and the resolver's ambiguity refusal fires first). The kernel cases (box corner, reentrant fold) are already pinned in `tests/_kernel/geometry/test_surface_frames.py` | - | **S4: REACHABLE after all** - the blocker was the SLAVE, not the verb; one conformal L (three boxes fragmented) gives a single corner node and 15 pairs. Probed end-to-end, deck runs |
 | 5 | non-coincident sides pair partially and silently | soil `n=3` against footing `n=4` | `ValueError` naming all 12 unmatched SLAVE nodes and the count (`12 of 16`), pointing at `master_entities=` / `tie` / `contact` | DISCARDED - refused by name, no partial pairing |
 | 6 | quadratic master facets get the linear tributary rule | `g.mesh.generation.set_order(2)` | `NotImplementedError` naming the facet as a `quad9` and ADR 0093 D3 | DISCARDED |
 | 7 | h5 round-trip loses the 9-float frame; an in-window 2.31.x file breaks | `to_h5` -> `from_h5` on a 3-D model; then a 2.31.x-shaped payload row (the `orient_t2` / `has_orient_t2` columns removed from the dtype) fed to `_decode_interface` | round-trip float delta exactly `0.0` on `orient` and `a_trib`, widths stay 9, laws and names identical; the trimmed row decodes to a 6-float orient via the reader's presence probe | DISCARDED |
@@ -140,10 +208,10 @@ is part of the result.
 | 10 | the emit gate refuses an ADR 96 pair the fork accepts | 13 hand Tcl decks, one per `(ndf1, ndf2)`, each with `-mat/-dir 1 2 3 -orient` and a trailing `puts MARKER_RAN`; then the same matrix through the verb | the fork runs `(3,3) (3,4) (4,3) (4,4) (3,6) (6,4) (4,6) (6,6) (6,3) (3,5) (5,3) (4,5) (3,7)` - **every** pair with both ends >= 3 - each giving the exact `u = -1e-4`, zero refusals. apeGmsh refused `(4,6)` | **CONFIRMED (F1)** - fixed |
 | 11 | the passenger DOF is read or written | ndf-4 / ndf-3 pair, `sp` imposing `p = 1e6` on the master's DOF 4 under `constraints Transformation` | node 2's displacement identical to the `p = 0` twin (`-1.0e-4`), `nodeReaction` DOF 4 exactly `0.0`, `eleResponse force` is 7-wide `[0,0,100, 0, 0,0,-100]` with the passenger slot exactly `0.0`, `basicForce` unchanged | DISCARDED - the fork's own G2 assertion reproduces |
 | 12 | the two tangential sliders are coupled (or the square locus is not what ships) | footing pushed along `t1` and along `(t1+t2)/sqrt(2)`, `LoadControl` at 1e4/step until the mechanism forms; last converged step read off the recorder | axis capacity `2.5e5 N` = `tau_b * A` exactly; diagonal capacity in `(3.5e5, 3.6e5]`, ratio `1.40` against `sqrt(2) = 1.414` (step granularity 1e4) and against `1.0` for a circular locus | MEASURED - matches the documented uncoupled-slider choice; S4's owed number is `sqrt(2)` |
-| 13 | a non-orthonormal frame reaches the deck | `_validate_interface_orient_triad` fed a `t1` skewed 10 deg OUT of the tangent plane (with `t2 = n x t1`), and a degenerate `t1 == n, t2 == 0`; both then run on the exe | both PASS the triad check - it compares `t2` to `n x t1` and never checks that `n`/`t1` are unit or mutually orthogonal. Consequence measured: the skewed frame is silently re-orthogonalised by `ZeroLength::setUp` and gives the identical answer; the degenerate frame fails to converge (`analyze` returns `-3`), loudly | DISCARDED as a defect - no reachable route produces a wrong deck, and both off-contract frames are either corrected or loud. A one-line orthonormality assert would close it as hardening |
+| 13 | a non-orthonormal frame reaches the deck | `_validate_interface_orient_triad` fed a `t1` skewed 10 deg OUT of the tangent plane (with `t2 = n x t1`), and a degenerate `t1 == n, t2 == 0`; both then run on the exe | both PASS the triad check - it compares `t2` to `n x t1` and never checks that `n`/`t1` are unit or mutually orthogonal. Consequence measured: the skewed frame is silently re-orthogonalised by `ZeroLength::setUp` and gives the identical answer; the degenerate frame fails to converge (`analyze` returns `-3`), loudly | DISCARDED as a defect - no reachable route produces a wrong deck. **Closed by S4 anyway as hardening**: a silently corrected frame is a wrong model that looks right, so the orthonormality assert now refuses both |
 | 14 | tag / deck determinism (ADR 0027) | the same 3-D model built twice, records compared, then two decks compared byte-for-byte | records identical; decks byte-identical (3779 bytes both) | DISCARDED |
 | 15 | a hostile interface name breaks the Tcl | names `soil "footing" [x] $a {b}` and `brace{open` through to a run deck | the name only ever appears as a top-level `# comment`; both decks emit and run | DISCARDED (shared `_emit_name` lane, unchanged by S1-S3) |
-| 16 | the results reader mis-shapes three springs per pair | not probed - would need an MPCO/`.ladruno` run | - | NOT PROBED; S3 claims `n_springs` comes from `META/NUM_COMPONENTS`, S4 owes the read-back |
+| 16 | the results reader mis-shapes three springs per pair | not probed - would need an MPCO/`.ladruno` run | - | **S4 MEASURED it** - `spring_force_0..2` and no fourth channel, matched to `eleResponse basicForce` at 1e-12, with the out-of-plane spring exactly `0.0` |
 
 ### F1 - the accepted-ndf table was the note's examples, not its rule
 
@@ -171,18 +239,23 @@ named pairs survive as examples in the refusal text. Regressions:
 and `test_3d_gate_mirrors_the_resolvers_rule` - all three fail with the
 old table restored and pass with the rule.
 
-### Named, not fixed
+### Named, not fixed — all four settled by S4 (2026-09-08)
 
 - **S4** - the corner-wrapping master (row 4) end-to-end, and the
-  results-side read-back of three springs per pair (row 16).
+  results-side read-back of three springs per pair (row 16). **DONE**;
+  row 4's "cannot be expressed" was about the *slave*, and a fragmented
+  three-box L expresses it. Numbers in the S4 bullet above.
 - **Hardening (any slice)** - `_validate_interface_orient_triad` could
-  also assert the frame is orthonormal (row 13). Not done here: no
-  reachable route produces such a record, and the two synthetic ones are
-  either silently corrected by the engine or fail to converge.
+  also assert the frame is orthonormal (row 13). **DONE** - the skew is
+  refused rather than silently re-orthogonalised, because "the engine
+  corrects it" means the springs act along a triad the record does not
+  describe, and a per-pair `spring_force_1` then means something else
+  than the record says.
 - **Test coverage gap** - the staged and partitioned interface tests
   (`test_interface_partitioned_emit.py`,
   `test_interface_partitioned_staged_emit.py`) are 2-D only; the 3-D
-  routes are correct (row 9) but unpinned. Cheap S4 addition.
+  routes are correct (row 9) but unpinned. **DONE** - 3-D cases added to
+  `test_interface_staged_emit.py` and `test_interface_partitioned_emit.py`.
 - **Out of scope, observed in passing** - `ops.element.ShellMITC4(pg=...)`
   against a physical group carrying no elements in the snapshot (e.g.
   after `get_fem_data(dim=3)` dropped the dim-2 rows) emits the section

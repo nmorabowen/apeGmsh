@@ -6193,7 +6193,8 @@ _ORIENT_TRIAD_TOL = 1e-9
 
 
 def _validate_interface_orient_triad(rec: "InterfaceRecord") -> None:
-    """A 3-D record's third frame vector must BE ``n x t1``.
+    """A 3-D record's frame must be orthonormal, and its third vector
+    must BE ``n x t1``.
 
     ``zeroLength -orient x1 x2 x3 yp1 yp2 yp3`` takes only TWO vectors
     and derives the third itself: local-1 is ``x``, local-2 is the part
@@ -6206,9 +6207,36 @@ def _validate_interface_orient_triad(rec: "InterfaceRecord") -> None:
     stacked vector), an h5 reload or a hand build, and a flipped ``t2``
     would put the ``-dir 3`` slider on the opposite tangent with no
     other symptom in the deck.
+
+    **Orthonormality is checked first (TIMs A10 S4).** The ``t2 == n x
+    t1`` rule alone passes a ``t1`` tilted OUT of the tangent plane, as
+    long as ``t2`` was built from the same skewed ``t1``: the S3
+    adversarial review MEASURED a 10-degree skew sailing through and
+    then being silently re-orthogonalised by ``ZeroLength::setUp``,
+    which gives the right answer for the WRONG frame — the springs act
+    along a triad the record does not describe, so a per-pair
+    ``spring_force_1`` no longer means what the record says it means.
+    Refused here instead, on the same 1e-9 budget.
     """
     frame = np.asarray(rec.orient, dtype=float).reshape(3, 3)
     n, t1, t2 = frame[0], frame[1], frame[2]
+    n_err = abs(float(np.linalg.norm(n)) - 1.0)
+    t1_err = abs(float(np.linalg.norm(t1)) - 1.0)
+    dot_err = abs(float(np.dot(n, t1)))
+    if max(n_err, t1_err, dot_err) > _ORIENT_TRIAD_TOL:
+        name = getattr(rec, "name", None)
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"interface{label}: pair (master={int(rec.master_node)}, "
+            f"slave={int(rec.slave_node)}) carries a frame that is not "
+            f"ORTHONORMAL — |n|-1={n_err:.3e}, |t1|-1={t1_err:.3e}, "
+            f"n.t1={dot_err:.3e} (budget {_ORIENT_TRIAD_TOL:g}) for "
+            f"n={tuple(n)}, t1={tuple(t1)}. The zeroLength -orient "
+            f"argument is (x, yp) and ZeroLength::setUp silently "
+            f"re-orthogonalises it, so a skewed frame runs to a "
+            f"plausible answer whose springs act along a triad the "
+            f"record does not describe (ADR 0093 D2 / TIMs A10 S4)."
+        )
     err = float(np.linalg.norm(np.cross(n, t1) - t2))
     if err > _ORIENT_TRIAD_TOL:
         name = getattr(rec, "name", None)

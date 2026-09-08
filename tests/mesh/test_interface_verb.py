@@ -434,3 +434,130 @@ def test_3d_quadratic_master_facets_are_refused_by_name():
             "face", "skin", normal=NORMAL, tangential=TANGENTIAL)
         with pytest.raises(NotImplementedError, match="quad8|quad9|tri6"):
             g.mesh.queries.get_fem_data(dim=3)
+
+
+# =====================================================================
+# A master spanning TWO faces (TIMs A10 S4; adversarial review row 4)
+# =====================================================================
+# The S1 kernel pins the box corner and the reentrant fold against
+# synthetic facet arrays; the S3 review could not reach either THROUGH
+# THE VERB, because a slave built as two separate bodies puts two nodes
+# at the corner and the resolver's ambiguity refusal fires first. It is
+# reachable — the slave just has to be ONE conformal mesh across the
+# corner, which a fragment of three boxes gives.
+
+CORNER_N = 3
+CORNER_TH = 0.2
+
+
+def _faces_at(volume: int, *, plane: str, value: float,
+              tol: float = 1e-6) -> "list[int]":
+    lo = {"x": 0, "y": 1, "z": 2}[plane]
+    out = []
+    for _d, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[lo] - value) < tol and abs(bb[lo + 3] - value) < tol:
+            out.append(abs(tag))
+    return out
+
+
+def _corner_fem(*, reentrant: bool):
+    """Block ``[0,1]^3`` plus an L-shaped body wrapping its ``(x=1, z=1)``
+    edge: a side plate, a top plate and the corner block between them,
+    FRAGMENTED together so the corner line carries one node, not two.
+
+    ``reentrant=False`` — master = the block's two convex faces.
+    ``reentrant=True`` — the roles swap and the master is the L's notch,
+    a 270-degree fold back into the material.
+    """
+    with apeGmsh(model_name="iface_3d_corner", verbose=False) as g:
+        block = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        side = g.model.geometry.add_box(1, 0, 0, CORNER_TH, 1, 1)
+        top = g.model.geometry.add_box(0, 0, 1, 1, 1, CORNER_TH)
+        corner = g.model.geometry.add_box(1, 0, 1, CORNER_TH, 1, CORNER_TH)
+        g.model.sync()
+        ell = [int(t) for t in g.model.boolean.fragment(
+            [side, top, corner], [], dim=3)]
+        g.model.sync()
+
+        st = g.mesh.structured
+        st.set_transfinite(
+            [(3, block)], n={"x": CORNER_N, "y": CORNER_N, "z": CORNER_N})
+        for v in ell:
+            bb = gmsh.model.getBoundingBox(3, v)
+            st.set_transfinite([(3, v)], n={
+                ax: (2 if abs(bb[hi] - bb[lo]) < 0.5 else CORNER_N)
+                for ax, lo, hi in (("x", 0, 3), ("y", 1, 4), ("z", 2, 5))})
+        g.mesh.generation.generate(3)
+
+        v_side = next(v for v in ell
+                      if gmsh.model.occ.getCenterOfMass(3, v)[0] > 1.0
+                      and gmsh.model.occ.getCenterOfMass(3, v)[2] < 1.0)
+        v_top = next(v for v in ell
+                     if gmsh.model.occ.getCenterOfMass(3, v)[0] < 1.0)
+        block_faces = (_faces_at(block, plane="z", value=1.0)
+                       + _faces_at(block, plane="x", value=1.0))
+        ell_faces = (_faces_at(v_top, plane="z", value=1.0)
+                     + _faces_at(v_side, plane="x", value=1.0))
+
+        g.physical.add(3, [block], name="block")
+        g.physical.add(3, ell, name="ell")
+        g.physical.add(2, ell_faces if reentrant else block_faces,
+                       name="face")
+        g.physical.add(2, block_faces if reentrant else ell_faces,
+                       name="skin")
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL,
+            name="Wrap")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def test_corner_wrapping_master_averages_the_normal_at_the_edge():
+    """A master spanning two adjacent faces resolves, and the nodes ON
+    the shared edge take the average of the two face normals — the
+    ``(1,0,1)/sqrt(2)`` a cube corner must give under S1's uniform
+    facet weighting."""
+    recs = _corner_fem(reentrant=False).elements.interfaces
+    assert len(recs) == 2 * CORNER_N * CORNER_N - CORNER_N  # 9 + 9 - 3 shared
+    normals = [tuple(round(float(v), 9) for v in r.orient[:3]) for r in recs]
+    root2 = round(1.0 / np.sqrt(2.0), 9)
+    assert normals.count((0.0, 0.0, 1.0)) == CORNER_N * (CORNER_N - 1)
+    assert normals.count((1.0, 0.0, 0.0)) == CORNER_N * (CORNER_N - 1)
+    assert normals.count((root2, 0.0, root2)) == CORNER_N
+    for r in recs:                       # still an orthonormal right triad
+        n, t1, t2 = (np.asarray(r.orient[i:i + 3]) for i in (0, 3, 6))
+        np.testing.assert_allclose(np.cross(n, t1), t2, atol=1e-12)
+        assert float(np.dot(n, t1)) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_corner_wrapping_master_closes_the_tributary_over_both_faces():
+    """INV-3 across the corner: the two unit faces total 2.0, and the
+    edge nodes carry the SUM of their shares on both — no facet is
+    counted twice and none is dropped at the seam."""
+    recs = _corner_fem(reentrant=False).elements.interfaces
+    assert sum(float(r.a_trib) for r in recs) == pytest.approx(2.0, rel=1e-12)
+    root2 = 1.0 / np.sqrt(2.0)
+    edge = [float(r.a_trib) for r in recs
+            if abs(float(r.orient[0]) - root2) < 1e-9]
+    flat = [float(r.a_trib) for r in recs
+            if abs(float(r.orient[0]) - root2) >= 1e-9]
+    # A 2x2 division of each unit face: cells of 0.25, so a face-corner
+    # node takes a quarter cell and an edge node on the seam takes one
+    # quarter from each side.
+    assert min(edge) == pytest.approx(2 * 0.25 * 0.25)
+    assert min(flat) == pytest.approx(0.25 * 0.25)
+
+
+def test_reentrant_notch_master_is_refused_naming_the_fold_node():
+    """The mirror case, and the one that must NOT resolve: an L-shaped
+    body whose notch is the master. The two notch faces meet at a
+    270-degree interior dihedral, so their averaged normal points into
+    the material — refused at resolve, naming the node, both facets and
+    the angle (ADR 0093 D2)."""
+    with pytest.raises(ValueError, match=r"REENTRANT fold") as exc:
+        _corner_fem(reentrant=True)
+    msg = str(exc.value)
+    assert "'Wrap'" in msg
+    assert "master node" in msg
+    assert "270" in msg
+    assert "separate interface() calls" in msg

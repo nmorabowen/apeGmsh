@@ -608,10 +608,100 @@ D1–D4.
     and a `(4,3)` u-p deck — mutation-checked by emitting `-dir 1 2 4`,
     which makes the fork print "passenger mode … element disabled".)*
     *Landed 2026-09-08.*
-15. **S4 (3D) — verification**: the 2D convergence case rotated into 3D
-    (one element deep must reproduce the 2D answer), then a u–p soil
-    showing the pore pressure is untouched. The `tie` comparison S10
-    left owed becomes constructible here.
+15. **S4 (3D) — verification: the deck is not merely well-formed, it is
+    right.** S1–S3 made a 3D master resolve and emit; none of them could
+    say the answer was correct, because ADR 96 turned every way of
+    getting it wrong into a *quiet* wrong — a warning plus an inert
+    element, or a frame the engine silently re-orthogonalises. S4 is the
+    measurement, and every number below is a COMPARISON rather than a
+    hand value, because only a comparison fails for the right reason.
+    Fork build `1652f945c`.
+
+    **The 2D acceptance case, rotated into 3D.** A strip footing on a
+    slab, the same `ENT` + `epp` laws, solved once as plane strain of
+    thickness `t` and once as its 3D twin extruded ONE element deep to
+    the same `t` with every out-of-plane DOF fixed. The twin is exact
+    *by construction*, and that is the design decision worth recording:
+    one element deep splits each 2D pair into the two z-layer pairs
+    above and below it, each taking half its `A_trib` — asserted before
+    a solver number is read — and splits each nodal load the same way,
+    so the ONLY residual left is floating-point summation order.
+    Measured: cap settlement `-6.34596966103573388e-03` (2D) against
+    `-6.34596966103573475e-03` (3D), **rel 1.4e-16**; interface
+    normal-spring sum `-2.9999999999999995e+06` against
+    `-3.0000000000000000e+06`, **rel 1.6e-16**, both equal to the
+    applied `-3.0e6`. The gate is 1e-12 relative — four orders of slack,
+    for a different solver's summation order and nothing else.
+    Mutation-checked by doubling a 3D record's `A_trib` at emit: the
+    settlement and per-pair force checks fail while the *total* still
+    balances, which is precisely why the equilibrium check S10 leaned on
+    cannot, alone, verify a tributary.
+
+    **Three springs, read back (D6 in 3D).** S3 claimed the recorder
+    needed nothing because `n_springs` is per-element metadata; claimed,
+    never measured. `Results.from_mpco` returns `spring_force_0..2` and
+    no fourth channel, matched against the engine's own `eleResponse
+    basicForce` at 1e-12. The out-of-plane tangent reads exactly `0.0`
+    — its DOF is held by the plane-strain fixities, so that zero is a
+    prediction the frame has to earn, not a coincidence; the in-plane
+    tangent carries only the two bodies' Poisson mismatch (`180.4` N
+    against `747296` N normal).
+
+    **The u–p passenger DOF at model scale.** The `(4,3)` pair with a
+    real `LadrunoUP` soil, a pressure datum declared through the ADR
+    0074 / A2 gate's own mechanism (the deck PASSES
+    `validate_up_pressure_datum`; dropping the DOF-4 flag refuses the
+    same deck by name, which is asserted rather than assumed), and
+    `p = 1e6` imposed on an interface node. Against the fork's own G3
+    twin — the same mesh with `equalDOF 1 2 3` in place of the
+    interface — the pore-pressure field agrees to **rel 1.5e-17**
+    (worst `1.455e-11` on `1.0e6`) even though the two ties have
+    entirely different mechanics; and `eleResponse force` is
+    `ndf1 + ndf2 = 7` wide with the master's DOF-4 slot exactly `0.0` on
+    every pair, the fork's G2 assertion reproduced through apeGmsh. With
+    `p = 0` the `(4,3)` deck reproduces the all-brick `(3,3)` twin to
+    **rel 1.4e-16**, so the mixed-ndf join itself costs nothing.
+
+    **A master spanning two faces.** The S3 review recorded the
+    corner-wrap case as not constructible through the verb. It is — the
+    blocker was the *slave*: two separate slave bodies put two nodes at
+    the corner and the resolver's ambiguity refusal fires first, while
+    ONE conformal slave (three boxes fragmented) puts one node there.
+    15 pairs across two unit faces, the 3 seam nodes carrying the
+    averaged `(1,0,1)/√2` D2 predicts, INV-3 closing on `2.0` with a
+    seam node taking a quarter cell from each side, and the deck running
+    with zero fork refusals and every pair in compression under a
+    diagonal push. The reentrant mirror is refused at resolve naming the
+    node, both facets and the 270° dihedral.
+
+    **One production change, and it is a refusal.**
+    `_validate_interface_orient_triad` now checks ORTHONORMALITY before
+    the `t2 == n x t1` rule, on the same 1e-9 budget. The cross-product
+    rule alone passes a `t1` tilted out of the tangent plane whenever
+    `t2` was built from that same skewed `t1`, and the S3 review
+    measured the consequence: `ZeroLength::setUp` re-orthogonalises it
+    and the run gives the right answer for a triad the record does not
+    describe — so a per-pair `spring_force_1` stops meaning what the
+    record says it means. "The engine corrects it" is not a reason to
+    let it through; it is the reason it is invisible.
+
+    *(tests: `tests/opensees/integration_ladruno/
+    test_interface_3d_verification.py` for everything needing the
+    engine; the corner-wrap record rules and the reentrant refusal in
+    `test_interface_verb.py`; the skew and degenerate frames in
+    `test_interface_emit.py`; and the plan's named coverage gap closed
+    with 3D deck-level cases in `test_interface_staged_emit.py` and
+    `test_interface_partitioned_emit.py`, `per_rank=True` included.)*
+    *Landed 2026-09-08 — the A10 ladder is complete.*
+
+    *Still owed, and named:* the S10 `tie` comparison. It became
+    *constructible* here — `tie` takes a dim-2 surface master, which
+    `interface()` now does too — but it was not built: `tie`'s default
+    enforcement is itself a penalty (`ASDEmbeddedNodeElement`), so it
+    would compare one penalty against another, and S10's amendment
+    already chose `equal_dof` as the stronger bonded reference for
+    exactly that reason. The 3D `equalDOF` twin above is that comparison,
+    one dimension up.
 
 ## Alternatives rejected
 
