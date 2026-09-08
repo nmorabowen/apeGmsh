@@ -13,6 +13,9 @@ import numpy as np
 import pytest
 
 from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._ladruno_element_io import (
+    GaussColumnDroppedWarning,
+)
 from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "ladruno"
@@ -744,3 +747,126 @@ def test_overlapping_tokens_that_disagree_raise() -> None:
     # the two buckets' columns is mis-labelled. Do not pick one.
     with pytest.raises(GaussLayoutMismatch, match="element 7 Gauss point 0"):
         _dedupe_gauss_columns(*_overlap(5.0, -3.0), component="stress_xx")
+
+
+# ---------------------------------------------------------------------------
+# ADR 0105 Amendment 1 — material-level buckets, and the loud drop
+# ---------------------------------------------------------------------------
+#
+# ``ASDPlasticMaterial3D`` writes one bucket per ``material.<token>``
+# request, each a per-Gauss-point block labelled with the MATERIAL's own
+# names (``p``, ``J2stress``, ``BackStress_1``…). Synthesised here from the
+# quad fixture — same bucket shape the fork writes, provably fork-free —
+# because the mapping and the drop-warning are reader behaviour, not fork
+# behaviour. The live round-trip is
+# ``tests/opensees/integration_ladruno/test_ladruno_gauss_generic_columns.py``.
+
+
+def _add_material_bucket(
+    path: Path, token: str, labels: "tuple[str, ...]",
+) -> None:
+    """Append a per-GP ``material.<token>`` bucket to a ``.ladruno`` file.
+
+    One block per Gauss point (``LEVELS == 4``, the Nd-material depth the
+    recorder writes), each carrying ``labels``. DATA is filled with an
+    arange so a read can be checked column by column.
+    """
+    import h5py
+
+    with h5py.File(path, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        key = next(iter(on_e["stress"]))
+        src = on_e["stress"][key]
+        n_t, n_e, _ = src["DATA"].shape
+        n_gp = int(np.asarray(src["COLUMN_MAP"]["GAUSS_ID"][...]).size)
+        width = n_gp * len(labels)
+        grp = on_e.create_group(f"{token}/{key}")
+        grp.create_dataset("DATA", data=np.arange(
+            n_t * n_e * width, dtype=np.float64,
+        ).reshape(n_t, n_e, width))
+        for name in ("ID", "STEP", "TIME"):
+            if name in src:
+                grp.create_dataset(name, data=np.asarray(src[name][...]))
+        cm = grp.create_group("COLUMN_MAP")
+        cm.create_dataset("LEVELS", data=np.full(n_gp, 4, dtype=np.int64))
+        cm.create_dataset(
+            "GAUSS_ID", data=np.arange(n_gp, dtype=np.int64),
+        )
+        cm.attrs["COMP_NAMES"] = "\n".join([",".join(labels)] * n_gp)
+
+
+def _quad_with(tmp_path: Path, buckets: dict) -> Path:
+    import shutil
+
+    dst = tmp_path / "material.ladruno"
+    shutil.copy(QUAD, dst)
+    for token, labels in buckets.items():
+        _add_material_bucket(dst, token, labels)
+    return dst
+
+
+def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {
+        "material.PStress": ("p",),
+        "material.J2Stress": ("J2stress",),
+        "material.VolStrain": ("epsVol",),
+        "material.J2Strain": ("J2strain",),
+        "material.BackStress": tuple(f"BackStress_{i}" for i in range(1, 7)),
+    })
+    with LadrunoReader(path) as r:
+        comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "material_mean_stress", "material_j2_stress",
+            "material_volumetric_strain", "material_j2_strain",
+            "back_stress_xx", "back_stress_yy", "back_stress_zz",
+            "back_stress_xy", "back_stress_yz", "back_stress_xz",
+        } <= comps
+        # One column per (element, GP) — 1 element × 4 GPs, 2 steps.
+        slab = r.read_gauss("stage_0", "material_mean_stress")
+        assert slab.values.shape == (2, 4)
+        # The BackStress block is 6 wide per GP; the xy column is offset 3.
+        slab = r.read_gauss("stage_0", "back_stress_xy")
+        assert slab.values.shape == (2, 4)
+        np.testing.assert_array_equal(
+            slab.values[0], np.array([3.0, 9.0, 15.0, 21.0]),
+        )
+
+
+def test_unknown_material_label_warns_and_names_it(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning) as rec:
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "WhoKnows" not in comps
+    msg = str(rec[0].message)
+    assert "WhoKnows" in msg
+    assert "material.Mystery" in msg
+    assert "FourNodeQuad" in msg
+
+
+def test_fully_mapped_buckets_do_not_warn(tmp_path: Path) -> None:
+    # The quad fixture's own stress/strain buckets map completely — and a
+    # beam's section.force / section.deformation stations are not Gauss
+    # columns at all. Neither may warn, or the warning is noise.
+    import warnings
+
+    for fixture in (QUAD, FIBERBEAM):
+        with LadrunoReader(fixture) as r:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", GaussColumnDroppedWarning)
+                r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_one_warning_per_bucket(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {
+        "material.Mystery": ("WhoKnows", "NorMe"),
+        "material.Other": ("Neither",),
+    })
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning) as rec:
+            r.available_components("stage_0", ResultLevel.GAUSS)
+    assert len(rec) == 2                       # two buckets, not three labels
+    joined = " ".join(str(w.message) for w in rec)
+    for label in ("WhoKnows", "NorMe", "Neither"):
+        assert label in joined

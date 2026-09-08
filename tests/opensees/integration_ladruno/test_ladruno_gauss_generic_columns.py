@@ -219,6 +219,15 @@ SOLID_GAUSS = (
     "strain_xx", "strain_yy", "strain_zz", "strain_xy", "strain_yz", "strain_xz",
 )
 
+# ADR 0105 Amendment 1 — the five material-level buckets
+# ``ASDPlasticMaterial3D::setResponse`` answers, in apeGmsh's names.
+MATERIAL_LEVEL_GAUSS = (
+    "material_mean_stress", "material_j2_stress",
+    "material_volumetric_strain", "material_j2_strain",
+    "back_stress_xx", "back_stress_yy", "back_stress_zz",
+    "back_stress_xy", "back_stress_yz", "back_stress_xz",
+)
+
 
 def _single_hex_fem():
     with apeGmsh(model_name="gc_hex", verbose=False) as g:
@@ -247,6 +256,29 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
     land on ``plastic_strain_*`` / ``equivalent_plastic_strain`` — one column
     per (element, GP), engine-checked.  Pinned here because the ADR-94 build
     is the first one apeGmsh's ASDP decks are contracted against.
+
+    ADR 0105 Amendment 1 adds the five remaining material-level buckets:
+    ``PStress`` / ``J2Stress`` / ``VolStrain`` / ``J2Strain`` /
+    ``BackStress`` → ``material_mean_stress`` / ``material_j2_stress`` /
+    ``material_volumetric_strain`` / ``material_j2_strain`` /
+    ``back_stress_*``.  MEASURED on fork build ``3622d6214`` with this
+    deck, and asserted below to 1e-6 relative:
+
+    * ``material_mean_stress`` == the tensor-derived ``mean_stress``,
+      **same sign, factor 1** — both are ``trace(σ)/3``, tension-positive
+      (``VoigtVector::meanStress()``).  The fork header's "mean
+      (hydrostatic) stress" comment does not negate it; several yield
+      functions negate it themselves at the call site.
+    * ``material_j2_stress`` == the tensor-derived ``j2_stress``, **factor
+      1** — both are J2 = ½·s:s, NOT √J2.
+    * ``material_volumetric_strain`` == ``volumetric_strain`` (both
+      ``trace(ε)``, not ``/3``) and ``material_j2_strain`` ==
+      ``j2_strain`` (the material stores tensorial shear, so its J2
+      matches the reader's halve-the-engineering-shear convention).
+
+    The names stay provenance-distinct anyway: the equality above is a
+    MEASUREMENT of one material on one build, not a contract, and only
+    an audit per material would make it one.
     """
     fem = _single_hex_fem()
     ops = apeSees(fem)
@@ -270,7 +302,9 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
     ops.recorder.Ladruno(
         file=path,
         elem_responses=("stress", "strain", "material.pstrain",
-                        "material.eqpstrain"),
+                        "material.eqpstrain", "material.PStress",
+                        "material.J2Stress", "material.VolStrain",
+                        "material.J2Strain", "material.BackStress"),
     )
     ops.constraints.Transformation()
     ops.numberer.Plain()
@@ -294,6 +328,12 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
         np.asarray(o.eleResponse(eid, "material", k, "pstrain"), dtype=np.float64)
         for k in range(1, n_gp + 1)
     ])
+    live_pstress = np.array([
+        float(np.asarray(
+            o.eleResponse(eid, "material", k, "PStress"), dtype=np.float64,
+        )[0])
+        for k in range(1, n_gp + 1)
+    ])
     o.remove("recorders")
 
     r = Results.from_ladruno(path)
@@ -302,7 +342,7 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
         "plastic_strain_xx", "plastic_strain_yy", "plastic_strain_zz",
         "plastic_strain_xy", "plastic_strain_yz", "plastic_strain_xz",
         "equivalent_plastic_strain",
-    )
+    ) + MATERIAL_LEVEL_GAUSS
     missing = [c for c in wanted if c not in available]
     assert not missing, f"{missing} absent from {sorted(available)}"
     for component in wanted:
@@ -326,3 +366,36 @@ def test_asdplastic_on_ladruno_brick_keeps_its_gauss_columns(tmp_path) -> None:
     )
     # The leg yielded: the plastic strain is not a column of zeros.
     assert np.max(np.abs(slab.values[-1])) > 1e-4
+
+    # --- ADR 0105 Amendment 1 -------------------------------------------
+    # The material's own mean stress, against the engine, per Gauss point.
+    mean = r.elements.gauss.get(component="material_mean_stress")
+    np.testing.assert_allclose(
+        np.sort(mean.values[-1]), np.sort(live_pstress), rtol=1e-6, atol=1e-9,
+    )
+    # NullHardening: the back stress is initialised to zero and never
+    # moves, so a nonzero column here means the block was mis-sliced.
+    for component in (
+        "back_stress_xx", "back_stress_yy", "back_stress_zz",
+        "back_stress_xy", "back_stress_yz", "back_stress_xz",
+    ):
+        slab = r.elements.gauss.get(component=component)
+        assert np.all(slab.values == 0.0), component
+    # Measured relations to the tensor-derived scalars (see the docstring):
+    # identical, same sign, factor 1 — the material and the reader use the
+    # same definition for all four.
+    for recorded, derived in (
+        ("material_mean_stress", "mean_stress"),
+        ("material_j2_stress", "j2_stress"),
+        ("material_volumetric_strain", "volumetric_strain"),
+        ("material_j2_strain", "j2_strain"),
+    ):
+        np.testing.assert_allclose(
+            r.elements.gauss.get(component=recorded).values[-1],
+            r.elements.gauss.get(component=derived).values[-1],
+            rtol=1e-6, atol=1e-12, err_msg=f"{recorded} vs {derived}",
+        )
+    # J2, not √J2: the two differ by ~4e3 on this deck, so the equality
+    # above is a real check on the definition, not on a near-zero column.
+    j2 = r.elements.gauss.get(component="material_j2_stress").values[-1]
+    assert np.min(np.abs(j2)) > 1.0

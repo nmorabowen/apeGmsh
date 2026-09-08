@@ -27,6 +27,7 @@ apeGmsh's neutral vocabulary here:
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -235,7 +236,36 @@ _CONTINUUM_SCALAR_TOKENS = {
     "ebarp": "equivalent_plastic_strain",
     "equivalentplasticstrain": "equivalent_plastic_strain",
     "plasticstraineq": "equivalent_plastic_strain",
+    # ADR 0105 Amendment 1 — the material-level invariants
+    # ``ASDPlasticMaterial3D::setResponse`` labels for the
+    # ``material.PStress`` / ``J2Stress`` / ``VolStrain`` / ``J2Strain``
+    # buckets. Named ``material_*`` on purpose: these are what the
+    # MATERIAL computed, under its own definition and sign, and are NOT
+    # the reader's tensor-derived ``mean_stress`` / ``j2_stress`` /
+    # ``volumetric_strain`` / ``j2_strain`` (``results/_derived.py``).
+    # Aliasing the two would need a per-material sign/definition audit —
+    # the fork header's comment on ``p`` does not match its own
+    # arithmetic — so the two provenances stay separately named.
+    "p": "material_mean_stress",
+    "j2stress": "material_j2_stress",
+    "epsvol": "material_volumetric_strain",
+    "j2strain": "material_j2_strain",
+    # Scalar internal variables (``iv_size == 1``), labelled by the IV's
+    # own name. An explicit map, no generic pass-through: an unknown IV
+    # must surface as a dropped column (:class:`GaussColumnDroppedWarning`)
+    # rather than as a guessed canonical.
+    "yieldstress": "yield_stress",
+    "dp_cohesion": "dp_cohesion",
+    "cappressure": "cap_pressure",
+    "epsqpshear": "eps_qp_shear",
 }
+
+# Tensor internal variables are labelled ``<name>_<i>``, i = 1..iv_size,
+# in the material's Voigt order 11, 22, 33, 12, 23, 13 — the same order
+# the ``epsP1..`` plastic-strain columns already use.
+_IV_VOIGT_SUFFIX = ("xx", "yy", "zz", "xy", "yz", "xz")
+_TENSOR_IV_RE = re.compile(r"^(?P<name>backstress)_(?P<i>[1-6])$")
+_TENSOR_IV_ROOT = {"backstress": "back_stress"}
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
 
 
@@ -254,11 +284,24 @@ def continuum_canonical(token: str) -> Optional[str]:
     Matching is case-insensitive, so the out-of-plane ``sigma33`` /
     ``sigma_zz`` (however the recorder cases them) resolve to
     ``stress_zz``.
+
+    ASDPlasticMaterial3D's material-level buckets (ADR 0105 Amendment 1)
+    map too: ``p``→``material_mean_stress``,
+    ``J2stress``→``material_j2_stress``,
+    ``epsVol``→``material_volumetric_strain``,
+    ``J2strain``→``material_j2_strain``, the ``BackStress_1..6`` tensor
+    internal variable → ``back_stress_xx``…``back_stress_xz``, and the
+    known scalar internal variables (``YieldStress``, ``DP_cohesion``,
+    ``CapPressure``, ``EpsQpShear``).
     """
     t = token.strip().lower()
     scalar = _CONTINUUM_SCALAR_TOKENS.get(t)
     if scalar is not None:
         return scalar
+    m = _TENSOR_IV_RE.match(t)
+    if m is not None:
+        root = _TENSOR_IV_ROOT[m.group("name")]
+        return f"{root}_{_IV_VOIGT_SUFFIX[int(m.group('i')) - 1]}"
     m = _CONTINUUM_DIGIT_RE.match(t)
     if m is not None:
         root = _KIND_TO_ROOT[m.group("kind")]
@@ -518,8 +561,44 @@ def _select_rows(
 # Gauss reads (continuum stress / strain)
 # =====================================================================
 
+
+class GaussColumnDroppedWarning(UserWarning):
+    """A per-Gauss-point column was discarded — its label has no canonical.
+
+    Raised (once per bucket, per read) by :func:`gauss_available` when a
+    Gauss / material-level block carries a label
+    :func:`continuum_canonical` does not know. The column is dropped:
+    it never reaches ``available_components()`` and cannot be plotted.
+    A silent drop is indistinguishable from a material that never wrote
+    the quantity — the five ASDPlasticMaterial3D material-level buckets
+    (``PStress`` / ``J2Stress`` / ``VolStrain`` / ``J2Strain`` /
+    ``BackStress``) went missing exactly that way (ADR 0105 Amendment 1),
+    so say so.
+    """
+
+
+# SectionOutput depth. A ``section.force`` / ``section.deformation``
+# block carries GAUSS_ID >= 0 (its integration station) but is a LINE
+# STATION, not a Gauss column — ``section_canonical`` owns it. Excluding
+# it here is what keeps the section axial force ``P`` from colliding with
+# ASDPlasticMaterial3D's mean stress ``p`` (canonicalisation is
+# case-insensitive), and keeps its stations out of the drop warning.
+_SECTION_BLOCK_LEVEL = 2
+
+
+def _is_gauss_block(b: _Block) -> bool:
+    """True for a block that carries continuum Gauss columns.
+
+    Element-level rows (``gauss_id < 0``) are not Gauss data; section
+    stations (``LEVELS == 2``) are line stations. Fiber buckets are
+    excluded by TOKEN before any block is looked at (:func:`is_fiber_token`).
+    """
+    return b.gauss_id >= 0 and b.level != _SECTION_BLOCK_LEVEL
+
+
 def gauss_available(on_elements: "h5py.Group") -> set[str]:
     out: set[str] = set()
+    dropped: dict[str, set[str]] = {}
     for token in on_elements:
         if is_fiber_token(token):
             continue
@@ -532,14 +611,26 @@ def gauss_available(on_elements: "h5py.Group") -> set[str]:
                 blocks, token=token, bucket_key=key,
             )
             for b in blocks:
-                # Element-level rows are not Gauss data. Fiber buckets are
-                # excluded by token before this loop.
-                if b.gauss_id < 0:
+                if not _is_gauss_block(b):
                     continue
                 for name in b.comp_names:
                     c = continuum_canonical(name)
                     if c is not None:
                         out.add(c)
+                    else:
+                        dropped.setdefault(f"{token}/{key}", set()).add(name)
+    for bucket, labels in dropped.items():
+        warnings.warn(
+            f"Gauss column(s) {sorted(labels)} of bucket {bucket!r} were "
+            f"dropped: the .ladruno file labels them with names apeGmsh "
+            f"has no canonical component for, so they are not listed by "
+            f"available_components() and cannot be read or plotted. "
+            f"Element class {_class_name(bucket.split('/', 1)[-1])!r}. "
+            f"Add the label to the .ladruno reader's token map if the "
+            f"quantity should be readable.",
+            GaussColumnDroppedWarning,
+            stacklevel=2,
+        )
     return out
 
 
@@ -582,7 +673,7 @@ def read_gauss_slab(
             # flag the overlap tie-break needs.
             from_file_names = resolved is blocks
             blocks = resolved
-            gp_blocks = [b for b in blocks if b.gauss_id >= 0]
+            gp_blocks = [b for b in blocks if _is_gauss_block(b)]
             if not gp_blocks:
                 continue
             # (block, col-within-DATA) pairs that hold the component.
