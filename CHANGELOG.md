@@ -333,6 +333,28 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — the `system Pardiso -stats` parser, alone (ADR 0106 S1)
+
+A new pure, stdlib-only `apeGmsh.opensees._solver_stats` module: the fork
+PR #821 `PARDISO stats:` block (five-line, one per numeric factorisation)
+now has a parser, `parse_solver_stats`, taking either a line-fed iterable
+(what a streaming run will hand it) or a log path (what a re-parse of a
+finished run's `<deck>.log` will hand it). Three frozen dataclasses carry
+the result: `SolverStatsBlock` (one factorisation), `StageSolverStats` (a
+bucket's ADR 0106 D6 reduction — max on the four capacity numbers, last-seen
+on the four identity ones), and `RunSolverStats` (the per-stage tuple plus
+a run-level bucket and the `factorisations` / `malformed_blocks` counters).
+Stage buckets come from `APEGMSH_STAGE open|close <name>` window lines
+(not emitted anywhere yet — see below); a block outside any window lands
+run-level. The parser never raises on malformed input — a missing field,
+an interrupting second header, a field with no header, or a value that
+won't parse as a number all count against `malformed_blocks` instead,
+covered by six mutation tests alongside the reference-block and
+multi-block-reduction ones.
+
+Not wired anywhere (S2/S3): no emitter emits `APEGMSH_STAGE` yet, nothing
+calls this parser, and `apeSees.tcl` / `apeSees.py` still return `None`.
+Nothing changes for any run.
 ### FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and `pyvista.trame` needs `trame-pyvista`
 
 pyvista 0.49.0 pulls VTK 9.7.0, which removed `vtkRenderer.AddActor2D` /
