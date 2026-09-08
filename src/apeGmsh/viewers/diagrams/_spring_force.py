@@ -10,7 +10,12 @@ The ZeroLength element's spring directions are not carried by FEMData
 generically — apeGmsh stores connectivity but not the per-spring
 direction vectors. We therefore default to axis-aligned directions
 (suffix 0 → x, 1 → y, 2 → z) and let the user override per diagram if
-their model uses skew springs.
+their model uses skew springs — except for a spring that belongs to a
+resolved ``g.constraints.interface()`` pair (ADR 0093 / TIMs A10),
+whose three springs act along the record's own ``(n, t1, t2)`` frame
+rather than the global axes; that per-spring frame is used instead
+(see :func:`_direction_from_interface_orient`), unless
+``SpringForceStyle.direction`` is set, which still wins over both.
 
 Render seam (ADR 0042, R-B): emits one arrow :class:`GlyphLayer` via
 ``self._backend`` and holds no VTK objects. Signed force flips the
@@ -46,15 +51,98 @@ _DEFAULT_AXES = (
 _COMPONENT_SUFFIX = re.compile(r"^spring_(force|deformation)_(\d+)$")
 
 
-def _direction_from_component(component: str) -> ndarray:
-    """Default unit direction for ``spring_force_<n>`` style components."""
+def _suffix_index(component: str) -> Optional[int]:
+    """The ``<n>`` in ``spring_(force|deformation)_<n>``, or ``None``."""
     m = _COMPONENT_SUFFIX.match(component)
     if m is None:
-        return _DEFAULT_AXES[0].copy()
-    idx = int(m.group(2))
-    if 0 <= idx < 3:
+        return None
+    return int(m.group(2))
+
+
+def _direction_from_component(component: str) -> ndarray:
+    """Default unit direction for ``spring_force_<n>`` style components."""
+    idx = _suffix_index(component)
+    if idx is not None and 0 <= idx < 3:
         return _DEFAULT_AXES[idx].copy()
     return _DEFAULT_AXES[0].copy()
+
+
+def _direction_from_interface_orient(
+    orient: "tuple[float, ...] | ndarray", suffix_idx: int,
+) -> Optional[ndarray]:
+    """Frame vector ``suffix_idx`` from an ``InterfaceRecord.orient``
+    (ADR 0093 / TIMs A10), used instead of a global axis when a spring
+    belongs to a resolved ``g.constraints.interface()`` pair.
+
+    Six floats (2-D line master): ``(x1,x2,x3, yp1,yp2,yp3)`` — the
+    zeroLength ``-orient`` argument. Suffix 0 is the master-normal
+    ``x``; suffix 1 is ``yp`` Gram-Schmidt orthogonalised against
+    ``x`` (the actual local-y the fork derives). No suffix 2 — a 2-D
+    pair has only two springs.
+
+    Nine floats (3-D surface master, TIMs A10 S2): ``(n, t1, t2)`` —
+    already a stacked orthonormal triad; suffix ``k`` is the k-th
+    vector, renormalised defensively.
+
+    Returns ``None`` when ``suffix_idx`` has no corresponding frame
+    vector (out of range, or a degenerate vector) — callers fall back
+    to the global-axis rule.
+    """
+    vec = np.asarray(orient, dtype=np.float64)
+    if vec.size == 6:
+        if suffix_idx == 0:
+            v = vec[0:3]
+        elif suffix_idx == 1:
+            x = vec[0:3]
+            x_norm = float(np.linalg.norm(x))
+            if x_norm < 1e-12:
+                return None
+            x_hat = x / x_norm
+            yp = vec[3:6]
+            v = yp - float(np.dot(yp, x_hat)) * x_hat
+        else:
+            return None
+    elif vec.size == 9:
+        if suffix_idx not in (0, 1, 2):
+            return None
+        v = vec[suffix_idx * 3: suffix_idx * 3 + 3]
+    else:
+        return None
+    norm = float(np.linalg.norm(v))
+    if norm < 1e-12:
+        return None
+    return v / norm
+
+
+def _match_interface_record(
+    interfaces: Any, node_i: int, node_j: int,
+) -> Any:
+    """The interface record whose emitted zeroLength connects
+    ``{node_i, node_j}``, or ``None``.
+
+    The emitted zeroLength's own element tag is not carried on the
+    record (ADR 0093), so matching goes by node pair instead. The
+    record's real pair is ``(master_node, phantom_node)`` for a
+    mixed-ndf pair (INV-1: the phantom, not ``slave_node``, is the
+    zeroLength's actual jNode), else ``(master_node, slave_node)``.
+    """
+    if not interfaces:
+        return None
+    pair = frozenset((int(node_i), int(node_j)))
+    for rec in interfaces:
+        master = getattr(rec, "master_node", None)
+        if master is None:
+            continue
+        phantom = getattr(rec, "phantom_node", None)
+        second = (
+            phantom if phantom is not None
+            else getattr(rec, "slave_node", None)
+        )
+        if second is None:
+            continue
+        if frozenset((int(master), int(second))) == pair:
+            return rec
+    return None
 
 
 @register_diagram_kind(
@@ -80,6 +168,12 @@ class SpringForceDiagram(Diagram):
         self._positions: Optional[ndarray] = None   # (n, 3) spring coords
         self._values: Optional[ndarray] = None      # (n,) signed force/def
         self._direction: Optional[ndarray] = None
+        # Per-spring direction override (n, 3), set when one or more
+        # springs in the selection belong to a resolved interface pair
+        # (ADR 0093) whose frame differs from the global-axis default;
+        # ``None`` in the common case, where every spring uses
+        # ``self._direction`` uniformly.
+        self._directions: Optional[ndarray] = None
         self._initial_scale: float = 1.0
 
         # Mapping from slab position -> spring index in our layer order
@@ -168,7 +262,7 @@ class SpringForceDiagram(Diagram):
             anchor = anchors.get(int(slab_eids[k]))
             if anchor is not None:
                 anchor_nids[k] = anchor[0]
-                positions_in_slab_order[k] = anchor[1]
+                positions_in_slab_order[k] = anchor[2]
                 valid_mask[k] = True
 
         if not valid_mask.any():
@@ -183,6 +277,7 @@ class SpringForceDiagram(Diagram):
         )
         self._positions = positions_in_slab_order
         self._slab_to_spring_pos = np.where(valid_mask)[0]
+        matched_eids = slab_eids[valid_mask]
 
         # Anchor-node substrate rows so sync_substrate_points can
         # re-sample the deformed substrate (-1 = node not on substrate;
@@ -196,7 +291,10 @@ class SpringForceDiagram(Diagram):
         nid_to_sub[scene_ids] = np.arange(scene_ids.size, dtype=np.int64)
         self._substrate_rows = nid_to_sub[anchor_nids]
 
-        # Direction
+        # Direction — an explicit style override wins outright; otherwise
+        # per-spring interface frames (ADR 0093) apply where a spring
+        # matches a resolved interface record, and the global-axis rule
+        # fills in everywhere else.
         if style.direction is not None:
             d = np.asarray(style.direction, dtype=np.float64)
             norm = float(np.linalg.norm(d))
@@ -204,9 +302,14 @@ class SpringForceDiagram(Diagram):
                 d = _DEFAULT_AXES[0].copy()
             else:
                 d = d / norm
+            self._direction = d
+            self._directions = None
         else:
-            d = _direction_from_component(self.spec.selector.component)
-        self._direction = d
+            fallback = _direction_from_component(self.spec.selector.component)
+            self._direction = fallback
+            self._directions = self._resolve_interface_directions(
+                fallback, matched_eids, anchors,
+            )
 
         # Auto scale at attach — global max-abs across every step
         if style.scale is None:
@@ -297,6 +400,7 @@ class SpringForceDiagram(Diagram):
         self._positions = None
         self._values = None
         self._direction = None
+        self._directions = None
         self._slab_to_spring_pos = None
         self._substrate_rows = None
         super().detach()
@@ -328,6 +432,7 @@ class SpringForceDiagram(Diagram):
         if norm < 1e-12:
             return
         self._direction = d / norm
+        self._directions = None    # explicit override applies uniformly
         if self._values is None or self._handle is None:
             return
         self._layer = self._build_layer(self._values, self.current_scale())
@@ -347,10 +452,17 @@ class SpringForceDiagram(Diagram):
 
     def _build_layer(self, values: ndarray, scale: float) -> GlyphLayer:
         """Arrow glyph layer: orientation = value × dir (sign flips the
-        arrow), scale = |value| × ``scale``."""
+        arrow), scale = |value| × ``scale``. ``dir`` is either the
+        single ``self._direction`` axis (broadcast to every spring) or
+        the per-spring ``self._directions`` array when one or more
+        springs matched an interface record (ADR 0093)."""
         style: SpringForceStyle = self.spec.style    # type: ignore[assignment]
         assert self._positions is not None and self._direction is not None
-        orientations = values[:, None] * self._direction[None, :]
+        dirs = (
+            self._directions if self._directions is not None
+            else self._direction[None, :]
+        )
+        orientations = values[:, None] * dirs
         scales = np.abs(values) * float(scale)
         return GlyphLayer(
             layer_id=self._layer_id(),
@@ -360,6 +472,52 @@ class SpringForceDiagram(Diagram):
             scales=scales,
             color=ColorSpec(mode="solid", solid_rgb=style.color),
         )
+
+    def _interface_records(self) -> Any:
+        """``self._results.fem.elements.interfaces``, defensively —
+        ``None`` when unavailable (no bound FEMData, or a FEMData that
+        carries no ``interfaces`` slot)."""
+        fem = getattr(self._results, "fem", None)
+        elements = getattr(fem, "elements", None) if fem is not None else None
+        return (
+            getattr(elements, "interfaces", None)
+            if elements is not None else None
+        )
+
+    def _resolve_interface_directions(
+        self,
+        fallback: ndarray,
+        eids: ndarray,
+        anchors: "dict[int, tuple[int, int, ndarray]]",
+    ) -> Optional[ndarray]:
+        """Per-spring direction array (n, 3), or ``None`` when nothing
+        in the selection matches an interface record — the common
+        case, where callers keep broadcasting ``self._direction``
+        unchanged from before this feature existed."""
+        interfaces = self._interface_records()
+        if not interfaces:
+            return None
+        suffix_idx = _suffix_index(self.spec.selector.component)
+        if suffix_idx is None:
+            return None
+        directions = np.tile(fallback, (len(eids), 1))
+        matched = False
+        for i, eid in enumerate(eids):
+            anchor = anchors.get(int(eid))
+            if anchor is None:
+                continue
+            rec = _match_interface_record(interfaces, anchor[0], anchor[1])
+            if rec is None:
+                continue
+            orient = getattr(rec, "orient", None)
+            if orient is None:
+                continue
+            d = _direction_from_interface_orient(orient, suffix_idx)
+            if d is None:
+                continue
+            directions[i] = d
+            matched = True
+        return directions if matched else None
 
     @staticmethod
     def _collect_zero_length_ids(view: "ViewerData") -> ndarray:
@@ -373,15 +531,19 @@ class SpringForceDiagram(Diagram):
     @staticmethod
     def _collect_spring_anchors(
         view: "ViewerData", element_ids: ndarray,
-    ) -> "dict[int, tuple[int, ndarray]]":
-        """``eid -> (node_i_id, node_i_position)`` for resolvable springs.
+    ) -> "dict[int, tuple[int, int, ndarray]]":
+        """``eid -> (node_i_id, node_j_id, node_i_position)`` for
+        resolvable springs.
 
         Node i anchors the glyph (i == j for a zero-length element).
         Returning a dict keyed by eid (rather than a positions array
         positionally zipped against ``element_ids``) keeps the mapping
         correct when some spring's node is absent from the view, and
         hands ``sync_substrate_points`` the node id it needs to follow
-        the deformed substrate.
+        the deformed substrate. node_j is carried alongside node_i so
+        an interface pair's zeroLength can be matched back to its
+        record by node pair (:func:`_match_interface_record`) — ADR
+        0093 puts no element tag on the record.
         """
         eid_set = {int(e) for e in element_ids}
         node_ids_arr = np.asarray(list(view.nodes.ids), dtype=np.int64)
@@ -393,7 +555,7 @@ class SpringForceDiagram(Diagram):
         nid_to_idx[node_ids_arr] = np.arange(
             node_ids_arr.size, dtype=np.int64,
         )
-        out: dict[int, tuple[int, ndarray]] = {}
+        out: dict[int, tuple[int, int, ndarray]] = {}
         for group in view.elements:
             if group.element_type.dim != 1:
                 continue
@@ -404,8 +566,9 @@ class SpringForceDiagram(Diagram):
                 if eid not in eid_set:
                     continue
                 nid_i = int(conn[k, 0])
+                nid_j = int(conn[k, 1]) if conn.shape[1] > 1 else nid_i
                 ii = nid_to_idx[nid_i]
                 if ii < 0:
                     continue
-                out[eid] = (nid_i, coords_arr[ii].copy())
+                out[eid] = (nid_i, nid_j, coords_arr[ii].copy())
         return out
