@@ -431,10 +431,16 @@ resolver runs there is genuinely nothing in the model that says
 whether your wire becomes a truss or a beam. Declare it wrong and the
 bridge refuses at emit, naming the ndf it actually found.
 
-Two-dimensional line masters only, for now. A 3D model raises
-`NotImplementedError` at the call, and an interior edge — material on
-both sides, so no outward direction exists — raises at resolve; both
-are loud, neither degrades into a guess. Partitioned (MPI) emit is
+The master's dimension follows the model's: a boundary curve in 2D, a
+boundary surface in 3D. The 3D lane resolves — per-pair frames from the
+adjacent facets, an `A_trib` that is a real area, so `thickness` is
+refused there by name — but it does not emit yet; that is the next
+slice, and the build says so rather than writing a two-direction
+element into a three-direction model. Give it the wrong dimension for
+the model and it raises at resolve, naming the label. So does an
+interior face — material on both sides, so no outward direction
+exists. All of it is loud; none of it degrades into a guess.
+Partitioned (MPI) emit is
 supported: each pair's whole unit lands on the one rank owning the
 master node's backing continuum element, because the pair's nodes are
 co-located and node-tally ownership cannot decide between the ranks.

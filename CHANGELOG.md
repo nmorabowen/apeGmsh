@@ -368,6 +368,27 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — interface() 3D S2: a surface master resolves, emission still refuses
+
+`g.constraints.interface()` used to refuse a 3D model at the call. It now
+takes a dim-2 surface master there, the way it takes a dim-1 curve in 2D,
+and the wrong dimension for the model is refused by name on the label.
+The per-pair frame comes from the adjacent facets and the tributary area
+from the facet-area accumulation, so a 3D interface has a real area and
+`thickness=` — the 2D out-of-plane depth — is refused there rather than
+quietly multiplied in. `slave_ndf=` takes `None`, 3, 4 (a u-p soil node)
+or 6 (a shell) in 3D, and every one of those pairs connects directly:
+the fork now joins a mixed 3D pair itself, leaving each degree of freedom
+past the third an untouched passenger, so the 2D phantom bridge has
+nothing left to bridge. A pair's orientation record widens from six
+floats to nine, `(n, t1, t2)`, because a 3D friction law acts on two
+tangential directions; a 2D interface's saved model is unchanged, and an
+older file still reads. What does NOT work yet is emission: build a 3D
+interface into a deck and the bridge refuses, naming the slice that will
+write it, rather than emitting a two-direction element into a
+three-direction model. That slice owes the per-pair orientation with
+both tangents, the friction law across them, and the recorder channels.
+
 ### ADDED — ADR 0106 S5: live acceptance against the real fork binary
 
 S1-S4 proved the parser and the wiring against fake children; this slice runs

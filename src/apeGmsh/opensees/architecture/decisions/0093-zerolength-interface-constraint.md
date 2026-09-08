@@ -528,15 +528,46 @@ D1–D4.
     `tests/_kernel/geometry/test_surface_frames.py`, mutation-checked
     on the sign-fix and on both directions of the fold constant.)*
     *Landed 2026-09-07.*
-13. **S2 (3D) — composite**: lift the declaration and resolve gates for
-    dim-2 masters; the D4 phantom bridge parameterised by the fork's
-    accepted ndf pairs, refused below `a240b9183`. `InterfaceRecord`
-    widens here: `orient` carries six floats today (one normal, one
-    tangent) and 3D needs the second tangent, so the field becomes a
-    9-tuple (or `(3, 3)`) with an h5 payload bump behind it.
+13. **S2 (3D) — composite: the three gates lifted, the record widened.**
+    `interface()` now takes a dim-1 line master in a 2D model or a
+    dim-2 surface master in a 3D one, and the wrong one for the model is
+    refused by name on the label. `resolve_interfaces` reads the model
+    dimension once and threads it (the `resolve_contacts` idiom): 2D
+    gathers boundary edges against the 2D continuum, 3D gathers ragged
+    tri3/quad4 facets against the 3D continuum and hands them to S1's
+    `surface_frames`. The two arguments whose meaning is dimensional are
+    checked at declaration too, as early as the live model shows its
+    dimension — `thickness` is the 2D depth and is **refused by name**
+    in 3D (a surface has a real area; `A_trib` is the facet-area
+    accumulation, D3), and `slave_ndf` takes `(None, 2, 3)` in 2D
+    against `(None, 3, 4, 6)` in 3D. **D4 does not cross over**: the
+    phantom bridge exists because `ZeroLength::setDomain` refused
+    `dofNd1 != dofNd2`, and in 3D it no longer does — fork #808 / ADR 96
+    takes every pair in `_ACCEPTED_3D_NDF_PAIRS` directly, with each DOF
+    past the third an untouched passenger, so a 3D pair mints no
+    phantom at all. That constant carries the minimum build
+    `TIMS_FORK_BATCH_MIN_BUILD` (`a240b9183`) as a citation, not a
+    runtime check: a build's ancestry is not derivable from a hash.
+    `InterfaceRecord.orient` widens from six floats to **six or nine** —
+    the first six are the zeroLength `-orient` argument at either
+    dimension, and 3D appends `t2` because the Coulomb law acts on two
+    tangents. On h5 that is an APPENDED `orient_t2` / `has_orient_t2`
+    pair (neutral 2.32.0, presence-probed on read): the `orient` column
+    does not move, so a 2D row is byte-for-byte what 2.29.0 wrote.
+    **Emission is still S3**, and saying so is part of the slice:
+    `_refuse_3d_interface_emission` in `build.py` refuses a nine-float
+    record in the shared whole-pool gate — keyed on the record, so
+    compose / h5 / a stage claim are all covered — naming S3 rather than
+    letting `_emit_interface_record`'s hard-coded `-dir 1 2` emit a
+    2D-shaped element. *(tests: the 3D box + footing skin in
+    `test_interface_verb.py`, the hand-built slab in
+    `test_interface_resolver.py`, the frame's h5 round-trip, and the
+    refusal read off a real `apeSees` deck attempt.)* *Landed
+    2026-09-08.*
 14. **S3 (3D) — emit**: per-pair `-orient` from the widened record, the
     Coulomb law as the 2D material bundle plus the second tangent,
-    recorder channels per pair as in 2D.
+    recorder channels per pair as in 2D. Its entry point is the refusal
+    S2 left standing, `_refuse_3d_interface_emission`.
 15. **S4 (3D) — verification**: the 2D convergence case rotated into 3D
     (one element deep must reproduce the 2D answer), then a u–p soil
     showing the pore pressure is untouched. The `tie` comparison S10

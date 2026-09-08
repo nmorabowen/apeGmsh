@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-08T04:58:35Z",
+  "generated": "2026-09-08T05:59:59Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -352,7 +352,7 @@
     },
     "g.constraints.interface": {
       "symbol": "g.constraints.interface",
-      "signature": "interface(master, slave, *, normal, tangential, thickness, tolerance=1e-06, slave_ndf=None, master_entities=None, slave_entities=None, name=None) -> 'InterfaceDef'",
+      "signature": "interface(master, slave, *, normal, tangential, thickness=<unset>, tolerance=1e-06, slave_ndf=None, master_entities=None, slave_entities=None, name=None) -> 'InterfaceDef'",
       "skill": "references/api-cheatsheet.md",
       "doc": "Declare an oriented coincident-pair ``zeroLength`` interface"
     },

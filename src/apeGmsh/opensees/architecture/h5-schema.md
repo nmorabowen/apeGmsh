@@ -183,7 +183,7 @@ Attributes only.
 | Attribute | Type | Description |
 |---|---|---|
 | `schema_version` | string | **legacy envelope** — back-compat only; *not* authoritative (see [Schema versioning](#versioning)) |
-| `neutral_schema_version` | string | per-zone version of the broker neutral zone (e.g. `"2.31.0"`) |
+| `neutral_schema_version` | string | per-zone version of the broker neutral zone (e.g. `"2.32.0"`) |
 | `opensees_schema_version` | string | per-zone version of the `/opensees/` zone (e.g. `"2.20.0"`); forward-stamped even on broker-only files |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
@@ -888,7 +888,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.31.0** |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.32.0** |
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../../results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../../cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
@@ -936,7 +936,7 @@ our own output is held by
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
 [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py), current
-through **2.31.0**. The opensees zone's per-version history is
+through **2.32.0**. The opensees zone's per-version history is
 maintained inline in [`opensees/emitter/h5.py`](../emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
@@ -1093,6 +1093,12 @@ full "why" and the exact affected dtype columns:
 - `2.31.0` — 2D mortar (`-slave-segments` lane): adds the `thickness`
   column (2D mortar plane-model out-of-plane thickness) to
   `contact_payload_dtype`.
+- `2.32.0` — TIMs A10 S2 (`interface()` on a 3D surface master): adds
+  the `orient_t2` / `has_orient_t2` columns to
+  `interface_payload_dtype`, carrying the second in-plane tangent of a
+  3D pair's `(n, t1, t2)` frame. The `orient` column is unchanged and
+  still holds the zeroLength `-orient` argument at both master
+  dimensions, so a 2D interface row is byte-for-byte what 2.29.0 wrote.
 
 ### OpenSees-zone history (post-2.10)
 

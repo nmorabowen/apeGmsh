@@ -57,6 +57,30 @@ from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
 from apeGmsh._kernel.records._constraints import (
     ConstraintRecord, ContactRecord, ContactPlaneRecord, InterfaceRecord,
 )
+from apeGmsh._kernel.resolvers._interface_resolver import (
+    _SLAVE_NDF_VALUES as _SLAVE_NDF_VALUES_2D,
+    _SLAVE_NDF_VALUES_3D,
+)
+
+class _Unset:
+    """``g.constraints.interface(thickness=...)`` sentinel.
+
+    The kwarg means different things in 2D (required) and 3D (refused by
+    name), and the model's dimension is not always known at declaration
+    — so "omitted" has to stay distinguishable from an explicit
+    ``None``. A named class rather than a bare ``object()`` because the
+    default's ``repr`` lands in the harvested public signature
+    (``studio/_api_index.json``), and ``<object object at 0x...>`` would
+    make that index non-deterministic.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+
+_UNSET = _Unset()
 
 _DISPATCH: dict[type, str] = {
     EqualDOFDef:             "_resolve_node_pair",
@@ -1093,7 +1117,7 @@ class ConstraintsComposite:
 
     def interface(
         self, master, slave, *,
-        normal, tangential, thickness,
+        normal, tangential, thickness=_UNSET,
         tolerance=1e-6, slave_ndf=None,
         master_entities=None, slave_entities=None,
         name=None,
@@ -1111,15 +1135,19 @@ class ConstraintsComposite:
         interface: with a bilateral bond a converging ground drives the
         liner's demand without bound.
 
-        2D line masters only in v1; a 3D model or a surface master
-        raises :class:`NotImplementedError` (ADR 0093 D2).
+        The master's dimension follows the model's: a dim-1 **curve** in
+        a 2D model, a dim-2 **surface** in a 3D one (TIMs A10 S2). The
+        wrong one for the model raises :class:`NotImplementedError` by
+        name. A 3D interface resolves to records but does not emit yet —
+        the build refuses it, naming TIMs A10 S3.
 
         Parameters
         ----------
         master, slave : str
-            The master curve PG / part label — a **free boundary** of
-            the meshed 2D continuum — and the node-for-node coincident
-            slave label. The two node sets must be disjoint.
+            The master PG / part label — a **free boundary** of the
+            meshed continuum, a curve in 2D and a surface in 3D — and
+            the node-for-node coincident slave label. The two node sets
+            must be disjoint.
         normal : NormalLaw
             Per-area normal law: ``NormalLaw(kind="ent"|"epp_gap"|
             "elastic", k_per_area=..., ...)``. Declarative kernel data,
@@ -1129,17 +1157,22 @@ class ConstraintsComposite:
             Per-area tangential law: ``TangentialLaw(kind="epp"|
             "elastic", k_per_area=..., tau_b=...)``.
         thickness : float
-            Out-of-plane thickness (**required**, ``> 0``) —
-            ``A_trib = ell_trib * thickness``.
+            Out-of-plane thickness (**required in a 2D model**, ``> 0``)
+            — ``A_trib = ell_trib * thickness``. A 3D surface master has
+            a real area, so passing it there is refused by name; omit it.
         tolerance : float
             Coincidence radius for the node pairing. A slave with no
             master inside it is an error, never a silent skip.
-        slave_ndf : {None, 2, 3}
-            The ndf the slave wire will be declared with. ``None`` /
-            ``2`` ⇒ the slave matches the 2D continuum and the pair
+        slave_ndf : {None, 2, 3} in 2D, {None, 3, 4, 6} in 3D
+            The ndf the slave will be declared with. In 2D: ``None`` /
+            ``2`` ⇒ the slave matches the continuum and the pair
             connects directly; ``3`` ⇒ a beam slave, so each pair gets
-            the phantom bridge of ADR 0093 D4 (the fork refuses a
-            mixed-ndf ``zeroLength``). Explicit by design — see
+            the phantom bridge of ADR 0093 D4 (the engine refuses a
+            mixed-ndf ``zeroLength`` there). In 3D: ``None`` / ``3`` /
+            ``4`` (u-p soil) / ``6`` (shell), all connecting directly —
+            fork #808 / ADR 96 takes a mixed 3D pair itself, with every
+            DOF past the third riding as a passenger, so there is no
+            phantom to mint. Explicit by design — see
             :class:`~apeGmsh._kernel.defs.constraints.InterfaceDef`.
         master_entities, slave_entities : list of (dim, tag), optional
             Restrict each side to specific Gmsh entities.
@@ -1155,7 +1188,8 @@ class ConstraintsComposite:
         # precedent, silent-failures slice 2).
         from ._compose_errors import raise_if_from_h5_session
         raise_if_from_h5_session(self._parent, "g.constraints.interface()")
-        self._refuse_3d_interface()
+        thickness = self._check_interface_dimensional_args(
+            thickness, slave_ndf)
         defn = InterfaceDef(
             master_label=master, slave_label=slave,
             master_entities=master_entities, slave_entities=slave_entities,
@@ -1167,38 +1201,101 @@ class ConstraintsComposite:
         return defn
 
     @staticmethod
-    def _refuse_3d_interface() -> None:
-        """Refuse ``interface()`` on a 3D model as early as we can see it.
-
-        The authoritative gate is in :meth:`resolve_interfaces` (the
-        master entity must be a curve, and its edges must be in-plane);
-        this one just fires at declaration time when the model already
-        carries 3D geometry, so the user learns before meshing. A model
-        with no geometry yet reports dimension 0 and falls through to
-        the resolve-time gate.
+    def _live_model_dim() -> int | None:
+        """The live Gmsh model's dimension, or ``None`` when there is no
+        model to ask (in which case only the resolve-time gate applies).
+        A model with no geometry yet answers 0, which is "not known".
         """
         import gmsh
         try:
             dim = int(gmsh.model.getDimension())
         except Exception:
-            return  # no live model — the resolve-time gate still applies
-        if dim == 3:
-            raise NotImplementedError(
-                "g.constraints.interface(): the model is 3D, and only 2D "
-                "line masters are implemented. A 3D surface master needs "
-                "per-facet frames and a surface tributary model — "
-                "deferred, ADR 0093 D2. Use g.constraints.contact() / "
-                "tie() for a 3D interface.")
+            return None
+        return dim or None
+
+    @classmethod
+    def _check_interface_dimensional_args(cls, thickness, slave_ndf):
+        """Validate the two ``interface()`` arguments whose meaning is
+        dimensional, as early as the live model lets us see it.
+
+        ``thickness`` is the 2D line master's out-of-plane depth and has
+        no 3D counterpart (a surface master has a real area, ADR 0093
+        D3); the accepted ``slave_ndf`` set differs too (D4's phantom in
+        2D, the fork's directly-connectable pairs in 3D, ADR 96). The
+        authoritative gates are in :meth:`resolve_interfaces` and the
+        resolver — these fire at declaration so the user learns before
+        meshing. A model that does not yet say it is 3D is treated as
+        the 2D lane here, which is what keeps ``thickness`` required and
+        ``slave_ndf=4`` refused on a session with no geometry yet; the
+        resolve-time gate has the real answer either way.
+
+        Returns the ``thickness`` to store — ``None`` in 3D, where the
+        def carries no depth at all.
+
+        The sentinel matters. ``thickness=`` omitted is a *2D* mistake
+        and stays a :class:`TypeError` (and the 3D call's natural
+        spelling is simply not passing it), while an explicit
+        ``thickness=None`` / ``0`` / ``-1`` is a value error about a
+        value the caller did supply.
+        """
+        if cls._live_model_dim() == 3:
+            if thickness is not _UNSET:
+                raise ValueError(
+                    f"g.constraints.interface(): thickness="
+                    f"{thickness!r} was passed, but the model is 3D and "
+                    f"the master is a SURFACE with a real area — A_trib "
+                    f"comes from the facet-area accumulation (ADR 0093 "
+                    f"D3, the 3D reading). thickness is the 2D line "
+                    f"master's out-of-plane depth only. Drop thickness=.")
+            if slave_ndf not in _SLAVE_NDF_VALUES_3D:
+                raise ValueError(
+                    f"g.constraints.interface(): on a 3D surface master "
+                    f"slave_ndf must be one of {_SLAVE_NDF_VALUES_3D} "
+                    f"(None/3 = a continuum slave, 4 = a u-p soil node, "
+                    f"6 = a shell / beam node — the fork's zeroLength "
+                    f"takes every such pair directly, ADR 96), got "
+                    f"{slave_ndf!r}.")
+            return None
+
+        if thickness is _UNSET:
+            raise TypeError(
+                "g.constraints.interface() missing a required keyword "
+                "argument: 'thickness' — the 2D line master's "
+                "out-of-plane depth, A_trib = ell_trib * thickness "
+                "(ADR 0093 D3). It is omitted only on a 3D surface "
+                "master, which has a real area.")
+        if thickness is None:
+            raise ValueError(
+                "g.constraints.interface(): thickness is required on a "
+                "2D line master — A_trib = ell_trib * thickness "
+                "(ADR 0093 D3), and the verb refuses to guess an "
+                "out-of-plane thickness.")
+        if slave_ndf not in _SLAVE_NDF_VALUES_2D:
+            raise ValueError(
+                f"g.constraints.interface(): on a 2D line master "
+                f"slave_ndf must be one of {_SLAVE_NDF_VALUES_2D} "
+                f"(None/2 = the slave matches the 2D continuum, direct "
+                f"zeroLength; 3 = beam slave, phantom bridge per "
+                f"ADR 0093 D4), got {slave_ndf!r}.")
+        return thickness
 
     def resolve_interfaces(self, node_tags, node_coords) -> list:
         """Resolve every :meth:`interface` def to :class:`InterfaceRecord`\\ s.
 
         Gathers the live-Gmsh inputs — both node sets, the master's
-        boundary line elements, and the model's 2D domain elements —
+        boundary cells, and the model's top-dimension domain elements —
         and hands the geometry math to
         :func:`~apeGmsh._kernel.resolvers._interface_resolver.resolve_interface_records`
         (pure kernel, no Gmsh), mirroring how :meth:`resolve_contacts`
         gathers and delegates.
+
+        **The model dimension is read once, here, and threaded** — the
+        :meth:`resolve_contacts` idiom, and the single branch point. In
+        a 2D model the master is a dim-1 curve, gathered as boundary
+        line elements against the 2D continuum; in a 3D model it is a
+        dim-2 surface, gathered as boundary facets against the 3D
+        continuum (TIMs A10 S2). The wrong dimension for the model is
+        refused by name, on the master's own label.
 
         Must run **after** :meth:`resolve` so the interface phantom tags
         start above the MP lane's phantom high-water mark; the factory
@@ -1215,12 +1312,15 @@ class ConstraintsComposite:
 
         import gmsh
         model_dim = int(gmsh.model.getDimension())
-        if model_dim != 2:
+        if model_dim not in (2, 3):
             raise NotImplementedError(
-                f"interface: the model is {model_dim}D and only 2D line "
-                f"masters are implemented (ADR 0093 D2).")
+                f"interface: the model is {model_dim}D — the verb takes a "
+                f"dim-1 line master in a 2D model or a dim-2 surface "
+                f"master in a 3D one (ADR 0093 D2 / TIMs A10 S2).")
+        master_dim = model_dim - 1
 
-        domain_tags, domain_conn = self._collect_domain_elements()
+        domain_tags, domain_conn = self._collect_domain_elements(
+            dim=model_dim)
         # Start above BOTH the model's own node tags and any phantom the
         # MP lane already minted this resolve (see
         # ``_phantom_tag_high_water``).
@@ -1233,25 +1333,33 @@ class ConstraintsComposite:
                       or self._entities_for_label(defn.master_label))
             s_ents = (defn.slave_entities
                       or self._entities_for_label(defn.slave_label))
-            bad_dims = sorted({int(d) for d, _ in m_ents} - {1})
+            bad_dims = sorted({int(d) for d, _ in m_ents} - {master_dim})
             if bad_dims:
+                want = "line (dim-1)" if master_dim == 1 else "surface (dim-2)"
                 raise NotImplementedError(
                     f"interface: master label {defn.master_label!r} "
                     f"resolves to entities of dimension {bad_dims}, but "
-                    f"only 2D line (dim-1) masters are implemented — a "
-                    f"surface master is deferred (ADR 0093 D2).")
+                    f"the model is {model_dim}D, so the master must be a "
+                    f"{want} free boundary of the continuum (ADR 0093 D2 "
+                    f"/ TIMs A10 S2).")
 
             master_nodes = self._collect_node_set(
                 m_ents, defn.master_label, kind="interface", role="master")
             slave_nodes = self._collect_node_set(
                 s_ents, defn.slave_label, kind="interface", role="slave")
-            edges = self._collect_master_edges(m_ents, defn.master_label)
+            cells: dict[str, Any] = (
+                {"master_edges":
+                    self._collect_master_edges(m_ents, defn.master_label)}
+                if model_dim == 2 else
+                {"master_facets":
+                    self._collect_master_facets(m_ents, defn.master_label)}
+            )
 
             recs, next_phantom = resolve_interface_records(
                 node_tags, node_coords,
                 master_nodes=master_nodes,
                 slave_nodes=slave_nodes,
-                master_edges=edges,
+                **cells,
                 domain_elem_tags=domain_tags,
                 domain_elem_nodes=domain_conn,
                 normal_law=defn.normal,
@@ -1308,6 +1416,38 @@ class ConstraintsComposite:
                 f"interface: master label {label!r} resolved to entities "
                 f"but carries no line elements (is the curve meshed?).")
         return np.asarray(rows, dtype=int)
+
+    @staticmethod
+    def _collect_master_facets(entities, label) -> list[list[int]]:
+        """The master surface's boundary facets, as a RAGGED node-tag list.
+
+        The 3D sibling of :meth:`_collect_master_edges` (TIMs A10 S2).
+        Ragged on purpose, unlike ``PartsRegistry._collect_surface_faces``
+        and the contact lane's ``_drop_to_corner_facets``: ``interface()``
+        supports a mixed tri3 / quad4 master, and it must NOT drop a
+        higher-order facet to its corners — that would leave the mid-side
+        stations unsprung against a coincident quadratic slave and break
+        INV-3, the same reasoning that expands ``line3`` above instead of
+        dropping it. Facet sizes are judged in
+        :func:`~apeGmsh._kernel.geometry._surface_frames.surface_frames`,
+        which refuses tri6 / quad8 / quad9 **by name** (the equal-share
+        tributary rule is linear-only, D3), so there is no size check
+        here to drift from it.
+        """
+        import gmsh
+        rows: list[list[int]] = []
+        for dim, tag in entities:
+            etypes, _, enodes = gmsh.model.mesh.getElements(int(dim), int(tag))
+            for etype, conn in zip(etypes, enodes):
+                _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(
+                    int(etype))
+                rows.extend(
+                    np.asarray(conn, dtype=int).reshape(-1, int(npe)).tolist())
+        if not rows:
+            raise ValueError(
+                f"interface: master label {label!r} resolved to entities "
+                f"but carries no surface elements (is the surface meshed?).")
+        return rows
 
     @staticmethod
     def _collect_master_segments(entities, label, *, role="master") -> np.ndarray:
@@ -1376,20 +1516,22 @@ class ConstraintsComposite:
 
     @staticmethod
     def _collect_domain_elements(
-        *, verb: str = "interface",
+        *, verb: str = "interface", dim: int = 2,
     ) -> tuple[list[int], list[np.ndarray]]:
-        """Every 2D (top-dimension) element in the model: tags + connectivity.
+        """Every top-dimension element in the model: tags + connectivity.
 
         Deliberately the *domain* elements only — never the boundary
-        curve elements. ADR 0093 INV-5: top-dimension elements are the
-        ones ``_fem_extract`` never replicates across a partition cut,
-        so a backing element picked from this set identifies exactly one
-        owner rank.
+        curve / surface elements. ADR 0093 INV-5: top-dimension elements
+        are the ones ``_fem_extract`` never replicates across a partition
+        cut, so a backing element picked from this set identifies exactly
+        one owner rank. ``dim`` is the model's own dimension, threaded by
+        the caller that already read it (2 by default, the 2D lane every
+        existing caller is on).
         """
         import gmsh
         tags: list[int] = []
         conn: list[np.ndarray] = []
-        etypes, etags, enodes = gmsh.model.mesh.getElements(2)
+        etypes, etags, enodes = gmsh.model.mesh.getElements(int(dim))
         for etype, et, en in zip(etypes, etags, enodes):
             _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(int(etype))
             rows = np.asarray(en, dtype=int).reshape(-1, int(npe))
@@ -1397,7 +1539,7 @@ class ConstraintsComposite:
             conn.extend(rows)
         if not tags:
             raise ValueError(
-                f"{verb}: the model carries no 2D elements — the "
+                f"{verb}: the model carries no {int(dim)}D elements — the "
                 "outward normal (ADR 0093 D2) and the backing element "
                 "(INV-5) are both derived from the continuum elements "
                 "adjacent to the master face.")

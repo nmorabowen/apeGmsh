@@ -481,3 +481,43 @@ def test_interface_tags_continue_the_shared_namespaces():
     )
     assert [c[1][1] for c in em.calls if c[0] == "uniaxialMaterial"] == [4, 5]
     assert [c[1][1] for c in em.calls if c[0] == "element"] == [6]
+
+
+# ==========================================================================
+# The S2 / S3 boundary (TIMs A10)
+# ==========================================================================
+def test_3d_record_refuses_to_emit_and_names_S3():
+    """S2 resolves a 3D surface master into records; S3 emits them.
+
+    Between the two, ``_emit_interface_record`` still hard-codes
+    ``-dir 1 2`` and a six-float ``-orient``, which on a 3D pair would
+    spring two of three translations in a frame the record does not
+    mean. The whole pool is refused before a line is written, loudly and
+    by slice name — a silently 2D-shaped element is exactly what ADR
+    0093 exists to prevent.
+    """
+    rec = _rec(10, 20, a_trib=0.25, name="SoilFooting",
+               orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+    em = RecordingEmitter()
+    em.model(ndm=3, ndf=3)
+    em.calls.clear()
+    with pytest.raises(BridgeError) as exc:
+        emit_interfaces(
+            em, _Fem([rec]), TagAllocator(),
+            effective_ndf={10: 3, 20: 3}, envelope_ndf=3, ndm=3,
+        )
+    msg = str(exc.value)
+    assert "TIMs A10 S3" in msg
+    assert "SoilFooting" in msg
+    assert "nothing was emitted" in msg
+    assert em.calls == []            # and nothing was, in fact, emitted
+
+
+def test_the_3d_refusal_precedes_the_2d_ndf_gate():
+    # Keyed on the RECORD's own frame width, not on ndm — so a 3D record
+    # reaching emit through compose / h5 / a stage claim is refused with
+    # the S3 message rather than the 2D-only ndm complaint.
+    rec = _rec(10, 20, a_trib=0.25,
+               orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+    with pytest.raises(BridgeError, match="TIMs A10 S3"):
+        _emit([rec], ndf={10: 2, 20: 2}, envelope=2, ndm=2)

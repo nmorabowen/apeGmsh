@@ -947,11 +947,14 @@ def _transform_contact_geometry(
     * ``point`` (ContactPlaneRecord) is a position — rotated then
       translated, matching the node-coord path in
       :func:`_apply_geometric_transform`;
-    * ``orient`` (InterfaceRecord, ADR 0093 INV-2) is the zeroLength
-      ``-orient`` 6-tuple, i.e. **two** stacked direction vectors
-      (local-x ``x1..x3`` and the local-y hint ``yp1..yp3``) — both
-      rotated, neither translated. Rotating only local-x would leave
-      the pair's frame non-orthogonal and silently mis-oriented;
+    * ``orient`` (InterfaceRecord, ADR 0093 INV-2) is a stack of unit
+      direction vectors — two on a 2D line master (local-x ``x1..x3``
+      and the local-y hint ``yp1..yp3``, the zeroLength ``-orient``
+      6-tuple), three on a 3D surface master (``n``, ``t1``, ``t2``;
+      TIMs A10 S2). **Every** one is rotated, none translated. Rotating
+      only local-x would leave the pair's frame non-orthogonal and
+      silently mis-oriented, and the same holds vector by vector at
+      either width;
     * ``phantom_coords`` (InterfaceRecord) is a position — rotated then
       translated, exactly like the real node it stands on.
 
@@ -977,13 +980,14 @@ def _transform_contact_geometry(
         orient = getattr(rec, "orient", None)
         if orient is not None:
             arr = np.asarray(orient, dtype=np.float64).reshape(-1)
-            if arr.size != 6:
+            if arr.size not in (6, 9):
                 raise ValueError(
                     f"compose: {type(rec).__name__}.orient has {arr.size} "
-                    f"components — the zeroLength -orient is a 6-tuple "
-                    f"(x1, x2, x3, yp1, yp2, yp3), ADR 0093 INV-2.")
+                    f"components — it is the 2D line master's 6-tuple "
+                    f"(x1, x2, x3, yp1, yp2, yp3) or the 3D surface "
+                    f"master's 9-tuple (n, t1, t2), ADR 0093 INV-2.")
             rotated = _apply_geometric_transform(
-                arr.reshape(2, 3),
+                arr.reshape(-1, 3),
                 translate=(0.0, 0.0, 0.0), rotate=rotate,
             )
             changes["orient"] = tuple(
