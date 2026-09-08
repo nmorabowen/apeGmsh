@@ -3718,6 +3718,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-viewers-spring-force-arrows-use-an-interface-pairs-own-frame-and-a-swallowed-scalar-bar-exception-is-narrowed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4103,6 +4114,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-viewers-spring-force-arrows-use-an-interface-pairs-own-frame-and-a-swallowed-scalar-bar-exception-is-narrowed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
       
     </span>
   </a>
@@ -4704,6 +4726,27 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-viewers-spring-force-arrows-use-an-interface-pairs-own-frame-and-a-swallowed-scalar-bar-exception-is-narrowed">FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed<a class="headerlink" href="#fixed-viewers-spring-force-arrows-use-an-interface-pairs-own-frame-and-a-swallowed-scalar-bar-exception-is-narrowed" title="Permanent link">&para;</a></h3>
+<p><code>SpringForceDiagram</code> mapped the canonical suffix <code>spring_force_0/1/2</code> to
+the GLOBAL x/y/z axes unconditionally — right for an axis-aligned
+zeroLength spring, wrong for a 3D <code>g.constraints.interface()</code> pair
+(TIMs A10), whose three springs act along the record's own <code>(n, t1,
+t2)</code> frame. A spring is now matched back to its <code>InterfaceRecord</code> by
+node pair (the emitted zeroLength carries no element tag) and, when
+matched, suffix <code>k</code> resolves to the record's k-th frame vector instead
+of a global axis; a 2D pair's <code>(x, yp)</code> orient derives its second axis
+by Gram-Schmidt. A spring with no matching record, and an explicit
+<code>SpringForceStyle.direction</code> override, are both unchanged.</p>
+<p><code>PyVistaBackend.add_scalar_bar</code> wrapped its horizontal-legend title
+path in a bare <code>except Exception: pass</code> that also swallowed the bar's
+own bookkeeping — on VTK 9.7 this hid an <code>AttributeError</code> from the
+removed <code>vtkRenderer.AddActor2D</code> and produced a scalar bar nothing
+could remove (#1122). The bookkeeping now runs before the title path,
+so a title failure still leaves the bar registered and removable; the
+catch is narrowed to <code>AttributeError</code> / <code>TypeError</code> / <code>ValueError</code> (a
+missing VTK method, a missing/malformed title or anchor, a non-numeric
+font size) and surfaces via a new <code>ScalarBarTitleWarning</code> instead of
+disappearing silently.</p>
 <h3 id="fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting">FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)<a class="headerlink" href="#fixed-bridge-three-fail-loud-hygiene-gaps-binary-as-directory-silent-empty-pg-elements-banner-quoting" title="Permanent link">&para;</a></h3>
 <p>Three small hygiene fixes to the OpenSees bridge, bundled in one PR.</p>
 <p><code>resolve_opensees_binary</code> now accepts a directory at every precedence
