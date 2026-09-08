@@ -1610,15 +1610,22 @@ class InterfaceDef(ConstraintDef):
     one ``zeroLength`` per coincident (master, slave) node pair, with
     per-pair local axes taken from the **master face geometry** and
     per-pair tributary-scaled normal / tangential laws. The master is a
-    2D line boundary of a meshed continuum; the slave is a
-    node-for-node coincident wire (3D surface masters raise —
-    ADR 0093 D2).
+    free boundary of a meshed continuum — a dim-1 line in a 2D model, a
+    dim-2 surface in a 3D one (TIMs A10 S2) — and the slave is the
+    node-for-node coincident wire or skin facing it.
+
+    Which dimension applies is the model's, not the def's, and the def
+    cannot see it: the fields below that only exist in one dimension
+    (``thickness``, the accepted ``slave_ndf`` values) are checked
+    against the live model by ``ConstraintsComposite.interface()`` at
+    declaration and by the resolver at resolve. What is validated HERE
+    is only what holds in both.
 
     Parameters
     ----------
     master_label, slave_label
-        The master curve PG / part label (a free boundary of the
-        continuum) and the coincident slave label. The two node sets
+        The master curve / surface PG / part label (a free boundary of
+        the continuum) and the coincident slave label. The two node sets
         must be disjoint and node-for-node coincident.
     normal, tangential
         The declarative per-area laws
@@ -1628,17 +1635,20 @@ class InterfaceDef(ConstraintDef):
         uniaxial materials, scaled by that pair's ``A_trib``, only at
         emit — the verb carries no OpenSees types (INV-4).
     thickness
-        Out-of-plane thickness, ``> 0`` and **required**: ``A_trib =
-        ell_trib * thickness`` (D3). The verb refuses to guess it
-        (sign-off question 2, settled explicit-only).
+        Out-of-plane thickness, ``> 0``: ``A_trib = ell_trib *
+        thickness`` (D3). **Required on a 2D line master** — the verb
+        refuses to guess it (sign-off question 2, settled
+        explicit-only) — and ``None`` on a 3D surface master, which has
+        a real area and no out-of-plane direction to take a depth from.
     tolerance
         Coincidence radius for the node pairing.
     slave_ndf
-        Which ndf the slave wire will be declared with — an
-        **explicit** decision, never inferred. At resolve time apeGmsh
-        cannot know whether the slave wire becomes an OpenSees truss
-        (ndf 2) or a beam (ndf 3): element classes are assigned at
-        ``ops.element`` declaration, i.e. *after* resolution. So:
+        Which ndf the slave will be declared with — an **explicit**
+        decision, never inferred. At resolve time apeGmsh cannot know
+        whether the slave wire becomes an OpenSees truss (ndf 2) or a
+        beam (ndf 3), or whether a 3D skin is a solid, a u-p soil node
+        or a shell: element classes are assigned at ``ops.element``
+        declaration, i.e. *after* resolution. On a 2D line master:
 
         * ``None`` (default) / ``2`` — the slave matches the 2D
           continuum's ndf, and the zeroLength connects the two real
@@ -1651,9 +1661,17 @@ class InterfaceDef(ConstraintDef):
           phantom. The beam's rotation DOF is never touched (the hinge
           semantics the campaign asks for).
 
-        Any other value raises. Validating this against the ndf
-        actually inferred from the emitted elements is ADR 0093 S5's
-        job (emit time is the first moment that ndf exists).
+        On a 3D surface master, ``None`` / ``3`` / ``4`` (u-p soil) /
+        ``6`` (shell) — all connecting directly, with no phantom at all:
+        fork #808 / ADR 96 takes a mixed 3D pair whose ends are both
+        ndf >= 3, acting on DOFs 1-3 and leaving every further DOF an
+        untouched passenger, so the whole reason D4 exists is gone.
+
+        The dimensional split means the accepted set is checked where
+        the model dimension is visible (``ConstraintsComposite`` and the
+        resolver), not here. Validating the declaration against the ndf
+        actually inferred from the emitted elements is ADR 0093 S5's job
+        (emit time is the first moment that ndf exists).
     master_entities, slave_entities
         Restrict each side to specific Gmsh entities (default = the
         whole label).
@@ -1671,9 +1689,12 @@ class InterfaceDef(ConstraintDef):
     tolerance: float = 1e-6
     slave_ndf: int | None = None
 
-    #: ``None`` and ``2`` both mean "the slave matches the 2D
-    #: continuum" (direct pair); ``3`` mints the phantom bridge.
-    _SLAVE_NDF_VALUES = (None, 2, 3)
+    #: Every ``slave_ndf`` any master dimension accepts — the UNION, not
+    #: the per-dimension set. 2D takes ``(None, 2, 3)`` (``3`` mints the
+    #: D4 phantom bridge); 3D takes ``(None, 3, 4, 6)`` (all direct).
+    #: Which of the two applies needs the live model, so the def only
+    #: catches values no dimension would ever take.
+    _SLAVE_NDF_VALUES = (None, 2, 3, 4, 6)
 
     def __post_init__(self) -> None:
         # Imported here, not at module scope: defs are stage-1 data and
@@ -1692,20 +1713,19 @@ class InterfaceDef(ConstraintDef):
                 f"InterfaceDef: tangential must be a TangentialLaw "
                 f"(ADR 0093 D1, e.g. TangentialLaw(kind='epp', "
                 f"k_per_area=..., tau_b=...)), got {self.tangential!r}.")
-        if self.thickness is None:
-            raise ValueError(
-                "InterfaceDef: thickness is required — A_trib = "
-                "ell_trib * thickness (ADR 0093 D3), and the verb "
-                "refuses to guess an out-of-plane thickness.")
-        _check_positive(self.thickness, "thickness", "InterfaceDef")
+        # ``None`` is the 3D surface master's thickness (there is none);
+        # the 2D "required" half is enforced where the model dimension
+        # is visible. A supplied value is still checked here.
+        if self.thickness is not None:
+            _check_positive(self.thickness, "thickness", "InterfaceDef")
         _check_positive(self.tolerance, "tolerance", "InterfaceDef")
         if self.slave_ndf not in self._SLAVE_NDF_VALUES:
             raise ValueError(
                 f"InterfaceDef: slave_ndf must be one of "
-                f"{self._SLAVE_NDF_VALUES} (None/2 = the slave matches "
-                f"the 2D continuum, direct zeroLength; 3 = beam slave, "
-                f"phantom bridge per ADR 0093 D4), got "
-                f"{self.slave_ndf!r}.")
+                f"{self._SLAVE_NDF_VALUES} — the union over both master "
+                f"dimensions (2D: None/2 direct, 3 = beam slave with the "
+                f"ADR 0093 D4 phantom bridge; 3D: None/3/4/6, all "
+                f"direct per ADR 96) — got {self.slave_ndf!r}.")
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

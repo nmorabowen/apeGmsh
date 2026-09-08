@@ -392,10 +392,26 @@ __all__ = [
 #: 2D mortar record's ``slave_nps=2`` needed no further bump.  Per ADR
 #: 0023's two-version reader window, readers tolerate 2.30.x and 2.31.x.
 #:
+#: v2.32.0 (September 2026, TIMs A10 S2 — `interface()` on a 3D surface
+#: master): additive — adds the ``orient_t2`` (float64 ``(3,)``) and
+#: ``has_orient_t2`` (uint8) columns to ``interface_payload_dtype``.  A
+#: 3D interface record's frame is nine floats, ``(n, t1, t2)``, because
+#: a 3D Coulomb law acts on TWO in-plane tangents; the existing
+#: ``orient`` ``(6,)`` column keeps the zeroLength ``-orient`` argument
+#: at both master dimensions and the third vector rides in the appended
+#: pair.  **No layout change on the 2D side**: a 2D line master's row
+#: writes the same six floats into the same column at the same offset it
+#: has occupied since 2.29.0, with ``has_orient_t2 = 0``, so a 2D
+#: interface round-trips field-for-field exactly as before.  A 2.31.x
+#: file simply lacks the two columns and decodes to the 6-float orient
+#: it always meant — presence-probed on read like ``thickness``
+#: (2.31.0).  Per ADR 0023's two-version reader window, readers tolerate
+#: 2.31.x and 2.32.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.31.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.32.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -2147,15 +2163,28 @@ def _encode_interface(rec: Any) -> tuple[Any, ...]:
     if rec.orient is None:
         orient = (nan,) * 6
         has_orient = np.uint8(0)
+        orient_t2 = (nan, nan, nan)
+        has_t2 = np.uint8(0)
     else:
         vals = [float(x) for x in rec.orient]
-        if len(vals) != 6:
+        if len(vals) not in (6, 9):
             raise ValueError(
                 f"interface (master {rec.master_node}): orient has "
-                f"{len(vals)} components — it must be the zeroLength "
-                f"6-tuple (x1, x2, x3, yp1, yp2, yp3).")
-        orient = tuple(vals)
+                f"{len(vals)} components — it must be the 2D line "
+                f"master's zeroLength 6-tuple (x1, x2, x3, yp1, yp2, "
+                f"yp3) or the 3D surface master's 9-tuple (n, t1, t2).")
+        # The first six are the ``-orient`` argument at either width and
+        # go in the 2.29.0 column untouched; the 3D second tangent goes
+        # in the appended one (2.32.0), flagged rather than NaN-sentinel
+        # because a tangent's components may legitimately be 0.
+        orient = tuple(vals[:6])
         has_orient = np.uint8(1)
+        if len(vals) == 9:
+            orient_t2 = tuple(vals[6:])
+            has_t2 = np.uint8(1)
+        else:
+            orient_t2 = (nan, nan, nan)
+            has_t2 = np.uint8(0)
 
     nl = rec.normal_law
     tl = rec.tangential_law
@@ -2242,6 +2271,8 @@ def _encode_interface(rec: Any) -> tuple[Any, ...]:
         eq_dofs,
         eq_name,
         rec.name or "",
+        orient_t2,
+        has_t2,
     )
 
 
@@ -3848,6 +3879,17 @@ def _decode_interface(row: Any, cls: type) -> Any:
               np.asarray(p["orient"], dtype=np.float64).reshape(-1)[:6])
         if int(p["has_orient"]) == 1 else None
     )
+    # The 3D second tangent, additive in neutral 2.32.0 — presence-probed
+    # on read like ``thickness`` (2.31.0), so an in-window 2.31.x file
+    # decodes the 6-float orient it always meant.
+    if (
+        orient is not None
+        and "has_orient_t2" in p.dtype.names
+        and int(p["has_orient_t2"]) == 1
+    ):
+        orient = orient + tuple(
+            float(x) for x in
+            np.asarray(p["orient_t2"], dtype=np.float64).reshape(-1)[:3])
 
     n_kind = _str(p["normal_kind"])
     normal_law = NormalLaw(

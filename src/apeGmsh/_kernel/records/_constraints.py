@@ -949,6 +949,13 @@ class TangentialLaw:
             )
 
 
+#: The two ``InterfaceRecord.orient`` widths (ADR 0093 D2): six floats on
+#: a 2D line master — the zeroLength ``-orient`` argument itself — and
+#: nine on a 3D surface master, that same argument plus the second
+#: in-plane tangent (TIMs A10 S2).
+_ORIENT_WIDTHS = (6, 9)
+
+
 @dataclass
 class InterfaceRecord(ConstraintRecord):
     """One resolved ``g.constraints.interface()`` coincident-pair spring
@@ -979,13 +986,22 @@ class InterfaceRecord(ConstraintRecord):
         see the note above :attr:`tag_rewrite_spec` for why one offset
         covers both.
     orient
-        The zeroLength ``-orient`` 6-tuple ``(x1, x2, x3, yp1, yp2, yp3)``
-        — local-x is the master face's outward normal (D2). A direction,
-        not a tag; ``g.compose`` rotates it (never translates), the
+        The pair's local frame as stacked unit direction vectors —
+        local-x is always the master face's outward normal (D2). **Six**
+        floats on a 2D line master, ``(x1, x2, x3, yp1, yp2, yp3)``:
+        exactly the zeroLength ``-orient`` argument. **Nine** on a 3D
+        surface master (TIMs A10 S2), ``(n, t1, t2)``: the first six are
+        still that argument, and the last three are the second in-plane
+        tangent, carried rather than left to ``n x t1`` because a 3D
+        Coulomb law acts on two tangents and the triad is what a reader
+        of the record wants to see. Directions, not tags; ``g.compose``
+        rotates every stacked vector (never translates), the
         :class:`ContactRecord`-style ``_transform_contact_geometry``
         extension (INV-2).
     a_trib
-        Tributary area for this pair, ``ell_trib * thickness`` (D3).
+        Tributary area for this pair — ``ell_trib * thickness`` on a 2D
+        line master, the facet-area accumulation on a 3D surface master,
+        where there is no ``thickness`` at all (D3).
     normal_law, tangential_law
         The declarative per-area laws (D1) — translated to typed
         materials, scaled by ``a_trib``, only at emit.
@@ -1024,11 +1040,16 @@ class InterfaceRecord(ConstraintRecord):
         # (a bare normal, missing the ``-orient`` local-y hint)
         # constructing fine here is a trap that only surfaces as a
         # wrong sign deep in emit. Fail loud at construction instead.
-        if self.orient is not None and len(self.orient) != 6:
+        # Two widths, one per master dimension, and nothing between them:
+        # 6 = the 2D line master's (normal, tangent), 9 = the 3D surface
+        # master's (n, t1, t2).
+        if self.orient is not None and len(self.orient) not in _ORIENT_WIDTHS:
             raise ValueError(
                 f"InterfaceRecord.orient must be a 6-tuple "
-                f"(x1, x2, x3, yp1, yp2, yp3) or None, got a value of "
-                f"length {len(self.orient)}: {self.orient!r}"
+                f"(x1, x2, x3, yp1, yp2, yp3) on a 2D line master, a "
+                f"9-tuple (n, t1, t2) on a 3D surface master, or None; "
+                f"got a value of length {len(self.orient)}: "
+                f"{self.orient!r}"
             )
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node,

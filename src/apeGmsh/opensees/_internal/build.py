@@ -6073,6 +6073,34 @@ def _validate_interface_ndf(
         )
 
 
+def _refuse_3d_interface_emission(rec: object) -> None:
+    """Refuse to emit a 3D interface record (TIMs A10 S2 / S3 boundary).
+
+    S2 lifted the resolver's gates, so a dim-2 surface master in a 3D
+    model now RESOLVES: the records exist, carrying a nine-float
+    ``(n, t1, t2)`` frame and a facet-area ``A_trib``. Emission is S3 —
+    :func:`_emit_interface_record` still hard-codes ``-dir 1 2`` and a
+    six-float ``-orient``, which on a 3D pair would spring two of the
+    three translations in a frame the record does not mean. That is a
+    silently wrong model, so the width of ``orient`` is read here and
+    the whole pool refused before a line is written.
+
+    Keyed on the RECORD, not on ``ndm``: the record is what carries the
+    3D frame, so a 3D interface composed into a model, read back from
+    h5, or claimed into a stage is refused on every route.
+    """
+    orient = getattr(rec, "orient", None)
+    if orient is None or len(orient) != 9:
+        return
+    name = getattr(rec, "name", None)
+    label = name if name else f"master {int(getattr(rec, 'master_node'))}"
+    raise BridgeError(
+        f"interface '{label}': 3-D interface emission is not built yet "
+        f"(TIMs A10 S3 — per-pair -orient with two tangents, ADR 0093 "
+        f"register); the records resolved, nothing was emitted"
+    )
+
+
 def _validate_interface_records(
     records: "Sequence[InterfaceRecord]",
     *,
@@ -6084,10 +6112,14 @@ def _validate_interface_records(
     deck half-written then aborted is worse than one never started.
 
     Shared by the base pass (:func:`emit_interfaces`, which validates
-    the WHOLE side-list including stage-claimed rows) and the stage
-    pass (:func:`emit_stage_interfaces`).
+    the WHOLE side-list including stage-claimed rows), the stage pass
+    (:func:`emit_stage_interfaces`) and the partitioned owner-rank plan
+    — so a refusal here reaches every route into
+    :func:`_emit_interface_record`, which is the whole point of the 3D
+    refusal below.
     """
     for rec in records:
+        _refuse_3d_interface_emission(rec)
         _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
         if rec.orient is None:
             raise BridgeError(

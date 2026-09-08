@@ -380,3 +380,58 @@ def test_h5_element_meta_interface_rows_carry_sentinel_and_true_pair(tmp_path):
         quad_eids = np.asarray(quad["fem_eids"])
         assert (quad_eids >= 0).all()
         assert len(set(quad_eids.tolist())) == len(quad_eids)
+
+
+# ======================================================================
+# 3D surface master: resolves (TIMs A10 S2), refuses to emit (S3)
+# ======================================================================
+def _surface_at_z(volume: int, z: float, tol: float = 1e-6) -> int:
+    for dim, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[2] - z) < tol and abs(bb[5] - z) < tol:
+            return abs(tag)
+    raise AssertionError(f"no boundary surface of volume {volume} at z={z}")
+
+
+def _fem_3d(n: int = 2):
+    with apeGmsh(model_name="iface_a10_e2e", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=n)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(3, [footing], name="footing")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [_surface_at_z(footing, 1.0)], name="skin")
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL,
+            name="SoilFooting")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def test_3d_interface_build_refuses_and_names_s3(tmp_path):
+    """The honest S2 end state on main: the verb resolves a 3D surface
+    master into records, and the bridge refuses to turn them into a
+    deck, naming the slice that will. Silence — or a 2D-shaped
+    ``-dir 1 2`` element — would be the failure."""
+    fem = _fem_3d()
+    assert fem.elements.interfaces                      # S2: they resolved
+    assert all(len(r.orient) == 9 for r in fem.elements.interfaces)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    for pg in ("soil", "footing"):
+        ops.element.stdBrick(pg=pg, material=mat)
+
+    # ``build()`` only freezes the declarations; the interface pool is
+    # gated where it is emitted, which is the whole-pool
+    # validate-before-a-single-line discipline the 2D lane already has.
+    ops.build()
+    with pytest.raises(BridgeError) as exc:
+        ops.tcl(str(tmp_path / "refused.tcl"))
+    msg = str(exc.value)
+    assert "TIMs A10 S3" in msg
+    assert "SoilFooting" in msg
+    assert "nothing was emitted" in msg

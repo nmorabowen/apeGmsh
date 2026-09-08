@@ -1,6 +1,9 @@
 # `interface()` in 3D — scope only (TIMs A10)
 
-**Status (2026-09-07, updated same day):** scoped, not built. **Blocker 1
+**Status (2026-09-08):** S1 and S2 built; S3 (emit) and S4
+(verification) open. A 3D surface master now resolves into records and
+the build refuses to emit them, naming S3 — the three gates in the
+table below are gone. **Blocker 1
 (F1) is cleared** — fork #808 / ADR 96, minimum build `a240b9183`
 (`TIMS_FORK_BATCH_MIN_BUILD`): `zeroLength` accepts any 3-D pair with both
 ndf ≥ 3, acts on DOFs 1–3 only, only `-dir 1 2 3` exist on a mixed pair, the
@@ -17,7 +20,7 @@ ndf-3 footing skin and the ndf-4 u–p soil, one `zeroLength` with an `ENT`
 normal law and a Coulomb shear law — `g.constraints.interface()` (ADR 0093)
 as it exists in 2D, on a 3D surface master.
 
-## Where it is refused today (verified 2026-09-07)
+## Where it was refused before S2 (verified 2026-09-07; all three lifted 2026-09-08)
 
 | gate | where | what it says |
 |---|---|---|
@@ -66,6 +69,14 @@ as it exists in 2D, on a 3D surface master.
 - S2 — composite: lift the three gates above for dim-2 masters; the D4
   phantom bridge parameterised by the fork's accepted ndf pairs — `(3,4)`,
   `(4,3)`, `(4,4)`, `(3,6)`, `(6,4)` on builds ≥ `a240b9183`; refuse below it.
+  **Done 2026-09-08** — all three gates lifted; a 3D surface master
+  resolves, `thickness` is refused by name, `slave_ndf` takes
+  `(None, 3, 4, 6)`, and no phantom is minted (the accepted pairs need
+  no bridge — the parameterisation IS the retirement of D4 in 3D). The
+  record's `orient` widens to nine floats, `(n, t1, t2)`, on an appended
+  h5 column (neutral 2.32.0) that leaves a 2D row untouched. Emission
+  still refuses, loudly and by S3's name. Details in the ADR 0093
+  register, entry 13.
 - S3 — emit: per-pair `-orient` with two tangents; the Coulomb law as the
   existing 2D material bundle plus the second tangent; MPCO/Ladruno
   recorder channels per pair as in 2D.

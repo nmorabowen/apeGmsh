@@ -543,7 +543,8 @@ def contact_payload_dtype() -> np.dtype:
 
 
 def interface_payload_dtype() -> np.dtype:
-    """Payload dtype for :class:`InterfaceRecord` (neutral schema 2.29.0).
+    """Payload dtype for :class:`InterfaceRecord` (neutral schema 2.29.0,
+    the ``orient_t2`` column additive in 2.32.0).
 
     One resolved ``g.constraints.interface()`` coincident-pair zeroLength
     (ADR 0093 S6). Flat by construction — every field on the record is a
@@ -556,7 +557,11 @@ def interface_payload_dtype() -> np.dtype:
     * ``orient`` is a fixed ``(6,)`` float64 with a ``has_orient``
       presence flag (the ``outward`` / ``has_outward`` pattern of
       :func:`contact_payload_dtype` — NaN alone is not a clean sentinel
-      for a vector whose components may legitimately be 0).
+      for a vector whose components may legitimately be 0). It holds
+      the zeroLength ``-orient`` argument at BOTH master dimensions; the
+      3D record's third vector rides in the appended ``orient_t2`` /
+      ``has_orient_t2`` pair, which is what leaves a 2D row's bytes
+      exactly where 2.29.0 put them.
     * The two declarative laws are decomposed into fixed-width kind
       strings + their scalar params, the ``cpl_*`` decomposition pattern
       of :func:`_coupling_control_fields`: ``normal_kind`` /
@@ -607,6 +612,17 @@ def interface_payload_dtype() -> np.dtype:
         ("eq_dofs", _vlen(np.int64)),
         ("eq_name", _utf8()),                # "" ⇒ None
         ("name", _utf8()),                   # declaration name ("" ⇒ None)
+        # The 3D surface master's SECOND in-plane tangent (neutral
+        # 2.32.0, TIMs A10 S2). ``orient`` above stays exactly six floats
+        # — it is the zeroLength ``-orient`` argument and a 2D row's
+        # bytes are unchanged — and a 3D row carries t2 here, flagged,
+        # so the record round-trips at its own width. APPENDED for the
+        # ``thickness`` reason two dtypes up: the encoder writes an
+        # un-keyed POSITIONAL tuple, so dtype order and tuple order are
+        # coupled by index alone; every additive column lands at the end
+        # and a field index only ever grows.
+        ("orient_t2", np.float64, (3,)),
+        ("has_orient_t2", np.uint8),         # 0 ⇒ a 2D (6-float) orient
     ])
 
 

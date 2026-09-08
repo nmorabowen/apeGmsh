@@ -464,9 +464,25 @@ def test_unknown_slave_ndf_is_refused(bad):
 # Scope gates
 # =====================================================================
 
-def test_three_dimensional_model_is_refused():
-    with pytest.raises(NotImplementedError, match="ADR 0093 D2"):
+def test_ndm_outside_two_and_three_is_refused():
+    # TIMs A10 S2 lifted the blanket ndm != 2 gate; what is left is the
+    # pair the verb actually has geometry for.
+    with pytest.raises(NotImplementedError, match="TIMs A10 S2"):
+        _strip().resolve(ndm=1)
+
+
+def test_three_dimensional_call_needs_facets_not_edges():
+    # The 2D arguments do not carry over: a dim-2 master's tributary and
+    # frame come from facets, and the 2D thickness has no 3D meaning.
+    with pytest.raises(ValueError, match="thickness"):
         _strip().resolve(ndm=3)
+    with pytest.raises(ValueError, match="master_facets"):
+        _strip().resolve(ndm=3, thickness=None)
+
+
+def test_two_dimensional_call_refuses_facets():
+    with pytest.raises(ValueError, match="master_facets"):
+        _strip().resolve(master_facets=[(1, 2, 3)])
 
 
 def test_out_of_plane_master_edge_is_refused():
@@ -487,3 +503,132 @@ def test_laws_are_carried_verbatim_onto_every_record():
     for r in recs:
         assert r.normal_law is NORMAL
         assert r.tangential_law is TANGENTIAL
+
+
+# =====================================================================
+# 3D surface master (TIMs A10 S2)
+# =====================================================================
+
+def _slab(nx: int = 2, ny: int = 1) -> "_Model3D":
+    """``nx * ny`` unit hexes filling z in [0, 1], master = the top face.
+
+    The smallest fixture that still exercises a SHARED master node: with
+    ``nx=2`` the middle column of nodes belongs to two facets, so its
+    normal is an average and its ``A_trib`` is two quarter-shares.
+    """
+    m = _Model3D()
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            for k in (0, 1):
+                m.node(m.tag(i, j, k), float(i), float(j), float(k))
+    for i in range(nx):
+        for j in range(ny):
+            m.elem(100 + i * ny + j, [
+                m.tag(i, j, 0), m.tag(i + 1, j, 0),
+                m.tag(i + 1, j + 1, 0), m.tag(i, j + 1, 0),
+                m.tag(i, j, 1), m.tag(i + 1, j, 1),
+                m.tag(i + 1, j + 1, 1), m.tag(i, j + 1, 1),
+            ])
+            m.facets.append((
+                m.tag(i, j, 1), m.tag(i + 1, j, 1),
+                m.tag(i + 1, j + 1, 1), m.tag(i, j + 1, 1),
+            ))
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            top = m.tag(i, j, 1)
+            m.master.append(top)
+            m.slave.append(m.node(top + 500, float(i), float(j), 1.0))
+    return m
+
+
+class _Model3D:
+    """A hand-built 3D patch: nodes, hex domain elements, master facets."""
+
+    def __init__(self) -> None:
+        self.coords: dict[int, tuple[float, float, float]] = {}
+        self.elem_tags: list[int] = []
+        self.elem_nodes: list[list[int]] = []
+        self.master: list[int] = []
+        self.slave: list[int] = []
+        self.facets: list[tuple[int, ...]] = []
+
+    @staticmethod
+    def tag(i: int, j: int, k: int) -> int:
+        return 1 + i * 100 + j * 10 + k
+
+    def node(self, tag: int, x: float, y: float, z: float) -> int:
+        self.coords[int(tag)] = (float(x), float(y), float(z))
+        return int(tag)
+
+    def elem(self, tag: int, nodes) -> None:
+        self.elem_tags.append(int(tag))
+        self.elem_nodes.append([int(n) for n in nodes])
+
+    def resolve(self, **kw):
+        tags = sorted(self.coords)
+        coords = np.array([self.coords[t] for t in tags], dtype=float)
+        kw.setdefault("normal_law", NORMAL)
+        kw.setdefault("tangential_law", TANGENTIAL)
+        kw.setdefault("ndm", 3)
+        return resolve_interface_records(
+            np.array(tags, dtype=int), coords,
+            master_nodes=self.master, slave_nodes=self.slave,
+            master_facets=self.facets,
+            domain_elem_tags=self.elem_tags,
+            domain_elem_nodes=self.elem_nodes,
+            **kw,
+        )
+
+
+def test_3d_orient_is_a_nine_float_right_handed_orthonormal_triad():
+    recs, _ = _slab().resolve()
+    assert recs
+    for r in recs:
+        assert len(r.orient) == 9
+        n, t1, t2 = (np.asarray(r.orient[i:i + 3]) for i in (0, 3, 6))
+        for v in (n, t1, t2):
+            assert float(np.linalg.norm(v)) == pytest.approx(1.0, abs=1e-12)
+        assert float(np.dot(n, t1)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.dot(n, t2)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.dot(t1, t2)) == pytest.approx(0.0, abs=1e-12)
+        np.testing.assert_allclose(np.cross(n, t1), t2, atol=1e-12)
+
+
+def test_3d_normals_point_out_of_the_slab_not_into_it():
+    # INV-1 in 3D: local-x is the master face's OUTWARD normal, and the
+    # material is below z=1, so every pair must read +z.
+    recs, _ = _slab().resolve()
+    for r in recs:
+        np.testing.assert_allclose(r.orient[:3], (0.0, 0.0, 1.0), atol=1e-12)
+
+
+def test_3d_tributary_areas_sum_to_the_master_face_area():
+    recs, _ = _slab(nx=2, ny=1).resolve()
+    assert sum(r.a_trib for r in recs) == pytest.approx(2.0, abs=1e-12)
+    # The shared middle column carries two quarter-shares, a corner one.
+    by_master = {r.master_node: r.a_trib for r in recs}
+    assert by_master[_Model3D.tag(1, 0, 1)] == pytest.approx(0.5)
+    assert by_master[_Model3D.tag(0, 0, 1)] == pytest.approx(0.25)
+
+
+def test_3d_mints_no_phantom_at_any_accepted_slave_ndf():
+    # ADR 96 retires D4 in 3D: the fork's zeroLength takes the mixed
+    # pair itself, so a bridge here would sit between two nodes that can
+    # already be joined.
+    for ndf in (None, 3, 4, 6):
+        recs, next_tag = _slab().resolve(slave_ndf=ndf, phantom_tag_start=900)
+        assert next_tag == 900
+        assert all(r.phantom_node is None for r in recs)
+        assert all(r.equal_dof_records == [] for r in recs)
+
+
+def test_3d_refuses_a_two_dof_slave_by_name():
+    with pytest.raises(ValueError, match="slave_ndf"):
+        _slab().resolve(slave_ndf=2)
+
+
+def test_3d_backing_element_is_the_hex_under_the_pair():
+    recs, _ = _slab(nx=2, ny=1).resolve()
+    by_master = {r.master_node: r.backing_element for r in recs}
+    assert by_master[_Model3D.tag(0, 0, 1)] == 100
+    assert by_master[_Model3D.tag(2, 0, 1)] == 101
