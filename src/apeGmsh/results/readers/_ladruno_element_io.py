@@ -283,6 +283,17 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     ),
     "yieldstress": "yield_stress",
     "dp_cohesion": "dp_cohesion",
+    # ADR 0107 / fork ADR-97 -- the local-Newton iteration count of the
+    # LAST Closest_Point return-map solve at that Gauss point. A scalar
+    # column per Gauss point, OBSERVED on fork build ff47275fd rather
+    # than assumed: NUM_COMP 1, MULTIPLICITY 1, FIBER_ID -1, one column
+    # per GAUSS_ID. Measured 0 while the point is elastic and 1 once it
+    # yields on the planar families (MC / MCTC / VonMises /
+    # DruckerPrager); the fork documents up to 5 for Hoek-Brown's curved
+    # surface. UNDEFINED under Backward_Euler -- the fork still writes
+    # the bucket, so a value read off a non-Closest_Point deck is
+    # meaningless rather than absent.
+    "cp_iterations": "cp_iterations",
     "cappressure": "cap_pressure",
     "epsqpshear": "eps_qp_shear",
     "psi": "state_parameter",

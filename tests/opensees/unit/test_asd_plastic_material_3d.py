@@ -28,10 +28,14 @@ import pytest
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.nd import (
+    _ASDP_EXPLICIT_INTEGRATION_METHODS,
+    _ASDP_IMPLICIT_INTEGRATION_METHODS,
     _ASDP_OPTIONAL_PARAMS,
     _ASDP_PARAMS_BY_COMPONENT,
     _ASDP_RETURN_TO_YIELD_SURFACE,
     _ASDP_TANGENT_TYPES,
+    ASDP_ALGORITHMIC_TANGENT,
+    ASDP_CLOSEST_POINT_MIN_BUILD,
     ASDPlasticIntegrationWarning,
     ASDPlasticMaterial3D,
     HoekBrownRock,
@@ -439,18 +443,156 @@ def test_explicit_integrators_are_accepted_with_a_warning(method: str) -> None:
     assert dict(mat.integration_options)["integration_method"] == method
 
 
-def test_backward_euler_and_every_valid_token_are_silent() -> None:
+@pytest.mark.parametrize("method", sorted(_ASDP_IMPLICIT_INTEGRATION_METHODS))
+def test_implicit_integrators_and_every_valid_token_are_silent(
+    method: str,
+) -> None:
+    """Neither implicit map warns; ``Algorithmic`` pairs only with CP."""
     import warnings
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         for tangent in sorted(_ASDP_TANGENT_TYPES):
+            if (
+                tangent == ASDP_ALGORITHMIC_TANGENT
+                and method != "Closest_Point"
+            ):
+                continue  # ADR-97 D2, covered below
             for ret in sorted(_ASDP_RETURN_TO_YIELD_SURFACE):
                 _mc(integration_options=(
-                    ("integration_method", "Backward_Euler"),
+                    ("integration_method", method),
                     ("tangent_type", tangent),
                     ("return_to_yield_surface", ret),
                 ))
+
+
+# --- fork ADR-97: the Closest_Point / Algorithmic opt-in pair ---------------
+
+
+def test_closest_point_is_implicit_and_does_not_warn() -> None:
+    """ADR-97 D1: CP is the second SUPPORTED map, not an explicit one."""
+    import warnings
+
+    assert "Closest_Point" in _ASDP_IMPLICIT_INTEGRATION_METHODS
+    assert "Closest_Point" not in _ASDP_EXPLICIT_INTEGRATION_METHODS
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mat = MohrCoulombSoil(
+            c=100, phi=30, psi=10, E=1e6, nu=0.3,
+            integration_method="Closest_Point",
+            tangent_type=ASDP_ALGORITHMIC_TANGENT,
+        )
+    opts = dict(mat.integration_options)
+    assert opts["integration_method"] == "Closest_Point"
+    assert opts["tangent_type"] == ASDP_ALGORITHMIC_TANGENT
+
+
+@pytest.mark.parametrize(
+    "helper, kw",
+    [
+        (MohrCoulombSoil, dict(c=100, phi=30, psi=10, E=1e6, nu=0.3)),
+        (
+            MohrCoulombTensionCutoffSoil,
+            dict(c=100.0, phi=30.0, psi=10.0, tension_cutoff=50.0,
+                 E=1e6, nu=0.3),
+        ),
+        (HoekBrownRock, dict(E=5.0e7, nu=0.25, sigci=50000.0,
+                             mb=0.5741, s=0.0117, a=0.5028)),
+    ],
+    ids=lambda v: getattr(v, "__name__", ""),
+)
+def test_closest_point_pair_emits_both_tokens(helper, kw) -> None:
+    """All three D5 helpers are matched YF/PF pairs, so all support CP."""
+    line = _emitted(helper(
+        **kw,
+        integration_method="Closest_Point",
+        tangent_type=ASDP_ALGORITHMIC_TANGENT,
+    ))
+    assert "integration_method Closest_Point" in line
+    assert f"tangent_type {ASDP_ALGORITHMIC_TANGENT}" in line
+
+
+def test_algorithmic_tangent_requires_closest_point() -> None:
+    """ADR-97 D2 — the one client-side check, on the deck's own strings."""
+    # Explicit Backward_Euler.
+    with pytest.raises(ValueError, match="ADR-97 D2"):
+        MohrCoulombSoil(
+            c=100, phi=30, psi=10, E=1e6, nu=0.3,
+            tangent_type=ASDP_ALGORITHMIC_TANGENT,
+        )
+    # No integration_method at all: the message names the fork default,
+    # because that is what the deck would actually run.
+    with pytest.raises(ValueError, match="the fork default"):
+        _mc(integration_options=(
+            ("tangent_type", ASDP_ALGORITHMIC_TANGENT),
+        ))
+    # The refusal lists the tangents that ARE available, minus itself.
+    with pytest.raises(ValueError) as exc:
+        _mc(integration_options=(
+            ("integration_method", "Backward_Euler"),
+            ("tangent_type", ASDP_ALGORITHMIC_TANGENT),
+        ))
+    offered = [
+        t.strip(" .") for t in
+        str(exc.value).split("defines:")[1].split(",")
+    ]
+    # Exact tokens, not a substring test: Numerical_Algorithmic_FirstOrder
+    # legitimately contains "Algorithmic".
+    assert ASDP_ALGORITHMIC_TANGENT not in offered
+    assert set(offered) == _ASDP_TANGENT_TYPES - {ASDP_ALGORITHMIC_TANGENT}
+
+
+@pytest.mark.parametrize("method", sorted(_ASDP_EXPLICIT_INTEGRATION_METHODS))
+def test_explicit_integrator_warning_names_the_experimental_gate(
+    method: str,
+) -> None:
+    """ADR-97 D5 — the four explicit methods name the fork's opt-in."""
+    with pytest.warns(
+        ASDPlasticIntegrationWarning, match="experimental_integrator",
+    ) as rec:
+        _mc(integration_options=(("integration_method", method),))
+    msg = str(rec[0].message)
+    assert ASDP_CLOSEST_POINT_MIN_BUILD in msg
+    # ...and warns the token is NOT safe to add unconditionally: it is
+    # unknown to every pre-ADR-97 parser, which rejects the material over
+    # it. Adopting the advice blindly breaks the deck.
+    assert "do NOT add that token unconditionally" in msg
+
+
+def test_experimental_integrator_does_not_silence_the_warning() -> None:
+    """The opt-in is the FORK's acceptance gate, not a mute button.
+
+    Being explicit (no active yield-drift correction) is a property of
+    the method. Suppressing on the opt-in would have made apeGmsh go
+    quiet on pre-ADR-97 builds, where that very token makes the ADR-94
+    parser reject the whole nDMaterial command.
+    """
+    for value in (1, True, "1", "True", 1.0, 0, False):
+        with pytest.warns(ASDPlasticIntegrationWarning):
+            _mc(integration_options=(
+                ("integration_method", "Forward_Euler"),
+                ("experimental_integrator", value),
+            ))
+
+
+def test_duplicate_integration_option_is_refused() -> None:
+    """Validation reads a dict, ``_emit`` writes the whole sequence.
+
+    A repeat made those disagree and smuggled the ADR-97 D2 pairing into
+    the emitted deck (``tangent_type Algorithmic`` validating as the
+    later ``Secant``), so a duplicate is refused outright.
+    """
+    with pytest.raises(ValueError, match="given more than once"):
+        _mc(integration_options=(
+            ("tangent_type", ASDP_ALGORITHMIC_TANGENT),
+            ("tangent_type", "Secant"),
+            ("integration_method", "Backward_Euler"),
+        ))
+    with pytest.raises(ValueError, match="integration_method"):
+        _mc(integration_options=(
+            ("integration_method", "Forward_Euler"),
+            ("integration_method", "Closest_Point"),
+        ))
 
 
 @pytest.mark.parametrize(

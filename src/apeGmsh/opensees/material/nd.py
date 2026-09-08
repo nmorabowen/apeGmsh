@@ -1306,10 +1306,24 @@ def asdp_parameter_schema(
 # The fork parser's token lists after ADR-94 (``OPS_AllASDPlasticMaterial3Ds
 # .cpp``; ADR 0105 D3).  An unknown token aborts the command there; here it
 # is a ``ValueError`` at construction.
-_ASDP_INTEGRATION_METHODS: frozenset[str] = frozenset({
-    "Forward_Euler", "Forward_Euler_Subincrement", "Backward_Euler",
+#: The two IMPLICIT integrators.  ``Backward_Euler`` is an Ortiz-Simo
+#: cutting-plane map; ``Closest_Point`` (fork ADR-97) is the fully implicit
+#: closest-point projection and the only one with an exact consistent
+#: tangent (:data:`ASDP_ALGORITHMIC_TANGENT`).
+_ASDP_IMPLICIT_INTEGRATION_METHODS: frozenset[str] = frozenset({
+    "Backward_Euler", "Closest_Point",
+})
+#: The four EXPLICIT integrators.  They carry no active yield-drift
+#: correction; a fork build at or after :data:`ASDP_CLOSEST_POINT_MIN_BUILD`
+#: REFUSES them unless the deck also sets ``experimental_integrator 1``
+#: (fork ADR-97 D5).
+_ASDP_EXPLICIT_INTEGRATION_METHODS: frozenset[str] = frozenset({
+    "Forward_Euler", "Forward_Euler_Subincrement",
     "Modified_Euler_Error_Control", "Runge_Kutta_45_Error_Control",
 })
+_ASDP_INTEGRATION_METHODS: frozenset[str] = (
+    _ASDP_IMPLICIT_INTEGRATION_METHODS | _ASDP_EXPLICIT_INTEGRATION_METHODS
+)
 #: Selectable before ADR-94, refused by name since — with the fork's reason.
 _ASDP_REFUSED_INTEGRATION_METHODS: dict[str, str] = {
     "Backward_Euler_LineSearch": (
@@ -1325,8 +1339,12 @@ _ASDP_REFUSED_INTEGRATION_METHODS: dict[str, str] = {
         "Runge_Kutta_45_Error_Control or Backward_Euler."
     ),
 }
+#: The exact consistent tangent of the ``Closest_Point`` return map, and
+#: the only ``tangent_type`` that is REFUSED with any other integrator
+#: (fork ADR-97 D2).
+ASDP_ALGORITHMIC_TANGENT = "Algorithmic"
 _ASDP_TANGENT_TYPES: frozenset[str] = frozenset({
-    "Elastic", "Continuum", "Secant",
+    "Elastic", "Continuum", "Secant", ASDP_ALGORITHMIC_TANGENT,
     "Numerical_Algorithmic_FirstOrder", "Numerical_Algorithmic_SecondOrder",
 })
 _ASDP_RETURN_TO_YIELD_SURFACE: frozenset[str] = frozenset({
@@ -1335,6 +1353,15 @@ _ASDP_RETURN_TO_YIELD_SURFACE: frozenset[str] = frozenset({
 #: Minimum fork build for the ADR-94 contract (``ops.ladrunoBuild()``).
 #: An older parser silently drops ``strict_convergence`` / ``f_relative_tol``.
 ASDP_MIN_FORK_BUILD = "bbf657d49"
+
+#: Minimum fork build for ``Closest_Point`` / ``Algorithmic`` and for the
+#: ``experimental_integrator`` gate (``ops.ladrunoBuild()``, fork ADR-97).
+#: Documented, not enforced -- a bare hash cannot prove ancestry (same as
+#: :data:`ASDP_MIN_FORK_BUILD`).  An OLDER parser does not silently ignore
+#: the tokens: ``integration_method Closest_Point`` is an unknown value and
+#: the ADR-94 parser aborts the ``nDMaterial`` command naming it, so a deck
+#: built on a stale backend fails loud rather than running Backward_Euler.
+ASDP_CLOSEST_POINT_MIN_BUILD = "7e93e4381"
 
 #: Minimum fork build for ``LadrunoSANISAND``'s ``-implexFactor`` argument
 #: (``ops.ladrunoBuild()``, ADR 92 P2-9, fork PR #822). Documented, not
@@ -1354,10 +1381,11 @@ SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
 class ASDPlasticIntegrationWarning(UserWarning):
     """An ``ASDPlasticMaterial3D`` deck selects an explicit integrator.
 
-    After fork ADR-94 ``Backward_Euler`` is the only integrator the fork
-    documents as supported; the explicit schemes remain selectable but
-    carry no active yield-drift correction.  Fail-soft: the fork still
-    accepts them.
+    The supported pair is implicit: ``Backward_Euler`` (ADR-94) and
+    ``Closest_Point`` (ADR-97).  The four explicit schemes carry no active
+    yield-drift correction.  Fail-soft here, but NOT on the fork: a build
+    at or after :data:`ASDP_CLOSEST_POINT_MIN_BUILD` refuses them outright
+    unless the deck also sets ``experimental_integrator 1`` (ADR-97 D5).
     """
 
 
@@ -1420,11 +1448,18 @@ class ASDPlasticMaterial3D(NDMaterial):
         ``strict_convergence`` is a bool (emitted ``1`` / ``0``);
         ``integration_method`` / ``tangent_type`` /
         ``return_to_yield_surface`` are string enums validated at
-        construction against the fork's post-ADR-94 token lists
-        (``Backward_Euler_LineSearch`` and
+        construction against the fork's token lists after ADR-94 and
+        ADR-97 (``Backward_Euler_LineSearch`` and
         ``Runge_Kutta_45_Error_Control_old`` are refused with the
-        fork's reason; any non-``Backward_Euler`` method warns
-        :class:`ASDPlasticIntegrationWarning`).  Empty dict = all fork
+        fork's reason; the four EXPLICIT methods warn
+        :class:`ASDPlasticIntegrationWarning` unless the deck also
+        passes ``experimental_integrator=1``; ``tangent_type
+        "Algorithmic"`` raises unless ``integration_method`` is
+        ``"Closest_Point"``, ADR-97 D2).  Whether ``Closest_Point`` is
+        available for a given YF/PF/EL/IV combination is left to the
+        fork, which refuses naming the exact specialization — see
+        :func:`MohrCoulombSoil` for the supported families and the
+        build floor.  Empty dict = all fork
         defaults (Backward_Euler / Secant / 1e-6 / 100 / Disabled /
         0.01 / 110 / strict off / relative tol off).  ``strict_convergence``
         and ``f_relative_tol`` need a fork build at or after
@@ -1464,7 +1499,23 @@ class ASDPlasticMaterial3D(NDMaterial):
         self._validate_integration_options()
 
     def _validate_integration_options(self) -> None:
-        """ADR 0105 D3 — the fork's token lists, client-side."""
+        """The fork's token lists, client-side (ADR 0105 D3, ADR 0107)."""
+        # Validation reads a dict; ``_emit`` iterates the SEQUENCE and
+        # writes every pair.  A duplicated name makes those two disagree,
+        # which silently defeats the cross-field ADR-97 D2 rule below
+        # (``tangent_type Algorithmic`` + ``tangent_type Secant`` would
+        # validate as Secant and still emit Algorithmic).  A repeated
+        # option is meaningless in the deck anyway -- refuse it.
+        seen: set[str] = set()
+        for name, _ in self.integration_options:
+            if name in seen:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: integration option {name!r} is "
+                    f"given more than once. Every option is emitted, so a "
+                    f"repeat is ambiguous in the deck and would bypass the "
+                    f"client-side token checks."
+                )
+            seen.add(name)
         opts = dict(self.integration_options)
         method = opts.get("integration_method")
         if method is not None:
@@ -1480,14 +1531,51 @@ class ASDPlasticMaterial3D(NDMaterial):
                     f"{method!r}; valid: "
                     f"{', '.join(sorted(_ASDP_INTEGRATION_METHODS))}."
                 )
-            if method != "Backward_Euler":
+            if method in _ASDP_EXPLICIT_INTEGRATION_METHODS:
+                # Always warns: being explicit (no active yield-drift
+                # correction) is a property of the METHOD, not of whether
+                # the fork happens to accept the deck.  Deliberately NOT
+                # silenced by the fork's ``experimental_integrator`` opt-in
+                # -- that token is unknown to every parser before
+                # ASDP_CLOSEST_POINT_MIN_BUILD, where the ADR-94 fail-loud
+                # parser REJECTS the whole nDMaterial command over it.  A
+                # suppression would have made apeGmsh go quiet exactly
+                # when it had talked the user into breaking their deck.
                 warnings.warn(
-                    f"ASDPlasticMaterial3D: integration_method {method!r} is "
-                    f"experimental on the fork after ADR-94 (no active "
-                    f"yield-drift correction); Backward_Euler is the only "
-                    f"integrator the fork documents as supported.",
+                    f"ASDPlasticMaterial3D: integration_method {method!r} "
+                    f"is EXPLICIT and carries no active yield-drift "
+                    f"correction; the supported implicit pair is "
+                    f"Backward_Euler and Closest_Point. A fork build at or "
+                    f"after {ASDP_CLOSEST_POINT_MIN_BUILD} additionally "
+                    f"REFUSES it outright unless the deck sets the fork's "
+                    f"own 'experimental_integrator 1' token (ADR-97 D5) -- "
+                    f"but do NOT add that token unconditionally: an older "
+                    f"parser does not know it and rejects the material.",
                     ASDPlasticIntegrationWarning,
                     stacklevel=3,
+                )
+        # ADR-97 D2 -- a static fact about the deck's own two strings, so
+        # it is checked here; family/pairing support is NOT (it depends on
+        # compile-time markers in the fork's templated instantiations that
+        # Python cannot introspect -- the fork's parser fails loud naming
+        # the exact YF/PF/IV, and that text is what a user should see).
+        if opts.get("tangent_type") == ASDP_ALGORITHMIC_TANGENT:
+            if method != "Closest_Point":
+                asked = (
+                    "the fork default (Backward_Euler)" if method is None
+                    else repr(method)
+                )
+                others = ", ".join(
+                    sorted(_ASDP_TANGENT_TYPES - {ASDP_ALGORITHMIC_TANGENT})
+                )
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: tangent_type "
+                    f"{ASDP_ALGORITHMIC_TANGENT!r} is the exact consistent "
+                    f"tangent of the 'Closest_Point' return map and is "
+                    f"refused with any other integration_method (fork "
+                    f"ADR-97 D2); this deck asks for {asked}. Set "
+                    f"integration_method='Closest_Point', or pick a "
+                    f"tangent_type the chosen integrator defines: {others}."
                 )
         for key, valid in (
             ("tangent_type", _ASDP_TANGENT_TYPES),
@@ -1679,21 +1767,60 @@ def MohrCoulombSoil(
     initial_p0
         Initial confining pressure offset.  Defaults to ``0.0``.
     integration_method
-        One of ``"Backward_Euler"`` (default; the only integrator the
-        fork documents as supported after ADR-94), ``"Forward_Euler"``,
+        One of the two IMPLICIT maps — ``"Backward_Euler"`` (default;
+        an Ortiz-Simo cutting plane) or ``"Closest_Point"`` (fork
+        ADR-97; the fully implicit closest-point projection, the only
+        one with an exact consistent tangent) — or one of the four
+        EXPLICIT schemes ``"Forward_Euler"``,
         ``"Forward_Euler_Subincrement"``,
         ``"Modified_Euler_Error_Control"``,
-        ``"Runge_Kutta_45_Error_Control"`` (the explicit ones warn
-        :class:`ASDPlasticIntegrationWarning`).
+        ``"Runge_Kutta_45_Error_Control"``, which warn
+        :class:`ASDPlasticIntegrationWarning` and are REFUSED outright
+        by a fork build at or after
+        :data:`ASDP_CLOSEST_POINT_MIN_BUILD` without
+        ``experimental_integrator=1`` (ADR-97 D5).
         ``"Backward_Euler_LineSearch"`` and
         ``"Runge_Kutta_45_Error_Control_old"`` are refused with the
         fork's reason (ADR-94 M7 / M8).
+
+        ``"Closest_Point"`` needs a fork build at or after
+        :data:`ASDP_CLOSEST_POINT_MIN_BUILD`, and is supported only for
+        MATCHED YF/PF pairs of five families (VonMises, Drucker-Prager
+        including the apex, Mohr-Coulomb, MohrCoulombTensionCutoff,
+        Hoek-Brown) — 23 of the fork's 46 registered specializations.
+        A mixed pairing, ``StiffSoil`` and ``RoundedMohrCoulomb`` are
+        refused BY THE FORK, naming the exact YF/PF/IV and citing
+        ADR-97 D3; that support table depends on compile-time markers
+        inside the fork's templated instantiations and is deliberately
+        NOT duplicated here.  All three of these helpers
+        (:func:`MohrCoulombSoil`, :func:`MohrCoulombTensionCutoffSoil`,
+        :func:`HoekBrownRock`) build a matched pair, so all three are
+        in the supported set.
     tangent_type
         One of ``"Continuum"`` (default — fork ADR-84 §9.4; measured
         5.3x fewer global iterations than ``"Secant"`` with identical
         results at convergence, fork ADR-94 M3), ``"Elastic"``,
         ``"Secant"``, ``"Numerical_Algorithmic_FirstOrder"``,
-        ``"Numerical_Algorithmic_SecondOrder"``.
+        ``"Numerical_Algorithmic_SecondOrder"``, or ``"Algorithmic"``
+        (fork ADR-97; the exact consistent tangent of the
+        ``Closest_Point`` map).  ``"Algorithmic"`` raises
+        :class:`ValueError` here unless
+        ``integration_method="Closest_Point"`` (ADR-97 D2) — no tangent
+        the fork ships for ``Backward_Euler`` is the tangent of that
+        map (measured against a central difference of the material's
+        own committed response: ``Continuum`` 57 % off, ``Secant``
+        80 %, ``Elastic`` 103 %).
+
+        For a new non-associated deck of a supported family, prefer
+        ``integration_method="Closest_Point"`` with
+        ``tangent_type="Algorithmic"``, ``algorithm KrylovNewton`` and
+        an unsymmetric solver (``UmfPack`` or ``Pardiso
+        -matrixType 0``) — the configuration the fork's own mesh-scale
+        measurement found fastest by wall clock and most robust to
+        convergence (24000-DOF strip footing: 12/12 push steps in 78 s
+        against 7/12 in 504 s for ``Backward_Euler``).  This is
+        guidance, not a default: the defaults here stay the fork's
+        shipped ones until the fork itself flips them.
     f_absolute_tol, stress_absolute_tol, n_max_iterations
         Integration solver tolerances + iteration cap.
     f_relative_tol

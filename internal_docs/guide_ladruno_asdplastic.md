@@ -81,12 +81,22 @@ Both need a fork build at or after `bbf657d49`; an older parser drops the tokens
 "second site" the SANISAND guide warns about; `test_namespace_wrapper_mirrors_the_helper_defaults`
 covers all three helpers). Results are identical at convergence; only the iteration count moves.
 
-Client-side token validation in `__post_init__`, against the fork's post-ADR-94 lists:
-`integration_method ∈ {Forward_Euler, Forward_Euler_Subincrement, Backward_Euler,
-Modified_Euler_Error_Control, Runge_Kutta_45_Error_Control}`; `Backward_Euler_LineSearch` and
-`Runge_Kutta_45_Error_Control_old` raise with the fork's reason (M7 / M8); anything else raises
-naming the valid set; a non-`Backward_Euler` choice warns `ASDPlasticIntegrationWarning`.
-`tangent_type` and `return_to_yield_surface` are validated the same way.
+Client-side token validation in `__post_init__`, against the fork's lists after ADR-94 and
+ADR-97. The methods split by kind, because the distinction is load-bearing:
+**implicit** `{Backward_Euler, Closest_Point}` — both supported, neither warns — and
+**explicit** `{Forward_Euler, Forward_Euler_Subincrement, Modified_Euler_Error_Control,
+Runge_Kutta_45_Error_Control}`, which warn `ASDPlasticIntegrationWarning` and are REFUSED by the
+fork at or after `7e93e4381` without `experimental_integrator=1`.
+`Backward_Euler_LineSearch` and `Runge_Kutta_45_Error_Control_old` raise with the fork's reason
+(M7 / M8); anything else raises naming the valid set. `tangent_type` and
+`return_to_yield_surface` are validated the same way.
+
+`Closest_Point` (fork ADR-97, ADR 0107) is the second implicit map — a true closest-point
+projection with an exact consistent tangent, `tangent_type Algorithmic`. It is the only tangent
+apeGmsh cross-checks: `Algorithmic` without `Closest_Point` raises (ADR-97 D2). Which YF/PF
+combinations support the map (23 of 46, matched-family pairs only) is left to the fork's parser
+— all three helpers build matched pairs, so all three are supported. **Defaults do not move**;
+see `guide_ladruno_asdp_closest_point.md` and ADR 0107 for why, and for the fork's measurement.
 
 ## 5. The swallowing-host gate — DONE
 
@@ -192,8 +202,14 @@ Two things measured on the way that shape the deck rules below:
 5. **Rock scale: set `f_relative_tol`** (`1e-8` is the fork's suggested start for Hoek–Brown at
    50 MPa; `1e-7` completed the MC problem at ×1e9 in the battery).
 6. **Keep `MC_ds > 0`** on Mohr–Coulomb decks that reach a corner.
-7. **`Backward_Euler`** only; the explicit schemes warn, the two refused ones raise.
+7. **Implicit only** — `Backward_Euler` (default) or `Closest_Point` (fork build
+   `7e93e4381`+; pair it with `tangent_type="Algorithmic"`, `algorithm KrylovNewton` and an
+   unsymmetric solver). The four explicit schemes warn and the fork now refuses them without
+   `experimental_integrator=1`; the two refused ones raise.
 8. **Plastic strain is `material.pstrain`** (and `material.eqpstrain`) in `elem_responses`; the
-   bare token is refused because the fork records nothing for it.
+   bare token is refused because the fork records nothing for it. Same rule for
+   **`material.cp_iterations`** (ADR 0107): a recorder token, NOT an `eleResponse` —
+   `eleResponse(tag, "cp_iterations")` returns an empty list. It reads 0 while the Gauss point
+   is elastic and 1 once MC yields, and is meaningless unless the deck selected `Closest_Point`.
 9. **Minimum fork build `bbf657d49`**; older parsers silently drop `strict_convergence` and
    `f_relative_tol`. The battery prints the build hash it ran against.
