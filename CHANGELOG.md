@@ -57,6 +57,33 @@ than a shared vocabulary.
   driver deck ends at `I1 = 8.08` against a cutoff of `0.4487` — never
   returned — the probe answers `False`, and the recorder writes no bucket.
   Mutating the probe kills 6 of 6 tests in the gate.
+### FIXED — `tail_monitor` walked off the end of a half-appended SWMR frame
+
+Appending one frame to a Monitor sink is three separate writes on the
+writer's side — `STEP`, then `TIME`, then `FRAMES` — and SWMR gives no
+atomicity across them. `tail_monitor` took its frame count from `STEP`
+alone and sliced `FRAMES` to it; h5py clips an over-long slice, so the yield
+loop indexed past the end of the returned rows and raised `IndexError` — out
+of the one function whose entire purpose is following a file another process
+is still writing. A live fork run hits the same window whenever the solver
+is descheduled between the two appends; in this repo it surfaced as a rare
+failure of `test_tail_follows_growing_file` under full-suite load.
+
+- `tail_monitor` now refreshes all three datasets each poll and advances to
+  `min(STEP, TIME, FRAMES)`. A half-appended frame is not a frame yet, so it
+  is deferred to the next poll rather than yielded short — **nothing is
+  dropped**, and no caller sees a different frame sequence than before.
+- Regression test `test_tail_survives_a_half_appended_frame` drives a writer
+  that deliberately stalls between the `STEP`/`TIME` flush and the `FRAMES`
+  append, which makes the window deterministic instead of load-dependent.
+- Unrelated hygiene in the same area: `test_log_router.py`'s
+  `test_unraisablehook_emits_error` fed pytest's own `sys.unraisablehook`
+  inside a `warnings.catch_warnings()` block that suppressed nothing —
+  pytest only *queues* the exception there and warns at the end of the item,
+  outside any block in the test body, so a `PytestUnraisableExceptionWarning`
+  reached every run's warnings summary. Replaced with a
+  `@pytest.mark.filterwarnings` mark, which is installed around the whole
+  item. The test's own assertion is unchanged.
 
 ### CHANGED — the fork's DruckerPrager return map is adopted: build floor `61b3efa04`, `material.ladrunoBranch` read back, the ASD-DP apex caveat (fork ADR-95, PR #803)
 
