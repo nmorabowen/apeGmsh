@@ -27,6 +27,7 @@ project's viewer-verification note).
 """
 from __future__ import annotations
 
+import warnings
 import weakref
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -573,6 +574,19 @@ class _PvHandle:
         self.surf_hidden: frozenset = frozenset()
 
 
+class ScalarBarTitleWarning(UserWarning):
+    """A horizontal legend's separate title actor could not be drawn.
+
+    Raised past the ``vtkScalarBarActor`` itself — the bar is already
+    registered and shows up (and remains removable) with no title band
+    — by :meth:`PyVistaBackend._add_bar_title`'s VTK calls when
+    ``spec.title``/``spec.title_anchor``/``spec.title_pt`` is missing
+    or malformed, or a VTK method the title path calls has been
+    removed (as ``vtkRenderer.AddActor2D`` was on VTK 9.7 — the #1122
+    regression this warning replaces a silent ``pass`` for).
+    """
+
+
 # =====================================================================
 # Backend
 # =====================================================================
@@ -811,29 +825,47 @@ class PyVistaBackend:
             return
         # Drop any prior bar for this legend before re-adding.
         self.remove_scalar_bar(spec.key)
-        try:
-            # The title is always pyvista's registry key (the controller
-            # keeps titles unique across legends); a spec carrying its
-            # own title anchor merely stops VTK from *drawing* it.
-            bar = self._plotter.add_scalar_bar(
-                title=spec.title, mapper=mapper, interactive=False,
-                fmt=spec.fmt, vertical=spec.vertical,
-                width=spec.extent[0], height=spec.extent[1],
-                position_x=spec.anchor[0], position_y=spec.anchor[1],
-                title_font_size=spec.title_pt, label_font_size=spec.label_pt,
-                n_labels=spec.n_labels,
-            )
-            title_actor = None
-            if spec.title_anchor is not None:
-                # ``vtkScalarBarActor`` has no draw-title flag; blanking
-                # the actor's title is how you stop it rendering one.
-                # pyvista's registry key is the title we passed above and
-                # is unaffected, so removal still works by it.
-                bar.SetTitle("")
+        # The title is always pyvista's registry key (the controller
+        # keeps titles unique across legends); a spec carrying its own
+        # title anchor merely stops VTK from *drawing* it.
+        bar = self._plotter.add_scalar_bar(
+            title=spec.title, mapper=mapper, interactive=False,
+            fmt=spec.fmt, vertical=spec.vertical,
+            width=spec.extent[0], height=spec.extent[1],
+            position_x=spec.anchor[0], position_y=spec.anchor[1],
+            title_font_size=spec.title_pt, label_font_size=spec.label_pt,
+            n_labels=spec.n_labels,
+        )
+        # Record the bar BEFORE the title path runs, so a title failure
+        # below still leaves ``remove_scalar_bar`` able to remove the
+        # bar itself — the #1122 regression was this bookkeeping line
+        # sitting *after* the title path, inside the same swallow.
+        title_actor = None
+        self._scalar_bars[spec.key] = (spec.title, bar, title_actor)
+        if spec.title_anchor is not None:
+            # ``vtkScalarBarActor`` has no draw-title flag; blanking the
+            # actor's title is how you stop it rendering one. pyvista's
+            # registry key is the title we passed above and is
+            # unaffected, so removal still works by it.
+            bar.SetTitle("")
+            try:
                 title_actor = self._add_bar_title(spec, bar)
-            self._scalar_bars[spec.key] = (spec.title, bar, title_actor)
-        except Exception:
-            pass
+                self._scalar_bars[spec.key] = (spec.title, bar, title_actor)
+            except (AttributeError, TypeError, ValueError) as exc:
+                # AttributeError: a VTK method the title path calls is
+                # missing (as ``vtkRenderer.AddActor2D`` was on VTK
+                # 9.7). TypeError: a missing/non-string ``spec.title``,
+                # or a malformed ``spec.title_anchor``. ValueError: a
+                # non-numeric ``spec.title_pt``. None of these should
+                # take the viewer down over a legend's title band, but
+                # they are real enough to surface rather than swallow.
+                warnings.warn(
+                    ScalarBarTitleWarning(
+                        f"add_scalar_bar: could not draw the horizontal "
+                        f"legend title for {spec.key!r}: {exc!r}"
+                    ),
+                    stacklevel=2,
+                )
 
     def _add_bar_title(self, spec: ScalarBarSpec, bar: Any) -> Any:
         """Draw a horizontal legend's title in its reserved band.
@@ -1348,6 +1380,7 @@ __all__ = [
     "PyVistaBackend",
     "PyVistaQtBackend",
     "RenderSurface",
+    "ScalarBarTitleWarning",
     "apply_clip_planes",
     "build_outline_edges",
     "build_render_surface",
