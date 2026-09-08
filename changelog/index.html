@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0106-proposed-capture-and-parse-system-pardiso-stats-per-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 proposed: capture and parse system Pardiso -stats, per stage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3861,6 +3872,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0106-proposed-capture-and-parse-system-pardiso-stats-per-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 proposed: capture and parse system Pardiso -stats, per stage
       
     </span>
   </a>
@@ -4184,6 +4206,36 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0106-proposed-capture-and-parse-system-pardiso-stats-per-stage">ADDED — ADR 0106 proposed: capture and parse <code>system Pardiso -stats</code>, per stage<a class="headerlink" href="#added-adr-0106-proposed-capture-and-parse-system-pardiso-stats-per-stage" title="Permanent link">&para;</a></h3>
+<p>The fork prints a <code>PARDISO stats:</code> block on stderr after <strong>every</strong> numeric
+factorisation now (fork PR #821, build <code>a240b9183</code> and later). apeGmsh emits
+the <code>-stats</code> flag and then throws the answer away: the block is tee'd into
+<code>&lt;deck&gt;.log</code> and nothing reads it, because <code>stream_run</code> returns <code>None</code> and so
+do <code>apeSees.tcl(run=True)</code> and <code>apeSees.py(run=True)</code> — there is no
+run-result object in the bridge to hang a measurement on, and the stream
+carries no stage boundaries to attribute one to.</p>
+<p><code>ADR 0106</code>
+is the plan for closing that (TIMs slice A8-parse). A new run-side
+<code>_solver_stats.py</code> holds one pure parser and three frozen records; the
+per-stage reduction takes the <strong>maximum</strong> of the five capacity numbers
+(<code>iparm(15..19)</code>, fill included) and the last-seen value of the four identity
+ones, because a stage that refactorises per Newton step can peak in the
+middle and the last block would under-report exactly the case the
+measurement exists for. Attribution rides a new runtime
+<code>APEGMSH_STAGE open|close &lt;name&gt;</code> marker, gated on the deck's own stats
+request rather than on <code>progress=</code> so a deck that does not ask for statistics
+stays byte-identical. The parser never raises — a mangled block is counted,
+not believed — and a run that asked for statistics and saw none warns once,
+naming <code>TIMS_FORK_BATCH_MIN_BUILD</code>.</p>
+<p>Two deliberate refusals go with it. Nothing measured touches a build record:
+<code>ProfileRecord</code> stays frozen, <code>StageRecord</code> gains no field, and the archive
+stays free of telemetry. And an <strong>explicit</strong> <code>system Mumps</code> on a serial deck
+becomes a build-time error — the fork's desktop targets never compile the
+serial <code>MumpsSolver</code>, so the command is rejected at runtime and the model
+solves on whatever SOE was already in place instead of stopping. ADR 0027's
+auto-emitted parallel fallback, partitioned decks and ADR 0077's
+parallel-ARPACK path are untouched.</p>
+<p>Proposed only — no code, no schema bump, no behaviour change in this entry.</p>
 <h3 id="added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12">ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)<a class="headerlink" href="#added-ladrunosanisands-impl-exstate-responses-are-read-and-the-bare-tokens-refused-tims-a12" title="Permanent link">&para;</a></h3>
 <p>Same trap as ADR 0105, on the fork's SANISAND family this time: <code>LadrunoSANISAND</code>
 answers seven more material-level responses (state parameter, yield-surface
