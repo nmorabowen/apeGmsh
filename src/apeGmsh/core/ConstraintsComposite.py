@@ -1139,7 +1139,10 @@ class ConstraintsComposite:
         a 2D model, a dim-2 **surface** in a 3D one (TIMs A10 S2). The
         wrong one for the model raises :class:`NotImplementedError` by
         name. A 3D interface resolves to records but does not emit yet —
-        the build refuses it, naming TIMs A10 S3.
+        the build refuses it, naming TIMs A10 S3. Declare it AFTER the
+        3D geometry exists: a session with no geometry yet is validated
+        as the 2D lane (``thickness`` required, ``slave_ndf=4`` refused),
+        and a thickness accepted that way is refused again at resolve.
 
         Parameters
         ----------
