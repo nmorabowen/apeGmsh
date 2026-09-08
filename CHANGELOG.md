@@ -359,6 +359,40 @@ Nothing calls it yet. ADR 0093's register (entries 12–15) now carries the
 3D slices: S2 lifts the three refusal gates for a dim-2 master and widens
 `InterfaceRecord.orient` from six floats to the second tangent's nine, and
 S3 emits that frame as the per-pair `zeroLength -orient`.
+### ADDED — ADR 0106 proposed: capture and parse `system Pardiso -stats`, per stage
+
+The fork prints a `PARDISO stats:` block on stderr after **every** numeric
+factorisation now (fork PR #821, build `a240b9183` and later). apeGmsh emits
+the `-stats` flag and then throws the answer away: the block is tee'd into
+`<deck>.log` and nothing reads it, because `stream_run` returns `None` and so
+do `apeSees.tcl(run=True)` and `apeSees.py(run=True)` — there is no
+run-result object in the bridge to hang a measurement on, and the stream
+carries no stage boundaries to attribute one to.
+
+`ADR 0106`
+is the plan for closing that (TIMs slice A8-parse). A new run-side
+`_solver_stats.py` holds one pure parser and three frozen records; the
+per-stage reduction takes the **maximum** of the five capacity numbers
+(`iparm(15..19)`, fill included) and the last-seen value of the four identity
+ones, because a stage that refactorises per Newton step can peak in the
+middle and the last block would under-report exactly the case the
+measurement exists for. Attribution rides a new runtime
+`APEGMSH_STAGE open|close <name>` marker, gated on the deck's own stats
+request rather than on `progress=` so a deck that does not ask for statistics
+stays byte-identical. The parser never raises — a mangled block is counted,
+not believed — and a run that asked for statistics and saw none warns once,
+naming `TIMS_FORK_BATCH_MIN_BUILD`.
+
+Two deliberate refusals go with it. Nothing measured touches a build record:
+`ProfileRecord` stays frozen, `StageRecord` gains no field, and the archive
+stays free of telemetry. And an **explicit** `system Mumps` on a serial deck
+becomes a build-time error — the fork's desktop targets never compile the
+serial `MumpsSolver`, so the command is rejected at runtime and the model
+solves on whatever SOE was already in place instead of stopping. ADR 0027's
+auto-emitted parallel fallback, partitioned decks and ADR 0077's
+parallel-ARPACK path are untouched.
+
+Proposed only — no code, no schema bump, no behaviour change in this entry.
 
 ### ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
 
