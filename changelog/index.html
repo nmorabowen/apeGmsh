@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-asdplasticmaterial3ds-material-level-gauss-buckets-are-read-mean-stress-j2-volumetric-strain-back-stress-and-internal-variables-adr-0105-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8923,6 +8934,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-asdplasticmaterial3ds-material-level-gauss-buckets-are-read-mean-stress-j2-volumetric-strain-back-stress-and-internal-variables-adr-0105-amendment-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
       
     </span>
   </a>
@@ -14308,6 +14330,72 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-asdplasticmaterial3ds-material-level-gauss-buckets-are-read-mean-stress-j2-volumetric-strain-back-stress-and-internal-variables-adr-0105-amendment-1">ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)<a class="headerlink" href="#added-asdplasticmaterial3ds-material-level-gauss-buckets-are-read-mean-stress-j2-volumetric-strain-back-stress-and-internal-variables-adr-0105-amendment-1" title="Permanent link">&para;</a></h3>
+<p>The fork recorder forwards <code>elem_responses=("material.&lt;token&gt;",)</code> to every Gauss
+point's material, and ADR-94's <code>setResponse</code> labels the columns it returns. The
+<code>.ladruno</code> reader knew the plastic-strain tensor and <code>eqpstrain</code> and nothing
+else, so recording <code>material.PStress</code> / <code>J2Stress</code> / <code>VolStrain</code> / <code>J2Strain</code> /
+<code>BackStress</code> wrote five full buckets into the file that
+<code>Results.elements.gauss.available_components()</code> never listed — dropped with no
+warning, indistinguishable from a material that never wrote them.</p>
+<p>They now land on canonical names:</p>
+<table>
+<thead>
+<tr>
+<th>Bucket</th>
+<th>Column label</th>
+<th>apeGmsh component</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>material.PStress</code></td>
+<td><code>p</code></td>
+<td><code>material_mean_stress</code></td>
+</tr>
+<tr>
+<td><code>material.J2Stress</code></td>
+<td><code>J2stress</code></td>
+<td><code>material_j2_stress</code></td>
+</tr>
+<tr>
+<td><code>material.VolStrain</code></td>
+<td><code>epsVol</code></td>
+<td><code>material_volumetric_strain</code></td>
+</tr>
+<tr>
+<td><code>material.J2Strain</code></td>
+<td><code>J2strain</code></td>
+<td><code>material_j2_strain</code></td>
+</tr>
+<tr>
+<td><code>material.BackStress</code></td>
+<td><code>BackStress_1..6</code></td>
+<td><code>back_stress_xx/yy/zz/xy/yz/xz</code></td>
+</tr>
+</tbody>
+</table>
+<p>plus the known scalar internal variables (<code>YieldStress</code> → <code>yield_stress</code>,
+<code>DP_cohesion</code> → <code>dp_cohesion</code>, <code>CapPressure</code> → <code>cap_pressure</code>, <code>EpsQpShear</code> →
+<code>eps_qp_shear</code>).</p>
+<p>The <code>material_*</code> names are <strong>provenance-distinct on purpose</strong>: they are what the
+material computed, under its own definition and sign, and are NOT aliased onto
+the tensor-derived <code>mean_stress</code> / <code>j2_stress</code> / <code>volumetric_strain</code> /
+<code>j2_strain</code>. On fork build <code>3622d6214</code> a <code>MohrCoulombSoil</code> deck measures them
+equal (same sign, factor 1 — both <code>trace/3</code>, both J2 = 1/2 s:s, both
+<code>trace(eps)</code>), and the live test asserts that measurement to 1e-6; aliasing them
+would need a per-material audit instead.</p>
+<p>Back-stress components arrive in the material's Voigt order 11, 22, 33, 12, 23,
+13 — the order the <code>epsP1..</code> plastic-strain columns already use.</p>
+<p><strong>A dropped Gauss column now warns instead of vanishing.</strong>
+<code>gauss_available</code> raises one <code>GaussColumnDroppedWarning</code> per bucket, naming the
+bucket, the labels it could not map and the element class, whenever a
+per-Gauss-point column is discarded because no canonical component matches its
+label. Buckets that map completely never warn. Section stations (<code>LEVELS == 2</code>,
+<code>section.force</code> / <code>section.deformation</code>) are excluded from the Gauss paths
+outright — they carry a station index but are line stations, and their axial
+force <code>P</code> would otherwise collide with the material's mean stress <code>p</code> under the
+case-insensitive label match.</p>
 <h3 id="changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105">CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, <code>strict_convergence</code> on, <code>Continuum</code> tangent, swallowing-host gate, <code>MohrCoulombTensionCutoffSoil</code> + <code>HoekBrownRock</code> (ADR 0105)<a class="headerlink" href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" title="Permanent link">&para;</a></h3>
 <p>The Ladruno fork's ADR-94 fix wave (<code>ladruno</code> at or after <code>bbf657d49</code>) made the
 <code>ASDPlasticMaterial3D</code> parser fail loud: an unknown model-parameter name aborts
