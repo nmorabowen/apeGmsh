@@ -333,6 +333,69 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, `strict_convergence` on, `Continuum` tangent, swallowing-host gate, `MohrCoulombTensionCutoffSoil` + `HoekBrownRock` (ADR 0105)
+
+The Ladruno fork's ADR-94 fix wave (`ladruno` at or after `bbf657d49`) made the
+`ASDPlasticMaterial3D` parser fail loud: an unknown model-parameter name aborts
+the `nDMaterial` command and every parameter of the instantiated combination
+except `MassDensity` / `InitialP0` is required. `MohrCoulombSoil` emitted a
+21-name superset, twelve of them foreign to its combination, so every SSI deck
+built through it was refused by the new build. It now emits exactly its
+schema (`YoungsModulus, PoissonsRatio, MC_phi, MC_c, MC_ds, MC_psi,
+MassDensity, InitialP0`). The per-combination schema lives in `material/nd.py`
+(`_ASDP_PARAMS_BY_COMPONENT` + `asdp_parameter_schema`, read from the fork
+headers' `parameters_t` tuples and pinned against the fork's 46 registered
+combinations); `ASDPlasticMaterial3D.__post_init__` refuses a foreign name
+(naming it and the schema) and a missing required name (listing them) when
+every component is in the table, and leaves unknown combinations to the fork.
+
+**Behaviour changes, stated plainly.** `MohrCoulombSoil` (and the two new
+helpers) now default to `strict_convergence=True` and `tangent_type="Continuum"`
+(was `Secant`). Decks that previously committed inadmissible or non-converged
+states now **fail at the step** instead of finishing with wrong stresses —
+that is the contract, not a regression. Iteration signatures moved: the
+Continuum tangent costs fewer global Newton iterations (measured 72 vs 139 on
+the fork's two-cube model; the fork measured 5.3× on its own rig) and every
+Gauss point now carries its own tangent on the fork. Results at convergence
+are unchanged. `f_relative_tol: float = 0.0` is exposed (off = the fork's
+default); rock-scale decks should set it — the same MC problem completed
+20/20 in kPa and ×1e9 only with it on. `Backward_Euler_LineSearch` and
+`Runge_Kutta_45_Error_Control_old` raise at construction with the fork's
+reason (ADR-94 M7 / M8); the explicit integrators warn
+`ASDPlasticIntegrationWarning`; unknown `tangent_type` /
+`return_to_yield_surface` tokens raise. Both new options need a fork build
+at or after `bbf657d49` (`ASDP_MIN_FORK_BUILD`).
+
+`validate_asdplastic_host` (`_internal/build.py`, next to the ADR 0103 gates)
+warns once per deck — `ASDPlasticHostWarning` — when an `ASDPlasticMaterial3D`
+(directly or through `PlaneStrain`) sits on an element measured to swallow
+material refusals (fork ADR-94 B2: `stdBrick` reports 20/20 on a deck
+`LadrunoBrick` refuses 0/20), keyed on a new tri-state
+`_ElemSpec.propagates_material_refusal` rather than on element names. Two
+helpers land with the same build (exact schema, same defaults,
+`PlaneStrain`-wrappable, on `ops.nDMaterial`): `MohrCoulombTensionCutoffSoil`
+(the fork's ADR-84 composite; `tension_cutoff` is `TC_min_stress`, tension
+positive) and `HoekBrownRock` (`mb, s, a` taken directly; deriving them from
+`mi, GSI, D` is the caller's job). No DruckerPrager / VonMises helpers.
+
+**Goldens.** No golden deck under `tests/opensees` carried a `MohrCoulombSoil`
+line, so none moved; `src/apeGmsh/studio/_api_index.json` was rebuilt for the
+new signatures. Unit tests that built the generic class with a partial MC
+block now supply the full schema. Readers are unchanged; a new live assertion
+in `test_ladruno_gauss_generic_columns.py` pins that the ADR-94 build still
+labels the `stress` / `strain` Gauss columns and the `material.pstrain` /
+`material.eqpstrain` plastic-strain columns for an ASDP deck on
+`LadrunoBrick`. Recorder side: a bare `pstrain` (or any known material-level
+token — `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`,
+`J2Strain`) in `elem_responses` records NOTHING on the fork, silently;
+`ops.recorder.Ladruno` / `MPCO` now refuse it at construction and name the
+`material.<token>` spelling that reaches the Gauss-point materials. Acceptance gate: `tests/opensees/integration_ladruno/
+test_asdplastic_live.py` (`ladruno_fork`; seven cases, each a fresh
+subprocess printing `ops.ladrunoBuild()`), 7/7 on build `3622d6214`. Guide:
+`internal_docs/guide_ladruno_asdplastic.md`; fork asks:
+`internal_docs/asdplastic_fork_asks.md`.
+
+
 ### DOCS — `interface()` in 3D scoped, not built (TIMs A10)
 
 `internal_docs/plan_interface_3d.md` records where `g.constraints.interface()`

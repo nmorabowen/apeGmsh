@@ -344,6 +344,16 @@ class Element(Recorder):
 # FilterableRecorder — shared node/element region-filter machinery
 # ---------------------------------------------------------------------------
 
+
+#: Element-response tokens that only a MATERIAL answers (ASDPlasticMaterial3D
+#: ``setResponse``): a bare ``-E <token>`` records nothing on the fork; the
+#: recorder reaches the material only as ``material.<token>`` (ADR 0105).
+_MATERIAL_ONLY_ELEM_TOKENS: frozenset[str] = frozenset({
+    "pstrain", "pstrains", "eqpstrain",
+    "PStress", "J2Stress", "VolStrain", "J2Strain",
+})
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class FilterableRecorder(Recorder):
     """Base for HDF5 recorders that share MPCO's region-filter surface.
@@ -399,6 +409,30 @@ class FilterableRecorder(Recorder):
                 f"{type(self).__name__}: supply only one of dT or nsteps "
                 f"(got dT={self.dT!r}, nsteps={self.nsteps!r})."
             )
+
+    def _validate_elem_tokens(self) -> None:
+        """Refuse an element token the fork answers only under ``material.``.
+
+        The ``.ladruno`` / MPCO recorders forward a dotted ``material.<token>``
+        request to every Gauss point's material (``LadrunoRecorder.cpp``
+        splits it into ``material <k> <token>``); a BARE material-level token
+        never reaches the material and records nothing — no error, no
+        bucket (fork ``ASDPlasticMaterial3D::setResponse`` says so in its
+        own comment; measured on build ``3622d6214``, ADR 0105).  The known
+        ASDPlasticMaterial3D ones are refused here with the spelling that
+        works.  ``stress`` / ``strain`` are legitimately element-level and
+        are not touched.
+        """
+        kind = type(self).__name__
+        for token in self.elem_responses:
+            if token in _MATERIAL_ONLY_ELEM_TOKENS:
+                raise ValueError(
+                    f"{kind}: elem_responses token {token!r} is a MATERIAL-"
+                    f"level response — the recorder forwards it to the "
+                    f"Gauss-point materials only under the 'material.' "
+                    f"prefix, and the bare token silently records nothing "
+                    f"(fork ADR-94 build). Use 'material.{token}'."
+                )
 
     def _validate_filter(self) -> None:
         """The four shared selector guards (call from ``__post_init__``).
@@ -792,6 +826,7 @@ class MPCO(FilterableRecorder):
             )
         self._validate_cadence()
         self._validate_filter()
+        self._validate_elem_tokens()
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -944,6 +979,7 @@ class Ladruno(FilterableRecorder):
             )
         self._validate_cadence()
         self._validate_filter()
+        self._validate_elem_tokens()
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

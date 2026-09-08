@@ -3977,6 +3977,62 @@ def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
             )
 
 
+class ASDPlasticHostWarning(UserWarning):
+    """An ``ASDPlasticMaterial3D`` sits on an element that swallows refusals.
+
+    After fork ADR-94 the material returns ``LADRUNO_MATERIAL_REFUSED``
+    from every failure site — but only a host that ACTS on the return
+    code turns that into a failed step.  ``stdBrick`` (``Brick::update()``
+    returns 0 unconditionally) was measured to report 20/20 successes on
+    a deck ``LadrunoBrick`` refuses 0/20 (fork ADR-94 B2, deliberately
+    left on the fork).  ``strict_convergence`` — on by default since
+    ADR 0105 — is therefore inert on such a host.
+
+    Fail-soft: a vanilla-host deck is legal and was the SSI-1 default;
+    it is the fail-loud contract that does not reach it.
+    """
+
+
+def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
+    """ADR 0105 D4 — warn once per deck when an ASDP material is swallowed.
+
+    Keyed on :func:`element_propagates_material_refusal`, the measured
+    per-element flag, not on element names: only a host MEASURED to
+    discard the return code (``False``) warns; an unmeasured one
+    (``None``) stays silent.  Materials are found through the wrapper
+    graph (``PlaneStrain(base=...)`` and friends), the way
+    :func:`validate_sanisand_substep_cap` finds a capped SANISAND.
+    """
+    from .._element_capabilities import element_propagates_material_refusal
+    from ..material.nd import ASDPlasticMaterial3D
+
+    hosts: dict[str, set[str]] = {}
+    for spec in elements:
+        cls = type(spec).__name__
+        if element_propagates_material_refusal(cls) is not False:
+            continue
+        if any(
+            isinstance(m, ASDPlasticMaterial3D)
+            for m in _material_graph(getattr(spec, "material", None))
+        ):
+            hosts.setdefault(cls, set()).add(str(getattr(spec, "pg", "?")))
+    if not hosts:
+        return
+    where = "; ".join(
+        f"{cls} (pg {', '.join(sorted(pgs))})" for cls, pgs in sorted(hosts.items())
+    )
+    warnings.warn(
+        f"ASDPlasticMaterial3D on {where}: material refusals are swallowed "
+        f"by this element (fork ADR-94 B2) — strict_convergence and every "
+        f"other fail-loud material contract never reach the analysis, so "
+        f"a non-converged or inadmissible state is committed as if it had "
+        f"converged. Use LadrunoBrick or TenNodeTetrahedron for a fail-loud "
+        f"deck.",
+        ASDPlasticHostWarning,
+        stacklevel=2,
+    )
+
+
 class WarnBodyForceDoubleCount(UserWarning):
     """A continuum element's ``body_force`` overlaps an imported gravity case.
 

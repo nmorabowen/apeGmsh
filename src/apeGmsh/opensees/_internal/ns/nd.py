@@ -28,6 +28,8 @@ from ...material.nd import (
     LogStrain,
     ManzariDafalias,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
+    MohrCoulombTensionCutoffSoil as _build_mohr_coulomb_tc_soil,
+    HoekBrownRock as _build_hoek_brown_rock,
     PlaneStrain,
     SAniSandMS,
     StagedStrain,
@@ -434,6 +436,104 @@ class _NDMaterialNS(_BridgeNamespace):
             name=name,
         )
 
+    def MohrCoulombTensionCutoffSoil(
+        self,
+        *,
+        c: float,
+        phi: float,
+        psi: float,
+        tension_cutoff: float,
+        E: float,
+        nu: float,
+        rho: float = 0.0,
+        ds: float = 1e-5,
+        initial_p0: float = 0.0,
+        integration_method: str = "Backward_Euler",
+        tangent_type: str = "Continuum",
+        f_absolute_tol: float = 1e-6,
+        f_relative_tol: float = 0.0,
+        stress_absolute_tol: float = 1e-6,
+        n_max_iterations: int = 100,
+        strict_convergence: bool = True,
+        return_to_yield_surface: str = "Disabled",
+        rk45_dT_min: float = 0.01,
+        rk45_niter_max: int = 100,
+        name: str | None = None,
+    ) -> _ASDPlasticMaterial3DCls:
+        """Register a Mohr-Coulomb + tension cut-off ASDPlasticMaterial3D.
+
+        The fork's ADR-84 composite (Cerro Lindo's material).  See
+        :func:`apeGmsh.opensees.material.nd.MohrCoulombTensionCutoffSoil`
+        for the parameter docstring (ADR 0105 D5).
+        """
+        return self._bridge._register(
+            _build_mohr_coulomb_tc_soil(
+                c=c, phi=phi, psi=psi, tension_cutoff=tension_cutoff,
+                E=E, nu=nu, rho=rho, ds=ds, initial_p0=initial_p0,
+                integration_method=integration_method,
+                tangent_type=tangent_type,
+                f_absolute_tol=f_absolute_tol,
+                f_relative_tol=f_relative_tol,
+                stress_absolute_tol=stress_absolute_tol,
+                n_max_iterations=n_max_iterations,
+                strict_convergence=strict_convergence,
+                return_to_yield_surface=return_to_yield_surface,
+                rk45_dT_min=rk45_dT_min,
+                rk45_niter_max=rk45_niter_max,
+            ),
+            name=name,
+        )
+
+    def HoekBrownRock(
+        self,
+        *,
+        E: float,
+        nu: float,
+        sigci: float,
+        mb: float,
+        s: float,
+        a: float,
+        mb_psi: float | None = None,
+        ds: float = 0.0,
+        rho: float = 0.0,
+        initial_p0: float = 0.0,
+        integration_method: str = "Backward_Euler",
+        tangent_type: str = "Continuum",
+        f_absolute_tol: float = 1e-6,
+        f_relative_tol: float = 0.0,
+        stress_absolute_tol: float = 1e-6,
+        n_max_iterations: int = 100,
+        strict_convergence: bool = True,
+        return_to_yield_surface: str = "Disabled",
+        rk45_dT_min: float = 0.01,
+        rk45_niter_max: int = 100,
+        name: str | None = None,
+    ) -> _ASDPlasticMaterial3DCls:
+        """Register a generalized Hoek-Brown ASDPlasticMaterial3D.
+
+        Takes the rock-mass constants ``mb, s, a`` directly (deriving them
+        from ``mi, GSI, D`` is the caller's job).  See
+        :func:`apeGmsh.opensees.material.nd.HoekBrownRock` for the
+        parameter docstring (ADR 0105 D5).
+        """
+        return self._bridge._register(
+            _build_hoek_brown_rock(
+                E=E, nu=nu, sigci=sigci, mb=mb, s=s, a=a, mb_psi=mb_psi,
+                ds=ds, rho=rho, initial_p0=initial_p0,
+                integration_method=integration_method,
+                tangent_type=tangent_type,
+                f_absolute_tol=f_absolute_tol,
+                f_relative_tol=f_relative_tol,
+                stress_absolute_tol=stress_absolute_tol,
+                n_max_iterations=n_max_iterations,
+                strict_convergence=strict_convergence,
+                return_to_yield_surface=return_to_yield_surface,
+                rk45_dT_min=rk45_dT_min,
+                rk45_niter_max=rk45_niter_max,
+            ),
+            name=name,
+        )
+
     def PlaneStrain(
         self, *, base: NDMaterial | str, name: str | None = None
     ) -> PlaneStrain:
@@ -818,10 +918,12 @@ class _NDMaterialNS(_BridgeNamespace):
         yield_stress: float = 1e10,
         initial_p0: float = 0.0,
         integration_method: str = "Backward_Euler",
-        tangent_type: str = "Secant",
+        tangent_type: str = "Continuum",
         f_absolute_tol: float = 1e-6,
+        f_relative_tol: float = 0.0,
         stress_absolute_tol: float = 1e-6,
         n_max_iterations: int = 100,
+        strict_convergence: bool = True,
         return_to_yield_surface: str = "Disabled",
         rk45_dT_min: float = 0.01,
         rk45_niter_max: int = 100,
@@ -833,7 +935,8 @@ class _NDMaterialNS(_BridgeNamespace):
         SSI case: MohrCoulomb_YF + MohrCoulomb_PF + LinearIsotropic3D_EL
         + BackStress(NullHardeningTensorFunction).  See
         :func:`apeGmsh.opensees.material.nd.MohrCoulombSoil` for the
-        parameter docstring.
+        parameter docstring (ADR 0105: exact schema, ``strict_convergence``
+        on and ``Continuum`` tangent by default).
         """
         return self._bridge._register(
             _build_mohr_coulomb_soil(
@@ -842,8 +945,10 @@ class _NDMaterialNS(_BridgeNamespace):
                 integration_method=integration_method,
                 tangent_type=tangent_type,
                 f_absolute_tol=f_absolute_tol,
+                f_relative_tol=f_relative_tol,
                 stress_absolute_tol=stress_absolute_tol,
                 n_max_iterations=n_max_iterations,
+                strict_convergence=strict_convergence,
                 return_to_yield_surface=return_to_yield_surface,
                 rk45_dT_min=rk45_dT_min,
                 rk45_niter_max=rk45_niter_max,

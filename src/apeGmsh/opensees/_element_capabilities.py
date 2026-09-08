@@ -120,6 +120,18 @@ class _ElemSpec:
     # keeps today's scalar behaviour unchanged.
     ndf_floor_per_slot : dict[int, tuple[int, ...]] | None = None
 
+    # Whether the element ACTS on a material's refused trial strain (ADR
+    # 0105 D4 / fork ADR-94 B2).  ``True``: the element returns the
+    # material's failure code and the step fails (``LadrunoBrick``,
+    # ``TenNodeTetrahedron`` — fork verdict §3).  ``False``: MEASURED to
+    # discard every material return code, so ``strict_convergence`` and
+    # every other fail-loud material contract is invisible on it
+    # (``stdBrick``: ``Brick::update()`` assigns the code and returns 0
+    # unconditionally; pinned by the fork's
+    # ``test_R2_strict_convergence_is_a_noop_on_stdbrick``).  ``None``:
+    # not measured either way — the gate stays silent rather than guess.
+    propagates_material_refusal : bool | None = None
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
@@ -290,6 +302,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={11: (0,1,2,3,4,5,6,7,8,9)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     "stdBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -299,6 +312,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
         cpp_class_name="Brick",
+        propagates_material_refusal=False,
     ),
     "bbarBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -329,6 +343,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork 20-node serendipity quadratic hex (tag 33018, ADR 72), the
     # second-order sibling of LadrunoBrick. Token == C++ class name == registry
@@ -773,6 +788,19 @@ def element_ndf_strict(class_name: str) -> bool:
     token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
     spec = _ELEM_REGISTRY.get(token)
     return spec is not None and spec.ndf_floor_per_slot is not None
+
+
+def element_propagates_material_refusal(class_name: str) -> "bool | None":
+    """Whether an ``Element`` subclass acts on a material's refusal.
+
+    ``True`` / ``False`` are the MEASURED answers on the registry entry
+    (:attr:`_ElemSpec.propagates_material_refusal`); ``None`` is
+    "unknown" — an unregistered class, or a registered one nobody has
+    measured — and the ADR 0105 D4 gate never warns on ``None``.
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    return None if spec is None else spec.propagates_material_refusal
 
 
 def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":

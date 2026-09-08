@@ -508,3 +508,35 @@ class TestLadrunoNamespace:
         )
         assert r.nodes_pg == "Targets"
         assert r.has_filter() is True
+
+
+# ---------------------------------------------------------------------------
+# ADR 0105 — material-level tokens need the ``material.`` prefix
+# ---------------------------------------------------------------------------
+
+
+class TestMaterialLevelTokens:
+    @pytest.mark.parametrize(
+        "token",
+        ["pstrain", "pstrains", "eqpstrain", "PStress", "J2Stress",
+         "VolStrain", "J2Strain"],
+    )
+    def test_bare_material_token_is_refused_naming_the_prefix(
+        self, token: str,
+    ) -> None:
+        with pytest.raises(ValueError, match=f"Use 'material.{token}'"):
+            Ladruno(file="x.ladruno", elem_responses=("stress", token))
+
+    def test_prefixed_and_element_level_tokens_pass(self) -> None:
+        r = Ladruno(
+            file="x.ladruno",
+            elem_responses=("stress", "strain", "material.pstrain",
+                            "material.eqpstrain", "material.stress"),
+        )
+        assert "material.pstrain" in r.elem_responses
+
+    def test_mpco_shares_the_guard(self) -> None:
+        from apeGmsh.opensees.recorder import MPCO
+
+        with pytest.raises(ValueError, match="MPCO: elem_responses token"):
+            MPCO(file="x.mpco", elem_responses=("pstrain",))
