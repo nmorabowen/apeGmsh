@@ -861,7 +861,9 @@ class PyVistaBackend:
             prop.SetShadow(labels.GetShadow())
         except Exception:
             pass
-        self._plotter.renderer.AddActor2D(actor)
+        # ``AddActor`` buckets a vtkActor2D into Actors2D itself; VTK 9.7
+        # removed ``AddActor2D`` / ``RemoveActor2D`` (deprecated since 9.5).
+        self._plotter.renderer.AddActor(actor)
         return actor
 
     def move_scalar_bar(self, bar_key: str, spec: ScalarBarSpec) -> bool:
@@ -901,7 +903,7 @@ class PyVistaBackend:
             pass
         if title_actor is not None:
             try:
-                self._plotter.renderer.RemoveActor2D(title_actor)
+                self._plotter.renderer.RemoveActor(title_actor)
             except Exception:
                 pass
 
