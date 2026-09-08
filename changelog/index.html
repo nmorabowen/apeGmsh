@@ -3685,6 +3685,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0106-s3-apeseestcl-apeseespy-return-the-solver-stats-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 S3: apeSees.tcl / apeSees.py return the solver-stats record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3949,6 +3960,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0106-s3-apeseestcl-apeseespy-return-the-solver-stats-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0106 S3: apeSees.tcl / apeSees.py return the solver-stats record
       
     </span>
   </a>
@@ -4349,6 +4371,28 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0106-s3-apeseestcl-apeseespy-return-the-solver-stats-record">ADDED — ADR 0106 S3: <code>apeSees.tcl</code> / <code>apeSees.py</code> return the solver-stats record<a class="headerlink" href="#added-adr-0106-s3-apeseestcl-apeseespy-return-the-solver-stats-record" title="Permanent link">&para;</a></h3>
+<p>A run that asked for <code>system Pardiso -stats</code> now hands the numbers back instead
+of leaving them in the log. <code>stream_run</code> grew an <code>expect_solver_stats</code> flag and
+a <code>RunSolverStats | None</code> return: when the flag is set, each line it tees is
+fed straight to the S1 parser as it streams, and the finished per-stage record
+comes back through <code>apeSees.tcl(run=True)</code> / <code>apeSees.py(run=True)</code>. Both
+methods changed from <code>-&gt; None</code> to <code>-&gt; RunSolverStats | None</code>, which is additive
+for every existing caller; the committed API index is rebuilt with them. Where
+they return early — <code>run=False</code> — they return <code>None</code>, as does every deck that
+never declared <code>stats=True</code>.</p>
+<p>The predicate is not recomputed: <code>emit</code> already resolved it to gate the S2
+stage marker, so the run reads the same answer off the emitter and cannot
+disagree with the bytes it just wrote. A deck that never asked pays nothing —
+the parser is not called at all, and the tee is byte-identical to the child's
+output either way. On a non-zero exit the <code>RuntimeError</code> is raised unchanged
+and the record is not smuggled through it: the log is already on disk, and
+<code>parse_solver_stats(&lt;deck&gt;.log)</code> reads back exactly what the streaming parse
+had accumulated. A clean run that asked for statistics and got no parseable
+block warns once, as <code>SolverStatsWarning</code>, naming <code>TIMS_FORK_BATCH_MIN_BUILD</code> —
+fork builds older than that print a format apeGmsh deliberately does not guess
+at. Still owed by S5: acceptance against the real fork binary, where the
+54-DOF brick's first factorisation must read 1836 factor entries.</p>
 <h3 id="added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker">ADDED — ADR 0106 S2: the <code>APEGMSH_STAGE open|close &lt;name&gt;</code> runtime marker<a class="headerlink" href="#added-adr-0106-s2-the-apegmsh_stage-openclose-name-runtime-marker" title="Permanent link">&para;</a></h3>
 <p>The first executable slice of ADR 0106 (S1 landed the pure parser separately).
 <code>stage_open</code> / <code>stage_close</code> on the Tcl and Python emitters now drop a runtime
