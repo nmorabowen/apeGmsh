@@ -297,8 +297,9 @@ Scope is tight, and each exclusion is an existing decision:
 - **partitioned decks are untouched** — that is what Mumps is for;
 - **ADR 0077 INV-8** ([`apesees.py:10830-10840`](../../apesees.py))
   *requires* Mumps for parallel ARPACK and is upstream of this gate;
-- `MumpsParallel` is refused under the same condition and the same
-  sentence.
+- there is no `MumpsParallel` Python type to refuse beside it — apeGmsh's
+  typed systems expose a single `Mumps` (the name is OpenSees' own
+  `MumpsParallelSolver`); corrected on S4, PR #1118.
 
 This is the one decision here that is separable from stats capture. It
 is in scope because it is the same fact — *the fork's desktop portfolio
@@ -383,8 +384,8 @@ What a green test has to prove:
 - **INV-7 — A failed run's numbers survive.** `parse_solver_stats` over
   the tee'd log of a run that raised returns the same record the
   streaming parse had accumulated up to the failure.
-- **INV-8 — D5's gate is narrow.** An explicit serial `Mumps` /
-  `MumpsParallel` raises; a partitioned `Mumps`, the ADR 0027
+- **INV-8 — D5's gate is narrow.** An explicit serial `Mumps`
+  raises; a partitioned `Mumps`, the ADR 0027
   auto-emitted runtime fallback, and the ADR 0077 parallel-ARPACK path
   are all unaffected.
 
@@ -429,7 +430,7 @@ leaves a log `parse_solver_stats` can read (INV-7).
 
 **S4 — D5's serial-`Mumps` refusal.** `validate_serial_mumps` plus its
 call sites, mirroring `validate_ladruno_up_solver`'s. Tests: serial
-explicit `Mumps` raises with the sentence; `MumpsParallel` likewise;
+explicit `Mumps` raises with the sentence;
 partitioned `Mumps` is accepted; the ADR 0027 auto-emitted fallback is
 accepted; a staged deck where only one stage declares `Mumps` raises
 naming that stage; an eigen-only / H5 emit (`enforce=False`) is skipped.
