@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-08T05:15:56Z",
+  "generated": "2026-09-08T05:53:50Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3496,7 +3496,7 @@
     },
     "ops.py": {
       "symbol": "ops.py",
-      "signature": "py(path: 'str', *, run: 'bool' = False, analyze_steps: 'int | None' = None, analyze_dt: 'float | None' = None, split: 'bool' = False, python: 'str | None' = None, stream: 'bool' = False, verbose: 'bool' = False, log: 'str | None' = None, progress: 'bool' = True) -> 'None'",
+      "signature": "py(path: 'str', *, run: 'bool' = False, analyze_steps: 'int | None' = None, analyze_dt: 'float | None' = None, split: 'bool' = False, python: 'str | None' = None, stream: 'bool' = False, verbose: 'bool' = False, log: 'str | None' = None, progress: 'bool' = True) -> \"'RunSolverStats | None'\"",
       "skill": "references/opensees-bridge.md",
       "doc": "Emit an openseespy Python deck to ``path``; optionally run it."
     },
@@ -3748,7 +3748,7 @@
     },
     "ops.tcl": {
       "symbol": "ops.tcl",
-      "signature": "tcl(path: 'str', *, run: 'bool' = False, bin: 'str | None' = None, analyze_steps: 'int | None' = None, analyze_dt: 'float | None' = None, split: 'bool' = False, per_rank: 'bool' = False, flat: 'bool' = False, stream: 'bool' = False, verbose: 'bool' = False, log: 'str | None' = None, progress: 'bool' = True) -> 'None'",
+      "signature": "tcl(path: 'str', *, run: 'bool' = False, bin: 'str | None' = None, analyze_steps: 'int | None' = None, analyze_dt: 'float | None' = None, split: 'bool' = False, per_rank: 'bool' = False, flat: 'bool' = False, stream: 'bool' = False, verbose: 'bool' = False, log: 'str | None' = None, progress: 'bool' = True) -> \"'RunSolverStats | None'\"",
       "skill": "references/opensees-bridge.md",
       "doc": "Emit a Tcl deck to ``path``; optionally subprocess OpenSees."
     },
