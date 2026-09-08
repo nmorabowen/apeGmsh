@@ -356,6 +356,45 @@ same global scope `stage_open` and `analyze` already use, so it runs once per
 rank's own process without disturbing a byte of any `if {[getPID] == K} { ...
 }` rank guard.
 
+### ADDED — an explicit `system Mumps` on a serial deck is refused at build time (ADR 0106 S4)
+
+The Ladruno fork's desktop targets (`OpenSees.exe`, the desktop openseespy
+build) never compile the serial `MumpsSolver`: a declared `system Mumps`
+answers *unknown system type* at runtime, and a rejected `system` command
+does not abort the deck, so the model silently solves on whatever SOE was
+already in place instead of stopping. A new `validate_serial_mumps` in
+`_internal/build.py`, sitting beside `validate_ladruno_up_solver` and
+reusing its flat/staged/partitioned seam, now refuses an explicit `Mumps`
+declared on a serial (non-partitioned) deck, naming the offending stage on
+a staged deck. Partitioned decks, the ADR 0027 auto-emitted `Mumps`/`UmfPack`
+fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
+Independently revertable.
+### ADDED — interface() 3D S1: per-node outward frames and tributary areas on a surface master
+
+`g.constraints.interface()` still refuses a 3D model, exactly as before.
+What lands here is the geometry it will stand on: `surface_frames()` in
+`apeGmsh/_kernel/geometry/_surface_frames.py`, the 3D sibling of the 2D
+lane's `_boundary_chain`. Given a dim-2 master's tri3 / quad4 facets and
+the solid elements behind them, it returns each master node's **outward**
+unit normal, two in-plane tangents completing a right-handed frame, and a
+tributary area.
+
+Three things are decided rather than inherited. A facet's winding is not a
+contract — the sign comes from the owning solid's centroid, so a mesh wound
+inconsistently is oriented correctly instead of refused. The per-node
+average is uniform over the adjacent facet normals, which is what makes a
+cube's corner `(1,1,1)/√3` and its edge the normalised sum of two faces.
+And a reentrant fold is refused loudly while a convex corner is not — a
+distinction `dot(n_i, n_j)` cannot make on its own, since a 90° corner and
+a 270° fold both give exactly zero, so the sense is read from the facet
+centroids. Quadratic facets are refused by name: their mid-side nodes need
+a shape-function-weighted area split, and the equal-share rule would
+quietly mis-weight every spring.
+
+Nothing calls it yet. ADR 0093's register (entries 12–15) now carries the
+3D slices: S2 lifts the three refusal gates for a dim-2 master and widens
+`InterfaceRecord.orient` from six floats to the second tangent's nine, and
+S3 emits that frame as the per-pair `zeroLength -orient`.
 ### ADDED — ADR 0106 proposed: capture and parse `system Pardiso -stats`, per stage
 
 The fork prints a `PARDISO stats:` block on stderr after **every** numeric

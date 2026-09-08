@@ -319,6 +319,9 @@ class Mumps(LinearSystem):
     use under ``OpenSeesMP``. Optional knobs are emitted only when set;
     ``matrix_type`` is always emitted (including ``0`` for the default
     unsymmetric mode) so the deck does not hide the storage choice.
+    Declared on a serial (non-partitioned) deck it is refused at build
+    time (ADR 0106 D5): the fork's desktop targets never compile the
+    serial ``MumpsSolver``.
 
     Parameters
     ----------
