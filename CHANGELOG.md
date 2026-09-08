@@ -471,6 +471,30 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
+
+`SpringForceDiagram` mapped the canonical suffix `spring_force_0/1/2` to
+the GLOBAL x/y/z axes unconditionally — right for an axis-aligned
+zeroLength spring, wrong for a 3D `g.constraints.interface()` pair
+(TIMs A10), whose three springs act along the record's own `(n, t1,
+t2)` frame. A spring is now matched back to its `InterfaceRecord` by
+node pair (the emitted zeroLength carries no element tag) and, when
+matched, suffix `k` resolves to the record's k-th frame vector instead
+of a global axis; a 2D pair's `(x, yp)` orient derives its second axis
+by Gram-Schmidt. A spring with no matching record, and an explicit
+`SpringForceStyle.direction` override, are both unchanged.
+
+`PyVistaBackend.add_scalar_bar` wrapped its horizontal-legend title
+path in a bare `except Exception: pass` that also swallowed the bar's
+own bookkeeping — on VTK 9.7 this hid an `AttributeError` from the
+removed `vtkRenderer.AddActor2D` and produced a scalar bar nothing
+could remove (#1122). The bookkeeping now runs before the title path,
+so a title failure still leaves the bar registered and removable; the
+catch is narrowed to `AttributeError` / `TypeError` / `ValueError` (a
+missing VTK method, a missing/malformed title or anchor, a non-numeric
+font size) and surfaces via a new `ScalarBarTitleWarning` instead of
+disappearing silently.
+
 ### FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
 
 `_MATERIAL_BUCKET_TOKENS` resolves `.ladruno` material-level Gauss
@@ -522,30 +546,6 @@ per-symbol suffixes would risk exactly the silent mislabelling this
 table exists to catch, so it is left as a follow-up pending either a
 fork source read of the MPCO-side response tagging or a live MPCO
 recording to inspect.
-### FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
-
-`SpringForceDiagram` mapped the canonical suffix `spring_force_0/1/2` to
-the GLOBAL x/y/z axes unconditionally — right for an axis-aligned
-zeroLength spring, wrong for a 3D `g.constraints.interface()` pair
-(TIMs A10), whose three springs act along the record's own `(n, t1,
-t2)` frame. A spring is now matched back to its `InterfaceRecord` by
-node pair (the emitted zeroLength carries no element tag) and, when
-matched, suffix `k` resolves to the record's k-th frame vector instead
-of a global axis; a 2D pair's `(x, yp)` orient derives its second axis
-by Gram-Schmidt. A spring with no matching record, and an explicit
-`SpringForceStyle.direction` override, are both unchanged.
-
-`PyVistaBackend.add_scalar_bar` wrapped its horizontal-legend title
-path in a bare `except Exception: pass` that also swallowed the bar's
-own bookkeeping — on VTK 9.7 this hid an `AttributeError` from the
-removed `vtkRenderer.AddActor2D` and produced a scalar bar nothing
-could remove (#1122). The bookkeeping now runs before the title path,
-so a title failure still leaves the bar registered and removable; the
-catch is narrowed to `AttributeError` / `TypeError` / `ValueError` (a
-missing VTK method, a missing/malformed title or anchor, a non-numeric
-font size) and surfaces via a new `ScalarBarTitleWarning` instead of
-disappearing silently.
-
 ### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
 
 S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
