@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, strict_convergence on, Continuum tangent, swallowing-host gate, MohrCoulombTensionCutoffSoil + HoekBrownRock (ADR 0105)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#docs-interface-in-3d-scoped-not-built-tims-a10" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8912,6 +8923,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, strict_convergence on, Continuum tangent, swallowing-host gate, MohrCoulombTensionCutoffSoil + HoekBrownRock (ADR 0105)
       
     </span>
   </a>
@@ -14286,6 +14308,63 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105">CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, <code>strict_convergence</code> on, <code>Continuum</code> tangent, swallowing-host gate, <code>MohrCoulombTensionCutoffSoil</code> + <code>HoekBrownRock</code> (ADR 0105)<a class="headerlink" href="#changed-asdplasticmaterial3d-decks-follow-the-forks-adr-94-contract-exact-parameter-schema-strict_convergence-on-continuum-tangent-swallowing-host-gate-mohrcoulombtensioncutoffsoil-hoekbrownrock-adr-0105" title="Permanent link">&para;</a></h3>
+<p>The Ladruno fork's ADR-94 fix wave (<code>ladruno</code> at or after <code>bbf657d49</code>) made the
+<code>ASDPlasticMaterial3D</code> parser fail loud: an unknown model-parameter name aborts
+the <code>nDMaterial</code> command and every parameter of the instantiated combination
+except <code>MassDensity</code> / <code>InitialP0</code> is required. <code>MohrCoulombSoil</code> emitted a
+21-name superset, twelve of them foreign to its combination, so every SSI deck
+built through it was refused by the new build. It now emits exactly its
+schema (<code>YoungsModulus, PoissonsRatio, MC_phi, MC_c, MC_ds, MC_psi,
+MassDensity, InitialP0</code>). The per-combination schema lives in <code>material/nd.py</code>
+(<code>_ASDP_PARAMS_BY_COMPONENT</code> + <code>asdp_parameter_schema</code>, read from the fork
+headers' <code>parameters_t</code> tuples and pinned against the fork's 46 registered
+combinations); <code>ASDPlasticMaterial3D.__post_init__</code> refuses a foreign name
+(naming it and the schema) and a missing required name (listing them) when
+every component is in the table, and leaves unknown combinations to the fork.</p>
+<p><strong>Behaviour changes, stated plainly.</strong> <code>MohrCoulombSoil</code> (and the two new
+helpers) now default to <code>strict_convergence=True</code> and <code>tangent_type="Continuum"</code>
+(was <code>Secant</code>). Decks that previously committed inadmissible or non-converged
+states now <strong>fail at the step</strong> instead of finishing with wrong stresses —
+that is the contract, not a regression. Iteration signatures moved: the
+Continuum tangent costs fewer global Newton iterations (measured 72 vs 139 on
+the fork's two-cube model; the fork measured 5.3× on its own rig) and every
+Gauss point now carries its own tangent on the fork. Results at convergence
+are unchanged. <code>f_relative_tol: float = 0.0</code> is exposed (off = the fork's
+default); rock-scale decks should set it — the same MC problem completed
+20/20 in kPa and ×1e9 only with it on. <code>Backward_Euler_LineSearch</code> and
+<code>Runge_Kutta_45_Error_Control_old</code> raise at construction with the fork's
+reason (ADR-94 M7 / M8); the explicit integrators warn
+<code>ASDPlasticIntegrationWarning</code>; unknown <code>tangent_type</code> /
+<code>return_to_yield_surface</code> tokens raise. Both new options need a fork build
+at or after <code>bbf657d49</code> (<code>ASDP_MIN_FORK_BUILD</code>).</p>
+<p><code>validate_asdplastic_host</code> (<code>_internal/build.py</code>, next to the ADR 0103 gates)
+warns once per deck — <code>ASDPlasticHostWarning</code> — when an <code>ASDPlasticMaterial3D</code>
+(directly or through <code>PlaneStrain</code>) sits on an element measured to swallow
+material refusals (fork ADR-94 B2: <code>stdBrick</code> reports 20/20 on a deck
+<code>LadrunoBrick</code> refuses 0/20), keyed on a new tri-state
+<code>_ElemSpec.propagates_material_refusal</code> rather than on element names. Two
+helpers land with the same build (exact schema, same defaults,
+<code>PlaneStrain</code>-wrappable, on <code>ops.nDMaterial</code>): <code>MohrCoulombTensionCutoffSoil</code>
+(the fork's ADR-84 composite; <code>tension_cutoff</code> is <code>TC_min_stress</code>, tension
+positive) and <code>HoekBrownRock</code> (<code>mb, s, a</code> taken directly; deriving them from
+<code>mi, GSI, D</code> is the caller's job). No DruckerPrager / VonMises helpers.</p>
+<p><strong>Goldens.</strong> No golden deck under <code>tests/opensees</code> carried a <code>MohrCoulombSoil</code>
+line, so none moved; <code>src/apeGmsh/studio/_api_index.json</code> was rebuilt for the
+new signatures. Unit tests that built the generic class with a partial MC
+block now supply the full schema. Readers are unchanged; a new live assertion
+in <code>test_ladruno_gauss_generic_columns.py</code> pins that the ADR-94 build still
+labels the <code>stress</code> / <code>strain</code> Gauss columns and the <code>material.pstrain</code> /
+<code>material.eqpstrain</code> plastic-strain columns for an ASDP deck on
+<code>LadrunoBrick</code>. Recorder side: a bare <code>pstrain</code> (or any known material-level
+token — <code>pstrains</code>, <code>eqpstrain</code>, <code>PStress</code>, <code>J2Stress</code>, <code>VolStrain</code>,
+<code>J2Strain</code>) in <code>elem_responses</code> records NOTHING on the fork, silently;
+<code>ops.recorder.Ladruno</code> / <code>MPCO</code> now refuse it at construction and name the
+<code>material.&lt;token&gt;</code> spelling that reaches the Gauss-point materials. Acceptance gate: <code>tests/opensees/integration_ladruno/
+test_asdplastic_live.py</code> (<code>ladruno_fork</code>; seven cases, each a fresh
+subprocess printing <code>ops.ladrunoBuild()</code>), 7/7 on build <code>3622d6214</code>. Guide:
+<code>internal_docs/guide_ladruno_asdplastic.md</code>; fork asks:
+<code>internal_docs/asdplastic_fork_asks.md</code>.</p>
 <h3 id="docs-interface-in-3d-scoped-not-built-tims-a10">DOCS — <code>interface()</code> in 3D scoped, not built (TIMs A10)<a class="headerlink" href="#docs-interface-in-3d-scoped-not-built-tims-a10" title="Permanent link">&para;</a></h3>
 <p><code>internal_docs/plan_interface_3d.md</code> records where <code>g.constraints.interface()</code>
 refuses a 3D model today (declaration and resolve gates in
