@@ -984,6 +984,37 @@ def test_ladruno_tangent_is_not_named_yet(tmp_path: Path) -> None:
     assert material_bucket_canonicals("material.ladrunoTangent") is None
 
 
+def test_cp_iterations_is_a_scalar_gauss_component(tmp_path: Path) -> None:
+    """ADR 0107 / fork ADR-97 — one scalar column per Gauss point.
+
+    Shape pinned against a real ``.ladruno`` written by fork build
+    ``ff47275fd``: ``NUM_COMP`` 1, ``MULTIPLICITY`` 1, ``FIBER_ID`` -1,
+    one column per ``GAUSS_ID``. Before this entry the bucket was
+    dropped with a :class:`GaussColumnDroppedWarning`.
+    """
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    # A scalar bucket maps to exactly one canonical name...
+    assert material_bucket_canonicals("material.cp_iterations") == (
+        "cp_iterations",
+    )
+    # ...case-insensitively, like every other token in the table.
+    assert (material_bucket_canonicals("material.CP_Iterations")
+            == material_bucket_canonicals("material.cp_iterations"))
+
+    # ...and it reaches available_components() without warning.
+    path = _quad_with(tmp_path, {"material.cp_iterations": ("cp_iterations",)})
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "cp_iterations" in comps
+
+
 def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
     path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
     with LadrunoReader(path) as r:

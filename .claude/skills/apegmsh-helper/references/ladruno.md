@@ -204,18 +204,48 @@ required one is a `ValueError` naming the schema; a combination with a
 component outside `_ASDP_PARAMS_BY_COMPONENT` (e.g. the StiffSoil
 family) is accepted unchanged and the fork validates it instead.
 
-`integration_options` tokens are validated at construction:
-`integration_method` ∈ `Forward_Euler, Forward_Euler_Subincrement,
-Backward_Euler, Modified_Euler_Error_Control,
-Runge_Kutta_45_Error_Control` (`Backward_Euler` is the only one the fork
-documents as supported after ADR-94; any other raises
-`ASDPlasticIntegrationWarning`) — `Backward_Euler_LineSearch` and
-`Runge_Kutta_45_Error_Control_old` **raise** instead (fork ADR-94 M7/M8:
-both measured broken — the line-search variant ignores
-`n_max_iterations` and returns success for a strain increment the
-element never asked for; the RK45 variant's NaN guard calls `exit()` on
-the whole process). `tangent_type` and `return_to_yield_surface` tokens
-are validated the same way.
+`integration_options` tokens are validated at construction. Two IMPLICIT
+methods are supported and neither warns: `Backward_Euler` (default, an
+Ortiz-Simo cutting plane) and `Closest_Point` (fork ADR-97 / apeGmsh ADR
+0107 — a true closest-point projection, needs fork build `7e93e4381`+).
+The four EXPLICIT methods `Forward_Euler`, `Forward_Euler_Subincrement`,
+`Modified_Euler_Error_Control`, `Runge_Kutta_45_Error_Control` raise
+`ASDPlasticIntegrationWarning` and are REFUSED by a post-ADR-97 fork
+unless the deck also passes `experimental_integrator=1`.
+`Backward_Euler_LineSearch` and `Runge_Kutta_45_Error_Control_old`
+**raise** instead (fork ADR-94 M7/M8: both measured broken — the
+line-search variant ignores `n_max_iterations` and returns success for a
+strain increment the element never asked for; the RK45 variant's NaN
+guard calls `exit()` on the whole process). `tangent_type` and
+`return_to_yield_surface` tokens are validated the same way.
+
+`tangent_type="Algorithmic"` is the exact consistent tangent of the
+`Closest_Point` map and **raises unless paired with it** (ADR-97 D2) —
+the one pairing rule apeGmsh checks client-side. No tangent the fork
+ships for `Backward_Euler` is that map's tangent (measured 57 % off for
+`Continuum`, 80 % `Secant`, 103 % `Elastic`). Which YF/PF combinations
+support `Closest_Point` (23 of 46, matched-family pairs only) is left to
+the fork, which refuses naming the exact YF/PF/IV; all three helpers
+(`MohrCoulombSoil`, `MohrCoulombTensionCutoffSoil`, `HoekBrownRock`)
+build matched pairs and are supported. Defaults stay `Backward_Euler` /
+`Continuum` — for a NEW non-associated deck prefer `Closest_Point` +
+`Algorithmic` + `KrylovNewton` + an unsymmetric solver.
+
+**Watch out:** apeGmsh's `strict_convergence=True` default REFUSES a
+`Closest_Point` leg at ordinary kPa soil scale (measured on
+`ff47275fd`: a trial state hits `f = 1.37e-06` against the `1e-06`
+ABSOLUTE `f_absolute_tol`, ~1.6e-08 relative, and the step is rejected —
+`analyze()` returns `-3`). The MORE accurate map trips a threshold the
+coarser one misses. Set `f_relative_tol`, or `strict_convergence=False`.
+`Closest_Point` commits at `max|f|` ~8e-13 against `Backward_Euler`'s
+~1e-08, so the refusal is about the tolerance's units, not the answer.
+
+The iteration count of the last `Closest_Point` solve is readable as the
+Gauss component **`cp_iterations`**, recorded with
+`elem_responses=("material.cp_iterations",)` — a MATERIAL-level recorder
+token, not an `eleResponse` (that returns an empty list). 0 while elastic,
+1 once the planar families yield, up to 5 for Hoek-Brown; undefined under
+`Backward_Euler`.
 
 **Host gate.** `strict_convergence` only reaches the analysis on a host
 MEASURED to propagate a material refusal — `LadrunoBrick` /
