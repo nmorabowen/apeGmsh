@@ -1,7 +1,14 @@
 # `interface()` in 3D — scope only (TIMs A10)
 
-**Status (2026-09-07):** scoped, not built. Blocked on the fork's `ZeroLength`
-ndf relaxation (TIMs fork ask F1). Nothing here changes code.
+**Status (2026-09-07, updated same day):** scoped, not built. **Blocker 1
+(F1) is cleared** — fork #808 / ADR 96, minimum build `a240b9183`
+(`TIMS_FORK_BATCH_MIN_BUILD`): `zeroLength` accepts any 3-D pair with both
+ndf ≥ 3, acts on DOFs 1–3 only, only `-dir 1 2 3` exist on a mixed pair, the
+`force` response is element-sized (`ndf1 + ndf2`), and the differing-dof
+case is a warning plus an inert element, not a crash. Contract recorded in
+`contact_3d_passenger_dof_adoption.md`. **Blocker 2 is still open** and is
+entirely ours; the three refusal gates below still fire. Nothing here
+changes code.
 
 ## What the model needs
 
@@ -52,8 +59,8 @@ as it exists in 2D, on a 3D surface master.
   `_kernel/resolvers/_interface_resolver.py`; unit-tested on a flat patch,
   a box corner, and a reentrant fold (fail loud).
 - S2 — composite: lift the three gates above for dim-2 masters; the D4
-  phantom bridge parameterised by the fork's accepted ndf pairs (read from
-  the fork build's capability, not assumed).
+  phantom bridge parameterised by the fork's accepted ndf pairs — `(3,4)`,
+  `(4,3)`, `(4,4)`, `(3,6)`, `(6,4)` on builds ≥ `a240b9183`; refuse below it.
 - S3 — emit: per-pair `-orient` with two tangents; the Coulomb law as the
   existing 2D material bundle plus the second tangent; MPCO/Ladruno
   recorder channels per pair as in 2D.

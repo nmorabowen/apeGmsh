@@ -333,6 +333,30 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — the 2026-09-07 fork batch is recorded: minimum build `a240b9183`, the ADR 96 passenger-DOF contract, and the per-factorisation `Pardiso -stats` block
+
+The fork merged eight PRs on 2026-09-07 (#805, #808, #810, #811, #812, #814,
+#820, #821) against the TIMs proposed-model asks. This is the docs half of
+their adoption; no runtime behaviour changes.
+
+- `apeGmsh.opensees._target.TIMS_FORK_BATCH_MIN_BUILD = "a240b9183"` — the
+  documented (not enforced, as `ASDP_MIN_FORK_BUILD`) floor for the batch.
+- `Pardiso(stats=True)`'s docstring described the pre-#821 output (nnz and
+  peak memory once per sparsity pattern). The flag now prints a MUMPS-shaped
+  five-line block after every numeric factorisation; the docstring says so.
+  Nothing parses it yet (that is a later slice with its own ADR).
+- `internal_docs/contact_3d_passenger_dof_adoption.md` records fork ADR 96:
+  `zeroLength` and 3-D contact on ndf ≥ 3 pairs with the pressure DOF as a
+  passenger, the element-sized `force` response, and that vanilla's
+  differing-dof case is now a warning plus an inert element — so the
+  bridge's pre-emission ndf guards stay. The 2-D lane is unchanged.
+- `internal_docs/plan_interface_3d.md`: blocker 1 (fork F1) cleared; blocker
+  2 (ADR 0093 D2/D3 in 3-D) still open, `interface()` still refuses 3-D.
+
+Not in this PR, named for the runway: A12 (the seven `LadrunoSANISAND`
+responses — recorded only as `material.<token>`, the bare token records
+nothing), the `-stats` parser, and `interface()` 3-D S1–S4.
+
 ### ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
 
 The fork recorder forwards `elem_responses=("material.<token>",)` to every Gauss
