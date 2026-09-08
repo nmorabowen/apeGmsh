@@ -194,6 +194,57 @@ def test_tcl_emission_with_strategy() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 4b. Failed-increment banner quoting hole — ADR 0106 D2's stage_marker_name
+#     now normalises the ``label=`` and ``strategy.name`` banner text too
+#     (previously only the APEGMSH_STAGE marker used it), so ``$`` / ``\``
+#     / a newline in either can no longer corrupt the generated deck.
+# ---------------------------------------------------------------------------
+
+_DANGEROUS_NAME = "cost $rank\\panic\nline2"
+
+
+def _dangerous_spec() -> StrategySpec:
+    return StrategySpec(
+        name=_DANGEROUS_NAME, rungs=(("Newton",), ("KrylovNewton",)),
+    )
+
+
+def test_py_strategy_name_quoting_hole_closed() -> None:
+    em = PyEmitter()
+    em.analyze(steps=5, dt=0.1, label=_DANGEROUS_NAME, strategy=_dangerous_spec())
+    lines = em.lines()
+    banner_lines = [ln for ln in lines if "cost" in ln]
+    assert banner_lines, "the (sanitized) name should still appear somewhere"
+    for line in banner_lines:
+        # the raw name's dangerous substrings never survive verbatim —
+        # Python has no ``$``-substitution hazard, but the raw backslash
+        # could still corrupt the generated string literal
+        assert "$rank" not in line
+        assert "\\panic" not in line
+    # every emitted line is one physical line — no raw name-carried newline
+    # smuggled a second logical line into the deck.
+    for line in lines:
+        assert "\n" not in line
+
+
+def test_tcl_strategy_name_quoting_hole_closed() -> None:
+    em = TclEmitter()
+    em.analyze(steps=5, dt=0.1, label=_DANGEROUS_NAME, strategy=_dangerous_spec())
+    lines = em.lines()
+    banner_lines = [ln for ln in lines if "cost" in ln]
+    assert banner_lines, "the (sanitized) name should still appear somewhere"
+    for line in banner_lines:
+        # the raw name's dangerous substrings never survive verbatim: no
+        # ``$rank`` (Tcl variable substitution) and no literal backslash
+        # from the name (the line's own ``$_apesees_*`` variables are
+        # unrelated and expected).
+        assert "$rank" not in line
+        assert "\\panic" not in line
+    for line in lines:
+        assert "\n" not in line
+
+
+# ---------------------------------------------------------------------------
 # 5. Stage plumbing (full build pipeline over a one-quad stub)
 # ---------------------------------------------------------------------------
 

@@ -2288,6 +2288,34 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def _describe_pg_cells(fem: "FEMData", pg: str) -> str:
+    """Best-effort description of what physical group ``pg`` registers.
+
+    Used to build a useful error when a ``pg=`` element fan-out resolves
+    to zero elements: the group commonly still HAS cells registered on
+    the FEM snapshot's element-group registry (``fem.elements.physical``)
+    — e.g. a ``get_fem_data(dim=...)`` call excluded them from
+    ``fem.elements`` itself — so naming the registered count/dimension is
+    more useful than a bare "0 elements".
+    """
+    physical = getattr(fem.elements, "physical", None)
+    groups = getattr(physical, "_groups", None) if physical is not None else None
+    if not isinstance(groups, dict):
+        return f"pg {pg!r} has no registered cells on this snapshot"
+    matches = [
+        (dim, info) for (dim, _tag), info in groups.items()
+        if info.get("name") == pg
+    ]
+    if not matches:
+        return f"pg {pg!r} has no registered cells on this snapshot"
+    parts = []
+    for dim, info in sorted(matches):
+        eids = info.get("element_ids")
+        n = len(eids) if eids is not None else 0
+        parts.append(f"{n} dim-{dim} cell(s)")
+    return f"pg {pg!r} has " + ", ".join(parts)
+
+
 def needs_builder_ndf_bracket_for_token(
     type_token: str, *, ndm: int, envelope_ndf: int,
 ) -> bool:
@@ -8247,6 +8275,22 @@ def allocate_element_tags(
         # (MISSING_FEM_ELEMENT_ID, (i, j)) via expand_spec_to_elements.
         fanout = expand_spec_to_elements(fem, spec)
         n = len(fanout)
+        # Fail loud on a PG-form element declaration that fans out to
+        # NOTHING (adversarial review of A10): a physical group with no
+        # elements of the primitive's dimension in this FEM snapshot used
+        # to emit the section/material lines and silently zero element
+        # lines. ``pg is None`` is the node-pair form, which always
+        # fans out to exactly one synthetic element and can never hit
+        # this branch.
+        pg = getattr(spec, "pg", None)
+        if n == 0 and pg is not None:
+            raise BridgeError(
+                f"{type(spec).__name__}(pg={pg!r}) selected 0 elements: "
+                f"{_describe_pg_cells(fem, pg)}, but none of them are "
+                f"present in the FEM snapshot handed to apeSees(fem) — "
+                f"check that get_fem_data(dim=...) was not called with a "
+                f"dim that excludes this group's cells."
+            )
         tag_start = tags.allocate_block("element", n)
         # Share the fan-out's arrays by reference — they are read-only
         # (memoised) so the plan and the fan-out cache alias one buffer

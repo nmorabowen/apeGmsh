@@ -530,7 +530,11 @@ class PyEmitter:
         # algorithm) and restores rung 0 after a rescue; exhaustion
         # aborts with the same banner naming the ladder.
         n = int(steps)
-        where = f" of stage '{label}'".replace('"', "'") if label else ""
+        # ADR 0106 D2's stage_marker_name closes the same quoting hole
+        # here: a raw label could carry ``\`` or a newline into the
+        # generated ``raise SystemExit("...")`` banner below (the old
+        # ``"`` -> ``'`` swap alone left those open).
+        where = f" of stage '{stage_marker_name(label)}'" if label else ""
         call = (
             _ops_call("analyze", 1) if dt is None
             else _ops_call("analyze", 1, dt)
@@ -560,7 +564,7 @@ class PyEmitter:
             "(" + ", ".join(repr(a) for a in rung) + ",)"
             for rung in strategy.rungs
         ) + "]"
-        sname = strategy.name.replace('"', "'")
+        sname = stage_marker_name(strategy.name)
         self._lines.append(f"_apesees_rungs = {rungs_literal}")
         self._lines.append(f"for _apesees_i in range({n}):")
         prev_indent = self._lines.indent
