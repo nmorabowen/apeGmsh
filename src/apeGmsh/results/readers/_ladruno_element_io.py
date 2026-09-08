@@ -303,6 +303,22 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
         "implex_refusals_total", "implex_refusals_sign_change",
         "implex_refusals_control", "implex_refusals_companion",
     ),
+    # ADR 92 P2-9 grew this census 6 -> 7 slots. The fork sets NO
+    # ResponseType for it (LadrunoSANISAND.cpp:3947-3951 returns a bare
+    # MaterialResponse), so unlike every other fork response here the file
+    # always writes C1..C7 and these names are the ONLY ones there will be.
+    # Order is not the adoption guide's suggested list -- it is the fill
+    # site, LadrunoSANISAND.cpp:3996-4002, which is the only authority on a
+    # by-position map.
+    "implexguards": (
+        "implex_guards_floor_fallback",     # 0  P2-1 floor -> implicit stress
+        "implex_guards_f0_guard",           # 1  P2-2 f = 0 after reversal/softening
+        "implex_guards_hold_preserved",     # 2  P2-3 zero-dt commits left alone
+        "implex_guards_reversal_noise",     # 3  P2-5 reversal-noise guards
+        "implex_guards_trial_f0_guard",     # 4  P2-6 trial-time f = 0 fallbacks
+        "implex_guards_hold_skip_commit",   # 5  P2-5c hold-skip commits
+        "implex_guards_control_backoff",    # 6  P2-9 f* < 0.5*f_max
+    ),
 }
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
