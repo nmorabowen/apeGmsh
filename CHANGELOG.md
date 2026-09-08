@@ -333,6 +333,45 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
+
+Same trap as ADR 0105, on the fork's SANISAND family this time: `LadrunoSANISAND`
+answers seven more material-level responses (state parameter, yield-surface
+distance, IMPL-EX error tracking) only under the `material.<token>` prefix — a
+bare `-E psi` (or any of its siblings) reaches no material and records nothing,
+no error. They now land on canonical names, keyed by the **bucket token** exactly
+like the ASDPlasticMaterial3D buckets, and a bare token is refused up front
+naming the fix:
+
+| Bucket (aliases) | apeGmsh component(s) |
+|---|---|
+| `material.psi` (`stateParameter`) | `state_parameter` |
+| `material.yieldDistance` (`yieldFunction`) | `yield_distance` |
+| `material.implexError` | `implex_error` |
+| `material.avgImplexError` | `avg_implex_error` |
+| `material.substeps` (`substepsME`, `ladrunoSubsteps`) | `substeps_me`, `substeps_cap_hit` |
+| `material.implexDetail` | `implex_detail_total/dev/vol/clamp_fired/clamp_count/f` |
+| `material.implexRefusals` | `implex_refusals_total/sign_change/control/companion` |
+
+Every fork alias for a token resolves to the same canonical columns as its
+primary spelling, since the recorder forwards whichever one the deck used
+straight through. Registering by token (positional), not by column label, means
+this also works on fork builds old enough to still write `C1..Cn` instead of the
+named `COMP_NAMES` (fork PR #820) — the reason the ASDPlasticMaterial3D buckets
+are keyed this way too.
+
+Not done, named for the runway: `implexGuards` (6 slots, no `ResponseType`
+tags in the fork, so its slot meanings are not established) stays
+unregistered. None of the new canonical names were added to
+`_vocabulary.ALL_CANONICAL`, matching the existing `material_*` names. The
+MPCO reader's material-state path knows only `damage` /
+`equivalentPlasticStrain` / `plasticStrain` and drops these buckets, as it
+already does the ADR 0105 ones. And by-position resolution means a file whose
+`COMP_NAMES` disagree with the table (measured: `substeps_capHit, substeps_me`
+reads as `me, capHit`; a `material.psi` bucket labelled `yieldDistance` reads
+as `state_parameter`) is renamed **silently** — that predates this entry, but
+#820 makes the file's names authoritative, so the disagreement is now
+detectable and should warn.
 ### CHANGED — the 2026-09-07 fork batch is recorded: minimum build `a240b9183`, the ADR 96 passenger-DOF contract, and the per-factorisation `Pardiso -stats` block
 
 The fork merged eight PRs on 2026-09-07 (#805, #808, #810, #811, #812, #814,
