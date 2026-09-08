@@ -1069,6 +1069,25 @@ def element_available(on_elements: "h5py.Group") -> set[str]:
     return out
 
 
+class ElementWidthMismatchWarning(UserWarning):
+    """Buckets of a different column width were dropped from an element read.
+
+    Raised (once per read) by :func:`read_element_slab` when one response
+    token spans buckets whose component counts differ. They cannot share
+    one dense ``(T, E, ncol)`` slab, so the first width wins and the rest
+    are skipped — a deliberate choice, but a silent one until now: the
+    caller got fewer elements than it asked for with nothing to
+    distinguish that from elements which never recorded the quantity
+    (the same indistinguishability :class:`GaussColumnDroppedWarning`
+    exists for).
+
+    The mixed case is real, not hypothetical. The fork sizes a
+    ``zeroLength`` ``force`` response by ``ndf1 + ndf2``, so a 3-D model
+    pairing ordinary (3,3) nodes with u-p (3,4) nodes writes 6- and
+    7-column buckets under one ``force`` token.
+    """
+
+
 def read_element_slab(
     on_elements: "h5py.Group",
     token: str,
@@ -1083,7 +1102,9 @@ def read_element_slab(
     column width under one token (e.g. 2-D vs 3-D beams sharing a
     ``localForce`` token) can't share one ``(T, E, ncol)`` slab — the first
     width wins and mismatched buckets are skipped (homogeneous models, the
-    common case, always match).
+    common case, always match). A skip is never silent: it raises
+    :class:`ElementWidthMismatchWarning` naming both widths and the
+    elements left out.
     """
     if token not in on_elements:
         return None
@@ -1091,6 +1112,8 @@ def read_element_slab(
     values_parts: list[ndarray] = []
     eid_parts: list[ndarray] = []
     ncol_ref: "Optional[int]" = None
+    ncol_key: "Optional[str]" = None
+    dropped: list[tuple[str, int, ndarray]] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -1104,11 +1127,30 @@ def read_element_slab(
         block = data[t_idx][:, rows, :]                           # (T, E_sel, ncol)
         if ncol_ref is None:
             ncol_ref = block.shape[2]
+            ncol_key = key
         elif block.shape[2] != ncol_ref:
+            dropped.append((key, int(block.shape[2]), sel_ids))
             continue
         values_parts.append(block)
         eid_parts.append(sel_ids)
 
+    if dropped:
+        lost = np.concatenate([ids for _, _, ids in dropped])
+        shown = ", ".join(str(int(i)) for i in lost[:8])
+        if lost.size > 8:
+            shown += f", ... (+{lost.size - 8} more)"
+        widths = ", ".join(f"{k!r} has {n}" for k, n, _ in dropped)
+        warnings.warn(
+            f"Element read of token {token!r} kept the {ncol_ref}-column "
+            f"bucket {ncol_key!r} and DROPPED {len(dropped)} bucket(s) of a "
+            f"different width ({widths}); {lost.size} element(s) are missing "
+            f"from the result: {shown}. Buckets of differing component count "
+            f"cannot share one dense (T, E, ncol) slab, so the first width "
+            f"wins. Read the differing elements in a separate call scoped to "
+            f"them with element_ids= to get their columns.",
+            ElementWidthMismatchWarning,
+            stacklevel=2,
+        )
     if not values_parts:
         return None
     return (
