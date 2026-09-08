@@ -179,6 +179,103 @@ concrete, `E`/`nu`/`fc`/`ft`/`Gf`/`Gc` + regularization + `-implex`),
 + MCFT), `LadrunoCohesiveHingeBiaxial` (:1861). These follow the ASDConcrete
 "apeGmsh owns the curve, always `-autoRegularization $lch_ref`" idiom.
 
+**ASDPlasticMaterial3D geotechnical/rock materials** (`material/nd.py`,
+`ops.nDMaterial.<Type>`, ADR 0105 / fork ADR-94). Three typed helpers wrap
+the generic templated class, each emitting exactly its combination's
+parameter schema — a foreign or missing model-parameter name is a
+`ValueError` at construction, not a run-time fork refusal:
+`MohrCoulombSoil(*, c, phi, psi, E, nu, rho=0.0, ds=1e-5, ...)` (8 names:
+`YoungsModulus, PoissonsRatio, MC_phi, MC_c, MC_ds, MC_psi, MassDensity,
+InitialP0` — the pre-ADR-94 21-name superset is refused by the fork),
+`MohrCoulombTensionCutoffSoil(*, ..., tension_cutoff, ...)` (adds
+`TC_min_stress`; `tension_cutoff` is **tension-positive**, `>= 0`, capped
+by the fork at the Mohr-Coulomb apex `c·cot(phi)`), and
+`HoekBrownRock(*, E, nu, sigci, mb, s, a, mb_psi=None, ds=0.0, ...)`
+(`mb_psi=None` → `mb`, associated flow; deriving `mb`/`s`/`a` from
+`mi`/`GSI`/`D` — Hoek & Brown 2018 — is the caller's job, not duplicated
+here; the fork yields at `-s·sigci/mb` in net tension, fork PR #806). All
+three default `strict_convergence=True` and `tangent_type="Continuum"`
+(was `"Secant"` pre-ADR-0105) and expose `f_relative_tol: float = 0.0`;
+PlaneStrain-wrappable. No DruckerPrager / VonMises typed helpers — use
+the generic `ASDPlasticMaterial3D(yf=, pf=, el=, iv=,
+model_parameters=(...), ...)` for those (and for any other
+table-covered combination): a name outside the schema or a missing
+required one is a `ValueError` naming the schema; a combination with a
+component outside `_ASDP_PARAMS_BY_COMPONENT` (e.g. the StiffSoil
+family) is accepted unchanged and the fork validates it instead.
+
+`integration_options` tokens are validated at construction:
+`integration_method` ∈ `Forward_Euler, Forward_Euler_Subincrement,
+Backward_Euler, Modified_Euler_Error_Control,
+Runge_Kutta_45_Error_Control` (`Backward_Euler` is the only one the fork
+documents as supported after ADR-94; any other raises
+`ASDPlasticIntegrationWarning`) — `Backward_Euler_LineSearch` and
+`Runge_Kutta_45_Error_Control_old` **raise** instead (fork ADR-94 M7/M8:
+both measured broken — the line-search variant ignores
+`n_max_iterations` and returns success for a strain increment the
+element never asked for; the RK45 variant's NaN guard calls `exit()` on
+the whole process). `tangent_type` and `return_to_yield_surface` tokens
+are validated the same way.
+
+**Host gate.** `strict_convergence` only reaches the analysis on a host
+MEASURED to propagate a material refusal — `LadrunoBrick` /
+`TenNodeTetrahedron`. `stdBrick` swallows it unconditionally (fork
+ADR-94 B2: `Brick::update()` returns 0 regardless, measured 20/20
+"success" on a deck `LadrunoBrick` refuses 0/20); the build warns
+`ASDPlasticHostWarning` once per deck
+(`_internal/build.py::validate_asdplastic_host`, keyed on the measured
+per-element flag, not on element names). A vanilla-host deck stays
+legal — it was the SSI-1 default — it just means the fail-loud contract
+never reaches it.
+
+**Minimum fork build** `bbf657d49` (`ASDP_MIN_FORK_BUILD`) for
+`strict_convergence` / `f_relative_tol` — an older parser drops both
+silently. Rock-scale decks should set `f_relative_tol` (`1e-8` is the
+fork's suggested start for Hoek-Brown at 50 MPa; `1e-7` completed an MC
+problem at ×1e9 in the battery, fork ADR-94 M5) — the absolute
+tolerance alone is a verdict on the unit system. Keep `MC_ds > 0`
+(default `1e-5`) on Mohr-Coulomb decks that reach a corner (`ds=0` was
+refused at step 17 of the measured deviatoric-leg battery). Behaviour
+change stated plainly: a deck that used to commit an inadmissible or
+non-converged state now **fails at the step** — that is the ADR 0105
+contract, not a regression.
+
+**Recording plastic strain / material-level responses (ADR 0105
+Amendment 1).** Plastic strain, `eqpstrain`, and the other ASDP scalars
+are answered by the MATERIAL, not the element; `ops.recorder.Ladruno` /
+`MPCO` reach them only through `elem_responses=("material.<Token>",
+...)`, e.g. `elem_responses=("material.pstrain", "material.eqpstrain",
+"material.PStress", "material.J2Stress", "material.VolStrain",
+"material.J2Strain", "material.BackStress")`. A bare `pstrain` /
+`pstrains` / `eqpstrain` / `PStress` / `J2Stress` / `VolStrain` /
+`J2Strain` token is **refused at construction** (naming the
+`material.<token>` form to use) because the fork's
+`ASDPlasticMaterial3D::setResponse` records nothing for it — no error,
+no bucket, silently.
+
+Reader-side (`.ladruno`/`.mpco`, keyed by the **bucket token**, resolved
+by column position — never by column label, because
+`material.PStress` labels its column `p`, which collides
+case-insensitively with a force-based beam's section axial force `P`):
+`material.pstrain` / `material.eqpstrain` keep the existing
+self-describing path (`plastic_strain_xx..xz`,
+`equivalent_plastic_strain`); the five buckets above land on
+`material_mean_stress`, `material_j2_stress`,
+`material_volumetric_strain`, `material_j2_strain`, and
+`back_stress_xx..xz` (6 columns, the material's Voigt order 11, 22, 33,
+12, 23, 13 — the same order the `epsP1..` columns already use); the
+scalar internal-variable buckets add `yield_stress` / `dp_cohesion` /
+`cap_pressure` / `eps_qp_shear`. The `material_*` names are
+**provenance-distinct on purpose** from the reader's tensor-derived
+`mean_stress` / `j2_stress` / `volumetric_strain` / `j2_strain`
+(measured equal on the fork — same sign, both `trace/3`, both
+`J2 = 1/2 s:s` — but aliasing them would need a per-material
+sign/definition audit, not a measurement, so the two provenances stay
+separately named). A `material.<Token>` bucket that neither table can
+name now warns `GaussColumnDroppedWarning` once per bucket — naming the
+bucket, the unmapped column labels, and the element class — instead of
+vanishing silently.
+
 **Beam-column elements** (`element/beam_column.py`, `ops.element.<Type>`):
 `LadrunoDispBeamColumn` (:661, displacement-based + crack-band `lch`, optional
 `-nl` bowing strain, `-hinge`/`-hingeY`/`-hingeBiaxial` lumped hinges) and
