@@ -324,6 +324,9 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     # (DruckerPrager.cpp:1004-1005), so the file always writes C1..C8 and
     # this map is the only authority on what they mean. Order is the fill
     # site, ``DruckerPrager::getLadrunoBranch()``, DruckerPrager.cpp:960-970.
+    # The map wins over the file's own labels whenever the widths match, so
+    # re-check this entry if ``DruckerPrager::setResponse`` ever starts
+    # emitting a ResponseType for responseID 95.
     # ``ladrunoTangent`` (36 entries, responseID 96) is refused bare by the
     # recorder but deliberately NOT named here -- nothing reads it yet.
     "ladrunobranch": (

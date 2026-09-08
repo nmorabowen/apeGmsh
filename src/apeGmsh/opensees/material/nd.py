@@ -243,9 +243,10 @@ class DruckerPrager(NDMaterial):
         Initial cohesive yield strength (von-Mises radius at zero
         plastic strain). Must be strictly positive. On a weightless or
         lightly confined frictional deck it doubles as an APEX
-        REGULARISER: a small, explicitly non-physical value (0.2 kPa)
-        puts the tension cutoff at ``I1 = sqrt(2/3) * sigmaY / rho``
-        (~0.8 kPa), i.e. essentially "no tension", which is what lets
+        REGULARISER: a small, explicitly non-physical value (0.2 kPa on
+        the fork's deck) puts the tension cutoff at
+        ``I1 = sqrt(2/3) * sigmaY / rho`` (~0.8 kPa there), i.e.
+        essentially "no tension", which is what lets
         the first tensile Gauss points beside a footing edge return
         instead of stalling the step. Document it as a regulariser, not
         as cohesion.
@@ -304,7 +305,11 @@ class DruckerPrager(NDMaterial):
     hex plateaued correctly — a false collapse that looks like a mesh or
     material problem. Quadratic solids (``LadrunoBrick20``,
     ``BezierTet10``, ``TenNodeTetrahedron``) are usable on collapse decks
-    from that build on; prefer the b-bar variants. Non-associated flow
+    from that build on. Of the three only ``BezierTet10`` carries a b-bar
+    knob, and ``BezierTet10(bbar=True)`` is the tightest plateau — it is
+    exactly isochoric at zero dilatancy; standard-integration tets
+    over-shoot, and ``LadrunoBrick20(formulation="uri")`` loses rank once
+    all eight Gauss points yield. Non-associated flow
     (``rhoBar != rho``) makes the tangent unsymmetric — use ``UmfPack``,
     ``Pardiso``, ``Mumps`` or ``FullGeneral``, never ``ProfileSPD`` /
     ``BandSPD``. See ``internal_docs/guide_ladruno_adr95_druckerprager_fix.md``.
@@ -313,9 +318,12 @@ class DruckerPrager(NDMaterial):
     ``material.ladrunoBranch`` (8 floats — branch 0 elastic / 1 cone /
     2 cutoff / 3 corner, the two plastic multipliers, both trial yield
     values, the forced-accept flag, ``I1``, and ``detAmin``) and
-    ``material.ladrunoTangent`` (36 floats, unnamed for now). Pass them to
+    ``material.ladrunoTangent`` (36 floats). Pass ``ladrunoBranch`` to
     ``ops.recorder.Ladruno`` / ``MPCO`` with the ``material.`` prefix; the
-    bare token records nothing and is refused. An empty reply from
+    bare token records nothing and is refused. ``ladrunoTangent`` is
+    accepted by the recorder but ``Results`` names no columns for it yet
+    and drops all 36 with a ``GaussColumnDroppedWarning`` — writing it
+    today buys nothing. An empty reply from
     ``ops.eleResponse(e, "material", gp, "ladrunoBranch")`` means a
     pre-``61b3efa04`` engine — the cheapest capability probe there is.
     """
