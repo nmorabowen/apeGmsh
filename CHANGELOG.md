@@ -471,6 +471,46 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
+
+Three small hygiene fixes to the OpenSees bridge, bundled in one PR.
+
+`resolve_opensees_binary` now accepts a directory at every precedence
+level (explicit `bin=`, `OpenSeesTarget.binary`, `$OPENSEES_BIN`): a
+`dist/bin`-style folder is searched for `OpenSees.exe` / `OpenSees`
+inside it, raising `FileNotFoundError` naming the directory when the
+binary is not there. Previously `apeSees.tcl(run=True, bin=<dir>)`
+handed the directory straight to `CreateProcess`, which fails with an
+opaque `WinError 5` — the test-suite's own `APEGMSH_OPENSEES_BIN` env
+var is a directory, resolved by each test itself rather than by the
+bridge. `resolve_python_binary` is unchanged: its `explicit=` /
+`target.python` are always meant to be a python interpreter path, not
+a venv directory (the venv-directory case is already handled
+separately via `$OPENSEES_VENV`), so it does not share this shape.
+
+`ops.element.<X>(pg=...)` declared against a physical group with no
+elements of that dimension in the FEM snapshot (e.g. the group's cells
+were excluded by `get_fem_data(dim=...)`) used to silently allocate
+zero element tags and emit nothing — the section/material lines still
+went out, but the element declaration itself vanished with no error.
+`allocate_element_tags` — the single choke point every emit path
+(live/tcl/py/h5, staged/unstaged, partitioned/unpartitioned) funnels
+`Element` specs through — now raises `BridgeError` naming the
+primitive, the `pg=`, and what the snapshot's physical-group registry
+knows about it (registered cell count and dimension, when available).
+A node-pair element spec (`pg=None`) is unaffected — it always fans
+out to exactly one synthetic element.
+
+The failed-increment banner's `label=` / strategy-name normalisation
+(`analyze()` in both the tcl and py emitters) only swapped `"` -> `'`
+(plus `[`/`]` in tcl), leaving `$` (Tcl variable substitution), `\`
+(an escape in both generated-source dialects) and embedded newlines
+free to corrupt the emitted `puts` / `print` banner. Both sites in both
+emitters now route through the same `stage_marker_name` the
+`APEGMSH_STAGE` marker already used (ADR 0106 D2), so a strategy or
+stage name can no longer smuggle a stray substitution, escape, or
+extra logical line into the deck.
+
 ### FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
 
 `_MATERIAL_BUCKET_TOKENS` resolves `.ladruno` material-level Gauss
@@ -522,46 +562,6 @@ per-symbol suffixes would risk exactly the silent mislabelling this
 table exists to catch, so it is left as a follow-up pending either a
 fork source read of the MPCO-side response tagging or a live MPCO
 recording to inspect.
-### FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
-
-Three small hygiene fixes to the OpenSees bridge, bundled in one PR.
-
-`resolve_opensees_binary` now accepts a directory at every precedence
-level (explicit `bin=`, `OpenSeesTarget.binary`, `$OPENSEES_BIN`): a
-`dist/bin`-style folder is searched for `OpenSees.exe` / `OpenSees`
-inside it, raising `FileNotFoundError` naming the directory when the
-binary is not there. Previously `apeSees.tcl(run=True, bin=<dir>)`
-handed the directory straight to `CreateProcess`, which fails with an
-opaque `WinError 5` — the test-suite's own `APEGMSH_OPENSEES_BIN` env
-var is a directory, resolved by each test itself rather than by the
-bridge. `resolve_python_binary` is unchanged: its `explicit=` /
-`target.python` are always meant to be a python interpreter path, not
-a venv directory (the venv-directory case is already handled
-separately via `$OPENSEES_VENV`), so it does not share this shape.
-
-`ops.element.<X>(pg=...)` declared against a physical group with no
-elements of that dimension in the FEM snapshot (e.g. the group's cells
-were excluded by `get_fem_data(dim=...)`) used to silently allocate
-zero element tags and emit nothing — the section/material lines still
-went out, but the element declaration itself vanished with no error.
-`allocate_element_tags` — the single choke point every emit path
-(live/tcl/py/h5, staged/unstaged, partitioned/unpartitioned) funnels
-`Element` specs through — now raises `BridgeError` naming the
-primitive, the `pg=`, and what the snapshot's physical-group registry
-knows about it (registered cell count and dimension, when available).
-A node-pair element spec (`pg=None`) is unaffected — it always fans
-out to exactly one synthetic element.
-
-The failed-increment banner's `label=` / strategy-name normalisation
-(`analyze()` in both the tcl and py emitters) only swapped `"` -> `'`
-(plus `[`/`]` in tcl), leaving `$` (Tcl variable substitution), `\`
-(an escape in both generated-source dialects) and embedded newlines
-free to corrupt the emitted `puts` / `print` banner. Both sites in both
-emitters now route through the same `stage_marker_name` the
-`APEGMSH_STAGE` marker already used (ADR 0106 D2), so a strategy or
-stage name can no longer smuggle a stray substitution, escape, or
-extra logical line into the deck.
-
 ### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
 
 S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
