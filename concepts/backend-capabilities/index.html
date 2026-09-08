@@ -3993,11 +3993,22 @@ are unaffected and run on any build.</p>
 <p><code>LadrunoBondSlip</code>, <code>LadrunoCohesiveHinge</code>, <code>LadrunoCohesiveHingeBiaxial</code>,
 <code>LadrunoConcrete3D</code>, <code>LadrunoJ2</code>, <code>LadrunoJ2Finite</code>, <code>LadrunoRCConcrete</code>,
 <code>LadrunoRCFiniteStrain</code>, <code>LadrunoRebarBuckling</code>, <code>LadrunoUniaxialJ2</code></p>
+<p>The vanilla <code>DruckerPrager</code> runs on any build, but its tension-cutoff
+return map is only correct from fork build <code>61b3efa04</code> on (fork ADR-95).
+An older engine parses the same deck and answers differently — quadratic
+solid elements hit a false collapse floor. Its two read-only diagnostics,
+<code>material.ladrunoBranch</code> and <code>material.ladrunoTangent</code>, need that build
+too: an empty <code>ops.eleResponse(e, "material", gp, "ladrunoBranch")</code> is
+the probe for an older one.</p>
 <h3 id="recorders">Recorders<a class="headerlink" href="#recorders" title="Permanent link">&para;</a></h3>
 <p><code>recorder ladruno</code> (the HDF5 <code>.ladruno</code> recorder) and <code>recorder Monitor</code>
 (live SWMR telemetry). Every other recorder — including the plain text
 recorders that <a href="../results/"><code>Results.from_recorders</code></a> reads — works on any
 build.</p>
+<p>Material-level response tokens (<code>material.&lt;token&gt;</code>) are a fork-recorder
+feature: the fork splits them into <code>material &lt;k&gt; &lt;token&gt;</code> per Gauss point.
+The bare spelling records nothing, so <code>ops.recorder.Ladruno</code> / <code>MPCO</code>
+refuse it and name the prefixed form.</p>
 <h2 id="install-extras">Install extras<a class="headerlink" href="#install-extras" title="Permanent link">&para;</a></h2>
 <p>Everything above assumes the right extras are installed. <code>apeGmsh</code> itself
 pulls only <code>gmsh</code>, <code>h5py</code>, <code>numpy</code> and <code>pandas</code>.</p>
