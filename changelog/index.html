@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-the-system-pardiso-stats-parser-alone-adr-0106-s1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the system Pardiso -stats parser, alone (ADR 0106 S1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3905,6 +3916,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-system-pardiso-stats-parser-alone-adr-0106-s1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the system Pardiso -stats parser, alone (ADR 0106 S1)
       
     </span>
   </a>
@@ -4272,6 +4294,26 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-the-system-pardiso-stats-parser-alone-adr-0106-s1">ADDED — the <code>system Pardiso -stats</code> parser, alone (ADR 0106 S1)<a class="headerlink" href="#added-the-system-pardiso-stats-parser-alone-adr-0106-s1" title="Permanent link">&para;</a></h3>
+<p>A new pure, stdlib-only <code>apeGmsh.opensees._solver_stats</code> module: the fork
+PR #821 <code>PARDISO stats:</code> block (five-line, one per numeric factorisation)
+now has a parser, <code>parse_solver_stats</code>, taking either a line-fed iterable
+(what a streaming run will hand it) or a log path (what a re-parse of a
+finished run's <code>&lt;deck&gt;.log</code> will hand it). Three frozen dataclasses carry
+the result: <code>SolverStatsBlock</code> (one factorisation), <code>StageSolverStats</code> (a
+bucket's ADR 0106 D6 reduction — max on the four capacity numbers, last-seen
+on the four identity ones), and <code>RunSolverStats</code> (the per-stage tuple plus
+a run-level bucket and the <code>factorisations</code> / <code>malformed_blocks</code> counters).
+Stage buckets come from <code>APEGMSH_STAGE open|close &lt;name&gt;</code> window lines
+(not emitted anywhere yet — see below); a block outside any window lands
+run-level. The parser never raises on malformed input — a missing field,
+an interrupting second header, a field with no header, or a value that
+won't parse as a number all count against <code>malformed_blocks</code> instead,
+covered by six mutation tests alongside the reference-block and
+multi-block-reduction ones.</p>
+<p>Not wired anywhere (S2/S3): no emitter emits <code>APEGMSH_STAGE</code> yet, nothing
+calls this parser, and <code>apeSees.tcl</code> / <code>apeSees.py</code> still return <code>None</code>.
+Nothing changes for any run.</p>
 <h3 id="fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista">FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and <code>pyvista.trame</code> needs <code>trame-pyvista</code><a class="headerlink" href="#fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista" title="Permanent link">&para;</a></h3>
 <p>pyvista 0.49.0 pulls VTK 9.7.0, which removed <code>vtkRenderer.AddActor2D</code> /
 <code>RemoveActor2D</code> outright (deprecated since 9.5). The horizontal legend draws
