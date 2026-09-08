@@ -3674,6 +3674,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and pyvista.trame needs trame-pyvista
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3894,6 +3905,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and pyvista.trame needs trame-pyvista
       
     </span>
   </a>
@@ -4250,6 +4272,22 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista">FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and <code>pyvista.trame</code> needs <code>trame-pyvista</code><a class="headerlink" href="#fixed-pyvista-049-vtk-97-the-horizontal-legends-title-actor-leaked-its-scalar-bar-and-pyvistatrame-needs-trame-pyvista" title="Permanent link">&para;</a></h3>
+<p>pyvista 0.49.0 pulls VTK 9.7.0, which removed <code>vtkRenderer.AddActor2D</code> /
+<code>RemoveActor2D</code> outright (deprecated since 9.5). The horizontal legend draws
+its own title actor through them (<code>viewers/backends/pyvista_qt.py</code>); the
+<code>AttributeError</code> was swallowed by the surrounding <code>except Exception: pass</code>,
+so the backend never recorded the bar it had just added and
+<code>remove_scalar_bar()</code> found nothing to remove — a title-less legend that
+could never be dismissed. <code>tests/viewers/test_legend_layout.py</code> caught it
+(<code>assert ['vm'] == []</code>). The title now goes through the generic <code>AddActor</code> /
+<code>RemoveActor</code>, which bucket a <code>vtkActor2D</code> correctly on VTK 9.6 and 9.7
+alike. The <code>except Exception: pass</code> that hid it is left as is and named here.</p>
+<p>Also: since 0.49 <code>pyvista.trame</code> imports <code>PyVistaLocalView</code> from the separate
+<code>trame-pyvista</code> package, which pyvista does not declare; the <code>viewer</code> and
+<code>all</code> extras now list it (four <code>test_trame_backend.py</code> tests were failing on
+<code>ModuleNotFoundError</code>). Both were CI-only until the release; main went red
+on <code>92643dde</code> for these five tests and nothing else.</p>
 <h3 id="added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4">ADDED — an explicit <code>system Mumps</code> on a serial deck is refused at build time (ADR 0106 S4)<a class="headerlink" href="#added-an-explicit-system-mumps-on-a-serial-deck-is-refused-at-build-time-adr-0106-s4" title="Permanent link">&para;</a></h3>
 <p>The Ladruno fork's desktop targets (<code>OpenSees.exe</code>, the desktop openseespy
 build) never compile the serial <code>MumpsSolver</code>: a declared <code>system Mumps</code>
