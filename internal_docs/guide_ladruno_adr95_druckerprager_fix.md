@@ -59,6 +59,17 @@ semantics, the `theta` tension-softening parameter, hardening.
 4. **Non-associated DP tangents are unsymmetric.** Same rule as the concrete guide: `UmfPack` /
    `Pardiso` / `Mumps` / `FullGeneral`, never `ProfileSPD`/`BandSPD`.
 
+5. **Budget the push, not the element.** Measured on the fork's Prandtl deck (plain push to
+   s/B 0.15, idle box, PARDISO threaded, ladder budget 200): `LadrunoBrick -bbar` 1 386 DOF 31 s
+   (0.10 s per attempt); `LadrunoBrick20 -uri` 4 659 DOF 481 s, of which 40 % is 1 051 failed
+   attempts around the corner Gauss points (0.19 s per attempt); `BezierTet10` std / `-bbar` 7 749
+   DOF 466 / 533 s with zero failed attempts (0.31 / 0.35 s per attempt); `TenNodeTetrahedron`
+   727 s (0.48 s). SANISAND IMPL-EX on the H20 costs the same per attempt as Drucker–Prager
+   (296 s to target); SANISAND implicit costs 9.9 s per attempt, fifty times more, and stops at
+   s/B 0.008 after 20 min — on footing decks IMPL-EX is the affordable path, not a convenience.
+   Any per-Gauss-point census (`ladrunoBranch`, tangent SVD) at every station multiplies the wall
+   by ~5–8×; sample at stations, not at steps.
+
 ## 3. Read-back: the `ladrunoBranch` census (ask, not yet done)
 
 apeGmsh's `Results` layer has no token for this response yet. A useful, cheap addition:
