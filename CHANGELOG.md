@@ -346,6 +346,29 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0106 S5: live acceptance against the real fork binary
+
+S1-S4 proved the parser and the wiring against fake children; this slice runs
+the real `OpenSees.exe` (fork build `b52f8d83b`, PR #814) and checks the
+parsed numbers against what the fork's own solver actually prints. The deck
+mirrors the fork's own `tests/test_pardiso_stats.py` cantilever node for
+node — a 2x2x2 `stdBrick` mesh, `ElasticIsotropic`, bottom face fixed, top
+face loaded — giving the fork's own `n=54` free-DOF count. Measured against
+that exe: `n=54 nnz(A)=1764 matrixType=11 threads=16`, `factor entries
+iparm(18)=1836`, peak/perm/fact memory `252/215/31` KB, `0` Mflops — the
+fork's own suite only asserts a positive integer for the fill, so this is
+the first place those five numbers are pinned end to end. A second measured
+number (this exact linear-elastic model takes 2 refactorisations per step
+under `Newton` to satisfy `NormDispIncr 1e-10`) is sidestepped rather than
+piled on top of the first: the refactorisation-count and two-stage-split
+cases use `algorithm Linear` instead, which refactorises exactly once per
+`analyze(1)` call by construction, checked against the same exe (3 Linear
+steps, 3 blocks; a `gravity` + `push` staged deck splits 1/2 with the
+run-level bucket empty). `pytest.mark.ladruno_fork` gates the module; the
+subprocess lane additionally resolves the Tcl binary from the same
+`APEGMSH_OPENSEES_BIN` directory the live backend uses and skips on its own
+when that directory holds no `OpenSees(.exe)`.
+
 ### ADDED — ADR 0106 S3: `apeSees.tcl` / `apeSees.py` return the solver-stats record
 
 A run that asked for `system Pardiso -stats` now hands the numbers back instead

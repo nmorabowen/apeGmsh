@@ -1,8 +1,9 @@
 # ADR 0106 — Capturing `system Pardiso -stats`: a run-side solver-stats record, per stage
 
-**Status:** Proposed (2026-09-07). TIMs slice **A8-parse** — the reading
-half of the profiler work whose emitting half shipped as A8 (#1106).
-No code in this ADR; it is the plan the slices in §Slices execute.
+**Status:** Accepted (2026-09-08, fork build `b52f8d83b`). TIMs slice
+**A8-parse** — the reading half of the profiler work whose emitting half
+shipped as A8 (#1106). S1-S5 all landed; §Slices records the plan each
+slice executed.
 
 **Depends on:** fork PR #821, build ≥ `a240b9183`
 (`TIMS_FORK_BATCH_MIN_BUILD` in [`_target.py:113`](../../_target.py)).
