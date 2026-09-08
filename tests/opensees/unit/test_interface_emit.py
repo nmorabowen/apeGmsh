@@ -619,11 +619,17 @@ def test_3d_frame_tolerance_admits_float_noise_only():
 
 
 # --------------------------------------------------------------------------
-# The 3D ndf gate — the ADR 96 accepted-pair table
+# The 3D ndf gate — ADR 96's rule (both ends ndf >= 3), not its examples
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("m_ndf, s_ndf", [
     (3, 3), (6, 6),                            # vanilla
-    (3, 4), (4, 3), (4, 4), (3, 6), (6, 4),    # fork #808 / ADR 96
+    (3, 4), (4, 3), (4, 4), (3, 6), (6, 4),    # fork #808 / ADR 96, by name
+    # Over the ndf >= 3 floor but NOT among ADR 96's named examples. The
+    # fork takes each of these — measured deck by deck on build
+    # 1652f945c (adversarial review F1); (4, 6) is a u-p soil master
+    # under a shell raft, which the resolver's slave_ndf=6 already
+    # promises.
+    (4, 6), (6, 3), (3, 5), (5, 3), (4, 5), (3, 7),
 ])
 def test_3d_accepted_ndf_pairs_emit(m_ndf, s_ndf):
     em = _emit3d([_rec3d(10, 20, a_trib=0.25)],
@@ -633,10 +639,9 @@ def test_3d_accepted_ndf_pairs_emit(m_ndf, s_ndf):
 
 
 @pytest.mark.parametrize("m_ndf, s_ndf", [
-    (3, 7),          # ndf > 6 is not in the table
     (2, 3),          # a 2-dof node cannot carry a 3D translation triad
     (3, 2),
-    (4, 6),          # the table is not symmetric — (6, 4) is in, (4, 6) is not
+    (1, 3), (3, 1),
 ])
 def test_3d_unaccepted_ndf_pairs_are_refused_naming_adr_96(m_ndf, s_ndf):
     with pytest.raises(BridgeError) as exc:
@@ -646,15 +651,22 @@ def test_3d_unaccepted_ndf_pairs_are_refused_naming_adr_96(m_ndf, s_ndf):
     assert "TIMS_FORK_BATCH_MIN_BUILD" in msg
 
 
-def test_3d_gate_mirrors_the_resolvers_table():
+def test_3d_gate_mirrors_the_resolvers_rule():
     # Imported, never restated — the resolver's slave_ndf gate and this
-    # emit-time gate must agree by construction.
+    # emit-time gate must agree by construction. Every (master ndf,
+    # slave_ndf) combination the resolver ADVERTISES must reach a deck:
+    # a resolver that accepts what emit refuses is the F1 defect.
     from apeGmsh._kernel.resolvers._interface_resolver import (
-        _ACCEPTED_3D_NDF_PAIRS,
+        _SLAVE_NDF_VALUES_3D,
+        accepts_3d_ndf_pair,
     )
 
-    for m_ndf, s_ndf in _ACCEPTED_3D_NDF_PAIRS:
-        _emit3d([_rec3d(10, 20, a_trib=0.25)], ndf={10: m_ndf, 20: s_ndf})
+    for m_ndf in (3, 4):                       # stdBrick / LadrunoUP master
+        for s in _SLAVE_NDF_VALUES_3D:
+            s_ndf = 3 if s is None else int(s)
+            assert accepts_3d_ndf_pair(m_ndf, s_ndf)
+            _emit3d([_rec3d(10, 20, a_trib=0.25)],
+                    ndf={10: m_ndf, 20: s_ndf})
 
 
 def test_3d_record_carrying_a_phantom_is_refused():

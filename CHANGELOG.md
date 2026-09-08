@@ -422,6 +422,28 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — interface() 3D adversarial review: a u–p soil under a shell raft emits again
+
+The 3D emit gate refused an `ndf` `(4, 6)` pair — a `LadrunoUP` soil
+master under a shell/beam slave — even though `interface(slave_ndf=6)`
+accepts exactly that model at resolve time. The gate had transcribed the
+fork's adoption note, which spells out *examples* of the pairs its
+`zeroLength` takes, as if that list were exhaustive; the note's actual
+rule is "any pair with both `ndf` >= 3", which is also the rule the
+generic zeroLength-family endpoint guard next door already applies. So a
+raft-on-saturated-soil model resolved, saved and reloaded fine and then
+died at deck time with a `BridgeError` naming a table it satisfied on the
+engine. The gate is now that rule, declared once beside the resolver's
+`slave_ndf` contract; the named pairs survive only as examples inside the
+refusal text, so the message still reads in the note's own words. Nothing
+that emitted before changes, and a pair with an end below `ndf` 3 is
+refused exactly as before — the fork leaves such an element inert, which
+is the silent no-spring the gate exists for.
+
+Measured against fork build `1652f945c`: `(4, 6)`, and every other pair
+over the floor that was probed, runs with no `differing dof` /
+`passenger mode` / `element disabled` line in the log.
+
 ### ADDED — interface() 3D S3: a 3D interface emits a deck
 
 S2 resolved a 3D surface master and stopped there. It now emits: one

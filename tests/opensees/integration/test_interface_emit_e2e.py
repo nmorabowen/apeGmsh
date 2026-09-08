@@ -474,3 +474,77 @@ def test_3d_interface_emits_one_zerolength_per_pair(tmp_path):
         tok = ln.split()
         n = [float(v) for v in tok[tok.index("-orient") + 1:][:3]]
         assert n == pytest.approx([0.0, 0.0, 1.0])
+
+
+# ======================================================================
+# Adversarial review F1 — a u-p soil master under a SHELL raft, (4, 6)
+# ======================================================================
+def _fem_3d_shell_raft(n: int = 2):
+    """Soil box with a standalone shell plate lying on its top face.
+
+    The plate is its own OCC surface at ``z = 1``, never fragmented into
+    the box, so the two sides carry coincident-but-distinct node sets —
+    the 3-D sibling of the two-box fixture with an ndf-6 slave. Extracted
+    at all dimensions (``get_fem_data()``, not ``dim=3``) so the shell
+    elements survive into the snapshot.
+    """
+    with apeGmsh(model_name="iface_a10_raft", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        plate = g.model.geometry.add_rectangle(0, 0, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil)], n=n)
+        g.mesh.structured.set_transfinite([(2, plate)], n=n)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [plate], name="plate")
+        g.physical.add(2, [_surface_at_z(soil, 0.0)], name="base")
+        g.constraints.interface(
+            "face", "plate", normal=NORMAL, tangential=TANGENTIAL,
+            slave_ndf=6, name="SoilRaft")
+        return g.mesh.queries.get_fem_data()
+
+
+def test_3d_interface_up_master_shell_slave_emits(tmp_path):
+    """F1: ndf ``(4, 6)`` — a ``LadrunoUP`` soil master under a shell
+    raft — must reach the deck.
+
+    ADR 96's rule is "any pair with both ndf >= 3"; the pair list in its
+    adoption note is a set of EXAMPLES, and S3 transcribed it as an
+    exhaustive table. That table omitted ``(4, 6)``, so this exact model
+    — which ``interface(slave_ndf=6)`` accepts at resolve — raised
+    ``BridgeError`` at emit instead. The fork runs the deck with no
+    refusal at all (measured on build ``1652f945c``; the live smoke is
+    ``tests/opensees/integration_ladruno/test_interface_3d_live.py``).
+    """
+    fem = _fem_3d_shell_raft()
+    recs = fem.elements.interfaces
+    assert recs and all(len(r.orient) == 9 for r in recs)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    soil_mat = ops.nDMaterial.ElasticIsotropic(E=3e7, nu=0.3, rho=2.0)
+    ops.element.LadrunoUP(
+        pg="soil", material=soil_mat,
+        Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4,) * 3)
+    sec = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2)
+    ops.element.ShellMITC4(pg="plate", section=sec)
+    ops.fix(pg="base", dofs=(1, 1, 1, 1))
+
+    deck = tmp_path / "iface3d_raft.tcl"
+    ops.tcl(str(deck))
+    lines = deck.read_text().splitlines()
+
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == len(recs)
+    # the endpoints really are the mixed pair the fork was asked for
+    ndf4 = {ln.split()[1] for ln in lines
+            if ln.startswith("node ") and ln.endswith("-ndf 4")}
+    ndf6 = {ln.split()[1] for ln in lines
+            if ln.startswith("node ") and ln.endswith("-ndf 6")}
+    assert ndf4 and ndf6
+    for ln in zl:
+        tok = ln.split()
+        assert tok[3] in ndf4 and tok[4] in ndf6
+        assert tok[tok.index("-dir"):tok.index("-dir") + 4] == [
+            "-dir", "1", "2", "3"]

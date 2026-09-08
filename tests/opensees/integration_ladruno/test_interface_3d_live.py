@@ -198,3 +198,65 @@ def test_3d_interface_up_soil_deck_runs(tmp_path: Path) -> None:
     _analysis_chain(ops)
 
     _run_and_check(ops, tmp_path / "iface3d_up.tcl", n_pairs)
+
+
+def _soil_raft_fem(n: int = 3):
+    """A u-p soil box with a standalone SHELL raft on its top face —
+    the ``(4, 6)`` pair (adversarial review F1).
+
+    The plate is its own OCC surface at ``z = 1``, never fragmented into
+    the box, so the two sides carry coincident-but-distinct node sets.
+    Extracted at all dimensions so the shells survive into the snapshot.
+    """
+    with apeGmsh(model_name="iface_a10_raft_live", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        plate = g.model.geometry.add_rectangle(0, 0, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil)], n=n)
+        g.mesh.structured.set_transfinite([(2, plate)], n=n)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [plate], name="plate")
+        g.physical.add(2, [_surface_at_z(soil, 0.0)], name="base")
+        g.constraints.interface(
+            "face", "plate", normal=NORMAL, tangential=TANGENTIAL,
+            slave_ndf=6, name="SoilRaft")
+        return g.mesh.queries.get_fem_data()
+
+
+def test_3d_interface_up_soil_shell_raft_deck_runs(tmp_path: Path) -> None:
+    """The ``(4, 6)`` pair: an ndf-4 u-p soil master under an ndf-6 shell
+    raft.
+
+    Not among the pairs ADR 96's adoption note lists by name, and refused
+    by the S3 gate until the adversarial review replaced that list with
+    the note's actual rule (both ends ndf >= 3). The fork joins it like
+    any other: this asserts the log carries none of the three refusals.
+    """
+    fem = _soil_raft_fem()
+    n_pairs = len(fem.elements.interfaces)
+    assert n_pairs == 9
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    soil_mat = ops.nDMaterial.ElasticIsotropic(E=3e7, nu=0.3, rho=2.0)
+    ops.element.LadrunoUP(
+        pg="soil", material=soil_mat,
+        Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4,) * 3,
+    )
+    sec = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2)
+    ops.element.ShellMITC4(pg="plate", section=sec)
+    ops.fix(pg="base", dofs=(1, 1, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(pg="plate", forces=(0.0, 0.0, -1.0e4))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-6, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.2)
+    ops.analysis.Static()
+
+    _run_and_check(ops, tmp_path / "iface3d_raft.tcl", n_pairs)

@@ -6048,8 +6048,8 @@ def _validate_interface_ndf(
 
     In 3-D (a nine-float record, TIMs A10 S3) there is no phantom to
     declare — fork #808 / ADR 96 joins the mixed pair directly — so the
-    gate becomes the accepted-pair table itself, mirrored from the
-    resolver's ``_ACCEPTED_3D_NDF_PAIRS`` rather than restated here.
+    gate becomes ADR 96's own rule, imported from the resolver as
+    ``accepts_3d_ndf_pair`` rather than restated here.
     """
     name = getattr(rec, "name", None)
     label = f" {name!r}" if name else ""
@@ -6127,21 +6127,30 @@ def _validate_interface_ndf_3d(
 ) -> None:
     """The 3-D half of :func:`_validate_interface_ndf` (TIMs A10 S3).
 
-    The accepted ``(ndf_i, ndf_j)`` table is IMPORTED from the resolver
-    (``_ACCEPTED_3D_NDF_PAIRS``), never restated: the resolver's
-    ``slave_ndf`` gate and this emit-time gate must agree by
-    construction, and a second copy is a second thing to drift. The
-    fork joins any 3-D pair with both ends ndf >= 3, acting on DOFs 1-3
-    with every DOF past the third an untouched passenger (fork #808 /
-    ADR 96); a pair outside the table is a warning plus an inert
-    element there, so it is refused here, before a line is written.
+    The rule is IMPORTED from the resolver
+    (:func:`~apeGmsh._kernel.resolvers._interface_resolver.accepts_3d_ndf_pair`),
+    never restated: the resolver's ``slave_ndf`` gate and this emit-time
+    gate must agree by construction, and a second copy is a second thing
+    to drift. The fork joins any 3-D pair with both ends ndf >= 3,
+    acting on DOFs 1-3 with every DOF past the third an untouched
+    passenger (fork #808 / ADR 96); a pair below that is a warning plus
+    an inert element there, so it is refused here, before a line is
+    written.
+
+    It is the *rule* and not ADR 96's list of example pairs: the list
+    omits ``(4, 6)`` — a u-p soil master under a shell raft — which the
+    fork takes like any other, and which the resolver's
+    ``slave_ndf=6`` already promises (adversarial review F1, measured on
+    build ``1652f945c``).
 
     D4 does not cross over: in 3-D no phantom is minted at all (that is
     what the fork's relaxation retires), so a record carrying one is a
     resolver-contract violation rather than a user mistake.
     """
     from apeGmsh._kernel.resolvers._interface_resolver import (
-        _ACCEPTED_3D_NDF_PAIRS,
+        _MIN_3D_NDF,
+        _NAMED_3D_NDF_PAIRS,
+        accepts_3d_ndf_pair,
     )
     from .._target import TIMS_FORK_BATCH_MIN_BUILD
 
@@ -6161,18 +6170,18 @@ def _validate_interface_ndf_3d(
             f"3D. A phantom here means the record and the resolver "
             f"disagree."
         )
-    if (m_ndf, s_ndf) not in _ACCEPTED_3D_NDF_PAIRS:
+    if not accepts_3d_ndf_pair(m_ndf, s_ndf):
         raise BridgeError(
             f"interface{label}: pair (master={master}, slave={slave}) has "
             f"ndf=({m_ndf}, {s_ndf}), which no 3D zeroLength accepts. The "
-            f"fork joins a 3D pair whose ends BOTH carry ndf >= 3, acting "
-            f"on DOFs 1-3 with every DOF past the third an untouched "
-            f"passenger (fork #808 / ADR 96, minimum build "
-            f"{TIMS_FORK_BATCH_MIN_BUILD} = TIMS_FORK_BATCH_MIN_BUILD); "
-            f"the accepted pairs are "
-            f"{sorted(_ACCEPTED_3D_NDF_PAIRS)}. Outside that table the "
-            f"engine warns and leaves the element inert, so the interface "
-            f"would silently do nothing."
+            f"fork joins a 3D pair whose ends BOTH carry ndf >= "
+            f"{_MIN_3D_NDF}, acting on DOFs 1-3 with every DOF past the "
+            f"third an untouched passenger (fork #808 / ADR 96, minimum "
+            f"build {TIMS_FORK_BATCH_MIN_BUILD} = "
+            f"TIMS_FORK_BATCH_MIN_BUILD) — e.g. "
+            f"{list(_NAMED_3D_NDF_PAIRS)}, and any other pair over that "
+            f"floor. Below it the engine warns and leaves the element "
+            f"inert, so the interface would silently do nothing."
         )
 
 

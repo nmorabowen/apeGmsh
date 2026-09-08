@@ -27,7 +27,7 @@ phantom for a beam slave. A **dim-2 surface master in a 3D model**
 ``thickness`` at all, orients on nine — ``(n, t1, t2)``, because a 3D
 Coulomb law acts on two tangents — and mints no phantom: fork #808 /
 ADR 96 lets the ``zeroLength`` take the mixed pair directly (see
-:data:`_ACCEPTED_3D_NDF_PAIRS`). Emission of a 3D record is TIMs A10
+:func:`accepts_3d_ndf_pair`). Emission of a 3D record is TIMs A10
 S3; nothing here writes a deck line.
 """
 from __future__ import annotations
@@ -65,23 +65,42 @@ _ZERO_TOL = 1e-12
 #: is the rejected design).
 _PHANTOM_NDF = 2
 
-#: The ``(ndf_i, ndf_j)`` pairs a 3D ``zeroLength`` may join **directly**,
-#: i.e. with no D4 phantom bridge at all. ``(3, 3)`` and ``(6, 6)`` are
-#: vanilla; the mixed rows are fork #808 / ADR 96 (adoption note
-#: ``internal_docs/contact_3d_passenger_dof_adoption.md``), where both
-#: ends need only ndf >= 3, the element acts on DOFs 1-3 and every DOF
-#: past the third — the u-p pore pressure, a shell's rotations — rides as
-#: an untouched passenger. That is what retires the phantom in 3D: D4
-#: exists because the engine refused ``dofNd1 != dofNd2``, and in 3D it
-#: no longer does. The minimum build is
+#: The least ndf either end of a 3D ``zeroLength`` may carry. Fork #808 /
+#: ADR 96 (adoption note
+#: ``internal_docs/contact_3d_passenger_dof_adoption.md``) states the
+#: rule as "any pair with both ndf >= 3": the element acts on DOFs 1-3
+#: and every DOF past the third — the u-p pore pressure, a shell's
+#: rotations — rides as an untouched passenger. That is what retires the
+#: phantom in 3D: D4 exists because the engine refused
+#: ``dofNd1 != dofNd2``, and in 3D it no longer does. The minimum build is
 #: ``opensees._target.TIMS_FORK_BATCH_MIN_BUILD`` (``a240b9183``); below
 #: it the fork FATALs on the mixed rows. A build's ancestry is not
 #: derivable from a hash, so that constant is **documented, not
 #: enforced** — the same standing as everywhere else it is cited.
-_ACCEPTED_3D_NDF_PAIRS = frozenset({
-    (3, 3), (6, 6),                           # vanilla ZeroLength
-    (3, 4), (4, 3), (4, 4), (3, 6), (6, 4),   # fork #808 / ADR 96
-})
+_MIN_3D_NDF = 3
+
+#: The ``(ndf_i, ndf_j)`` pairs ADR 96's adoption note spells out by name
+#: — ``(3, 3)`` / ``(6, 6)`` vanilla, the rest fork #808. They are
+#: EXAMPLES of :data:`_MIN_3D_NDF`, quoted in the refusals so a reader
+#: recognises the note's own wording; the rule is
+#: :func:`accepts_3d_ndf_pair`, never this set. Treating the note's list
+#: as exhaustive refused ``(4, 6)`` — a u-p soil master under a shell
+#: raft — which the fork takes like any other (adversarial review F1).
+_NAMED_3D_NDF_PAIRS = ((3, 3), (6, 6), (3, 4), (4, 3), (4, 4), (3, 6),
+                       (6, 4))
+
+
+def accepts_3d_ndf_pair(ndf_i: int, ndf_j: int) -> bool:
+    """May a 3D ``zeroLength`` join this ``(ndf_i, ndf_j)`` pair directly?
+
+    ADR 96's rule verbatim: both ends ndf >= 3, nothing else. Declared
+    here and imported by the emit-time gate
+    (``opensees/_internal/build.py``) so the resolver's ``slave_ndf``
+    contract and the deck's cannot drift — and deliberately the SAME
+    rule ``validate_adaptive_element_endpoints`` already applies to
+    every other zeroLength-family element in 3D.
+    """
+    return int(ndf_i) >= _MIN_3D_NDF and int(ndf_j) >= _MIN_3D_NDF
 
 #: The slave ndf values the resolver accepts on a 2D line master.
 #: ``None`` and ``2`` both mean "the slave matches the 2D continuum"
@@ -92,8 +111,8 @@ _SLAVE_NDF_VALUES = (None, 2, 3)
 #: The slave ndf values accepted on a 3D surface master. ``None`` and
 #: ``3`` are the plain continuum slave; ``4`` is a u-p soil node and
 #: ``6`` a shell / beam node — all three connect directly, because every
-#: pair they can form with a 3D continuum master is in
-#: :data:`_ACCEPTED_3D_NDF_PAIRS`. ``2`` is refused by name: a 2-dof node
+#: pair they can form with a 3D continuum master satisfies
+#: :func:`accepts_3d_ndf_pair`. ``2`` is refused by name: a 2-dof node
 #: cannot carry a 3D translation triad at all.
 _SLAVE_NDF_VALUES_3D = (None, 3, 4, 6)
 
@@ -159,7 +178,7 @@ def resolve_interface_records(
         — a beam slave, so each pair gets a phantom bridge (D4). On a 3D
         surface master: ``None`` / ``3`` / ``4`` (u-p soil) / ``6``
         (shell), all connecting directly — the pair is one of
-        :data:`_ACCEPTED_3D_NDF_PAIRS` and needs no bridge. See the
+        :func:`accepts_3d_ndf_pair` and needs no bridge. See the
         ``InterfaceDef`` docstring for why this is explicit and never
         inferred.
     ndm
@@ -340,7 +359,7 @@ def resolve_interface_records(
             # 2D ONLY, and the ``ndm == 2`` above is the whole reason:
             # in 3D the same slave_ndf=3 needs no bridge, because the
             # fork's zeroLength takes the mixed pair itself
-            # (:data:`_ACCEPTED_3D_NDF_PAIRS`). Minting one there would
+            # (:func:`accepts_3d_ndf_pair`). Minting one there would
             # put a phantom between two nodes that can already be joined.
             phantom_node = next_tag
             next_tag += 1
