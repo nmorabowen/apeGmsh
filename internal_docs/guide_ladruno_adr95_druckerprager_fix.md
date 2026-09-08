@@ -112,12 +112,14 @@ Capability probe for `backend-capabilities`: an empty `ladrunoBranch` reply on a
 ## 4. The other two materials on the same deck (cross-references)
 
 The trigger is implementation-independent — the first tensile Gauss points beside the footing
-edge, which only quadratic elements resolve — but each material responds differently:
+edge, which only quadratic elements resolve — but each material responds differently. **Updated
+2026-09-08:** the ASD row's defect is fixed (fork PR #832); only the SANISAND cost story stands
+as a deck rule.
 
 | material | what happens at that spot | apeGmsh guidance |
 |---|---|---|
 | `DruckerPrager` (UW) | was the dead cutoff branch — **fixed** | use it for zero-dilatancy frictional collapse decks |
-| `ASDPlasticMaterial3D` + `DruckerPrager_YF` | no cutoff; the PR #815 apex projection is live but its region test `p − p_apex ≥ η·q` is Euclidean; at ψ = 0 the exact test is `p ≥ p_apex`, so over-apex states with small shear go to a flank map that cannot move p → the quadratic leg still walls at the same station (fork prediction on record, confirmed) | ADR 0105's contract stands; **add** the caveat: ASD-DP with `etabar = 0` on a footing/heave deck walls at the apex until the fork's ADR-94 follow-up (elastic-metric classification or flank-then-apex fallback). Its linear control matches UW-DP to the printed digit after #815. |
+| `ASDPlasticMaterial3D` + `DruckerPrager_YF` | cone + apex projection; the region test is now in the ELASTIC metric (fork ADR-94 wp/94f, PR #832, merged 2026-09-08) with a flank-first apex fallback behind it. PR #815 had made the projection live but classified in the EUCLIDEAN metric (`p − p_apex ≥ η·q`), which at ψ = 0 sent over-apex states with small shear to a flank map that cannot move p | **Usable on zero-dilatancy footing decks from #832 on.** Measured on the ADR-95 deck after the fix: `h20uri` TARGET at s/B 0.15, q/q_exact 0.9758 against the repaired UW-DP 0.9757, zero flank refusals (pre-fix: FLOOR at 0.01122 with 435). Linear control 1.0850, unchanged. On a pre-#832 engine the caveat stands: the quadratic leg walls at the footing edge. |
 | `LadrunoSANISAND` | no apex to return to; the substepper's cost explodes as p → 0 (implicit legs drown at ~10 s per attempt); IMPL-EX finishes with `-Pmin` holding the edge points at +0.1 kPa | as in `guide_ladruno_sanisand_integrator.md` / ADR 0103: `maxSubsteps` (the fork's CP1 deck uses 1000; 0 = uncapped lets one `analyze()` block for 15–45 min), `-implex` for footing decks, keep `-Pmin`. Read the late part of an IMPL-EX curve with the floor in mind. |
 
 ## 5. A live-gate suggestion (`ladruno_fork` marker)
