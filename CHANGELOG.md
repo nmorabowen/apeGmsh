@@ -346,6 +346,28 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0106 S2: the `APEGMSH_STAGE open|close <name>` runtime marker
+
+The first executable slice of ADR 0106 (S1 landed the pure parser separately).
+`stage_open` / `stage_close` on the Tcl and Python emitters now drop a runtime
+`puts "APEGMSH_STAGE open|close <name>"` / `print("APEGMSH_STAGE open|close
+<name>", flush=True)` pair around each stage, name last on the line so a name
+with spaces survives the S1 parser's `APEGMSH_STAGE (open|close) (.+)$`.
+Quoting is normalised the same way `analyze` already normalises a strategy
+name, so a name carrying a literal quote or bracket cannot break the
+enclosing source line or, in Tcl, trigger command substitution.
+
+The marker is gated on a new build-level predicate, `deck_requests_solver_stats`,
+which resolves the flat/staged system declarations the same way
+`validate_ladruno_up_solver` already does and answers whether any declared
+`Pardiso` or `Mumps` asked for `-stats`. A deck that never does emits
+byte-identically to today in both emitters — the existing staged golden decks
+are unchanged, proving INV-1. The live emitter is untouched (D3), and the H5 /
+recording emitters never see the marker as a primitive — no measurement
+reaches a declaration. Under a partitioned staged deck the marker rides the
+same global scope `stage_open` and `analyze` already use, so it runs once per
+rank's own process without disturbing a byte of any `if {[getPID] == K} { ...
+}` rank guard.
 ### ADDED — the `system Pardiso -stats` parser, alone (ADR 0106 S1)
 
 A new pure, stdlib-only `apeGmsh.opensees._solver_stats` module: the fork

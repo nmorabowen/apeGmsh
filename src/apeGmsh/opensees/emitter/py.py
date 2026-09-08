@@ -15,6 +15,8 @@ not pollute prior state.
 """
 from __future__ import annotations
 
+from .._internal.build import stage_marker_name
+
 from typing import Any, Literal, Sequence
 
 from .base import StrategySpec, trim_coords_to_ndm
@@ -128,6 +130,17 @@ class PyEmitter:
         # APEGMSH_PROGRESS ...)`` in the loop so the run=True streamer
         # can render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
+        # ADR 0106 D2 — stage-marker injection, set by
+        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
+        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ``print(APEGMSH_STAGE open|close <name>)`` so a solver-stats
+        # block on stderr can be attributed to the stage that paid for
+        # it. Default off keeps a deck with no ``stats=True`` anywhere
+        # byte-identical to today (INV-1). Tracks the name of the
+        # currently-open stage so ``stage_close`` (which takes no
+        # argument) can name it too.
+        self._emit_stage_markers: bool = False
+        self._current_stage_name: str | None = None
 
     # -- Output --------------------------------------------------------------
 
@@ -611,6 +624,18 @@ class PyEmitter:
         )
         self._lines.indent = prev_indent + "    "
 
+    def _emit_stage_marker(self, phase: str, name: str) -> None:
+        """ADR 0106 D2 — ``print(APEGMSH_STAGE open|close <name>)`` at
+        the current (outer) indent, name LAST so a name with spaces
+        survives the S1 parser's ``r"APEGMSH_STAGE (open|close) (.+)$"``.
+
+        Quoting normalised the same way ``analyze`` already normalises a
+        strategy name: ``"`` -> ``'`` so the name cannot close the
+        enclosing Python string literal early.
+        """
+        sname = stage_marker_name(name)
+        self._lines.append(f'print("APEGMSH_STAGE {phase} {sname}", flush=True)')
+
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
@@ -739,6 +764,9 @@ class PyEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
+        if self._emit_stage_markers:
+            self._current_stage_name = name
+            self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
 
     def domain_change(self) -> None:
@@ -750,6 +778,9 @@ class PyEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
+        if self._emit_stage_markers and self._current_stage_name is not None:
+            self._emit_stage_marker("close", self._current_stage_name)
+            self._current_stage_name = None
         # openseespy: ``ops.loadConst('-time', 0.0)`` matches the Tcl
         # ``loadConst -time 0.0`` semantics.
         self._lines.append(_ops_call("loadConst", "-time", 0.0))

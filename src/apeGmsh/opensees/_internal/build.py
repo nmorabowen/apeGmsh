@@ -3765,6 +3765,47 @@ def validate_serial_mumps(
 
     if flat_systems and type(flat_systems[-1]).__name__ in _SERIAL_MUMPS_CLASSES:
         raise BridgeError(_SERIAL_MUMPS_MSG)
+_STAGE_MARKER_UNSAFE = str.maketrans({
+    '"': "'", "[": "(", "]": ")", "{": "(", "}": ")", "\\": "/", "$": "_",
+})
+
+
+def stage_marker_name(name: str) -> str:
+    """The stage name as it appears on an ``APEGMSH_STAGE`` marker line.
+
+    ADR 0106 D2 — the marker is a runtime ``puts "..."`` / ``print("...")``
+    whose only job is to survive the S1 parser's ``(.+)$``, so the name is
+    normalised ONCE here for both emitters: ``"`` / ``[`` / ``]`` / ``{``
+    / ``}`` / ``\`` / ``$`` would close the string, trigger Tcl command
+    or variable substitution, or escape in Python; any whitespace run
+    (a newline included) collapses to one space.  Deterministic, so the
+    tcl and py lanes attribute to the same name.
+    """
+    return " ".join(str(name).translate(_STAGE_MARKER_UNSAFE).split())
+
+
+def deck_requests_solver_stats(
+    *,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> bool:
+    """ADR 0106 D2 — does this deck ask a solver for ``-stats`` anywhere?
+
+    Resolves the flat/staged system declarations the same way
+    :func:`validate_ladruno_up_solver` already resolves them (its
+    ``flat_systems`` / ``stage_systems`` shapes, reused verbatim by the
+    caller). Duck-types on ``.stats`` rather than naming ``Pardiso`` /
+    ``Mumps`` — both carry the flag and nothing else does. Answers a
+    plain "was it requested", independent of whether the deck's
+    analysis chain ever runs.
+    """
+    for system in flat_systems:
+        if getattr(system, "stats", False):
+            return True
+    for _name, system in stage_systems:
+        if system is not None and getattr(system, "stats", False):
+            return True
+    return False
 
 
 class ManzariTangentSolverWarning(UserWarning):
