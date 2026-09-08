@@ -3553,6 +3553,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-closest_point-algorithmic-the-asdplasticmaterial3d-closest-point-return-map-adr-0107-fork-adr-97" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Closest_Point / Algorithmic, the ASDPlasticMaterial3D closest-point return map (ADR 0107, fork ADR-97)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-materialcp_iterations-is-a-readable-gauss-component-adr-0107-d5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — material.cp_iterations is a readable Gauss component (ADR 0107 D5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verified-live-adr-0107" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verified live (ADR 0107)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-ladrunosanisand-implex-implexcontrol-implexfactor-seam-adr-92-p2-9-fork-pr-822" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3949,6 +3982,39 @@
     <span class="md-ellipsis">
       
         CHANGED — the fork's DruckerPrager return map is adopted: build floor 61b3efa04, material.ladrunoBranch read back, the ASD-DP apex caveat (fork ADR-95, PR #803)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-closest_point-algorithmic-the-asdplasticmaterial3d-closest-point-return-map-adr-0107-fork-adr-97" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Closest_Point / Algorithmic, the ASDPlasticMaterial3D closest-point return map (ADR 0107, fork ADR-97)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-materialcp_iterations-is-a-readable-gauss-component-adr-0107-d5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — material.cp_iterations is a readable Gauss component (ADR 0107 D5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verified-live-adr-0107" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verified live (ADR 0107)
       
     </span>
   </a>
@@ -4370,6 +4436,82 @@ whose per-material routing still hard-codes <code>catalog_token == "strain"</cod
 Also deferred: names for <code>ladrunoTangent</code>, the tension/corner censuses, and
 a <code>ladruno_fork</code> live gate — which needs the fork rebuilt, since our venv
 build <code>1652f945c</code> is pre-fix.</p>
+<h3 id="added-closest_point-algorithmic-the-asdplasticmaterial3d-closest-point-return-map-adr-0107-fork-adr-97">ADDED — <code>Closest_Point</code> / <code>Algorithmic</code>, the ASDPlasticMaterial3D closest-point return map (ADR 0107, fork ADR-97)<a class="headerlink" href="#added-closest_point-algorithmic-the-asdplasticmaterial3d-closest-point-return-map-adr-0107-fork-adr-97" title="Permanent link">&para;</a></h3>
+<p><code>ASDPlasticMaterial3D</code> and the three D5 helpers (<code>MohrCoulombSoil</code>,
+<code>MohrCoulombTensionCutoffSoil</code>, <code>HoekBrownRock</code>, all in
+<code>src/apeGmsh/opensees/material/nd.py</code>) accept two new option values:
+<code>integration_method="Closest_Point"</code> — the fork's second, fully implicit
+integrator, a true closest-point projection — and
+<code>tangent_type="Algorithmic"</code>, its exact consistent tangent. No tangent the
+fork ships for <code>Backward_Euler</code> is the tangent of that map: measured
+against a central difference of the material's own committed response,
+<code>Continuum</code> is 57 % off, <code>Secant</code> 80 %, <code>Elastic</code> 103 %.</p>
+<p><strong>No default moves and no deck changes.</strong> All three helpers keep
+<code>integration_method="Backward_Euler"</code> and <code>tangent_type="Continuum"</code>; a
+deck that does not ask for the new tokens emits byte-identically. The
+fork's own mesh-scale measurement recommends flipping the shipped default
+(24000-DOF strip footing: 12/12 push steps in 78 s against 7/12 in 504 s),
+but that flip is the fork owner's decision in a separate fork PR, and
+flipping here first would break every deck on a pre-ADR-97 build.</p>
+<p><code>tangent_type="Algorithmic"</code> without <code>integration_method="Closest_Point"</code>
+now raises <code>ValueError</code> at construction, quoting the fork's own reasoning
+(ADR-97 D2). That pairing rule is the ONLY new client-side check: which
+YF/PF/EL/IV combinations support <code>Closest_Point</code> (23 of the fork's 46
+registered specializations — matched-family pairs of VonMises,
+Drucker-Prager, Mohr-Coulomb, MohrCoulombTensionCutoff and Hoek-Brown) is
+deliberately left to the fork, whose parser fails loud naming the exact
+YF/PF/IV. All three helpers build matched pairs, so all three are
+supported.</p>
+<p><code>ASDPlasticIntegrationWarning</code> is re-keyed from "not <code>Backward_Euler</code>" to
+"is one of the four EXPLICIT integrators": <code>Closest_Point</code> no longer warns,
+and the message names the fork's new <code>experimental_integrator</code> gate, which
+REFUSES the explicit four outright on a build at or after
+<code>ASDP_CLOSEST_POINT_MIN_BUILD</code> (<code>7e93e4381</code>). The warning is deliberately
+NOT silenced by that opt-in, and says so: the token is unknown to every
+earlier parser, where ADR-94's fail-loud parser rejects the whole
+<code>nDMaterial</code> command over it — so adding it unconditionally breaks the
+deck on the build most users have.</p>
+<p>A duplicated name in <code>integration_options</code> is now a <code>ValueError</code>.
+Validation reads a dict while emission writes the whole sequence, so a
+repeat could smuggle the forbidden pairing into the deck
+(<code>tangent_type Algorithmic</code> validating as a later <code>Secant</code>).</p>
+<p>New module constants <code>ASDP_CLOSEST_POINT_MIN_BUILD</code> and
+<code>ASDP_ALGORITHMIC_TANGENT</code>; new split tables
+<code>_ASDP_IMPLICIT_INTEGRATION_METHODS</code> / <code>_ASDP_EXPLICIT_INTEGRATION_METHODS</code>.
+No signature changes, so <code>_api_index.json</code> does not move.</p>
+<h3 id="added-materialcp_iterations-is-a-readable-gauss-component-adr-0107-d5">ADDED — <code>material.cp_iterations</code> is a readable Gauss component (ADR 0107 D5)<a class="headerlink" href="#added-materialcp_iterations-is-a-readable-gauss-component-adr-0107-d5" title="Permanent link">&para;</a></h3>
+<p><code>src/apeGmsh/results/readers/_ladruno_element_io.py</code> gains one
+<code>_MATERIAL_BUCKET_TOKENS</code> entry. A <code>.ladruno</code> carrying the fork's new
+<code>material.cp_iterations</code> bucket — the local-Newton iteration count of the
+last <code>Closest_Point</code> return-map solve — previously raised
+<code>GaussColumnDroppedWarning</code> and hid the column; it now surfaces as the
+Gauss component <code>cp_iterations</code>. The recorder needed no change
+(<code>elem_responses</code> has no allow-list).</p>
+<p>The bucket's shape was OBSERVED on fork build <code>ff47275fd</code>, not assumed: a
+scalar per Gauss point (<code>NUM_COMP</code> 1, <code>MULTIPLICITY</code> 1, <code>FIBER_ID</code> -1, one
+column per <code>GAUSS_ID</code>). Measured 0 while the point is elastic and 1 once
+Mohr-Coulomb yields; the fork documents up to 5 for Hoek-Brown. The value
+is undefined under <code>Backward_Euler</code> — the fork still writes the bucket
+there, so a value read off a non-<code>Closest_Point</code> deck is meaningless
+rather than absent.</p>
+<h3 id="verified-live-adr-0107">Verified live (ADR 0107)<a class="headerlink" href="#verified-live-adr-0107" title="Permanent link">&para;</a></h3>
+<p>The battery <code>tests/opensees/integration_ladruno/
+test_asdplastic_closest_point_live.py</code> is 4/4 green on fork build
+<code>ff47275fd</code> and skips cleanly on an older backend, naming the running
+build. Its gate is a capability probe, not a build-hash comparison, so it
+arms itself on the first supporting build.</p>
+<p><code>Closest_Point</code> commits at <code>max|f_MC|</code> 8.24e-13 against <code>Backward_Euler</code>'s
+1.03e-08 — four orders of magnitude tighter at the same iteration count —
+and the two maps agree to 0.82 %, differing only where <code>Closest_Point</code>
+pins the exact triaxial-compression corner that <code>Backward_Euler</code> rounds.</p>
+<p><strong>Known interaction:</strong> apeGmsh's <code>strict_convergence=True</code> default (ADR
+0105 D2) REFUSES a <code>Closest_Point</code> leg at kPa soil scale. The fork checks
+a TRIAL state's residual against the ABSOLUTE <code>f_absolute_tol</code>, and a
+mid-Newton trial reaches <code>f = 1.37e-06</code> against the <code>1e-06</code> default —
+~1.6e-08 relative at that strength scale, tight enough that the MORE
+accurate map trips it where the coarser one does not. If a
+<code>Closest_Point</code> deck fails with <code>analyze() == -3</code>, set <code>f_relative_tol</code>
+(or <code>strict_convergence=False</code>). No default was changed in response.</p>
 <h3 id="added-ladrunosanisand-implex-implexcontrol-implexfactor-seam-adr-92-p2-9-fork-pr-822">ADDED — <code>LadrunoSANISAND</code> <code>-implex</code>/<code>-implexControl</code>/<code>-implexFactor</code> seam (ADR 92 P2-9, fork PR #822)<a class="headerlink" href="#added-ladrunosanisand-implex-implexcontrol-implexfactor-seam-adr-92-p2-9-fork-pr-822" title="Permanent link">&para;</a></h3>
 <p><code>LadrunoSANISAND</code> (<code>src/apeGmsh/opensees/material/nd.py</code>) gains three new
 fields: <code>implex</code> (bool, <code>-implex</code>), <code>implex_control</code> (an
