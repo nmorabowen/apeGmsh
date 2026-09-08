@@ -346,6 +346,31 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0106 S3: `apeSees.tcl` / `apeSees.py` return the solver-stats record
+
+A run that asked for `system Pardiso -stats` now hands the numbers back instead
+of leaving them in the log. `stream_run` grew an `expect_solver_stats` flag and
+a `RunSolverStats | None` return: when the flag is set, each line it tees is
+fed straight to the S1 parser as it streams, and the finished per-stage record
+comes back through `apeSees.tcl(run=True)` / `apeSees.py(run=True)`. Both
+methods changed from `-> None` to `-> RunSolverStats | None`, which is additive
+for every existing caller; the committed API index is rebuilt with them. Where
+they return early — `run=False` — they return `None`, as does every deck that
+never declared `stats=True`.
+
+The predicate is not recomputed: `emit` already resolved it to gate the S2
+stage marker, so the run reads the same answer off the emitter and cannot
+disagree with the bytes it just wrote. A deck that never asked pays nothing —
+the parser is not called at all, and the tee is byte-identical to the child's
+output either way. On a non-zero exit the `RuntimeError` is raised unchanged
+and the record is not smuggled through it: the log is already on disk, and
+`parse_solver_stats(<deck>.log)` reads back exactly what the streaming parse
+had accumulated. A clean run that asked for statistics and got no parseable
+block warns once, as `SolverStatsWarning`, naming `TIMS_FORK_BATCH_MIN_BUILD` —
+fork builds older than that print a format apeGmsh deliberately does not guess
+at. Still owed by S5: acceptance against the real fork binary, where the
+54-DOF brick's first factorisation must read 1836 factor entries.
+
 ### ADDED — ADR 0106 S2: the `APEGMSH_STAGE open|close <name>` runtime marker
 
 The first executable slice of ADR 0106 (S1 landed the pure parser separately).
