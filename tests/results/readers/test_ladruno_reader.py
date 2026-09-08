@@ -891,6 +891,49 @@ def test_sanisand_buckets_reach_the_gauss_level_with_generic_names(
         } <= comps
 
 
+def test_implex_guards_seven_slots_resolve_by_position(tmp_path: Path) -> None:
+    # ADR 92 P2-9. Unlike every other fork response, implexGuards carries no
+    # ResponseType at all (LadrunoSANISAND.cpp:3947-3951), so C1..C7 is not
+    # an "older build" case here -- it is what every build writes, and the
+    # by-position map is the only thing that can name these columns.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.implexGuards": tuple(f"C{i}" for i in range(1, 8)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert {
+        "implex_guards_floor_fallback", "implex_guards_f0_guard",
+        "implex_guards_hold_preserved", "implex_guards_reversal_noise",
+        "implex_guards_trial_f0_guard", "implex_guards_hold_skip_commit",
+        "implex_guards_control_backoff",
+    } <= comps
+
+
+def test_implex_guards_slot_order_matches_the_fork_fill_site() -> None:
+    # A by-position map is only as good as its order, and a wrong order
+    # mislabels data silently. Pinned to LadrunoSANISAND.cpp:3996-4002.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.implexGuards") == (
+        "implex_guards_floor_fallback",     # out4g(0) getFloorFallbacks
+        "implex_guards_f0_guard",           # out4g(1) getGuardsFired
+        "implex_guards_hold_preserved",     # out4g(2) getHoldsPreserved
+        "implex_guards_reversal_noise",     # out4g(3) getReversalNoiseGuards
+        "implex_guards_trial_f0_guard",     # out4g(4) getTrialGuardF0
+        "implex_guards_hold_skip_commit",   # out4g(5) getHoldSkipCommits
+        "implex_guards_control_backoff",    # out4g(6) getControlFactorBackoffs
+    )
+    # Both fork spellings reach the same map (the table keys are lowered).
+    assert (material_bucket_canonicals("material.ImplexGuards")
+            == material_bucket_canonicals("material.implexGuards"))
+
+
 def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
     path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
     with LadrunoReader(path) as r:

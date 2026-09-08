@@ -358,6 +358,7 @@ _MATERIAL_ONLY_ELEM_TOKENS: frozenset[str] = frozenset({
     "implexError", "avgImplexError",
     "substeps", "substepsME", "ladrunoSubsteps",
     "implexDetail", "implexRefusals",
+    "implexGuards", "ImplexGuards",
 })
 
 
