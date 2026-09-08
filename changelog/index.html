@@ -3718,6 +3718,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-interface-3d-s4-the-3d-interface-is-verified-against-the-2d-case-the-u-p-passenger-dof-and-a-corner" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4081,6 +4092,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
       
     </span>
   </a>
@@ -4660,6 +4682,53 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table">FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table<a class="headerlink" href="#fixed-results-reader-warn-when-a-material-buckets-real-comp_names-disagree-with-the-by-position-table" title="Permanent link">&para;</a></h3>
+<p><code>_MATERIAL_BUCKET_TOKENS</code> resolves <code>.ladruno</code> material-level Gauss
+buckets BY POSITION on purpose (older fork builds write generic
+<code>C1..Cn</code>), which means a real-name build whose columns are reordered or
+renamed relative to the fork's documented order was mislabelled in
+SILENCE rather than merely dropped. A measured probe found exactly that:
+a <code>material.substeps</code> bucket whose file names read <code>substeps_capHit,
+substeps_me</code> is read as <code>substeps_me, substeps_cap_hit</code>.</p>
+<p><code>_ladruno_element_io.py</code> gains a companion table,
+<code>_MATERIAL_BUCKET_EXPECTED_NAMES</code>, of the fork's documented real
+<code>COMP_NAMES</code> per token, exact spelling, in slot order — the SANISAND
+tokens (<code>psi</code>/<code>stateParameter</code>, <code>yieldDistance</code>/<code>yieldFunction</code>,
+<code>implexError</code>, <code>avgImplexError</code>, <code>substeps</code>/<code>substepsME</code>/
+<code>ladrunoSubsteps</code>, <code>implexDetail</code>, <code>implexRefusals</code>) and the ADR 0105
+ASDPlasticMaterial3D tokens whose exact spelling is stated in
+<code>internal_docs/guide_ladruno_asdplastic.md</code> (<code>PStress</code> -&gt; <code>p</code>,
+<code>J2Stress</code> -&gt; <code>J2stress</code>, <code>VolStrain</code> -&gt; <code>epsVol</code>, <code>J2Strain</code> -&gt;
+<code>J2strain</code>, <code>BackStress</code> -&gt; <code>BackStress_1..6</code>). <code>YieldStress</code> /
+<code>DP_cohesion</code> / <code>CapPressure</code> / <code>EpsQpShear</code> are left out — their exact
+COMP_NAMES spelling is not documented anywhere, so there is no
+expectation to check. <code>implexGuards</code> / <code>ladrunoBranch</code> carry no
+ResponseType at all (every build writes <code>C1..Cn</code>), so there is nothing
+real to compare against either.</p>
+<p><code>gauss_available</code> now also compares each non-generic bucket's real
+names against this table and raises one new <code>GaussColumnNameMismatchWarning</code>
+per bucket, per read, when they disagree — naming the bucket, the
+file's names and the expected ones. It does not change what gets
+read: the positional canonicals still win (reordering on a guess would
+be its own mislabelling), the warning is the heads-up that a build's
+column order needs checking against the fork source.</p>
+<p>Runway batch A also covers <code>implexGuards</code> (already registered by
+PR #1128 before this branch was cut — the 7-slot by-position map and
+the recorder guard were both already in <code>main</code>) and the MPCO twin of
+this table: the MPCO material-state reader
+(<code>_mpco_material_io.py</code>) was NOT extended to the SANISAND tokens.
+Unlike <code>damage</code>/<code>d+</code>/<code>d-</code> (an established OpenSees/ASDConcrete
+convention) or the <code>.ladruno</code> case above (spelling stated in the
+adoption guide), neither the MPCO primary group name nor the
+<code>META/COMPONENTS</code> symbol spelling for <code>psi</code> / <code>substeps</code> / <code>BackStress</code>
+under the MPCO recorder is documented anywhere in this repo or the
+fork guides — some of these responses (<code>implexGuards</code>, <code>ladrunoBranch</code>)
+carry no <code>ResponseType</code> at all, which the MPCO META-driven path has no
+generic-fallback machinery for. Guessing the group name or the
+per-symbol suffixes would risk exactly the silent mislabelling this
+table exists to catch, so it is left as a follow-up pending either a
+fork source read of the MPCO-side response tagging or a live MPCO
+recording to inspect.</p>
 <h3 id="added-interface-3d-s4-the-3d-interface-is-verified-against-the-2d-case-the-u-p-passenger-dof-and-a-corner">ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner<a class="headerlink" href="#added-interface-3d-s4-the-3d-interface-is-verified-against-the-2d-case-the-u-p-passenger-dof-and-a-corner" title="Permanent link">&para;</a></h3>
 <p>S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
 those said the 3D <code>g.constraints.interface()</code> is <em>right</em> — a deck with
