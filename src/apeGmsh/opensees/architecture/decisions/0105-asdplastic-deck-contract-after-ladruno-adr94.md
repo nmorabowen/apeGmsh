@@ -242,6 +242,11 @@ rejections; helper emit shapes; the D4 gate.
   not drift when the fork refuses more.
 - `stdBrick` propagation is by design on the fork; apeGmsh keeps D4 until
   the fork decides otherwise.
+- Make `DruckerPrager_YF`'s apex-region test exact at `etabar = 0` — an
+  elastic-metric classification, or a flank-then-apex fallback when the
+  flank map cannot move `p`. Today the Euclidean test added with the #815
+  apex projection sends over-apex, low-shear states to a flank map that
+  cannot return them (Amendment 2).
 
 ## Consequences
 
@@ -342,3 +347,36 @@ capture-declarable while `spec/_emit.py`'s MPCO token table has no
 token for them — a capture that silently records nothing. Recording
 them stays an explicit `elem_responses=("material.PStress", …)` on
 `ops.recorder.Ladruno`.
+
+## Amendment 2 — the DruckerPrager_YF apex wall at `etabar = 0` (2026-09-08)
+
+A caveat added, not a change: `strict_convergence`, the D4 host gate, the
+D1 schema and the D5 helper set all stand.
+
+`ASDPlasticMaterial3D` + `DruckerPrager_YF` has **no tension cutoff**. The
+apex projection fork PR #815 added is live on `ladruno`, but its region
+test `p − p_apex ≥ η·q` is Euclidean; at ψ = 0 (`DP_etabar = 0`, zero
+dilatancy) the exact test is `p ≥ p_apex`, so an over-apex state with
+small shear is routed to a flank map that cannot move `p` and never
+reaches the apex. Measured on the fork's Prandtl–Reissner strip-footing
+deck, the quadratic leg walls at the same station regardless of element —
+a fork prediction put on record and then confirmed. The trigger is the
+first tensile Gauss points beside the footing edge, which only quadratic
+elements resolve; the LINEAR control leg matches the vanilla UW
+`nDMaterial DruckerPrager` to the printed digit after #815, so the wall is
+specific to the quadratic / over-apex path, not a general disagreement
+between the two materials.
+
+**Deck guidance.** For a zero-dilatancy frictional collapse deck (footing,
+heave) emit the UW `DruckerPrager` primitive, whose cutoff return map fork
+PR #803 repairs, rather than ASD-DP with `etabar = 0` — which walls at the
+apex until the fork's ADR-94 follow-up lands (elastic-metric
+classification, or a flank-then-apex fallback when the flank map cannot
+move `p`). D8 gains the matching ask.
+
+**Provenance.** Fork ADR-95 campaign, PR #803, merged into `ladruno` as
+`61b3efa04` on 2026-09-08 (fix commit `31322a47a`); the #815 apex
+projection was already there. The UW workaround therefore needs a build at
+or after `61b3efa04` — our venv build `1652f945c` is pre-fix, so it takes a
+rebuild before the workaround is available locally. Measurements in
+`internal_docs/guide_ladruno_adr95_druckerprager_fix.md` §4.

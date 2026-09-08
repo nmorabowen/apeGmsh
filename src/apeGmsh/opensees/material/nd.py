@@ -213,6 +213,16 @@ class J2Plasticity(NDMaterial):
 # DruckerPrager — pressure-dependent plasticity for soils / concrete
 # ---------------------------------------------------------------------------
 
+#: Minimum fork build for the ADR-95 ``DruckerPrager`` return map
+#: (``ops.ladrunoBuild()``, fork PR #803 merged as ``61b3efa04``,
+#: 2026-09-08). Documented, not enforced — same as
+#: :data:`ASDP_MIN_FORK_BUILD`, a bare hash cannot prove ancestry. An older
+#: build parses and runs the identical deck; what it gets wrong is the
+#: answer (see the class docstring), so there is nothing to refuse at
+#: construction.
+DP_ADR95_MIN_FORK_BUILD = "61b3efa04"
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DruckerPrager(NDMaterial):
     """Drucker-Prager elasto-plastic continuum material.
@@ -231,7 +241,14 @@ class DruckerPrager(NDMaterial):
         Shear modulus. Must be strictly positive.
     sigmaY
         Initial cohesive yield strength (von-Mises radius at zero
-        plastic strain). Must be strictly positive.
+        plastic strain). Must be strictly positive. On a weightless or
+        lightly confined frictional deck it doubles as an APEX
+        REGULARISER: a small, explicitly non-physical value (0.2 kPa)
+        puts the tension cutoff at ``I1 = sqrt(2/3) * sigmaY / rho``
+        (~0.8 kPa), i.e. essentially "no tension", which is what lets
+        the first tensile Gauss points beside a footing edge return
+        instead of stalling the step. Document it as a regulariser, not
+        as cohesion.
     rho
         Drucker-Prager friction parameter (yield surface slope).
         Must be ``>= 0``.
@@ -271,6 +288,36 @@ class DruckerPrager(NDMaterial):
     arguments. apeGmsh emits the shortest form that carries the requested
     values, so a material that touches neither keyword produces exactly
     the line it produced before they existed.
+
+    **Fork ADR-95 — the tension-cutoff return map (build**
+    ``DP_ADR95_MIN_FORK_BUILD`` **and later).** Every build before fork
+    PR #803 never assembled the tension-cutoff residual row of the
+    two-surface return map, so a Gauss point crossing the cutoff kept an
+    unreturned stress and a pathological consistent tangent. Nothing in
+    this class changes — same arguments, same emitted line — but the
+    ANSWERS do: any path that reached ``I1 >= T`` was not on the yield
+    surface at all before the fix, and cone-only paths move by <= 1.3e-5
+    relative (the tangent's radial-return term divided by the returned
+    norm instead of the trial one). On the fork's Prandtl-Reissner
+    strip-footing deck the defect killed every quadratic element on the
+    step floor at 30-77 % of the collapse load while the linear b-bar
+    hex plateaued correctly — a false collapse that looks like a mesh or
+    material problem. Quadratic solids (``LadrunoBrick20``,
+    ``BezierTet10``, ``TenNodeTetrahedron``) are usable on collapse decks
+    from that build on; prefer the b-bar variants. Non-associated flow
+    (``rhoBar != rho``) makes the tangent unsymmetric — use ``UmfPack``,
+    ``Pardiso``, ``Mumps`` or ``FullGeneral``, never ``ProfileSPD`` /
+    ``BandSPD``. See ``internal_docs/guide_ladruno_adr95_druckerprager_fix.md``.
+
+    That build also adds two read-only diagnostics, both MATERIAL-level:
+    ``material.ladrunoBranch`` (8 floats — branch 0 elastic / 1 cone /
+    2 cutoff / 3 corner, the two plastic multipliers, both trial yield
+    values, the forced-accept flag, ``I1``, and ``detAmin``) and
+    ``material.ladrunoTangent`` (36 floats, unnamed for now). Pass them to
+    ``ops.recorder.Ladruno`` / ``MPCO`` with the ``material.`` prefix; the
+    bare token records nothing and is refused. An empty reply from
+    ``ops.eleResponse(e, "material", gp, "ladrunoBranch")`` means a
+    pre-``61b3efa04`` engine — the cheapest capability probe there is.
     """
 
     K: float

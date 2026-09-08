@@ -135,12 +135,25 @@ are unaffected and run on any build.
 `LadrunoConcrete3D`, `LadrunoJ2`, `LadrunoJ2Finite`, `LadrunoRCConcrete`,
 `LadrunoRCFiniteStrain`, `LadrunoRebarBuckling`, `LadrunoUniaxialJ2`
 
+The vanilla `DruckerPrager` runs on any build, but its tension-cutoff
+return map is only correct from fork build `61b3efa04` on (fork ADR-95).
+An older engine parses the same deck and answers differently — quadratic
+solid elements hit a false collapse floor. Its two read-only diagnostics,
+`material.ladrunoBranch` and `material.ladrunoTangent`, need that build
+too: an empty `ops.eleResponse(e, "material", gp, "ladrunoBranch")` is
+the probe for an older one.
+
 ### Recorders
 
 `recorder ladruno` (the HDF5 `.ladruno` recorder) and `recorder Monitor`
 (live SWMR telemetry). Every other recorder — including the plain text
 recorders that [`Results.from_recorders`](results.md) reads — works on any
 build.
+
+Material-level response tokens (`material.<token>`) are a fork-recorder
+feature: the fork splits them into `material <k> <token>` per Gauss point.
+The bare spelling records nothing, so `ops.recorder.Ladruno` / `MPCO`
+refuse it and name the prefixed form.
 
 ## Install extras
 

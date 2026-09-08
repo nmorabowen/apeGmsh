@@ -29,9 +29,9 @@ footing/collapse decks, and a new read-only material response exists that apeGms
 | change | where | emitter consequence |
 |---|---|---|
 | Two-surface return map: both residual rows assembled in every active-set combination (`Jact` index-driven); the radial-return term of the consistent tangent divides by ‖η_trial‖, not the returned norm | `SRC/material/nD/UWmaterials/DruckerPrager.cpp` (vanilla, marked `// Ladruno ADR-95`) | **Results change.** Cone-only paths move by ≤ 1.3e-5 relative (the tangent denominator was wrong on the cone too — path converges to the same state faster: fork gate leg 1390 s → 181 s). Any path that reached I1 ≥ T is different, because before the fix it was not on the yield surface at all. |
-| New read-only material response `ladrunoBranch` → 8 floats `[branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1, detAmin]`; branch 0 elastic / 1 cone / 2 cutoff / 3 corner; `detAmin` = min over ~200 directions of det(n·C_ep·n)/(2G)³ | same file; forwarded by LadrunoBrick, LadrunoBrick20, BezierTet10, TenNodeTetrahedron through `eleResponse <e> material <gp> ladrunoBranch` | A per-Gauss-point census apeGmsh can read back (§3). Empty list on pre-#803 builds — doubles as a capability probe. |
+| New read-only material responses `ladrunoBranch` → 8 floats `[branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1, detAmin]`; branch 0 elastic / 1 cone / 2 cutoff / 3 corner; `detAmin` = min over ~200 directions of det(n·C_ep·n)/(2G)³ | same file; forwarded by LadrunoBrick, LadrunoBrick20, BezierTet10, TenNodeTetrahedron through `eleResponse <e> material <gp> ladrunoBranch` | A per-Gauss-point census apeGmsh can read back (§3). Empty list on pre-#803 builds — doubles as a capability probe. A second response, `ladrunoTangent` → 36 floats (responseID 96, the consistent tangent), ships on the same branch; the guide does not mention it. apeGmsh refuses its bare token too but names no columns for it. |
 | `tests/test_r3_prandtl_collapse_gate.py`: the associated-flow control now asserts the two flow rules give **distinct** answers (`ASSOC_MIN_SEPARATION = 0.20`); its old "associated must not plateau" premise was the defect | fork Zone-A slow tier | Only matters if an apeGmsh live gate copied that premise. None does today. |
-| Build stamp | `ops.ladrunoBuild()` | Post-fix builds: any hash at or after the merge of #803 into `ladruno`. Pre-fix installs keep failing quadratic DP decks exactly as before. |
+| Build stamp | `ops.ladrunoBuild()` | #803 merged into `ladruno` as **`61b3efa04`** (2026-09-08); that hash is the floor, recorded as `DruckerPrager`'s `DP_ADR95_MIN_FORK_BUILD`. Pre-fix installs keep failing quadratic DP decks exactly as before — our venv build `1652f945c` is one of them until the fork is rebuilt. |
 
 Not changed: parameter list, parsing, class tags, send/recv layout, `updateMaterialStage`
 semantics, the `theta` tension-softening parameter, hardening.
@@ -70,9 +70,26 @@ semantics, the `theta` tension-softening parameter, hardening.
    Any per-Gauss-point census (`ladrunoBranch`, tangent SVD) at every station multiplies the wall
    by ~5–8×; sample at stations, not at steps.
 
-## 3. Read-back: the `ladrunoBranch` census (ask, not yet done)
+## 3. Read-back: the `ladrunoBranch` census (recorder/file half ADOPTED)
 
-apeGmsh's `Results` layer has no token for this response yet. A useful, cheap addition:
+**Adoption status (apeGmsh, 2026-09-08).** The recorder/file half is done. `ladrunoBranch` and
+`ladrunoTangent` joined `_MATERIAL_ONLY_ELEM_TOKENS` (`opensees/recorder.py`), so a bare token is
+refused at construction naming `material.<token>` — the bare spelling records nothing on the fork.
+The reader (`results/readers/_ladruno_element_io.py`) names the eight `ladrunoBranch` columns by
+position — `dp_branch`, `dp_gamma_cone`, `dp_gamma_cutoff`, `dp_f1_trial`, `dp_f2_trial`,
+`dp_forced_accept`, `dp_i1`, `dp_det_a_min` — pinned to the fill site
+`DruckerPrager::getLadrunoBranch()` (`DruckerPrager.cpp:960-970`), because the fork returns a bare
+`MaterialResponse(this, 95, Vector(8))` with no ResponseType and the file therefore writes `C1..C8`.
+The 36-entry `ladrunoTangent` takes the documented unknown-bucket route rather than inventing names.
+
+**Not adopted.** The LIVE path. `Results` is a pure file/array reader with no ops handle, so the
+`Results.from_native(...).gauss_point_branch(...)` sketched below cannot exist as written; the only
+live seam is `DomainCapture`, whose per-material routing still hard-codes `catalog_token ==
+"strain"` (`opensees/_response_catalog.py::needs_per_material_strain`). Generalising that table is
+its own slice, and it needs a post-`61b3efa04` build to verify. The tension and corner censuses
+below are likewise not built.
+
+The original ask, for reference:
 
 ```python
 # raw, works today on a post-#803 build via the bridge

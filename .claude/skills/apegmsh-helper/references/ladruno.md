@@ -326,6 +326,59 @@ Thread count is env-only (`MKL_NUM_THREADS` / `OMP_NUM_THREADS` before
 process start). Optional `krylov=L` (CGS reuse, not with `"symmetric"`)
 and `stats=True`.
 
+## DruckerPrager on collapse decks (fork ADR-95)
+
+The vanilla UW `DruckerPrager` apeGmsh emits from `material/nd.py::DruckerPrager`
+has a dead branch in its two-surface return map: the tension-cutoff residual row
+is never assembled, so a Gauss point crossing the cutoff keeps an unreturned
+stress and a pathological consistent tangent (whose radial-return term also
+divides by the returned norm instead of ‖η_trial‖). On a Prandtl–Reissner
+strip-footing deck that kills **every quadratic element** — `LadrunoBrick20`,
+`TenNodeTetrahedron` and `BezierTet10` sit on the step floor at 30–77 % of the
+Prandtl load while the linear b-bar hex plateaus at the right answer, a false
+collapse rather than a mesh or material problem. Fork PR #803 (commit
+`31322a47a`) repaired it; it merged into `ladruno` as **`61b3efa04`** on
+2026-09-08, and that hash is the floor for everything below
+(`DP_ADR95_MIN_FORK_BUILD` in `material/nd.py`). A build older than it — the
+venv's `1652f945c` until the fork is rebuilt — still fails these decks.
+
+Quadratic solids then become usable on collapse decks. Post-fix on the fork's
+coarse strip (h0 = 1.0 m, two elements across B, s/B 0.15, q/q_exact):
+`LadrunoBrick -bbar` 1.085 — unchanged before and after, so the linear leg is no
+discriminator — `LadrunoBrick20 -formulation uri` 0.976 (the fork-only 20-node
+hex, `ops.element.LadrunoBrick20(…, formulation="std"|"uri")`, `uri` = the
+C3D20R analog), `BezierTet10 -bbar` 1.040, `BezierTet10` std 1.182,
+`TenNodeTetrahedron` 1.170. Prefer b-bar (exactly isochoric at ψ = 0, tightest
+plateau); standard-integration tets over-shoot (locking) and the
+reduced-integration H20 loses rank once all eight Gauss points yield — 9.5 %
+spurious volumetric increment in the collapse mechanism, ~1 000 failed Newton
+attempts per push. Coarse-mesh numbers, not converged values.
+
+Deck rules. A small, explicitly non-physical `sigmaY` — 0.2 kPa puts the cutoff
+at I1 = √(2/3)·σ_y/ρ ≈ 0.8 kPa — is a legitimate **apex regulariser** for
+weightless or lightly confined frictional decks; call it a regulariser, never
+cohesion (before the fix it was decorative). Bernstein-consistent loads stay
+mandatory on Bézier elements (ADR 0091, `basis="bernstein"`; the
+`WarnLoadBasisMismatch` guard at `build()` catches the common case).
+Non-associated DP tangents are unsymmetric — `UmfPack`/`Pardiso`/`Mumps`/
+`FullGeneral`, never `ProfileSPD`/`BandSPD` (see the PARDISO/MUMPS note above).
+Budget the push, not the element: `LadrunoBrick -bbar` 1 386 DOF 31 s (0.10 s per
+attempt); `LadrunoBrick20 -uri` 4 659 DOF 481 s, 40 % of it 1 051 failed attempts
+around the corner Gauss points (0.19 s); `BezierTet10` std / `-bbar` 7 749 DOF
+466 / 533 s with zero failed attempts; `TenNodeTetrahedron` 727 s (0.48 s).
+
+Any deck that reached the cutoff answers differently post-fix — it was wrong
+before; cone-only paths move ≤ 1.3e-5 relative but converge faster (a fork gate
+leg went 1390 s → 181 s). The branch also adds two read-only **material**
+responses: `ladrunoBranch` (8 floats — branch 0 elastic / 1 cone / 2 cutoff /
+3 corner, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1, detAmin) and
+`ladrunoTangent` (36 floats), forwarded by `LadrunoBrick`, `LadrunoBrick20`,
+`BezierTet10` and `TenNodeTetrahedron`. Record them the ADR 0105 way,
+`material.ladrunoBranch` — the bare token records nothing and the recorder
+refuses it — and read an empty reply as the capability probe for a pre-#803
+engine. A per-Gauss-point census at every station multiplies wall time ~5–8×:
+sample at stations, not steps. The live `DomainCapture` path is not adopted.
+
 ## LadrunoBrick (unified 8-node hex)
 
 Fork-only 8-node hexahedron (class tag **33002**, Gmsh hex8 / etype 5) that folds
