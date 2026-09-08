@@ -194,6 +194,7 @@ if TYPE_CHECKING:
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
+    from ._solver_stats import RunSolverStats
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -10310,7 +10311,7 @@ class apeSees:
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> None:
+    ) -> "RunSolverStats | None":
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
 
         When ``run=True`` the OpenSees subprocess output is **always**
@@ -10323,6 +10324,13 @@ class apeSees:
         raises ``RuntimeError`` carrying the log tail + path, never the
         whole buffer. ``verbose`` / ``log`` / ``progress`` are inert
         when ``run=False``.
+
+        Returns a :class:`~apeGmsh.opensees._solver_stats.RunSolverStats`
+        (ADR 0106 D1) when the deck declared ``Pardiso(stats=True)``
+        anywhere and the run finished — the per-stage capacity record
+        parsed out of the solver's own ``PARDISO stats:`` blocks.
+        ``None`` otherwise, which includes every deck that did not ask
+        for statistics and every ``run=False`` call.
 
         When ``analyze_steps`` is supplied, an ``analyze`` line is
         appended to the deck after every other primitive — wrapped in
@@ -10493,16 +10501,17 @@ class apeSees:
             _write_split_tcl(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
-            return
+            return None
 
         binary = _resolve_opensees_binary(bin, self._opensees)
-        stream_run(
+        return stream_run(
             [binary, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
             deck_path=path,
+            expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
 
     def modal_deck(
@@ -10937,7 +10946,7 @@ class apeSees:
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> None:
+    ) -> "RunSolverStats | None":
         """Emit an openseespy Python deck to ``path``; optionally run it.
 
         ``run=True`` streams the openseespy subprocess exactly like
@@ -10945,7 +10954,8 @@ class apeSees:
         override, else ``<path>.log``), console opt-in via ``verbose``,
         a live step counter from the ``progress`` markers, and a
         tail-only ``RuntimeError`` on a non-zero exit. ``verbose`` /
-        ``log`` / ``progress`` are inert when ``run=False``.
+        ``log`` / ``progress`` are inert when ``run=False``. The
+        ``RunSolverStats | None`` return is :meth:`tcl`'s (ADR 0106 D1).
 
         ``analyze_steps`` / ``analyze_dt`` semantics mirror :meth:`tcl`
         (Phase SSI-1).
@@ -10997,14 +11007,14 @@ class apeSees:
             _write_split_py(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
-            return
+            return None
 
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
         # counter depend on it).
         child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        stream_run(
+        return stream_run(
             [python_bin, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
@@ -11012,6 +11022,7 @@ class apeSees:
             header="openseespy",
             env=child_env,
             deck_path=path,
+            expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
 
     def run(self, *, wipe: bool = True) -> None:
@@ -13575,6 +13586,19 @@ def _stage_strategy_spec(stage: "StageRecord") -> StrategySpec | None:
         if isinstance(stage.algorithm, SolutionAlgorithm) else None
     )
     return stage.strategy.to_spec(base=base)
+
+
+def _deck_requested_solver_stats(emitter: object) -> bool:
+    """Did the deck just emitted through *emitter* ask for ``-stats``?
+
+    ADR 0106 D2/D4: "the same predicate answers D4's *was a block
+    expected?*". :meth:`apeSees.emit` already ran
+    :func:`deck_requests_solver_stats` over this deck's flat / staged
+    system declarations and stamped the answer on the emitter to gate
+    the ``APEGMSH_STAGE`` marker — reading it back is the same facts,
+    not a second resolution that could disagree with the bytes.
+    """
+    return bool(getattr(emitter, "_emit_stage_markers", False))
 
 
 # ---------------------------------------------------------------------------
