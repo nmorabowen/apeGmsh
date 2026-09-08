@@ -263,6 +263,15 @@ _CONTINUUM_SCALAR_TOKENS = {
 # generic pass-through: an unknown bucket must surface as a dropped
 # column (:class:`GaussColumnDroppedWarning`), not as a guessed
 # canonical.
+#
+# TIMs A12 — LadrunoSANISAND's IMPL-EX/state responses (fork PR #805 /
+# #820). Same by-position resolution, and the same reason it has to be:
+# older fork builds write ``C1..Cn`` instead of the named COMP_NAMES
+# below, so a label map would miss those builds entirely. Each response
+# is keyed once under its primary token and again under every fork
+# alias (``stateparameter``, ``yieldfunction``, ``substepsme``,
+# ``ladrunosubsteps``) since the recorder forwards whichever spelling
+# the deck used straight through to ``-E material.<token>``.
 _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     "pstress": "material_mean_stress",
     "j2stress": "material_j2_stress",
@@ -276,6 +285,24 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     "dp_cohesion": "dp_cohesion",
     "cappressure": "cap_pressure",
     "epsqpshear": "eps_qp_shear",
+    "psi": "state_parameter",
+    "stateparameter": "state_parameter",
+    "yielddistance": "yield_distance",
+    "yieldfunction": "yield_distance",
+    "implexerror": "implex_error",
+    "avgimplexerror": "avg_implex_error",
+    "substeps": ("substeps_me", "substeps_cap_hit"),
+    "substepsme": ("substeps_me", "substeps_cap_hit"),
+    "ladrunosubsteps": ("substeps_me", "substeps_cap_hit"),
+    "implexdetail": (
+        "implex_detail_total", "implex_detail_dev", "implex_detail_vol",
+        "implex_detail_clamp_fired", "implex_detail_clamp_count",
+        "implex_detail_f",
+    ),
+    "implexrefusals": (
+        "implex_refusals_total", "implex_refusals_sign_change",
+        "implex_refusals_control", "implex_refusals_companion",
+    ),
 }
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")

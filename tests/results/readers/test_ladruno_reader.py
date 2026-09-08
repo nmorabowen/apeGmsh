@@ -838,6 +838,57 @@ def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
         )
 
 
+def test_sanisand_buckets_reach_the_gauss_level_with_real_names(
+    tmp_path: Path,
+) -> None:
+    # TIMs A12 — the fork's own COMP_NAMES (PR #820).
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.psi": ("psi",),
+        "material.implexDetail": (
+            "implexDetail_total", "implexDetail_dev", "implexDetail_vol",
+            "implexDetail_clampFired", "implexDetail_clampCount",
+            "implexDetail_f",
+        ),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "state_parameter",
+            "implex_detail_total", "implex_detail_dev",
+            "implex_detail_vol", "implex_detail_clamp_fired",
+            "implex_detail_clamp_count", "implex_detail_f",
+        } <= comps
+        slab = r.read_gauss("stage_0", "state_parameter")
+        assert slab.values.shape == (2, 4)
+
+
+def test_sanisand_buckets_reach_the_gauss_level_with_generic_names(
+    tmp_path: Path,
+) -> None:
+    # Older fork builds write C1..Cn instead of the named COMP_NAMES —
+    # registering by token (positional) has to work on both.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.psi": ("C1",),
+        "material.implexDetail": tuple(f"C{i}" for i in range(1, 7)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "state_parameter",
+            "implex_detail_total", "implex_detail_dev",
+            "implex_detail_vol", "implex_detail_clamp_fired",
+            "implex_detail_clamp_count", "implex_detail_f",
+        } <= comps
+
+
 def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
     path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
     with LadrunoReader(path) as r:

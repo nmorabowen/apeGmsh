@@ -158,6 +158,63 @@ def test_unknown_material_bucket_is_none():
     assert material_bucket_canonicals("material.SomeNewIV") is None
 
 
+# ---------------------------------------------------------------------------
+# TIMs A12 — LadrunoSANISAND's IMPL-EX/state responses (fork PR #805/#820)
+# ---------------------------------------------------------------------------
+
+
+def test_sanisand_scalar_buckets_map():
+    assert material_bucket_canonicals("material.psi") == ("state_parameter",)
+    assert material_bucket_canonicals("material.yieldDistance") == (
+        "yield_distance",
+    )
+    assert material_bucket_canonicals("material.implexError") == (
+        "implex_error",
+    )
+    assert material_bucket_canonicals("material.avgImplexError") == (
+        "avg_implex_error",
+    )
+
+
+def test_sanisand_multi_slot_buckets_map():
+    assert material_bucket_canonicals("material.substeps") == (
+        "substeps_me", "substeps_cap_hit",
+    )
+    assert material_bucket_canonicals("material.implexDetail") == (
+        "implex_detail_total", "implex_detail_dev", "implex_detail_vol",
+        "implex_detail_clamp_fired", "implex_detail_clamp_count",
+        "implex_detail_f",
+    )
+    assert material_bucket_canonicals("material.implexRefusals") == (
+        "implex_refusals_total", "implex_refusals_sign_change",
+        "implex_refusals_control", "implex_refusals_companion",
+    )
+
+
+def test_sanisand_bucket_token_is_case_insensitive():
+    assert material_bucket_canonicals("MATERIAL.PSI") == ("state_parameter",)
+    assert material_bucket_canonicals(" material.implexdetail ") == (
+        "implex_detail_total", "implex_detail_dev", "implex_detail_vol",
+        "implex_detail_clamp_fired", "implex_detail_clamp_count",
+        "implex_detail_f",
+    )
+
+
+def test_sanisand_aliases_resolve_to_same_canonicals_as_primary():
+    assert material_bucket_canonicals(
+        "material.stateParameter"
+    ) == material_bucket_canonicals("material.psi")
+    assert material_bucket_canonicals(
+        "material.yieldFunction"
+    ) == material_bucket_canonicals("material.yieldDistance")
+    assert material_bucket_canonicals(
+        "material.substepsME"
+    ) == material_bucket_canonicals("material.substeps")
+    assert material_bucket_canonicals(
+        "material.ladrunoSubsteps"
+    ) == material_bucket_canonicals("material.substeps")
+
+
 def test_material_labels_are_not_in_the_label_map():
     # The whole point of keying by token. ``p`` is the section axial
     # force ``P`` under case-insensitive matching; the label map must not
