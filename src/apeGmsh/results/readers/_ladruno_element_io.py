@@ -343,6 +343,56 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
 
+# Runway A1 — the fork's REAL ``COMP_NAMES`` for the tokens above, exact
+# spelling, in slot order. ``_MATERIAL_BUCKET_TOKENS`` resolves by
+# POSITION on purpose (older builds write generic ``C1..Cn``), which
+# means a real-name build whose columns are reordered or renamed is
+# mislabelled in silence — a measured probe found exactly that for
+# ``material.substeps`` (file order ``substeps_capHit, substeps_me`` read
+# as ``substeps_me, substeps_capHit``) and for ``material.psi`` (labelled
+# ``yieldDistance``, read as ``state_parameter``). This table lets
+# :func:`_name_mismatch` catch the disagreement and warn instead of
+# mislabelling.
+#
+# Deliberately partial. Only tokens whose exact fork spelling is
+# documented are listed:
+# * the SANISAND tokens per TIMs A12 (fork PR #820) / the adoption guide;
+# * the ADR 0105 ASDPlasticMaterial3D tokens whose spelling
+#   ``internal_docs/guide_ladruno_asdplastic.md`` states explicitly —
+#   ``p``, ``J2stress``, ``epsVol``, ``J2strain``, ``BackStress_1..6``.
+# ``YieldStress`` / ``DP_cohesion`` / ``CapPressure`` / ``EpsQpShear``
+# are named in ``_MATERIAL_BUCKET_TOKENS`` but their exact COMP_NAMES
+# spelling is not documented anywhere, so they are left out here — no
+# expectation, no check, rather than a guessed one that could
+# false-positive. ``implexGuards`` / ``ladrunoBranch`` carry no
+# ResponseType at all (every build writes ``C1..Cn``), so there is no
+# real spelling to compare against and they are absent too.
+_MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
+    "pstress": ("p",),
+    "j2stress": ("J2stress",),
+    "volstrain": ("epsVol",),
+    "j2strain": ("J2strain",),
+    "backstress": tuple(f"BackStress_{i}" for i in range(1, 7)),
+    "psi": ("psi",),
+    "stateparameter": ("psi",),
+    "yielddistance": ("yieldDistance",),
+    "yieldfunction": ("yieldDistance",),
+    "implexerror": ("implexError",),
+    "avgimplexerror": ("avgImplexError",),
+    "substeps": ("substeps_me", "substeps_capHit"),
+    "substepsme": ("substeps_me", "substeps_capHit"),
+    "ladrunosubsteps": ("substeps_me", "substeps_capHit"),
+    "implexdetail": (
+        "implexDetail_total", "implexDetail_dev", "implexDetail_vol",
+        "implexDetail_clampFired", "implexDetail_clampCount",
+        "implexDetail_f",
+    ),
+    "implexrefusals": (
+        "implexRefusals_total", "implexRefusals_signChange",
+        "implexRefusals_control", "implexRefusals_companion",
+    ),
+}
+
 
 def material_bucket_canonicals(token: str) -> "Optional[tuple[str, ...]]":
     """Canonical name per column for a ``material.<Token>`` bucket, else None.
@@ -362,6 +412,20 @@ def material_bucket_canonicals(token: str) -> "Optional[tuple[str, ...]]":
     if entry is None:
         return None
     return (entry,) if isinstance(entry, str) else entry
+
+
+def material_bucket_expected_names(token: str) -> "Optional[tuple[str, ...]]":
+    """The fork's documented real ``COMP_NAMES`` for ``material.<Token>``.
+
+    ``None`` for a token not in :data:`_MATERIAL_BUCKET_EXPECTED_NAMES` —
+    most tokens in :func:`material_bucket_canonicals` have no
+    documented exact spelling to check against, and no expectation
+    means no mismatch check.
+    """
+    t = token.strip()
+    if not t.lower().startswith(_MATERIAL_PREFIX):
+        return None
+    return _MATERIAL_BUCKET_EXPECTED_NAMES.get(t[len(_MATERIAL_PREFIX):].lower())
 
 
 def continuum_canonical(token: str) -> Optional[str]:
@@ -665,6 +729,22 @@ class GaussColumnDroppedWarning(UserWarning):
     """
 
 
+class GaussColumnNameMismatchWarning(UserWarning):
+    """A material bucket's real COMP_NAMES disagree with the fork's order.
+
+    Raised (once per bucket, per read) by :func:`gauss_available` when a
+    ``material.<Token>`` bucket writes real (non-generic) column names
+    that are in :data:`_MATERIAL_BUCKET_EXPECTED_NAMES` but do not match
+    what the file actually wrote. :data:`_MATERIAL_BUCKET_TOKENS`
+    resolves those columns BY POSITION regardless — the table wins
+    whenever the slot count matches, so a reordered or renamed column
+    would otherwise be mislabelled in silence rather than merely
+    dropped. This warning does not change what gets returned (reordering
+    would be its own guess); it only says the file and the table
+    disagree.
+    """
+
+
 def _block_canonicals(token: str, b: _Block) -> list[Optional[str]]:
     """Canonical (or None) per column of ``b``, by token then by label.
 
@@ -680,9 +760,36 @@ def _block_canonicals(token: str, b: _Block) -> list[Optional[str]]:
     return [continuum_canonical(name) for name in b.comp_names]
 
 
+def _name_mismatch(
+    token: str, b: _Block,
+) -> "Optional[tuple[tuple[str, ...], tuple[str, ...]]]":
+    """``(actual, expected)`` if ``b``'s real COMP_NAMES disagree with the
+    fork's documented order for ``token`` — else ``None``.
+
+    Only checked when the by-position table applies (the block's width
+    matches the table, the same condition :func:`_block_canonicals` uses
+    to resolve by position) and the names are not the generic ``C1..Cn``
+    fallback: a generic bucket has nothing to compare, and a width
+    mismatch already falls back to the label map.
+    """
+    if not b.comp_names or all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
+        return None
+    canon = material_bucket_canonicals(token)
+    if canon is None or len(canon) != len(b.comp_names):
+        return None
+    expected = material_bucket_expected_names(token)
+    if expected is None or len(expected) != len(b.comp_names):
+        return None
+    actual = tuple(b.comp_names)
+    if actual == expected:
+        return None
+    return actual, expected
+
+
 def gauss_available(on_elements: "h5py.Group") -> set[str]:
     out: set[str] = set()
     dropped: dict[str, set[str]] = {}
+    mismatched: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     for token in on_elements:
         if is_fiber_token(token):
             continue
@@ -694,16 +801,21 @@ def gauss_available(on_elements: "h5py.Group") -> set[str]:
             blocks = resolve_generic_gauss_blocks(
                 blocks, token=token, bucket_key=key,
             )
+            bucket = f"{token}/{key}"
             for b in blocks:
                 # Element-level rows are not Gauss data. Fiber buckets are
                 # excluded by token before this loop.
                 if b.gauss_id < 0:
                     continue
+                if bucket not in mismatched:
+                    mm = _name_mismatch(token, b)
+                    if mm is not None:
+                        mismatched[bucket] = mm
                 for name, c in zip(b.comp_names, _block_canonicals(token, b)):
                     if c is not None:
                         out.add(c)
                     elif token.lower().startswith(_MATERIAL_PREFIX):
-                        dropped.setdefault(f"{token}/{key}", set()).add(name)
+                        dropped.setdefault(bucket, set()).add(name)
     for bucket, labels in dropped.items():
         warnings.warn(
             f"Gauss column(s) {sorted(labels)} of bucket {bucket!r} were "
@@ -714,6 +826,17 @@ def gauss_available(on_elements: "h5py.Group") -> set[str]:
             f"Add the bucket token to the .ladruno reader's material "
             f"bucket table if the quantity should be readable.",
             GaussColumnDroppedWarning,
+            stacklevel=2,
+        )
+    for bucket, (actual, expected) in mismatched.items():
+        warnings.warn(
+            f"Bucket {bucket!r} COMP_NAMES {list(actual)} disagree with "
+            f"the fork's documented order {list(expected)} for this "
+            f"material response. apeGmsh still resolves its columns by "
+            f"POSITION (the table's slot order), so a reordered or "
+            f"renamed file column is read under the WRONG canonical "
+            f"name. Element class {_class_name(bucket.split('/', 1)[-1])!r}.",
+            GaussColumnNameMismatchWarning,
             stacklevel=2,
         )
     return out

@@ -471,6 +471,58 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
+
+`_MATERIAL_BUCKET_TOKENS` resolves `.ladruno` material-level Gauss
+buckets BY POSITION on purpose (older fork builds write generic
+`C1..Cn`), which means a real-name build whose columns are reordered or
+renamed relative to the fork's documented order was mislabelled in
+SILENCE rather than merely dropped. A measured probe found exactly that:
+a `material.substeps` bucket whose file names read `substeps_capHit,
+substeps_me` is read as `substeps_me, substeps_cap_hit`.
+
+`_ladruno_element_io.py` gains a companion table,
+`_MATERIAL_BUCKET_EXPECTED_NAMES`, of the fork's documented real
+`COMP_NAMES` per token, exact spelling, in slot order — the SANISAND
+tokens (`psi`/`stateParameter`, `yieldDistance`/`yieldFunction`,
+`implexError`, `avgImplexError`, `substeps`/`substepsME`/
+`ladrunoSubsteps`, `implexDetail`, `implexRefusals`) and the ADR 0105
+ASDPlasticMaterial3D tokens whose exact spelling is stated in
+`internal_docs/guide_ladruno_asdplastic.md` (`PStress` -> `p`,
+`J2Stress` -> `J2stress`, `VolStrain` -> `epsVol`, `J2Strain` ->
+`J2strain`, `BackStress` -> `BackStress_1..6`). `YieldStress` /
+`DP_cohesion` / `CapPressure` / `EpsQpShear` are left out — their exact
+COMP_NAMES spelling is not documented anywhere, so there is no
+expectation to check. `implexGuards` / `ladrunoBranch` carry no
+ResponseType at all (every build writes `C1..Cn`), so there is nothing
+real to compare against either.
+
+`gauss_available` now also compares each non-generic bucket's real
+names against this table and raises one new `GaussColumnNameMismatchWarning`
+per bucket, per read, when they disagree — naming the bucket, the
+file's names and the expected ones. It does not change what gets
+read: the positional canonicals still win (reordering on a guess would
+be its own mislabelling), the warning is the heads-up that a build's
+column order needs checking against the fork source.
+
+Runway batch A also covers `implexGuards` (already registered by
+PR #1128 before this branch was cut — the 7-slot by-position map and
+the recorder guard were both already in `main`) and the MPCO twin of
+this table: the MPCO material-state reader
+(`_mpco_material_io.py`) was NOT extended to the SANISAND tokens.
+Unlike `damage`/`d+`/`d-` (an established OpenSees/ASDConcrete
+convention) or the `.ladruno` case above (spelling stated in the
+adoption guide), neither the MPCO primary group name nor the
+`META/COMPONENTS` symbol spelling for `psi` / `substeps` / `BackStress`
+under the MPCO recorder is documented anywhere in this repo or the
+fork guides — some of these responses (`implexGuards`, `ladrunoBranch`)
+carry no `ResponseType` at all, which the MPCO META-driven path has no
+generic-fallback machinery for. Guessing the group name or the
+per-symbol suffixes would risk exactly the silent mislabelling this
+table exists to catch, so it is left as a follow-up pending either a
+fork source read of the MPCO-side response tagging or a live MPCO
+recording to inspect.
+
 ### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
 
 S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of

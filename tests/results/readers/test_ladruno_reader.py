@@ -1034,6 +1034,94 @@ def test_material_bucket_labels_are_not_matched_as_labels(tmp_path: Path) -> Non
     assert "material_j2_stress" not in comps
 
 
+# =====================================================================
+# Real-name mismatch (runway A1)
+#
+# _MATERIAL_BUCKET_TOKENS resolves material-level Gauss buckets by
+# COLUMN POSITION, which means a real-name build whose columns are
+# reordered or renamed relative to the fork's documented order is
+# mislabelled in SILENCE rather than merely dropped -- a measured probe
+# found exactly that for material.substeps (file order
+# substeps_capHit, substeps_me read as substeps_me, substeps_capHit).
+# _MATERIAL_BUCKET_EXPECTED_NAMES lets the reader compare and warn.
+# =====================================================================
+
+
+def test_swapped_real_names_warn_once_and_keep_positional_canonicals(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("substeps_capHit", "substeps_me"),
+    })
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnNameMismatchWarning) as rec:
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert len(rec) == 1
+        msg = str(rec[0].message)
+        assert "substeps_capHit" in msg and "substeps_me" in msg
+        assert "material.substeps" in msg
+        # The table still wins -- both positional canonicals are present,
+        # the warning is a heads-up, not a fix.
+        assert {"substeps_me", "substeps_cap_hit"} <= comps
+        slab = r.read_gauss("stage_0", "substeps_me")
+        assert slab.values.shape == (2, 4)
+
+
+def test_correct_real_names_do_not_warn_mismatch(tmp_path: Path) -> None:
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("substeps_me", "substeps_capHit"),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_generic_names_never_warn_mismatch(tmp_path: Path) -> None:
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("C1", "C2"),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_token_without_documented_names_never_warns_mismatch(
+    tmp_path: Path,
+) -> None:
+    # YieldStress is in the positional table but its exact COMP_NAMES
+    # spelling is not documented anywhere -- no expectation, no check.
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {"material.YieldStress": ("Fy",)})
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "yield_stress" in comps
+
+
 def test_section_axial_force_is_not_a_gauss_mean_stress() -> None:
     # The collision the token key exists to avoid: a section.force station
     # labels its axial force ``P``, and canonicalisation is
