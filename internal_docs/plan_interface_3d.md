@@ -55,9 +55,14 @@ as it exists in 2D, on a 3D surface master.
 
 ## Slices once F1 lands (each PR-able, in the ADR 0093 register)
 
-- S1 — kernel: 3D per-facet frames + surface tributary in
-  `_kernel/resolvers/_interface_resolver.py`; unit-tested on a flat patch,
-  a box corner, and a reentrant fold (fail loud).
+- S1 — kernel: 3D per-facet frames + surface tributary. **Done
+  2026-09-07** — `surface_frames()` in
+  `src/apeGmsh/_kernel/geometry/_surface_frames.py` (the geometry
+  package, not the resolver: that is where the 2D `edge_frames` was
+  lifted to for the same reuse reason), tested in
+  `tests/_kernel/geometry/test_surface_frames.py` on the flat patch, the
+  box corner, the reentrant fold, mixed tri3/quad4 and a flipped
+  winding. The three gates below still fire — lifting them is S2.
 - S2 — composite: lift the three gates above for dim-2 masters; the D4
   phantom bridge parameterised by the fork's accepted ndf pairs — `(3,4)`,
   `(4,3)`, `(4,4)`, `(3,6)`, `(6,4)` on builds ≥ `a240b9183`; refuse below it.

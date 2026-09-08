@@ -491,6 +491,57 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
     rules); `skills/apegmsh/` re-sync. *(prose at top tier per the docs
     voice rule; mechanics light)*
 
+### 3D surface masters (TIMs A10, opened 2026-09-07)
+
+D2 deferred the dim-2 master, and the deferral held until the fork
+relaxed `ZeroLength::setDomain` (fork #808 / ADR 96, minimum build
+`a240b9183`): a 3D pair with both ndf ≥ 3 is now accepted and acts on
+DOFs 1–3 only, so the mixed ndf-3 skin against ndf-4 u–p soil the
+requester actually has is constructible. The scope, the surviving
+refusal gates and the four slices are in
+`internal_docs/plan_interface_3d.md`; they extend this register rather
+than open a second ADR, because every decision they touch is one of
+D1–D4.
+
+12. **S1 (3D) — kernel: per-node surface frames + tributary areas.**
+    `_kernel/geometry/_surface_frames.py`, the 3D sibling of
+    `_boundary_chain.py`: `surface_frames()` walks a dim-2 master's tri3
+    / quad4 facets, signs each facet normal against its owning solid's
+    centroid (the D2 sign-fix, one dimension up), averages them
+    uniformly per node — the literal sibling of the 2D `_node_normals`,
+    and the only weight under which a cube corner comes out at
+    `(1,1,1)/√3` — and accumulates `A_trib` from the same equal-share
+    fan-triangulated facet areas `distributing_coupling(weighting=
+    "area")` already uses (D3, no `thickness` in 3D). Two in-plane
+    tangents complete a right-handed `(n, t1, t2)`; `t1` is the global
+    axis least aligned with `n`, projected and normalised, ties to the
+    lowest index, so the frame is a pure function of `n` (ADR 0027).
+    The one rule with no 2D counterpart is the **reentrant fold
+    refusal**: `dot(n_i, n_j)` cannot tell a 90° convex corner from a
+    270° reentrant one — both are exactly zero — so the sense is read
+    from the facet centroids and the refusal is stated on the interior
+    dihedral, past 45° of reentrancy. Quadratic facets (tri6 / quad8 /
+    quad9) are refused **by name**: their mid-side nodes need a
+    shape-function-weighted split, and the linear rule would quietly
+    mis-weight every spring. *(kernel only — the three gates still
+    refuse a 3D model, which is S2's lift; tests
+    `tests/_kernel/geometry/test_surface_frames.py`, mutation-checked
+    on the sign-fix and on both directions of the fold constant.)*
+    *Landed 2026-09-07.*
+13. **S2 (3D) — composite**: lift the declaration and resolve gates for
+    dim-2 masters; the D4 phantom bridge parameterised by the fork's
+    accepted ndf pairs, refused below `a240b9183`. `InterfaceRecord`
+    widens here: `orient` carries six floats today (one normal, one
+    tangent) and 3D needs the second tangent, so the field becomes a
+    9-tuple (or `(3, 3)`) with an h5 payload bump behind it.
+14. **S3 (3D) — emit**: per-pair `-orient` from the widened record, the
+    Coulomb law as the 2D material bundle plus the second tangent,
+    recorder channels per pair as in 2D.
+15. **S4 (3D) — verification**: the 2D convergence case rotated into 3D
+    (one element deep must reproduce the 2D answer), then a u–p soil
+    showing the pore pressure is untouched. The `tie` comparison S10
+    left owed becomes constructible here.
+
 ## Alternatives rejected
 
 - **The `_DISPATCH` MP-constraint lane.** The verb emits elements, not MP
