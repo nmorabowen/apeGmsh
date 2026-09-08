@@ -101,6 +101,18 @@ class OpenSeesCapabilities:
     """
 
 
+#: Minimum fork build (``ops.ladrunoBuild()``) for the 2026-09-07 TIMs batch
+#: (fork PRs #805, #808, #810, #811, #812, #814, #820, #821 — the fork's
+#: ``ladruno_apegmsh_adoption_guide_2026-09-07.md``).  Documented, not
+#: enforced (same as :data:`~apeGmsh.opensees.material.nd.ASDP_MIN_FORK_BUILD`
+#: — a bare hash cannot prove ancestry).  An older fork: ``zeroLength`` /
+#: contact refuse an ndf-4 u-p node in 3D (ADR 96), ``LadrunoSANISAND``
+#: answers no ``psi`` / ``yieldDistance`` and writes ``C1..Cn`` for its
+#: IMPL-EX responses, and ``system Pardiso -stats`` prints the old
+#: once-per-pattern lines instead of the per-factorisation block.
+TIMS_FORK_BATCH_MIN_BUILD = "a240b9183"
+
+
 def resolve_opensees_binary(
     explicit: str | None, target: OpenSeesTarget | None
 ) -> str:

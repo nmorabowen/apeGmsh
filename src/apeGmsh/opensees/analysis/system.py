@@ -235,8 +235,13 @@ class Pardiso(LinearSystem):
         lands on (fork recipe trap 5). Keep it off when the deliverable
         is a post-peak path, not just the peak.
     stats
-        Emit ``-stats``: dump PARDISO factor nnz and peak memory once per
-        sparsity pattern. The only way to see whether a model fits.
+        Emit ``-stats``: after **every numeric factorisation** (phase 22,
+        refactorisations included) the fork prints a MUMPS-shaped block on
+        stderr — ``PARDISO stats: n= nnz(A)= matrixType= threads=`` then
+        ``factor entries iparm(18)``, ``peak memory KB iparm(15)``, ``perm
+        memory KB iparm(16)``, ``fact memory KB iparm(17)``, ``factor
+        Mflops iparm(19)``. The only way to see whether a model fits. Fork
+        builds before ``a240b9183`` print the old once-per-pattern lines.
 
     .. warning::
         **Threaded PARDISO is not byte-reproducible run-to-run** (fork
