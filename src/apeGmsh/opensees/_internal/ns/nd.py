@@ -9,7 +9,7 @@ bridge so a tag is allocated.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from ...material.nd import (
     ASDConcrete3D,
@@ -291,6 +291,9 @@ class _NDMaterialNS(_BridgeNamespace):
         p_min: float | None = None,
         honor_tol_r: bool = False,
         max_substeps: int = 0,
+        implex: bool = False,
+        implex_control: tuple[float, float] | None = None,
+        implex_factor: Literal["fixed", "control", "controlIter"] | None = None,
         name: str | None = None,
     ) -> LadrunoSANISAND:
         """Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material.
@@ -309,6 +312,12 @@ class _NDMaterialNS(_BridgeNamespace):
         A deck otherwise migrates by swapping the method.  See the class
         for the deck rules — confine hydrostatically before flipping to
         stage 1, and never shear during the elastic stage.
+
+        ``implex`` / ``implex_control`` / ``implex_factor`` are the
+        IMPL-EX seam (ADR 92 P2-9).  ``implex_factor=None`` omits the
+        token, so the fork's own ``fixed`` default applies and the deck
+        stays byte-identical to one built before the field existed; see
+        the class for why ``control`` is measured-REFUTED.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -342,6 +351,9 @@ class _NDMaterialNS(_BridgeNamespace):
                 p_min=p_min,
                 honor_tol_r=honor_tol_r,
                 max_substeps=max_substeps,
+                implex=implex,
+                implex_control=implex_control,
+                implex_factor=implex_factor,
             ),
             name=name,
         )
