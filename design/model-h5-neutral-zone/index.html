@@ -4002,7 +4002,7 @@ neutral zone; ignore what else is in the file.</p>
 <h2 id="version-rule">Version rule<a class="headerlink" href="#version-rule" title="Permanent link">&para;</a></h2>
 <p><strong>Read this before reading any data.</strong> Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.</p>
-<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.31.0"</code>, stored as
+<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.32.0"</code>, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.</p>
 <table>
@@ -4032,7 +4032,7 @@ independent version; they do not share a number.</p>
 </tbody>
 </table>
 <p>The neutral zone is gated by <strong><code>neutral_schema_version</code> alone</strong>. At the
-time of writing the writer stamps <code>2.31.0</code>.</p>
+time of writing the writer stamps <code>2.32.0</code>.</p>
 <p><code>schema_version</code> is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
 composer may overwrite it. <strong>Do not branch on it.</strong> Use it only as a
