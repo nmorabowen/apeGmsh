@@ -892,7 +892,11 @@ class TclEmitter:
         # algorithm) and restores rung 0 after a rescue; exhaustion
         # aborts with the same banner naming the ladder.
         n = int(steps)
-        where = f" of stage '{label}'".replace('"', "'") if label else ""
+        # ADR 0106 D2's stage_marker_name closes the same quoting hole
+        # here: a raw label could carry ``$`` / ``\`` / ``{`` / ``}`` /
+        # a newline into the ``error "..."`` banner below (the old
+        # ``"`` -> ``'`` swap alone left those open).
+        where = f" of stage '{stage_marker_name(label)}'" if label else ""
         call = "analyze 1" if dt is None else _join("analyze", 1, dt)
         if strategy is None:
             self._lines.append(
@@ -923,7 +927,7 @@ class TclEmitter:
         rungs_literal = "{" + " ".join(
             "{" + _join(*rung) + "}" for rung in strategy.rungs
         ) + "}"
-        sname = strategy.name.replace('"', "'").replace("[", "(").replace("]", ")")
+        sname = stage_marker_name(strategy.name)
         self._lines.append(f"set _apesees_rungs {rungs_literal}")
         self._lines.append(
             f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
