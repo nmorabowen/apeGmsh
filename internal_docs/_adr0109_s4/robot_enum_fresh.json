@@ -1,0 +1,116 @@
+[
+  {
+    "case": 31,
+    "sequence": [
+      3
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 3,
+        "read": 1,
+        "put_error": null
+      }
+    ]
+  },
+  {
+    "case": 32,
+    "sequence": [
+      4
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 4,
+        "read": 1,
+        "put_error": null
+      }
+    ]
+  },
+  {
+    "case": 33,
+    "sequence": [
+      2,
+      3
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 2,
+        "read": 2,
+        "put_error": null
+      },
+      {
+        "set": 3,
+        "read": 2,
+        "put_error": null
+      }
+    ]
+  },
+  {
+    "case": 34,
+    "sequence": [
+      2,
+      1
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 2,
+        "read": 2,
+        "put_error": null
+      },
+      {
+        "set": 1,
+        "read": 1,
+        "put_error": null
+      }
+    ]
+  },
+  {
+    "case": 35,
+    "sequence": [
+      0
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 0,
+        "read": 1,
+        "put_error": null
+      }
+    ]
+  },
+  {
+    "case": 36,
+    "sequence": [
+      2,
+      0
+    ],
+    "steps": [
+      {
+        "initial_default": 1
+      },
+      {
+        "set": 2,
+        "read": 2,
+        "put_error": null
+      },
+      {
+        "set": 0,
+        "read": 2,
+        "put_error": null
+      }
+    ]
+  }
+]
