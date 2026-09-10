@@ -625,3 +625,157 @@ def test_sweep_result_dataclasses_derive_magnitude_and_phase() -> None:
     rr = RandomResponseResult(rms=0.5)
     assert rr.rms == 0.5
     assert rr.nu0 is None and rr.peak is None
+
+
+# ---------------------------------------------------------------------------
+# apeSees.footfall_walking — bridge-side validation (ADR 0109 S2).
+#
+# Every refusal below fires BEFORE the eigen solve: a typo in
+# ``occupancy`` or a missing damping channel must not cost a modal
+# analysis first.
+# ---------------------------------------------------------------------------
+
+
+def _footfall_kwargs(**overrides: object) -> dict:
+    kwargs: dict = dict(
+        num_modes=2, body_weight=747.0, g=9.81, response_nodes=2,
+        dof=1, damp=0.03,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_footfall_rejects_zero_num_modes() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="num_modes must be >= 1"):
+        ops.footfall_walking(**_footfall_kwargs(num_modes=0))
+
+
+def test_footfall_rejects_nonpositive_body_weight() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="body_weight"):
+        ops.footfall_walking(**_footfall_kwargs(body_weight=0.0))
+
+
+def test_footfall_rejects_nonpositive_g() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="g is gravitational acceleration"):
+        ops.footfall_walking(**_footfall_kwargs(g=-9.81))
+
+
+def test_footfall_rejects_empty_response_nodes() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="response_nodes must carry"):
+        ops.footfall_walking(**_footfall_kwargs(response_nodes=[]))
+
+
+def test_footfall_rejects_empty_excitation_nodes() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="excitation_nodes must carry"):
+        ops.footfall_walking(
+            **_footfall_kwargs(excitation="full", excitation_nodes=[]),
+        )
+
+
+def test_footfall_rejects_unknown_excitation() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="excitation must be one of"):
+        ops.footfall_walking(**_footfall_kwargs(excitation="diagonal"))
+
+
+def test_footfall_rejects_excitation_nodes_under_self() -> None:
+    """``self`` IS the diagonal — a separate walker set is a contradiction,
+    not a silently ignored argument."""
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="excitation='self'"):
+        ops.footfall_walking(**_footfall_kwargs(excitation_nodes=[2]))
+
+
+def test_footfall_rejects_unknown_limit_kind() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="limit must be one of"):
+        ops.footfall_walking(**_footfall_kwargs(limit="iso"))
+
+
+def test_footfall_rejects_unknown_occupancy() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="unknown occupancy"):
+        ops.footfall_walking(**_footfall_kwargs(occupancy="hospital"))
+
+
+def test_footfall_rejects_zero_dof() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="dof is 1-based"):
+        ops.footfall_walking(**_footfall_kwargs(dof=0))
+
+
+def test_footfall_rejects_f_max_above_table_7_1() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match=r"f_max must be in \(0, 20\]"):
+        ops.footfall_walking(**_footfall_kwargs(f_max=25.0))
+
+
+def test_footfall_rejects_a_missing_damping_channel() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="exactly one"):
+        ops.footfall_walking(**_footfall_kwargs(damp=None))
+
+
+def test_footfall_rejects_two_damping_channels() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="exactly one"):
+        ops.footfall_walking(**_footfall_kwargs(rayleigh=(0.1, 0.0)))
+
+
+def test_footfall_result_frf_and_mode_table_reject_a_foreign_node() -> None:
+    """The pure-Python accessors, without a live solve."""
+    from apeGmsh.opensees.analysis.footfall_frf import FRFMatrix
+    from apeGmsh.opensees.analysis.footfall_result import (
+        FootfallModes,
+        FootfallResult,
+    )
+
+    freq = np.array([10.0, 11.0])
+    matrix = FRFMatrix(
+        freq=freq,
+        exc_nodes=(2,),
+        resp_nodes=(2,),
+        dof=1,
+        normalization="asserted(1 of 1)",
+        modal_freq=np.array([10.0]),
+        modal_damping=np.array([0.03]),
+        _phi_exc=np.array([[1.0]]),
+        _phi_resp=np.array([[1.0]]),
+        _denom=np.ones((2, 1), dtype=np.complex128),
+    )
+    result = FootfallResult(
+        nodes=(2,),
+        f_dom=np.array([10.0]),
+        frf_max=np.array([1.0]),
+        a_p_lf=np.array([np.nan]),
+        a_espa_hf=np.array([0.001]),
+        a_p=np.array([0.001]),
+        regime=np.array(["high"], dtype=object),
+        exc_node=np.array([2]),
+        limit=np.array([0.00625]),
+        ratio=np.array([0.16]),
+        occupancy="office",
+        limit_kind="curve",
+        g=9.81,
+        body_weight=747.0,
+        normalization="asserted(1 of 1)",
+        freq=freq,
+        modes=FootfallModes(f_n=np.array([10.0]), beta=np.array([0.03])),
+        dof=1,
+        dt=0.005,
+        f_max=20.0,
+        _matrix=matrix,
+        _phi={2: np.array([1.0])},
+        _f_dom_hf=np.array([np.nan]),
+    )
+    with pytest.raises(KeyError, match="not a response node"):
+        result.frf(7)
+    # The high-frequency branch never evaluated here, so Eq 7-5 has no
+    # resonant harmonic to build a mode table from.
+    with pytest.raises(ValueError, match="high-frequency branch"):
+        result.mode_table(2)

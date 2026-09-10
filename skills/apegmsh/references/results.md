@@ -263,6 +263,19 @@ r.stage("dynamic").nodes.definitions             # carried across derivation
 # verified: tests/test_custom_scalar_expressions.py
 ```
 
+### Footfall vibration map — `FootfallResult.to_results` (ADR 0109)
+
+`apeSees.footfall_walking(num_modes=..., body_weight=..., g=..., response_nodes=...)`
+(both `body_weight` and `g` are required, model units — no defaults)
+runs a walking-vibration check per AISC Design Guide 11 2nd ed. Chapter 7
+and returns a `FootfallResult`. `result.to_results(fem, path)` writes it as
+an ordinary one-frame native results file (`footfall_ap`, `footfall_ratio`,
+`footfall_fdom`, `NaN` off the response nodes), so it binds through
+`Results.from_fem(fem, path, kind="native")` like any other bare-fem run
+and the ratio map renders with the plain nodal-scalar viewer — not a
+recorder, not a `RESPONSE_CATALOG` entry. How-to:
+<https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>.
+
 ## 5. Plots and the desktop viewer
 
 ### Static matplotlib (`[plot]` extra)

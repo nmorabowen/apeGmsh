@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-08T06:18:26Z",
+  "generated": "2026-09-10T15:53:56Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3049,6 +3049,12 @@
       "signature": "fix(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, dofs: 'tuple[int, ...]') -> 'None'",
       "skill": "references/opensees-bridge.md",
       "doc": "Apply homogeneous SP constraints (``fix``)."
+    },
+    "ops.footfall_walking": {
+      "symbol": "ops.footfall_walking",
+      "signature": "footfall_walking(*, num_modes: 'int', body_weight: 'float', g: 'float', response_nodes: \"'int | Node | Sequence[int | Node]'\", excitation: 'str' = 'self', excitation_nodes: \"'int | Node | Sequence[int | Node] | None'\" = None, dof: 'int' = 3, occupancy: 'str' = 'office', limit: 'str' = 'curve', damp: 'float | None' = None, modal_damp: 'Sequence[float] | None' = None, rayleigh: 'tuple[float, float] | None' = None, f_max: 'float' = 20.0, n_extra: 'int' = 30, dt: 'float' = 0.005, solver: 'str' = '-genBandArpack') -> \"'FootfallResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Evaluate walking footfall vibration on a live modal basis."
     },
     "ops.frequency_response": {
       "symbol": "ops.frequency_response",

@@ -202,6 +202,7 @@ if TYPE_CHECKING:
 
     from .analysis.complex_eigen import ComplexEigenResult
     from .analysis.eigen import EigenResult
+    from .analysis.footfall_result import FootfallResult
     from .analysis.modal import (
         FrequencyResponseResult,
         ModalHistoryResult,
@@ -9306,6 +9307,379 @@ class apeSees:
             properties=properties,
             _live=live_emitter,
         )
+
+    def footfall_walking(
+        self,
+        *,
+        num_modes: int,
+        body_weight: float,
+        g: float,
+        response_nodes: "int | Node | Sequence[int | Node]",
+        excitation: str = "self",
+        excitation_nodes: "int | Node | Sequence[int | Node] | None" = None,
+        dof: int = 3,
+        occupancy: str = "office",
+        limit: str = "curve",
+        damp: float | None = None,
+        modal_damp: Sequence[float] | None = None,
+        rayleigh: tuple[float, float] | None = None,
+        f_max: float = 20.0,
+        n_extra: int = 30,
+        dt: float = 0.005,
+        solver: str = "-genBandArpack",
+    ) -> "FootfallResult":
+        """Evaluate walking footfall vibration on a live modal basis.
+
+        AISC Design Guide 11, 2nd ed., §7.4.1, as ADR 0109 lays it out: one
+        ``eigen`` + ``modalProperties`` pair through :meth:`modal_properties`,
+        the modal acceleration FRF ``A_ij(Ω) = −Ω² H_ij(Ω)`` summed in numpy
+        over the D4 sweep grid, and each response node checked against
+        **both** Design Guide branches — Eq 7-1 where the FRF peaks below
+        9 Hz (a low-frequency floor, resonant build-up) and Eq 7-4…7-6 where
+        it peaks in 9-``f_max`` Hz (a high-frequency floor, footstep impulses
+        summed over every mode with ``f_n <= f_max``). The larger governs,
+        and the result records which branch it was.
+
+        Runs on **stock openseespy** — ``eigen``, ``modalProperties`` and
+        ``nodeEigenvector`` are all upstream; the fork is needed only for the
+        band solve the warning below points at.
+
+        **Units are yours.** ``body_weight`` (``Q``, model force units) and
+        ``g`` (model acceleration units) are required and have no defaults —
+        apeGmsh cannot know whether the model is in N·m or kip·in, and a
+        silently wrong ``g`` is a factor of 386 in the answer. ``Q = 168 lb
+        ≈ 747 N`` is the Guide's recommended walker weight. Every
+        acceleration on the result is a **fraction of g**.
+
+        **Where to put the nodes.** The Guide walks the walker along the
+        mid-length of an unobstructed path and seats the occupant at the
+        maximum mode-shape ordinate; both at mid-bay is the conservative
+        default. ``excitation="self"`` checks the diagonal ``(j, j)`` — the
+        walker standing where the occupant sits. ``excitation="full"``
+        checks every ``(i, j)`` pair and reports, per response node, the
+        excitation node that produced the largest ``a_p``.
+
+        **The eigenvector scale is asserted, not assumed** (ADR 0109 D2): the
+        modal sum takes ``m̃_a = 1``, and ``partiMass_C / partiFactor_C²``
+        must be 1 for every checkable mode or the evaluation refuses. The
+        provenance lands on :attr:`FootfallResult.normalization`.
+
+        Parameters
+        ----------
+        num_modes
+            Modes to extract. The Eq 7-5 sum wants every mode with
+            ``f_n <= f_max``; a basis that stops short of ``f_max`` warns.
+        body_weight
+            Walker weight ``Q`` in model force units. Must be ``> 0``.
+        g
+            Gravitational acceleration in model units. Must be ``> 0``.
+        response_nodes
+            Occupant node(s) — a tag, a ``Node``, or a sequence of either.
+        excitation
+            ``"self"`` (the diagonal only) or ``"full"`` (every pair).
+        excitation_nodes
+            Walker node(s) for ``excitation="full"``; defaults to
+            ``response_nodes``. Refused under ``"self"``, where the
+            excitation set IS the response set.
+        dof
+            1-based DOF the FRF and the mode shapes are read at — the
+            vertical translation, 3 on a 3-D floor.
+        occupancy
+            Tolerance family: ``"office"`` / ``"residence"`` / ``"church"`` /
+            ``"school"`` (0.5 %g), ``"shopping"`` / ``"dining"`` /
+            ``"indoor_bridge"`` (1.5 %g), ``"outdoor_bridge"`` (5 %g).
+        limit
+            ``"curve"`` (Fig 2-1 — the flat value scaled by the ISO 2631-2
+            base curve) or ``"table"`` (the flat Table 4-1 value).
+        damp, modal_damp, rayleigh
+            Exactly one ADR 0075 damping channel (ADR 0109 D6): a uniform
+            ratio (Table 4-2 is a sum of component ratios), a per-mode list
+            in absolute mode order, or ``(a0, a1)`` converted per mode as
+            ``ξ_a = a0/(2ω_a) + a1·ω_a/2``.
+        f_max
+            Upper band edge in Hz — also the Eq 7-5 basis cut. Table 7-1's
+            resonant harmonics stop at 20 Hz, so ``0 < f_max <= 20``.
+        n_extra
+            Linearly spaced sweep points on top of the modal frequencies and
+            their ±5 % clusters (ADR 0109 D4).
+        dt
+            Sampling step of the Eq 7-5 acceleration history, s.
+        solver
+            Eigen-solver flag, passed through verbatim (see :meth:`eigen`).
+
+        Returns
+        -------
+        FootfallResult
+            One row per response node — see
+            :class:`~apeGmsh.opensees.analysis.footfall_result.FootfallResult`.
+
+        Warns
+        -----
+        UserWarning
+            When the highest extracted mode is below ``f_max``: the Eq 7-5
+            impulse sum is then missing modes it should carry. Raise
+            ``num_modes``, or on the fork use ``eigen_feast`` over the band.
+
+        Raises
+        ------
+        ValueError
+            If ``num_modes < 1``, ``body_weight <= 0``, ``g <= 0``,
+            ``dof < 1``, a node set is empty, ``excitation`` is not
+            ``"self"`` / ``"full"``, ``limit`` is not ``"curve"`` /
+            ``"table"``, ``occupancy`` is unknown, ``f_max`` is outside
+            ``(0, 20]``, the damping channel is not exactly one, or the
+            eigenvectors are not mass-normalised.
+        NotImplementedError
+            If the model has any registered stages.
+        """
+        # Local imports — keep numpy + the kernel out of bridge import
+        # time for Tcl/Py/H5-only users.
+        import warnings as _warnings
+
+        import numpy as np
+
+        from .analysis.footfall import (
+            dominant_frequency,
+            tolerance_limit,
+            walking_high_frequency,
+            walking_low_frequency,
+        )
+        from .analysis.footfall_frf import frf_matrix, grid_for
+        from .analysis.footfall_result import FootfallModes, FootfallResult
+        from .analysis.modal import _damping_channel_args
+
+        context = "apeSees.footfall_walking"
+        self._modal_prereqs_and_guards(num_modes, context=context)
+        if body_weight <= 0.0:
+            raise ValueError(
+                f"{context}: body_weight is the walker's weight Q in model "
+                f"force units and must be > 0, got {body_weight}."
+            )
+        if g <= 0.0:
+            raise ValueError(
+                f"{context}: g is gravitational acceleration in model units "
+                f"and must be > 0, got {g} (386.1 in/s^2, 9.81 m/s^2)."
+            )
+        if dof < 1:
+            raise ValueError(f"{context}: dof is 1-based, got {dof}.")
+        excitations = ("self", "full")
+        if excitation not in excitations:
+            raise ValueError(
+                f"{context}: excitation must be one of {excitations}, got "
+                f"{excitation!r}."
+            )
+        limits = ("curve", "table")
+        if limit not in limits:
+            raise ValueError(
+                f"{context}: limit must be one of {limits}, got {limit!r}."
+            )
+        if not (0.0 < f_max <= 20.0):
+            raise ValueError(
+                f"{context}: f_max must be in (0, 20] Hz — Table 7-1's "
+                f"resonant harmonics stop at 20 Hz — got {f_max}."
+            )
+        # Probe the occupancy/kind pair now rather than after the solve.
+        tolerance_limit(occupancy, 8.0, kind=limit)  # type: ignore[arg-type]
+        # The same exactly-one-of rule the FRF matrix applies (ADR 0075),
+        # run up front so a bad channel does not cost an eigen solve.
+        _damping_channel_args(
+            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
+            context=context,
+        )
+
+        resp_tags = self._footfall_tags(
+            response_nodes, "response_nodes", context,
+        )
+        if excitation == "self":
+            if excitation_nodes is not None:
+                raise ValueError(
+                    f"{context}: excitation='self' evaluates the diagonal "
+                    "(j, j), so the excitation set IS response_nodes — pass "
+                    "excitation='full' to drive a different node set."
+                )
+            exc_tags = resp_tags
+        elif excitation_nodes is None:
+            exc_tags = resp_tags
+        else:
+            exc_tags = self._footfall_tags(
+                excitation_nodes, "excitation_nodes", context,
+            )
+
+        props = self.modal_properties(num_modes, solver=solver)
+        modal_f = np.asarray(props.freq, dtype=np.float64)
+        if float(np.max(modal_f)) < f_max:
+            _warnings.warn(
+                f"{context}: the highest extracted mode is "
+                f"{float(np.max(modal_f)):.3f} Hz, below f_max={f_max} Hz — "
+                "the Eq 7-5 impulse sum is missing modes it should carry. "
+                "Raise num_modes, or on the fork use "
+                f"eigen_feast(0.0, {f_max + 2.0}) to get the band exactly.",
+                UserWarning,
+                stacklevel=2,
+            )
+        f_min = max(float(np.min(modal_f)) - 1.0, 0.1)
+        freq = grid_for(props, f_min, f_max, n_extra)
+        matrix = frf_matrix(
+            props, exc_nodes=exc_tags, resp_nodes=resp_tags, dof=dof,
+            freq=freq, damp=damp, modal_damp=modal_damp, rayleigh=rayleigh,
+            unorm=False,
+        )
+        # Read the mode-shape columns while this domain is still the live
+        # one — everything after is pure numpy (the ADR 0075 staleness
+        # contract: a later eigen/sweep call wipes what ``props`` reads).
+        n_modes = int(matrix.modal_freq.size)
+        phi = {
+            tag: np.asarray(
+                [
+                    float(props.mode_shape(tag, mode + 1)[dof - 1])
+                    for mode in range(n_modes)
+                ],
+                dtype=np.float64,
+            )
+            for tag in dict.fromkeys((*exc_tags, *resp_tags))
+        }
+
+        modal_damping = matrix.modal_damping
+        basis = matrix.modal_freq <= f_max
+        hf_band = (freq >= 9.0) & (freq <= f_max)
+        n_resp = len(resp_tags)
+        nan = float("nan")
+        out_f_dom = np.full(n_resp, nan)
+        out_f_dom_hf = np.full(n_resp, nan)
+        out_frf_max = np.full(n_resp, nan)
+        out_a_lf = np.full(n_resp, nan)
+        out_a_hf = np.full(n_resp, nan)
+        out_a_p = np.full(n_resp, nan)
+        out_limit = np.full(n_resp, nan)
+        out_ratio = np.full(n_resp, nan)
+        out_regime = np.empty(n_resp, dtype=object)
+        out_exc = np.zeros(n_resp, dtype=np.int64)
+
+        for row, j_tag in enumerate(resp_tags):
+            candidates = (j_tag,) if excitation == "self" else exc_tags
+            best: "tuple[float, float, float, float, float, float] | None" = None
+            best_exc = j_tag
+            best_regime = "none"
+            for i_tag in candidates:
+                mag = matrix.magnitude(i_tag, j_tag)
+
+                f_lf = dominant_frequency(freq, mag, 9.0)
+                a_lf = nan
+                if np.isfinite(f_lf):
+                    beta_dom = float(modal_damping[
+                        int(np.argmin(np.abs(matrix.modal_freq - f_lf)))
+                    ])
+                    a_lf = walking_low_frequency(
+                        float(mag[int(np.argmin(np.abs(freq - f_lf)))]),
+                        f_lf, beta_dom, body_weight,
+                    ) / g
+
+                f_hf = nan
+                a_hf = nan
+                if bool(np.any(hf_band)):
+                    f_hf = dominant_frequency(
+                        freq[hf_band], mag[hf_band], f_max,
+                    )
+                if np.isfinite(f_hf) and bool(np.any(basis)):
+                    a_espa = walking_high_frequency(
+                        matrix.modal_freq[basis], phi[i_tag][basis],
+                        phi[j_tag][basis], f_hf, modal_damping[basis],
+                        body_weight, dt,
+                    )[0]
+                    a_hf = a_espa / g
+
+                if np.isfinite(a_lf) and np.isfinite(a_hf):
+                    regime = "both"
+                    a_p = max(a_lf, a_hf)
+                    f_gov = f_lf if a_lf >= a_hf else f_hf
+                elif np.isfinite(a_lf):
+                    regime, a_p, f_gov = "low", a_lf, f_lf
+                elif np.isfinite(a_hf):
+                    regime, a_p, f_gov = "high", a_hf, f_hf
+                else:
+                    regime, a_p, f_gov = "none", nan, nan
+
+                # Take the candidate unless the incumbent is finite AND
+                # at least as large — a NaN incumbent must never win
+                # (R-B finding 5: ``a_p > nan`` is False and would pin
+                # the first excitation node forever).
+                if best is not None and np.isfinite(best[0]) and not (
+                    np.isfinite(a_p) and a_p > best[0]
+                ):
+                    continue
+                frf_at = (
+                    float(mag[int(np.argmin(np.abs(freq - f_gov)))])
+                    if np.isfinite(f_gov) else nan
+                )
+                best = (a_p, a_lf, a_hf, f_gov, f_hf, frf_at)
+                best_exc = i_tag
+                best_regime = regime
+
+            assert best is not None  # every node has >= 1 candidate
+            out_a_p[row] = best[0]
+            out_a_lf[row] = best[1]
+            out_a_hf[row] = best[2]
+            out_f_dom[row] = best[3]
+            out_f_dom_hf[row] = best[4]
+            out_frf_max[row] = best[5]
+            out_regime[row] = best_regime
+            out_exc[row] = best_exc
+            if np.isfinite(best[3]):
+                limit_value = tolerance_limit(
+                    occupancy, best[3], kind=limit,  # type: ignore[arg-type]
+                )
+                out_limit[row] = limit_value
+                out_ratio[row] = best[0] / limit_value
+
+        return FootfallResult(
+            nodes=resp_tags,
+            f_dom=out_f_dom,
+            frf_max=out_frf_max,
+            a_p_lf=out_a_lf,
+            a_espa_hf=out_a_hf,
+            a_p=out_a_p,
+            regime=out_regime,
+            exc_node=out_exc,
+            limit=out_limit,
+            ratio=out_ratio,
+            occupancy=occupancy,
+            limit_kind=limit,
+            g=float(g),
+            body_weight=float(body_weight),
+            normalization=matrix.normalization,
+            freq=freq,
+            modes=FootfallModes(f_n=matrix.modal_freq, beta=modal_damping),
+            dof=int(dof),
+            dt=float(dt),
+            f_max=float(f_max),
+            _matrix=matrix,
+            _phi=phi,
+            _f_dom_hf=out_f_dom_hf,
+        )
+
+    def _footfall_tags(
+        self,
+        nodes: "int | Node | Sequence[int | Node]",
+        name: str,
+        context: str,
+    ) -> tuple[int, ...]:
+        """Resolve a footfall node set — one tag / ``Node``, or a sequence
+        of either — to unique tags in the order given."""
+        from .analysis.modal import _node_tag
+
+        items: "Sequence[int | Node]"
+        if isinstance(nodes, (int, Node)):
+            items = (nodes,)
+        else:
+            items = tuple(nodes)
+        if not items:
+            raise ValueError(
+                f"{context}: {name} must carry at least one node."
+            )
+        seen: dict[int, None] = {}
+        for item in items:
+            seen.setdefault(_node_tag(item), None)
+        return tuple(seen)
 
     def eigen_feast(
         self,
