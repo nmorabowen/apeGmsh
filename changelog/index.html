@@ -1017,6 +1017,8 @@
       
         
       
+        
+      
     
     
     
@@ -1158,6 +1160,34 @@
     
   
     Checkpoint & resume an analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/footfall-vibration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluate footfall vibration
   
 
     
@@ -3773,6 +3803,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-footfall-vibration-part-a-the-design-guide-11-kernel-and-the-frf-matrix-adr-0109-s0-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4235,6 +4276,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)
       
     </span>
   </a>
@@ -5016,6 +5068,41 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3">ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)<a class="headerlink" href="#added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3" title="Permanent link">&para;</a></h3>
+<p>The second half of the walking-vibration evaluation from part A: a driver
+that runs it on a live model, a result object, a map through the native
+writer, and a how-to that runs one end to end.</p>
+<ul>
+<li><code>apeSees.footfall_walking(num_modes=, body_weight=, g=, response_nodes=, ...)</code>
+  — builds its own live domain, issues one <code>eigen</code> + <code>modalProperties</code> pair,
+  and evaluates every response node against both Design Guide branches
+  (low-frequency Eq 7-1, high-frequency Eq 7-4…7-6), reporting whichever
+  governs. <code>body_weight</code> and <code>g</code> are required, model units, with no
+  default — apeGmsh has no unit system, and a silently wrong <code>g</code> is a
+  factor of 386 in the answer. <code>excitation="self"</code> checks the diagonal
+  (the walker where the occupant sits); <code>excitation="full"</code> checks every
+  excitation/response pair and names the excitation node that governs.
+  Warns, naming <code>eigen_feast</code>, when the extracted basis stops short of
+  <code>f_max</code>. The eigenvector scale is asserted per ADR 0109 D2 — never
+  silently rescaled.</li>
+<li><code>FootfallResult</code> — one row per response node: dominant frequency, the
+  governing acceleration and which of the regimes (<code>"low"</code> / <code>"high"</code> /
+  <code>"both"</code>) produced it, the excitation node under <code>"full"</code>, the Fig 2-1 /
+  Table 4-1 limit, and the demand/capacity <code>ratio</code>. <code>frf</code> and <code>mode_table</code>
+  read back the sweep and the per-mode Table 7-2-shaped rows;
+  <code>to_dataframe</code> gives the whole table at once.</li>
+<li><code>FootfallResult.to_results(fem, path)</code> — writes the evaluation as one
+  native results file: a single stage, a single time station, nodal
+  components <code>footfall_ap</code>, <code>footfall_ratio</code>, <code>footfall_fdom</code> over every
+  node in the model, <code>NaN</code> outside the response set. <code>Results.from_fem</code>
+  binds it like any other bare-fem run, so the ratio map renders with the
+  ordinary nodal-scalar viewer — no recorder, no <code>RESPONSE_CATALOG</code> entry.</li>
+<li>A new how-to, "Evaluate footfall vibration": one worked floor bay run
+  end to end — modelling the composite-boosted stiffness per §7.2, the
+  <code>num_modes</code> / 20 Hz warning, <code>body_weight</code> and <code>g</code> in the model's own
+  units (168 lb ≈ 747 N), <code>self</code> vs <code>full</code> excitation, reading <code>a_p</code> /
+  <code>regime</code> / <code>ratio</code>, and rendering the ratio map through <code>to_results</code>.</li>
+</ul>
 <h3 id="added-footfall-vibration-part-a-the-design-guide-11-kernel-and-the-frf-matrix-adr-0109-s0-s1">ADDED — footfall vibration, part A: the Design Guide 11 kernel and the FRF matrix (ADR 0109, S0 + S1)<a class="headerlink" href="#added-footfall-vibration-part-a-the-design-guide-11-kernel-and-the-frf-matrix-adr-0109-s0-s1" title="Permanent link">&para;</a></h3>
 <p>The first half of a walking-vibration evaluation per AISC Design Guide 11,
 2nd edition, Chapter 7. ADR 0109 records why this is the 2nd-edition FRF
