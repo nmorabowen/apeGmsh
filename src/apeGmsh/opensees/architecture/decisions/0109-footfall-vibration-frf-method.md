@@ -1,7 +1,8 @@
 # ADR 0109 — Footfall vibration by the FRF method (AISC Design Guide 11, 2nd ed., Chapter 7)
 
-**Status:** Proposed (2026-09-10); S0–S3 implemented and measured the same
-day (see "What was measured"), S4 pending. The study behind it (what Robot Structural Analysis actually computes,
+**Status:** Accepted (2026-09-10). S0–S3 merged the same day (#1142, #1143);
+S4 run against Robot Structural Analysis 2026 on this machine — see "What
+was measured" and `internal_docs/adr0109_s4_robot_validation.md`. The study behind it (what Robot Structural Analysis actually computes,
 what the 2nd-edition Design Guide asks for, and what apeGmsh already has)
 is written into the Context so the decisions can be checked against it.
 
@@ -43,7 +44,7 @@ post-processor on a modal basis. From the help text and the COM surface:
 | `ModalParams.FrequencyLimit`, `IncludeMassForDirX/Y/Z`, `IgnoreDensity` | the eigen solve feeding it — modes up to a frequency limit, with the mass directions to activate |
 | `ExcitationMethod` = `SELF` / `FULL` | *self*: response read at the node the force is applied to, one solve per node; *full*: response at every response node for a force at every excitation node, "applied independently … no interaction between them" |
 | `ExcitationNodes`, `ResponseNodes` (`ALL` / `SELECTED_NODES` / `NODES_BELONGING_TO_SELECTED_PANELS`) | the two node sets — in *full* mode the FRF matrix is `len(exc) × len(resp)` |
-| `ExcitationForces` = `CONCRETE_CENTRE` (CCIP-016, 1.0–2.8 Hz) / `SCI_P354` (1.8–2.2 Hz; stairs 1.2–4.5 Hz) / *AISC DG11 (2003)* (1.6–2.2 Hz; UI-only, not in the enum) | which walking-force model and which acceptance metric |
+| `ExcitationForces` = `CONCRETE_CENTRE` (CCIP-016, 1.0–2.8 Hz) / `SCI_P354` (1.8–2.2 Hz; stairs 1.2–4.5 Hz) / *AISC DG11 (2003)* (1.6–2.2 Hz; UI-only — S4 proved raw values 3 and 4 are silently ignored on RSA 2026, so the AISC option is unreachable through COM) | which walking-force model and which acceptance metric |
 | `MinWalkingFrequency`, `MaxWalkingFrequency` | the step-frequency band; "divided to 20 intervals considering additional points for the frequency of eigenvibrations" |
 | `WalkersWeight`, `FootstepsNumber` | resonant branch only; the transient branch always uses a 746 N impulse |
 | `Damping` (constant / Rayleigh / per-mode) | the modal damping channel |
@@ -325,7 +326,7 @@ roadmap.
    Path series) on a two-mode model against Eq 7-5 — an independent
    integration of the same physics.
 
-**Robot is a cross-check, not a gate.** With `apeRobot` the same floor can
+**Robot is a cross-check, not a gate** (run — see "What was measured", S4). With `apeRobot` the same floor can
 be run under Robot's AISC option (self-excitation, 1.6–2.2 Hz) and its
 `Frequency` / `A` read back through `IRobotFootfallResults`. Because Robot
 is on the first edition, agreement is expected on the dominant frequency
@@ -363,6 +364,39 @@ and `FootstepsNumber` — the help does not say.
   map wrote all-NaN with no error. Any zero per-mode ratio is now
   refused before the sweep. `regime="none"` survives in the result type
   as a defensive value but is unreachable after that fix.
+
+- **S4 — Robot Structural Analysis 2026, same beam, both floors**
+  (`internal_docs/adr0109_s4_robot_validation.md`; scripts and the JSON
+  exchange in `internal_docs/_adr0109_s4/`, the `.rtd` files regenerated
+  by `run_robot.py` and not committed):
+  - Natural frequencies agree to 4.6e-15 relative (16.326006087 /
+    65.300604683 Hz and 5.503495529 / 22.012829348 Hz) — the two
+    programs see the same beam.
+  - Low-frequency floor (5.50 Hz): Robot's critical step frequency
+    1.8320832 Hz is its own f₁/3, the third harmonic our first-edition
+    pass picked independently. Robot `A` = 0.645 %g (CCIP-016 resonant)
+    vs our `a_p` = 0.573 %g (Eq 7-1) — 1.13×; the first-edition flavour on
+    our FRF gives 0.481 %g — the whole spread is the force model, not the
+    FRF.
+  - High-frequency floor (16.3 Hz): Robot has no AISC answer — its
+    resonant branch tops out at 2.2 Hz × 4 and reports 0.171 %g off
+    resonance; its CCIP transient branch gives `VRMS` 1.199 mm/s against
+    our ESPA converted to 0.812 mm/s RMS (1.48×; the DG11 and CCIP-016
+    impulse constants alone differ 1.29×). Our `a_p` = 1.201 %g, ratio
+    1.177 — the answer the Guide asks for and Robot cannot give.
+  - **`FootstepsNumber` 20 → 6 scales Robot's resonant `A` by 0.693264 on
+    both floors — `1 − e^{−2πζN}` to six figures.** No `R` factor in the
+    CCIP branch (backed-out third-harmonic force 50.7 N ≠ α₃QR = 37.4 N).
+  - **The AISC option is not reachable through COM.** `ExcitationForces`
+    accepts 1 and 2; raw 3 and 4 return `True` from `SetAnalysisParams`
+    and leave the prior value in place — proved on fresh and pre-set
+    cases; results identical to CCIP-016. So Robot's stated first-edition
+    basis was validated only through the CCIP branch and the known
+    coefficients.
+  - Two Robot quirks for the record: the footfall case runs its own
+    lumped-mass modal solve (frequencies −0.13 % / −0.52 % from the
+    `DYNAMIC_MODAL` case), and `VRMS` / `VRMQ` raise `E_FAIL 0x80004005`
+    under SCI P354.
 
 ## Alternatives considered
 
