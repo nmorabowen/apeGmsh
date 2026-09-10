@@ -643,6 +643,42 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — footfall vibration, part A: the Design Guide 11 kernel and the FRF matrix (ADR 0109, S0 + S1)
+
+The first half of a walking-vibration evaluation per AISC Design Guide 11,
+2nd edition, Chapter 7. ADR 0109 records why this is the 2nd-edition FRF
+method rather than a copy of Robot Structural Analysis's footfall case:
+Autodesk documents Robot as built on the 1st edition, resonant-only under
+its AISC option, and the high-frequency effective-impulse branch is the
+part a modern check cannot skip.
+
+- `apeGmsh.opensees.analysis.footfall` — the Chapter 7 equations as pure
+  numpy functions with no OpenSees import: the dynamic coefficient
+  (Eq 7-2), the resonant build-up factor (Eq 7-3), the Table 7-1 harmonic,
+  the effective impulse (Eq 1-6), the low-frequency peak (Eq 7-1), the
+  high-frequency waveform and equivalent sinusoidal peak (Eq 7-4 … 7-6),
+  the Fig 2-1 / Table 4-1 tolerance limit (curve by default, flat on
+  request), and the dominant-frequency search. Units are the caller's;
+  the kernel never divides by g.
+- `apeGmsh.opensees.analysis.footfall_frf` — the excitation × response
+  acceleration FRF matrix as a modal sum over one `eigen` +
+  `modalProperties` pair on stock openseespy, evaluated lazily per node
+  pair; `grid_for` builds the §7.3 sweep (every mode, a ±5 % cluster
+  around each, extra linear points). The eigenvector scale is asserted
+  from `partiMass / partiFactor²` because `modalProperties -return` does
+  not export the generalised masses; a basis that fails the check is
+  refused naming the mode, never rescaled. Damping is the ADR 0075
+  channel (uniform, per mode, or Rayleigh converted per mode).
+- Oracles: the Guide's Example 7.1 reproduced from its Table 7-2 without
+  a finite-element model (0.374 %g tip mode; 0.865 %g peak and 0.314 %g
+  ESPA over 38 modes); the tip-mass cantilever against the SDOF closed
+  form; and one node pair against the fork's `frequencyResponse -load`
+  on build `1652f945c`, agreeing to 4.6e-16 relative.
+
+The driver (`apeSees.footfall_walking`), the result map and the how-to
+follow in part B.
+
+
 ### FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
 
 `SpringForceDiagram` mapped the canonical suffix `spring_force_0/1/2` to
