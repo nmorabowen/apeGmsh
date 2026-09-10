@@ -146,7 +146,11 @@ def assert_unit_generalized_mass(
             f"check(s) failed: {'; '.join(failures[:8])}"
             + (" ..." if len(failures) > 8 else "")
             + ".  The modal sum assumes m~ = 1 and there is no silent "
-            "rescale (ADR 0109 D2)."
+            "rescale (ADR 0109 D2).  Measured on this build: the "
+            "-fullGenLapack solver returns m~ != 1 under CONSISTENT "
+            "element mass (1.009-1.045 on a beam), while the default "
+            "-genBandArpack returns exactly 1 under lumped and "
+            "consistent mass alike — re-run with solver='-genBandArpack'."
         )
     if checkable == 0:
         raise ValueError(
@@ -407,7 +411,9 @@ def _modal_damping_ratios(
     )
     n_modes = int(omega.size)
     if damp is not None:
-        return np.full(n_modes, float(damp), dtype=np.float64)
+        return _refuse_undamped(
+            np.full(n_modes, float(damp), dtype=np.float64), context=context,
+        )
     if rayleigh is not None:
         a0, a1 = float(rayleigh[0]), float(rayleigh[1])
         ratios = a0 / (2.0 * omega) + a1 * omega / 2.0
@@ -419,7 +425,9 @@ def _modal_damping_ratios(
                 "(xi_a = a0/(2 w_a) + a1 w_a/2) — a negative ratio "
                 "makes the FRF grow at resonance."
             )
-        return np.asarray(ratios, dtype=np.float64)
+        return _refuse_undamped(
+            np.asarray(ratios, dtype=np.float64), context=context,
+        )
     assert modal_damp is not None  # the validator above guarantees it
     ratios = np.asarray([float(x) for x in modal_damp], dtype=np.float64)
     if ratios.size != n_modes:
@@ -427,6 +435,27 @@ def _modal_damping_ratios(
             f"{context}: modal_damp carries {ratios.size} ratios but "
             f"the basis has {n_modes} modes — the list is in absolute "
             "mode order and must cover every extracted mode."
+        )
+    return _refuse_undamped(ratios, context=context)
+
+
+def _refuse_undamped(ratios: np.ndarray, *, context: str) -> np.ndarray:
+    """Refuse a zero ratio on any mode (R-B finding 1).
+
+    ``grid_for`` puts every modal frequency exactly on the sweep grid, so
+    an undamped mode makes the modal denominator ``0 + 0j`` there and the
+    magnitude ``NaN``; ``dominant_frequency``'s argmax then *selects* the
+    NaN and the whole evaluation goes silently NaN.  An undamped FRF has
+    no finite resonant peak, so there is nothing to evaluate.
+    """
+    zero = np.flatnonzero(ratios <= 0.0)
+    if zero.size:
+        raise ValueError(
+            f"{context}: damping ratio is zero on mode(s) "
+            f"{[int(a) + 1 for a in zero]} — an undamped FRF has no "
+            "finite peak at resonance (the sweep grid sits exactly on "
+            "every modal frequency).  Use the Design Guide Table 4-2 "
+            "component sum (0.01 structure + 0.01 ceiling ... ), never 0."
         )
     return ratios
 

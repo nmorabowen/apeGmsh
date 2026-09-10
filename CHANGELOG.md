@@ -643,6 +643,42 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)
+
+The second half of the walking-vibration evaluation from part A: a driver
+that runs it on a live model, a result object, a map through the native
+writer, and a how-to that runs one end to end.
+
+- `apeSees.footfall_walking(num_modes=, body_weight=, g=, response_nodes=, ...)`
+  — builds its own live domain, issues one `eigen` + `modalProperties` pair,
+  and evaluates every response node against both Design Guide branches
+  (low-frequency Eq 7-1, high-frequency Eq 7-4…7-6), reporting whichever
+  governs. `body_weight` and `g` are required, model units, with no
+  default — apeGmsh has no unit system, and a silently wrong `g` is a
+  factor of 386 in the answer. `excitation="self"` checks the diagonal
+  (the walker where the occupant sits); `excitation="full"` checks every
+  excitation/response pair and names the excitation node that governs.
+  Warns, naming `eigen_feast`, when the extracted basis stops short of
+  `f_max`. The eigenvector scale is asserted per ADR 0109 D2 — never
+  silently rescaled.
+- `FootfallResult` — one row per response node: dominant frequency, the
+  governing acceleration and which of the regimes (`"low"` / `"high"` /
+  `"both"`) produced it, the excitation node under `"full"`, the Fig 2-1 /
+  Table 4-1 limit, and the demand/capacity `ratio`. `frf` and `mode_table`
+  read back the sweep and the per-mode Table 7-2-shaped rows;
+  `to_dataframe` gives the whole table at once.
+- `FootfallResult.to_results(fem, path)` — writes the evaluation as one
+  native results file: a single stage, a single time station, nodal
+  components `footfall_ap`, `footfall_ratio`, `footfall_fdom` over every
+  node in the model, `NaN` outside the response set. `Results.from_fem`
+  binds it like any other bare-fem run, so the ratio map renders with the
+  ordinary nodal-scalar viewer — no recorder, no `RESPONSE_CATALOG` entry.
+- A new how-to, "Evaluate footfall vibration": one worked floor bay run
+  end to end — modelling the composite-boosted stiffness per §7.2, the
+  `num_modes` / 20 Hz warning, `body_weight` and `g` in the model's own
+  units (168 lb ≈ 747 N), `self` vs `full` excitation, reading `a_p` /
+  `regime` / `ratio`, and rendering the ratio map through `to_results`.
+
 ### ADDED — footfall vibration, part A: the Design Guide 11 kernel and the FRF matrix (ADR 0109, S0 + S1)
 
 The first half of a walking-vibration evaluation per AISC Design Guide 11,

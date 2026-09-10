@@ -1,7 +1,7 @@
 # ADR 0109 — Footfall vibration by the FRF method (AISC Design Guide 11, 2nd ed., Chapter 7)
 
-**Status:** Proposed (2026-09-10). Study only — nothing implemented, nothing
-run. The study behind it (what Robot Structural Analysis actually computes,
+**Status:** Proposed (2026-09-10); S0–S3 implemented and measured the same
+day (see "What was measured"), S4 pending. The study behind it (what Robot Structural Analysis actually computes,
 what the 2nd-edition Design Guide asks for, and what apeGmsh already has)
 is written into the Context so the decisions can be checked against it.
 
@@ -334,6 +334,35 @@ that slice is a report of the differences with the first-edition
 coefficients (`α_i = 0.5/0.2/0.1/0.05`, Q = 157 lb, R = 0.5) applied to our
 FRF, which is also the cheapest way to *measure* what Robot does with `R`
 and `FootstepsNumber` — the help does not say.
+
+## What was measured (PR-A / PR-B, 2026-09-10, build `1652f945c`)
+
+- **The fork oracle agrees to machine precision.** One `(i, j)` pair of the
+  Python matrix against `frequencyResponse -load … -resp accel` on the
+  same tip-mass cantilever: 4.6e-16 relative, both parts. The SDOF closed
+  form: 3.8e-7.
+- **Example 7.1 from Table 7-2**: 0.374 %g (tip mode), 0.865 %g peak and
+  0.3141 %g ESPA over the 38 modes — the Guide prints 0.865 / 0.314.
+- **The D2 assertion caught a real non-unit basis.** On a 6 m beam with
+  `mass=` on the element, `partiMass/partiFactor²` (which is identically
+  `V'MV` — `DomainModalProperties` divides both by the same `GM`) read:
+
+  | element mass | `-fullGenLapack` | `-genBandArpack` |
+  |---|---|---|
+  | lumped (default) | 1.0, 1.0, 1.0, 1.0 | 1.0, 1.0, 1.0, 1.0 |
+  | consistent (`c_mass=True`) | 1.009, 1.029, 0.995, 1.045 | 1.0, 1.0, 1.0, 1.0 |
+
+  So `-fullGenLapack` does **not** return an M-orthonormal basis under
+  consistent element mass on this build, and the refusal is correct, not
+  a false positive. Consequence: the refusal message names the solver;
+  the how-to uses the default solver; `-fullGenLapack` stays the
+  tiny-model escape hatch under lumped mass only.
+- **Zero damping went silently NaN** (R-B): `grid_for` places every modal
+  frequency exactly on the grid, so an undamped mode gives a `0 + 0j`
+  denominator, `dominant_frequency`'s argmax selects the NaN, and the
+  map wrote all-NaN with no error. Any zero per-mode ratio is now
+  refused before the sweep. `regime="none"` survives in the result type
+  as a defensive value but is unreachable after that fix.
 
 ## Alternatives considered
 
