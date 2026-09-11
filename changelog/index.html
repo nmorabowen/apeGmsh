@@ -3803,6 +3803,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4276,6 +4287,17 @@
     <span class="md-ellipsis">
       
         FIXED — Pardiso / Mumps always emit -matrixType (incl. 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
       
     </span>
   </a>
@@ -5068,6 +5090,18 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109">ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)<a class="headerlink" href="#added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109" title="Permanent link">&para;</a></h3>
+<p><code>examples/footfall_two_bay_shell.py</code> builds two 6 m by 6 m bays of 200 mm
+slab as shell elements on six columns as beam elements, fragmented so the
+column tops share slab nodes, and runs <code>apeSees.footfall_walking</code> three
+ways: self excitation at the two bay centres, full excitation between
+them, and self excitation at every slab node for the ratio map. It then
+draws the figures that explain the answer: the bay-centre FRF with the
+Eq 7-1 resonant prediction and the Fig 2-1 limit curve, the Eq 7-5
+impulse waveform with its peak, ESPA and limit, the per-mode Eq 7-4
+amplitudes, and a Robot-style sweep of the four walking harmonics over
+the 1.6 to 2.2 Hz step band. Harmonics whose window lies below the FRF
+band are drawn as absent, not clamped to the band edge.</p>
 <h3 id="added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3">ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)<a class="headerlink" href="#added-footfall-vibration-part-b-the-walking-driver-the-result-map-and-the-how-to-adr-0109-s2-s3" title="Permanent link">&para;</a></h3>
 <p>The second half of the walking-vibration evaluation from part A: a driver
 that runs it on a live model, a result object, a map through the native
