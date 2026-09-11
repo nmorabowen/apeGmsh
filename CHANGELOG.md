@@ -643,6 +643,21 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
+
+`examples/footfall_two_bay_shell.py` builds two 6 m by 6 m bays of 200 mm
+slab as shell elements on six columns as beam elements, fragmented so the
+column tops share slab nodes, and runs `apeSees.footfall_walking` three
+ways: self excitation at the two bay centres, full excitation between
+them, and self excitation at every slab node for the ratio map. It then
+draws the figures that explain the answer: the bay-centre FRF with the
+Eq 7-1 resonant prediction and the Fig 2-1 limit curve, the Eq 7-5
+impulse waveform with its peak, ESPA and limit, the per-mode Eq 7-4
+amplitudes, and a Robot-style sweep of the four walking harmonics over
+the 1.6 to 2.2 Hz step band. Harmonics whose window lies below the FRF
+band are drawn as absent, not clamped to the band edge.
+
+
 ### ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)
 
 The second half of the walking-vibration evaluation from part A: a driver
