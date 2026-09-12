@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -156,6 +156,25 @@ unchanged `K₀` on *every* iteration (`formTangent` is inside the loop, and
 its `zeroA()` kills the fork's factorization reuse). `ModifiedNewton` forms
 it once per step. Worst on softening / arc-length runs. See
 [opensees-bridge.md](opensees-bridge.md); ADR 0082 G2.
+
+### ❌ `footfall_walking(..., solver="-fullGenLapack")` on consistent mass → ✅ default solver
+The D2 scale assertion refuses with "eigenvectors are NOT mass-normalised".
+That is a true positive: on build `1652f945c` LAPACK returns m̃ = 1.009–1.045
+under `c_mass=True`, ARPACK returns exactly 1 under both. Do not switch the
+model to lumped mass to "fix" it — switch the solver. See
+[opensees-bridge.md](opensees-bridge.md) §Footfall.
+
+### ❌ `footfall_walking(..., damp=0.0)` → ✅ Table 4-2 component sum (≥ 0.01)
+Refused on every channel. Before the fix an undamped mode made the modal
+denominator `0+0j` on the grid point that sits exactly on it, the argmax
+selected the NaN, and the map wrote all-NaN with no error.
+
+### ❌ Column lines fragmented into slab surfaces, then mesh → ✅ `remove_orphans()` first
+`g.model.boolean.fragment(bays, cols, dim=2)` consumes the column-top points
+and leaves stale `_metadata` entries; `generate()` raises
+`GeometryValidationError: model._metadata has stale entries`. Call
+`g.model.geometry.remove_orphans()` before `sync()` (the two-bay footfall
+example does this).
 
 ## Pitfalls not covered in the other references
 

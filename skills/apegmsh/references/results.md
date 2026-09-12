@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@f90bfef9 (2026-07-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`
@@ -273,7 +273,12 @@ an ordinary one-frame native results file (`footfall_ap`, `footfall_ratio`,
 `footfall_fdom`, `NaN` off the response nodes), so it binds through
 `Results.from_fem(fem, path, kind="native")` like any other bare-fem run
 and the ratio map renders with the plain nodal-scalar viewer — not a
-recorder, not a `RESPONSE_CATALOG` entry. How-to:
+recorder, not a `RESPONSE_CATALOG` entry. Evaluate `response_nodes=ops.nodes.get(pg="Slab")`
+(self excitation at every slab node) when the map is the point — two nodes
+render as a grey slab. The driver, its rules and the figure accessors
+(`frf`, `mode_table`, `to_dataframe`) are in
+[opensees-bridge.md](opensees-bridge.md) §Footfall; worked floor
+`examples/footfall_two_bay_shell.py`; how-to
 <https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>.
 
 ## 5. Plots and the desktop viewer

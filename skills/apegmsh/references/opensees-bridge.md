@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -355,6 +355,68 @@ raises (per-stage modal deferred). **Partitioned:** a global (non-staged)
 `ops.damping.rayleigh(...)` is now emitted in the partitioned (OpenSeesMP)
 deck too — before #752 it was silently dropped, so `np>1` runs came out
 undamped; stage-bound `s.damping.*` was (and remains) the staged route.
+
+## Footfall vibration — `ops.footfall_walking` (ADR 0109)
+
+The AISC Design Guide 11 **2nd-edition** Chapter 7 walking check, on stock
+openseespy (one `eigen` + `modalProperties`, then a numpy modal sum — the
+fork is not required). NOT a copy of Robot's footfall case: Autodesk
+documents Robot as built on the 1st edition, resonant-only under its AISC
+option; this implements both regimes.
+
+```python
+res = ops.footfall_walking(
+    num_modes=40, body_weight=747.0, g=9.81,      # both REQUIRED, model units (168 lb ≈ 747 N)
+    response_nodes=[mid1, mid2], dof=3,           # occupant nodes; vertical DOF (2 in a 2-D frame)
+    excitation="self",                            # or "full" + excitation_nodes=[...] (walker set)
+    occupancy="office", limit="curve",            # Fig 2-1 curve (default) | "table" flat
+    damp=0.03,                                    # or modal_damp=[...] / rayleigh=(a0, a1); NEVER 0
+)
+res.to_dataframe()            # per node: f_dom frf_max a_p_lf a_espa_hf a_p regime exc_node limit ratio
+res.frf(j)                    # (freq, |A_ij|) acceleration per unit force, i defaults to exc_node[j]
+res.mode_table(j)             # (f_n, phi_i, phi_j, a_p,m) — the Eq 7-4 rows of the impulse branch
+res.modes.f_n, res.modes.beta # the basis and its per-mode damping
+res.to_results(fem, path)     # one-frame nodal map → Results.from_fem(fem, path, kind="native")
+```
+
+What it computes, per response node: the FRF between walker and occupant
+over 1 Hz below f₁ to 20 Hz (every mode + a ±5 % cluster + 30 linear
+points); the **dominant frequency** = the FRF peak; below 9 Hz the
+resonant peak `a_p = |A|max · α(f_dom) · Q · ρ(β)` (Eq 7-1, α = 0.09e^(−0.075f),
+ρ from Table 7-3); in 9–20 Hz the **impulse branch** — effective impulse
+per footstep (Eq 1-6), per-mode ring-down summed over one step (Eq 7-5),
+ESPA = √2·RMS (Eq 7-6). `regime` = `"low"` / `"high"` / `"both"` (both
+evaluated, larger governs). `a_p`, `limit` and `ratio = a_p/limit` are
+**fractions of g** (0.005 = 0.5 %g).
+
+Rules that bite:
+- `num_modes` must carry the basis past 20 Hz (the driver warns, naming
+  `eigen_feast`); on the two-bay slab example 40 modes reached 179 Hz, ~10
+  would do.
+- Damping must be > 0 on every mode — the sweep grid sits exactly on each
+  modal frequency, so an undamped mode is a 0/0 and the driver refuses.
+- The eigenvector scale is **asserted** (`partiMass/partiFactor² = 1`,
+  since `modalProperties -return` does not export generalised masses) and
+  refused, never rescaled. Measured on build `1652f945c`: `-fullGenLapack`
+  is NOT M-orthonormal under **consistent** element mass (m̃ 1.009–1.045) —
+  use the default `-genBandArpack`, which is exactly 1 under both mass types.
+- The vertical FRF sees only modes with vertical shape at BOTH nodes: on a
+  flat slab on columns the sway/torsion modes near 6–8 Hz are invisible at
+  a bay centre and the 10 Hz bending pair governs through the impulse branch.
+- `harmonic_for_dominant` raises outside 9–20 Hz and `dominant_frequency`
+  returns NaN on an empty slice; the driver branches on NaN.
+
+Worked floor: `examples/footfall_two_bay_shell.py` (two 6 m bays of
+ShellMITC4 on beam columns, self/full/whole-slab runs, ratio map, FRF /
+waveform / harmonic figures with the limit drawn); how-to
+<https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>; the
+kernel is `apeGmsh.opensees.analysis.footfall` (pure numpy, Example 7.1
+from its Table 7-2 is the oracle). Robot 2026 validation
+(`internal_docs/adr0109_s4_robot_validation.md`): frequencies agree to
+4.6e-15; `a_p` differs by the force model only (1.13× on a 5.5 Hz floor);
+Robot's AISC option is UI-only — raw `ExcitationForces` 3/4 are silently
+ignored through COM. Deferred (S5): running / stairs / rhythmic, CCIP-016
+and SCI P354 response factors — evaluators over the same FRF.
 
 ## ✅ Multi-point constraints ARE emitted (ADR 0022, shipped v2.0.0)
 
