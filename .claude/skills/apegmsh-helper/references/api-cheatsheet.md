@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -864,6 +864,10 @@ ops.damping.modal(ratios, *, modes)                 # bundles eigen; no modal_q
 ops.damping.uniform|sec_stif|urd|urd_beta(*, ..., on=None, activate_time=, factor=)
 #   on= attaches via region -damp; OR omit on= and pass the handle to a
 #   -damp-capable element's damp= kwarg. ops.damping.* also on s.damping.* (staged).
+ops.footfall_walking(*, num_modes, body_weight, g, response_nodes, excitation="self"|"full",
+    excitation_nodes=None, dof=3, occupancy="office", limit="curve"|"table",
+    damp=|modal_damp=|rayleigh=, f_max=20.0, n_extra=30, dt=0.005, solver="-genBandArpack")
+    -> FootfallResult                               # DG11 2nd ed Ch.7 walking check (ADR 0109); a_p/limit as fractions of g
 # Loads reach the deck ONLY via p.from_model(case) or p.load — nothing
 # auto-emits, so no 2x double-count trap. The deck is authoritative: the
 # bridge applies exactly what you import and does NOT audit the geometry's
