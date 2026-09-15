@@ -20,10 +20,11 @@ Pins, per the ADR:
    runs clean with a ladder attached (no escalation prints); a
    non-converging deck walks every rung and aborts with the
    exhaustion banner (exit != 0) — the #587 fail-loud floor holds.
-7. **Non-retryable return codes in the live rung walk** (Ladruno fork
-   PR #838) — rc ``-4`` (commit-time material refusal) raises before
-   the first escalation; rc ``-33086`` (trial-time) still walks every
-   rung and is returned unchanged.
+7. **Non-retryable return codes in the rung walk** (Ladruno fork
+   PR #838) — rc ``-4`` (a refused commit) raises before the first
+   escalation, in the live emitter and in the ladder both deck
+   emitters write; rc ``-33086`` (trial-time) still walks every rung
+   and is returned unchanged.
 """
 from __future__ import annotations
 
@@ -186,6 +187,17 @@ def test_py_emission_with_strategy() -> None:
     assert "of stage 'Gravity'" in text
 
 
+def test_py_emission_ladder_aborts_on_the_commit_refusal() -> None:
+    # fork PR #838: rc -4 must stop the emitted ladder dead instead of
+    # walking rung 1 on a partially committed domain.
+    em = PyEmitter()
+    em.analyze(steps=5, dt=0.1, label="Gravity", strategy=_spec())
+    text = "\n".join(em.lines())
+    assert f"if _apesees_rc == {COMMIT_ABORT_RC}:" in text
+    assert "raise RuntimeError(" in text
+    assert "Restart the run from the last good checkpoint." in text
+
+
 def test_tcl_emission_without_strategy_unchanged() -> None:
     em = TclEmitter()
     em.analyze(steps=5, label="S")
@@ -202,6 +214,16 @@ def test_tcl_emission_with_strategy() -> None:
     assert "eval algorithm $_apesees_rung" in text
     assert "eval algorithm [lindex $_apesees_rungs 0]" in text
     assert "exhausting strategy ladder 'non-smooth' (3 rungs)" in text
+
+
+def test_tcl_emission_ladder_aborts_on_the_commit_refusal() -> None:
+    # Same #838 stop as the py deck, through Tcl's ``error``.
+    em = TclEmitter()
+    em.analyze(steps=5, dt=0.1, label="Gravity", strategy=_spec())
+    text = "\n".join(em.lines())
+    assert "set _apesees_rc [analyze 1 0.1]" in text
+    assert f"if {{$_apesees_rc == {COMMIT_ABORT_RC}}} {{" in text
+    assert "Restart the run from the last good checkpoint." in text
 
 
 # ---------------------------------------------------------------------------

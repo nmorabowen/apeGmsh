@@ -612,6 +612,12 @@ def test_commit_abort_message_names_the_rc_and_the_recovery() -> None:
     assert "-4" in msg
     assert "COMMIT" in msg
     assert "Restart the run from the last good checkpoint." in msg
+    # -4 is not exclusively the IMPL-EX latch: StaticAnalysis /
+    # DirectIntegrationAnalysis return it for ANY Integrator::commit()
+    # failure, and Domain::commit() fails for more than one reason. The
+    # message must name the refused commit, not assert a cause.
+    assert "Integrator::commit()" in msg
+    assert "PARTIALLY" in msg
 
 
 def test_material_refused_rc_keeps_todays_retry_path() -> None:

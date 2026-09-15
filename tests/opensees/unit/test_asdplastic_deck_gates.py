@@ -15,6 +15,7 @@ import warnings
 import pytest
 
 from apeGmsh.opensees._element_capabilities import (
+    _CLASS_TOKEN_ALIASES,
     _ELEM_REGISTRY,
     element_propagates_material_refusal,
 )
@@ -81,6 +82,63 @@ class TestCapabilityFlag:
         assert element_propagates_material_refusal("SSPquad") is False
         assert element_propagates_material_refusal("stdBrick") is False
         assert element_propagates_material_refusal("ShellMITC3") is None
+
+    def test_the_fork_838_roster_pins_every_valued_entry(self) -> None:
+        """Pin ALL 17 measured verdicts against the fork's own roster.
+
+        Transcribed from fork PR #838's "Element refusal roster" in
+        ``Ladruno_implementation/LEDGER_quirks.md`` — the one
+        authoritative copy — by the element's C++ class name, which is
+        what the roster keys on; the registry key is given where it
+        differs (``_CLASS_TOKEN_ALIASES`` maps the class name onto it,
+        and ``stdBrick``'s ``cpp_class_name`` is ``Brick``).  A
+        representative-sample pin lets 11 of these drift silently; this
+        one does not.
+        """
+        roster = {
+            # FORWARD — update() accumulates the setTrialStrain codes.
+            "BezierTet10": True,
+            "BezierTri6": True,
+            "FourNodeQuad": True,      # registry key "quad"
+            "LadrunoBrick20": True,
+            "LadrunoCST": True,
+            "LadrunoLST": True,
+            "LadrunoQuad": True,
+            "LadrunoUP": True,
+            "SixNodeTri": True,        # registry key "tri6n"
+            "TenNodeTetrahedron": True,
+            "Tri31": True,             # registry key "tri31"
+            # SENTINEL — forwards exactly LADRUNO_MATERIAL_REFUSED
+            # (ADR-33/34), which is what a capped SANISAND raises.
+            "LadrunoBrick": True,
+            # DISCARD — the code cannot reach the analysis.
+            "FourNodeTetrahedron": False,
+            "SSPbrick": False,
+            "SSPquad": False,
+            "bbarBrick": False,        # roster row "BbarBrick"
+            "stdBrick": False,         # roster row "Brick"
+        }
+        for name, verdict in roster.items():
+            assert element_propagates_material_refusal(name) is verdict, name
+
+        valued = {
+            name for name, spec in _ELEM_REGISTRY.items()
+            if spec.propagates_material_refusal is not None
+        }
+        assert valued == {
+            _CLASS_TOKEN_ALIASES.get(n, n) for n in roster
+        }, "a registry entry gained or lost a verdict without this pin"
+
+        unvalued = set(_ELEM_REGISTRY) - valued
+        assert unvalued == {
+            # Section-based shells — not direct NDMaterial hosts.
+            "ASDShellQ4", "ShellDKGQ", "ShellMITC3", "ShellMITC4",
+            # Uniaxial trusses / beams.
+            "ElasticTimoshenkoBeam", "corotTruss", "elasticBeamColumn",
+            "truss",
+            # Raw G/v/rho, no matTag at all (ADR 0054).
+            "ASDAbsorbingBoundary2D", "ASDAbsorbingBoundary3D",
+        }, "the unmeasured set must stay exactly the non-NDMaterial hosts"
 
 
 class TestHostGate:

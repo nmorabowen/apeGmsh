@@ -142,6 +142,16 @@ paths.
 The material graph is walked transitively, so a `PlaneStrain` or
 `LogStrain` wrapper cannot hide a capped model one level down.
 
+**Amendment (2026-09-15, fork PR #838).** The allow-list above is retired.
+The fork audited all 52 `NDMaterial`-hosting elements (26 FORWARD, 1
+SENTINEL, 25 DISCARD — `Ladruno_implementation/LEDGER_quirks.md`, "Element
+refusal roster"), so "only `LadrunoBrick` propagates" was never true; it was
+the only element anyone had read. `validate_sanisand_substep_cap` now keys
+on the measured per-element flag and raises only on a host measured to
+DISCARD, which turns the rule into a deny-list — the asymmetry argument
+above still holds, but it no longer has to be paid for by refusing elements
+nobody had checked. `LadrunoBrick20` is FORWARD and is allowed.
+
 ## Consequences
 
 **Positive.**
