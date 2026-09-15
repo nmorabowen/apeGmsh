@@ -162,8 +162,9 @@ The material graph is walked transitively, so a `PlaneStrain` or
 **Neutral / forward-looking.**
 - `_UNSYMMETRIC_SAFE_SYSTEMS` is the shared extension point for any future
   gate that needs "a solver that holds a full unsymmetric matrix".
-- `_REFUSAL_PROPAGATING_ELEMENTS` is a one-line addition per element as the
-  fork's return-code plumbing spreads.
+- The substep-cap gate reads `_ElemSpec.propagates_material_refusal` (the
+  one-element allow-list was retired when fork PR #838 shipped its element
+  refusal roster); a new element is one row in `_element_capabilities.py`.
 - No new material and no new classTag: fork ADR-90 rejected the
   viscoplastic wrapper on measured grounds, and `33022` stays reserved and
   unbuilt.
