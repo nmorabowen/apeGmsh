@@ -1239,6 +1239,11 @@ _ASDP_PARAMS_BY_COMPONENT: dict[str, frozenset[str]] = {
     "HoekBrown_YF": frozenset({"HB_sigci", "HB_mb", "HB_s", "HB_a", "HB_ds"}),
     # -- plastic-flow directions -----------------------------------------
     "VonMises_PF": frozenset(),
+    # On a fork build before :data:`ASDP_DILATANT_APEX_MIN_BUILD` (#836),
+    # ``DP_etabar > DP_eta * G / K`` (dilatant flow, from about psi ~ 2.3
+    # deg) silently apex-projects a wedge of trials that should return to
+    # the cone flank -- a zero ``Continuum`` tangent at exactly the Gauss
+    # points the mechanism forms around, not a wrong number.
     "DruckerPrager_PF": frozenset({"DP_etabar"}),
     "MohrCoulomb_PF": frozenset({"MC_phi", "MC_c", "MC_ds", "MC_psi"}),
     "MohrCoulombTensionCutoff_PF": frozenset({
@@ -1376,6 +1381,19 @@ ASDP_CLOSEST_POINT_MIN_BUILD = "7e93e4381"
 #: of a real refusal (``LadrunoSANISAND.cpp:655-670``, a branch that
 #: predates P2-9 in fork ``4870f802c6``).
 SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
+
+#: Minimum fork build for the DILATANT-flow Drucker-Prager apex fix
+#: (``ops.ladrunoBuild()``, fork PR #836). Documented, not enforced (same as
+#: :data:`ASDP_MIN_FORK_BUILD` -- a bare hash cannot prove ancestry). Before
+#: it, ``Backward_Euler`` unions the Euclidean apex test with the exact
+#: elastic-metric one, and the union is wrong whenever ``DP_etabar >
+#: DP_eta * G / K``: every trial in that wedge is apex-projected although
+#: its correct return is to the cone flank -- committed with no deviator
+#: and, under ``tangent_type Continuum``, a zero tangent at exactly the
+#: Gauss points the mechanism forms around. No refusal is issued; the
+#: failure is silent and presents as "the element walls while still
+#: hardening", not as a wrong number.
+ASDP_DILATANT_APEX_MIN_BUILD = "2db3f0889"
 
 
 class ASDPlasticIntegrationWarning(UserWarning):

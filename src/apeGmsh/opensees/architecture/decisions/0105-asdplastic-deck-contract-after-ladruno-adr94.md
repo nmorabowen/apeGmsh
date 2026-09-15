@@ -403,3 +403,37 @@ UW `DruckerPrager` workaround is no longer required and the two materials
 now agree on this deck to within 1e-4 of the exact load. On a **pre-#832**
 engine Amendment 2 still applies, so emitters that pin an older build keep
 the workaround. D8's matching ask is struck.
+
+## Amendment 4 — the apex wall, part 2: Amendment 3 was ψ = 0 only (2026-09-15)
+
+Amendment 3 closed the apex misclassification at zero dilatancy. Fork WP F8
+(PR #836, merged `2db3f0889`) closes the rest of it: #832's fix *unioned*
+the elastic-metric apex test with the Euclidean one, and a union keeps the
+**wider** region, so it stays wrong for any **dilatant** flow — the exact
+slope `K·etabar/G` overtakes the Euclidean `eta` as soon as
+`DP_etabar > DP_eta·G/K` (on the ADR-95 deck, from ψ ≈ 2.3°, up to ~10× too
+wide at associated flow, ψ = φ). Every trial in that wedge was
+apex-projected — committed with no deviator and, under `tangent_type
+Continuum`, a zero tangent at exactly the Gauss points the mechanism forms
+around — with **no refusal issued**. ψ = 0 is untouched by construction
+(Amendment 3 stands as measured); the risk was specific to dilatant ASD-DP.
+
+F8 makes the elastic-metric test **replace**, not union with, the Euclidean
+one for `DruckerPrager_YF`. **Any stored ASD-DP result with `DP_etabar >
+DP_eta·G/K` from a build before the fix is suspect** — not because the load
+path looks wrong (pre-fix it measured within 5.17 % worst-case, 0.141 % at
+its terminal point) but because the *iteration* that produced it used a
+different, non-smooth map at exactly the states that matter. "The load path
+looks fine" is not evidence the return map is.
+
+**Deck guidance.** The min-build constant is `ASDP_DILATANT_APEX_MIN_BUILD`
+in `material/nd.py`, documented not enforced (a bare hash cannot prove
+ancestry). No emitter change: the two DP emit sites (`nd.py:1234`,
+`nd.py:1242`) are unchanged, and vanilla `DruckerPrager` (`nd.py:227-390`)
+was never in scope for F8. If a harness surfaces the relaxed-rung count
+(`strategy.py`'s `Ladder`, harvested into `LiveRunner.strategy_events`),
+report it next to any ASD-vs-UW agreement figure — the fork's own measured
+associated leg needed its third rung on 92.9 % of converged steps where the
+UW leg needed none, on curves that otherwise agreed to 0.075 %. See
+`internal_docs/guide_ladruno_adr95_druckerprager_fix.md` §4 and
+`internal_docs/guide_ladruno_asdp_closest_point.md` §7.
