@@ -157,9 +157,52 @@ the Ladruno fork — stock OpenSees fails loud at the element line.
 
 The penalty/enforcement knobs are exposed directly on the factory:
 `k` (numeric or `"auto"` + `k_alpha`/`host`), `kr`, `enforce="penalty"|"al"`,
-`bipenalty_dtcr` / `bipenalty_wcap` (explicit-dynamics penalty mass), and
-`absolute` (skip the `g0` stress-free birth). `host` is given as a **FEM
-element id**; the bridge translates it to the emitted OpenSees tag.
+`al_update="commit"|"iter"`, `bipenalty_dtcr` / `bipenalty_wcap`
+(explicit-dynamics penalty mass), and `absolute` (skip the `g0` stress-free
+birth). `host` is given as a **FEM element id**; the bridge translates it to
+the emitted OpenSees tag.
+
+#### Closing the constraint gap: `enforce="al"` and the augmentation sweep
+
+`enforce="al"` alone does **not** make the tie rigid within one step. The
+fork advances the augmented-Lagrangian Uzawa recursion once per *committed*
+step (`-alUpdate commit`, the default), so a single push still shows the
+penalty gap `err = c/K_t`. Cranking `k` up is the wrong lever: the rigidity
+error falls as `1/K_t` but conditioning degrades linearly in `K_t`, and the
+fork's measured selection band is `1e2…1e4 × k_host` — a hand-set numeric
+`k` above `1e6 × k_host` draws a once-only fork warning whenever a `-host`
+is named.
+
+The supported way to close the gap *within* a step is the held-load
+augmentation sweep, wrapped as a context manager on the live emitter:
+
+```python
+ops.analyze(steps=1)                       # the real step, any algorithm
+with ops.augment(element=tag, tol=1e-8, max_passes=10) as gaps:
+    pass                                   # passes already ran on entry
+# read displacements HERE — LoadControl 0.0 holds the LOAD, not a
+# DisplacementControl target, so the control DOF drifts during the passes
+assert gaps[-1] < 1e-8
+```
+
+It brackets `ladrunoBeginAugment` / `ladrunoEndAugment` in `try/finally`
+(a missed `End` does not fail — it silently voids every later recorder
+sample), forces `integrator('LoadControl', 0.0)` for the held passes
+whatever drove the real step, polls
+`eleResponse(tag, 'constraintViolation')`, restores the caller's integrator
+and refuses to nest. `al_update="iter"` is an expert opt-in that the fork
+refuses at the first `update()` outside full Newton + `LoadControl`; prefer
+the sweep.
+
+**`FE_Datastore` save/restore.** Fork PR #839 bumped
+`LadrunoKinematicCoupling`'s wire format: the header `Vector` grew from 20
+to 21 slots (`hdr(20) = alUpdate`) and the version stamp `hdr(19)` moved to
+`2`, with the committed multiplier `lambdaCommitted` appended to the
+payload (`3·nGap`). A **newer** version is now refused rather than
+mis-read, so a checkpoint written by a post-#839 build cannot be restored
+by an older engine — keep the `database` / `save` / `restore` pair on one
+build (see `docs/how-to/checkpoint-resume.md`). Restores of pre-#839
+checkpoints still read fine.
 
 Under partitioned (OpenSeesMP) emit the element lands on a **single
 canonical rank** (the rank where every slave is present; the reference

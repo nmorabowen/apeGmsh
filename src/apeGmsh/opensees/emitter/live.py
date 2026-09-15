@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import os
 import warnings
+from contextlib import contextmanager
 from typing import (
-    TYPE_CHECKING, Any, Callable, Literal, NamedTuple, Sequence, cast,
+    TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Sequence,
+    cast,
 )
 
 from .._internal.analyze_rc import check_analyze_rc
@@ -32,6 +34,16 @@ if TYPE_CHECKING:
 
 __all__ = ["LiveOpsEmitter", "get_backend_name", "get_backend_build"]
 
+
+#: Raised by :meth:`LiveOpsEmitter.augment` on a stock (non-fork) build.
+#: ``ladrunoBeginAugment`` / ``ladrunoEndAugment`` and the coupling's
+#: ``constraintViolation`` response are fork-only (ADR-41 / PR #839).
+_AUGMENT_FORK_REQUIRED = (
+    "ops.augment(...) requires the Ladruno fork build of OpenSees — the "
+    "held-load augmentation sweep (ladrunoBeginAugment / ladrunoEndAugment) "
+    "and the LadrunoKinematicCoupling 'constraintViolation' response are "
+    "fork-only. Point APEGMSH_OPENSEES_BIN at the fork's dist\bin."
+)
 
 #: Raised by :meth:`LiveOpsEmitter.profiler` when the live openseespy build
 #: lacks the fork-only ``profiler`` command (i.e. stock openseespy). Deck
@@ -490,6 +502,15 @@ class LiveOpsEmitter:
         self.strategy_events: list[
             tuple[str, int, int, tuple[int | float | str, ...]]
         ] = []
+        # Last ``integrator(...)`` this emitter issued — the caller's
+        # integrator, restored after an :meth:`augment` sweep. ``None``
+        # until one is set (a sweep then leaves LoadControl 0.0 in place
+        # and says so).
+        self._last_integrator: "tuple[int | float | str, ...] | None" = None
+        # Guards :meth:`augment` against nesting: the fork only WARNS on a
+        # second ``ladrunoBeginAugment``, and the inner block's
+        # ``ladrunoEndAugment`` would then clear the flag for the outer one.
+        self._in_augment: bool = False
 
     # -- Model ---------------------------------------------------------------
 
@@ -847,6 +868,11 @@ class LiveOpsEmitter:
         if i_type in _FORK_ONLY_INTEGRATORS:
             self._stock_build_gate(_fork_integrator_required(i_type))
         self._ops.integrator(i_type, *args)
+        # Remember the caller's integrator so :meth:`augment` can restore
+        # it after the held-load sweep swaps in ``LoadControl 0.0``.
+        # openseespy exposes no "what integrator is active?" query, so the
+        # last call we emitted IS the record.
+        self._last_integrator = (i_type, *args)
 
     def analysis(self, a_type: str) -> None:
         self._ops.analysis(a_type)
@@ -1134,6 +1160,120 @@ class LiveOpsEmitter:
         # ``-tangent``/``-recompute``) AND at least one prior ``analyze`` /
         # ``domainChanged`` step.
         return float(self._ops.criticalTimeStep())
+
+    @contextmanager
+    def augment(
+        self, *, element: int, tol: float = 1.0e-8, max_passes: int = 10,
+    ) -> "Iterator[list[float]]":
+        """Run an ADR-41 held-load augmentation sweep and yield its
+        per-pass constraint-violation history.
+
+        This is the supported way to close an ``enforce="al"`` coupling's
+        constraint gap **within** one step (fork PR #839 §3.2). The fork's
+        default ``-alUpdate commit`` cadence advances the Uzawa recursion
+        once per *committed* step, so a single push leaves the penalty gap
+        ``c/K_t`` standing; ``Domain::commit()`` still runs every element's
+        ``commitState()`` during a held-load sweep, so each held pass IS an
+        outer Uzawa update at **fixed** ``λ`` — a well-posed residual that
+        every algorithm and integrator can solve.
+
+        The whole sweep runs on **entry**, in this order::
+
+            ops.ladrunoBeginAugment()          # recorders + commitTag frozen
+            ops.integrator('LoadControl', 0.0) # HOLD the load
+            repeat up to ``max_passes``:
+                ops.analyze(1)                             # inner solve
+                ops.eleResponse(element, 'constraintViolation')[0]
+                stop once that value is < ``tol``
+            finally:
+                ops.ladrunoEndAugment()
+                ops.integrator(*caller's integrator)       # restored
+
+        so the ``with`` body runs *after* the passes but *before*
+        ``ladrunoEndAugment``. **Read displacements after the block**, not
+        inside it: ``LoadControl 0.0`` holds the LOAD, not a
+        ``DisplacementControl`` target, so a displacement-driven step's
+        control DOF is released and drifts during the passes (fork-measured
+        1.08 % of the push) — physically right, but the target is no longer
+        what the control DOF reads.
+
+        ``LoadControl 0.0`` is mandatory whatever drove the real step: a
+        zero-increment ``DisplacementControl`` is degenerate (vanilla's
+        ``dLambda = -dUabar/dUahat`` is unbounded at a zero increment) and
+        often still returns ``ok = 0``. The ``try/finally`` is equally
+        mandatory: while the flag is on ``Domain::commit()`` fires no
+        recorders and bumps no ``commitTag``, so a missed
+        ``ladrunoEndAugment`` does not fail — it silently voids every later
+        recorder sample.
+
+        λ history is deliberately **live-only**: the loop reads
+        ``ops.eleResponse`` directly and there is no
+        ``_response_catalog`` entry for the coupling's ``lambda`` /
+        ``constraintViolation``, because the committed multiplier
+        (``lambdaCommitted``, new in #839) is **wire-only** — it rides the
+        ``FE_Datastore`` payload and has no response token at all, so a
+        catalog entry could never round-trip the thing a ``Results``
+        consumer would want.
+
+        Parameters
+        ----------
+        element : int
+            Emitted OpenSees tag of the ``LadrunoKinematicCoupling`` whose
+            ``constraintViolation`` drives the stopping test.
+        tol : float, default 1e-8
+            Stop once the violation falls below this.
+        max_passes : int, default 10
+            Hard cap on held-load passes.
+
+        Yields
+        ------
+        list[float]
+            The violation after each pass, in order. Empty only when
+            ``max_passes < 1``. Convergence is ``history[-1] < tol``.
+
+        Raises
+        ------
+        RuntimeError
+            On a stock (non-fork) build; on a nested sweep; or when a held
+            pass fails to converge (``analyze(1) != 0`` — the inner solve
+            at fixed ``λ`` diverging is a real failure, not a slow sweep).
+        """
+        self._stock_build_gate(_AUGMENT_FORK_REQUIRED)
+        if self._in_augment:
+            raise RuntimeError(
+                "LiveOpsEmitter.augment: an augmentation sweep is already "
+                "open. The fork only WARNS on a second ladrunoBeginAugment, "
+                "and the inner block's ladrunoEndAugment would clear the "
+                "flag for the outer one — leaving it running with recorders "
+                "silently frozen. Nesting is refused."
+            )
+        history: list[float] = []
+        self._in_augment = True
+        self._ops.ladrunoBeginAugment()
+        try:
+            self._ops.integrator("LoadControl", 0.0)
+            for i in range(int(max_passes)):
+                rc = int(self._ops.analyze(1))
+                if rc != 0:
+                    raise RuntimeError(
+                        f"LiveOpsEmitter.augment: held-load pass {i + 1} of "
+                        f"element {element} failed (analyze returned {rc}). "
+                        "The inner solve runs at FIXED lambda, so this is a "
+                        "genuine solver failure, not a slow sweep."
+                    )
+                gap = float(
+                    self._ops.eleResponse(
+                        int(element), "constraintViolation")[0]
+                )
+                history.append(gap)
+                if gap < float(tol):
+                    break
+            yield history
+        finally:
+            self._in_augment = False
+            self._ops.ladrunoEndAugment()
+            if self._last_integrator is not None:
+                self._ops.integrator(*self._last_integrator)
 
     # -- Partition emission scoping (ADR 0027, P4) --------------------------
 

@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.21.0"  # SSI-2.E (/opensees/stages/*/update_material_stage)
 OPENSEES_PRIOR_MINOR = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
-NEUTRAL_CURRENT      = "2.32.0"  # 3D interface: additive `orient_t2` column on interface_payload_dtype
-NEUTRAL_PRIOR_MINOR  = "2.31.0"  # 2D mortar: additive `thickness` column on contact_payload_dtype
+NEUTRAL_CURRENT      = "2.33.0"  # fork #839: additive `cpl_al_update` column on the coupling-control lane
+NEUTRAL_PRIOR_MINOR  = "2.32.0"  # 3D interface: additive `orient_t2` column on interface_payload_dtype

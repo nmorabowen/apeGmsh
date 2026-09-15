@@ -214,6 +214,12 @@ def _coupling_control_fields() -> list[tuple]:
     emits, deliberately NOT the emit-time ops tag; ``-1`` = none) and
     ``cpl_wcap`` (float64, NaN when unset). 2.12.0 files lack these four;
     the reader probes ``cpl_k_auto`` and falls back to the v1 knobs only.
+
+    Schema 2.33.0 adds ``cpl_al_update`` (uint8 code 0=unset / 1=commit /
+    2=iter — the ``-alUpdate`` AL Uzawa cadence from fork PR #839).
+    Pre-2.33.0 files lack it; the reader probes presence and decodes
+    ``al_update=None`` (which IS the fork default cadence, so the meaning
+    of an older file is unchanged).
     """
     return [
         ("cpl_has", np.uint8),
@@ -234,6 +240,11 @@ def _coupling_control_fields() -> list[tuple]:
         # decodes the base CouplingControl.
         ("cpl_pressure", np.uint8),
         ("cpl_kp", np.float64),
+        # AL Uzawa cadence (fork PR #839, schema 2.33.0). uint8 code
+        # 0=unset (-alUpdate omitted ⇒ the fork default "commit"),
+        # 1="commit", 2="iter". Pre-2.33.0 files lack the column; the
+        # reader probes ``cpl_al_update`` presence and decodes ``None``.
+        ("cpl_al_update", np.uint8),
     ]
 
 
@@ -322,6 +333,9 @@ def surface_coupling_payload_dtype() -> np.dtype:
         # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
         ("sr_cpl_pressure", _vlen(np.uint8)),      # (n_sr,) 0/1
         ("sr_cpl_kp", _vlen(np.float64)),          # (n_sr,) NaN when unset
+        # AL Uzawa cadence per slave (schema 2.33.0 mirror of
+        # ``cpl_al_update``): 0=unset, 1=commit, 2=iter.
+        ("sr_cpl_al_update", _vlen(np.uint8)),     # (n_sr,) 0/1/2
         # stiffness="auto" sentinel per slave record (schema 2.27.0
         # mirror of ``stiffness_auto``): 1 ⇒ resolved at emit from the
         # host material; the ``sr_stiffness`` entry holds a placeholder.

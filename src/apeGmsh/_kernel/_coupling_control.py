@@ -10,9 +10,14 @@ sibling package would run that package's ``__init__``; a top-level
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 #: Valid ``-enforce`` modes for the fork coupling elements.
 _ENFORCE_MODES: tuple[str, ...] = ("penalty", "al")
+
+#: Valid ``-alUpdate`` cadences (fork PR #839).  Spelling is exact and
+#: case-sensitive on the fork side (``strcmp``), no aliases.
+_AL_UPDATE_MODES: tuple[str, ...] = ("commit", "iter")
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,10 @@ class CouplingControl:
                                                     else fork-derived ``K_t·ℓ²``
     ``enforce``         ``-enforce {penalty|al}``   ``al`` = augmented
                                                     Lagrangian (implicit only)
+    ``al_update``       ``-alUpdate {commit|iter}`` where the AL Uzawa
+                                                    recursion advances —
+                                                    **RBE2 only**, needs
+                                                    ``enforce="al"``
     ``bipenalty_dtcr``  ``-bipenalty -dtcr $dt``    explicit critical-step
                                                     target (>0)
     ``bipenalty_wcap``  ``-bipenalty -wcap $beta``  penalty mass from the
@@ -59,6 +68,18 @@ class CouplingControl:
     ``host`` is stored as the **FEM element id** (stable across emits); the
     bridge resolves it to the emitted OpenSees element tag at emit time and
     passes it into :meth:`emit_flags` — the control never sees ops tags.
+
+    ``al_update`` (fork PR #839) is a **`LadrunoKinematicCoupling`-only**
+    token; the RBE3 / embedded emit paths refuse it (they share this class
+    but not the flag).  ``None`` omits ``-alUpdate`` and inherits the fork
+    default ``commit``, so a deck that never sets it is byte-identical to
+    one built before the token existed.  ``"iter"`` is an expert opt-in —
+    the fork refuses it at the first ``update()`` outside full Newton +
+    ``LoadControl``; the supported within-step route is the held-load
+    augmentation sweep (``LiveOpsEmitter.augment``).  Minimum engine build
+    for the token: see ``TCL_COUPLING_TOKENS_MIN_BUILD`` in
+    ``apeGmsh.opensees.emitter.tcl`` — an older fork build parses the
+    coupling line without it and silently runs the ``commit`` cadence.
     """
     k: float | str | None = None
     kr: float | None = None
@@ -69,6 +90,9 @@ class CouplingControl:
     k_alpha: float | None = None
     host: int | None = None
     bipenalty_wcap: float | None = None
+    # AL Uzawa cadence (fork PR #839) — appended, like every prior
+    # addition, so existing positional construction order is unchanged.
+    al_update: Literal["commit", "iter"] | None = None
 
     def __post_init__(self) -> None:
         if self.enforce not in _ENFORCE_MODES:
@@ -76,6 +100,20 @@ class CouplingControl:
                 f"CouplingControl: enforce must be one of {_ENFORCE_MODES}, "
                 f"got {self.enforce!r}."
             )
+        if self.al_update is not None:
+            if self.al_update not in _AL_UPDATE_MODES:
+                raise ValueError(
+                    f"CouplingControl: al_update must be one of "
+                    f"{_AL_UPDATE_MODES}, got {self.al_update!r}."
+                )
+            if self.enforce != "al":
+                raise ValueError(
+                    "CouplingControl: al_update (-alUpdate) configures the "
+                    "augmented-Lagrangian Uzawa cadence — it has no effect "
+                    "without enforce='al' (the penalty formulation carries "
+                    "no multiplier) and the fork drops it with a warning. "
+                    "Pass enforce='al', or drop al_update."
+                )
         if isinstance(self.k, str):
             if self.k != "auto":
                 raise ValueError(
@@ -151,7 +189,7 @@ class CouplingControl:
             self.k is None and self.kr is None and self.enforce == "penalty"
             and self.bipenalty_dtcr is None and not self.absolute
             and self.k_alpha is None and self.host is None
-            and self.bipenalty_wcap is None
+            and self.bipenalty_wcap is None and self.al_update is None
         )
 
     def emit_flags(
@@ -185,6 +223,8 @@ class CouplingControl:
             out += ["-kr", self.kr]
         if self.enforce != "penalty":
             out += ["-enforce", self.enforce]
+        if self.al_update is not None:
+            out += ["-alUpdate", self.al_update]
         if self.bipenalty_dtcr is not None:
             out += ["-bipenalty", "-dtcr", self.bipenalty_dtcr]
         if self.bipenalty_wcap is not None:
@@ -231,6 +271,12 @@ class EmbeddedNodeControl(CouplingControl):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.al_update is not None:
+            raise ValueError(
+                "EmbeddedNodeControl: al_update (-alUpdate) is a "
+                "LadrunoKinematicCoupling-only token (fork PR #839); "
+                "LadrunoEmbeddedNode's parser rejects it. Drop al_update."
+            )
         if self.kp is not None and not (self.kp > 0):
             raise ValueError(
                 f"EmbeddedNodeControl: kp must be > 0 if set, got {self.kp!r}."
