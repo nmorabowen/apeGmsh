@@ -31,7 +31,13 @@ with `k`, `dofs` and `host` dropped. No Tcl-target coupling validation
 existed in this repo to re-run; a live probe on the new `OpenSees.exe`
 reads `K_t: 1e+06` for a `k=1e6` deck. The F7 live close-out also lands
 here: on the real binary the six-wide `implexRefusals` block resolves,
-and the first `-4` raises the abort with zero subdivisions.
+and the first `-4` raises the abort with zero subdivisions. F10 (fork
+#837) is a diagnosis, not a feature: apeGmsh has no self-weight SANISAND
+harness, so its guidance lands as docstring caveats on `implex_control`
+and the `regrow` knob, plus one live test that reads the bucket from a
+bare `-implex` run and asserts the companion slot does not grow. That
+test found the fork's refusal counters surviving `ops.wipe()` across
+material instances in one process, which is a fork follow-up.
 
 ### CHANGED — adopt fork PR #838 (F7): the IMPL-EX commit-time refusal latch
 
