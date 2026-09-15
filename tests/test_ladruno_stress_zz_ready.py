@@ -188,6 +188,7 @@ def test_sanisand_multi_slot_buckets_map():
     assert material_bucket_canonicals("material.implexRefusals") == (
         "implex_refusals_total", "implex_refusals_sign_change",
         "implex_refusals_control", "implex_refusals_companion",
+        "implex_refusals_commit_latched", "implex_refusals_latched",
     )
 
 

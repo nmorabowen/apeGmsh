@@ -973,6 +973,77 @@ def test_ladruno_branch_slot_order_matches_the_fork_fill_site() -> None:
     )
 
 
+def test_implex_refusals_slot_order_matches_the_fork(tmp_path: Path) -> None:
+    # Fork PR #838 (WP-99, F7) widened implexRefusals 4 -> 6: slot 4
+    # (commitLatched) is the per-instance commit-refusal latch, slot 5
+    # (latched) the process-wide post-latch count. Pinned in slot order.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.implexRefusals") == (
+        "implex_refusals_total", "implex_refusals_sign_change",
+        "implex_refusals_control", "implex_refusals_companion",
+        "implex_refusals_commit_latched", "implex_refusals_latched",
+    )
+
+
+def test_implex_refusals_six_column_block_resolves_with_real_names(
+    tmp_path: Path,
+) -> None:
+    # Before the widening, a 6-column implexRefusals block mismatched the
+    # (then 4-wide) table and fell through to the label map, which knows
+    # none of these spellings -- the whole bucket was dropped in silence.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.implexRefusals": (
+            "implexRefusals_total", "implexRefusals_signChange",
+            "implexRefusals_control", "implexRefusals_companion",
+            "implexRefusals_commitLatched", "implexRefusals_latched",
+        ),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert {
+        "implex_refusals_total", "implex_refusals_sign_change",
+        "implex_refusals_control", "implex_refusals_companion",
+        "implex_refusals_commit_latched", "implex_refusals_latched",
+    } <= comps
+
+
+def test_implex_refusals_width_mismatch_still_silently_drops() -> None:
+    # A block whose width does not match the table's (e.g. a pre-#838
+    # build still writing the old 4-column implexRefusals) falls through
+    # _block_canonicals to the label map, which has no entry for these
+    # material-private spellings, and _name_mismatch declines to compare
+    # (it only checks when the widths already agree) -- so the column is
+    # dropped with no mismatch warning at this layer. Confirmed by
+    # reading _block_canonicals/_name_mismatch directly, not through the
+    # full gauss_available() pipeline (which does separately warn once a
+    # bucket lands in "dropped" -- that is a different code path).
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _Block,
+        _block_canonicals,
+        _name_mismatch,
+    )
+
+    old_format_block = _Block(
+        level=4, gauss_id=0,
+        comp_names=(
+            "implexRefusals_total", "implexRefusals_signChange",
+            "implexRefusals_control", "implexRefusals_companion",
+        ),
+        col_start=0,
+    )
+    assert _block_canonicals("material.implexRefusals", old_format_block) == (
+        [None, None, None, None]
+    )
+    assert _name_mismatch("material.implexRefusals", old_format_block) is None
+
+
 def test_ladruno_tangent_is_not_named_yet(tmp_path: Path) -> None:
     # The 36-entry `ladrunoTangent` (responseID 96) is refused bare by the
     # recorder but has no by-position map: nothing reads it yet, so it takes

@@ -310,9 +310,17 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
         "implex_detail_clamp_fired", "implex_detail_clamp_count",
         "implex_detail_f",
     ),
+    # Fork PR #838 (WP-99, F7) widened this 4 -> 6. Slot 4
+    # (commit_latched) is the ONLY per-instance slot -- each Gauss
+    # point's own commit-refusal latch, 0/1, sticky until
+    # revertToStart(). Slot 5 (latched) is process-wide but fires once
+    # per NEWTON ITERATION per latched point, not once per refusal.
+    # Neither is summable like slots 0-3 (0 is already their sum):
+    # reduce slot 4 with max()/a latched-point count, never a sum.
     "implexrefusals": (
         "implex_refusals_total", "implex_refusals_sign_change",
         "implex_refusals_control", "implex_refusals_companion",
+        "implex_refusals_commit_latched", "implex_refusals_latched",
     ),
     # ADR 92 P2-9 grew this census 6 -> 7 slots. The fork sets NO
     # ResponseType for it (LadrunoSANISAND.cpp:3947-3951 returns a bare
@@ -401,6 +409,7 @@ _MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
     "implexrefusals": (
         "implexRefusals_total", "implexRefusals_signChange",
         "implexRefusals_control", "implexRefusals_companion",
+        "implexRefusals_commitLatched", "implexRefusals_latched",
     ),
 }
 
