@@ -21,6 +21,14 @@ Tcl-specific dialect choices:
 * Floats render with Python's ``repr(float)`` precision — enough digits
   to round-trip through the parser without rewriting the user's
   numbers.
+
+Tcl-target coupling tokens (WP-103, fork PR #840): before
+:data:`TCL_COUPLING_TOKENS_MIN_BUILD`, ``OPS_GetStringFromAll`` never
+filled its buffer under classic Tcl, so a numeric ``k``, a ``dofs``
+list, or an explicit ``host`` on ``LadrunoKinematicCoupling`` /
+``LadrunoDistributingCoupling`` / ``LadrunoEmbeddedNode`` /
+``LadrunoEmbeddedRebar`` silently ran with that option DISCARDED —
+see the constant's docstring.
 """
 from __future__ import annotations
 
@@ -34,7 +42,26 @@ from typing import (
 from .base import StrategySpec, trim_coords_to_ndm
 
 
-__all__ = ["PartitionSpan", "TclEmitter"]
+__all__ = ["PartitionSpan", "TclEmitter", "TCL_COUPLING_TOKENS_MIN_BUILD"]
+
+#: Minimum fork build for ``k`` / ``dofs`` / ``host`` tokens on the Tcl
+#: target's coupling / embedded-node / embedded-rebar family
+#: (``ops.ladrunoBuild()``, fork PR #840, WP-103). Documented, not
+#: enforced (same convention as ``nd.py``'s ``ASDP_MIN_FORK_BUILD`` and
+#: siblings — a bare hash cannot prove ancestry).
+#:
+#: Before this build, ``OPS_GetStringFromAll`` never filled the caller's
+#: buffer under classic Tcl (``OpenSees.exe`` / SP / MP; the openseespy
+#: backend was never affected), so every Tcl deck emitted by
+#: :class:`TclEmitter` for ``LadrunoKinematicCoupling`` /
+#: ``LadrunoDistributingCoupling`` (generic ``element(...)``) or
+#: :meth:`TclEmitter.embedded_node` / :meth:`TclEmitter.embedded_rebar`
+#: that carried a numeric ``k``, a ``dofs`` list, or an explicit
+#: ``host`` silently ran with that option DISCARDED: a ``-k 1e6`` deck
+#: ran at the fork default ``1e12``, and ``-dof 1 2 3`` was either
+#: refused outright or tied all six components. The token spellings
+#: never changed — only the minimum build that can read them.
+TCL_COUPLING_TOKENS_MIN_BUILD = "634824e1f"
 
 
 class PartitionSpan(NamedTuple):
