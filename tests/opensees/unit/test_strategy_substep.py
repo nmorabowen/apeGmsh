@@ -18,6 +18,10 @@ Pins, per the ADR:
    zero budget, target already met, wall budget spent, a driver that
    never converges, and a driver that converges without moving the
    declared control DOF.
+6. **Non-retryable return codes** (Ladruno fork PR #838) — rc ``-4``
+   is a commit-time material refusal and aborts before the FIRST
+   subdivision; rc ``-33086`` is the trial-time one and keeps today's
+   retry path exactly.
 
 Every test drives a **fake** ``SubstepDriver``: the controller is
 step-size policy over an ``analyze`` return code, so a live OpenSees
@@ -30,6 +34,11 @@ import math
 
 import pytest
 
+from apeGmsh.opensees._internal.analyze_rc import (
+    COMMIT_ABORT_RC,
+    MATERIAL_REFUSED_RC,
+    AnalysisAbortedError,
+)
 from apeGmsh.opensees.analysis.algorithm import KrylovNewton, Newton
 from apeGmsh.opensees.analysis.strategy import (
     Ladder,
@@ -562,3 +571,58 @@ def test_adapter_plugs_into_drive_end_to_end() -> None:
     assert len(ops.integrators) == ops.steps + res.subdivisions
     # the rescue step is on the record, halved twice from the base
     assert any(a[3] == pytest.approx(-0.125) for a in ops.integrators)
+
+
+# ---------------------------------------------------------------------------
+# 6. Non-retryable return codes (Ladruno fork PR #838)
+# ---------------------------------------------------------------------------
+
+
+class FixedRcDriver:
+    """Every increment returns the same rc; the DOF never moves."""
+
+    def __init__(self, rc: int) -> None:
+        self.rc = rc
+        self.attempts = 0
+
+    def analyze(self, ds: float) -> int:
+        self.attempts += 1
+        return self.rc
+
+    def disp(self, node: int, dof: int) -> float:
+        return 0.0
+
+    def load(self) -> float:
+        return 0.0
+
+
+def test_commit_abort_rc_stops_the_controller_on_the_first_attempt() -> None:
+    # rc -4 is a commit-time material refusal: the model state is
+    # inconsistent, so the controller must NOT subdivide even once.
+    drv = FixedRcDriver(COMMIT_ABORT_RC)
+    with pytest.raises(AnalysisAbortedError, match="last good checkpoint"):
+        _policy(budget=8).drive(drv)
+    assert drv.attempts == 1
+
+
+def test_commit_abort_message_names_the_rc_and_the_recovery() -> None:
+    with pytest.raises(AnalysisAbortedError) as exc:
+        _policy().drive(FixedRcDriver(COMMIT_ABORT_RC))
+    msg = str(exc.value)
+    assert "-4" in msg
+    assert "COMMIT" in msg
+    assert "Restart the run from the last good checkpoint." in msg
+
+
+def test_material_refused_rc_keeps_todays_retry_path() -> None:
+    # -33086 is the TRIAL-time refusal: still retryable, and must
+    # behave exactly like any other non-convergence code.
+    refused = FixedRcDriver(MATERIAL_REFUSED_RC)
+    ordinary = FixedRcDriver(-3)
+    res_refused = _policy(budget=2).drive(refused)
+    res_ordinary = _policy(budget=2).drive(ordinary)
+
+    assert res_refused.verdict == res_ordinary.verdict == "budget"
+    assert not res_refused.ok
+    assert refused.attempts == ordinary.attempts == 3
+    assert res_refused.subdivisions == res_ordinary.subdivisions == 3

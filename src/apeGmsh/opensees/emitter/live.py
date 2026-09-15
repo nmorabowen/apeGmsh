@@ -23,6 +23,7 @@ from typing import (
     TYPE_CHECKING, Any, Callable, Literal, NamedTuple, Sequence, cast,
 )
 
+from .._internal.analyze_rc import check_analyze_rc
 from .base import StrategySpec, trim_coords_to_ndm
 
 if TYPE_CHECKING:
@@ -921,7 +922,16 @@ class LiveOpsEmitter:
                     self._ops.analyze(1) if dt is None
                     else self._ops.analyze(1, dt)
                 )
-                last_rc = int(rc)
+                # Classify before escalating: a commit-time refusal
+                # (rc -4) would otherwise walk every remaining rung
+                # pointlessly — see ``_internal.analyze_rc``.
+                last_rc = check_analyze_rc(
+                    rc,
+                    where=(
+                        f"strategy '{strategy.name}' increment "
+                        f"{i + 1}/{steps}{where} at rung {r}"
+                    ),
+                )
                 if last_rc == 0:
                     carried = r
                     break

@@ -40,6 +40,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from .._internal.analyze_rc import check_analyze_rc
 from .._internal.types import SolutionAlgorithm
 from ..emitter.base import StrategySpec
 from .algorithm import (
@@ -440,7 +441,16 @@ class Substep:
             # contract — unloading a yielded model to correct an
             # overshoot corrupts the plastic state).
             ds_use = min(ds, self.target - u)
-            if driver.analyze(ds_use) != 0:
+            # A commit-time material refusal is not a step-size verdict
+            # (see ``_internal.analyze_rc``): halving it burns the whole
+            # subdivision budget on an increment that can never succeed
+            # and then reports ``budget``/``floor`` as if it were
+            # mechanical.  Classify BEFORE subdividing.
+            rc = check_analyze_rc(
+                driver.analyze(ds_use),
+                where=f"Substep at u = {u:g} (ds = {ds_use:g})",
+            )
+            if rc != 0:
                 nsub += 1
                 depth += 1
                 good = 0

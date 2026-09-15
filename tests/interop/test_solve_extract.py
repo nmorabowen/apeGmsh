@@ -6,9 +6,19 @@ applied load) on self-contained models, so it needs no live ETABS.
 """
 from __future__ import annotations
 
+import sys
+import types
+from pathlib import Path
+
 import pytest
 
 from apeGmsh.interop import StructuralModel, solve_and_extract
+from apeGmsh.interop.solve import _run_static
+from apeGmsh.opensees._internal.analyze_rc import (
+    COMMIT_ABORT_RC,
+    MATERIAL_REFUSED_RC,
+    AnalysisAbortedError,
+)
 
 # A 4x4 m slab on four pinned corners under a uniform downward pressure.
 _SLAB = {
@@ -60,3 +70,58 @@ def test_solve_and_extract_defaults_first_case_and_validates_case():
     assert solve_and_extract(model).case == "Dead"
     with pytest.raises(ValueError, match="not in load patterns"):
         solve_and_extract(model, case="Nope")
+
+
+# ---------------------------------------------------------------------------
+# Non-retryable analyze return codes (Ladruno fork PR #838)
+#
+# ``_run_static`` collapses every rc to the ``converged`` bool; a
+# commit-time material refusal (-4) must not be reported as ordinary
+# non-convergence.  Driven against a fake backend — the classification
+# is arithmetic on the rc, so a live solve would test the solver.
+# ---------------------------------------------------------------------------
+
+
+class _FixedRcOps(types.ModuleType):
+    """Fake ``openseespy.opensees``: every ``analyze`` returns ``rc``."""
+
+    def __init__(self, rc):
+        super().__init__("openseespy.opensees")
+        self.rc = rc
+
+    def __getattr__(self, name):        # system/numberer/test/... are no-ops
+        def _noop(*args, **kwargs):
+            return None
+        return _noop
+
+    def analyze(self, *args):
+        return self.rc
+
+
+class _DeckWriter:
+    """Stands in for the bridge: ``py(path)`` writes an empty deck."""
+
+    def py(self, path):
+        Path(path).write_text("", encoding="utf-8")
+
+
+def _run_with_rc(rc, monkeypatch):
+    fake = _FixedRcOps(rc)
+    parent = types.ModuleType("openseespy")
+    parent.opensees = fake
+    monkeypatch.setitem(sys.modules, "openseespy", parent)
+    monkeypatch.setitem(sys.modules, "openseespy.opensees", fake)
+    return _run_static(_DeckWriter(), tol=1e-8, max_iter=10)
+
+
+def test_run_static_aborts_on_the_commit_refusal(monkeypatch):
+    with pytest.raises(AnalysisAbortedError, match="last good checkpoint"):
+        _run_with_rc(COMMIT_ABORT_RC, monkeypatch)
+
+
+def test_run_static_still_reports_other_codes_as_not_converged(monkeypatch):
+    # -33086 is the retryable trial-time refusal; it stays a bool here,
+    # exactly like any other non-convergence code.
+    assert _run_with_rc(MATERIAL_REFUSED_RC, monkeypatch) is False
+    assert _run_with_rc(-3, monkeypatch) is False
+    assert _run_with_rc(0, monkeypatch) is True

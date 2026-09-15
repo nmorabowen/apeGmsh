@@ -20,6 +20,10 @@ Pins, per the ADR:
    runs clean with a ladder attached (no escalation prints); a
    non-converging deck walks every rung and aborts with the
    exhaustion banner (exit != 0) — the #587 fail-loud floor holds.
+7. **Non-retryable return codes in the live rung walk** (Ladruno fork
+   PR #838) — rc ``-4`` (commit-time material refusal) raises before
+   the first escalation; rc ``-33086`` (trial-time) still walks every
+   rung and is returned unchanged.
 """
 from __future__ import annotations
 
@@ -36,9 +40,16 @@ from apeGmsh.opensees.analysis.algorithm import (
     Newton,
     NewtonLineSearch,
 )
+from apeGmsh.opensees._internal.analyze_rc import (
+    COMMIT_ABORT_RC,
+    MATERIAL_REFUSED_RC,
+    AnalysisAbortedError,
+)
 from apeGmsh.opensees.analysis.strategy import PROFILE_NAMES, Ladder, profile
 from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees.emitter import live as live_mod
 from apeGmsh.opensees.emitter.base import StrategySpec
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 
@@ -361,3 +372,64 @@ def test_laddered_deck_exhaustion_fails_loud(tmp_path: Path) -> None:
     out = proc.stdout + proc.stderr
     assert "apeGmsh strategy 'non-smooth': increment 1/2 of stage 'Push' -> rung 1" in out
     assert "exhausting strategy ladder 'non-smooth' (3 rungs)" in out
+
+
+# ---------------------------------------------------------------------------
+# 7. Non-retryable return codes in the live rung walk (fork PR #838)
+# ---------------------------------------------------------------------------
+
+
+class _FixedRcOps:
+    """Fake openseespy: every ``analyze`` returns the same rc."""
+
+    def __init__(self, rc: int) -> None:
+        self.rc = rc
+        self.attempts = 0
+        self.algorithms: list[tuple[int | float | str, ...]] = []
+
+    def wipe(self) -> None:  # pragma: no cover - never called (wipe=False)
+        pass
+
+    def algorithm(self, *args: int | float | str) -> None:
+        self.algorithms.append(args)
+
+    def analyze(self, *args: int | float) -> int:
+        self.attempts += 1
+        return self.rc
+
+
+def _live_on(ops: _FixedRcOps, monkeypatch: pytest.MonkeyPatch) -> LiveOpsEmitter:
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: ops)
+    return LiveOpsEmitter(wipe=False)
+
+
+def test_live_ladder_aborts_on_the_commit_refusal_without_escalating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = _FixedRcOps(COMMIT_ABORT_RC)
+    emitter = _live_on(ops, monkeypatch)
+    spec = _spec()
+
+    with pytest.raises(AnalysisAbortedError, match="last good checkpoint"):
+        emitter.analyze(steps=3, label="Push", strategy=spec)
+
+    # Rung 0 was attempted once and no further rung was ever reached.
+    assert ops.attempts == 1
+    assert ops.algorithms == []
+    assert emitter.strategy_events == []
+
+
+def test_live_ladder_walks_every_rung_on_the_trial_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # -33086 stays retryable: the ladder escalates exactly as it does
+    # for any other non-convergence code, and returns the failing rc.
+    ops = _FixedRcOps(MATERIAL_REFUSED_RC)
+    emitter = _live_on(ops, monkeypatch)
+    spec = _spec()
+
+    rc = emitter.analyze(steps=3, label="Push", strategy=spec)
+
+    assert rc == MATERIAL_REFUSED_RC
+    assert ops.attempts == len(spec.rungs)
+    assert len(emitter.strategy_events) == len(spec.rungs) - 1
