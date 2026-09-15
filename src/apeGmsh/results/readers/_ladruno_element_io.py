@@ -27,6 +27,7 @@ apeGmsh's neutral vocabulary here:
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -236,7 +237,206 @@ _CONTINUUM_SCALAR_TOKENS = {
     "equivalentplasticstrain": "equivalent_plastic_strain",
     "plasticstraineq": "equivalent_plastic_strain",
 }
+
+# ADR 0105 Amendment 1 — ASDPlasticMaterial3D's material-level buckets.
+#
+# Keyed by the BUCKET TOKEN (the part after ``material.``), NOT by the
+# column label, and resolved by COLUMN POSITION. The labels the material
+# writes are not usable as keys: ``material.PStress`` labels its one
+# column ``p``, and canonicalisation is case-insensitive, so a label map
+# would make every force-based beam's section axial force ``P`` resolve
+# to a Gauss mean stress. The token is unambiguous — one bucket, one
+# request, one known column set.
+#
+# Named ``material_*`` on purpose: these are what the MATERIAL computed,
+# under its own definition and sign, and are NOT the reader's
+# tensor-derived ``mean_stress`` / ``j2_stress`` / ``volumetric_strain``
+# / ``j2_strain`` (``results/_derived.py``). Aliasing the two would need
+# a per-material sign/definition audit — the fork header's comment on
+# ``p`` does not match its own arithmetic — so the two provenances stay
+# separately named.
+#
+# A tuple maps a multi-column bucket by position: ``BackStress`` is the
+# material's Voigt order 11, 22, 33, 12, 23, 13 — the same order the
+# ``epsP1..`` plastic-strain columns already use. Scalar internal
+# variables (``iv_size == 1``) get one name. An explicit table, no
+# generic pass-through: an unknown bucket must surface as a dropped
+# column (:class:`GaussColumnDroppedWarning`), not as a guessed
+# canonical.
+#
+# TIMs A12 — LadrunoSANISAND's IMPL-EX/state responses (fork PR #805 /
+# #820). Same by-position resolution, and the same reason it has to be:
+# older fork builds write ``C1..Cn`` instead of the named COMP_NAMES
+# below, so a label map would miss those builds entirely. Each response
+# is keyed once under its primary token and again under every fork
+# alias (``stateparameter``, ``yieldfunction``, ``substepsme``,
+# ``ladrunosubsteps``) since the recorder forwards whichever spelling
+# the deck used straight through to ``-E material.<token>``.
+_MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
+    "pstress": "material_mean_stress",
+    "j2stress": "material_j2_stress",
+    "volstrain": "material_volumetric_strain",
+    "j2strain": "material_j2_strain",
+    "backstress": (
+        "back_stress_xx", "back_stress_yy", "back_stress_zz",
+        "back_stress_xy", "back_stress_yz", "back_stress_xz",
+    ),
+    "yieldstress": "yield_stress",
+    "dp_cohesion": "dp_cohesion",
+    # ADR 0107 / fork ADR-97 -- the local-Newton iteration count of the
+    # LAST Closest_Point return-map solve at that Gauss point. A scalar
+    # column per Gauss point, OBSERVED on fork build ff47275fd rather
+    # than assumed: NUM_COMP 1, MULTIPLICITY 1, FIBER_ID -1, one column
+    # per GAUSS_ID. Measured 0 while the point is elastic and 1 once it
+    # yields on the planar families (MC / MCTC / VonMises /
+    # DruckerPrager); the fork documents up to 5 for Hoek-Brown's curved
+    # surface. UNDEFINED under Backward_Euler -- the fork still writes
+    # the bucket, so a value read off a non-Closest_Point deck is
+    # meaningless rather than absent.
+    "cp_iterations": "cp_iterations",
+    "cappressure": "cap_pressure",
+    "epsqpshear": "eps_qp_shear",
+    "psi": "state_parameter",
+    "stateparameter": "state_parameter",
+    "yielddistance": "yield_distance",
+    "yieldfunction": "yield_distance",
+    "implexerror": "implex_error",
+    "avgimplexerror": "avg_implex_error",
+    "substeps": ("substeps_me", "substeps_cap_hit"),
+    "substepsme": ("substeps_me", "substeps_cap_hit"),
+    "ladrunosubsteps": ("substeps_me", "substeps_cap_hit"),
+    "implexdetail": (
+        "implex_detail_total", "implex_detail_dev", "implex_detail_vol",
+        "implex_detail_clamp_fired", "implex_detail_clamp_count",
+        "implex_detail_f",
+    ),
+    "implexrefusals": (
+        "implex_refusals_total", "implex_refusals_sign_change",
+        "implex_refusals_control", "implex_refusals_companion",
+    ),
+    # ADR 92 P2-9 grew this census 6 -> 7 slots. The fork sets NO
+    # ResponseType for it (LadrunoSANISAND.cpp:3947-3951 returns a bare
+    # MaterialResponse), so unlike every other fork response here the file
+    # always writes C1..C7 and these names are the ONLY ones there will be.
+    # Order is not the adoption guide's suggested list -- it is the fill
+    # site, LadrunoSANISAND.cpp:3996-4002, which is the only authority on a
+    # by-position map.
+    "implexguards": (
+        "implex_guards_floor_fallback",     # 0  P2-1 floor -> implicit stress
+        "implex_guards_f0_guard",           # 1  P2-2 f = 0 after reversal/softening
+        "implex_guards_hold_preserved",     # 2  P2-3 zero-dt commits left alone
+        "implex_guards_reversal_noise",     # 3  P2-5 reversal-noise guards
+        "implex_guards_trial_f0_guard",     # 4  P2-6 trial-time f = 0 fallbacks
+        "implex_guards_hold_skip_commit",   # 5  P2-5c hold-skip commits
+        "implex_guards_control_backoff",    # 6  P2-9 f* < 0.5*f_max
+    ),
+    # Fork ADR-95 (PR #803). Same shape as implexGuards: the fork returns a
+    # bare ``MaterialResponse(this, 95, Vector(8))`` with NO ResponseType
+    # (DruckerPrager.cpp:1004-1005), so the file always writes C1..C8 and
+    # this map is the only authority on what they mean. Order is the fill
+    # site, ``DruckerPrager::getLadrunoBranch()``, DruckerPrager.cpp:960-970.
+    # The map wins over the file's own labels whenever the widths match, so
+    # re-check this entry if ``DruckerPrager::setResponse`` ever starts
+    # emitting a ResponseType for responseID 95.
+    # ``ladrunoTangent`` (36 entries, responseID 96) is refused bare by the
+    # recorder but deliberately NOT named here -- nothing reads it yet.
+    "ladrunobranch": (
+        "dp_branch",            # 0  0 elastic / 1 cone / 2 cutoff / 3 corner
+        "dp_gamma_cone",        # 1  gamma(0), the f1 plastic multiplier
+        "dp_gamma_cutoff",      # 2  gamma(1), the f2 plastic multiplier
+        "dp_f1_trial",          # 3  f1 at the TRIAL state
+        "dp_f2_trial",          # 4  f2 at the TRIAL state
+        "dp_forced_accept",     # 5  1 when the count > 3 bailout fired
+        "dp_i1",                # 6  I1 of the RETURNED stress
+        "dp_det_a_min",         # 7  min_n det(n.D_ep.n) / (2G)^3
+    ),
+}
+_MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
+
+# Runway A1 — the fork's REAL ``COMP_NAMES`` for the tokens above, exact
+# spelling, in slot order. ``_MATERIAL_BUCKET_TOKENS`` resolves by
+# POSITION on purpose (older builds write generic ``C1..Cn``), which
+# means a real-name build whose columns are reordered or renamed is
+# mislabelled in silence — a measured probe found exactly that for
+# ``material.substeps`` (file order ``substeps_capHit, substeps_me`` read
+# as ``substeps_me, substeps_capHit``) and for ``material.psi`` (labelled
+# ``yieldDistance``, read as ``state_parameter``). This table lets
+# :func:`_name_mismatch` catch the disagreement and warn instead of
+# mislabelling.
+#
+# Deliberately partial. Only tokens whose exact fork spelling is
+# documented are listed:
+# * the SANISAND tokens per TIMs A12 (fork PR #820) / the adoption guide;
+# * the ADR 0105 ASDPlasticMaterial3D tokens whose spelling
+#   ``internal_docs/guide_ladruno_asdplastic.md`` states explicitly —
+#   ``p``, ``J2stress``, ``epsVol``, ``J2strain``, ``BackStress_1..6``.
+# ``YieldStress`` / ``DP_cohesion`` / ``CapPressure`` / ``EpsQpShear``
+# are named in ``_MATERIAL_BUCKET_TOKENS`` but their exact COMP_NAMES
+# spelling is not documented anywhere, so they are left out here — no
+# expectation, no check, rather than a guessed one that could
+# false-positive. ``implexGuards`` / ``ladrunoBranch`` carry no
+# ResponseType at all (every build writes ``C1..Cn``), so there is no
+# real spelling to compare against and they are absent too.
+_MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
+    "pstress": ("p",),
+    "j2stress": ("J2stress",),
+    "volstrain": ("epsVol",),
+    "j2strain": ("J2strain",),
+    "backstress": tuple(f"BackStress_{i}" for i in range(1, 7)),
+    "psi": ("psi",),
+    "stateparameter": ("psi",),
+    "yielddistance": ("yieldDistance",),
+    "yieldfunction": ("yieldDistance",),
+    "implexerror": ("implexError",),
+    "avgimplexerror": ("avgImplexError",),
+    "substeps": ("substeps_me", "substeps_capHit"),
+    "substepsme": ("substeps_me", "substeps_capHit"),
+    "ladrunosubsteps": ("substeps_me", "substeps_capHit"),
+    "implexdetail": (
+        "implexDetail_total", "implexDetail_dev", "implexDetail_vol",
+        "implexDetail_clampFired", "implexDetail_clampCount",
+        "implexDetail_f",
+    ),
+    "implexrefusals": (
+        "implexRefusals_total", "implexRefusals_signChange",
+        "implexRefusals_control", "implexRefusals_companion",
+    ),
+}
+
+
+def material_bucket_canonicals(token: str) -> "Optional[tuple[str, ...]]":
+    """Canonical name per column for a ``material.<Token>`` bucket, else None.
+
+    ``material.PStress`` → ``("material_mean_stress",)``;
+    ``material.BackStress`` → the six ``back_stress_*`` names in the
+    material's Voigt order. ``None`` for every other token — including
+    ``material.stress`` / ``material.strain`` / ``material.pstrain`` /
+    ``material.eqpstrain``, whose columns carry self-describing labels
+    (``sigma11``, ``epsP11``, ``eqpstrain``) that
+    :func:`continuum_canonical` already maps.
+    """
+    t = token.strip()
+    if not t.lower().startswith(_MATERIAL_PREFIX):
+        return None
+    entry = _MATERIAL_BUCKET_TOKENS.get(t[len(_MATERIAL_PREFIX):].lower())
+    if entry is None:
+        return None
+    return (entry,) if isinstance(entry, str) else entry
+
+
+def material_bucket_expected_names(token: str) -> "Optional[tuple[str, ...]]":
+    """The fork's documented real ``COMP_NAMES`` for ``material.<Token>``.
+
+    ``None`` for a token not in :data:`_MATERIAL_BUCKET_EXPECTED_NAMES` —
+    most tokens in :func:`material_bucket_canonicals` have no
+    documented exact spelling to check against, and no expectation
+    means no mismatch check.
+    """
+    t = token.strip()
+    if not t.lower().startswith(_MATERIAL_PREFIX):
+        return None
+    return _MATERIAL_BUCKET_EXPECTED_NAMES.get(t[len(_MATERIAL_PREFIX):].lower())
 
 
 def continuum_canonical(token: str) -> Optional[str]:
@@ -518,8 +718,89 @@ def _select_rows(
 # Gauss reads (continuum stress / strain)
 # =====================================================================
 
+
+class GaussColumnDroppedWarning(UserWarning):
+    """A material-level column was discarded — nothing could name it.
+
+    Raised (once per bucket, per read) by :func:`gauss_available` for a
+    ``material.<Token>`` bucket whose token is not in
+    :data:`_MATERIAL_BUCKET_TOKENS` and whose labels
+    :func:`continuum_canonical` does not know either. The column is
+    dropped: it never reaches ``available_components()`` and cannot be
+    plotted. A silent drop is indistinguishable from a material that
+    never wrote the quantity — the ASDPlasticMaterial3D material-level
+    buckets went missing exactly that way (ADR 0105 Amendment 1), so say
+    so.
+
+    Scoped to ``material.`` buckets on purpose. Elsewhere a label the
+    Gauss level cannot name is routinely another level's business — a
+    ``section.force`` station carries ``P``/``Mz``, which
+    :func:`section_canonical` owns — so warning there would be noise,
+    not news.
+    """
+
+
+class GaussColumnNameMismatchWarning(UserWarning):
+    """A material bucket's real COMP_NAMES disagree with the fork's order.
+
+    Raised (once per bucket, per read) by :func:`gauss_available` when a
+    ``material.<Token>`` bucket writes real (non-generic) column names
+    that are in :data:`_MATERIAL_BUCKET_EXPECTED_NAMES` but do not match
+    what the file actually wrote. :data:`_MATERIAL_BUCKET_TOKENS`
+    resolves those columns BY POSITION regardless — the table wins
+    whenever the slot count matches, so a reordered or renamed column
+    would otherwise be mislabelled in silence rather than merely
+    dropped. This warning does not change what gets returned (reordering
+    would be its own guess); it only says the file and the table
+    disagree.
+    """
+
+
+def _block_canonicals(token: str, b: _Block) -> list[Optional[str]]:
+    """Canonical (or None) per column of ``b``, by token then by label.
+
+    A ``material.<Token>`` bucket in :data:`_MATERIAL_BUCKET_TOKENS` is
+    resolved by COLUMN POSITION (its labels are material-private and
+    collide across levels — ``p`` vs the section force ``P``). Everything
+    else, including a material bucket whose column count does not match
+    the table, falls back to the label map.
+    """
+    names = material_bucket_canonicals(token)
+    if names is not None and len(names) == len(b.comp_names):
+        return list(names)
+    return [continuum_canonical(name) for name in b.comp_names]
+
+
+def _name_mismatch(
+    token: str, b: _Block,
+) -> "Optional[tuple[tuple[str, ...], tuple[str, ...]]]":
+    """``(actual, expected)`` if ``b``'s real COMP_NAMES disagree with the
+    fork's documented order for ``token`` — else ``None``.
+
+    Only checked when the by-position table applies (the block's width
+    matches the table, the same condition :func:`_block_canonicals` uses
+    to resolve by position) and the names are not the generic ``C1..Cn``
+    fallback: a generic bucket has nothing to compare, and a width
+    mismatch already falls back to the label map.
+    """
+    if not b.comp_names or all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
+        return None
+    canon = material_bucket_canonicals(token)
+    if canon is None or len(canon) != len(b.comp_names):
+        return None
+    expected = material_bucket_expected_names(token)
+    if expected is None or len(expected) != len(b.comp_names):
+        return None
+    actual = tuple(b.comp_names)
+    if actual == expected:
+        return None
+    return actual, expected
+
+
 def gauss_available(on_elements: "h5py.Group") -> set[str]:
     out: set[str] = set()
+    dropped: dict[str, set[str]] = {}
+    mismatched: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     for token in on_elements:
         if is_fiber_token(token):
             continue
@@ -531,15 +812,44 @@ def gauss_available(on_elements: "h5py.Group") -> set[str]:
             blocks = resolve_generic_gauss_blocks(
                 blocks, token=token, bucket_key=key,
             )
+            bucket = f"{token}/{key}"
             for b in blocks:
                 # Element-level rows are not Gauss data. Fiber buckets are
                 # excluded by token before this loop.
                 if b.gauss_id < 0:
                     continue
-                for name in b.comp_names:
-                    c = continuum_canonical(name)
+                if bucket not in mismatched:
+                    mm = _name_mismatch(token, b)
+                    if mm is not None:
+                        mismatched[bucket] = mm
+                for name, c in zip(b.comp_names, _block_canonicals(token, b)):
                     if c is not None:
                         out.add(c)
+                    elif token.lower().startswith(_MATERIAL_PREFIX):
+                        dropped.setdefault(bucket, set()).add(name)
+    for bucket, labels in dropped.items():
+        warnings.warn(
+            f"Gauss column(s) {sorted(labels)} of bucket {bucket!r} were "
+            f"dropped: apeGmsh has no canonical component for that "
+            f"material bucket, so its columns are not listed by "
+            f"available_components() and cannot be read or plotted. "
+            f"Element class {_class_name(bucket.split('/', 1)[-1])!r}. "
+            f"Add the bucket token to the .ladruno reader's material "
+            f"bucket table if the quantity should be readable.",
+            GaussColumnDroppedWarning,
+            stacklevel=2,
+        )
+    for bucket, (actual, expected) in mismatched.items():
+        warnings.warn(
+            f"Bucket {bucket!r} COMP_NAMES {list(actual)} disagree with "
+            f"the fork's documented order {list(expected)} for this "
+            f"material response. apeGmsh still resolves its columns by "
+            f"POSITION (the table's slot order), so a reordered or "
+            f"renamed file column is read under the WRONG canonical "
+            f"name. Element class {_class_name(bucket.split('/', 1)[-1])!r}.",
+            GaussColumnNameMismatchWarning,
+            stacklevel=2,
+        )
     return out
 
 
@@ -590,8 +900,8 @@ def read_gauss_slab(
             # spanning several Gauss points contributes one hit per GP.
             hits: list[tuple[_Block, int, int]] = []
             for b in gp_blocks:
-                for off, name in enumerate(b.comp_names):
-                    if continuum_canonical(name) != component:
+                for off, c in enumerate(_block_canonicals(token, b)):
+                    if c != component:
                         continue
                     for gp in range(b.n_gauss):
                         hits.append((b, gp, b.gp_column(gp, off)))
@@ -929,6 +1239,25 @@ def element_available(on_elements: "h5py.Group") -> set[str]:
     return out
 
 
+class ElementWidthMismatchWarning(UserWarning):
+    """Buckets of a different column width were dropped from an element read.
+
+    Raised (once per read) by :func:`read_element_slab` when one response
+    token spans buckets whose component counts differ. They cannot share
+    one dense ``(T, E, ncol)`` slab, so the first width wins and the rest
+    are skipped — a deliberate choice, but a silent one until now: the
+    caller got fewer elements than it asked for with nothing to
+    distinguish that from elements which never recorded the quantity
+    (the same indistinguishability :class:`GaussColumnDroppedWarning`
+    exists for).
+
+    The mixed case is real, not hypothetical. The fork sizes a
+    ``zeroLength`` ``force`` response by ``ndf1 + ndf2``, so a 3-D model
+    pairing ordinary (3,3) nodes with u-p (3,4) nodes writes 6- and
+    7-column buckets under one ``force`` token.
+    """
+
+
 def read_element_slab(
     on_elements: "h5py.Group",
     token: str,
@@ -943,7 +1272,9 @@ def read_element_slab(
     column width under one token (e.g. 2-D vs 3-D beams sharing a
     ``localForce`` token) can't share one ``(T, E, ncol)`` slab — the first
     width wins and mismatched buckets are skipped (homogeneous models, the
-    common case, always match).
+    common case, always match). A skip is never silent: it raises
+    :class:`ElementWidthMismatchWarning` naming both widths and the
+    elements left out.
     """
     if token not in on_elements:
         return None
@@ -951,6 +1282,8 @@ def read_element_slab(
     values_parts: list[ndarray] = []
     eid_parts: list[ndarray] = []
     ncol_ref: "Optional[int]" = None
+    ncol_key: "Optional[str]" = None
+    dropped: list[tuple[str, int, ndarray]] = []
 
     for key in token_grp:
         bucket = token_grp[key]
@@ -964,11 +1297,30 @@ def read_element_slab(
         block = data[t_idx][:, rows, :]                           # (T, E_sel, ncol)
         if ncol_ref is None:
             ncol_ref = block.shape[2]
+            ncol_key = key
         elif block.shape[2] != ncol_ref:
+            dropped.append((key, int(block.shape[2]), sel_ids))
             continue
         values_parts.append(block)
         eid_parts.append(sel_ids)
 
+    if dropped:
+        lost = np.concatenate([ids for _, _, ids in dropped])
+        shown = ", ".join(str(int(i)) for i in lost[:8])
+        if lost.size > 8:
+            shown += f", ... (+{lost.size - 8} more)"
+        widths = ", ".join(f"{k!r} has {n}" for k, n, _ in dropped)
+        warnings.warn(
+            f"Element read of token {token!r} kept the {ncol_ref}-column "
+            f"bucket {ncol_key!r} and DROPPED {len(dropped)} bucket(s) of a "
+            f"different width ({widths}); {lost.size} element(s) are missing "
+            f"from the result: {shown}. Buckets of differing component count "
+            f"cannot share one dense (T, E, ncol) slab, so the first width "
+            f"wins. Read the differing elements in a separate call scoped to "
+            f"them with element_ids= to get their columns.",
+            ElementWidthMismatchWarning,
+            stacklevel=2,
+        )
     if not values_parts:
         return None
     return (

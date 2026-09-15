@@ -24,6 +24,8 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
+from .._internal.build import stage_marker_name
+
 import os
 from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
@@ -331,6 +333,17 @@ class TclEmitter:
         # APEGMSH_PROGRESS`` in the loop so the run=True streamer can
         # render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
+        # ADR 0106 D2 — stage-marker injection, set by
+        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
+        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ``puts APEGMSH_STAGE open|close <name>`` so a solver-stats
+        # block on stderr can be attributed to the stage that paid for
+        # it. Default off keeps a deck with no ``stats=True`` anywhere
+        # byte-identical to today (INV-1). Tracks the name of the
+        # currently-open stage so ``stage_close`` (which takes no
+        # argument) can name it too.
+        self._emit_stage_markers: bool = False
+        self._current_stage_name: str | None = None
         # Streaming sink state (ADR 0065 Tier 2 /
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
         # (the default, byte-identical to before).
@@ -879,7 +892,11 @@ class TclEmitter:
         # algorithm) and restores rung 0 after a rescue; exhaustion
         # aborts with the same banner naming the ladder.
         n = int(steps)
-        where = f" of stage '{label}'".replace('"', "'") if label else ""
+        # ADR 0106 D2's stage_marker_name closes the same quoting hole
+        # here: a raw label could carry ``$`` / ``\`` / ``{`` / ``}`` /
+        # a newline into the ``error "..."`` banner below (the old
+        # ``"`` -> ``'`` swap alone left those open).
+        where = f" of stage '{stage_marker_name(label)}'" if label else ""
         call = "analyze 1" if dt is None else _join("analyze", 1, dt)
         if strategy is None:
             self._lines.append(
@@ -910,7 +927,7 @@ class TclEmitter:
         rungs_literal = "{" + " ".join(
             "{" + _join(*rung) + "}" for rung in strategy.rungs
         ) + "}"
-        sname = strategy.name.replace('"', "'").replace("[", "(").replace("]", ")")
+        sname = stage_marker_name(strategy.name)
         self._lines.append(f"set _apesees_rungs {rungs_literal}")
         self._lines.append(
             f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
@@ -984,6 +1001,20 @@ class TclEmitter:
         self._lines.append("flush stdout")
         self._lines.indent = prev_indent + "    "
         self._lines.append("}")
+
+    def _emit_stage_marker(self, phase: str, name: str) -> None:
+        """ADR 0106 D2 — ``puts APEGMSH_STAGE open|close <name>`` at the
+        current (outer) indent, name LAST so a name with spaces survives
+        the S1 parser's ``r"APEGMSH_STAGE (open|close) (.+)$"``.
+
+        Quoting normalised the same way ``analyze`` already normalises a
+        strategy name (line ~913): ``"`` -> ``'`` so the name cannot
+        close the ``puts`` string early, ``[``/``]`` -> ``(``/``)`` so it
+        cannot trigger Tcl command substitution inside it.
+        """
+        sname = stage_marker_name(name)
+        self._lines.append(f'puts "APEGMSH_STAGE {phase} {sname}"')
+        self._lines.append("flush stdout")
 
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
@@ -1254,6 +1285,21 @@ class TclEmitter:
         self._lines.append(_join("updateParameter", int(pid), 1))
         self._lines.append(_join("remove", "parameter", int(pid)))
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self._lines.append(_join("parameter", int(pid)))
+        for et in ele_tags:
+            self._lines.append(
+                _join("addToParameter", int(pid), "element", int(et), *args)
+            )
+        self._lines.append(_join("updateParameter", int(pid), float(value)))
+        self._lines.append(_join("remove", "parameter", int(pid)))
+
     def step_hook_ramp(
         self,
         name: str,
@@ -1323,6 +1369,9 @@ class TclEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
+        if self._emit_stage_markers:
+            self._current_stage_name = name
+            self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
 
     def domain_change(self) -> None:
@@ -1334,6 +1383,9 @@ class TclEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
+        if self._emit_stage_markers and self._current_stage_name is not None:
+            self._emit_stage_marker("close", self._current_stage_name)
+            self._current_stage_name = None
         self._lines.append("loadConst -time 0.0")
         self._lines.append("wipeAnalysis")
         if self._step_hooks_registered:
@@ -1368,6 +1420,22 @@ class TclEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append("reset")
+        self._lines.indent = prev_indent
+
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            _join("setNodeVel", int(node), int(dof), float(value), "-commit")
+        )
+        self._lines.indent = prev_indent
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            _join("setNodeAccel", int(node), int(dof), float(value), "-commit")
+        )
         self._lines.indent = prev_indent
 
     def remove_sp(self, node: int, dof: int) -> None:

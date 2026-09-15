@@ -8,6 +8,7 @@ capability probe is gated behind its availability.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -49,6 +50,36 @@ def test_binary_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("shutil.which", lambda _name: None)
     with pytest.raises(FileNotFoundError, match="OpenSeesTarget"):
         resolve_opensees_binary(None, None)
+
+
+def test_binary_directory_resolves_to_exe_inside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("os.name", "nt")
+    bin_dir = tmp_path / "dist_bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "OpenSees.exe"
+    exe.write_text("stub")
+    # directory at each precedence level resolves to the exe inside it
+    assert resolve_opensees_binary(str(bin_dir), None) == str(exe)
+    target = OpenSeesTarget(binary=str(bin_dir))
+    assert resolve_opensees_binary(None, target) == str(exe)
+    monkeypatch.setenv("OPENSEES_BIN", str(bin_dir))
+    assert resolve_opensees_binary(None, None) == str(exe)
+
+
+def test_binary_directory_without_exe_raises_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("os.name", "nt")
+    empty_dir = tmp_path / "empty_bin"
+    empty_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="OpenSees.exe"):
+        resolve_opensees_binary(str(empty_dir), None)
+
+
+def test_binary_file_path_unchanged() -> None:
+    assert resolve_opensees_binary("E:/explicit.exe", None) == "E:/explicit.exe"
 
 
 def test_python_precedence_explicit_over_target_over_env(

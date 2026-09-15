@@ -13,6 +13,11 @@ import numpy as np
 import pytest
 
 from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._ladruno_element_io import (
+    ElementWidthMismatchWarning,
+    GaussColumnDroppedWarning,
+    read_element_slab,
+)
 from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "ladruno"
@@ -744,3 +749,494 @@ def test_overlapping_tokens_that_disagree_raise() -> None:
     # the two buckets' columns is mis-labelled. Do not pick one.
     with pytest.raises(GaussLayoutMismatch, match="element 7 Gauss point 0"):
         _dedupe_gauss_columns(*_overlap(5.0, -3.0), component="stress_xx")
+
+
+# ---------------------------------------------------------------------------
+# ADR 0105 Amendment 1 — material-level buckets, and the loud drop
+# ---------------------------------------------------------------------------
+#
+# ``ASDPlasticMaterial3D`` writes one bucket per ``material.<token>``
+# request, each a per-Gauss-point block labelled with the MATERIAL's own
+# private names (``p``, ``J2stress``, ``BackStress_1``…). The reader maps
+# those buckets by TOKEN and by column POSITION — the labels are not
+# unique across levels (``p`` is the section axial force ``P`` under
+# case-insensitive matching), so they cannot be the key. Synthesised here
+# from the quad fixture — same bucket shape the fork writes, provably
+# fork-free — because the mapping and the drop-warning are reader
+# behaviour, not fork behaviour. The live round-trip is
+# ``tests/opensees/integration_ladruno/test_ladruno_gauss_generic_columns.py``.
+
+
+def _add_material_bucket(
+    path: Path, token: str, labels: "tuple[str, ...]",
+) -> None:
+    """Append a per-GP ``material.<token>`` bucket to a ``.ladruno`` file.
+
+    One block per Gauss point (``LEVELS == 4``, the Nd-material depth the
+    recorder writes), each carrying ``labels``. DATA is filled with an
+    arange so a read can be checked column by column.
+    """
+    import h5py
+
+    with h5py.File(path, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        key = next(iter(on_e["stress"]))
+        src = on_e["stress"][key]
+        n_t, n_e, _ = src["DATA"].shape
+        n_gp = int(np.asarray(src["COLUMN_MAP"]["GAUSS_ID"][...]).size)
+        width = n_gp * len(labels)
+        grp = on_e.create_group(f"{token}/{key}")
+        grp.create_dataset("DATA", data=np.arange(
+            n_t * n_e * width, dtype=np.float64,
+        ).reshape(n_t, n_e, width))
+        for name in ("ID", "STEP", "TIME"):
+            if name in src:
+                grp.create_dataset(name, data=np.asarray(src[name][...]))
+        cm = grp.create_group("COLUMN_MAP")
+        cm.create_dataset("LEVELS", data=np.full(n_gp, 4, dtype=np.int64))
+        cm.create_dataset(
+            "GAUSS_ID", data=np.arange(n_gp, dtype=np.int64),
+        )
+        cm.attrs["COMP_NAMES"] = "\n".join([",".join(labels)] * n_gp)
+
+
+def _quad_with(tmp_path: Path, buckets: dict) -> Path:
+    import shutil
+
+    dst = tmp_path / "material.ladruno"
+    shutil.copy(QUAD, dst)
+    for token, labels in buckets.items():
+        _add_material_bucket(dst, token, labels)
+    return dst
+
+
+def test_material_level_buckets_reach_the_gauss_level(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {
+        "material.PStress": ("p",),
+        "material.J2Stress": ("J2stress",),
+        "material.VolStrain": ("epsVol",),
+        "material.J2Strain": ("J2strain",),
+        "material.BackStress": tuple(f"BackStress_{i}" for i in range(1, 7)),
+        "material.YieldStress": ("YieldStress",),
+    })
+    with LadrunoReader(path) as r:
+        comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "material_mean_stress", "material_j2_stress",
+            "material_volumetric_strain", "material_j2_strain",
+            "back_stress_xx", "back_stress_yy", "back_stress_zz",
+            "back_stress_xy", "back_stress_yz", "back_stress_xz",
+            "yield_stress",
+        } <= comps
+        # One column per (element, GP) — 1 element × 4 GPs, 2 steps.
+        slab = r.read_gauss("stage_0", "material_mean_stress")
+        assert slab.values.shape == (2, 4)
+        # The BackStress block is 6 wide per GP; the xy column is offset 3.
+        slab = r.read_gauss("stage_0", "back_stress_xy")
+        assert slab.values.shape == (2, 4)
+        np.testing.assert_array_equal(
+            slab.values[0], np.array([3.0, 9.0, 15.0, 21.0]),
+        )
+
+
+def test_sanisand_buckets_reach_the_gauss_level_with_real_names(
+    tmp_path: Path,
+) -> None:
+    # TIMs A12 — the fork's own COMP_NAMES (PR #820).
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.psi": ("psi",),
+        "material.implexDetail": (
+            "implexDetail_total", "implexDetail_dev", "implexDetail_vol",
+            "implexDetail_clampFired", "implexDetail_clampCount",
+            "implexDetail_f",
+        ),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "state_parameter",
+            "implex_detail_total", "implex_detail_dev",
+            "implex_detail_vol", "implex_detail_clamp_fired",
+            "implex_detail_clamp_count", "implex_detail_f",
+        } <= comps
+        slab = r.read_gauss("stage_0", "state_parameter")
+        assert slab.values.shape == (2, 4)
+
+
+def test_sanisand_buckets_reach_the_gauss_level_with_generic_names(
+    tmp_path: Path,
+) -> None:
+    # Older fork builds write C1..Cn instead of the named COMP_NAMES —
+    # registering by token (positional) has to work on both.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.psi": ("C1",),
+        "material.implexDetail": tuple(f"C{i}" for i in range(1, 7)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert {
+            "state_parameter",
+            "implex_detail_total", "implex_detail_dev",
+            "implex_detail_vol", "implex_detail_clamp_fired",
+            "implex_detail_clamp_count", "implex_detail_f",
+        } <= comps
+
+
+def test_implex_guards_seven_slots_resolve_by_position(tmp_path: Path) -> None:
+    # ADR 92 P2-9. Unlike every other fork response, implexGuards carries no
+    # ResponseType at all (LadrunoSANISAND.cpp:3947-3951), so C1..C7 is not
+    # an "older build" case here -- it is what every build writes, and the
+    # by-position map is the only thing that can name these columns.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.implexGuards": tuple(f"C{i}" for i in range(1, 8)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert {
+        "implex_guards_floor_fallback", "implex_guards_f0_guard",
+        "implex_guards_hold_preserved", "implex_guards_reversal_noise",
+        "implex_guards_trial_f0_guard", "implex_guards_hold_skip_commit",
+        "implex_guards_control_backoff",
+    } <= comps
+
+
+def test_implex_guards_slot_order_matches_the_fork_fill_site() -> None:
+    # A by-position map is only as good as its order, and a wrong order
+    # mislabels data silently. Pinned to LadrunoSANISAND.cpp:3996-4002.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.implexGuards") == (
+        "implex_guards_floor_fallback",     # out4g(0) getFloorFallbacks
+        "implex_guards_f0_guard",           # out4g(1) getGuardsFired
+        "implex_guards_hold_preserved",     # out4g(2) getHoldsPreserved
+        "implex_guards_reversal_noise",     # out4g(3) getReversalNoiseGuards
+        "implex_guards_trial_f0_guard",     # out4g(4) getTrialGuardF0
+        "implex_guards_hold_skip_commit",   # out4g(5) getHoldSkipCommits
+        "implex_guards_control_backoff",    # out4g(6) getControlFactorBackoffs
+    )
+    # Both fork spellings reach the same map (the table keys are lowered).
+    assert (material_bucket_canonicals("material.ImplexGuards")
+            == material_bucket_canonicals("material.implexGuards"))
+
+
+def test_ladruno_branch_eight_slots_resolve_by_position(tmp_path: Path) -> None:
+    # Fork ADR-95 (PR #803). Like implexGuards, the fork returns a bare
+    # MaterialResponse with no ResponseType (DruckerPrager.cpp:1004-1005),
+    # so C1..C8 is what every build writes and the by-position map is the
+    # only thing that can name these columns.
+    import warnings
+
+    path = _quad_with(tmp_path, {
+        "material.ladrunoBranch": tuple(f"C{i}" for i in range(1, 9)),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert {
+        "dp_branch", "dp_gamma_cone", "dp_gamma_cutoff",
+        "dp_f1_trial", "dp_f2_trial", "dp_forced_accept",
+        "dp_i1", "dp_det_a_min",
+    } <= comps
+
+
+def test_ladruno_branch_slot_order_matches_the_fork_fill_site() -> None:
+    # Pinned to DruckerPrager::getLadrunoBranch(), DruckerPrager.cpp:960-970.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.ladrunoBranch") == (
+        "dp_branch",            # mLadBranch
+        "dp_gamma_cone",        # mLadGamma0
+        "dp_gamma_cutoff",      # mLadGamma1
+        "dp_f1_trial",          # mLadF1Trial
+        "dp_f2_trial",          # mLadF2Trial
+        "dp_forced_accept",     # mLadForcedAccept
+        "dp_i1",                # I1 of the returned stress
+        "dp_det_a_min",         # detAmin
+    )
+
+
+def test_ladruno_tangent_is_not_named_yet(tmp_path: Path) -> None:
+    # The 36-entry `ladrunoTangent` (responseID 96) is refused bare by the
+    # recorder but has no by-position map: nothing reads it yet, so it takes
+    # the documented unknown-bucket route rather than inventing 36 names.
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    assert material_bucket_canonicals("material.ladrunoTangent") is None
+
+
+def test_cp_iterations_is_a_scalar_gauss_component(tmp_path: Path) -> None:
+    """ADR 0107 / fork ADR-97 — one scalar column per Gauss point.
+
+    Shape pinned against a real ``.ladruno`` written by fork build
+    ``ff47275fd``: ``NUM_COMP`` 1, ``MULTIPLICITY`` 1, ``FIBER_ID`` -1,
+    one column per ``GAUSS_ID``. Before this entry the bucket was
+    dropped with a :class:`GaussColumnDroppedWarning`.
+    """
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        material_bucket_canonicals,
+    )
+
+    # A scalar bucket maps to exactly one canonical name...
+    assert material_bucket_canonicals("material.cp_iterations") == (
+        "cp_iterations",
+    )
+    # ...case-insensitively, like every other token in the table.
+    assert (material_bucket_canonicals("material.CP_Iterations")
+            == material_bucket_canonicals("material.cp_iterations"))
+
+    # ...and it reaches available_components() without warning.
+    path = _quad_with(tmp_path, {"material.cp_iterations": ("cp_iterations",)})
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnDroppedWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "cp_iterations" in comps
+
+
+def test_unknown_material_bucket_warns_and_names_it(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {"material.Mystery": ("WhoKnows",)})
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning) as rec:
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "WhoKnows" not in comps
+    msg = str(rec[0].message)
+    assert "WhoKnows" in msg
+    assert "material.Mystery" in msg
+    assert "FourNodeQuad" in msg
+
+
+def test_fully_mapped_buckets_do_not_warn(tmp_path: Path) -> None:
+    # The quad fixture's own stress/strain buckets map completely — and a
+    # beam's section.force / section.deformation stations are not Gauss
+    # columns at all. Neither may warn, or the warning is noise.
+    import warnings
+
+    for fixture in (QUAD, FIBERBEAM):
+        with LadrunoReader(fixture) as r:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", GaussColumnDroppedWarning)
+                r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_one_warning_per_bucket(tmp_path: Path) -> None:
+    path = _quad_with(tmp_path, {
+        "material.Mystery": ("WhoKnows", "NorMe"),
+        "material.Other": ("Neither",),
+    })
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning) as rec:
+            r.available_components("stage_0", ResultLevel.GAUSS)
+    assert len(rec) == 2                       # two buckets, not three labels
+    joined = " ".join(str(w.message) for w in rec)
+    for label in ("WhoKnows", "NorMe", "Neither"):
+        assert label in joined
+
+
+def test_material_bucket_labels_are_not_matched_as_labels(tmp_path: Path) -> None:
+    # Same labels, a token nobody maps: the columns must NOT resolve.
+    # Proves the mapping is keyed by token, not by label.
+    path = _quad_with(tmp_path, {"material.Mystery": ("p", "J2stress")})
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnDroppedWarning):
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "material_mean_stress" not in comps
+    assert "material_j2_stress" not in comps
+
+
+# =====================================================================
+# Real-name mismatch (runway A1)
+#
+# _MATERIAL_BUCKET_TOKENS resolves material-level Gauss buckets by
+# COLUMN POSITION, which means a real-name build whose columns are
+# reordered or renamed relative to the fork's documented order is
+# mislabelled in SILENCE rather than merely dropped -- a measured probe
+# found exactly that for material.substeps (file order
+# substeps_capHit, substeps_me read as substeps_me, substeps_capHit).
+# _MATERIAL_BUCKET_EXPECTED_NAMES lets the reader compare and warn.
+# =====================================================================
+
+
+def test_swapped_real_names_warn_once_and_keep_positional_canonicals(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("substeps_capHit", "substeps_me"),
+    })
+    with LadrunoReader(path) as r:
+        with pytest.warns(GaussColumnNameMismatchWarning) as rec:
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+        assert len(rec) == 1
+        msg = str(rec[0].message)
+        assert "substeps_capHit" in msg and "substeps_me" in msg
+        assert "material.substeps" in msg
+        # The table still wins -- both positional canonicals are present,
+        # the warning is a heads-up, not a fix.
+        assert {"substeps_me", "substeps_cap_hit"} <= comps
+        slab = r.read_gauss("stage_0", "substeps_me")
+        assert slab.values.shape == (2, 4)
+
+
+def test_correct_real_names_do_not_warn_mismatch(tmp_path: Path) -> None:
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("substeps_me", "substeps_capHit"),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_generic_names_never_warn_mismatch(tmp_path: Path) -> None:
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {
+        "material.substeps": ("C1", "C2"),
+    })
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            r.available_components("stage_0", ResultLevel.GAUSS)
+
+
+def test_token_without_documented_names_never_warns_mismatch(
+    tmp_path: Path,
+) -> None:
+    # YieldStress is in the positional table but its exact COMP_NAMES
+    # spelling is not documented anywhere -- no expectation, no check.
+    import warnings
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussColumnNameMismatchWarning,
+    )
+
+    path = _quad_with(tmp_path, {"material.YieldStress": ("Fy",)})
+    with LadrunoReader(path) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+            comps = set(r.available_components("stage_0", ResultLevel.GAUSS))
+    assert "yield_stress" in comps
+
+
+def test_section_axial_force_is_not_a_gauss_mean_stress() -> None:
+    # The collision the token key exists to avoid: a section.force station
+    # labels its axial force ``P``, and canonicalisation is
+    # case-insensitive, so a label-keyed ``p`` would surface every
+    # force-based beam station as material_mean_stress at the Gauss level.
+    with LadrunoReader(FIBERBEAM) as r:
+        assert r.available_components("stage_0", ResultLevel.GAUSS) == []
+        # …while the station itself still reads at its own level.
+        assert "axial_force" in r.available_components(
+            "stage_0", ResultLevel.LINE_STATIONS,
+        )
+
+
+# =====================================================================
+# Mixed-width buckets under one response token
+#
+# The fork sizes a zeroLength `force` response by ndf1 + ndf2, so a 3-D
+# model pairing (3,3) nodes with u-p (3,4) nodes writes 6- and 7-column
+# buckets under ONE token. They cannot share a dense (T, E, ncol) slab;
+# the first width wins. That is a deliberate choice -- but it used to be
+# a silent one, and a short read is indistinguishable from elements that
+# never recorded the quantity.
+# =====================================================================
+
+
+def _mixed_width_on_elements(path: Path) -> "object":
+    """An ON_ELEMENTS group with 6- and 7-column buckets under `force`."""
+    import h5py
+
+    f = h5py.File(path, "w")
+    tok = f.create_group("ON_ELEMENTS").create_group("force")
+    # Alphabetical iteration puts the 6-column bucket first, so it wins.
+    a = tok.create_group("a_pairs_3_3")
+    a.create_dataset("ID", data=np.array([11, 12], dtype=np.int64))
+    a.create_dataset("DATA", data=np.zeros((2, 2, 6), dtype=np.float64))
+    b = tok.create_group("b_pairs_3_4")
+    b.create_dataset("ID", data=np.array([21, 22], dtype=np.int64))
+    b.create_dataset("DATA", data=np.ones((2, 2, 7), dtype=np.float64))
+    return f
+
+
+def test_mixed_width_buckets_drop_elements_and_say_so(tmp_path: Path) -> None:
+    f = _mixed_width_on_elements(tmp_path / "mixed.h5")
+    try:
+        with pytest.warns(ElementWidthMismatchWarning) as rec:
+            out = read_element_slab(
+                f["ON_ELEMENTS"], "force",
+                t_idx=np.array([0, 1]), element_ids=None,
+            )
+        assert out is not None
+        values, ids = out
+        # The drop itself: the 7-column pair is gone from the result.
+        assert values.shape == (2, 2, 6)
+        assert ids.tolist() == [11, 12]
+        assert 21 not in ids.tolist() and 22 not in ids.tolist()
+        # …and it is no longer silent. The message must carry what the
+        # caller needs to act: both widths, and WHICH elements are absent.
+        msg = str(rec[0].message)
+        assert "6-column" in msg and "has 7" in msg
+        assert "21" in msg and "22" in msg
+        assert "force" in msg
+    finally:
+        f.close()
+
+
+def test_uniform_width_buckets_do_not_warn(tmp_path: Path) -> None:
+    # The common case stays quiet -- a warning on every homogeneous read
+    # would be noise, and noise is how a real one gets ignored.
+    import warnings
+
+    import h5py
+
+    with h5py.File(tmp_path / "uniform.h5", "w") as f:
+        tok = f.create_group("ON_ELEMENTS").create_group("force")
+        for name, eids in (("a", [11, 12]), ("b", [21, 22])):
+            g = tok.create_group(name)
+            g.create_dataset("ID", data=np.array(eids, dtype=np.int64))
+            g.create_dataset("DATA", data=np.zeros((2, 2, 6), dtype=np.float64))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ElementWidthMismatchWarning)
+            out = read_element_slab(
+                f["ON_ELEMENTS"], "force",
+                t_idx=np.array([0, 1]), element_ids=None,
+            )
+        assert out is not None
+        assert out[1].tolist() == [11, 12, 21, 22]
+

@@ -72,6 +72,49 @@ def _interface_fem(**kw):
         return g.mesh.queries.get_fem_data(dim=2)
 
 
+# ── 3D fixture (TIMs A10 S2) ─────────────────────────────────────────
+
+def _surface_at_z(volume: int, z: float, tol: float = 1e-6) -> int:
+    for dim, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[2] - z) < tol and abs(bb[5] - z) < tol:
+            return abs(tag)
+    raise AssertionError(f"no boundary surface of volume {volume} at z={z}")
+
+
+def _build_two_boxes(g, n: int = 3):
+    """Soil block [0,1]^2 x [0,1] under a footing block [0,1]^2 x [1,2].
+
+    The 3D sibling of :func:`_build_two_squares`: transfinite hexes, the
+    two volumes NEVER fragmented, so the shared plane at ``z=1`` carries
+    two coincident-but-distinct node sets. ``"face"`` is the soil's top
+    surface (the master — its material sits below, so outward is ``+z``)
+    and ``"skin"`` the footing's underside.
+    """
+    soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+    footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+    g.model.sync()
+    g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=n)
+    g.mesh.generation.generate(3)
+    top = _surface_at_z(soil, 1.0)
+    g.physical.add(3, [soil], name="soil")
+    g.physical.add(3, [footing], name="footing")
+    g.physical.add(2, [top], name="face")
+    g.physical.add(2, [_surface_at_z(footing, 1.0)], name="skin")
+    g.physical.add(
+        1, [abs(t) for _, t in gmsh.model.getBoundary(
+            [(2, top)], oriented=False)][:1], name="edge")
+    return soil, footing
+
+
+def _interface_fem_3d(**kw):
+    with apeGmsh(model_name="iface_a10", verbose=False) as g:
+        _build_two_boxes(g)
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL, **kw)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
 def _element_ids(fem) -> set[int]:
     return {int(t) for t in fem.elements.ids}
 
@@ -118,19 +161,41 @@ def test_unknown_slave_ndf_is_refused(bad):
                 thickness=THICKNESS, slave_ndf=bad)
 
 
-def test_three_dimensional_model_is_refused_at_the_verb():
-    with apeGmsh(model_name="iface_3d", verbose=False) as g:
+def test_thickness_is_refused_by_name_on_a_3d_model():
+    """``thickness`` is the 2D line master's out-of-plane depth. A 3D
+    surface master has a real area, so the kwarg is refused rather than
+    quietly multiplied into ``A_trib`` (TIMs A10 S2)."""
+    with apeGmsh(model_name="iface_3d_thk", verbose=False) as g:
         g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
         g.model.sync()
-        with pytest.raises(NotImplementedError, match="ADR 0093 D2"):
+        with pytest.raises(ValueError, match="thickness"):
             g.constraints.interface(
                 "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
                 thickness=THICKNESS)
+        assert g.constraints.interface_defs == []
 
 
-def test_surface_master_is_refused_at_resolve():
-    """A dim-2 master on a 2D model — the label resolves, but a surface
-    master needs per-facet frames (deferred, D2)."""
+@pytest.mark.parametrize("ndf,ok", [(None, True), (3, True), (4, True),
+                                    (6, True), (2, False)])
+def test_slave_ndf_set_is_the_3d_one_on_a_3d_model(ndf, ok):
+    with apeGmsh(model_name="iface_3d_ndf", verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        if ok:
+            g.constraints.interface(
+                "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
+                slave_ndf=ndf)
+            assert g.constraints.interface_defs[-1].thickness is None
+        else:
+            with pytest.raises(ValueError, match="slave_ndf"):
+                g.constraints.interface(
+                    "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
+                    slave_ndf=ndf)
+
+
+def test_surface_master_is_refused_at_resolve_in_a_2d_model():
+    """A dim-2 master on a 2D model — the label resolves, but a 2D
+    model's master is its dim-1 boundary curve (D2)."""
     with apeGmsh(model_name="iface_surf", verbose=False) as g:
         _build_two_squares(g)
         g.constraints.interface(
@@ -138,6 +203,17 @@ def test_surface_master_is_refused_at_resolve():
             thickness=THICKNESS)
         with pytest.raises(NotImplementedError, match="ADR 0093 D2"):
             g.mesh.queries.get_fem_data(dim=2)
+
+
+def test_line_master_is_refused_at_resolve_in_a_3d_model():
+    """The mirror: a dim-1 master in a 3D model. The surface lane needs
+    facets, and a curve carries none — refused by name on the label."""
+    with apeGmsh(model_name="iface_3d_line", verbose=False) as g:
+        _build_two_boxes(g)
+        g.constraints.interface(
+            "edge", "skin", normal=NORMAL, tangential=TANGENTIAL)
+        with pytest.raises(NotImplementedError, match="dimension \\[1\\]"):
+            g.mesh.queries.get_fem_data(dim=3)
 
 
 # =====================================================================
@@ -278,3 +354,210 @@ def test_interface_and_node_to_surface_phantoms_never_collide():
     # Both ranges also stay clear of the real node pool.
     real = {int(t) for t in fem.nodes.ids}
     assert (mp_phantoms | iface_phantoms).isdisjoint(real)
+
+
+# =====================================================================
+# 3D surface master, end to end (TIMs A10 S2)
+# =====================================================================
+
+def test_3d_surface_master_resolves_into_records():
+    fem = _interface_fem_3d()
+    recs = fem.elements.interfaces
+    assert len(recs) == 9                     # n=3 nodes/edge => 3x3 grid
+    assert [r.kind for r in recs] == ["interface"] * 9
+    assert [r.slave_node for r in recs] == sorted(
+        r.slave_node for r in recs)
+    masters = {r.master_node for r in recs}
+    slaves = {r.slave_node for r in recs}
+    assert len(masters) == len(slaves) == 9
+    assert masters.isdisjoint(slaves)
+
+
+def test_3d_records_carry_a_nine_float_outward_frame():
+    for r in _interface_fem_3d().elements.interfaces:
+        assert len(r.orient) == 9
+        n, t1, t2 = (np.asarray(r.orient[i:i + 3]) for i in (0, 3, 6))
+        # The soil is below z=1, so INV-1's outward is +z on every pair,
+        # corners and edges of the face included (they are averages).
+        np.testing.assert_allclose(n, [0.0, 0.0, 1.0], atol=1e-12)
+        for v in (n, t1, t2):
+            assert float(np.linalg.norm(v)) == pytest.approx(1.0, abs=1e-12)
+        assert float(np.dot(n, t1)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.dot(n, t2)) == pytest.approx(0.0, abs=1e-12)
+        assert float(np.dot(t1, t2)) == pytest.approx(0.0, abs=1e-12)
+        np.testing.assert_allclose(np.cross(n, t1), t2, atol=1e-12)
+
+
+def test_3d_tributary_areas_close_over_the_master_surface():
+    recs = _interface_fem_3d().elements.interfaces
+    assert sum(r.a_trib for r in recs) == pytest.approx(1.0, rel=1e-12)
+    # 2x2 quads of area 0.25: the 4 face corners take one quarter-share
+    # each, the 4 edge nodes two, the centre node four -- and no
+    # thickness leg multiplies any of them (D3, the 3D reading).
+    cell = 0.25
+    shares = sorted(r.a_trib for r in recs)
+    assert shares[0] == pytest.approx(0.25 * cell)
+    assert shares[4] == pytest.approx(0.50 * cell)
+    assert shares[-1] == pytest.approx(cell)
+
+
+def test_3d_backing_elements_are_solid_domain_elements():
+    fem = _interface_fem_3d()
+    backing = {r.backing_element for r in fem.elements.interfaces}
+    assert backing <= _element_ids(fem)
+    assert all(t.dim == 3 for t in fem.elements.types)
+
+
+@pytest.mark.parametrize("ndf", [None, 3, 4, 6])
+def test_3d_pairs_connect_directly_at_every_accepted_slave_ndf(ndf):
+    # ADR 96: the fork's zeroLength takes the mixed 3D pair itself, so
+    # D4's phantom bridge has nothing left to bridge.
+    for r in _interface_fem_3d(slave_ndf=ndf).elements.interfaces:
+        assert r.phantom_node is None
+        assert r.phantom_ndf is None
+        assert r.equal_dof_records == []
+
+
+def test_3d_quadratic_master_facets_are_refused_by_name():
+    with apeGmsh(model_name="iface_3d_quad", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=2)
+        g.mesh.generation.generate(3)
+        g.mesh.generation.set_order(2)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(3, [footing], name="footing")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [_surface_at_z(footing, 1.0)], name="skin")
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL)
+        with pytest.raises(NotImplementedError, match="quad8|quad9|tri6"):
+            g.mesh.queries.get_fem_data(dim=3)
+
+
+# =====================================================================
+# A master spanning TWO faces (TIMs A10 S4; adversarial review row 4)
+# =====================================================================
+# The S1 kernel pins the box corner and the reentrant fold against
+# synthetic facet arrays; the S3 review could not reach either THROUGH
+# THE VERB, because a slave built as two separate bodies puts two nodes
+# at the corner and the resolver's ambiguity refusal fires first. It is
+# reachable — the slave just has to be ONE conformal mesh across the
+# corner, which a fragment of three boxes gives.
+
+CORNER_N = 3
+CORNER_TH = 0.2
+
+
+def _faces_at(volume: int, *, plane: str, value: float,
+              tol: float = 1e-6) -> "list[int]":
+    lo = {"x": 0, "y": 1, "z": 2}[plane]
+    out = []
+    for _d, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[lo] - value) < tol and abs(bb[lo + 3] - value) < tol:
+            out.append(abs(tag))
+    return out
+
+
+def _corner_fem(*, reentrant: bool):
+    """Block ``[0,1]^3`` plus an L-shaped body wrapping its ``(x=1, z=1)``
+    edge: a side plate, a top plate and the corner block between them,
+    FRAGMENTED together so the corner line carries one node, not two.
+
+    ``reentrant=False`` — master = the block's two convex faces.
+    ``reentrant=True`` — the roles swap and the master is the L's notch,
+    a 270-degree fold back into the material.
+    """
+    with apeGmsh(model_name="iface_3d_corner", verbose=False) as g:
+        block = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        side = g.model.geometry.add_box(1, 0, 0, CORNER_TH, 1, 1)
+        top = g.model.geometry.add_box(0, 0, 1, 1, 1, CORNER_TH)
+        corner = g.model.geometry.add_box(1, 0, 1, CORNER_TH, 1, CORNER_TH)
+        g.model.sync()
+        ell = [int(t) for t in g.model.boolean.fragment(
+            [side, top, corner], [], dim=3)]
+        g.model.sync()
+
+        st = g.mesh.structured
+        st.set_transfinite(
+            [(3, block)], n={"x": CORNER_N, "y": CORNER_N, "z": CORNER_N})
+        for v in ell:
+            bb = gmsh.model.getBoundingBox(3, v)
+            st.set_transfinite([(3, v)], n={
+                ax: (2 if abs(bb[hi] - bb[lo]) < 0.5 else CORNER_N)
+                for ax, lo, hi in (("x", 0, 3), ("y", 1, 4), ("z", 2, 5))})
+        g.mesh.generation.generate(3)
+
+        v_side = next(v for v in ell
+                      if gmsh.model.occ.getCenterOfMass(3, v)[0] > 1.0
+                      and gmsh.model.occ.getCenterOfMass(3, v)[2] < 1.0)
+        v_top = next(v for v in ell
+                     if gmsh.model.occ.getCenterOfMass(3, v)[0] < 1.0)
+        block_faces = (_faces_at(block, plane="z", value=1.0)
+                       + _faces_at(block, plane="x", value=1.0))
+        ell_faces = (_faces_at(v_top, plane="z", value=1.0)
+                     + _faces_at(v_side, plane="x", value=1.0))
+
+        g.physical.add(3, [block], name="block")
+        g.physical.add(3, ell, name="ell")
+        g.physical.add(2, ell_faces if reentrant else block_faces,
+                       name="face")
+        g.physical.add(2, block_faces if reentrant else ell_faces,
+                       name="skin")
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL,
+            name="Wrap")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def test_corner_wrapping_master_averages_the_normal_at_the_edge():
+    """A master spanning two adjacent faces resolves, and the nodes ON
+    the shared edge take the average of the two face normals — the
+    ``(1,0,1)/sqrt(2)`` a cube corner must give under S1's uniform
+    facet weighting."""
+    recs = _corner_fem(reentrant=False).elements.interfaces
+    assert len(recs) == 2 * CORNER_N * CORNER_N - CORNER_N  # 9 + 9 - 3 shared
+    normals = [tuple(round(float(v), 9) for v in r.orient[:3]) for r in recs]
+    root2 = round(1.0 / np.sqrt(2.0), 9)
+    assert normals.count((0.0, 0.0, 1.0)) == CORNER_N * (CORNER_N - 1)
+    assert normals.count((1.0, 0.0, 0.0)) == CORNER_N * (CORNER_N - 1)
+    assert normals.count((root2, 0.0, root2)) == CORNER_N
+    for r in recs:                       # still an orthonormal right triad
+        n, t1, t2 = (np.asarray(r.orient[i:i + 3]) for i in (0, 3, 6))
+        np.testing.assert_allclose(np.cross(n, t1), t2, atol=1e-12)
+        assert float(np.dot(n, t1)) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_corner_wrapping_master_closes_the_tributary_over_both_faces():
+    """INV-3 across the corner: the two unit faces total 2.0, and the
+    edge nodes carry the SUM of their shares on both — no facet is
+    counted twice and none is dropped at the seam."""
+    recs = _corner_fem(reentrant=False).elements.interfaces
+    assert sum(float(r.a_trib) for r in recs) == pytest.approx(2.0, rel=1e-12)
+    root2 = 1.0 / np.sqrt(2.0)
+    edge = [float(r.a_trib) for r in recs
+            if abs(float(r.orient[0]) - root2) < 1e-9]
+    flat = [float(r.a_trib) for r in recs
+            if abs(float(r.orient[0]) - root2) >= 1e-9]
+    # A 2x2 division of each unit face: cells of 0.25, so a face-corner
+    # node takes a quarter cell and an edge node on the seam takes one
+    # quarter from each side.
+    assert min(edge) == pytest.approx(2 * 0.25 * 0.25)
+    assert min(flat) == pytest.approx(0.25 * 0.25)
+
+
+def test_reentrant_notch_master_is_refused_naming_the_fold_node():
+    """The mirror case, and the one that must NOT resolve: an L-shaped
+    body whose notch is the master. The two notch faces meet at a
+    270-degree interior dihedral, so their averaged normal points into
+    the material — refused at resolve, naming the node, both facets and
+    the angle (ADR 0093 D2)."""
+    with pytest.raises(ValueError, match=r"REENTRANT fold") as exc:
+        _corner_fem(reentrant=True)
+    msg = str(exc.value)
+    assert "'Wrap'" in msg
+    assert "master node" in msg
+    assert "270" in msg
+    assert "separate interface() calls" in msg

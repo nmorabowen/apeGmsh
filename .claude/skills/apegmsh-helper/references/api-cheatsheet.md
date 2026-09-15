@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures live here; src/ is not the authoring lookup (ADR 0096) -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -274,7 +274,25 @@ set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
 set_recombine(dim, tag, *, angle=45)   recombine()   set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
+
+build_graded_box(*, extent=(bx,ly,hz), footprint=(B,L), h, l_mech, d_mech, r,
+                 orientation=0.0) -> list[int]   # 18 sub-volume tags
 ```
+`# src/apeGmsh/mesh/_mesh_structured.py:501`
+
+`build_graded_box` is the only `structured` verb that **creates
+geometry** — a 3x3x2 arrangement of boxes, fragmented conformal,
+centred on the origin in plan and hanging below `z = 0`. It gives a
+soil box a uniform "mechanism block" at cell `h` around the footprint
+and a geometric growth ratio `r` per cell out to the boundary. `h` must
+divide `B` and `L` **exactly** (else `ValueError`) — that is what puts a
+mesh line on each footprint edge. `l_mech` (lateral, from the footing
+edge) and `d_mech` (depth) round to whole cells; the block must fit
+strictly inside the domain. `orientation` rotates the whole grid about
+`z` in **degrees**, rigidly, so counts are identical at every angle.
+Sets the constraints only — call `generate()` yourself.
+`# verified: tests/test_structured_graded_box.py::test_coarse_case_counts_match_the_layout_law`
+`# verified: tests/test_structured_graded_box.py::test_footprint_edges_are_mesh_lines`
 
 ### `g.mesh.editing` — (`_Editing`)
 
@@ -846,20 +864,30 @@ ops.damping.modal(ratios, *, modes)                 # bundles eigen; no modal_q
 ops.damping.uniform|sec_stif|urd|urd_beta(*, ..., on=None, activate_time=, factor=)
 #   on= attaches via region -damp; OR omit on= and pass the handle to a
 #   -damp-capable element's damp= kwarg. ops.damping.* also on s.damping.* (staged).
+ops.footfall_walking(*, num_modes, body_weight, g, response_nodes, excitation="self"|"full",
+    excitation_nodes=None, dof=3, occupancy="office", limit="curve"|"table",
+    damp=|modal_damp=|rayleigh=, f_max=20.0, n_extra=30, dt=0.005, solver="-genBandArpack")
+    -> FootfallResult                               # DG11 2nd ed Ch.7 walking check (ADR 0109); a_p/limit as fractions of g
 # Loads reach the deck ONLY via p.from_model(case) or p.load — nothing
 # auto-emits, so no 2x double-count trap. The deck is authoritative: the
 # bridge applies exactly what you import and does NOT audit the geometry's
 # case-list (no WarnUnconsumedModelLoads). A case you don't import is not
 # applied; an import of a non-existent case is a no-op.
 # NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
+# Staged prescribed motion (rotations included, zeros skipped):
+#   s.imposed_path(node=, ratios=(r1..r6), series=) -> Plain
+#   ops.imposed_displacement(...) stays the non-staged, translations-only path.
 
 # staged analysis (ADR 0034) — domainChange between stages:
 with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py
     s.activate(...); s.fix(...); s.mass(...); s.region(...); s.recorder(...)
     s.damping.rayleigh(...); s.damping.uniform(..., on=)   # stage-bound (D5); no s.damping.modal
     with s.pattern(series=ts) as p: p.from_model("live")   # stage-scoped pattern (ADR 0051 BL-3)
+    s.update_parameter("xPerm", 1e-5, pg="soil")               # element parameter
+    s.update_parameter("poissonRatio", .35, pg="soil", material=sand)  # material param
     s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
+    s.zero_velocities(nodes=None)     # transient -> static handover; None = whole domain
 ```
 
 Flat emit / run verbs (each builds internally):

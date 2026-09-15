@@ -1,0 +1,554 @@
+{
+  "high": {
+    "name": "high",
+    "mass_per_len": 500.0,
+    "f1_target": 16.326006,
+    "freq_limit": 70.0,
+    "project_type": 1,
+    "robot_version": 26.0,
+    "ro_used": 590762.048192771,
+    "modal_setup": {},
+    "footfall_setup": [
+      {
+        "case": 2,
+        "requested_forces": 1,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 3,
+        "requested_forces": 2,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 2,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 4,
+        "requested_forces": 3,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 5,
+        "requested_forces": 4,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 6,
+        "requested_forces": 1,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 7,
+        "requested_forces": 3,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 8,
+        "requested_forces": 4,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 70.0,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      }
+    ],
+    "calculate": true,
+    "results_available": true,
+    "modes": [
+      {
+        "mode": 1,
+        "f": 16.32600608705551,
+        "T": 0.06125196785225233,
+        "damping": 0.03
+      },
+      {
+        "mode": 2,
+        "f": 65.30060468313529,
+        "T": 0.01531379387453456,
+        "damping": 0.03
+      },
+      {
+        "mode": 3,
+        "f": 75.86608837495218,
+        "T": 0.013181119804908227,
+        "damping": 0.03
+      },
+      {
+        "mode": 4,
+        "f": 146.88971469216176,
+        "T": 0.006807828595049762,
+        "damping": 0.03
+      }
+    ],
+    "footfall_results": {
+      "case2": {
+        "Frequency": 2.2,
+        "A": 0.016756782920647858,
+        "RF_Resonant": 2.172879481459122,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      },
+      "case3": {
+        "Frequency": 2.2,
+        "A": 0.01204567900046689,
+        "RF_Resonant": 2.4091358000933782,
+        "RF_Transient": 14.282835601126159,
+        "RF_Overall": 14.282835601126159,
+        "VRMS": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+        "VRMQ": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+        "ExcitationNode": 7.0
+      },
+      "case4": {
+        "Frequency": 2.2,
+        "A": 0.016756782920647858,
+        "RF_Resonant": 2.172879481459122,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      },
+      "case5": {
+        "Frequency": 2.2,
+        "A": 0.016756782920647858,
+        "RF_Resonant": 2.172879481459122,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      },
+      "case6": {
+        "Frequency": 2.2,
+        "A": 0.011616867524295168,
+        "RF_Resonant": 1.5063782351244945,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      },
+      "case7": {
+        "Frequency": 2.2,
+        "A": 0.011616867524295168,
+        "RF_Resonant": 1.5063782351244945,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      },
+      "case8": {
+        "Frequency": 2.2,
+        "A": 0.011616867524295168,
+        "RF_Resonant": 1.5063782351244945,
+        "RF_Transient": 11.987272321198663,
+        "RF_Overall": 11.987272321198663,
+        "VRMS": 0.0011987272321198664,
+        "VRMQ": 0.001484899164223236,
+        "ExcitationNode": 7.0
+      }
+    },
+    "post_run_params": {
+      "case2": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case3": {
+        "ExcitationForces": 2,
+        "FootstepsNumber": 20
+      },
+      "case4": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case5": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case6": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      },
+      "case7": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      },
+      "case8": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      }
+    },
+    "rtd": "C:\\Users\\nmb\\Documents\\Github\\apeGmsh\\.claude\\worktrees\\ladrunosanisand-fork-adoption-ca0d8e\\internal_docs\\_adr0109_s4\\footfall_high.rtd"
+  },
+  "low": {
+    "name": "low",
+    "mass_per_len": 4400.0,
+    "f1_target": 5.503496,
+    "freq_limit": 30.0,
+    "project_type": 1,
+    "robot_version": 26.0,
+    "ro_used": 5198706.024096385,
+    "modal_setup": {},
+    "footfall_setup": [
+      {
+        "case": 2,
+        "requested_forces": 1,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 3,
+        "requested_forces": 2,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 2,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 4,
+        "requested_forces": 3,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 5,
+        "requested_forces": 4,
+        "requested_footsteps": 20,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 20,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 6,
+        "requested_forces": 1,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 7,
+        "requested_forces": 3,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      },
+      {
+        "case": 8,
+        "requested_forces": 4,
+        "requested_footsteps": 6,
+        "SetAnalysisParams": true,
+        "readback": {
+          "ExcitationForces": 1,
+          "ExcitationMethod": 1,
+          "WalkersWeight": 747.0,
+          "FootstepsNumber": 6,
+          "MinWalkingFrequency": 1.6,
+          "MaxWalkingFrequency": 2.2,
+          "Damping.Type": 1,
+          "Damping.ConstValue": 0.03,
+          "ModalParams.FrequencyLimit": 29.999999999999996,
+          "ExcitationNodes.Type": 2,
+          "ResponseNodes.Type": 2
+        }
+      }
+    ],
+    "calculate": true,
+    "results_available": true,
+    "modes": [
+      {
+        "mode": 1,
+        "f": 5.503495529233439,
+        "T": 0.18170270052700235,
+        "damping": 0.03
+      },
+      {
+        "mode": 2,
+        "f": 22.012829348068173,
+        "T": 0.045428053985607224,
+        "damping": 0.03
+      },
+      {
+        "mode": 3,
+        "f": 25.57445317400846,
+        "T": 0.03910152030215484,
+        "damping": 0.03
+      },
+      {
+        "mode": 4,
+        "f": 49.51651272136015,
+        "T": 0.02019528325080586,
+        "damping": 0.03
+      }
+    ],
+    "footfall_results": {
+      "case2": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.06328597880022988,
+        "RF_Resonant": 8.90859197815397,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 8.90859197815397,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      },
+      "case3": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.05025708758885252,
+        "RF_Resonant": 10.051417517770505,
+        "RF_Transient": 6.399209837571545,
+        "RF_Overall": 10.051417517770505,
+        "VRMS": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+        "VRMQ": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+        "ExcitationNode": 7.0
+      },
+      "case4": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.06328597880022988,
+        "RF_Resonant": 8.90859197815397,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 8.90859197815397,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      },
+      "case5": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.06328597880022988,
+        "RF_Resonant": 8.90859197815397,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 8.90859197815397,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      },
+      "case6": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.04387386501031302,
+        "RF_Resonant": 6.176002477820018,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 6.176002477820018,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      },
+      "case7": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.04387386501031302,
+        "RF_Resonant": 6.176002477820018,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 6.176002477820018,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      },
+      "case8": {
+        "Frequency": 1.8320831871324605,
+        "A": 0.04387386501031302,
+        "RF_Resonant": 6.176002477820018,
+        "RF_Transient": 5.398621032898224,
+        "RF_Overall": 6.176002477820018,
+        "VRMS": 0.0007816395650047379,
+        "VRMQ": 0.0008796450583341395,
+        "ExcitationNode": 7.0
+      }
+    },
+    "post_run_params": {
+      "case2": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case3": {
+        "ExcitationForces": 2,
+        "FootstepsNumber": 20
+      },
+      "case4": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case5": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 20
+      },
+      "case6": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      },
+      "case7": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      },
+      "case8": {
+        "ExcitationForces": 1,
+        "FootstepsNumber": 6
+      }
+    },
+    "rtd": "C:\\Users\\nmb\\Documents\\Github\\apeGmsh\\.claude\\worktrees\\ladrunosanisand-fork-adoption-ca0d8e\\internal_docs\\_adr0109_s4\\footfall_low.rtd"
+  }
+}

@@ -2,6 +2,334 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+### ADDED — the `ladrunoBranch` read-back contract: two Gauss censuses, a capability probe, and a live gate (ADR 0108, fork ADR-95)
+
+The recorder/file half of fork ADR-95 landed earlier: the `61b3efa04` build
+floor, the recorder's refusal of the bare token, and the eight by-position
+reader column names. This is the rest — what turns those columns into
+something a user can act on. ADR 0108 records the response layout as the
+contract, and the fact that the branch codes are UW-DruckerPrager's rather
+than a shared vocabulary.
+
+- `results.elements.gauss.tension_census()` and `.corner_census()` return a
+  new `apeGmsh.results.GaussCensus` — count, `examined`, the matching
+  values, and the `element_index` / `natural_coords` pair that carries a
+  `global_coords(fem)` identical to `GaussSlab`'s. Both take the standard
+  `pg=` / `label=` / `selection=` / `ids=` / `time=` / `stage=` selectors
+  and answer for one instant, the last step of the selected slice.
+- `tension_census()` counts `mean_stress >= 0`, built from the ordinary
+  `stress` response through the existing derived scalar, so it works on any
+  material and any build — it is the census the fork's campaign leaned on.
+  `corner_census()` counts `dp_branch == 3` and is UW-DruckerPrager-only.
+  `>= 0`, not `> 0`: a point returned exactly to the apex sits at `I1 = T`
+  and is the whole point.
+- A census over a component the file does not carry is **refused**, naming
+  the component and the build floor. An absent Gauss component reads back
+  as an empty slab, so counting it would report `count = 0` — "no corner
+  points" where the truth is "pre-`61b3efa04` engine, never recorded".
+- `apeGmsh.opensees._element_capabilities.probe_ladruno_branch(ops, tag)` —
+  the empty reply IS the probe. An older engine parses the identical deck
+  and answers `[]` with no exception, and gets the return map wrong too, so
+  the empty list means "do not believe this run's collapse load on
+  quadratic solids". It knows the response WIDTH only, never the eight
+  names (those live on the read side; the dependency runs results →
+  opensees), and raises on any third width rather than letting a changed
+  response silently re-label the by-position columns.
+- `docs/concepts/backend-capabilities.md` gains the two independent build
+  floors — `61b3efa04` for the UW `DruckerPrager` cutoff, `67474aeb7` for
+  the `ASDPlasticMaterial3D` + `DruckerPrager_YF` apex — and says why only
+  the first can be probed: the ASD material exposes no response token.
+- New `ladruno_fork` gate,
+  `tests/opensees/integration_ladruno/test_ladruno_dp_branch_live.py`: a
+  one-hex material driver under prescribed hydrostatic tension, with the
+  reader cross-checked against `ops.eleResponse` on the live domain.
+- **`RESPONSE_CATALOG` is deliberately untouched.** That seam
+  (`resolve_generic_gauss_blocks`) splits the single element-level `C1..Cn`
+  block an untagged *element* response produces; `ladrunoBranch` is a
+  *material* response and reaches the file already split per Gauss point.
+  A catalog row would be read by nobody — and `_class_int_rule` returns
+  `None` once a class has two non-`Custom` rules, so a mismatched row would
+  silently drop every element of that class from DomainCapture, stress
+  included. ADR 0108 D2.
+- **Partially verified.** The installed fork build (`1652f945c`) predates
+  the fix, so the five post-fix assertions are written and gated but have
+  not been run to green. What did run measured the defect directly: the
+  driver deck ends at `I1 = 8.08` against a cutoff of `0.4487` — never
+  returned — the probe answers `False`, and the recorder writes no bucket.
+  Mutating the probe kills 6 of 6 tests in the gate.
+### FIXED — `tail_monitor` walked off the end of a half-appended SWMR frame
+
+Appending one frame to a Monitor sink is three separate writes on the
+writer's side — `STEP`, then `TIME`, then `FRAMES` — and SWMR gives no
+atomicity across them. `tail_monitor` took its frame count from `STEP`
+alone and sliced `FRAMES` to it; h5py clips an over-long slice, so the yield
+loop indexed past the end of the returned rows and raised `IndexError` — out
+of the one function whose entire purpose is following a file another process
+is still writing. A live fork run hits the same window whenever the solver
+is descheduled between the two appends; in this repo it surfaced as a rare
+failure of `test_tail_follows_growing_file` under full-suite load.
+
+- `tail_monitor` now refreshes all three datasets each poll and advances to
+  `min(STEP, TIME, FRAMES)`. A half-appended frame is not a frame yet, so it
+  is deferred to the next poll rather than yielded short — **nothing is
+  dropped**, and no caller sees a different frame sequence than before.
+- Regression test `test_tail_survives_a_half_appended_frame` drives a writer
+  that deliberately stalls between the `STEP`/`TIME` flush and the `FRAMES`
+  append, which makes the window deterministic instead of load-dependent.
+- Unrelated hygiene in the same area: `test_log_router.py`'s
+  `test_unraisablehook_emits_error` fed pytest's own `sys.unraisablehook`
+  inside a `warnings.catch_warnings()` block that suppressed nothing —
+  pytest only *queues* the exception there and warns at the end of the item,
+  outside any block in the test body, so a `PytestUnraisableExceptionWarning`
+  reached every run's warnings summary. Replaced with a
+  `@pytest.mark.filterwarnings` mark, which is installed around the whole
+  item. The test's own assertion is unchanged.
+
+### CHANGED — the fork's DruckerPrager return map is adopted: build floor `61b3efa04`, `material.ladrunoBranch` read back, the ASD-DP apex caveat (fork ADR-95, PR #803)
+
+Fork PR #803 merged into `ladruno` as `61b3efa04` (2026-09-08) and repaired
+the vanilla UW `DruckerPrager` two-surface return map: the tension-cutoff
+residual row was never assembled, so a Gauss point crossing the cutoff kept
+an unreturned stress and a pathological consistent tangent. This is the
+adoption. No apeGmsh API changes — the `DruckerPrager` primitive, its
+argument order and its validation are untouched — but the answers change on
+any deck that reaches the cutoff, and two read-only diagnostics appear.
+
+- `ops.recorder.Ladruno` / `MPCO` refuse the bare `ladrunoBranch` and
+  `ladrunoTangent` tokens, naming `material.<token>` — the same guard ADR
+  0105 put on the ASDPlasticMaterial3D and LadrunoSANISAND responses,
+  because the bare spelling records nothing on the fork.
+- The `.ladruno` reader names the eight `ladrunoBranch` columns by position
+  (`dp_branch`, `dp_gamma_cone`, `dp_gamma_cutoff`, `dp_f1_trial`,
+  `dp_f2_trial`, `dp_forced_accept`, `dp_i1`, `dp_det_a_min`), pinned to the
+  fill site `DruckerPrager::getLadrunoBranch()`. The fork returns a bare
+  `MaterialResponse` with no ResponseType there, so the file writes `C1..C8`
+  and this map is the only authority on what they mean — the `implexGuards`
+  situation exactly. `ladrunoTangent`'s 36 entries are deliberately unnamed.
+- `apeGmsh.opensees.material.nd.DP_ADR95_MIN_FORK_BUILD = "61b3efa04"` — the
+  documented (not enforced, as `ASDP_MIN_FORK_BUILD`) floor. An older engine
+  parses the identical deck; what it gets wrong is the answer, so there is
+  nothing to refuse at construction. The `DruckerPrager` docstring now says
+  what the defect did — every quadratic element on a false collapse floor at
+  30–77 % of the load while the linear b-bar hex plateaued correctly — that
+  quadratic solids are usable from that build on, that non-associated flow
+  needs an unsymmetric solver, and that a small non-physical `sigmaY` is an
+  apex regulariser, not cohesion.
+- ADR 0105 Amendment 2 records the caveat the same campaign measured on the
+  OTHER material: `ASDPlasticMaterial3D` + `DruckerPrager_YF` with
+  `DP_etabar = 0` walls at the apex, because PR #815's apex-region test is
+  Euclidean where the exact test at ψ = 0 is `p >= p_apex`. The contract is
+  unchanged; zero-dilatancy collapse decks should use the UW
+  `DruckerPrager`. The fork ask is filed in `internal_docs/asdplastic_fork_asks.md`.
+- Guide: `internal_docs/guide_ladruno_adr95_druckerprager_fix.md` (imported
+  by #1130) now carries the merge commit, the second response and the
+  adoption status. Skill references gained the deck rules and name
+  `LadrunoBrick20` for the first time.
+
+Not in this PR, named for the runway: the LIVE read-back. `Results` is a
+pure file/array reader with no ops handle, so the guide's sketched
+`gauss_point_branch()` cannot exist there; the live seam is `DomainCapture`,
+whose per-material routing still hard-codes `catalog_token == "strain"`.
+Also deferred: names for `ladrunoTangent`, the tension/corner censuses, and
+a `ladruno_fork` live gate — which needs the fork rebuilt, since our venv
+build `1652f945c` is pre-fix.
+### ADDED — `Closest_Point` / `Algorithmic`, the ASDPlasticMaterial3D closest-point return map (ADR 0107, fork ADR-97)
+
+`ASDPlasticMaterial3D` and the three D5 helpers (`MohrCoulombSoil`,
+`MohrCoulombTensionCutoffSoil`, `HoekBrownRock`, all in
+`src/apeGmsh/opensees/material/nd.py`) accept two new option values:
+`integration_method="Closest_Point"` — the fork's second, fully implicit
+integrator, a true closest-point projection — and
+`tangent_type="Algorithmic"`, its exact consistent tangent. No tangent the
+fork ships for `Backward_Euler` is the tangent of that map: measured
+against a central difference of the material's own committed response,
+`Continuum` is 57 % off, `Secant` 80 %, `Elastic` 103 %.
+
+**No default moves and no deck changes.** All three helpers keep
+`integration_method="Backward_Euler"` and `tangent_type="Continuum"`; a
+deck that does not ask for the new tokens emits byte-identically. The
+fork's own mesh-scale measurement recommends flipping the shipped default
+(24000-DOF strip footing: 12/12 push steps in 78 s against 7/12 in 504 s),
+but that flip is the fork owner's decision in a separate fork PR, and
+flipping here first would break every deck on a pre-ADR-97 build.
+
+`tangent_type="Algorithmic"` without `integration_method="Closest_Point"`
+now raises `ValueError` at construction, quoting the fork's own reasoning
+(ADR-97 D2). That pairing rule is the ONLY new client-side check: which
+YF/PF/EL/IV combinations support `Closest_Point` (23 of the fork's 46
+registered specializations — matched-family pairs of VonMises,
+Drucker-Prager, Mohr-Coulomb, MohrCoulombTensionCutoff and Hoek-Brown) is
+deliberately left to the fork, whose parser fails loud naming the exact
+YF/PF/IV. All three helpers build matched pairs, so all three are
+supported.
+
+`ASDPlasticIntegrationWarning` is re-keyed from "not `Backward_Euler`" to
+"is one of the four EXPLICIT integrators": `Closest_Point` no longer warns,
+and the message names the fork's new `experimental_integrator` gate, which
+REFUSES the explicit four outright on a build at or after
+`ASDP_CLOSEST_POINT_MIN_BUILD` (`7e93e4381`). The warning is deliberately
+NOT silenced by that opt-in, and says so: the token is unknown to every
+earlier parser, where ADR-94's fail-loud parser rejects the whole
+`nDMaterial` command over it — so adding it unconditionally breaks the
+deck on the build most users have.
+
+A duplicated name in `integration_options` is now a `ValueError`.
+Validation reads a dict while emission writes the whole sequence, so a
+repeat could smuggle the forbidden pairing into the deck
+(`tangent_type Algorithmic` validating as a later `Secant`).
+
+New module constants `ASDP_CLOSEST_POINT_MIN_BUILD` and
+`ASDP_ALGORITHMIC_TANGENT`; new split tables
+`_ASDP_IMPLICIT_INTEGRATION_METHODS` / `_ASDP_EXPLICIT_INTEGRATION_METHODS`.
+No signature changes, so `_api_index.json` does not move.
+
+### ADDED — `material.cp_iterations` is a readable Gauss component (ADR 0107 D5)
+
+`src/apeGmsh/results/readers/_ladruno_element_io.py` gains one
+`_MATERIAL_BUCKET_TOKENS` entry. A `.ladruno` carrying the fork's new
+`material.cp_iterations` bucket — the local-Newton iteration count of the
+last `Closest_Point` return-map solve — previously raised
+`GaussColumnDroppedWarning` and hid the column; it now surfaces as the
+Gauss component `cp_iterations`. The recorder needed no change
+(`elem_responses` has no allow-list).
+
+The bucket's shape was OBSERVED on fork build `ff47275fd`, not assumed: a
+scalar per Gauss point (`NUM_COMP` 1, `MULTIPLICITY` 1, `FIBER_ID` -1, one
+column per `GAUSS_ID`). Measured 0 while the point is elastic and 1 once
+Mohr-Coulomb yields; the fork documents up to 5 for Hoek-Brown. The value
+is undefined under `Backward_Euler` — the fork still writes the bucket
+there, so a value read off a non-`Closest_Point` deck is meaningless
+rather than absent.
+
+### Verified live (ADR 0107)
+
+The battery `tests/opensees/integration_ladruno/
+test_asdplastic_closest_point_live.py` is 4/4 green on fork build
+`ff47275fd` and skips cleanly on an older backend, naming the running
+build. Its gate is a capability probe, not a build-hash comparison, so it
+arms itself on the first supporting build.
+
+`Closest_Point` commits at `max|f_MC|` 8.24e-13 against `Backward_Euler`'s
+1.03e-08 — four orders of magnitude tighter at the same iteration count —
+and the two maps agree to 0.82 %, differing only where `Closest_Point`
+pins the exact triaxial-compression corner that `Backward_Euler` rounds.
+
+**Known interaction:** apeGmsh's `strict_convergence=True` default (ADR
+0105 D2) REFUSES a `Closest_Point` leg at kPa soil scale. The fork checks
+a TRIAL state's residual against the ABSOLUTE `f_absolute_tol`, and a
+mid-Newton trial reaches `f = 1.37e-06` against the `1e-06` default —
+~1.6e-08 relative at that strength scale, tight enough that the MORE
+accurate map trips it where the coarser one does not. If a
+`Closest_Point` deck fails with `analyze() == -3`, set `f_relative_tol`
+(or `strict_convergence=False`). No default was changed in response.
+
+### ADDED — `LadrunoSANISAND` `-implex`/`-implexControl`/`-implexFactor` seam (ADR 92 P2-9, fork PR #822)
+
+`LadrunoSANISAND` (`src/apeGmsh/opensees/material/nd.py`) gains three new
+fields: `implex` (bool, `-implex`), `implex_control` (an
+`(err_tol, reduction_limit)` pair, `-implexControl`), and `implex_factor`
+(`Literal["fixed", "control", "controlIter"] | None`, `-implexFactor`).
+None of the base `implex`/`implex_control` seam existed on this class
+before this change — it is added alongside `implex_factor` since the flag
+has nothing to validate against otherwise. All three default off/`None`
+and are then not emitted, so a deck that never opts in stays byte-identical
+to one built before this change. `implex_factor=None` specifically omits
+the `-implexFactor` token so the deck falls through to the fork's own
+`fixed` default.
+
+`__post_init__` mirrors the fork's own refusals: `implex_factor` set
+without `implex=True` raises (the fork refuses any `-implex*` flag without
+`-implex`), and `implex_factor` in `("control", "controlIter")` without
+`implex_control` raises, quoting the fork's own parser message
+(`LadrunoSANISAND.cpp:1983`). `_emit` appends the three flags, in that
+order, after the existing `-Presidual`/`-Pmin`/`-honorTolR`/`-maxSubsteps`
+tail — every positional precedes every flag, per the parser's ordering
+rule.
+
+A new `SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"` constant documents
+(does not enforce, matching `ASDP_MIN_FORK_BUILD`'s convention) the
+minimum fork build for `-implexFactor`: an older build's parser does not
+silently ignore the token — an unrecognised flag falls through to the
+positional-optional branch and hard-refuses construction. The message an
+apeGmsh deck gets there is *not* `unrecognized option`: because the
+five-argument tail always emits, that branch trips its `nPos >= 5` guard
+first and reports `too many positional optional arguments`, naming
+`-implexFactor` as the offending token.
+
+The three fields are also forwarded by the typed namespace wrapper
+(`_internal/ns/nd.py`), so `ops.nDMaterial.LadrunoSANISAND(...,
+implex_factor=...)` reaches the deck; `studio/_api_index.json` is rebuilt
+for the changed signature.
+
+Construction refuses every deck the fork's parser would reject: either
+companion without `implex=True`; an `implex_factor` outside the three
+accepted tokens (the `Literal` is a type hint, not a runtime check, and a
+mis-cased `"Control"` would otherwise have evaded the `implex_control`
+requirement too); an `implex_control` that is not a 2-tuple of numbers (a
+1-tuple emits a deck in which the *next flag name* is read as the missing
+number); and a control mode without `implex_control`. The fork's
+lower-case alias `controliter` is refused in favour of the canonical
+`controlIter`, so the annotation and the runtime agree.
+
+New tests in `tests/opensees/unit/primitives/test_materials_nd.py` cover
+full-seam emit ordering, the absence of any `-implex*` token when the
+fields are left at their defaults, namespace reachability end to end, and
+each refusal above. Out of scope for this change: an
+`implexGuards`/`implexDetail` response reader and an `ops.ladrunoBuild()`
+runtime check — both deferred slices.
+### ADDED — `LadrunoSANISAND` `implexGuards` is readable and recordable (ADR 92 P2-9, TIMs A12 follow-up)
+
+The fork's 7-slot `implexGuards` guard census now has canonical component
+names in the `.ladruno` reader's by-position table
+(`src/apeGmsh/results/readers/_ladruno_element_io.py`), and both fork
+spellings (`implexGuards`, `ImplexGuards`) join the material-level token
+guard in `src/apeGmsh/opensees/recorder.py` — a bare token was neither
+refused nor recorded before, so a deck asking for it got silence.
+
+`implexGuards` is the one fork response that carries **no** `ResponseType`:
+`LadrunoSANISAND::setResponse` returns a bare `MaterialResponse`, so every
+build writes `C1..C7` and these names are the only ones there will be. The
+slot order is taken from the fork's fill site, not from the adoption
+guide's suggested list — the guide's names transpose the P2-2 `f = 0` guard
+(slot 1) with the P2-5 reversal-noise census (slot 3). A by-position map
+with a transposed order mislabels data silently, so the order is pinned by
+its own test and mutation-checked against that exact swap.
+
+Slots, in fill order: floor fallback (P2-1), `f = 0` guard (P2-2), hold
+preserved (P2-3), reversal noise (P2-5), trial-time `f = 0` (P2-6),
+hold-skip commit (P2-5c), control back-off (P2-9, `f* < 0.5*f_max`).
+
+### FIXED — rubber-band selection crashed on VTK 9.7 (`AddActor2D` is gone)
+
+PR #1122 moved the legend title actor off `vtkViewport::AddActor2D` /
+`RemoveActor2D`, which VTK 9.7 removed (deprecated since 9.5), but the
+rubber-band selection box in `_pyvista_pick.py` uses the same pair and was
+missed. Its add call (`_pyvista_pick.py:376`) has never been wrapped in a
+`try`, so on VTK 9.7 — which arrives with pyvista 0.49, whose `vtk<9.8` pin
+replaced 0.48's `vtk<9.7` — starting a band selection raised
+`AttributeError` outright rather than degrading. The teardown call
+(`:238`) is guarded, so it leaked the actor silently instead. Both now use
+`AddActor` / `RemoveActor`, the same idiom #1122 adopted. No test covers
+this path, so CI stayed green through it.
+
+### FIXED — contact + `rigid_body(as_element=True)` now trips the MP-handler guard (A11)
+
+`_fem_has_handler_requiring_mp` (the predicate behind the contact
+handler-conflict guard, `apesees.py` #7) wrongly exempted
+`rigid_body(as_element=True)` as "handler-independent" alongside
+`kinematic_coupling`. It isn't: the fork's `LadrunoRigidBody::setDomain`
+still adds one `MP_Constraint` per slave (`LadrunoRigidBody.cpp:339,
+360-362`), and `LadrunoContactHandler` only WARNS about MP constraints
+without enforcing them (`LadrunoContactHandler.cpp:706-713`). A model
+combining contact and `rigid_body(as_element=True)` therefore silently
+dropped the rigid-body enforcement on its slaves. The exemption is
+removed — contact + `rigid_body(as_element=True)` now fails loud via the
+same `BridgeError` as `rigid_body(as_element=False)`, `equalDOF`, etc.
+`kinematic_coupling` (`LadrunoKinematicCoupling`, a true penalty element
+with no MP emit path) is unaffected and still coexists with contact.
+Docstring and guard message corrected to match. Locked by
+`tests/opensees/unit/test_contact_emit.py::test_handler_requiring_mp_predicate`.
+
 ### ADDED — `ops.uniaxialMaterial.MultiLinear` (piecewise-linear backbone)
 
 `uniaxialMaterial MultiLinear` is now a typed primitive:
@@ -314,6 +642,1036 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      existing line instead of conflicting — duplicated-header mangling is
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
+
+### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
+
+`examples/footfall_two_bay_shell.py` builds two 6 m by 6 m bays of 200 mm
+slab as shell elements on six columns as beam elements, fragmented so the
+column tops share slab nodes, and runs `apeSees.footfall_walking` three
+ways: self excitation at the two bay centres, full excitation between
+them, and self excitation at every slab node for the ratio map. It then
+draws the figures that explain the answer: the bay-centre FRF with the
+Eq 7-1 resonant prediction and the Fig 2-1 limit curve, the Eq 7-5
+impulse waveform with its peak, ESPA and limit, the per-mode Eq 7-4
+amplitudes, and a Robot-style sweep of the four walking harmonics over
+the 1.6 to 2.2 Hz step band. Harmonics whose window lies below the FRF
+band are drawn as absent, not clamped to the band edge.
+
+
+### ADDED — footfall vibration, part B: the walking driver, the result map and the how-to (ADR 0109, S2 + S3)
+
+The second half of the walking-vibration evaluation from part A: a driver
+that runs it on a live model, a result object, a map through the native
+writer, and a how-to that runs one end to end.
+
+- `apeSees.footfall_walking(num_modes=, body_weight=, g=, response_nodes=, ...)`
+  — builds its own live domain, issues one `eigen` + `modalProperties` pair,
+  and evaluates every response node against both Design Guide branches
+  (low-frequency Eq 7-1, high-frequency Eq 7-4…7-6), reporting whichever
+  governs. `body_weight` and `g` are required, model units, with no
+  default — apeGmsh has no unit system, and a silently wrong `g` is a
+  factor of 386 in the answer. `excitation="self"` checks the diagonal
+  (the walker where the occupant sits); `excitation="full"` checks every
+  excitation/response pair and names the excitation node that governs.
+  Warns, naming `eigen_feast`, when the extracted basis stops short of
+  `f_max`. The eigenvector scale is asserted per ADR 0109 D2 — never
+  silently rescaled.
+- `FootfallResult` — one row per response node: dominant frequency, the
+  governing acceleration and which of the regimes (`"low"` / `"high"` /
+  `"both"`) produced it, the excitation node under `"full"`, the Fig 2-1 /
+  Table 4-1 limit, and the demand/capacity `ratio`. `frf` and `mode_table`
+  read back the sweep and the per-mode Table 7-2-shaped rows;
+  `to_dataframe` gives the whole table at once.
+- `FootfallResult.to_results(fem, path)` — writes the evaluation as one
+  native results file: a single stage, a single time station, nodal
+  components `footfall_ap`, `footfall_ratio`, `footfall_fdom` over every
+  node in the model, `NaN` outside the response set. `Results.from_fem`
+  binds it like any other bare-fem run, so the ratio map renders with the
+  ordinary nodal-scalar viewer — no recorder, no `RESPONSE_CATALOG` entry.
+- A new how-to, "Evaluate footfall vibration": one worked floor bay run
+  end to end — modelling the composite-boosted stiffness per §7.2, the
+  `num_modes` / 20 Hz warning, `body_weight` and `g` in the model's own
+  units (168 lb ≈ 747 N), `self` vs `full` excitation, reading `a_p` /
+  `regime` / `ratio`, and rendering the ratio map through `to_results`.
+
+### ADDED — footfall vibration, part A: the Design Guide 11 kernel and the FRF matrix (ADR 0109, S0 + S1)
+
+The first half of a walking-vibration evaluation per AISC Design Guide 11,
+2nd edition, Chapter 7. ADR 0109 records why this is the 2nd-edition FRF
+method rather than a copy of Robot Structural Analysis's footfall case:
+Autodesk documents Robot as built on the 1st edition, resonant-only under
+its AISC option, and the high-frequency effective-impulse branch is the
+part a modern check cannot skip.
+
+- `apeGmsh.opensees.analysis.footfall` — the Chapter 7 equations as pure
+  numpy functions with no OpenSees import: the dynamic coefficient
+  (Eq 7-2), the resonant build-up factor (Eq 7-3), the Table 7-1 harmonic,
+  the effective impulse (Eq 1-6), the low-frequency peak (Eq 7-1), the
+  high-frequency waveform and equivalent sinusoidal peak (Eq 7-4 … 7-6),
+  the Fig 2-1 / Table 4-1 tolerance limit (curve by default, flat on
+  request), and the dominant-frequency search. Units are the caller's;
+  the kernel never divides by g.
+- `apeGmsh.opensees.analysis.footfall_frf` — the excitation × response
+  acceleration FRF matrix as a modal sum over one `eigen` +
+  `modalProperties` pair on stock openseespy, evaluated lazily per node
+  pair; `grid_for` builds the §7.3 sweep (every mode, a ±5 % cluster
+  around each, extra linear points). The eigenvector scale is asserted
+  from `partiMass / partiFactor²` because `modalProperties -return` does
+  not export the generalised masses; a basis that fails the check is
+  refused naming the mode, never rescaled. Damping is the ADR 0075
+  channel (uniform, per mode, or Rayleigh converted per mode).
+- Oracles: the Guide's Example 7.1 reproduced from its Table 7-2 without
+  a finite-element model (0.374 %g tip mode; 0.865 %g peak and 0.314 %g
+  ESPA over 38 modes); the tip-mass cantilever against the SDOF closed
+  form; and one node pair against the fork's `frequencyResponse -load`
+  on build `1652f945c`, agreeing to 4.6e-16 relative.
+
+The driver (`apeSees.footfall_walking`), the result map and the how-to
+follow in part B.
+
+
+### FIXED — viewers: spring-force arrows use an interface pair's own frame, and a swallowed scalar-bar exception is narrowed
+
+`SpringForceDiagram` mapped the canonical suffix `spring_force_0/1/2` to
+the GLOBAL x/y/z axes unconditionally — right for an axis-aligned
+zeroLength spring, wrong for a 3D `g.constraints.interface()` pair
+(TIMs A10), whose three springs act along the record's own `(n, t1,
+t2)` frame. A spring is now matched back to its `InterfaceRecord` by
+node pair (the emitted zeroLength carries no element tag) and, when
+matched, suffix `k` resolves to the record's k-th frame vector instead
+of a global axis; a 2D pair's `(x, yp)` orient derives its second axis
+by Gram-Schmidt. A spring with no matching record, and an explicit
+`SpringForceStyle.direction` override, are both unchanged.
+
+`PyVistaBackend.add_scalar_bar` wrapped its horizontal-legend title
+path in a bare `except Exception: pass` that also swallowed the bar's
+own bookkeeping — on VTK 9.7 this hid an `AttributeError` from the
+removed `vtkRenderer.AddActor2D` and produced a scalar bar nothing
+could remove (#1122). The bookkeeping now runs before the title path,
+so a title failure still leaves the bar registered and removable; the
+catch is narrowed to `AttributeError` / `TypeError` / `ValueError` (a
+missing VTK method, a missing/malformed title or anchor, a non-numeric
+font size) and surfaces via a new `ScalarBarTitleWarning` instead of
+disappearing silently.
+### FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
+
+Three small hygiene fixes to the OpenSees bridge, bundled in one PR.
+
+`resolve_opensees_binary` now accepts a directory at every precedence
+level (explicit `bin=`, `OpenSeesTarget.binary`, `$OPENSEES_BIN`): a
+`dist/bin`-style folder is searched for `OpenSees.exe` / `OpenSees`
+inside it, raising `FileNotFoundError` naming the directory when the
+binary is not there. Previously `apeSees.tcl(run=True, bin=<dir>)`
+handed the directory straight to `CreateProcess`, which fails with an
+opaque `WinError 5` — the test-suite's own `APEGMSH_OPENSEES_BIN` env
+var is a directory, resolved by each test itself rather than by the
+bridge. `resolve_python_binary` is unchanged: its `explicit=` /
+`target.python` are always meant to be a python interpreter path, not
+a venv directory (the venv-directory case is already handled
+separately via `$OPENSEES_VENV`), so it does not share this shape.
+
+`ops.element.<X>(pg=...)` declared against a physical group with no
+elements of that dimension in the FEM snapshot (e.g. the group's cells
+were excluded by `get_fem_data(dim=...)`) used to silently allocate
+zero element tags and emit nothing — the section/material lines still
+went out, but the element declaration itself vanished with no error.
+`allocate_element_tags` — the single choke point every emit path
+(live/tcl/py/h5, staged/unstaged, partitioned/unpartitioned) funnels
+`Element` specs through — now raises `BridgeError` naming the
+primitive, the `pg=`, and what the snapshot's physical-group registry
+knows about it (registered cell count and dimension, when available).
+A node-pair element spec (`pg=None`) is unaffected — it always fans
+out to exactly one synthetic element.
+
+The failed-increment banner's `label=` / strategy-name normalisation
+(`analyze()` in both the tcl and py emitters) only swapped `"` -> `'`
+(plus `[`/`]` in tcl), leaving `$` (Tcl variable substitution), `\`
+(an escape in both generated-source dialects) and embedded newlines
+free to corrupt the emitted `puts` / `print` banner. Both sites in both
+emitters now route through the same `stage_marker_name` the
+`APEGMSH_STAGE` marker already used (ADR 0106 D2), so a strategy or
+stage name can no longer smuggle a stray substitution, escape, or
+extra logical line into the deck.
+
+### FIXED — results reader: warn when a material bucket's real COMP_NAMES disagree with the by-position table
+
+`_MATERIAL_BUCKET_TOKENS` resolves `.ladruno` material-level Gauss
+buckets BY POSITION on purpose (older fork builds write generic
+`C1..Cn`), which means a real-name build whose columns are reordered or
+renamed relative to the fork's documented order was mislabelled in
+SILENCE rather than merely dropped. A measured probe found exactly that:
+a `material.substeps` bucket whose file names read `substeps_capHit,
+substeps_me` is read as `substeps_me, substeps_cap_hit`.
+
+`_ladruno_element_io.py` gains a companion table,
+`_MATERIAL_BUCKET_EXPECTED_NAMES`, of the fork's documented real
+`COMP_NAMES` per token, exact spelling, in slot order — the SANISAND
+tokens (`psi`/`stateParameter`, `yieldDistance`/`yieldFunction`,
+`implexError`, `avgImplexError`, `substeps`/`substepsME`/
+`ladrunoSubsteps`, `implexDetail`, `implexRefusals`) and the ADR 0105
+ASDPlasticMaterial3D tokens whose exact spelling is stated in
+`internal_docs/guide_ladruno_asdplastic.md` (`PStress` -> `p`,
+`J2Stress` -> `J2stress`, `VolStrain` -> `epsVol`, `J2Strain` ->
+`J2strain`, `BackStress` -> `BackStress_1..6`). `YieldStress` /
+`DP_cohesion` / `CapPressure` / `EpsQpShear` are left out — their exact
+COMP_NAMES spelling is not documented anywhere, so there is no
+expectation to check. `implexGuards` / `ladrunoBranch` carry no
+ResponseType at all (every build writes `C1..Cn`), so there is nothing
+real to compare against either.
+
+`gauss_available` now also compares each non-generic bucket's real
+names against this table and raises one new `GaussColumnNameMismatchWarning`
+per bucket, per read, when they disagree — naming the bucket, the
+file's names and the expected ones. It does not change what gets
+read: the positional canonicals still win (reordering on a guess would
+be its own mislabelling), the warning is the heads-up that a build's
+column order needs checking against the fork source.
+
+Runway batch A also covers `implexGuards` (already registered by
+PR #1128 before this branch was cut — the 7-slot by-position map and
+the recorder guard were both already in `main`) and the MPCO twin of
+this table: the MPCO material-state reader
+(`_mpco_material_io.py`) was NOT extended to the SANISAND tokens.
+Unlike `damage`/`d+`/`d-` (an established OpenSees/ASDConcrete
+convention) or the `.ladruno` case above (spelling stated in the
+adoption guide), neither the MPCO primary group name nor the
+`META/COMPONENTS` symbol spelling for `psi` / `substeps` / `BackStress`
+under the MPCO recorder is documented anywhere in this repo or the
+fork guides — some of these responses (`implexGuards`, `ladrunoBranch`)
+carry no `ResponseType` at all, which the MPCO META-driven path has no
+generic-fallback machinery for. Guessing the group name or the
+per-symbol suffixes would risk exactly the silent mislabelling this
+table exists to catch, so it is left as a follow-up pending either a
+fork source read of the MPCO-side response tagging or a live MPCO
+recording to inspect.
+### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
+
+S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
+those said the 3D `g.constraints.interface()` is *right* — a deck with
+the correct shape and a wrong frame, a wrong tributary or a spring on
+the wrong DOF runs on the fork and exits 0. S4 is the measurement, and
+it closes the A10 ladder. No production code changes except one
+hardening refusal (below); everything else is tests and docs.
+
+**The 2D case, rotated into 3D.** The ADR 0093 acceptance geometry (a
+strip footing bearing on a slab, `ENT` normal + `epp` Coulomb
+tangential) solved once as plane strain of thickness `t = 0.5` and once
+as its 3D twin extruded ONE element deep to the same `t`, every node's
+out-of-plane DOF fixed. The twin is exact by construction: each 2D pair
+splits into the two z-layer pairs above and below it, each carrying
+half its `A_trib` (measured exactly half; both models close on
+`L x t = 0.5`), and each nodal load splits evenly over the same two
+nodes. Measured on fork build `1652f945c`: cap settlement
+`-6.34596966103573388e-03` (2D) against `-6.34596966103573475e-03`
+(3D), **relative 1.4e-16**; interface normal-spring sum
+`-2.99999999999999953e+06` against `-3.00000000000000000e+06`,
+**relative 1.6e-16**, both equal to the applied `-3.0e6` — equilibrium
+across the interface. The asserted tolerance is 1e-12 relative, four
+orders looser, to leave room only for a different solver's summation
+order. Mutation-checked: doubling a 3D record's `A_trib` at emit fails
+the settlement and the per-pair force checks while the *total* still
+balances, which is exactly why an equilibrium check alone cannot verify
+a tributary.
+
+**Three springs, read back (adversarial-review row 16).** S3 claimed a
+3D pair comes back as `spring_force_0..2` with no results-catalog
+change because `n_springs` is per-element `META/NUM_COMPONENTS`;
+measured now through `Results.from_mpco`, matched against the engine's
+own `eleResponse basicForce` to 1e-12. Under the vertical load the
+normal channel is compressive on every pair (ENT's sign), the in-plane
+tangent carries only the Poisson mismatch (`180.4` N against `747296` N
+normal, 2.4e-4), and the out-of-plane tangent — whose DOF the
+plane-strain fixities hold — is exactly `0.0`.
+
+**The u-p passenger DOF at model scale.** The `(4, 3)` pair the campaign
+has, with a real `LadrunoUP` soil, a pressure datum declared the way the
+ADR 0074 / A2 gate requires (the deck PASSES `validate_up_pressure_datum`
+— drop the DOF-4 flag from the base `fix` and the same deck is refused
+by name, which is asserted) and a non-zero pore pressure imposed on an
+interface node. The pore-pressure field is the `equalDOF 1 2 3` twin's
+to **1.5e-17 relative** (worst `1.455e-11` on `1.0e6`) even though the
+two ties have completely different mechanics; the interface element's
+force vector is 7 wide (`ndf1 + ndf2`) with the master's DOF-4 slot
+exactly `0.0` on every pair — the fork's own G2 assertion reproduced
+through apeGmsh. And with `p == 0` everywhere the `(4, 3)` deck
+reproduces the all-brick `(3, 3)` twin to **1.4e-16 relative**, so the
+mixed-ndf join costs nothing.
+
+**A master that wraps a corner (adversarial-review row 4).** The review
+could not reach the box-corner or reentrant-fold rules through the verb
+and left it to S4; it IS reachable — the slave just has to be ONE
+conformal mesh across the corner, which a fragment of three boxes
+gives. A master spanning two adjacent faces of a soil block now
+resolves to 15 pairs, the 3 on the shared edge carrying the averaged
+`(1,0,1)/sqrt(2)` normal, tributary closing on `2.0` with the seam
+nodes taking a quarter cell from each side, and the deck runs on the
+fork with zero refusals and every pair in compression under a diagonal
+push. The mirror case — an L-shaped soil whose notch is the master — is
+refused at resolve, naming the node, both facets and the 270-degree
+dihedral.
+
+**Hardening: `_validate_interface_orient_triad` now also refuses a frame
+that is not orthonormal.** The `t2 == n x t1` rule alone passes a `t1`
+tilted out of the tangent plane as long as `t2` was built from that same
+skewed `t1`; the S3 review measured a 10-degree skew sailing through and
+then being silently re-orthogonalised by `ZeroLength::setUp`, which
+gives the right answer for a frame the record does not describe — so a
+per-pair `spring_force_1` stops meaning what the record says. `|n|`,
+`|t1|` and `n . t1` are now checked on the same 1e-9 budget, before the
+cross-product rule, and the refusal names them. No reachable route
+produces such a record, so nothing that emitted before changes.
+
+Also pinned, closing the plan's named coverage gap: the staged
+(`s.interface(name=)`) and partitioned (`per_rank=True` included) routes
+gain 3D deck-level tests — the whole per-pair unit inside the claiming
+stage exactly once and before its `domainChange`, and the owner rank's
+block byte-identical to the flat deck's with each unit in exactly one
+rank fragment.
+
+### FIXED — interface() 3D adversarial review: a u–p soil under a shell raft emits again
+
+The 3D emit gate refused an `ndf` `(4, 6)` pair — a `LadrunoUP` soil
+master under a shell/beam slave — even though `interface(slave_ndf=6)`
+accepts exactly that model at resolve time. The gate had transcribed the
+fork's adoption note, which spells out *examples* of the pairs its
+`zeroLength` takes, as if that list were exhaustive; the note's actual
+rule is "any pair with both `ndf` >= 3", which is also the rule the
+generic zeroLength-family endpoint guard next door already applies. So a
+raft-on-saturated-soil model resolved, saved and reloaded fine and then
+died at deck time with a `BridgeError` naming a table it satisfied on the
+engine. The gate is now that rule, declared once beside the resolver's
+`slave_ndf` contract; the named pairs survive only as examples inside the
+refusal text, so the message still reads in the note's own words. Nothing
+that emitted before changes, and a pair with an end below `ndf` 3 is
+refused exactly as before — the fork leaves such an element inert, which
+is the silent no-spring the gate exists for.
+
+Measured against fork build `1652f945c`: `(4, 6)`, and every other pair
+over the floor that was probed, runs with no `differing dof` /
+`passenger mode` / `element disabled` line in the log.
+
+### ADDED — interface() 3D S3: a 3D interface emits a deck
+
+S2 resolved a 3D surface master and stopped there. It now emits: one
+`zeroLength` per coincident pair, the normal law on the pair's outward
+normal and the tangential law on both in-plane tangents, with the pair's
+own local frame written per element. There is no phantom bridge in 3D —
+the fork joins a mixed pair directly — so an `ndf`-3 footing skin sits on
+`ndf`-4 u–p soil and the pore pressure is left alone; a pair the fork
+would not take is refused before a line is written rather than emitted
+and quietly disabled. The frame is checked, not trusted: OpenSees derives
+the third local direction itself, so a record whose third vector is not
+the cross product of the first two is refused by name instead of putting
+the second slider on the wrong tangent.
+
+One thing to know before trusting a 3D number. The two tangential
+directions are **independent** sliders, each capped at the full bond
+strength, not a single circular slip surface. Sliding along one tangent
+behaves exactly as in 2D; sliding on the diagonal between them can carry
+up to √2 the intended shear. That is a deliberate choice — the laws
+translate to uniaxial materials, and a coupled cone is a different
+material — and measuring what it costs, together with reproducing the 2D
+convergence case in 3D and showing the pore pressure untouched, is the
+verification slice that follows.
+
+### CHANGED — interface() 3D S2: a surface master resolves, emission still refuses
+
+`g.constraints.interface()` used to refuse a 3D model at the call. It now
+takes a dim-2 surface master there, the way it takes a dim-1 curve in 2D,
+and the wrong dimension for the model is refused by name on the label.
+The per-pair frame comes from the adjacent facets and the tributary area
+from the facet-area accumulation, so a 3D interface has a real area and
+`thickness=` — the 2D out-of-plane depth — is refused there rather than
+quietly multiplied in. `slave_ndf=` takes `None`, 3, 4 (a u-p soil node)
+or 6 (a shell) in 3D, and every one of those pairs connects directly:
+the fork now joins a mixed 3D pair itself, leaving each degree of freedom
+past the third an untouched passenger, so the 2D phantom bridge has
+nothing left to bridge. A pair's orientation record widens from six
+floats to nine, `(n, t1, t2)`, because a 3D friction law acts on two
+tangential directions; a 2D interface's saved model is unchanged, and an
+older file still reads. What does NOT work yet is emission: build a 3D
+interface into a deck and the bridge refuses, naming the slice that will
+write it, rather than emitting a two-direction element into a
+three-direction model. That slice owes the per-pair orientation with
+both tangents, the friction law across them, and the recorder channels.
+
+### ADDED — ADR 0106 S5: live acceptance against the real fork binary
+
+S1-S4 proved the parser and the wiring against fake children; this slice runs
+the real `OpenSees.exe` (fork build `b52f8d83b`, PR #814) and checks the
+parsed numbers against what the fork's own solver actually prints. The deck
+mirrors the fork's own `tests/test_pardiso_stats.py` cantilever node for
+node — a 2x2x2 `stdBrick` mesh, `ElasticIsotropic`, bottom face fixed, top
+face loaded — giving the fork's own `n=54` free-DOF count. Measured against
+that exe: `n=54 nnz(A)=1764 matrixType=11 threads=16`, `factor entries
+iparm(18)=1836`, peak/perm/fact memory `252/215/31` KB, `0` Mflops — the
+fork's own suite only asserts a positive integer for the fill, so this is
+the first place those five numbers are pinned end to end. A second measured
+number (this exact linear-elastic model takes 2 refactorisations per step
+under `Newton` to satisfy `NormDispIncr 1e-10`) is sidestepped rather than
+piled on top of the first: the refactorisation-count and two-stage-split
+cases use `algorithm Linear` instead, which refactorises exactly once per
+`analyze(1)` call by construction, checked against the same exe (3 Linear
+steps, 3 blocks; a `gravity` + `push` staged deck splits 1/2 with the
+run-level bucket empty). `pytest.mark.ladruno_fork` gates the module; the
+subprocess lane additionally resolves the Tcl binary from the same
+`APEGMSH_OPENSEES_BIN` directory the live backend uses and skips on its own
+when that directory holds no `OpenSees(.exe)`.
+
+### ADDED — ADR 0106 S3: `apeSees.tcl` / `apeSees.py` return the solver-stats record
+
+A run that asked for `system Pardiso -stats` now hands the numbers back instead
+of leaving them in the log. `stream_run` grew an `expect_solver_stats` flag and
+a `RunSolverStats | None` return: when the flag is set, each line it tees is
+fed straight to the S1 parser as it streams, and the finished per-stage record
+comes back through `apeSees.tcl(run=True)` / `apeSees.py(run=True)`. Both
+methods changed from `-> None` to `-> RunSolverStats | None`, which is additive
+for every existing caller; the committed API index is rebuilt with them. Where
+they return early — `run=False` — they return `None`, as does every deck that
+never declared `stats=True`.
+
+The predicate is not recomputed: `emit` already resolved it to gate the S2
+stage marker, so the run reads the same answer off the emitter and cannot
+disagree with the bytes it just wrote. A deck that never asked pays nothing —
+the parser is not called at all, and the tee is byte-identical to the child's
+output either way. On a non-zero exit the `RuntimeError` is raised unchanged
+and the record is not smuggled through it: the log is already on disk, and
+`parse_solver_stats(<deck>.log)` reads back exactly what the streaming parse
+had accumulated. A clean run that asked for statistics and got no parseable
+block warns once, as `SolverStatsWarning`, naming `TIMS_FORK_BATCH_MIN_BUILD` —
+fork builds older than that print a format apeGmsh deliberately does not guess
+at. Still owed by S5: acceptance against the real fork binary, where the
+54-DOF brick's first factorisation must read 1836 factor entries.
+
+### ADDED — ADR 0106 S2: the `APEGMSH_STAGE open|close <name>` runtime marker
+
+The first executable slice of ADR 0106 (S1 landed the pure parser separately).
+`stage_open` / `stage_close` on the Tcl and Python emitters now drop a runtime
+`puts "APEGMSH_STAGE open|close <name>"` / `print("APEGMSH_STAGE open|close
+<name>", flush=True)` pair around each stage, name last on the line so a name
+with spaces survives the S1 parser's `APEGMSH_STAGE (open|close) (.+)$`.
+Quoting is normalised the same way `analyze` already normalises a strategy
+name, so a name carrying a literal quote or bracket cannot break the
+enclosing source line or, in Tcl, trigger command substitution.
+
+The marker is gated on a new build-level predicate, `deck_requests_solver_stats`,
+which resolves the flat/staged system declarations the same way
+`validate_ladruno_up_solver` already does and answers whether any declared
+`Pardiso` or `Mumps` asked for `-stats`. A deck that never does emits
+byte-identically to today in both emitters — the existing staged golden decks
+are unchanged, proving INV-1. The live emitter is untouched (D3), and the H5 /
+recording emitters never see the marker as a primitive — no measurement
+reaches a declaration. Under a partitioned staged deck the marker rides the
+same global scope `stage_open` and `analyze` already use, so it runs once per
+rank's own process without disturbing a byte of any `if {[getPID] == K} { ...
+}` rank guard.
+### ADDED — the `system Pardiso -stats` parser, alone (ADR 0106 S1)
+
+A new pure, stdlib-only `apeGmsh.opensees._solver_stats` module: the fork
+PR #821 `PARDISO stats:` block (five-line, one per numeric factorisation)
+now has a parser, `parse_solver_stats`, taking either a line-fed iterable
+(what a streaming run will hand it) or a log path (what a re-parse of a
+finished run's `<deck>.log` will hand it). Three frozen dataclasses carry
+the result: `SolverStatsBlock` (one factorisation), `StageSolverStats` (a
+bucket's ADR 0106 D6 reduction — max on the four capacity numbers, last-seen
+on the four identity ones), and `RunSolverStats` (the per-stage tuple plus
+a run-level bucket and the `factorisations` / `malformed_blocks` counters).
+Stage buckets come from `APEGMSH_STAGE open|close <name>` window lines
+(not emitted anywhere yet — see below); a block outside any window lands
+run-level. The parser never raises on malformed input — a missing field,
+an interrupting second header, a field with no header, or a value that
+won't parse as a number all count against `malformed_blocks` instead,
+covered by six mutation tests alongside the reference-block and
+multi-block-reduction ones.
+
+Not wired anywhere (S2/S3): no emitter emits `APEGMSH_STAGE` yet, nothing
+calls this parser, and `apeSees.tcl` / `apeSees.py` still return `None`.
+Nothing changes for any run.
+### FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and `pyvista.trame` needs `trame-pyvista`
+
+pyvista 0.49.0 pulls VTK 9.7.0, which removed `vtkRenderer.AddActor2D` /
+`RemoveActor2D` outright (deprecated since 9.5). The horizontal legend draws
+its own title actor through them (`viewers/backends/pyvista_qt.py`); the
+`AttributeError` was swallowed by the surrounding `except Exception: pass`,
+so the backend never recorded the bar it had just added and
+`remove_scalar_bar()` found nothing to remove — a title-less legend that
+could never be dismissed. `tests/viewers/test_legend_layout.py` caught it
+(`assert ['vm'] == []`). The title now goes through the generic `AddActor` /
+`RemoveActor`, which bucket a `vtkActor2D` correctly on VTK 9.6 and 9.7
+alike. The `except Exception: pass` that hid it is left as is and named here.
+
+Also: since 0.49 `pyvista.trame` imports `PyVistaLocalView` from the separate
+`trame-pyvista` package, which pyvista does not declare; the `viewer` and
+`all` extras now list it (four `test_trame_backend.py` tests were failing on
+`ModuleNotFoundError`). Both were CI-only until the release; main went red
+on `92643dde` for these five tests and nothing else.
+
+### ADDED — an explicit `system Mumps` on a serial deck is refused at build time (ADR 0106 S4)
+
+The Ladruno fork's desktop targets (`OpenSees.exe`, the desktop openseespy
+build) never compile the serial `MumpsSolver`: a declared `system Mumps`
+answers *unknown system type* at runtime, and a rejected `system` command
+does not abort the deck, so the model silently solves on whatever SOE was
+already in place instead of stopping. A new `validate_serial_mumps` in
+`_internal/build.py`, sitting beside `validate_ladruno_up_solver` and
+reusing its flat/staged/partitioned seam, now refuses an explicit `Mumps`
+declared on a serial (non-partitioned) deck, naming the offending stage on
+a staged deck. Partitioned decks, the ADR 0027 auto-emitted `Mumps`/`UmfPack`
+fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
+Independently revertable.
+### ADDED — interface() 3D S1: per-node outward frames and tributary areas on a surface master
+
+`g.constraints.interface()` still refuses a 3D model, exactly as before.
+What lands here is the geometry it will stand on: `surface_frames()` in
+`apeGmsh/_kernel/geometry/_surface_frames.py`, the 3D sibling of the 2D
+lane's `_boundary_chain`. Given a dim-2 master's tri3 / quad4 facets and
+the solid elements behind them, it returns each master node's **outward**
+unit normal, two in-plane tangents completing a right-handed frame, and a
+tributary area.
+
+Three things are decided rather than inherited. A facet's winding is not a
+contract — the sign comes from the owning solid's centroid, so a mesh wound
+inconsistently is oriented correctly instead of refused. The per-node
+average is uniform over the adjacent facet normals, which is what makes a
+cube's corner `(1,1,1)/√3` and its edge the normalised sum of two faces.
+And a reentrant fold is refused loudly while a convex corner is not — a
+distinction `dot(n_i, n_j)` cannot make on its own, since a 90° corner and
+a 270° fold both give exactly zero, so the sense is read from the facet
+centroids. Quadratic facets are refused by name: their mid-side nodes need
+a shape-function-weighted area split, and the equal-share rule would
+quietly mis-weight every spring.
+
+Nothing calls it yet. ADR 0093's register (entries 12–15) now carries the
+3D slices: S2 lifts the three refusal gates for a dim-2 master and widens
+`InterfaceRecord.orient` from six floats to the second tangent's nine, and
+S3 emits that frame as the per-pair `zeroLength -orient`.
+### ADDED — ADR 0106 proposed: capture and parse `system Pardiso -stats`, per stage
+
+The fork prints a `PARDISO stats:` block on stderr after **every** numeric
+factorisation now (fork PR #821, build `a240b9183` and later). apeGmsh emits
+the `-stats` flag and then throws the answer away: the block is tee'd into
+`<deck>.log` and nothing reads it, because `stream_run` returns `None` and so
+do `apeSees.tcl(run=True)` and `apeSees.py(run=True)` — there is no
+run-result object in the bridge to hang a measurement on, and the stream
+carries no stage boundaries to attribute one to.
+
+`ADR 0106`
+is the plan for closing that (TIMs slice A8-parse). A new run-side
+`_solver_stats.py` holds one pure parser and three frozen records; the
+per-stage reduction takes the **maximum** of the five capacity numbers
+(`iparm(15..19)`, fill included) and the last-seen value of the four identity
+ones, because a stage that refactorises per Newton step can peak in the
+middle and the last block would under-report exactly the case the
+measurement exists for. Attribution rides a new runtime
+`APEGMSH_STAGE open|close <name>` marker, gated on the deck's own stats
+request rather than on `progress=` so a deck that does not ask for statistics
+stays byte-identical. The parser never raises — a mangled block is counted,
+not believed — and a run that asked for statistics and saw none warns once,
+naming `TIMS_FORK_BATCH_MIN_BUILD`.
+
+Two deliberate refusals go with it. Nothing measured touches a build record:
+`ProfileRecord` stays frozen, `StageRecord` gains no field, and the archive
+stays free of telemetry. And an **explicit** `system Mumps` on a serial deck
+becomes a build-time error — the fork's desktop targets never compile the
+serial `MumpsSolver`, so the command is rejected at runtime and the model
+solves on whatever SOE was already in place instead of stopping. ADR 0027's
+auto-emitted parallel fallback, partitioned decks and ADR 0077's
+parallel-ARPACK path are untouched.
+
+Proposed only — no code, no schema bump, no behaviour change in this entry.
+
+### ADDED — LadrunoSANISAND's IMPL-EX/state responses are read, and the bare tokens refused (TIMs A12)
+
+Same trap as ADR 0105, on the fork's SANISAND family this time: `LadrunoSANISAND`
+answers seven more material-level responses (state parameter, yield-surface
+distance, IMPL-EX error tracking) only under the `material.<token>` prefix — a
+bare `-E psi` (or any of its siblings) reaches no material and records nothing,
+no error. They now land on canonical names, keyed by the **bucket token** exactly
+like the ASDPlasticMaterial3D buckets, and a bare token is refused up front
+naming the fix:
+
+| Bucket (aliases) | apeGmsh component(s) |
+|---|---|
+| `material.psi` (`stateParameter`) | `state_parameter` |
+| `material.yieldDistance` (`yieldFunction`) | `yield_distance` |
+| `material.implexError` | `implex_error` |
+| `material.avgImplexError` | `avg_implex_error` |
+| `material.substeps` (`substepsME`, `ladrunoSubsteps`) | `substeps_me`, `substeps_cap_hit` |
+| `material.implexDetail` | `implex_detail_total/dev/vol/clamp_fired/clamp_count/f` |
+| `material.implexRefusals` | `implex_refusals_total/sign_change/control/companion` |
+
+Every fork alias for a token resolves to the same canonical columns as its
+primary spelling, since the recorder forwards whichever one the deck used
+straight through. Registering by token (positional), not by column label, means
+this also works on fork builds old enough to still write `C1..Cn` instead of the
+named `COMP_NAMES` (fork PR #820) — the reason the ASDPlasticMaterial3D buckets
+are keyed this way too.
+
+Not done, named for the runway: `implexGuards` (6 slots, no `ResponseType`
+tags in the fork, so its slot meanings are not established) stays
+unregistered. None of the new canonical names were added to
+`_vocabulary.ALL_CANONICAL`, matching the existing `material_*` names. The
+MPCO reader's material-state path knows only `damage` /
+`equivalentPlasticStrain` / `plasticStrain` and drops these buckets, as it
+already does the ADR 0105 ones. And by-position resolution means a file whose
+`COMP_NAMES` disagree with the table (measured: `substeps_capHit, substeps_me`
+reads as `me, capHit`; a `material.psi` bucket labelled `yieldDistance` reads
+as `state_parameter`) is renamed **silently** — that predates this entry, but
+#820 makes the file's names authoritative, so the disagreement is now
+detectable and should warn.
+### CHANGED — the 2026-09-07 fork batch is recorded: minimum build `a240b9183`, the ADR 96 passenger-DOF contract, and the per-factorisation `Pardiso -stats` block
+
+The fork merged eight PRs on 2026-09-07 (#805, #808, #810, #811, #812, #814,
+#820, #821) against the TIMs proposed-model asks. This is the docs half of
+their adoption; no runtime behaviour changes.
+
+- `apeGmsh.opensees._target.TIMS_FORK_BATCH_MIN_BUILD = "a240b9183"` — the
+  documented (not enforced, as `ASDP_MIN_FORK_BUILD`) floor for the batch.
+- `Pardiso(stats=True)`'s docstring described the pre-#821 output (nnz and
+  peak memory once per sparsity pattern). The flag now prints a MUMPS-shaped
+  five-line block after every numeric factorisation; the docstring says so.
+  Nothing parses it yet (that is a later slice with its own ADR).
+- `internal_docs/contact_3d_passenger_dof_adoption.md` records fork ADR 96:
+  `zeroLength` and 3-D contact on ndf ≥ 3 pairs with the pressure DOF as a
+  passenger, the element-sized `force` response, and that vanilla's
+  differing-dof case is now a warning plus an inert element — so the
+  bridge's pre-emission ndf guards stay. The 2-D lane is unchanged.
+- `internal_docs/plan_interface_3d.md`: blocker 1 (fork F1) cleared; blocker
+  2 (ADR 0093 D2/D3 in 3-D) still open, `interface()` still refuses 3-D.
+
+Not in this PR, named for the runway: A12 (the seven `LadrunoSANISAND`
+responses — recorded only as `material.<token>`, the bare token records
+nothing), the `-stats` parser, and `interface()` 3-D S1–S4.
+
+### ADDED — ASDPlasticMaterial3D's material-level Gauss buckets are read: mean stress, J2, volumetric strain, back stress and internal variables (ADR 0105 Amendment 1)
+
+The fork recorder forwards `elem_responses=("material.<token>",)` to every Gauss
+point's material, and ADR-94's `setResponse` labels the columns it returns. The
+`.ladruno` reader knew the plastic-strain tensor and `eqpstrain` and nothing
+else, so recording `material.PStress` / `J2Stress` / `VolStrain` / `J2Strain` /
+`BackStress` wrote five full buckets into the file that
+`Results.elements.gauss.available_components()` never listed — dropped with no
+warning, indistinguishable from a material that never wrote them.
+
+They now land on canonical names, keyed by the **bucket token** and resolved by
+column position:
+
+| Bucket | apeGmsh component(s) |
+|---|---|
+| `material.PStress` | `material_mean_stress` |
+| `material.J2Stress` | `material_j2_stress` |
+| `material.VolStrain` | `material_volumetric_strain` |
+| `material.J2Strain` | `material_j2_strain` |
+| `material.BackStress` | `back_stress_xx/yy/zz/xy/yz/xz` (6 columns) |
+| `material.YieldStress` | `yield_stress` |
+| `material.DP_cohesion` | `dp_cohesion` |
+| `material.CapPressure` | `cap_pressure` |
+| `material.EpsQpShear` | `eps_qp_shear` |
+
+**The token is the key, not the column label**, because the labels the material
+writes are not unique across levels: `material.PStress` labels its column `p`,
+canonicalisation is case-insensitive, and the section axial force of every
+force-based beam is labelled `P` — a label-keyed map turned each `section.force`
+station into a Gauss `material_mean_stress`. The self-describing buckets
+(`material.stress`, `material.strain`, `material.pstrain`, `material.eqpstrain`)
+are not in the token table and keep the existing label path (`sigma11`,
+`epsP11`, `eqpstrain`) unchanged.
+
+The `material_*` names are **provenance-distinct on purpose**: they are what the
+material computed, under its own definition and sign, and are NOT aliased onto
+the tensor-derived `mean_stress` / `j2_stress` / `volumetric_strain` /
+`j2_strain`. On fork build `3622d6214` a `MohrCoulombSoil` deck measures them
+equal (same sign, factor 1 — both `trace/3`, both J2 = 1/2 s:s, both
+`trace(eps)`), and the live test asserts that measurement to 1e-6; aliasing them
+would need a per-material audit instead.
+
+Back-stress components arrive in the material's Voigt order 11, 22, 33, 12, 23,
+13 — the order the `epsP1..` plastic-strain columns already use.
+
+**A dropped material column now warns instead of vanishing.**
+`gauss_available` raises one `GaussColumnDroppedWarning` per `material.<Token>`
+bucket that neither the token table nor the label map can name, naming the
+bucket, the labels it could not map and the element class. Buckets that map
+completely never warn, and the warning is scoped to `material.` buckets: a label
+the Gauss level cannot name elsewhere is routinely another level's business (a
+`section.force` station carries `P`/`Mz`), so warning there would be noise.
+
+### CHANGED — ASDPlasticMaterial3D decks follow the fork's ADR-94 contract: exact parameter schema, `strict_convergence` on, `Continuum` tangent, swallowing-host gate, `MohrCoulombTensionCutoffSoil` + `HoekBrownRock` (ADR 0105)
+
+The Ladruno fork's ADR-94 fix wave (`ladruno` at or after `bbf657d49`) made the
+`ASDPlasticMaterial3D` parser fail loud: an unknown model-parameter name aborts
+the `nDMaterial` command and every parameter of the instantiated combination
+except `MassDensity` / `InitialP0` is required. `MohrCoulombSoil` emitted a
+21-name superset, twelve of them foreign to its combination, so every SSI deck
+built through it was refused by the new build. It now emits exactly its
+schema (`YoungsModulus, PoissonsRatio, MC_phi, MC_c, MC_ds, MC_psi,
+MassDensity, InitialP0`). The per-combination schema lives in `material/nd.py`
+(`_ASDP_PARAMS_BY_COMPONENT` + `asdp_parameter_schema`, read from the fork
+headers' `parameters_t` tuples and pinned against the fork's 46 registered
+combinations); `ASDPlasticMaterial3D.__post_init__` refuses a foreign name
+(naming it and the schema) and a missing required name (listing them) when
+every component is in the table, and leaves unknown combinations to the fork.
+
+**Behaviour changes, stated plainly.** `MohrCoulombSoil` (and the two new
+helpers) now default to `strict_convergence=True` and `tangent_type="Continuum"`
+(was `Secant`). Decks that previously committed inadmissible or non-converged
+states now **fail at the step** instead of finishing with wrong stresses —
+that is the contract, not a regression. Iteration signatures moved: the
+Continuum tangent costs fewer global Newton iterations (measured 72 vs 139 on
+the fork's two-cube model; the fork measured 5.3× on its own rig) and every
+Gauss point now carries its own tangent on the fork. Results at convergence
+are unchanged. `f_relative_tol: float = 0.0` is exposed (off = the fork's
+default); rock-scale decks should set it — the same MC problem completed
+20/20 in kPa and ×1e9 only with it on. `Backward_Euler_LineSearch` and
+`Runge_Kutta_45_Error_Control_old` raise at construction with the fork's
+reason (ADR-94 M7 / M8); the explicit integrators warn
+`ASDPlasticIntegrationWarning`; unknown `tangent_type` /
+`return_to_yield_surface` tokens raise. Both new options need a fork build
+at or after `bbf657d49` (`ASDP_MIN_FORK_BUILD`).
+
+`validate_asdplastic_host` (`_internal/build.py`, next to the ADR 0103 gates)
+warns once per deck — `ASDPlasticHostWarning` — when an `ASDPlasticMaterial3D`
+(directly or through `PlaneStrain`) sits on an element measured to swallow
+material refusals (fork ADR-94 B2: `stdBrick` reports 20/20 on a deck
+`LadrunoBrick` refuses 0/20), keyed on a new tri-state
+`_ElemSpec.propagates_material_refusal` rather than on element names. Two
+helpers land with the same build (exact schema, same defaults,
+`PlaneStrain`-wrappable, on `ops.nDMaterial`): `MohrCoulombTensionCutoffSoil`
+(the fork's ADR-84 composite; `tension_cutoff` is `TC_min_stress`, tension
+positive) and `HoekBrownRock` (`mb, s, a` taken directly; deriving them from
+`mi, GSI, D` is the caller's job). No DruckerPrager / VonMises helpers.
+
+**Goldens.** No golden deck under `tests/opensees` carried a `MohrCoulombSoil`
+line, so none moved; `src/apeGmsh/studio/_api_index.json` was rebuilt for the
+new signatures. Unit tests that built the generic class with a partial MC
+block now supply the full schema. Readers are unchanged; a new live assertion
+in `test_ladruno_gauss_generic_columns.py` pins that the ADR-94 build still
+labels the `stress` / `strain` Gauss columns and the `material.pstrain` /
+`material.eqpstrain` plastic-strain columns for an ASDP deck on
+`LadrunoBrick`. Recorder side: a bare `pstrain` (or any known material-level
+token — `pstrains`, `eqpstrain`, `PStress`, `J2Stress`, `VolStrain`,
+`J2Strain`) in `elem_responses` records NOTHING on the fork, silently;
+`ops.recorder.Ladruno` / `MPCO` now refuse it at construction and name the
+`material.<token>` spelling that reaches the Gauss-point materials. Acceptance gate: `tests/opensees/integration_ladruno/
+test_asdplastic_live.py` (`ladruno_fork`; seven cases, each a fresh
+subprocess printing `ops.ladrunoBuild()`), 7/7 on build `3622d6214`. Guide:
+`internal_docs/guide_ladruno_asdplastic.md`; fork asks:
+`internal_docs/asdplastic_fork_asks.md`.
+
+
+### DOCS — `interface()` in 3D scoped, not built (TIMs A10)
+
+`internal_docs/plan_interface_3d.md` records where `g.constraints.interface()`
+refuses a 3D model today (declaration and resolve gates in
+`core/ConstraintsComposite.py`), why no apeGmsh-side emission can be correct
+before the fork relaxes `ZeroLength::setDomain`'s equal-ndf / ndf-3-or-6
+guard (`ZeroLength.cpp:611-673`; a phantom at either ndf would either
+mismatch or hand the spring a pore-pressure slot), and the slice order once
+that lands (3D per-facet frames and surface tributary, the gates, per-pair
+`-orient` with two tangents, a rotated 2D verification case). No code change.
+### ADDED — `g.mesh.structured.build_graded_box` — mechanism block + geometric grading in one call (PM-01 A9)
+
+A footing-on-soil model wants three things at once from its mesh, and
+until now had to hand-assemble them from `set_transfinite_box`,
+`set_transfinite_curve(mesh_type="Progression")` and
+`set_transfinite_volume`: a **uniform block** at cell size `h` around the
+footing where the collapse mechanism lives, a declared **geometric growth
+ratio** `r` per cell from there out to the boundary, and the footprint's
+edges landing exactly on **mesh lines** so the footing width is not fuzzy.
+`build_graded_box(extent=(bx, ly, hz), footprint=(B, L), h=…, l_mech=…,
+d_mech=…, r=…, orientation=0.0)` produces all three and returns the 18
+sub-volume tags, ready for `g.physical.add_volume(...)`; it sets the
+constraints only and leaves `generate()` to the caller.
+
+It is the one `structured` verb that **creates geometry**, and
+deliberately so: a single box cannot carry a uniform interior and a graded
+exterior on one transfinite curve, so the verb lays out a 3×3×2
+arrangement of boxes, fragments them conformal, and then combines the
+existing primitives over the result — uniform curves inside the block,
+`Progression` outside with the ratio oriented to grow *away* from the
+block on both sides of every axis.
+
+Two invariants are enforced rather than assumed. `h` must divide `B` and
+`L` exactly (a loud `ValueError` otherwise): that, plus rounding `l_mech`
+and `d_mech` to whole cells, is what guarantees a node on each footprint
+edge — the "fuzzy footing width" error is excluded by construction, not by
+luck. And the block must fit *strictly* inside the domain, so a block as
+wide or as deep as the box — which would leave no far field to grade and
+silently produce a uniform mesh — is refused with the numbers in the
+message. `r = 1` is legal and grades nothing; `r < 1` is refused, since a
+ratio below one refines *toward* the boundary.
+
+`orientation` is a rotation of the whole grid about `z`, in degrees. It is
+applied to the fragmented volumes **before** any curve is read, because
+`occ.rotate` preserves the tags of the entities it is handed but re-tags
+their boundary curves and surfaces — constraints set first would be
+silently dropped, and the curves are classified in the un-rotated frame
+instead. Because the rotation is rigid the element and node counts are
+identical at every angle, which is what makes it usable as the
+two-orientation axis of a refinement study.
+
+The far-field cell count is the smallest `n` with
+`h·(1 + r + … + r^{n-1}) ≥ span`, so the cell touching the block is never
+coarser than `h`. That law reproduces the published element/node table of
+the PM-01 domain-cost study exactly for its three geometric-grading rows
+when fed the same far-field seed; the verb itself seeds at `h`, the
+declared near-field cell, which buys a denser far field (51×51×26 grid
+lines at `r = 1.2` against the study's 49×49×24) rather than a coarser
+one.
+### ADDED — `ops.strategy.Substep`: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
+
+`ops.strategy.Ladder` has escalated the solution *algorithm* since ADR 0057
+Phase A and nothing else — the step size was fixed at declaration time, so the
+only answer to a stalled increment was a different `algorithm` command against
+the same increment. That is the wrong lever for the failure this project keeps
+meeting: on a push into plasticity the Newton radius of convergence collapses
+at the knee and no algorithm converges at the declared step. Measured on the
+TIMs response-curve harness, cell U-V: the coupled Newton's radius at the
+reference state lies between 3.125e-6 and 6.25e-6 m of control-node settlement,
+**an eighth of the declared 2.5e-5**, and above it every rung of the ladder
+returns `rc = -3`.
+
+`ops.strategy.Substep(node=, dof=, target=, ds=, ds_min=, ...)` is that lever,
+ported from the harness's `stage_S5_push`: a base step, a cap, halving on a
+failed increment, regrow by `regrow` after `regrow_after` consecutive good
+steps, a floor, a subdivision budget and a wall-clock budget — plus
+**run-to-criterion** termination, so a push declares what it wants rather than a
+step count guessed in advance. Either a `target` advance at the control
+node/DOF, or (with `plateau=` + `plateau_window=`) a tail slope that has fallen
+to a declared fraction of the initial tangent, both least-squares fits over the
+committed curve, guarded by the harness's own rules: at least 8 rows, and the
+window must be covered by the curve's own range. `ds_use = min(ds, target - u)`
+lands **exactly** on the target and never overshoots, the `loadConst` contract
+ADR 0057 evidence point 4 wrote down. It runs against a three-method
+`SubstepDriver` protocol (`analyze(ds)`, `disp(node, dof)`, `load()`), so
+whichever integrator idiom carries the increment — `DisplacementControl` on the
+control node, or the fork's `sp` platen under `LoadControl(-ds)` — stays behind
+that seam and the controller owns the step-size policy and nothing else.
+
+**Verdict semantics are the point.** `TARGET` and `PLATEAU` are successes;
+`BUDGET`, `FLOOR` and `WALL` are failures, and `SubstepResult.ok` is derived
+from the verdict and from nothing else — a spent budget is never dressed up as
+success, however many good steps preceded it. This diverges on purpose from the
+harness, whose `_verdict` promotes a guard-terminated leg to
+`limit_point_then_guard` when the tangent criterion had already been met.
+Ordering handles that case instead: both success criteria are tested at the top
+of every attempt, so a run that met its criterion has already exited before a
+budget can be spent, and the #587 fail-loud floor holds unbroken.
+
+Two exclusions are deliberate. The harness's `_try_step` relaxes the
+*convergence test* (`tol * rung["tol_factor"]`) as it escalates — ADR 0057 §6
+excludes that outright, so only the rc-checking skeleton was taken. And
+`_push_dr`, the dynamic-relaxation driver, is **not** ported: it wipes the whole
+chain to `system Diagonal` / `algorithm Linear` / `LadrunoDynamicRelaxation` /
+Transient, a wholesale integrator identity change that §6 also excludes, and it
+was defective for state-memory materials (every pseudo-step of its fictitious
+transient is a strain increment a path-dependent material commits, so the state
+at rest is not the state the static path would have produced).
+
+One knob deviates from the harness on measured evidence: `budget` counts
+**consecutive** halvings spent rescuing one increment — ADR 0057's own
+`max_halvings` — not a run-wide total. Ported verbatim as a total, the budget
+was spent by *probing* rather than by failure: regrow doubles the step every
+`regrow_after` good steps, so past a knee it re-fails by construction and a run
+died on `BUDGET` after roughly `2 × budget` perfectly healthy steps with a
+converging step size in hand. `SubstepResult.subdivisions` still reports the run
+total so the probing cost stays visible.
+
+An adversarial probe on degenerate inputs found two further defects, both now
+fixed and pinned: a **NaN control displacement made the controller spin
+forever** (a NaN fails *every* comparison in the loop — target, floor and the
+step-1 fidelity tripwire alike — and `min(ds, target - nan)` returns `ds`; the
+probe ran 5000 `analyze` calls before its own cap fired), and a **NaN load
+silently disabled a declared plateau criterion** (the initial tangent fits to
+NaN and the criterion's own guard then turns it off). Both are now loud
+refusals, the load check scoped to runs that actually declared a plateau.
+
+Deck emission of the substep loop is **deferred**, and is named rather than
+papered over: `Ladder.to_spec()` **refuses** a Substep-carrying ladder instead
+of resolving it to the Phase A fixed-step spec, because emitting the algorithm
+rungs alone would ship a deck that quietly ignores the declared step policy —
+the silent-no-op class this project has a documented history of. A `Ladder` may
+carry at most one `Substep`, reachable as `Ladder.substep`; Phase A emission is
+byte-identical when none is present. Because that in-process run is for now the
+only way to drive one, `ops.strategy.OpenSeesPyDriver(ops_module, node=, dof=,
+sign=-1.0)` ships as the stock driver for the `DisplacementControl` case — it
+re-issues `integrator DisplacementControl $node $dof $sign*ds` and takes one
+step per attempt, since the step size has to be pushed into the integrator every
+time it changes, and it covers that case only (under the sp platen `getTime()`
+is a settlement, not a force, so that driver is three methods written against
+the `SubstepDriver` Protocol).
+### ADDED — `s.profile(deep=, memory=, per_step=)` brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
+
+`ops.profiler.*` brackets the *whole* deck's appended `analyze` call —
+useful for a flat model, useless for a staged one, where each
+`with ops.stage(...) as s:` block owns its own analyze loop and the question
+is "which stage is expensive," not "is the run expensive."
+
+`_StageBuilder.profile(deep=False, memory=False, per_step=False)` reuses the
+same `Emitter.profiler(*args)` machinery — not a second implementation — to
+bracket just THAT stage: `profiler start [-deep] [-memory] [-perStep]`
+immediately before the stage's analyze loop, `profiler stop` + `profiler report
+<stage name>.h5` immediately after (filename derived from the stage's own
+name, so no extra kwarg is needed). A sibling stage that never calls
+`s.profile` stays unbracketed. `Mumps(stats=True)` still emits its `-stats`
+flag on the stage's own `system Mumps` line, unaffected by the bracket.
+
+H5 archival of `s.profile` refuses loudly (mirrors the existing
+`phantom_node_tags` refusal in `H5Emitter.set_stage_records`) rather than
+silently dropping the declaration on a `to_h5` round-trip — use
+`ops.tcl(path)` / `ops.py(path)` for a profiled staged deck.
+### ADDED — `s.imposed_path(...)`: prescribed motion on any DOF, inside a stage
+
+`ops.imposed_displacement` maps `ux` / `uy` / `uz` onto DOFs 1-3 and
+builds a **global** pattern, which ADR 0051 §5 forbids mixing with
+stages — so a staged model could not prescribe a rotation at all without
+hand-authoring `p.sp` rows. `s.imposed_path(node=, ratios=(r1..r6),
+series=)` closes that: `ratios` is positional over the node's DOFs, so
+4..6 (the rotations) are reachable, and the pattern is stage-scoped.
+
+Creates a stage `Plain` via `s.pattern(series=)` and records one `sp` per
+**non-zero** ratio:
+
+```
+sp <node> <i> <ratios[i-1]>
+```
+
+Zeros are skipped rather than emitted as `sp … 0.0` — a prescribed zero
+is a *constraint* (it pins the DOF), not the absence of one, so emitting
+it would silently clamp DOFs the caller meant to leave free; `s.fix` /
+`s.support` are the verbs for pinning. The ratios are shape only: the
+magnitude and history come from `series`, so a unit direction plus a
+`Path` gives a fault-slip or support-settlement path. The pattern is
+returned, so ordinary `p.load` rows on other DOFs of the same node
+coexist in the same stage.
+
+`ratios` longer than the model's `ndf` is refused at the call site
+(`ValueError`, matching `ops.imposed_displacement`'s existing check). The
+bound is the `ops.model(ndf=)` **envelope**, an upper bound on any node's
+ndf — the per-node *effective* map (ADR 0048) resolves at build time from
+every declared element's PG fan-out and cannot be probed per call without
+a full mesh walk. `ops.imposed_displacement` is untouched.
+### ADDED — `s.update_parameter(...)`: a typed pass-through over `updateParameter`
+
+`s.initial_stress` and `s.activate_absorbing` already drive the OpenSees
+`parameter` / `addToParameter` / `updateParameter` primitive internally,
+each for one fixed response. `s.update_parameter(name, value, *,
+pg=|elements=, material=None)` exposes the general form, emitting
+
+```
+parameter $pid
+addToParameter $pid element $eid <name> [<mat_tag>]   # one per element
+updateParameter $pid <value>
+remove parameter $pid
+```
+
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an **element**
+parameter (fork `LadrunoUP::setParameter` matches `xPerm` / `yPerm` /
+`zPerm` on `argv[0]`, `LadrunoUP.cpp:1932-1943`).
+`s.update_parameter("poissonRatio", 0.35, pg="soil", material=sand)`
+changes a **material** parameter: the element forwards the unmatched argv
+to its integration-point materials (`LadrunoUP.cpp:1962-1971`) and
+ManzariDafalias matches on `argv[0] == name` **and** `argv[1] == its own
+tag` (`ManzariDafalias.cpp:820-857`) — which is why `material=` *appends*
+the tag rather than replacing the element target.
+
+There is deliberately no `material=`-only form: `OPS_Parameter` /
+`OPS_addToParameter` accept `node` / `element` / `region` / `loadPattern`
+and nothing else (`OpenSeesParameterCommands.cpp`), so a material is
+unreachable without an element that hosts it. No registry of "known"
+parameter names either — the target's own `setParameter` is the
+authority, and a name it does not recognise already errors there.
+
+Emits right after the absorbing-boundary flip, on both the flat and the
+partitioned path (per rank, same element-ownership filter). A fresh
+`parameter` tag per record and per rank keeps each block self-contained,
+so a later stage may re-declare. H5 archival of the verb is deferred and
+fail-loud.
+### ADDED — `s.zero_velocities()`: the transient → static handover
+
+A static stage inherits the previous transient stage's committed nodal
+velocities and accelerations — a static integrator writes neither — so
+`reactions -dynamic` in the static stage keeps reporting the previous
+stage's inertia and damping as if they were live. `s.zero_velocities()`
+(whole domain) / `s.zero_velocities(nodes=[...])` hands the stage a
+quiescent kinematic state.
+
+Emits, per node and per DOF of the node's **effective** ndf (a u–p node
+gets DOFs 1..4), `setNodeVel <n> <dof> 0.0 -commit` and
+`setNodeAccel <n> <dof> 0.0 -commit` — stock commands, so both emit
+targets (Tcl + openseespy) and any build run it. `-commit` is
+load-bearing, not decoration: `OPS_setNodeVel` rebuilds the vector from
+the node's **committed** state (`Node::getVel` returns `commitVel`) and
+writes only the **trial** vector, so without committing each call the
+next DOF reads the old value back and only the last DOF ends up zeroed.
+The fork's `ladrunoSetNodeTrial` cannot substitute — it writes the trial
+vectors and never commits — and neither stock nor the fork ships a
+domain-wide zeroing command, so the deck cost is `2 × Σ ndf` lines;
+scope it with `nodes=` when that matters.
+
+Emit slot is LAST in the stage block: after the stage's domain
+mutations, analysis chain, patterns and the optional `s.reset()` (which
+reverts the Domain to the last `setTime` and would restore the very
+velocities being removed), immediately before `analyze`. Wired on both
+the flat and the partitioned emit paths — under MP each rank emits only
+the slice of the target set it owns (INV-4). H5 archival of the verb is
+deferred and fail-loud: the staged archive raises `NotImplementedError`
+rather than write a deck that silently replays the artefact.
+### ADDED — a build-time pressure-datum check for static u-p decks (A2)
+
+A saturated (u-p) region whose pore-pressure DOFs are **all free** is
+impervious, and its **static** tangent is singular in `p`. Nothing downstream
+says so: the fork measured (2026-07-11) that every serial general solver —
+UmfPack, FullGeneral, BandGeneral, SparseGeneral — factorises the sealed
+system through round-off and returns `rc = 0` with an arbitrary,
+solver-dependent pressure level, because the p-RHS is consistent and no solver
+sees the rank deficiency. That refuted "it fails loudly" claim is pinned by a
+`strict` xfail in the fork
+(`tests/test_ladruno_up_element_analytic.py:533-548`); on the apeGmsh side
+nothing looked for it at all. A silent wrong answer, so it is now a gate.
+
+`validate_up_pressure_datum` runs beside the ADR 0049 G1–G3 gates, after the
+ADR 0074 D4 solver gate. It walks the pressure-**carrier** nodes of every
+`LadrunoUP` spec — every node of an equal-order shape, the vertex slots only
+of a Taylor–Hood tri6/tet10 — unions them through shared elements into
+connected components (union-find, `O(N α(N))`, measured ≈5 µs/element on a
+47k-quad column), and requires each component to hold at least one node whose
+pressure DOF (slot `ndm+1`) is pinned. A datum is any single-point constraint
+on that slot: a broker or stage-claimed `fix`, an `s.support`, or a pattern
+`sp`. Dropping the mid-edge nodes is what keeps a Taylor–Hood mesh one region
+instead of shattering it, and it also means a mid-edge node can never serve as
+the datum.
+
+The gate is scoped to decks that declare `ops.analysis.Static()` (flat or
+per-stage) and are not H5 archival — the same "does this actually solve"
+scope D4 uses. A sealed region is physically *correct* under
+`ops.analysis.Transient()`: undrained loading puts the storage term `1/Q̄` on
+the p diagonal, so the tangent is regular, and that is what the fork's own
+Terzaghi lane runs. Refusing it there would be a false positive.
+
+The `BridgeError` names a node of the offending region, how many of the
+model's u-p regions are sealed, and the fix — pin the pressure DOF of one
+node of that region, typically a drained surface. On a Taylor–Hood mesh it
+also names the vertex-node idiom, because the obvious whole-pg mask over-runs
+the mid-edge nodes' `ndf` and G3 refuses it.
+### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
+
+`g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
+with no `-dof` list, and the fork's default — "every DOF the slave has" —
+gates on DOF **count** only (`LadrunoKinematicCoupling.cpp:260-275`): it
+walks components `1..ndm+nrot` and keeps each one the slave carries. For an
+ndf-4 u–p slave in 3D, component 4 is kept as a *rotation* row and `buildB`
+(`:335-350`) ties the node's pore pressure to the master's θx, with a
+penalty of order `K_t·ℓ²` — silently; the only warning sits behind
+`!useDefault`. The bridge's constraint-side ndf gate (G2,
+`validate_constraint_master_ndf`) now refuses the default at emit when any
+slave's ndf is neither `ndm` (translations) nor `ndm + nrot` (translations
++ rotations), naming the node and telling the user to pass `dofs=`
+explicitly (`dofs=[1, 2, 3]` for translations only). The docstring that
+recommended `dofs=None` "for mixed sets" now says what the default really
+does. The gate is count-based, so a 2D u–p node (ndf 3, the same count as
+`(u, v, θ)`) is not distinguishable here; the pressure-node identification
+by element class belongs to the pressure-datum check (TIMs A2).
 
 ### FIXED — the flaky `suite` segfault: the cyclic GC was finalizing Qt off the UI thread (#1080)
 

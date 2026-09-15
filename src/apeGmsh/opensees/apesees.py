@@ -33,11 +33,14 @@ from ._internal.build import (
     MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
+    UpdateParameterRecord,
     RayleighRecord,
     RegionAssignmentRecord,
+    ProfileRecord,
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
+    ZeroVelocityRecord,
     _emit_node_with_inferred_ndf,
     allocate_element_tags,
     bucket_primary_nodes_by_rank,
@@ -52,11 +55,14 @@ from ._internal.build import (
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
     emit_reinforce_ties,
+    emit_update_parameters,
     emit_embed_ties,
     emit_contacts,
     emit_contact_planes,
     emit_interfaces,
     emit_rebar_elements,
+    emit_zero_velocities,
+    zero_velocity_target_nodes,
     emit_ghost_sp_ops,
     emit_stage_interfaces,
     allocate_interface_tags,
@@ -95,9 +101,13 @@ from ._internal.build import (
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
+    validate_serial_mumps,
+    deck_requests_solver_stats,
+    validate_up_pressure_datum,
     validate_manzari_convergence_test,
     validate_manzari_tangent_solver,
     validate_sanisand_substep_cap,
+    validate_asdplastic_host,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -184,6 +194,7 @@ if TYPE_CHECKING:
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
+    from ._solver_stats import RunSolverStats
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -191,6 +202,7 @@ if TYPE_CHECKING:
 
     from .analysis.complex_eigen import ComplexEigenResult
     from .analysis.eigen import EigenResult
+    from .analysis.footfall_result import FootfallResult
     from .analysis.modal import (
         FrequencyResponseResult,
         ModalHistoryResult,
@@ -467,9 +479,8 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     broader :func:`_fem_has_mp_constraints` (which also counts penalty-element
     interpolation ties). Node-side records emit MP_Constraints EXCEPT
     ``kinematic_coupling`` (→ ``LadrunoKinematicCoupling`` element) and
-    ``rigid_body(as_element=True)`` (→ ``LadrunoRigidBody`` element) and
     ``penalty`` (g.constraints.penalty → a stiff spring element, NOT an
-    MP_Constraint — it has no MP emit path in build.py), which are all
+    MP_Constraint — it has no MP emit path in build.py), which are
     handler-independent. The interpolation ties (``tie`` / ``embedded`` /
     ``distributing``) all emit penalty/coupling ELEMENTS — handler-independent
     too; their only handler-requiring route is ``enforce="equation"``, caught
@@ -477,6 +488,15 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     those element-emitting kinds, requires a handler. Unknown node kinds
     default to handler-requiring (conservative — better a false fail-loud than
     a silently-unenforced MP constraint).
+
+    ``rigid_body(as_element=True)`` is NOT handler-independent, despite
+    emitting a ``LadrunoRigidBody`` element: ``LadrunoRigidBody::setDomain``
+    adds one ``MP_Constraint`` per slave (fork
+    ``LadrunoRigidBody.cpp:339,360-362``), and ``LadrunoContactHandler`` only
+    WARNS about MP constraints — it does not enforce them (fork
+    ``LadrunoContactHandler.cpp:706-713``). So contact + rigid_body
+    (as_element=True) would silently leave those slaves unconstrained; this
+    counts as handler-requiring like the ``as_element=False`` form.
 
     ADR 0093: a **mixed-ndf** ``g.constraints.interface()`` pair emits a
     real ``equalDOF`` from its own pass, so it counts here too —
@@ -505,9 +525,6 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
         for rec in node_constraints:
             kind = getattr(rec, "kind", None)
             if kind in _HANDLER_INDEPENDENT:
-                continue
-            if (kind == ConstraintKind.RIGID_BODY
-                    and getattr(rec, "as_element", False)):
                 continue
             return True
     except TypeError:
@@ -1260,6 +1277,24 @@ class BuiltModel:
             ],
         )
 
+        # ADR 0106 D5: an explicit `system Mumps` on a serial (non-
+        # partitioned) deck is refused at build time. The fork's desktop
+        # targets never compile the serial MumpsSolver, so it would
+        # silently answer "unknown system type" and leave the run on
+        # whatever SOE was already in place instead of stopping. Gates on
+        # the FEM's partition count (D5's `len(fem.partitions) <= 1`), not
+        # on `_will_partition`: a partitioned mesh emitted flat carries
+        # the parallel chain by design (the ADR 0027 twin decks).
+        validate_serial_mumps(
+            enforce=_has_analysis_chain and not _emitter_is_archival,
+            staged=_staged,
+            partitioned=is_partitioned(self.fem),
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
+
         # A Manzari-family material with the CONSISTENT tangent
         # (tan_type != 0 — now the LadrunoSANISAND default, and the fork
         # parser's own default since PR #792) has a genuinely UNSYMMETRIC
@@ -1272,6 +1307,18 @@ class BuiltModel:
             enforce=_has_analysis_chain and not _emitter_is_archival,
             staged=_staged,
             partitioned=_will_partition,
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
+
+        # ADR 0106 D2: gate the tcl/py runtime stage marker on whether
+        # THIS deck asks a solver for ``-stats`` anywhere (flat or in
+        # any stage) — reuses the same flat/staged system resolution as
+        # the two validators above. A deck with no ``stats=True``
+        # anywhere emits byte-identically to today (INV-1).
+        emitter._emit_stage_markers = deck_requests_solver_stats(  # type: ignore[attr-defined]
             flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
             stage_systems=[
                 (repr(st.name), st.system) for st in self.stage_records
@@ -1298,6 +1345,12 @@ class BuiltModel:
         # converges on a partially integrated stress. Raise, not warn --
         # that is a wrong answer, not a slow run.
         validate_sanisand_substep_cap(elements)
+
+        # ADR 0105 D4: an ASDPlasticMaterial3D whose host discards the
+        # material return code (stdBrick, fork ADR-94 B2) never sees its
+        # own strict_convergence refusal. Warn, not raise -- the vanilla
+        # host is legal and was the SSI-1 default.
+        validate_asdplastic_host(elements)
 
         # ADR 0093 S7: a stage-CLAIMED interface cannot ride the staged
         # H5 archive.  The claim itself is bridge-side state — nothing
@@ -1427,6 +1480,38 @@ class BuiltModel:
                 *(r for st in self.stage_records for r in st.mass_records),
             ),
             load_records=tuple(ld for p in _plains for ld in p.loads),
+            sp_records=tuple(sp for p in _plains for sp in p.sps),
+            support_records=tuple(
+                r for st in self.stage_records for r in st.support_records
+            ),
+        )
+
+        # G4 — a STATIC u-p deck whose pressure DOFs are all free is
+        # singular in p and factorises through round-off with rc = 0 and an
+        # arbitrary pressure level (fork xfail
+        # test_ladruno_up_element_analytic.py:533-548).  Walk the pressure
+        # regions and require a datum in each.  Scoped to Static: a sealed
+        # region is physically correct under Transient (the storage term
+        # regularises the p rows), and archival emits never solve — the
+        # same two facts D4 above is scoped on.  Runs AFTER D4 so the
+        # solver footgun still reports first on a deck with both.
+        from .analysis.analysis import Static as _StaticAnalysis
+        validate_up_pressure_datum(
+            self.fem, elements, self.ndm,
+            enforce=(
+                not _emitter_is_archival
+                and (
+                    any(isinstance(p, _StaticAnalysis) for p in ordered)
+                    or any(
+                        isinstance(st.analysis, _StaticAnalysis)
+                        for st in self.stage_records
+                    )
+                )
+            ),
+            fix_records=(
+                *self.fix_records,
+                *(r for st in self.stage_records for r in st.fix_records),
+            ),
             sp_records=tuple(sp for p in _plains for sp in p.sps),
             support_records=tuple(
                 r for st in self.stage_records for r in st.support_records
@@ -2794,6 +2879,18 @@ class BuiltModel:
                     tags=tags,
                 )
 
+            # 6c. ``s.update_parameter`` — the general form of the same
+            # primitive, so it shares 6b's slot rationale: the stage's
+            # elements are in the Domain and the analyze loop has not
+            # started, so the new value is what this stage steps with.
+            if stage.update_parameter_records:
+                emit_update_parameters(
+                    stage.update_parameter_records,
+                    emitter, self.fem,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    tags=tags,
+                )
+
             # 7. Analysis chain.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
@@ -2839,11 +2936,31 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # 8b. Transient → static handover: zero the inherited nodal
+            # velocity / acceleration state.  LAST before ``analyze``,
+            # and specifically AFTER ``reset`` — ``reset`` reverts the
+            # Domain to the last ``setTime``, which would restore the
+            # very velocities this is removing.
+            if stage.zero_velocity_records:
+                emit_zero_velocities(
+                    zero_velocity_target_nodes(
+                        stage.zero_velocity_records, self.fem.nodes.ids,
+                    ),
+                    emitter,
+                    effective_ndf=inferred_ndf,
+                    envelope_ndf=self.ndf,
+                )
+
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             # Deck emitters return 0 (their per-increment loops fail
             # loud at RUN time); the live emitter returns the first
             # failing rc — raise rather than run the next stage on a
             # silently partial state.
+            # TIMs A8: per-stage profiler bracket (``s.profile``) —
+            # ``profiler start [flags]`` immediately before THIS
+            # stage's analyze loop only.
+            if stage.profile is not None:
+                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -2854,6 +2971,15 @@ class BuiltModel:
                     f"aborting; running the remaining stages on a "
                     f"partial state is almost never intended."
                 )
+
+            # TIMs A8: close the bracket — ``profiler stop`` then
+            # ``profiler report <stage name>.h5`` immediately after
+            # THIS stage's analyze loop, reported under the stage's own
+            # name (``stop`` ends the run the way ``ops.profiler.stop``
+            # does at bridge level; ``report`` appends the ended run).
+            if stage.profile is not None:
+                emitter.profiler("stop")
+                emitter.profiler("report", f"{stage.name}.h5")
 
             # 10. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
@@ -4478,6 +4604,25 @@ class BuiltModel:
                     finally:
                         emitter.partition_close()
 
+            # 4c. ``s.update_parameter`` — per rank, same ownership
+            # filter as 4b (only the rank owning an element may address
+            # it; an unowned eid is skipped, not an error).
+            if stage.update_parameter_records:
+                for idx, _part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(_part, idx)
+                    emitter.partition_open(rank)
+                    try:
+                        emit_update_parameters(
+                            stage.update_parameter_records,
+                            emitter, self.fem,
+                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                            tags=tags,
+                            element_owner=element_owner,
+                            partition_rank=rank,
+                        )
+                    finally:
+                        emitter.partition_close()
+
             # 5. Analysis chain — global; each rank executes locally.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
@@ -4549,10 +4694,43 @@ class BuiltModel:
             if stage.pre_analyze_reset:
                 emitter.reset()
 
+            # 6b. Transient → static handover: zero the inherited nodal
+            # velocity / acceleration state.  Per-rank (INV-4): a rank
+            # can only reach the nodes in its own subdomain, so each
+            # rank emits its owned slice; a node held by two ranks is
+            # zeroed on both (idempotent).  Emitted after ``reset``
+            # and immediately before ``analyze``, same as the flat path.
+            if stage.zero_velocity_records:
+                zero_vel_nodes = zero_velocity_target_nodes(
+                    stage.zero_velocity_records, self.fem.nodes.ids,
+                )
+                for idx, part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(part, idx)
+                    rank_owned = rank_owned_nodes[rank]
+                    rank_zero_vel = [
+                        nid for nid in zero_vel_nodes if nid in rank_owned
+                    ]
+                    if not rank_zero_vel:
+                        continue
+                    emitter.partition_open(rank)
+                    try:
+                        emit_zero_velocities(
+                            rank_zero_vel, emitter,
+                            effective_ndf=inferred_ndf,
+                            envelope_ndf=self.ndf,
+                        )
+                    finally:
+                        emitter.partition_close()
+
             # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             # See the flat path: deck emitters fail loud at RUN time;
             # a live rc != 0 raises here rather than running the next
             # stage on a silently partial state.
+            # TIMs A8: per-stage profiler bracket (``s.profile``) —
+            # ``profiler start [flags]`` immediately before THIS
+            # stage's analyze loop only.
+            if stage.profile is not None:
+                emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -4563,6 +4741,15 @@ class BuiltModel:
                     f"aborting; running the remaining stages on a "
                     f"partial state is almost never intended."
                 )
+
+            # TIMs A8: close the bracket — ``profiler stop`` then
+            # ``profiler report <stage name>.h5`` immediately after
+            # THIS stage's analyze loop, reported under the stage's own
+            # name (``stop`` ends the run the way ``ops.profiler.stop``
+            # does at bridge level; ``report`` appends the ended run).
+            if stage.profile is not None:
+                emitter.profiler("stop")
+                emitter.profiler("report", f"{stage.name}.h5")
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             set_stage_owned_node_tags(emitter, None)
@@ -7346,21 +7533,27 @@ class BuiltModel:
             # contact and a handler-requiring MP constraint would silently drop
             # the MP enforcement. Fail loud rather than emit a silently-wrong
             # deck. NB this checks only HANDLER-REQUIRING constraints: penalty/
-            # penalty_al ties + kinematic/distributing couplings + rigid_body
-            # (as_element) emit handler-INDEPENDENT elements and coexist with
-            # contact fine; equation ties are caught above.
+            # penalty_al ties + kinematic/distributing couplings emit
+            # handler-INDEPENDENT elements and coexist with contact fine;
+            # equation ties are caught above. rigid_body(as_element=True) is
+            # NOT handler-independent — LadrunoRigidBody::setDomain still adds
+            # one MP_Constraint per slave, which LadrunoContact only warns
+            # about instead of enforcing (fork LadrunoContactHandler.cpp:
+            # 706-713) — so it trips this guard the same as as_element=False.
             if _fem_has_handler_requiring_mp(self.fem):
                 raise BridgeError(
                     "Contact interactions and a handler-requiring MP "
                     "constraint (equalDOF / equalDOF_mixed / rigidLink / "
-                    "rigidDiaphragm) are both present, but the LadrunoContact "
-                    "handler required for contact is Plain-style for MP "
-                    "constraints (fork P1a) — the MP constraint would NOT be "
-                    "enforced. Only one constraint handler can be active. Split "
-                    "the model into separate runs, or remove the MP constraint "
-                    "from the contact run. (Penalty/penalty_al ties, "
-                    "kinematic/distributing couplings, and rigid_body "
-                    "as_element are handler-independent elements and are fine "
+                    "rigidDiaphragm / rigid_body, including "
+                    "rigid_body(as_element=True) — LadrunoRigidBody still "
+                    "emits an MP_Constraint per slave) are both present, but "
+                    "the LadrunoContact handler required for contact is "
+                    "Plain-style for MP constraints (fork P1a) — the MP "
+                    "constraint would NOT be enforced. Only one constraint "
+                    "handler can be active. Split the model into separate "
+                    "runs, or remove the MP constraint from the contact run. "
+                    "(Penalty/penalty_al ties and kinematic/distributing "
+                    "couplings are handler-independent elements and are fine "
                     "with contact.)"
                 )
             from .analysis.constraint_handler import (
@@ -9115,6 +9308,379 @@ class apeSees:
             _live=live_emitter,
         )
 
+    def footfall_walking(
+        self,
+        *,
+        num_modes: int,
+        body_weight: float,
+        g: float,
+        response_nodes: "int | Node | Sequence[int | Node]",
+        excitation: str = "self",
+        excitation_nodes: "int | Node | Sequence[int | Node] | None" = None,
+        dof: int = 3,
+        occupancy: str = "office",
+        limit: str = "curve",
+        damp: float | None = None,
+        modal_damp: Sequence[float] | None = None,
+        rayleigh: tuple[float, float] | None = None,
+        f_max: float = 20.0,
+        n_extra: int = 30,
+        dt: float = 0.005,
+        solver: str = "-genBandArpack",
+    ) -> "FootfallResult":
+        """Evaluate walking footfall vibration on a live modal basis.
+
+        AISC Design Guide 11, 2nd ed., §7.4.1, as ADR 0109 lays it out: one
+        ``eigen`` + ``modalProperties`` pair through :meth:`modal_properties`,
+        the modal acceleration FRF ``A_ij(Ω) = −Ω² H_ij(Ω)`` summed in numpy
+        over the D4 sweep grid, and each response node checked against
+        **both** Design Guide branches — Eq 7-1 where the FRF peaks below
+        9 Hz (a low-frequency floor, resonant build-up) and Eq 7-4…7-6 where
+        it peaks in 9-``f_max`` Hz (a high-frequency floor, footstep impulses
+        summed over every mode with ``f_n <= f_max``). The larger governs,
+        and the result records which branch it was.
+
+        Runs on **stock openseespy** — ``eigen``, ``modalProperties`` and
+        ``nodeEigenvector`` are all upstream; the fork is needed only for the
+        band solve the warning below points at.
+
+        **Units are yours.** ``body_weight`` (``Q``, model force units) and
+        ``g`` (model acceleration units) are required and have no defaults —
+        apeGmsh cannot know whether the model is in N·m or kip·in, and a
+        silently wrong ``g`` is a factor of 386 in the answer. ``Q = 168 lb
+        ≈ 747 N`` is the Guide's recommended walker weight. Every
+        acceleration on the result is a **fraction of g**.
+
+        **Where to put the nodes.** The Guide walks the walker along the
+        mid-length of an unobstructed path and seats the occupant at the
+        maximum mode-shape ordinate; both at mid-bay is the conservative
+        default. ``excitation="self"`` checks the diagonal ``(j, j)`` — the
+        walker standing where the occupant sits. ``excitation="full"``
+        checks every ``(i, j)`` pair and reports, per response node, the
+        excitation node that produced the largest ``a_p``.
+
+        **The eigenvector scale is asserted, not assumed** (ADR 0109 D2): the
+        modal sum takes ``m̃_a = 1``, and ``partiMass_C / partiFactor_C²``
+        must be 1 for every checkable mode or the evaluation refuses. The
+        provenance lands on :attr:`FootfallResult.normalization`.
+
+        Parameters
+        ----------
+        num_modes
+            Modes to extract. The Eq 7-5 sum wants every mode with
+            ``f_n <= f_max``; a basis that stops short of ``f_max`` warns.
+        body_weight
+            Walker weight ``Q`` in model force units. Must be ``> 0``.
+        g
+            Gravitational acceleration in model units. Must be ``> 0``.
+        response_nodes
+            Occupant node(s) — a tag, a ``Node``, or a sequence of either.
+        excitation
+            ``"self"`` (the diagonal only) or ``"full"`` (every pair).
+        excitation_nodes
+            Walker node(s) for ``excitation="full"``; defaults to
+            ``response_nodes``. Refused under ``"self"``, where the
+            excitation set IS the response set.
+        dof
+            1-based DOF the FRF and the mode shapes are read at — the
+            vertical translation, 3 on a 3-D floor.
+        occupancy
+            Tolerance family: ``"office"`` / ``"residence"`` / ``"church"`` /
+            ``"school"`` (0.5 %g), ``"shopping"`` / ``"dining"`` /
+            ``"indoor_bridge"`` (1.5 %g), ``"outdoor_bridge"`` (5 %g).
+        limit
+            ``"curve"`` (Fig 2-1 — the flat value scaled by the ISO 2631-2
+            base curve) or ``"table"`` (the flat Table 4-1 value).
+        damp, modal_damp, rayleigh
+            Exactly one ADR 0075 damping channel (ADR 0109 D6): a uniform
+            ratio (Table 4-2 is a sum of component ratios), a per-mode list
+            in absolute mode order, or ``(a0, a1)`` converted per mode as
+            ``ξ_a = a0/(2ω_a) + a1·ω_a/2``.
+        f_max
+            Upper band edge in Hz — also the Eq 7-5 basis cut. Table 7-1's
+            resonant harmonics stop at 20 Hz, so ``0 < f_max <= 20``.
+        n_extra
+            Linearly spaced sweep points on top of the modal frequencies and
+            their ±5 % clusters (ADR 0109 D4).
+        dt
+            Sampling step of the Eq 7-5 acceleration history, s.
+        solver
+            Eigen-solver flag, passed through verbatim (see :meth:`eigen`).
+
+        Returns
+        -------
+        FootfallResult
+            One row per response node — see
+            :class:`~apeGmsh.opensees.analysis.footfall_result.FootfallResult`.
+
+        Warns
+        -----
+        UserWarning
+            When the highest extracted mode is below ``f_max``: the Eq 7-5
+            impulse sum is then missing modes it should carry. Raise
+            ``num_modes``, or on the fork use ``eigen_feast`` over the band.
+
+        Raises
+        ------
+        ValueError
+            If ``num_modes < 1``, ``body_weight <= 0``, ``g <= 0``,
+            ``dof < 1``, a node set is empty, ``excitation`` is not
+            ``"self"`` / ``"full"``, ``limit`` is not ``"curve"`` /
+            ``"table"``, ``occupancy`` is unknown, ``f_max`` is outside
+            ``(0, 20]``, the damping channel is not exactly one, or the
+            eigenvectors are not mass-normalised.
+        NotImplementedError
+            If the model has any registered stages.
+        """
+        # Local imports — keep numpy + the kernel out of bridge import
+        # time for Tcl/Py/H5-only users.
+        import warnings as _warnings
+
+        import numpy as np
+
+        from .analysis.footfall import (
+            dominant_frequency,
+            tolerance_limit,
+            walking_high_frequency,
+            walking_low_frequency,
+        )
+        from .analysis.footfall_frf import frf_matrix, grid_for
+        from .analysis.footfall_result import FootfallModes, FootfallResult
+        from .analysis.modal import _damping_channel_args
+
+        context = "apeSees.footfall_walking"
+        self._modal_prereqs_and_guards(num_modes, context=context)
+        if body_weight <= 0.0:
+            raise ValueError(
+                f"{context}: body_weight is the walker's weight Q in model "
+                f"force units and must be > 0, got {body_weight}."
+            )
+        if g <= 0.0:
+            raise ValueError(
+                f"{context}: g is gravitational acceleration in model units "
+                f"and must be > 0, got {g} (386.1 in/s^2, 9.81 m/s^2)."
+            )
+        if dof < 1:
+            raise ValueError(f"{context}: dof is 1-based, got {dof}.")
+        excitations = ("self", "full")
+        if excitation not in excitations:
+            raise ValueError(
+                f"{context}: excitation must be one of {excitations}, got "
+                f"{excitation!r}."
+            )
+        limits = ("curve", "table")
+        if limit not in limits:
+            raise ValueError(
+                f"{context}: limit must be one of {limits}, got {limit!r}."
+            )
+        if not (0.0 < f_max <= 20.0):
+            raise ValueError(
+                f"{context}: f_max must be in (0, 20] Hz — Table 7-1's "
+                f"resonant harmonics stop at 20 Hz — got {f_max}."
+            )
+        # Probe the occupancy/kind pair now rather than after the solve.
+        tolerance_limit(occupancy, 8.0, kind=limit)  # type: ignore[arg-type]
+        # The same exactly-one-of rule the FRF matrix applies (ADR 0075),
+        # run up front so a bad channel does not cost an eigen solve.
+        _damping_channel_args(
+            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
+            context=context,
+        )
+
+        resp_tags = self._footfall_tags(
+            response_nodes, "response_nodes", context,
+        )
+        if excitation == "self":
+            if excitation_nodes is not None:
+                raise ValueError(
+                    f"{context}: excitation='self' evaluates the diagonal "
+                    "(j, j), so the excitation set IS response_nodes — pass "
+                    "excitation='full' to drive a different node set."
+                )
+            exc_tags = resp_tags
+        elif excitation_nodes is None:
+            exc_tags = resp_tags
+        else:
+            exc_tags = self._footfall_tags(
+                excitation_nodes, "excitation_nodes", context,
+            )
+
+        props = self.modal_properties(num_modes, solver=solver)
+        modal_f = np.asarray(props.freq, dtype=np.float64)
+        if float(np.max(modal_f)) < f_max:
+            _warnings.warn(
+                f"{context}: the highest extracted mode is "
+                f"{float(np.max(modal_f)):.3f} Hz, below f_max={f_max} Hz — "
+                "the Eq 7-5 impulse sum is missing modes it should carry. "
+                "Raise num_modes, or on the fork use "
+                f"eigen_feast(0.0, {f_max + 2.0}) to get the band exactly.",
+                UserWarning,
+                stacklevel=2,
+            )
+        f_min = max(float(np.min(modal_f)) - 1.0, 0.1)
+        freq = grid_for(props, f_min, f_max, n_extra)
+        matrix = frf_matrix(
+            props, exc_nodes=exc_tags, resp_nodes=resp_tags, dof=dof,
+            freq=freq, damp=damp, modal_damp=modal_damp, rayleigh=rayleigh,
+            unorm=False,
+        )
+        # Read the mode-shape columns while this domain is still the live
+        # one — everything after is pure numpy (the ADR 0075 staleness
+        # contract: a later eigen/sweep call wipes what ``props`` reads).
+        n_modes = int(matrix.modal_freq.size)
+        phi = {
+            tag: np.asarray(
+                [
+                    float(props.mode_shape(tag, mode + 1)[dof - 1])
+                    for mode in range(n_modes)
+                ],
+                dtype=np.float64,
+            )
+            for tag in dict.fromkeys((*exc_tags, *resp_tags))
+        }
+
+        modal_damping = matrix.modal_damping
+        basis = matrix.modal_freq <= f_max
+        hf_band = (freq >= 9.0) & (freq <= f_max)
+        n_resp = len(resp_tags)
+        nan = float("nan")
+        out_f_dom = np.full(n_resp, nan)
+        out_f_dom_hf = np.full(n_resp, nan)
+        out_frf_max = np.full(n_resp, nan)
+        out_a_lf = np.full(n_resp, nan)
+        out_a_hf = np.full(n_resp, nan)
+        out_a_p = np.full(n_resp, nan)
+        out_limit = np.full(n_resp, nan)
+        out_ratio = np.full(n_resp, nan)
+        out_regime = np.empty(n_resp, dtype=object)
+        out_exc = np.zeros(n_resp, dtype=np.int64)
+
+        for row, j_tag in enumerate(resp_tags):
+            candidates = (j_tag,) if excitation == "self" else exc_tags
+            best: "tuple[float, float, float, float, float, float] | None" = None
+            best_exc = j_tag
+            best_regime = "none"
+            for i_tag in candidates:
+                mag = matrix.magnitude(i_tag, j_tag)
+
+                f_lf = dominant_frequency(freq, mag, 9.0)
+                a_lf = nan
+                if np.isfinite(f_lf):
+                    beta_dom = float(modal_damping[
+                        int(np.argmin(np.abs(matrix.modal_freq - f_lf)))
+                    ])
+                    a_lf = walking_low_frequency(
+                        float(mag[int(np.argmin(np.abs(freq - f_lf)))]),
+                        f_lf, beta_dom, body_weight,
+                    ) / g
+
+                f_hf = nan
+                a_hf = nan
+                if bool(np.any(hf_band)):
+                    f_hf = dominant_frequency(
+                        freq[hf_band], mag[hf_band], f_max,
+                    )
+                if np.isfinite(f_hf) and bool(np.any(basis)):
+                    a_espa = walking_high_frequency(
+                        matrix.modal_freq[basis], phi[i_tag][basis],
+                        phi[j_tag][basis], f_hf, modal_damping[basis],
+                        body_weight, dt,
+                    )[0]
+                    a_hf = a_espa / g
+
+                if np.isfinite(a_lf) and np.isfinite(a_hf):
+                    regime = "both"
+                    a_p = max(a_lf, a_hf)
+                    f_gov = f_lf if a_lf >= a_hf else f_hf
+                elif np.isfinite(a_lf):
+                    regime, a_p, f_gov = "low", a_lf, f_lf
+                elif np.isfinite(a_hf):
+                    regime, a_p, f_gov = "high", a_hf, f_hf
+                else:
+                    regime, a_p, f_gov = "none", nan, nan
+
+                # Take the candidate unless the incumbent is finite AND
+                # at least as large — a NaN incumbent must never win
+                # (R-B finding 5: ``a_p > nan`` is False and would pin
+                # the first excitation node forever).
+                if best is not None and np.isfinite(best[0]) and not (
+                    np.isfinite(a_p) and a_p > best[0]
+                ):
+                    continue
+                frf_at = (
+                    float(mag[int(np.argmin(np.abs(freq - f_gov)))])
+                    if np.isfinite(f_gov) else nan
+                )
+                best = (a_p, a_lf, a_hf, f_gov, f_hf, frf_at)
+                best_exc = i_tag
+                best_regime = regime
+
+            assert best is not None  # every node has >= 1 candidate
+            out_a_p[row] = best[0]
+            out_a_lf[row] = best[1]
+            out_a_hf[row] = best[2]
+            out_f_dom[row] = best[3]
+            out_f_dom_hf[row] = best[4]
+            out_frf_max[row] = best[5]
+            out_regime[row] = best_regime
+            out_exc[row] = best_exc
+            if np.isfinite(best[3]):
+                limit_value = tolerance_limit(
+                    occupancy, best[3], kind=limit,  # type: ignore[arg-type]
+                )
+                out_limit[row] = limit_value
+                out_ratio[row] = best[0] / limit_value
+
+        return FootfallResult(
+            nodes=resp_tags,
+            f_dom=out_f_dom,
+            frf_max=out_frf_max,
+            a_p_lf=out_a_lf,
+            a_espa_hf=out_a_hf,
+            a_p=out_a_p,
+            regime=out_regime,
+            exc_node=out_exc,
+            limit=out_limit,
+            ratio=out_ratio,
+            occupancy=occupancy,
+            limit_kind=limit,
+            g=float(g),
+            body_weight=float(body_weight),
+            normalization=matrix.normalization,
+            freq=freq,
+            modes=FootfallModes(f_n=matrix.modal_freq, beta=modal_damping),
+            dof=int(dof),
+            dt=float(dt),
+            f_max=float(f_max),
+            _matrix=matrix,
+            _phi=phi,
+            _f_dom_hf=out_f_dom_hf,
+        )
+
+    def _footfall_tags(
+        self,
+        nodes: "int | Node | Sequence[int | Node]",
+        name: str,
+        context: str,
+    ) -> tuple[int, ...]:
+        """Resolve a footfall node set — one tag / ``Node``, or a sequence
+        of either — to unique tags in the order given."""
+        from .analysis.modal import _node_tag
+
+        items: "Sequence[int | Node]"
+        if isinstance(nodes, (int, Node)):
+            items = (nodes,)
+        else:
+            items = tuple(nodes)
+        if not items:
+            raise ValueError(
+                f"{context}: {name} must carry at least one node."
+            )
+        seen: dict[int, None] = {}
+        for item in items:
+            seen.setdefault(_node_tag(item), None)
+        return tuple(seen)
+
     def eigen_feast(
         self,
         f_min: float,
@@ -10119,7 +10685,7 @@ class apeSees:
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> None:
+    ) -> "RunSolverStats | None":
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
 
         When ``run=True`` the OpenSees subprocess output is **always**
@@ -10132,6 +10698,13 @@ class apeSees:
         raises ``RuntimeError`` carrying the log tail + path, never the
         whole buffer. ``verbose`` / ``log`` / ``progress`` are inert
         when ``run=False``.
+
+        Returns a :class:`~apeGmsh.opensees._solver_stats.RunSolverStats`
+        (ADR 0106 D1) when the deck declared ``Pardiso(stats=True)``
+        anywhere and the run finished — the per-stage capacity record
+        parsed out of the solver's own ``PARDISO stats:`` blocks.
+        ``None`` otherwise, which includes every deck that did not ask
+        for statistics and every ``run=False`` call.
 
         When ``analyze_steps`` is supplied, an ``analyze`` line is
         appended to the deck after every other primitive — wrapped in
@@ -10302,16 +10875,17 @@ class apeSees:
             _write_split_tcl(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
-            return
+            return None
 
         binary = _resolve_opensees_binary(bin, self._opensees)
-        stream_run(
+        return stream_run(
             [binary, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
             deck_path=path,
+            expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
 
     def modal_deck(
@@ -10746,7 +11320,7 @@ class apeSees:
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> None:
+    ) -> "RunSolverStats | None":
         """Emit an openseespy Python deck to ``path``; optionally run it.
 
         ``run=True`` streams the openseespy subprocess exactly like
@@ -10754,7 +11328,8 @@ class apeSees:
         override, else ``<path>.log``), console opt-in via ``verbose``,
         a live step counter from the ``progress`` markers, and a
         tail-only ``RuntimeError`` on a non-zero exit. ``verbose`` /
-        ``log`` / ``progress`` are inert when ``run=False``.
+        ``log`` / ``progress`` are inert when ``run=False``. The
+        ``RunSolverStats | None`` return is :meth:`tcl`'s (ADR 0106 D1).
 
         ``analyze_steps`` / ``analyze_dt`` semantics mirror :meth:`tcl`
         (Phase SSI-1).
@@ -10806,14 +11381,14 @@ class apeSees:
             _write_split_py(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
-            return
+            return None
 
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
         # counter depend on it).
         child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        stream_run(
+        return stream_run(
             [python_bin, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
@@ -10821,6 +11396,7 @@ class apeSees:
             header="openseespy",
             env=child_env,
             deck_path=path,
+            expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
 
     def run(self, *, wipe: bool = True) -> None:
@@ -11561,6 +12137,8 @@ class _StageBuilder:
         "_initial_stress_records",
         "_activate_absorbing_records",
         "_activated_pgs",
+        # Transient → static handover: ``s.zero_velocities`` pool.
+        "_zero_velocity_records",
         # Phase SSI-2.D (PR-B + PR-C): stage-bound BC + recorder pools.
         "_fix_records",
         "_mass_records",
@@ -11592,6 +12170,8 @@ class _StageBuilder:
         "_remove_sp_records",
         "_remove_element_records",
         "_update_material_stage_records",
+        # Typed pass-through over parameter / updateParameter.
+        "_update_parameter_records",
         "_set_time",
         "_set_creep_on",
         "_pre_analyze_reset",
@@ -11602,6 +12182,8 @@ class _StageBuilder:
         # stage's analyze loop (set via ``s.run(strategy=)``).
         "_strategy",
         "_analysis_set", "_run_set",
+        # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+        "_profile",
     )
 
     def __init__(self, bridge: "apeSees", name: str) -> None:
@@ -11610,6 +12192,8 @@ class _StageBuilder:
         self._initial_stress_records: list[InitialStressRecord] = []
         self._activate_absorbing_records: list[ActivateAbsorbingRecord] = []
         self._activated_pgs: list[str] = []
+        # Transient → static handover: nodal vel / accel zeroing pool.
+        self._zero_velocity_records: list[ZeroVelocityRecord] = []
         # Phase SSI-2.D PR-B: stage-bound BC pools (fix + mass).
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
@@ -11639,6 +12223,8 @@ class _StageBuilder:
         self._remove_sp_records: list[SPRemovalRecord] = []
         self._remove_element_records: list[ElementRemovalRecord] = []
         self._update_material_stage_records: list[MaterialStageRecord] = []
+        # Typed pass-through over parameter / updateParameter.
+        self._update_parameter_records: list[UpdateParameterRecord] = []
         self._set_time: float | None = None
         self._set_creep_on: bool | None = None
         self._pre_analyze_reset: bool = False
@@ -11654,6 +12240,8 @@ class _StageBuilder:
         self._strategy: "Ladder | None" = None
         self._analysis_set: bool = False
         self._run_set: bool = False
+        # TIMs A8: optional per-stage profiler bracket.
+        self._profile: "ProfileRecord | None" = None
 
     def __enter__(self) -> "_StageBuilder":
         return self
@@ -11701,6 +12289,7 @@ class _StageBuilder:
             dt=None if self._dt is None else float(self._dt),
             strategy=self._strategy,
             activated_pgs=tuple(self._activated_pgs),
+            zero_velocity_records=tuple(self._zero_velocity_records),
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
@@ -11717,10 +12306,12 @@ class _StageBuilder:
             update_material_stage_records=tuple(
                 self._update_material_stage_records,
             ),
+            update_parameter_records=tuple(self._update_parameter_records),
             set_time=self._set_time,
             set_creep_on=self._set_creep_on,
             pre_analyze_reset=self._pre_analyze_reset,
             activate_absorbing_records=tuple(self._activate_absorbing_records),
+            profile=self._profile,
         )
         self._bridge._stage_records.append(record)
 
@@ -11837,6 +12428,79 @@ class _StageBuilder:
             ),
         )
         self._activate_absorbing_records.append(record)
+        return record
+
+    def zero_velocities(
+        self, nodes: "Iterable[int | Node] | None" = None,
+    ) -> "ZeroVelocityRecord":
+        """Zero the nodal velocity AND acceleration state at this stage's
+        boundary — the transient → static handover.
+
+        A static stage inherits the previous transient stage's committed
+        nodal velocities and accelerations (a static integrator never
+        writes either), so ``recorder Node ... -dynamic`` /
+        ``reactions -dynamic`` in the static stage keeps reporting the
+        previous stage's inertial and damping terms as if they were
+        live.  Call this on the static stage to hand it a quiescent
+        kinematic state.
+
+        Emits, per targeted node and per DOF of that node's *effective*
+        ndf (a u-p node has 4, so it gets DOFs 1..4)::
+
+            setNodeVel   <node> <dof> 0.0 -commit
+            setNodeAccel <node> <dof> 0.0 -commit
+
+        ``-commit`` is load-bearing, not decoration.  The stock handler
+        (``OpenSeesMiscCommands.cpp`` ``OPS_setNodeVel`` /
+        ``OPS_setNodeAccel``) rebuilds the vector from the node's
+        COMMITTED state (``Node::getVel`` returns ``commitVel``) and
+        writes only the TRIAL vector.  Without committing each call, the
+        next DOF's call reads the OLD committed vector back and only the
+        last DOF ends up zeroed — and the committed state a static stage
+        actually reads is never touched at all.
+
+        Emit slot: LAST in the stage block — after the stage's domain
+        mutations, its analysis chain, its patterns and the optional
+        ``s.reset()``, immediately before ``analyze``.  ``reset`` reverts
+        the Domain to the last ``setTime`` (restoring the velocities),
+        so the zeroing has to follow it; and nothing else may run between
+        the zeroing and the step that would otherwise read the stale
+        state.
+
+        There is no cheaper mechanism.  The Ladruno fork adds
+        ``ladrunoSetNodeTrial`` (``OpenSeesMiscCommands.cpp``
+        ``OPS_LadrunoSetNodeTrial``), but it writes the TRIAL vectors
+        only and never commits, so it cannot express this; neither stock
+        nor the fork ships a domain-wide zeroing command.  The deck is
+        therefore ``2 x sum(ndf)`` lines — proportional to the model.
+        Pass ``nodes=`` to scope it when the whole domain is too many.
+
+        Parameters
+        ----------
+        nodes
+            The nodes to quiet.  ``None`` (default) means the whole
+            domain — every node in ``fem.nodes.ids``.  Accepts a mix of
+            plain integer tags and :class:`Node` instances, same as
+            :meth:`fix`.
+
+        Raises
+        ------
+        ValueError
+            If ``nodes=`` is supplied but empty (an inert directive is
+            almost always a mistake; omit the argument for the whole
+            domain).
+        """
+        if nodes is None:
+            record = ZeroVelocityRecord(nodes=None)
+        else:
+            nodes_tuple = _iter_tags(nodes)
+            if not nodes_tuple:
+                raise ValueError(
+                    f"Stage {self._name!r}.zero_velocities: nodes= is "
+                    "empty — omit the argument to zero the whole domain."
+                )
+            record = ZeroVelocityRecord(nodes=nodes_tuple)
+        self._zero_velocity_records.append(record)
         return record
 
     # -- Stage-bound constraints (CLAIM by name) -------------------------
@@ -12696,6 +13360,120 @@ class _StageBuilder:
             MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i),
         )
 
+    def update_parameter(
+        self,
+        name: str,
+        value: float,
+        *,
+        pg: str | None = None,
+        elements: "Iterable[int] | None" = None,
+        material: "Primitive | None" = None,
+    ) -> "UpdateParameterRecord":
+        """Change one element (or element-hosted material) parameter at
+        this stage's boundary — a typed pass-through over the same
+        ``parameter`` / ``addToParameter`` / ``updateParameter``
+        primitive that :meth:`initial_stress` and
+        :meth:`activate_absorbing` drive internally.
+
+        Emits, once per record::
+
+            parameter $pid
+            addToParameter $pid element $eleTag <name> [<mat_tag>]   # per element
+            updateParameter $pid <value>
+            remove parameter $pid
+
+        Two target shapes, both addressed through elements:
+
+        * **an element parameter** — ``s.update_parameter("xPerm", 1e-5,
+          pg="soil")``.  ``LadrunoUP::setParameter`` matches ``xPerm`` /
+          ``yPerm`` / ``zPerm`` directly (fork
+          ``LadrunoUP.cpp:1932-1943``; ``zPerm`` is 3-D only).
+        * **a material parameter** — ``s.update_parameter("poissonRatio",
+          0.35, pg="soil", material=sand)``.  The element forwards the
+          unmatched argv to its integration-point materials (the
+          catch-all at ``LadrunoUP.cpp:1962-1971``) and the material
+          matches on ``argv[0] == name`` **and** ``argv[1] == its own
+          tag`` (``ManzariDafalias::setParameter``
+          ``ManzariDafalias.cpp:820-857``) — which is why ``material=``
+          appends the tag rather than replacing the element target.
+
+        There is deliberately no ``material=``-only form: OpenSees
+        ``parameter`` / ``addToParameter`` accept ``node`` / ``element``
+        / ``region`` / ``loadPattern`` and nothing else
+        (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter`` /
+        ``OPS_addToParameter``), so a material is unreachable without an
+        element that hosts it.
+
+        No registry of known parameter names — the element's /
+        material's own ``setParameter`` is the authority, and a name it
+        does not recognise already errors there.
+
+        Parameters
+        ----------
+        name
+            The parameter name the target's ``setParameter`` matches
+            (e.g. ``"xPerm"``, ``"poissonRatio"``).
+        value
+            The value passed to ``updateParameter``.
+        pg
+            Physical group whose elements carry the parameter.  XOR with
+            ``elements``.
+        elements
+            Explicit list of FEM element ids (NOT OpenSees ops tags —
+            same convention as :meth:`remove_element` /
+            :meth:`activate_absorbing`).  XOR with ``pg``.
+        material
+            Optional material handle.  When given, its bridge-allocated
+            tag is appended to the ``addToParameter`` argv so the
+            element forwards the update to THAT material.  Omit for a
+            parameter the element owns itself.
+
+        Raises
+        ------
+        ValueError
+            Empty ``name``; both or neither of ``pg`` / ``elements``.
+        BridgeError
+            ``material=`` was never registered on this bridge (so it has
+            no tag, and the argv would name nothing).
+        """
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.update_parameter: name= must be "
+                "non-empty."
+            )
+        if (pg is None) == (elements is None):
+            raise ValueError(
+                f"Stage {self._name!r}.update_parameter: supply exactly "
+                f"one of pg= or elements= (got pg={pg!r}, "
+                f"elements={elements!r})."
+            )
+        mat_tag: int | None = None
+        if material is not None:
+            tag = self._bridge.tag_for(material)
+            if tag is None:
+                raise BridgeError(
+                    f"Stage {self._name!r}.update_parameter: "
+                    f"{type(material).__name__} was never registered on "
+                    "this bridge, so it has no tag — the addToParameter "
+                    "argv would name nothing and the update would be a "
+                    "silent no-op.  Create it via ops.nDMaterial.<Class>"
+                    "(...) / ops.uniaxialMaterial.<Class>(...) (or "
+                    "register it with ops.register(mat)) first."
+                )
+            mat_tag = int(tag)
+        record = UpdateParameterRecord(
+            name=str(name),
+            value=float(value),
+            pg=pg,
+            elements=(
+                None if elements is None
+                else tuple(int(e) for e in elements)
+            ),
+            mat_tag=mat_tag,
+        )
+        self._update_parameter_records.append(record)
+        return record
+
     def set_time(self, t: float) -> None:
         """Override the stage's starting pseudo-time (Phase SSI-2.E).
 
@@ -12910,6 +13688,108 @@ class _StageBuilder:
         self._pattern_specs.append(plain)
         return plain
 
+    def imposed_path(
+        self,
+        *,
+        node: "int | Node",
+        ratios: "Sequence[float]",
+        series: "TimeSeries | str",
+    ) -> "Plain":
+        """Drive ONE node along a prescribed multi-DOF path in this stage.
+
+        The rotational / staged counterpart to
+        :meth:`apeSees.imposed_displacement`, which is translations-only
+        (``ux`` / ``uy`` / ``uz`` → DOFs 1-3) and global (ADR 0051 §5
+        forbids mixing a global pattern with stages).  Here ``ratios``
+        is positional over the node's DOFs, so DOFs 4..6 — the rotations
+        — are reachable, and the pattern is stage-scoped.
+
+        Creates a stage-scoped ``Plain`` via :meth:`pattern` and records
+        one ``sp`` per NON-ZERO ratio::
+
+            sp <node> <i> <ratios[i-1]>
+
+        Zero ratios are skipped, not emitted as ``sp … 0.0``: a
+        prescribed zero is a *constraint* (it pins the DOF), not the
+        absence of one, so emitting it would silently clamp DOFs the
+        caller meant to leave free.  Use ``s.fix`` / ``s.support`` when
+        pinning is what you want.
+
+        The ratios are shape only — the magnitude and history come from
+        ``series``.  The applied value on DOF ``i`` at time ``t`` is
+        ``ratios[i-1] * series(t)``, so a unit-direction vector plus a
+        ``Path`` series gives a fault-slip or support-settlement path,
+        and the same pattern may carry ordinary ``p.load`` lines on
+        other DOFs of the same node (they coexist — a prescribed SP and
+        a nodal load are different rows in the same pattern).
+
+        Returns the pattern, so more can be added to it::
+
+            with ops.stage("slip") as s:
+                p = s.imposed_path(
+                    node=99, ratios=(0.0, 0.0, 0.0, 0.0, 0.0, 0.01),
+                    series=ops.timeSeries.Linear(),
+                )
+                p.load(node=99, forces=(0.0, 0.0, -5e3, 0.0, 0.0, 0.0))
+
+        Parameters
+        ----------
+        node
+            The node to drive — a tag or a :class:`Node`.
+        ratios
+            Per-DOF ratios, positional from DOF 1.  At most the model's
+            ``ndf`` entries; at least one must be non-zero.
+        series
+            The :class:`~apeGmsh.opensees._internal.types.TimeSeries`
+            scaling the path — a handle, or the ``name=`` a series was
+            registered under (dual-mode, same as :meth:`pattern`).
+
+        Raises
+        ------
+        ValueError
+            ``ratios`` is empty, is all zeros (an inert directive), or
+            is longer than the model's ``ndf``.
+
+        Notes
+        -----
+        The length check is against the ``ops.model(ndf=)`` **envelope**,
+        which is an upper bound on any node's ndf — the per-node
+        *effective* ndf map (ADR 0048) is only resolved at build time,
+        from every declared element's PG fan-out, so it cannot be probed
+        per call without a full mesh walk.  A ratio past the envelope is
+        therefore refused here; a ratio past a particular node's lower
+        effective ndf reaches OpenSees, which rejects the ``sp`` line.
+        """
+        ratios_t = tuple(float(r) for r in ratios)
+        if not ratios_t:
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: ratios= must "
+                "contain at least one entry."
+            )
+        model_ndf = self._bridge._ndf
+        if model_ndf is not None and len(ratios_t) > model_ndf:
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: ratios= has "
+                f"{len(ratios_t)} entries but the model's ndf is "
+                f"{model_ndf} — DOF {len(ratios_t)} does not exist.  "
+                f"Trim ratios= or call ops.model(..., "
+                f"ndf={len(ratios_t)}) first."
+            )
+        if not any(ratios_t):
+            raise ValueError(
+                f"Stage {self._name!r}.imposed_path: every ratio is "
+                "zero, so the pattern would emit no sp lines at all.  "
+                "Supply at least one non-zero ratio (a prescribed zero "
+                "is a fixity — use s.fix / s.support for that)."
+            )
+        plain = self.pattern(series=series)
+        node_tag = int(_iter_tags([node])[0])
+        with plain:
+            for dof, ratio in enumerate(ratios_t, start=1):
+                if ratio:
+                    plain.sp(node=node_tag, dof=dof, value=ratio)
+        return plain
+
     def activate(self, *, pgs: "Iterable[str]") -> None:
         """Mark element PGs as activated by this stage (Phase SSI-2.B).
 
@@ -13006,6 +13886,60 @@ class _StageBuilder:
         self._strategy = strategy
         self._run_set = True
 
+    def profile(
+        self, *,
+        deep: bool = False,
+        memory: bool = False,
+        per_step: bool = False,
+    ) -> None:
+        """Bracket THIS stage's ``analyze`` loop with the Ladruno
+        fork's stack profiler (TIMs A8), reported under this stage's
+        own name.
+
+        Reuses the same ``Emitter.profiler(*args)`` machinery the
+        bridge-level ``ops.profiler.*`` verbs drive (see
+        ``_ProfilerNS.start`` / ``.report``) — NOT a second
+        implementation.  Emits ``profiler start [-deep] [-memory]
+        [-perStep]`` immediately before this stage's analyze loop and
+        ``profiler report <stage name>.h5`` immediately after it
+        (before ``stage_close``); the filename is derived from the
+        stage's name, so no filename kwarg is needed here.
+
+        ``deep`` / ``memory`` / ``per_step`` mirror
+        ``ops.profiler.start``'s three flags exactly. Deck emission
+        works on any build; running the deck requires the Ladruno
+        fork (stock ``openseespy``/``OpenSees.exe`` rejects the
+        ``profiler`` command at run time).
+        """
+        if self._profile is not None:
+            raise ValueError(
+                f"Stage {self._name!r}.profile: already called; "
+                "stages support one profiler bracket each."
+            )
+        self._profile = ProfileRecord(
+            deep=bool(deep), memory=bool(memory), per_step=bool(per_step),
+        )
+
+
+# ---------------------------------------------------------------------------
+# TIMs A8 — per-stage profiler bracket
+# ---------------------------------------------------------------------------
+
+def _stage_profile_start_flags(profile: "ProfileRecord") -> list[str]:
+    """Build the ``profiler start`` flag list for a stage's bracket.
+
+    Mirrors ``_ProfilerNS.start`` exactly (``-deep`` / ``-memory`` /
+    ``-perStep``) — see ``_internal/ns/profiler.py``.
+    """
+    flags: list[str] = []
+    if profile.deep:
+        flags.append("-deep")
+    if profile.memory:
+        flags.append("-memory")
+    if profile.per_step:
+        flags.append("-perStep")
+    return flags
+
 
 # ---------------------------------------------------------------------------
 # ADR 0057 Phase A — stage strategy resolution
@@ -13026,6 +13960,19 @@ def _stage_strategy_spec(stage: "StageRecord") -> StrategySpec | None:
         if isinstance(stage.algorithm, SolutionAlgorithm) else None
     )
     return stage.strategy.to_spec(base=base)
+
+
+def _deck_requested_solver_stats(emitter: object) -> bool:
+    """Did the deck just emitted through *emitter* ask for ``-stats``?
+
+    ADR 0106 D2/D4: "the same predicate answers D4's *was a block
+    expected?*". :meth:`apeSees.emit` already ran
+    :func:`deck_requests_solver_stats` over this deck's flat / staged
+    system declarations and stamped the answer on the emitter to gate
+    the ``APEGMSH_STAGE`` marker — reading it back is the same facts,
+    not a second resolution that could disagree with the bytes.
+    """
+    return bool(getattr(emitter, "_emit_stage_markers", False))
 
 
 # ---------------------------------------------------------------------------

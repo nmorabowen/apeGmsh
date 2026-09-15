@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -356,6 +356,68 @@ raises (per-stage modal deferred). **Partitioned:** a global (non-staged)
 deck too — before #752 it was silently dropped, so `np>1` runs came out
 undamped; stage-bound `s.damping.*` was (and remains) the staged route.
 
+## Footfall vibration — `ops.footfall_walking` (ADR 0109)
+
+The AISC Design Guide 11 **2nd-edition** Chapter 7 walking check, on stock
+openseespy (one `eigen` + `modalProperties`, then a numpy modal sum — the
+fork is not required). NOT a copy of Robot's footfall case: Autodesk
+documents Robot as built on the 1st edition, resonant-only under its AISC
+option; this implements both regimes.
+
+```python
+res = ops.footfall_walking(
+    num_modes=40, body_weight=747.0, g=9.81,      # both REQUIRED, model units (168 lb ≈ 747 N)
+    response_nodes=[mid1, mid2], dof=3,           # occupant nodes; vertical DOF (2 in a 2-D frame)
+    excitation="self",                            # or "full" + excitation_nodes=[...] (walker set)
+    occupancy="office", limit="curve",            # Fig 2-1 curve (default) | "table" flat
+    damp=0.03,                                    # or modal_damp=[...] / rayleigh=(a0, a1); NEVER 0
+)
+res.to_dataframe()            # per node: f_dom frf_max a_p_lf a_espa_hf a_p regime exc_node limit ratio
+res.frf(j)                    # (freq, |A_ij|) acceleration per unit force, i defaults to exc_node[j]
+res.mode_table(j)             # (f_n, phi_i, phi_j, a_p,m) — the Eq 7-4 rows of the impulse branch
+res.modes.f_n, res.modes.beta # the basis and its per-mode damping
+res.to_results(fem, path)     # one-frame nodal map → Results.from_fem(fem, path, kind="native")
+```
+
+What it computes, per response node: the FRF between walker and occupant
+over 1 Hz below f₁ to 20 Hz (every mode + a ±5 % cluster + 30 linear
+points); the **dominant frequency** = the FRF peak; below 9 Hz the
+resonant peak `a_p = |A|max · α(f_dom) · Q · ρ(β)` (Eq 7-1, α = 0.09e^(−0.075f),
+ρ from Table 7-3); in 9–20 Hz the **impulse branch** — effective impulse
+per footstep (Eq 1-6), per-mode ring-down summed over one step (Eq 7-5),
+ESPA = √2·RMS (Eq 7-6). `regime` = `"low"` / `"high"` / `"both"` (both
+evaluated, larger governs). `a_p`, `limit` and `ratio = a_p/limit` are
+**fractions of g** (0.005 = 0.5 %g).
+
+Rules that bite:
+- `num_modes` must carry the basis past 20 Hz (the driver warns, naming
+  `eigen_feast`); on the two-bay slab example 40 modes reached 179 Hz, ~10
+  would do.
+- Damping must be > 0 on every mode — the sweep grid sits exactly on each
+  modal frequency, so an undamped mode is a 0/0 and the driver refuses.
+- The eigenvector scale is **asserted** (`partiMass/partiFactor² = 1`,
+  since `modalProperties -return` does not export generalised masses) and
+  refused, never rescaled. Measured on build `1652f945c`: `-fullGenLapack`
+  is NOT M-orthonormal under **consistent** element mass (m̃ 1.009–1.045) —
+  use the default `-genBandArpack`, which is exactly 1 under both mass types.
+- The vertical FRF sees only modes with vertical shape at BOTH nodes: on a
+  flat slab on columns the sway/torsion modes near 6–8 Hz are invisible at
+  a bay centre and the 10 Hz bending pair governs through the impulse branch.
+- `harmonic_for_dominant` raises outside 9–20 Hz and `dominant_frequency`
+  returns NaN on an empty slice; the driver branches on NaN.
+
+Worked floor: `examples/footfall_two_bay_shell.py` (two 6 m bays of
+ShellMITC4 on beam columns, self/full/whole-slab runs, ratio map, FRF /
+waveform / harmonic figures with the limit drawn); how-to
+<https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>; the
+kernel is `apeGmsh.opensees.analysis.footfall` (pure numpy, Example 7.1
+from its Table 7-2 is the oracle). Robot 2026 validation
+(`internal_docs/adr0109_s4_robot_validation.md`): frequencies agree to
+4.6e-15; `a_p` differs by the force model only (1.13× on a 5.5 Hz floor);
+Robot's AISC option is UI-only — raw `ExcitationForces` 3/4 are silently
+ignored through COM. Deferred (S5): running / stairs / rhythmic, CCIP-016
+and SCI P354 response factors — evaluators over the same FRF.
+
 ## ✅ Multi-point constraints ARE emitted (ADR 0022, shipped v2.0.0)
 
 Declare MP constraints on the session as usual (`g.constraints.*`);
@@ -558,12 +620,44 @@ The three semantics are distinct (don't confuse them):
 
 <!-- verified: tests/opensees/unit/test_stage_bound_fix_mass.py::test_s_fix_populates_stage_record_fix_records, tests/opensees/unit/test_stage_embedded_claim.py::test_embedded_claim_populates_stage_pool, tests/opensees/unit/test_stage_initial_stress_push.py -->
 
+`s.update_parameter(name, value, *, pg=|elements=, material=None)` is the
+typed pass-through over the `parameter` / `addToParameter` /
+`updateParameter` primitive `s.initial_stress` and `s.activate_absorbing`
+drive internally. Emits `parameter $pid` / one
+`addToParameter $pid element $eid <name> [<mat_tag>]` per element /
+`updateParameter $pid <value>` / `remove parameter $pid`.
+`s.update_parameter("xPerm", 1e-5, pg="soil")` changes an ELEMENT
+parameter; `s.update_parameter("poissonRatio", 0.35, pg="soil",
+material=sand)` changes a MATERIAL one — the tag rides as the trailing
+argv because the element forwards it to its GP materials, which match on
+their own tag.
+<!-- verified: tests/opensees/unit/test_stage_update_parameter.py -->
+
 Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 `s.remove_element(*, pg=|elements=)`, `s.set_time(t)`,
 `s.set_creep(on)`, `s.reset()`.
 
+Transient → static handover: `s.zero_velocities(nodes=None)` zeroes the
+inherited nodal velocity AND acceleration state (`nodes=None` = whole
+domain). A static stage inherits the previous transient stage's committed
+velocities — a static integrator writes neither — so `-dynamic` reactions
+keep reporting the previous stage's inertia/damping. Emits, per node and
+per DOF of the node's *effective* ndf (a u-p node gets 1..4),
+`setNodeVel <n> <dof> 0.0 -commit` + `setNodeAccel <n> <dof> 0.0 -commit`,
+LAST in the stage block (after `s.reset()`, immediately before `analyze`).
+<!-- verified: tests/opensees/unit/test_stage_zero_velocities.py -->
+
+
 ### Stage gotchas
 
+- **`s.zero_velocities()` writes `2 * sum(ndf)` deck lines** — there is no
+  domain-wide zeroing command in stock OpenSees or the fork (the fork's
+  `ladrunoSetNodeTrial` writes the TRIAL vectors only and never commits).
+  Pass `nodes=` to scope it. The `-commit` flag is mandatory, not
+  cosmetic: `OPS_setNodeVel` rebuilds from the COMMITTED vector and sets
+  only TRIAL, so without it each DOF re-reads the old value and only the
+  last DOF ends up zeroed. H5 archival of the verb is deferred — the
+  staged archive raises `NotImplementedError`; emit Tcl / openseespy.
 - **`s.remove_sp` `dofs=` are 1-based DOF INDICES** (one `remove sp
   $node $dof` line each), **not** the 0/1 fixity-flag vector that
   `s.fix` / `s.mass` use. Same kwarg name, different meaning.
@@ -577,6 +671,12 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
   `fem.elements.contacts` (the serial-only `emit_contacts` subsystem),
   not a claimable MP record.
   <!-- verified: tests/opensees/unit/test_stage_tied_contact_claim.py::test_tied_contact_claim_populates_stage_pool -->
+- **`s.update_parameter` has no `material=`-only form.** OpenSees
+  `parameter` / `addToParameter` address `node` / `element` / `region` /
+  `loadPattern` and nothing else, so a material is unreachable without an
+  element hosting it — always pass `pg=` or `elements=`, and add
+  `material=` only to append the tag the material matches on. H5 archival
+  of the verb is deferred (the staged archive raises).
 - **Live execution refuses staged models.** `ops.analyze()` and
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
@@ -586,6 +686,16 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
 - `s.mass` re-applying mass to a node already massed in another tier
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).
+- **`s.profile(deep=False, memory=False, per_step=False)` brackets ONE
+  stage** (TIMs A8): `profiler start [-deep] [-memory] [-perStep]`
+  right before that stage's `analyze` loop, `profiler stop` +
+  `profiler report <stage name>.h5` right after — the same
+  `Emitter.profiler(*args)` machinery as the bridge-level
+  `ops.profiler.*`, reported under the stage's own name so each
+  stage's cost is a distinct HDF5 run. Sibling stages stay
+  unbracketed. H5 archival of `s.profile` refuses loudly; emit
+  `ops.tcl(path)` / `ops.py(path)`.
+  <!-- verified: tests/opensees/unit/test_stage_profiler.py -->
 
 ## Solution-algorithm & stock-integrator options (PR #786)
 
@@ -990,7 +1100,15 @@ ops.py("out/model.py")
   a staged model must keep every pattern stage-scoped
   (`s.pattern(series=...)`); don't register a global `ops.pattern.Plain`
   (or `ops.imposed_displacement`, which builds one) alongside
-  `ops.stage(...)`.
+  `ops.stage(...)`. The staged prescribed-motion verb is
+  `s.imposed_path(node=, ratios=(r1..r6), series=)` — one `sp` per
+  NON-ZERO ratio (zeros are skipped, since a prescribed zero is a
+  fixity), positional from DOF 1 so the rotations 4..6 are reachable,
+  inside a stage-scoped `Plain` it returns for further `p.load` /
+  `p.sp` rows. `ops.imposed_displacement` stays the non-staged,
+  translations-only path.
+  <!-- verified: tests/opensees/unit/test_stage_imposed_path.py -->
+
 - **Ambiguous `pg=`** — same name at multiple dimensions. Keep PG
   names dimension-unique.
 - **`len(dofs) != ndf`** — `ops.fix` needs a mask no longer than the node

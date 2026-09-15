@@ -129,7 +129,7 @@ emit (no separate user resolve step).
 | `recorders.nodes(pg, components, ...)` | `disp`, `vel`, `accel`, `incrDisp`, `reaction`, `pressure` | `nodes/` |
 | `recorders.elements(pg, components, ...)` | `globalForce`, `localForce` (per element-node) | `elements/nodal_forces/` |
 | `recorders.line_stations(pg, components, ...)` | `section.force`, `section.deformation` (along beams) | `elements/line_stations/` |
-| `recorders.gauss(pg, components, ...)` | `stress`, `strain`, `material.stress`, `material.strain` (continuum) | `elements/gauss_points/` |
+| `recorders.gauss(pg, components, ...)` | `stress`, `strain`, `material.stress`, `material.strain` (continuum); the ASDPlasticMaterial3D material-level buckets `material.pstrain`, `material.eqpstrain`, `material.PStress`, `material.J2Stress`, `material.VolStrain`, `material.J2Strain`, `material.BackStress` (ADR 0105 Amendment 1) | `elements/gauss_points/` |
 | `recorders.fibers(pg, components, ...)` | `section.fiber.stress` / `material.fiber.stress` (auto shell-keyword swap) | `elements/fibers/` |
 | `recorders.layers(pg, components, ...)` | layered shell stress/strain per layer + sub-GP | `elements/layers/` |
 | `recorders.modal(n_modes, ...)` | eigenvalues + mode shapes | one stage per mode (`kind="mode"`) |

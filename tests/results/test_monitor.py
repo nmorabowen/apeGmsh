@@ -132,6 +132,79 @@ def test_tail_follows_growing_file(tmp_path: Path) -> None:
                                [0.0, 2.0, 4.0, 6.0, 8.0, 10.0])
 
 
+def _write_swmr_monitor_skewed(path: Path, ready: threading.Event,
+                               n: int = 4, stall: float = 0.25) -> None:
+    """Like :func:`_write_swmr_monitor`, but STALLS mid-frame.
+
+    Appending one frame is three separate operations — STEP, TIME, then
+    FRAMES — and SWMR gives no atomicity across them. This writer flushes
+    STEP and TIME, waits ``stall`` seconds, and only then appends FRAMES,
+    which holds the reader inside that window for long enough to make the
+    skew certain instead of load-dependent.
+    """
+    import h5py
+    import time as _t
+
+    with h5py.File(path, "w", libver="latest") as f:
+        f.attrs["FORMAT"] = "ladruno-monitor"
+        f.attrs["FORMAT_VERSION"] = 1
+        f.attrs["GENERATOR"] = "Ladruno"
+        f.create_dataset(
+            "COLUMNS", data=np.array(["node1.disp.dof1"], dtype="S32"),
+        )
+        step = f.create_dataset("STEP", shape=(0,), maxshape=(None,),
+                                dtype="i4", chunks=(8,))
+        tvec = f.create_dataset("TIME", shape=(0,), maxshape=(None,),
+                                dtype="f8", chunks=(8,))
+        frames = f.create_dataset("FRAMES", shape=(0, 1), maxshape=(None, 1),
+                                  dtype="f8", chunks=(8, 1))
+        f.swmr_mode = True
+        ready.set()
+        for k in range(n):
+            step.resize((k + 1,))
+            step[k] = k
+            tvec.resize((k + 1,))
+            tvec[k] = 0.01 * (k + 1)
+            step.flush()
+            tvec.flush()
+            _t.sleep(stall)          # reader refreshes inside the window
+            frames.resize((k + 1, 1))
+            frames[k, 0] = float(k) * 2.0
+            frames.flush()
+            _t.sleep(0.05)
+
+
+def test_tail_survives_a_half_appended_frame(tmp_path: Path) -> None:
+    """A STEP longer than FRAMES must not raise, and must not lose a frame.
+
+    ``tail_monitor`` used to take its frame count from ``STEP`` alone and
+    slice ``FRAMES`` to it; h5py clips an over-long slice, so the yield
+    loop walked off the end of ``rows`` with an ``IndexError`` — out of
+    the one function whose entire purpose is reading a file another
+    process is still writing. It surfaced as a rare failure of
+    ``test_tail_follows_growing_file`` under full-suite load, where the
+    writer thread happened to be descheduled between the two appends.
+
+    The stalling writer makes that window deterministic. Every frame must
+    still arrive, in order, exactly once — deferred to the next poll, not
+    skipped.
+    """
+    path = tmp_path / "skewed.h5"
+    ready = threading.Event()
+    writer = threading.Thread(
+        target=_write_swmr_monitor_skewed, args=(path, ready, 4),
+    )
+    writer.start()
+    try:
+        ready.wait(timeout=5.0)
+        got = list(tail_monitor(path, timeout=1.0, poll=0.02))
+    finally:
+        writer.join(timeout=10.0)
+
+    assert [g[0] for g in got] == list(range(4))
+    np.testing.assert_allclose([g[2][0] for g in got], [0.0, 2.0, 4.0, 6.0])
+
+
 # ---------------------------------------------------------------------------
 # Live parity — run a monitored analysis and check the sink vs ops.nodeDisp
 # ---------------------------------------------------------------------------

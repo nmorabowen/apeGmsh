@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import re
 import sys
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     # `Self` is 3.11+, but this module must import on the 3.10 that
@@ -60,9 +61,15 @@ __all__ = [
     "SanisandIntegrationWarning",
     "ASDPlasticMaterial3D",
     "MohrCoulombSoil",
+    "MohrCoulombTensionCutoffSoil",
+    "HoekBrownRock",
     "PlaneStrain",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
+    "ASDPlasticIntegrationWarning",
+    "ASDP_MIN_FORK_BUILD",
+    "SANISAND_IMPLEX_FACTOR_MIN_BUILD",
+    "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
     "LadrunoConcrete3D",
@@ -206,6 +213,16 @@ class J2Plasticity(NDMaterial):
 # DruckerPrager — pressure-dependent plasticity for soils / concrete
 # ---------------------------------------------------------------------------
 
+#: Minimum fork build for the ADR-95 ``DruckerPrager`` return map
+#: (``ops.ladrunoBuild()``, fork PR #803 merged as ``61b3efa04``,
+#: 2026-09-08). Documented, not enforced — same as
+#: :data:`ASDP_MIN_FORK_BUILD`, a bare hash cannot prove ancestry. An older
+#: build parses and runs the identical deck; what it gets wrong is the
+#: answer (see the class docstring), so there is nothing to refuse at
+#: construction.
+DP_ADR95_MIN_FORK_BUILD = "61b3efa04"
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DruckerPrager(NDMaterial):
     """Drucker-Prager elasto-plastic continuum material.
@@ -224,7 +241,15 @@ class DruckerPrager(NDMaterial):
         Shear modulus. Must be strictly positive.
     sigmaY
         Initial cohesive yield strength (von-Mises radius at zero
-        plastic strain). Must be strictly positive.
+        plastic strain). Must be strictly positive. On a weightless or
+        lightly confined frictional deck it doubles as an APEX
+        REGULARISER: a small, explicitly non-physical value (0.2 kPa on
+        the fork's deck) puts the tension cutoff at
+        ``I1 = sqrt(2/3) * sigmaY / rho`` (~0.8 kPa there), i.e.
+        essentially "no tension", which is what lets
+        the first tensile Gauss points beside a footing edge return
+        instead of stalling the step. Document it as a regulariser, not
+        as cohesion.
     rho
         Drucker-Prager friction parameter (yield surface slope).
         Must be ``>= 0``.
@@ -264,6 +289,43 @@ class DruckerPrager(NDMaterial):
     arguments. apeGmsh emits the shortest form that carries the requested
     values, so a material that touches neither keyword produces exactly
     the line it produced before they existed.
+
+    **Fork ADR-95 — the tension-cutoff return map (build**
+    ``DP_ADR95_MIN_FORK_BUILD`` **and later).** Every build before fork
+    PR #803 never assembled the tension-cutoff residual row of the
+    two-surface return map, so a Gauss point crossing the cutoff kept an
+    unreturned stress and a pathological consistent tangent. Nothing in
+    this class changes — same arguments, same emitted line — but the
+    ANSWERS do: any path that reached ``I1 >= T`` was not on the yield
+    surface at all before the fix, and cone-only paths move by <= 1.3e-5
+    relative (the tangent's radial-return term divided by the returned
+    norm instead of the trial one). On the fork's Prandtl-Reissner
+    strip-footing deck the defect killed every quadratic element on the
+    step floor at 30-77 % of the collapse load while the linear b-bar
+    hex plateaued correctly — a false collapse that looks like a mesh or
+    material problem. Quadratic solids (``LadrunoBrick20``,
+    ``BezierTet10``, ``TenNodeTetrahedron``) are usable on collapse decks
+    from that build on. Of the three only ``BezierTet10`` carries a b-bar
+    knob, and ``BezierTet10(bbar=True)`` is the tightest plateau — it is
+    exactly isochoric at zero dilatancy; standard-integration tets
+    over-shoot, and ``LadrunoBrick20(formulation="uri")`` loses rank once
+    all eight Gauss points yield. Non-associated flow
+    (``rhoBar != rho``) makes the tangent unsymmetric — use ``UmfPack``,
+    ``Pardiso``, ``Mumps`` or ``FullGeneral``, never ``ProfileSPD`` /
+    ``BandSPD``. See ``internal_docs/guide_ladruno_adr95_druckerprager_fix.md``.
+
+    That build also adds two read-only diagnostics, both MATERIAL-level:
+    ``material.ladrunoBranch`` (8 floats — branch 0 elastic / 1 cone /
+    2 cutoff / 3 corner, the two plastic multipliers, both trial yield
+    values, the forced-accept flag, ``I1``, and ``detAmin``) and
+    ``material.ladrunoTangent`` (36 floats). Pass ``ladrunoBranch`` to
+    ``ops.recorder.Ladruno`` / ``MPCO`` with the ``material.`` prefix; the
+    bare token records nothing and is refused. ``ladrunoTangent`` is
+    accepted by the recorder but ``Results`` names no columns for it yet
+    and drops all 36 with a ``GaussColumnDroppedWarning`` — writing it
+    today buys nothing. An empty reply from
+    ``ops.eleResponse(e, "material", gp, "ladrunoBranch")`` means a
+    pre-``61b3efa04`` engine — the cheapest capability probe there is.
     """
 
     K: float
@@ -367,6 +429,11 @@ _MANZARI_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
 
 #: ``SAniSandMS`` parser defaults for the same tail — RungeKutta4 and the
 #: continuum elasto-plastic tangent, unlike ManzariDafalias.
+#: The three ``-implexFactor`` modes the fork accepts (ADR 92 P2-9).  Only
+#: ``fixed`` is gate-passed; ``control`` is measured-REFUTED and
+#: ``controlIter`` is TIMs-campaign-only.
+_SANISAND_IMPLEX_FACTORS: tuple[str, ...] = ("fixed", "control", "controlIter")
+
 _SANISANDMS_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
     3, 2, 1, 1e-7, 1e-7
 )
@@ -740,7 +807,7 @@ class LadrunoSANISAND(NDMaterial):
         nDMaterial LadrunoSANISAND tag G0 nu e_init Mc c lambda_c e0 ksi \
             P_atm m h0 ch nb A0 nd z_max cz Rho \
             [IntScheme TanType JacoType TolF TolR] \
-            [-Presidual pr] [-Pmin pmin] [-honorTolR 0|1]
+            [-Presidual pr] [-Pmin pmin] [-honorTolR 0|1]             [-maxSubsteps n] [-implex] [-implexControl tol rlim]             [-implexFactor fixed|control|controlIter]
 
     The fork's thin C++ subclass of the ``ManzariDafalias`` material
     (Ghofrani & Arduino, U. Washington, after Dafalias & Manzari 2004).
@@ -861,6 +928,28 @@ class LadrunoSANISAND(NDMaterial):
            whole increment. Only :class:`~apeGmsh.opensees.element.solid.LadrunoBrick`
            propagates on every path today, so apeGmsh **raises** at
            ``build()`` if a capped material reaches any other element.
+    implex
+        Enables the fork's IMPL-EX (implicit/explicit) integration seam
+        (``-implex``). Default ``False`` = off = vanilla's behaviour, and
+        the flag is then not emitted, so an unset deck is byte-identical
+        to one built before this argument existed. ``implex_control`` and
+        ``implex_factor`` both require this to be ``True`` — the fork
+        refuses any ``-implex*`` flag without ``-implex`` first.
+    implex_control
+        ``(err_tol, reduction_limit)`` pair for the IMPL-EX step-size
+        control (``-implexControl err_tol reduction_limit``). ``None``
+        (default) omits the flag. Required when ``implex_factor`` is
+        ``"control"`` or ``"controlIter"``.
+    implex_factor
+        Selects the IMPL-EX extrapolation factor scheme
+        (``-implexFactor {fixed|control|controlIter}``). ``None``
+        (default) **omits** the token entirely, so the deck falls
+        through to the fork's own ``fixed`` default and stays
+        byte-identical to a deck built before this field existed (same
+        rationale as ``max_substeps=0`` above). ``"control"`` is
+        MEASURED-REFUTED on the fork's R3 registered arm; ``"controlIter"``
+        is TIMs-campaign-only. Neither is a general recommendation —
+        pick one only with a specific, sourced reason to.
     """
 
     # 18 positionals — same names and order as ManzariDafalias
@@ -896,6 +985,11 @@ class LadrunoSANISAND(NDMaterial):
     p_min: float | None = None      # None -> resolved to 1.0e-3 * P_atm
     honor_tol_r: bool = False
     max_substeps: int = 0           # 0 = uncapped = vanilla's behaviour
+
+    # the IMPL-EX seam
+    implex: bool = False
+    implex_control: tuple[float, float] | None = None   # (err_tol, reduction_limit); None = off
+    implex_factor: Literal["fixed", "control", "controlIter"] | None = None
 
     def __post_init__(self) -> None:
         _validate_sanisand_bounds(
@@ -975,6 +1069,54 @@ class LadrunoSANISAND(NDMaterial):
                 SanisandIntegrationWarning,
                 stacklevel=2,
             )
+        # ADR 92 P2-9.  The fork refuses ANY -implex* flag without the base
+        # -implex, so BOTH companions are gated on it -- not just the factor.
+        if not self.implex:
+            for _name, _value in (("implex_control", self.implex_control),
+                                  ("implex_factor", self.implex_factor)):
+                if _value is not None:
+                    raise ValueError(
+                        f"LadrunoSANISAND: {_name}={_value!r} requires implex=True "
+                        f"(the fork refuses any -implex* flag without -implex)."
+                    )
+        # -implexControl takes EXACTLY two values, $tol then $reductionLimit.
+        # A short tuple is the dangerous shape, not an obviously broken one:
+        # it emits a deck in which the NEXT flag name is consumed as the
+        # missing number (`-implexControl 1e-4 -implexFactor` reads
+        # "-implexFactor" as reductionLimit), which parses and runs wrong.
+        if self.implex_control is not None:
+            _ctrl = self.implex_control
+            if (not isinstance(_ctrl, tuple) or len(_ctrl) != 2
+                    or not all(isinstance(v, (int, float))
+                               and not isinstance(v, bool) for v in _ctrl)):
+                raise ValueError(
+                    f"LadrunoSANISAND: implex_control must be a 2-tuple of numbers "
+                    f"(err_tol, reduction_limit), got {self.implex_control!r}. The fork's "
+                    f"-implexControl takes exactly two values ($tol $reductionLimit); a "
+                    f"wrong-length value emits a deck whose next flag name is read as a "
+                    f"number."
+                )
+        # The Literal annotation is a hint, not a check: without this, a
+        # mis-cased token reaches the deck and the fork refuses at parse time
+        # -- and "Control" would ALSO slip past the -implexControl
+        # requirement below, which is keyed on the value.
+        if self.implex_factor is not None:
+            if self.implex_factor not in _SANISAND_IMPLEX_FACTORS:
+                raise ValueError(
+                    f"LadrunoSANISAND: implex_factor={self.implex_factor!r} is not one of "
+                    f"{_SANISAND_IMPLEX_FACTORS}; the fork refuses any other token at parse "
+                    f"time. (The fork also accepts the lower-case alias 'controliter'; "
+                    f"apeGmsh requires the canonical 'controlIter' so that the type "
+                    f"annotation and the runtime agree.)"
+                )
+            # Keyed off "not fixed" rather than a membership tuple, so a mode
+            # added later inherits the requirement instead of silently escaping it.
+            if self.implex_factor != "fixed" and self.implex_control is None:
+                raise ValueError(
+                    f"LadrunoSANISAND: implex_factor={self.implex_factor!r} requires implex_control "
+                    f"(err_tol, reduction_limit) -- the fork's own message: '-implexFactor control "
+                    f"REQUIRES -implexControl' (LadrunoSANISAND.cpp:1983)."
+                )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | int | str] = [
@@ -1015,6 +1157,12 @@ class LadrunoSANISAND(NDMaterial):
         # the one it produced before the flag existed.
         if self.max_substeps:
             args += ["-maxSubsteps", self.max_substeps]
+        if self.implex:
+            args.append("-implex")
+        if self.implex_control is not None:
+            args += ["-implexControl", *self.implex_control]
+        if self.implex_factor is not None:
+            args += ["-implexFactor", self.implex_factor]
         emitter.nDMaterial("LadrunoSANISAND", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
@@ -1049,10 +1197,196 @@ class LadrunoSANISAND(NDMaterial):
 # Valid combinations are produced by
 # ``SRC/material/nD/ASDPlasticMaterial3D/gen_ASD_material_definitions_CPP.py``;
 # unsupported triples cause an OpenSees runtime error (the factory
-# returns ``nullptr``).  apeGmsh does not enforce client-side: any
-# ``(yf, pf, el, iv)`` shape is accepted at registration time; the
-# OpenSees binary is the source of truth on which combinations exist
-# in this build.
+# returns ``nullptr``).  apeGmsh does not enforce the COMBINATION
+# client-side: any ``(yf, pf, el, iv)`` shape is accepted at registration
+# time; the OpenSees binary is the source of truth on which combinations
+# exist in this build.
+#
+# ADR 0105 (fork ADR-94): the fork parser fails loud.  An unknown model-
+# parameter name aborts the ``nDMaterial`` command, and every parameter
+# of the instantiated combination except ``MassDensity`` / ``InitialP0``
+# is REQUIRED (an unset one used to run silently at 0 -- a typo'd
+# ``MC_phi`` ran at phi = 0, fork finding B1).  The fork's ``list`` verb
+# prints only the four type strings, so the per-combination schema is
+# carried HERE, composed from the component headers'
+# ``using parameters_t`` tuples as
+# ``EL ∪ YF ∪ PF ∪ (one set per IV hardening policy) ∪ {MassDensity,
+# InitialP0}``.  :func:`asdp_parameter_schema` resolves it;
+# :meth:`ASDPlasticMaterial3D.__post_init__` validates against it when
+# every component is in the table and leaves anything else to the fork
+# (the escape hatch for combinations the table does not cover, e.g. the
+# StiffSoil family).  Pinned against the fork's 46 registered
+# combinations by ``tests/opensees/unit/test_asd_plastic_material_3d.py``.
+
+#: Model-parameter names per ASDPlasticMaterial3D component (fork headers
+#: ``SRC/material/nD/ASDPlasticMaterial3D/**/*.h``, ``using parameters_t``).
+#: Keys are the tokens as they appear in the four-string header and in the
+#: IV string's ``Name(Policy)`` policies.  A component absent from this
+#: table makes :func:`asdp_parameter_schema` return ``None``.
+_ASDP_PARAMS_BY_COMPONENT: dict[str, frozenset[str]] = {
+    # -- elasticity ------------------------------------------------------
+    "LinearIsotropic3D_EL": frozenset({"YoungsModulus", "PoissonsRatio"}),
+    "StiffSoil_EL": frozenset({
+        "SS_Eur_ref", "PoissonsRatio", "SS_pref", "SS_m", "MC_phi", "MC_c",
+    }),
+    # -- yield functions -------------------------------------------------
+    "VonMises_YF": frozenset(),          # yield stress is the YieldStress IV
+    "DruckerPrager_YF": frozenset({"DP_xi_c", "DP_eta"}),
+    "MohrCoulomb_YF": frozenset({"MC_phi", "MC_c", "MC_ds"}),
+    "MohrCoulombTensionCutoff_YF": frozenset({
+        "MC_phi", "MC_c", "MC_ds", "MC_psi", "TC_min_stress",
+    }),
+    "HoekBrown_YF": frozenset({"HB_sigci", "HB_mb", "HB_s", "HB_a", "HB_ds"}),
+    # -- plastic-flow directions -----------------------------------------
+    "VonMises_PF": frozenset(),
+    "DruckerPrager_PF": frozenset({"DP_etabar"}),
+    "MohrCoulomb_PF": frozenset({"MC_phi", "MC_c", "MC_ds", "MC_psi"}),
+    "MohrCoulombTensionCutoff_PF": frozenset({
+        "MC_phi", "MC_c", "MC_ds", "MC_psi", "TC_min_stress",
+    }),
+    "HoekBrown_PF": frozenset({
+        "HB_sigci", "HB_mb_psi", "HB_s", "HB_a", "HB_ds",
+    }),
+    # -- internal-variable hardening policies (the ``(Policy)`` in the IV
+    #    string; one parameter set per policy, whatever IV carries it) -----
+    "TensorLinearHardeningFunction": frozenset({
+        "TensorLinearHardeningParameter",
+    }),
+    "ScalarLinearHardeningFunction": frozenset({
+        "ScalarLinearHardeningParameter",
+    }),
+    "ArmstrongFrederickHardeningFunction": frozenset({"AF_ha", "AF_cr"}),
+    "NullHardeningTensorFunction": frozenset(),
+    "NullHardeningScalarFunction": frozenset(),
+}
+
+#: Accepted by every combination and never required (fork parser: ``0`` =
+#: no mass, no geostatic seed).
+_ASDP_OPTIONAL_PARAMS: frozenset[str] = frozenset({"MassDensity", "InitialP0"})
+
+_ASDP_IV_TOKEN = re.compile(r"^\s*(?P<name>\w+)\((?P<policy>\w+)\)\s*$")
+
+
+def asdp_parameter_schema(
+    yf: str, pf: str, el: str, iv: str,
+) -> frozenset[str] | None:
+    """Model-parameter names the fork parser accepts for a combination.
+
+    The set is ``EL ∪ YF ∪ PF ∪ (parameters of every hardening policy
+    named in ``iv``) ∪ {MassDensity, InitialP0}``; every name except the
+    last two is REQUIRED by the ADR-94 parser.  ``iv`` is the
+    ``Name(Policy):Name(Policy):...`` string of the Tcl header (the same
+    IV name may appear more than once with different policies -- the
+    fork registers e.g. ``BackStress(TensorLinearHardeningFunction):
+    YieldStress(ScalarLinearHardeningFunction):BackStress(NullHardening
+    TensorFunction):``).
+
+    Returns ``None`` when any component -- a type string or an IV policy
+    -- is outside :data:`_ASDP_PARAMS_BY_COMPONENT`, or when ``iv`` does
+    not parse: apeGmsh then does not validate and the fork does
+    (ADR 0105 D1, the escape hatch).
+    """
+    components = [yf, pf, el]
+    for token in iv.split(":"):
+        if not token.strip():
+            continue
+        m = _ASDP_IV_TOKEN.match(token)
+        if m is None:
+            return None
+        components.append(m.group("policy"))
+    names: set[str] = set(_ASDP_OPTIONAL_PARAMS)
+    for comp in components:
+        params = _ASDP_PARAMS_BY_COMPONENT.get(comp)
+        if params is None:
+            return None
+        names |= params
+    return frozenset(names)
+
+
+# The fork parser's token lists after ADR-94 (``OPS_AllASDPlasticMaterial3Ds
+# .cpp``; ADR 0105 D3).  An unknown token aborts the command there; here it
+# is a ``ValueError`` at construction.
+#: The two IMPLICIT integrators.  ``Backward_Euler`` is an Ortiz-Simo
+#: cutting-plane map; ``Closest_Point`` (fork ADR-97) is the fully implicit
+#: closest-point projection and the only one with an exact consistent
+#: tangent (:data:`ASDP_ALGORITHMIC_TANGENT`).
+_ASDP_IMPLICIT_INTEGRATION_METHODS: frozenset[str] = frozenset({
+    "Backward_Euler", "Closest_Point",
+})
+#: The four EXPLICIT integrators.  They carry no active yield-drift
+#: correction; a fork build at or after :data:`ASDP_CLOSEST_POINT_MIN_BUILD`
+#: REFUSES them unless the deck also sets ``experimental_integrator 1``
+#: (fork ADR-97 D5).
+_ASDP_EXPLICIT_INTEGRATION_METHODS: frozenset[str] = frozenset({
+    "Forward_Euler", "Forward_Euler_Subincrement",
+    "Modified_Euler_Error_Control", "Runge_Kutta_45_Error_Control",
+})
+_ASDP_INTEGRATION_METHODS: frozenset[str] = (
+    _ASDP_IMPLICIT_INTEGRATION_METHODS | _ASDP_EXPLICIT_INTEGRATION_METHODS
+)
+#: Selectable before ADR-94, refused by name since — with the fork's reason.
+_ASDP_REFUSED_INTEGRATION_METHODS: dict[str, str] = {
+    "Backward_Euler_LineSearch": (
+        "REFUSED by the fork (ADR-94 M7): it ignores n_max_iterations, its "
+        "line search cannot cut the step, and its substepping returns "
+        "success for a strain increment the element never asked for "
+        "(measured 2/20 steps where plain Backward_Euler does 20/20). Use "
+        "Backward_Euler."
+    ),
+    "Runge_Kutta_45_Error_Control_old": (
+        "REFUSED by the fork (ADR-94 M8): its yield-drift check is dead "
+        "code and its NaN guard calls exit() on the whole process. Use "
+        "Runge_Kutta_45_Error_Control or Backward_Euler."
+    ),
+}
+#: The exact consistent tangent of the ``Closest_Point`` return map, and
+#: the only ``tangent_type`` that is REFUSED with any other integrator
+#: (fork ADR-97 D2).
+ASDP_ALGORITHMIC_TANGENT = "Algorithmic"
+_ASDP_TANGENT_TYPES: frozenset[str] = frozenset({
+    "Elastic", "Continuum", "Secant", ASDP_ALGORITHMIC_TANGENT,
+    "Numerical_Algorithmic_FirstOrder", "Numerical_Algorithmic_SecondOrder",
+})
+_ASDP_RETURN_TO_YIELD_SURFACE: frozenset[str] = frozenset({
+    "Disabled", "One_Step_Return", "Iterative_Return",
+})
+#: Minimum fork build for the ADR-94 contract (``ops.ladrunoBuild()``).
+#: An older parser silently drops ``strict_convergence`` / ``f_relative_tol``.
+ASDP_MIN_FORK_BUILD = "bbf657d49"
+
+#: Minimum fork build for ``Closest_Point`` / ``Algorithmic`` and for the
+#: ``experimental_integrator`` gate (``ops.ladrunoBuild()``, fork ADR-97).
+#: Documented, not enforced -- a bare hash cannot prove ancestry (same as
+#: :data:`ASDP_MIN_FORK_BUILD`).  An OLDER parser does not silently ignore
+#: the tokens: ``integration_method Closest_Point`` is an unknown value and
+#: the ADR-94 parser aborts the ``nDMaterial`` command naming it, so a deck
+#: built on a stale backend fails loud rather than running Backward_Euler.
+ASDP_CLOSEST_POINT_MIN_BUILD = "7e93e4381"
+
+#: Minimum fork build for ``LadrunoSANISAND``'s ``-implexFactor`` argument
+#: (``ops.ladrunoBuild()``, ADR 92 P2-9, fork PR #822). Documented, not
+#: enforced (same as :data:`ASDP_MIN_FORK_BUILD` — a bare hash cannot prove
+#: ancestry). An older build does NOT silently ignore the token: an
+#: unrecognised flag falls through to the parser's positional-optional
+#: branch and hard-refuses construction. Note the message it prints for an
+#: apeGmsh deck is NOT ``unrecognized option``: because the five-argument
+#: tail always emits, that branch trips its ``nPos >= 5`` guard first and
+#: reports ``too many positional optional arguments (max 5: IntScheme
+#: TanType JacoType TolF TolR), at '-implexFactor'`` -- a confusing report
+#: of a real refusal (``LadrunoSANISAND.cpp:655-670``, a branch that
+#: predates P2-9 in fork ``4870f802c6``).
+SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
+
+
+class ASDPlasticIntegrationWarning(UserWarning):
+    """An ``ASDPlasticMaterial3D`` deck selects an explicit integrator.
+
+    The supported pair is implicit: ``Backward_Euler`` (ADR-94) and
+    ``Closest_Point`` (ADR-97).  The four explicit schemes carry no active
+    yield-drift correction.  Fail-soft here, but NOT on the fork: a build
+    at or after :data:`ASDP_CLOSEST_POINT_MIN_BUILD` refuses them outright
+    unless the deck also sets ``experimental_integrator 1`` (ADR-97 D5).
+    """
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1096,19 +1430,40 @@ class ASDPlasticMaterial3D(NDMaterial):
         value or a 1-tuple).
     model_parameters
         ``{name: scalar}`` — model-parameter dictionary.  All values
-        are stored as floats.  Unknown keys are silently consumed by
-        the OpenSees parser (it forwards via ``setParameterByName``);
-        prefer the typed :class:`MohrCoulombSoil` helper for the SSI
-        case.
+        are stored as floats.  When every component of the combination
+        is in :data:`_ASDP_PARAMS_BY_COMPONENT` the names are validated
+        against :func:`asdp_parameter_schema` at construction: a name
+        outside the schema and a missing required name are both
+        ``ValueError`` (the fork's ADR-94 parser would refuse the deck
+        at run time; ADR 0105 D1 fails at build time instead).  A
+        combination with a component outside the table is accepted
+        unchanged and the fork validates.  Prefer the typed
+        :func:`MohrCoulombSoil` / :func:`MohrCoulombTensionCutoffSoil` /
+        :func:`HoekBrownRock` helpers, which emit exactly their schema.
     integration_options
         ``{name: scalar | str}`` — keyed by parser option name.
-        Mixed types: ``f_absolute_tol`` / ``stress_absolute_tol`` /
-        ``rk45_dT_min`` are floats; ``n_max_iterations`` /
-        ``rk45_niter_max`` are ints; ``integration_method`` /
-        ``tangent_type`` / ``return_to_yield_surface`` are string
-        enums (see the OpenSees source for valid tokens).  Empty
-        dict = all defaults (Backward_Euler / Secant / 1e-6 /
-        100 / Disabled / 0.01 / 110).
+        Mixed types: ``f_absolute_tol`` / ``f_relative_tol`` /
+        ``stress_absolute_tol`` / ``rk45_dT_min`` are floats;
+        ``n_max_iterations`` / ``rk45_niter_max`` are ints;
+        ``strict_convergence`` is a bool (emitted ``1`` / ``0``);
+        ``integration_method`` / ``tangent_type`` /
+        ``return_to_yield_surface`` are string enums validated at
+        construction against the fork's token lists after ADR-94 and
+        ADR-97 (``Backward_Euler_LineSearch`` and
+        ``Runge_Kutta_45_Error_Control_old`` are refused with the
+        fork's reason; the four EXPLICIT methods warn
+        :class:`ASDPlasticIntegrationWarning` unless the deck also
+        passes ``experimental_integrator=1``; ``tangent_type
+        "Algorithmic"`` raises unless ``integration_method`` is
+        ``"Closest_Point"``, ADR-97 D2).  Whether ``Closest_Point`` is
+        available for a given YF/PF/EL/IV combination is left to the
+        fork, which refuses naming the exact specialization — see
+        :func:`MohrCoulombSoil` for the supported families and the
+        build floor.  Empty dict = all fork
+        defaults (Backward_Euler / Secant / 1e-6 / 100 / Disabled /
+        0.01 / 110 / strict off / relative tol off).  ``strict_convergence``
+        and ``f_relative_tol`` need a fork build at or after
+        :data:`ASDP_MIN_FORK_BUILD`; an older parser drops them silently.
     """
 
     yf: str
@@ -1140,6 +1495,124 @@ class ASDPlasticMaterial3D(NDMaterial):
                     "ASDPlasticMaterial3D: internal_variables "
                     f"{name!r} must have at least one value"
                 )
+        self._validate_parameter_schema()
+        self._validate_integration_options()
+
+    def _validate_integration_options(self) -> None:
+        """The fork's token lists, client-side (ADR 0105 D3, ADR 0107)."""
+        # Validation reads a dict; ``_emit`` iterates the SEQUENCE and
+        # writes every pair.  A duplicated name makes those two disagree,
+        # which silently defeats the cross-field ADR-97 D2 rule below
+        # (``tangent_type Algorithmic`` + ``tangent_type Secant`` would
+        # validate as Secant and still emit Algorithmic).  A repeated
+        # option is meaningless in the deck anyway -- refuse it.
+        seen: set[str] = set()
+        for name, _ in self.integration_options:
+            if name in seen:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: integration option {name!r} is "
+                    f"given more than once. Every option is emitted, so a "
+                    f"repeat is ambiguous in the deck and would bypass the "
+                    f"client-side token checks."
+                )
+            seen.add(name)
+        opts = dict(self.integration_options)
+        method = opts.get("integration_method")
+        if method is not None:
+            reason = _ASDP_REFUSED_INTEGRATION_METHODS.get(str(method))
+            if reason is not None:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: integration_method {method!r} is "
+                    f"{reason}"
+                )
+            if method not in _ASDP_INTEGRATION_METHODS:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: unknown integration_method "
+                    f"{method!r}; valid: "
+                    f"{', '.join(sorted(_ASDP_INTEGRATION_METHODS))}."
+                )
+            if method in _ASDP_EXPLICIT_INTEGRATION_METHODS:
+                # Always warns: being explicit (no active yield-drift
+                # correction) is a property of the METHOD, not of whether
+                # the fork happens to accept the deck.  Deliberately NOT
+                # silenced by the fork's ``experimental_integrator`` opt-in
+                # -- that token is unknown to every parser before
+                # ASDP_CLOSEST_POINT_MIN_BUILD, where the ADR-94 fail-loud
+                # parser REJECTS the whole nDMaterial command over it.  A
+                # suppression would have made apeGmsh go quiet exactly
+                # when it had talked the user into breaking their deck.
+                warnings.warn(
+                    f"ASDPlasticMaterial3D: integration_method {method!r} "
+                    f"is EXPLICIT and carries no active yield-drift "
+                    f"correction; the supported implicit pair is "
+                    f"Backward_Euler and Closest_Point. A fork build at or "
+                    f"after {ASDP_CLOSEST_POINT_MIN_BUILD} additionally "
+                    f"REFUSES it outright unless the deck sets the fork's "
+                    f"own 'experimental_integrator 1' token (ADR-97 D5) -- "
+                    f"but do NOT add that token unconditionally: an older "
+                    f"parser does not know it and rejects the material.",
+                    ASDPlasticIntegrationWarning,
+                    stacklevel=3,
+                )
+        # ADR-97 D2 -- a static fact about the deck's own two strings, so
+        # it is checked here; family/pairing support is NOT (it depends on
+        # compile-time markers in the fork's templated instantiations that
+        # Python cannot introspect -- the fork's parser fails loud naming
+        # the exact YF/PF/IV, and that text is what a user should see).
+        if opts.get("tangent_type") == ASDP_ALGORITHMIC_TANGENT:
+            if method != "Closest_Point":
+                asked = (
+                    "the fork default (Backward_Euler)" if method is None
+                    else repr(method)
+                )
+                others = ", ".join(
+                    sorted(_ASDP_TANGENT_TYPES - {ASDP_ALGORITHMIC_TANGENT})
+                )
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: tangent_type "
+                    f"{ASDP_ALGORITHMIC_TANGENT!r} is the exact consistent "
+                    f"tangent of the 'Closest_Point' return map and is "
+                    f"refused with any other integration_method (fork "
+                    f"ADR-97 D2); this deck asks for {asked}. Set "
+                    f"integration_method='Closest_Point', or pick a "
+                    f"tangent_type the chosen integrator defines: {others}."
+                )
+        for key, valid in (
+            ("tangent_type", _ASDP_TANGENT_TYPES),
+            ("return_to_yield_surface", _ASDP_RETURN_TO_YIELD_SURFACE),
+        ):
+            value = opts.get(key)
+            if value is not None and value not in valid:
+                raise ValueError(
+                    f"ASDPlasticMaterial3D: unknown {key} {value!r}; valid: "
+                    f"{', '.join(sorted(valid))}."
+                )
+
+    def _validate_parameter_schema(self) -> None:
+        """ADR 0105 D1 — the fork's fail-loud parameter contract, client-side."""
+        schema = asdp_parameter_schema(self.yf, self.pf, self.el, self.iv)
+        if schema is None:
+            return  # a component outside the table: the fork validates
+        combo = f"{self.yf} / {self.pf} / {self.el} / {self.iv}"
+        given = [name for name, _ in self.model_parameters]
+        foreign = [name for name in given if name not in schema]
+        if foreign:
+            raise ValueError(
+                f"ASDPlasticMaterial3D: model parameter {foreign[0]!r} is "
+                f"not a parameter of {combo} (foreign: "
+                f"{', '.join(foreign)}). The fork's ADR-94 parser refuses an "
+                f"unknown name and aborts the nDMaterial command. Schema for "
+                f"this combination: {', '.join(sorted(schema))}."
+            )
+        missing = sorted(schema - _ASDP_OPTIONAL_PARAMS - set(given))
+        if missing:
+            raise ValueError(
+                f"ASDPlasticMaterial3D: {len(missing)} required model "
+                f"parameter(s) missing for {combo}: {', '.join(missing)}. "
+                f"Every parameter except MassDensity and InitialP0 is "
+                f"required by the fork's ADR-94 parser (an unset one used "
+                f"to run silently at 0)."
+            )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[float | int | str] = [self.yf, self.pf, self.el, self.iv]
@@ -1181,11 +1654,64 @@ class ASDPlasticMaterial3D(NDMaterial):
 #
 # Constructs an ASDPlasticMaterial3D with the standard
 # MohrCoulomb_YF + MohrCoulomb_PF + LinearIsotropic3D_EL
-# + BackStress(NullHardeningTensorFunction): composition.  Zero-fills
-# the non-MohrCoulomb model parameters (AF_*, DP_*, DuncanChang_*,
-# etc.) defensively — STKO's emit does the same; the OpenSees parser
-# accepts unknown names without erroring (forwarded via
-# ``setParameterByName``).
+# + BackStress(NullHardeningTensorFunction): composition and emits
+# EXACTLY that combination's schema (ADR 0105 D1).  It used to zero-fill
+# a 21-name superset (AF_*, DP_*, DuncanChang_*, ...) the way STKO does;
+# the fork's ADR-94 parser refuses the deck at the first foreign name.
+
+
+def _validate_mc_inputs(who: str, *, c: float, phi: float, psi: float) -> None:
+    if c < 0:
+        raise ValueError(f"{who}: c must be >= 0, got {c!r}")
+    if not (0.0 <= phi < 90.0):
+        raise ValueError(
+            f"{who}: phi must be in [0, 90) degrees, got {phi!r}"
+        )
+    if not (0.0 <= psi <= phi):
+        raise ValueError(
+            f"{who}: psi must be in [0, phi] (associated flow "
+            f"is psi=phi; non-associated requires psi<phi). Got "
+            f"psi={psi!r}, phi={phi!r}."
+        )
+
+
+def _validate_elastic_inputs(
+    who: str, *, E: float, nu: float, rho: float,
+) -> None:
+    if E <= 0:
+        raise ValueError(f"{who}: E must be > 0, got {E!r}")
+    if not (0.0 <= nu < 0.5):
+        raise ValueError(f"{who}: nu must be in [0, 0.5), got {nu!r}")
+    if rho < 0:
+        raise ValueError(f"{who}: rho must be >= 0, got {rho!r}")
+
+
+def _asdp_integration_tail(
+    *,
+    integration_method: str,
+    tangent_type: str,
+    f_absolute_tol: float,
+    f_relative_tol: float,
+    stress_absolute_tol: float,
+    n_max_iterations: int,
+    strict_convergence: bool,
+    return_to_yield_surface: str,
+    rk45_dT_min: float,
+    rk45_niter_max: int,
+) -> tuple[tuple[str, float | int | str], ...]:
+    """The ``Begin_Integration_Options`` block every typed helper emits."""
+    return (
+        ("f_absolute_tol", f_absolute_tol),
+        ("f_relative_tol", f_relative_tol),
+        ("stress_absolute_tol", stress_absolute_tol),
+        ("n_max_iterations", n_max_iterations),
+        ("strict_convergence", bool(strict_convergence)),
+        ("rk45_dT_min", rk45_dT_min),
+        ("rk45_niter_max", rk45_niter_max),
+        ("return_to_yield_surface", return_to_yield_surface),
+        ("integration_method", integration_method),
+        ("tangent_type", tangent_type),
+    )
 
 
 def MohrCoulombSoil(
@@ -1200,10 +1726,12 @@ def MohrCoulombSoil(
     yield_stress: float = 1e10,
     initial_p0: float = 0.0,
     integration_method: str = "Backward_Euler",
-    tangent_type: str = "Secant",
+    tangent_type: str = "Continuum",
     f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
     stress_absolute_tol: float = 1e-6,
     n_max_iterations: int = 100,
+    strict_convergence: bool = True,
     return_to_yield_surface: str = "Disabled",
     rk45_dT_min: float = 0.01,
     rk45_niter_max: int = 100,
@@ -1212,7 +1740,14 @@ def MohrCoulombSoil(
 
     Replaces the ~30-line dict-of-parameters call to the generic
     :class:`ASDPlasticMaterial3D` for the SSI Cerro Lindo / rock-mass
-    case.
+    case.  Emits exactly the combination's parameter schema and the
+    ADR 0105 defaults (``strict_convergence`` on, ``Continuum``
+    tangent); the deck needs a fork build at or after
+    :data:`ASDP_MIN_FORK_BUILD` for ``strict_convergence`` /
+    ``f_relative_tol`` to take effect (an older parser drops them
+    silently) and a refusal-propagating host (``LadrunoBrick`` /
+    ``TenNodeTetrahedron``) for ``strict_convergence`` to reach the
+    analysis at all — ``stdBrick`` swallows it (fork ADR-94 B2).
 
     Parameters
     ----------
@@ -1232,16 +1767,76 @@ def MohrCoulombSoil(
     initial_p0
         Initial confining pressure offset.  Defaults to ``0.0``.
     integration_method
-        One of ``"Forward_Euler"``, ``"Forward_Euler_Subincrement"``,
+        One of the two IMPLICIT maps — ``"Backward_Euler"`` (default;
+        an Ortiz-Simo cutting plane) or ``"Closest_Point"`` (fork
+        ADR-97; the fully implicit closest-point projection, the only
+        one with an exact consistent tangent) — or one of the four
+        EXPLICIT schemes ``"Forward_Euler"``,
+        ``"Forward_Euler_Subincrement"``,
         ``"Modified_Euler_Error_Control"``,
-        ``"Runge_Kutta_45_Error_Control"``, ``"Backward_Euler"``
-        (default), ``"Backward_Euler_LineSearch"``.
+        ``"Runge_Kutta_45_Error_Control"``, which warn
+        :class:`ASDPlasticIntegrationWarning` and are REFUSED outright
+        by a fork build at or after
+        :data:`ASDP_CLOSEST_POINT_MIN_BUILD` without
+        ``experimental_integrator=1`` (ADR-97 D5).
+        ``"Backward_Euler_LineSearch"`` and
+        ``"Runge_Kutta_45_Error_Control_old"`` are refused with the
+        fork's reason (ADR-94 M7 / M8).
+
+        ``"Closest_Point"`` needs a fork build at or after
+        :data:`ASDP_CLOSEST_POINT_MIN_BUILD`, and is supported only for
+        MATCHED YF/PF pairs of five families (VonMises, Drucker-Prager
+        including the apex, Mohr-Coulomb, MohrCoulombTensionCutoff,
+        Hoek-Brown) — 23 of the fork's 46 registered specializations.
+        A mixed pairing, ``StiffSoil`` and ``RoundedMohrCoulomb`` are
+        refused BY THE FORK, naming the exact YF/PF/IV and citing
+        ADR-97 D3; that support table depends on compile-time markers
+        inside the fork's templated instantiations and is deliberately
+        NOT duplicated here.  All three of these helpers
+        (:func:`MohrCoulombSoil`, :func:`MohrCoulombTensionCutoffSoil`,
+        :func:`HoekBrownRock`) build a matched pair, so all three are
+        in the supported set.
     tangent_type
-        One of ``"Elastic"``, ``"Continuum"``, ``"Secant"`` (default),
-        ``"Numerical_Algorithmic_FirstOrder"``,
-        ``"Numerical_Algorithmic_SecondOrder"``.
+        One of ``"Continuum"`` (default — fork ADR-84 §9.4; measured
+        5.3x fewer global iterations than ``"Secant"`` with identical
+        results at convergence, fork ADR-94 M3), ``"Elastic"``,
+        ``"Secant"``, ``"Numerical_Algorithmic_FirstOrder"``,
+        ``"Numerical_Algorithmic_SecondOrder"``, or ``"Algorithmic"``
+        (fork ADR-97; the exact consistent tangent of the
+        ``Closest_Point`` map).  ``"Algorithmic"`` raises
+        :class:`ValueError` here unless
+        ``integration_method="Closest_Point"`` (ADR-97 D2) — no tangent
+        the fork ships for ``Backward_Euler`` is the tangent of that
+        map (measured against a central difference of the material's
+        own committed response: ``Continuum`` 57 % off, ``Secant``
+        80 %, ``Elastic`` 103 %).
+
+        For a new non-associated deck of a supported family, prefer
+        ``integration_method="Closest_Point"`` with
+        ``tangent_type="Algorithmic"``, ``algorithm KrylovNewton`` and
+        an unsymmetric solver (``UmfPack`` or ``Pardiso
+        -matrixType 0``) — the configuration the fork's own mesh-scale
+        measurement found fastest by wall clock and most robust to
+        convergence (24000-DOF strip footing: 12/12 push steps in 78 s
+        against 7/12 in 504 s for ``Backward_Euler``).  This is
+        guidance, not a default: the defaults here stay the fork's
+        shipped ones until the fork itself flips them.
     f_absolute_tol, stress_absolute_tol, n_max_iterations
         Integration solver tolerances + iteration cap.
+    f_relative_tol
+        ``0.0`` (default) keeps the absolute tolerance alone — the fork's
+        own default.  When set, the yield-function tolerance becomes
+        ``max(f_absolute_tol, f_relative_tol * strength scale)`` so the
+        same problem converges in kPa and in Pa (fork ADR-94 M5 measured
+        the kPa deck passing 20/20 and the Pa deck refused on step 1
+        with the absolute default).  Rock-scale decks should set it;
+        ``1e-8`` is the fork's suggested start for Hoek-Brown at
+        50 MPa.
+    strict_convergence
+        ``True`` (default): a non-converged or inadmissible state is
+        REFUSED instead of committed (fork ADR-84 P2a, effective on
+        every integrator and failure path since ADR-94).  A deck that
+        used to finish with wrong stresses now fails at the step.
     return_to_yield_surface
         ``"Disabled"`` (default — STKO behavior), ``"One_Step_Return"``,
         or ``"Iterative_Return"``.
@@ -1256,26 +1851,8 @@ def MohrCoulombSoil(
         ``ops.nDMaterial.ASDPlasticMaterial3D(...)`` or to pass
         directly to ``ops.register(...)``.
     """
-    if c < 0:
-        raise ValueError(f"MohrCoulombSoil: c must be >= 0, got {c!r}")
-    if not (0.0 <= phi < 90.0):
-        raise ValueError(
-            f"MohrCoulombSoil: phi must be in [0, 90) degrees, got {phi!r}"
-        )
-    if not (0.0 <= psi <= phi):
-        raise ValueError(
-            "MohrCoulombSoil: psi must be in [0, phi] (associated flow "
-            f"is psi=phi; non-associated requires psi<phi). Got "
-            f"psi={psi!r}, phi={phi!r}."
-        )
-    if E <= 0:
-        raise ValueError(f"MohrCoulombSoil: E must be > 0, got {E!r}")
-    if not (0.0 <= nu < 0.5):
-        raise ValueError(
-            f"MohrCoulombSoil: nu must be in [0, 0.5), got {nu!r}"
-        )
-    if rho < 0:
-        raise ValueError(f"MohrCoulombSoil: rho must be >= 0, got {rho!r}")
+    _validate_mc_inputs("MohrCoulombSoil", c=c, phi=phi, psi=psi)
+    _validate_elastic_inputs("MohrCoulombSoil", E=E, nu=nu, rho=rho)
 
     return ASDPlasticMaterial3D(
         yf="MohrCoulomb_YF",
@@ -1292,38 +1869,223 @@ def MohrCoulombSoil(
             ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
         ),
         model_parameters=(
-            # Required MohrCoulomb + elastic + density.
-            ("AF_cr", 0.0),
-            ("AF_ha", 0.0),
-            ("DP_eta", 0.0),
-            ("DP_etabar", 0.0),
-            ("DP_xi_c", 0.0),
-            ("Dilatancy", 0.0),
-            ("DuncanChang_MaxSigma3", 0.0),
-            ("DuncanChang_n", 0.0),
-            ("InitialP0", initial_p0),
+            # Exactly the MohrCoulomb_YF / _PF + LinearIsotropic3D_EL
+            # schema (ADR 0105 D1); nothing foreign, nothing missing.
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("MC_phi", phi),
             ("MC_c", c),
             ("MC_ds", ds),
-            ("MC_phi", phi),
             ("MC_psi", psi),
             ("MassDensity", rho),
-            ("PoissonsRatio", nu),
-            ("ReferencePressure", 0.0),
-            ("ReferenceYoungsModulus", 0.0),
-            ("ScalarLinearHardeningParameter", 0.0),
-            ("TC_min_stress", 0.0),
-            ("TensorLinearHardeningParameter", 0.0),
-            ("YoungsModulus", E),
+            ("InitialP0", initial_p0),
         ),
-        integration_options=(
-            ("f_absolute_tol", f_absolute_tol),
-            ("stress_absolute_tol", stress_absolute_tol),
-            ("n_max_iterations", n_max_iterations),
-            ("rk45_dT_min", rk45_dT_min),
-            ("rk45_niter_max", rk45_niter_max),
-            ("return_to_yield_surface", return_to_yield_surface),
-            ("integration_method", integration_method),
-            ("tangent_type", tangent_type),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# MohrCoulombTensionCutoffSoil / HoekBrownRock — the two other typed helpers
+# (ADR 0105 D5).  Same build as MohrCoulombSoil: exact schema, D2 defaults,
+# PlaneStrain-wrappable.  DruckerPrager / VonMises stay on the generic class.
+# ---------------------------------------------------------------------------
+
+
+def MohrCoulombTensionCutoffSoil(
+    *,
+    c: float,
+    phi: float,
+    psi: float,
+    tension_cutoff: float,
+    E: float,
+    nu: float,
+    rho: float = 0.0,
+    ds: float = 1e-5,
+    initial_p0: float = 0.0,
+    integration_method: str = "Backward_Euler",
+    tangent_type: str = "Continuum",
+    f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
+    stress_absolute_tol: float = 1e-6,
+    n_max_iterations: int = 100,
+    strict_convergence: bool = True,
+    return_to_yield_surface: str = "Disabled",
+    rk45_dT_min: float = 0.01,
+    rk45_niter_max: int = 100,
+) -> ASDPlasticMaterial3D:
+    """Mohr-Coulomb with a Rankine tension cut-off (fork ADR-84 composite).
+
+    ``MohrCoulombTensionCutoff_YF / _PF + LinearIsotropic3D_EL +
+    BackStress(NullHardeningTensorFunction):`` — the Cerro Lindo rock-mass
+    material.  Emits exactly the combination's schema (``MohrCoulombSoil``'s
+    eight names plus ``TC_min_stress``) with the ADR 0105 defaults; the
+    same fork-build and host requirements as :func:`MohrCoulombSoil`.
+
+    Parameters
+    ----------
+    c, phi, psi, E, nu, rho, ds, initial_p0
+        As :func:`MohrCoulombSoil`.
+    tension_cutoff
+        The Rankine limit on the major principal stress, **tension
+        positive** (``f_TC = sigma_max - TC_min_stress`` in the fork).
+        Must be ``>= 0``; the fork caps the effective cut-off at the
+        Mohr-Coulomb apex, ``min(tension_cutoff, c * cot(phi))``.
+    integration_method, tangent_type, ..., rk45_niter_max
+        As :func:`MohrCoulombSoil`.
+    """
+    _validate_mc_inputs("MohrCoulombTensionCutoffSoil", c=c, phi=phi, psi=psi)
+    _validate_elastic_inputs("MohrCoulombTensionCutoffSoil", E=E, nu=nu, rho=rho)
+    if tension_cutoff < 0:
+        raise ValueError(
+            "MohrCoulombTensionCutoffSoil: tension_cutoff must be >= 0 "
+            f"(tension positive), got {tension_cutoff!r}"
+        )
+    return ASDPlasticMaterial3D(
+        yf="MohrCoulombTensionCutoff_YF",
+        pf="MohrCoulombTensionCutoff_PF",
+        el="LinearIsotropic3D_EL",
+        iv="BackStress(NullHardeningTensorFunction):",
+        internal_variables=(
+            ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        ),
+        model_parameters=(
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("MC_phi", phi),
+            ("MC_c", c),
+            ("MC_ds", ds),
+            ("MC_psi", psi),
+            ("TC_min_stress", tension_cutoff),
+            ("MassDensity", rho),
+            ("InitialP0", initial_p0),
+        ),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
+        ),
+    )
+
+
+def HoekBrownRock(
+    *,
+    E: float,
+    nu: float,
+    sigci: float,
+    mb: float,
+    s: float,
+    a: float,
+    mb_psi: float | None = None,
+    ds: float = 0.0,
+    rho: float = 0.0,
+    initial_p0: float = 0.0,
+    integration_method: str = "Backward_Euler",
+    tangent_type: str = "Continuum",
+    f_absolute_tol: float = 1e-6,
+    f_relative_tol: float = 0.0,
+    stress_absolute_tol: float = 1e-6,
+    n_max_iterations: int = 100,
+    strict_convergence: bool = True,
+    return_to_yield_surface: str = "Disabled",
+    rk45_dT_min: float = 0.01,
+    rk45_niter_max: int = 100,
+) -> ASDPlasticMaterial3D:
+    """Generalized Hoek-Brown rock mass (``HoekBrown_YF / HoekBrown_PF``).
+
+    ``HoekBrown_YF / HoekBrown_PF + LinearIsotropic3D_EL +
+    BackStress(NullHardeningTensorFunction):``, emitting exactly the
+    combination's schema with the ADR 0105 defaults.  Takes the rock-mass
+    constants ``mb, s, a`` directly: deriving them from ``mi, GSI, D``
+    (Hoek & Brown 2018) is the caller's job — the fork's
+    ``HoekBrown_Utils.h`` formulas are one-liners and are not duplicated
+    here.  In net tension the fork yields at the textbook tensile
+    strength ``-s * sigci / mb`` (fork PR #806).
+
+    Parameters
+    ----------
+    E, nu, rho, initial_p0
+        As :func:`MohrCoulombSoil`.
+    sigci
+        Unconfined compressive strength of the intact rock (stress units,
+        ``> 0``).
+    mb, s, a
+        Rock-mass Hoek-Brown constants (``mb > 0``, ``0 < s <= 1``,
+        ``0 < a <= 1``).
+    mb_psi
+        The ``mb`` of the plastic potential.  ``None`` (default) uses
+        ``mb`` — associated flow.
+    ds
+        Perturbation of the yield function's numerical derivative
+        (``HB_ds``); ``0.0`` is the fork's own test value.
+    f_relative_tol
+        Rock-scale decks should set it — ``1e-8`` is the fork's suggested
+        start for Hoek-Brown at 50 MPa (fork ADR-94 M5): the absolute
+        tolerance alone is a verdict on the unit system.
+    integration_method, tangent_type, ..., rk45_niter_max
+        As :func:`MohrCoulombSoil`.
+    """
+    _validate_elastic_inputs("HoekBrownRock", E=E, nu=nu, rho=rho)
+    if sigci <= 0:
+        raise ValueError(f"HoekBrownRock: sigci must be > 0, got {sigci!r}")
+    if mb <= 0:
+        raise ValueError(f"HoekBrownRock: mb must be > 0, got {mb!r}")
+    if not (0.0 < s <= 1.0):
+        raise ValueError(f"HoekBrownRock: s must be in (0, 1], got {s!r}")
+    if not (0.0 < a <= 1.0):
+        raise ValueError(f"HoekBrownRock: a must be in (0, 1], got {a!r}")
+    if mb_psi is None:
+        mb_psi = mb
+    elif mb_psi <= 0:
+        raise ValueError(f"HoekBrownRock: mb_psi must be > 0, got {mb_psi!r}")
+    return ASDPlasticMaterial3D(
+        yf="HoekBrown_YF",
+        pf="HoekBrown_PF",
+        el="LinearIsotropic3D_EL",
+        iv="BackStress(NullHardeningTensorFunction):",
+        internal_variables=(
+            ("BackStress", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        ),
+        model_parameters=(
+            ("YoungsModulus", E),
+            ("PoissonsRatio", nu),
+            ("HB_sigci", sigci),
+            ("HB_mb", mb),
+            ("HB_s", s),
+            ("HB_a", a),
+            ("HB_mb_psi", mb_psi),
+            ("HB_ds", ds),
+            ("MassDensity", rho),
+            ("InitialP0", initial_p0),
+        ),
+        integration_options=_asdp_integration_tail(
+            integration_method=integration_method,
+            tangent_type=tangent_type,
+            f_absolute_tol=f_absolute_tol,
+            f_relative_tol=f_relative_tol,
+            stress_absolute_tol=stress_absolute_tol,
+            n_max_iterations=n_max_iterations,
+            strict_convergence=strict_convergence,
+            return_to_yield_surface=return_to_yield_surface,
+            rk45_dT_min=rk45_dT_min,
+            rk45_niter_max=rk45_niter_max,
         ),
     )
 

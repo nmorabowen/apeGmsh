@@ -177,10 +177,21 @@ def tail_monitor(
         idle = 0.0
         while True:
             step_ds.id.refresh()
-            total = step_ds.shape[0]
+            time_ds.id.refresh()
+            frame_ds.id.refresh()
+            # A frame is three separate appends on the writer's side —
+            # STEP, then TIME, then FRAMES — and SWMR gives no atomicity
+            # across them. A refresh landing inside that window sees a
+            # LONGER ``STEP`` than ``FRAMES``, and slicing ``FRAMES`` to
+            # the step count then returns fewer rows than asked for:
+            # ``rows[i]`` raised ``IndexError`` out of a reader whose
+            # whole purpose is following a file someone else is writing.
+            # Take the shortest of the three — a half-appended frame is
+            # not a frame yet, and the next poll picks it up.
+            total = min(
+                step_ds.shape[0], time_ds.shape[0], frame_ds.shape[0],
+            )
             if total > n:
-                time_ds.id.refresh()
-                frame_ds.id.refresh()
                 steps = np.asarray(step_ds[n:total], dtype=np.int64).flatten()
                 times = np.asarray(time_ds[n:total], dtype=np.float64).flatten()
                 rows = np.asarray(frame_ds[n:total], dtype=np.float64)

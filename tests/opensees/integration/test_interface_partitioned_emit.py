@@ -692,3 +692,151 @@ def test_mixed_ndf_partitioned_emit_is_reproducible(tmp_path):
     first = _deck_text(_mixed_ops(fem), tmp_path, "a.tcl")
     second = _deck_text(_mixed_ops(fem), tmp_path, "b.tcl")
     assert first == second
+
+
+# =====================================================================
+# (6) 3D surface masters — the same fan-out, one dimension up
+#     (TIMs A10 S4; the plan's named coverage gap)
+# =====================================================================
+# Everything above is 2-D. The partitioned route is dimension-blind by
+# construction — ``_plan_rank_interfaces`` reads only the stamped
+# backing element, and the per-rank block calls the SAME
+# ``_emit_interface_record`` the flat pass does — and the S3 adversarial
+# review measured a 3-D model fanning out correctly (row 9). Nothing
+# pinned it, so a 2-D-only regression would go green. These two do.
+
+
+def _volume_of(dim: int, tag: int) -> int:
+    """Walk upward adjacencies to the volume an entity bounds — the two
+    boxes are un-fragmented, so every boundary entity (including the
+    coincident ones at ``z = 1``) belongs to exactly one body."""
+    while dim < 3:
+        up, _down = gmsh.model.getAdjacencies(dim, tag)
+        dim, tag = dim + 1, int(up[0])
+    return tag
+
+
+def _surface_at_z(volume: int, z: float, tol: float = 1e-6) -> int:
+    for _dim, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[2] - z) < tol and abs(bb[5] - z) < tol:
+            return abs(tag)
+    raise AssertionError(f"no boundary surface of volume {volume} at z={z}")
+
+
+def _partition_soil_footing(g) -> None:
+    """Split exactly at the interface: every element of the soil box —
+    including the boundary entities coincident with the cut — to
+    partition 1, the footing to partition 2. Raw centroids cannot do it
+    (master and slave surfaces both sit at ``z = 1.0``), so lower-dim
+    elements follow the body they bound."""
+    elem_tags: "list[int]" = []
+    parts: "list[int]" = []
+    for dim, tag in gmsh.model.getEntities():
+        vol = _volume_of(dim, tag)
+        part = 1 if gmsh.model.occ.getCenterOfMass(3, vol)[2] < 1.0 else 2
+        _etypes, etags_list, _enodes = gmsh.model.mesh.getElements(
+            dim=dim, tag=tag)
+        for etags in etags_list:
+            for t in etags:
+                elem_tags.append(int(t))
+                parts.append(part)
+    g.mesh.partitioning.partition_explicit(3, elem_tags, parts)
+
+
+def _fem3d(*, n: int = 3, cut: bool = True):
+    """Soil ``[0,1]^3`` under footing ``[0,1]^2 x [1,2]``, un-fragmented,
+    so the two surfaces at ``z = 1`` carry coincident but distinct node
+    sets. No ``thickness`` — a 3-D master's ``A_trib`` is the facet-area
+    accumulation (ADR 0093 D3)."""
+    with apeGmsh(model_name="iface_s8_3d", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=n)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="rock")
+        g.physical.add(3, [footing], name="liner")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [_surface_at_z(footing, 1.0)], name="wire")
+        g.constraints.interface(
+            "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
+            name="RockLiner")
+        if cut:
+            _partition_soil_footing(g)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def _brick_ops(fem):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    for pg in ("rock", "liner"):
+        ops.element.stdBrick(pg=pg, material=mat)
+    return ops
+
+
+def test_3d_two_rank_owner_block_matches_the_flat_deck_byte_for_byte(
+    tmp_path,
+):
+    fem = _fem3d()
+    assert len(fem.partitions) == 2
+    recs = list(fem.elements.interfaces)
+    assert len(recs) == 9                      # 3x3 nodes on the face
+
+    part_text = _deck_text(_brick_ops(fem), tmp_path, "part.tcl")
+    flat_text = _deck_text(_brick_ops(fem), tmp_path, "flat.tcl", flat=True)
+
+    blocks = _rank_lines(part_text)
+    owners = [r for r, lines in blocks.items() if _zl_lines(lines)]
+    assert owners == [0], (
+        f"interface units in rank blocks {owners} — every backing "
+        "element is a soil brick, so rank 0 owns ALL units "
+        "(ADR 0093 INV-5)"
+    )
+
+    slave_ids = {int(r.slave_node) for r in recs}
+    owner_iface = _drop_ghost_lines(_iface_portion(blocks[0]), slave_ids)
+    flat_iface = _iface_portion(
+        [ln.strip() for ln in flat_text.splitlines()],
+    )
+    assert owner_iface == flat_iface
+    # …and they really are the 3-D unit, not a 2-D one that happened to
+    # match: three -mat slots on -dir 1 2 3 with a six-float -orient.
+    for ln in _zl_lines(owner_iface):
+        tok = ln.split()
+        assert tok[tok.index("-dir"):tok.index("-orient")] == [
+            "-dir", "1", "2", "3"]
+        assert len(tok[tok.index("-orient") + 1:]) == 6
+
+
+def test_3d_per_rank_fragments_carry_each_unit_exactly_once(tmp_path):
+    """``per_rank=True`` (ADR 0061) is layout-only: the owner rank's
+    fragment carries all nine units, the other rank's carries none, and
+    reassembling the fragments reproduces the monolithic deck."""
+    fem = _fem3d()
+    n_pairs = len(fem.elements.interfaces)
+    mono = tmp_path / "mono" / "main.tcl"
+    per = tmp_path / "per" / "main.tcl"
+    mono.parent.mkdir()
+    per.parent.mkdir()
+    _brick_ops(fem).tcl(str(mono))
+    _brick_ops(fem).tcl(str(per), per_rank=True)
+
+    frags = sorted((per.parent / "ranks").glob("rank*.tcl"))
+    assert frags, "per_rank=True wrote no rank fragments"
+    per_rank_zl = {
+        frag.name: _zl_lines([ln.strip() for ln in
+                              frag.read_text(encoding="utf-8").splitlines()])
+        for frag in frags
+    }
+    owners = {name for name, zl in per_rank_zl.items() if zl}
+    assert len(owners) == 1, (
+        f"interface zeroLength lines in {sorted(owners)} — the unit is "
+        "atomic and belongs to exactly one rank (ADR 0093 INV-5)")
+    owner_zl = per_rank_zl[owners.pop()]
+    assert len(owner_zl) == n_pairs == len(set(owner_zl))
+
+    mono_zl = _zl_lines([ln.strip() for ln in
+                         mono.read_text(encoding="utf-8").splitlines()])
+    assert sorted(owner_zl) == sorted(mono_zl)

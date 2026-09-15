@@ -1,5 +1,8 @@
 # apeGmsh ← Ladruno 2-D contact: adoption brief (fork ADR-85)
 
+> 3-D sibling: `contact_3d_passenger_dof_adoption.md` (fork ADR 96, u-p
+> nodes on `zeroLength` / contact). The 2-D lane it describes is unchanged.
+
 > ## STATUS — most of this brief is now HISTORY (2026-08-19)
 >
 > The adoption shipped: apeGmsh **#1048** and fork **#764**, plus **S4**

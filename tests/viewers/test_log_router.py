@@ -227,9 +227,10 @@ def test_excepthook_delegates_to_original(qapp):
 # =====================================================================
 
 
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnraisableExceptionWarning"
+)
 def test_unraisablehook_emits_error(captured, qapp):
-    import warnings
-
     router, msgs = captured
     # Simulate sys.unraisablehook's parameter — a named tuple-like
     # object with exc_type / exc_value / exc_traceback / err_msg.
@@ -245,11 +246,14 @@ def test_unraisablehook_emits_error(captured, qapp):
         err_msg = "from a Qt slot"
         object = None
 
-    # Suppress the PytestUnraisableExceptionWarning that pytest
-    # synthesises for this kind of intentional test invocation.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        sys.unraisablehook(_Unraisable())
+    # Feeding pytest's own unraisablehook is the point of the test, and
+    # pytest ANSWERS it by queueing the exception and warning about it at
+    # the end of this item -- outside any ``warnings.catch_warnings()``
+    # block in the test body, which is why the one that used to sit here
+    # suppressed nothing and the warning still reached the run summary.
+    # The filterwarnings mark above is installed around the whole item,
+    # so it covers pytest's own end-of-phase collection too.
+    sys.unraisablehook(_Unraisable())
     _drain(qapp)
     matched = [(t, s) for t, s in msgs if "boom-via-unraisable" in t]
     assert matched

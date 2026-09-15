@@ -15,6 +15,8 @@ not pollute prior state.
 """
 from __future__ import annotations
 
+from .._internal.build import stage_marker_name
+
 from typing import Any, Literal, Sequence
 
 from .base import StrategySpec, trim_coords_to_ndm
@@ -128,6 +130,17 @@ class PyEmitter:
         # APEGMSH_PROGRESS ...)`` in the loop so the run=True streamer
         # can render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
+        # ADR 0106 D2 — stage-marker injection, set by
+        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
+        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ``print(APEGMSH_STAGE open|close <name>)`` so a solver-stats
+        # block on stderr can be attributed to the stage that paid for
+        # it. Default off keeps a deck with no ``stats=True`` anywhere
+        # byte-identical to today (INV-1). Tracks the name of the
+        # currently-open stage so ``stage_close`` (which takes no
+        # argument) can name it too.
+        self._emit_stage_markers: bool = False
+        self._current_stage_name: str | None = None
 
     # -- Output --------------------------------------------------------------
 
@@ -517,7 +530,11 @@ class PyEmitter:
         # algorithm) and restores rung 0 after a rescue; exhaustion
         # aborts with the same banner naming the ladder.
         n = int(steps)
-        where = f" of stage '{label}'".replace('"', "'") if label else ""
+        # ADR 0106 D2's stage_marker_name closes the same quoting hole
+        # here: a raw label could carry ``\`` or a newline into the
+        # generated ``raise SystemExit("...")`` banner below (the old
+        # ``"`` -> ``'`` swap alone left those open).
+        where = f" of stage '{stage_marker_name(label)}'" if label else ""
         call = (
             _ops_call("analyze", 1) if dt is None
             else _ops_call("analyze", 1, dt)
@@ -547,7 +564,7 @@ class PyEmitter:
             "(" + ", ".join(repr(a) for a in rung) + ",)"
             for rung in strategy.rungs
         ) + "]"
-        sname = strategy.name.replace('"', "'")
+        sname = stage_marker_name(strategy.name)
         self._lines.append(f"_apesees_rungs = {rungs_literal}")
         self._lines.append(f"for _apesees_i in range({n}):")
         prev_indent = self._lines.indent
@@ -611,6 +628,18 @@ class PyEmitter:
         )
         self._lines.indent = prev_indent + "    "
 
+    def _emit_stage_marker(self, phase: str, name: str) -> None:
+        """ADR 0106 D2 — ``print(APEGMSH_STAGE open|close <name>)`` at
+        the current (outer) indent, name LAST so a name with spaces
+        survives the S1 parser's ``r"APEGMSH_STAGE (open|close) (.+)$"``.
+
+        Quoting normalised the same way ``analyze`` already normalises a
+        strategy name: ``"`` -> ``'`` so the name cannot close the
+        enclosing Python string literal early.
+        """
+        sname = stage_marker_name(name)
+        self._lines.append(f'print("APEGMSH_STAGE {phase} {sname}", flush=True)')
+
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
@@ -672,6 +701,25 @@ class PyEmitter:
         self._lines.append(_ops_call("updateParameter", int(pid), 1))
         self._lines.append(_ops_call("remove", "parameter", int(pid)))
 
+    def update_parameter(
+        self,
+        pid: int,
+        ele_tags: tuple[int, ...],
+        args: tuple[str | int, ...],
+        value: float,
+    ) -> None:
+        self._lines.append(_ops_call("parameter", int(pid)))
+        for et in ele_tags:
+            self._lines.append(
+                _ops_call(
+                    "addToParameter", int(pid), "element", int(et), *args,
+                )
+            )
+        self._lines.append(
+            _ops_call("updateParameter", int(pid), float(value))
+        )
+        self._lines.append(_ops_call("remove", "parameter", int(pid)))
+
     def step_hook_ramp(
         self,
         name: str,
@@ -720,6 +768,9 @@ class PyEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
+        if self._emit_stage_markers:
+            self._current_stage_name = name
+            self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
 
     def domain_change(self) -> None:
@@ -731,6 +782,9 @@ class PyEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
+        if self._emit_stage_markers and self._current_stage_name is not None:
+            self._emit_stage_marker("close", self._current_stage_name)
+            self._current_stage_name = None
         # openseespy: ``ops.loadConst('-time', 0.0)`` matches the Tcl
         # ``loadConst -time 0.0`` semantics.
         self._lines.append(_ops_call("loadConst", "-time", 0.0))
@@ -759,6 +813,22 @@ class PyEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(_ops_call("reset"))
+        self._lines.indent = prev_indent
+
+    def set_node_vel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call(
+            "setNodeVel", int(node), int(dof), float(value), "-commit",
+        ))
+        self._lines.indent = prev_indent
+
+    def set_node_accel(self, node: int, dof: int, value: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call(
+            "setNodeAccel", int(node), int(dof), float(value), "-commit",
+        ))
         self._lines.indent = prev_indent
 
     def remove_sp(self, node: int, dof: int) -> None:

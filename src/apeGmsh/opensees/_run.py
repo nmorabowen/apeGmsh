@@ -42,13 +42,35 @@ import os
 import re
 import subprocess
 import time
+import warnings
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
+
+from ._solver_stats import RunSolverStats, parse_solver_stats
+from ._target import TIMS_FORK_BATCH_MIN_BUILD
 
 if TYPE_CHECKING:  # type-only — no runtime edge onto the habitat
     from ..studio._progress import ProgressSidecar
 
-__all__ = ["stream_run", "resolve_log_path", "run_label"]
+__all__ = [
+    "stream_run",
+    "resolve_log_path",
+    "run_label",
+    "SolverStatsWarning",
+]
+
+
+class SolverStatsWarning(UserWarning):
+    """``-stats`` was emitted but no ``PARDISO stats:`` block came back.
+
+    ADR 0106 D4 / INV-6.  Two live causes, both covered by the one
+    sentence: a fork build older than
+    :data:`~apeGmsh.opensees._target.TIMS_FORK_BATCH_MIN_BUILD` (which
+    prints the older once-per-pattern format apeGmsh deliberately does
+    not parse), and a ``system`` declaration that never took effect.
+    Fail-soft — the run itself is unaffected.
+    """
+
 
 #: One machine-readable marker per emitted analyze increment sample
 #: (``puts "APEGMSH_PROGRESS i=.. n=.. t=.."`` — see the Tcl / Py
@@ -110,7 +132,8 @@ def stream_run(
     header: str = "OpenSees",
     env: dict[str, str] | None = None,
     deck_path: str | None = None,
-) -> None:
+    expect_solver_stats: bool = False,
+) -> RunSolverStats | None:
     """Run ``argv``, tee stdout+stderr to ``log_path``, report to console.
 
     Raises :class:`RuntimeError` on a non-zero exit, with the last
@@ -119,6 +142,19 @@ def stream_run(
     *deck_path* is recorded in the habitat progress sidecar so a
     consumer knows which deck the counter belongs to; omitting it costs
     that field only.
+
+    *expect_solver_stats* says the deck asked a solver for ``-stats``
+    (ADR 0106 D2's ``deck_requests_solver_stats``).  When true the tee'd
+    lines are handed to :func:`~apeGmsh.opensees._solver_stats.parse_solver_stats`
+    **as they stream** and the finished :class:`RunSolverStats` is
+    returned; when false the parser is never called and ``None`` is
+    returned (INV-1 — the parse does not merely cost nothing, it does
+    not run).  Parsing never consumes, reorders or rewrites a line: the
+    tee is byte-identical either way (INV-2).  On a non-zero exit the
+    ``RuntimeError`` is raised as before and the record is *not*
+    smuggled through it — the log is on disk and
+    ``parse_solver_stats(log_path)`` reads the same record back (D1,
+    INV-7).
     """
     started = time.perf_counter()
     n_lines = 0
@@ -145,33 +181,55 @@ def stream_run(
         env=env,
     )
     assert proc.stdout is not None
+    stats: RunSolverStats | None = None
     with open(log_path, "w", encoding="utf-8", errors="replace") as logf:
-        for line in proc.stdout:
-            logf.write(line)
-            logf.flush()
-            n_lines += 1
-            raw = line.rstrip("\n")
 
-            m = _PROGRESS_RE.search(raw)
-            if m is not None:
-                i, n = int(m.group(1)), int(m.group(2))
-                if verbose:
-                    pct = (100 * i) // n if n else 0
-                    el = time.perf_counter() - started
-                    print(
-                        f"   step {i:>7}/{n}  {pct:>3d}%   "
-                        f"t={m.group(3)}   elapsed {el:5.1f}s"
-                    )
-                if progress is not None:
-                    progress.sample(i=i, n=n, t=m.group(3), warnings=n_warn)
-                continue
+        def _tee() -> Iterator[str]:
+            """The read loop, yielding each tee'd line to the stats parser.
 
-            if _WARN_RE.search(raw):
-                n_warn += 1
-                warn_at.append(n_lines)
-                if verbose:
-                    print(f"   [warn] {raw.strip()}  (line {n_lines})")
-            tail.append(raw)
+            A generator so the *same* line the tee just wrote is what
+            the parser sees, in order, with nothing buffered up (D1's
+            "feeds it the stream line by line as it tees").  Yielding
+            before the progress / warning handling below keeps the
+            parser's view of the stream complete — the ``continue``
+            that hides a progress marker from the tail must not hide it
+            from the parse.
+            """
+            nonlocal n_lines, n_warn
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                logf.write(line)
+                logf.flush()
+                n_lines += 1
+                raw = line.rstrip("\n")
+                yield raw
+
+                m = _PROGRESS_RE.search(raw)
+                if m is not None:
+                    i, n = int(m.group(1)), int(m.group(2))
+                    if verbose:
+                        pct = (100 * i) // n if n else 0
+                        el = time.perf_counter() - started
+                        print(
+                            f"   step {i:>7}/{n}  {pct:>3d}%   "
+                            f"t={m.group(3)}   elapsed {el:5.1f}s"
+                        )
+                    if progress is not None:
+                        progress.sample(i=i, n=n, t=m.group(3), warnings=n_warn)
+                    continue
+
+                if _WARN_RE.search(raw):
+                    n_warn += 1
+                    warn_at.append(n_lines)
+                    if verbose:
+                        print(f"   [warn] {raw.strip()}  (line {n_lines})")
+                tail.append(raw)
+
+        if expect_solver_stats:
+            stats = parse_solver_stats(_tee())
+        else:
+            for _ in _tee():
+                pass
         proc.wait()
 
     elapsed = time.perf_counter() - started
@@ -189,7 +247,27 @@ def stream_run(
             head = ", ".join(str(x) for x in warn_at[:8])
             more = " ..." if len(warn_at) > 8 else ""
             print(f"     {n_warn} warnings at log lines {head}{more}")
-        return
+        # ADR 0106 INV-6: the deck asked for stats and the run came back
+        # clean, yet nothing parseable appeared. Success path only — a
+        # failed run has an obvious third cause (it died before the
+        # first factorisation) that this sentence would misdiagnose, and
+        # the RuntimeError is already the loud signal there.
+        if (
+            stats is not None
+            and stats.factorisations == 0
+            and stats.malformed_blocks == 0
+        ):
+            warnings.warn(
+                "`system Pardiso -stats` was emitted but no `PARDISO "
+                "stats:` block appeared in the run output. Fork builds "
+                f"before `{TIMS_FORK_BATCH_MIN_BUILD}` "
+                "(`TIMS_FORK_BATCH_MIN_BUILD`) print the older "
+                "once-per-pattern format, which apeGmsh does not parse. "
+                "Solver statistics are unavailable for this run.",
+                SolverStatsWarning,
+                stacklevel=2,
+            )
+        return stats
 
     print(f"[FAIL] exited {rc} after {elapsed:.1f}s  |  see {log_path}")
     tail_lines = list(tail)

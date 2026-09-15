@@ -180,6 +180,7 @@ nav:
           - Author a section document: how-to/author-a-section-document.md
           - Export to Tcl / openseespy: how-to/export-script.md
           - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
+          - Evaluate footfall vibration: how-to/footfall-vibration.md
       - Results:
           - Read displacement & reactions: how-to/read-results.md
           - Render a deformed shape or contour: how-to/render-a-still.md

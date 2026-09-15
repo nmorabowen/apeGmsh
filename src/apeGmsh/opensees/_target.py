@@ -101,22 +101,59 @@ class OpenSeesCapabilities:
     """
 
 
+#: Minimum fork build (``ops.ladrunoBuild()``) for the 2026-09-07 TIMs batch
+#: (fork PRs #805, #808, #810, #811, #812, #814, #820, #821 — the fork's
+#: ``ladruno_apegmsh_adoption_guide_2026-09-07.md``).  Documented, not
+#: enforced (same as :data:`~apeGmsh.opensees.material.nd.ASDP_MIN_FORK_BUILD`
+#: — a bare hash cannot prove ancestry).  An older fork: ``zeroLength`` /
+#: contact refuse an ndf-4 u-p node in 3D (ADR 96), ``LadrunoSANISAND``
+#: answers no ``psi`` / ``yieldDistance`` and writes ``C1..Cn`` for its
+#: IMPL-EX responses, and ``system Pardiso -stats`` prints the old
+#: once-per-pattern lines instead of the per-factorisation block.
+TIMS_FORK_BATCH_MIN_BUILD = "a240b9183"
+
+
+def _resolve_binary_in_dir(path: str) -> str:
+    """Descend into *path* if it names a directory, else return it unchanged.
+
+    A directory is treated as a ``dist/bin``-style folder: look for
+    ``OpenSees.exe`` (Windows) / ``OpenSees`` (elsewhere) inside it.
+    Raises :class:`FileNotFoundError` naming the directory if the binary
+    is not there — the alternative is handing the directory straight to
+    ``CreateProcess``, which fails with an opaque ``WinError 5``.
+    """
+    if os.path.isdir(path):
+        exe_name = "OpenSees.exe" if os.name == "nt" else "OpenSees"
+        candidate = os.path.join(path, exe_name)
+        if os.path.isfile(candidate):
+            return candidate
+        raise FileNotFoundError(
+            f"{path!r} is a directory but does not contain {exe_name!r}. "
+            "Pass the OpenSees dist/bin directory (it will be searched "
+            "for the binary) or a direct path to the executable."
+        )
+    return path
+
+
 def resolve_opensees_binary(
     explicit: str | None, target: OpenSeesTarget | None
 ) -> str:
     """Resolve the OpenSees Tcl binary path.
 
     Precedence: explicit ``bin=`` argument → ``target.binary`` →
-    ``$OPENSEES_BIN`` → ``shutil.which("OpenSees")``.  Raises
-    :class:`FileNotFoundError` if none resolve.
+    ``$OPENSEES_BIN`` → ``shutil.which("OpenSees")``.  At every
+    precedence level a directory (e.g. a fork ``dist/bin``) is searched
+    for ``OpenSees.exe`` / ``OpenSees`` inside it; a file path is used
+    as-is.  Raises :class:`FileNotFoundError` if none resolve (naming the
+    directory if one was given but did not contain the binary).
     """
     if explicit is not None:
-        return explicit
+        return _resolve_binary_in_dir(explicit)
     if target is not None and target.binary is not None:
-        return target.binary
+        return _resolve_binary_in_dir(target.binary)
     env = os.environ.get("OPENSEES_BIN")
     if env:
-        return env
+        return _resolve_binary_in_dir(env)
     on_path = shutil.which("OpenSees")
     if on_path:
         return on_path

@@ -25,6 +25,63 @@ parser adoption (unknown tokens, required parameters, `strict_convergence`,
 this one before touching `material/nd.py`, since both land in the same file
 and the same `Begin_Integration_Options` block (§9).
 
+## Adoption status — ADOPTED as ADR 0107 (2026-09-08)
+
+`Closest_Point` / `Algorithmic` are accepted values on
+`ASDPlasticMaterial3D` and all three D5 helpers, and
+`material.cp_iterations` is a readable Gauss component; see
+`src/apeGmsh/opensees/architecture/decisions/0107-asdplastic-closest-point-return-map.md`.
+**Verified live, 4/4, on fork build `ff47275fd`** (the `origin/ladruno`
+tip). Measured: CP commits at `max|f_MC|` 8.24e-13 against
+`Backward_Euler`'s 1.03e-08 at equal iterations; the maps agree to 0.82 %,
+differing only where CP pins the exact MC corner BE rounds.
+
+**The finding this guide does not have** (§0 says CP "converges strictly
+more of a load history"): apeGmsh's own `strict_convergence=True` default
+REFUSES a CP leg at ordinary kPa soil scale. The fork tests a TRIAL
+state's residual against the ABSOLUTE `f_absolute_tol`, a mid-Newton
+trial reaches `f = 1.37e-06` against the `1e-06` default (~1.6e-08
+relative), and the step is rejected — `analyze() == -3` at step 1 of 20.
+The MORE accurate map trips a threshold the coarser one misses. Set
+`f_relative_tol`, or strict off. Pinned in
+`case_strict_refuses_closest_point`.
+
+Four things below were written against a base 30 commits stale and are
+now WRONG — corrected here rather than edited in place, so the fork-side
+record stays as it was handed over:
+
+- **§9's prerequisite is satisfied.** The "proposed ADR 0104" shipped as
+  **ADR 0105** (PRs #1110–#1115). Its D3 already built the client-side
+  enum validation §5 item 1 asks for; this adoption only extends the
+  tables.
+- **§0 / §4's "`Secant` (apeGmsh's emitted default)" is stale.** ADR 0105
+  moved every helper's default to `Continuum` on measurement. The
+  57/80/103 % tangent-error figures still stand; the one that describes
+  our decks is `Continuum`'s **57 %**, not `Secant`'s 80 %.
+- **§5 item 1's "`MohrCoulombSoil` (`:1191-1328`)" is one of three.**
+  `MohrCoulombTensionCutoffSoil` and `HoekBrownRock` also exist (ADR 0105
+  D5) and are also matched YF/PF pairs, so all three support the map.
+  Their docstrings delegate to `MohrCoulombSoil`'s, so one edit covers
+  all three; the `_internal/ns/nd.py` mirror delegates too, making §5
+  item 2 a genuine no-op.
+- **§5 item 4's premise is false, but `cp_iterations` shipped anyway.**
+  The results layer does NOT expose an arbitrary named material response
+  generically: `_MATERIAL_BUCKET_TOKENS` is a closed table (ADR 0105
+  Amendment 1) and an unmapped bucket is dropped with a warning. It took
+  one table entry, whose shape was OBSERVED rather than guessed — a
+  scalar per Gauss point (`NUM_COMP` 1, `MULTIPLICITY` 1, `FIBER_ID` -1,
+  one column per `GAUSS_ID`), reading 0 while elastic and 1 once MC
+  yields. §6's "per-Gauss-point response" is right; its `ops.eleResponse(
+  1, "cp_iterations")` example in §8 is NOT — that returns an empty list.
+  The token only reaches you through a recorder, as
+  `elem_responses=("material.cp_iterations",)`, the same
+  material-level rule ADR 0105 found for `pstrain`.
+
+One thing the guide does not mention that mattered: `__post_init__`
+warned on `integration_method != "Backward_Euler"`, so `Closest_Point`
+would have raised a bogus "experimental, no drift correction" warning.
+The warning is now keyed on the explicit four (ADR 0107 D3).
+
 ## 0. One-paragraph summary
 
 `Backward_Euler` (apeGmsh's only integrator today, via `MohrCoulombSoil`'s

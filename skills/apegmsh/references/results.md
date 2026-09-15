@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@f90bfef9 (2026-07-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`
@@ -73,7 +73,9 @@ Notes:
   key (`basicForce`/`localForce`/`force`/`globalForce`) returning the raw
   block. Beam diagrams orient from the recorder's `MODEL/LOCAL_AXES`
   (`results.elements.local_axes(...)`; `line_force` uses it for true
-  cross-section roll). Energy: `results.energy(region=)`. See
+  cross-section roll). Energy: `results.energy(region=)`. ASDPlasticMaterial3D's
+  material-level responses (`material.pstrain`, `material.PStress`, …) land on
+  `results.elements.gauss` under canonical names too (ADR 0105 Amendment 1) — see
   `references/ladruno.md` for the fork-only details.
 - Zero-setup: `Results.demo()` / `make_demo_results(...)` — see §6.
 
@@ -260,6 +262,24 @@ r = Results.from_native("run.h5", model=model)   # auto-loads the sidecar
 r.stage("dynamic").nodes.definitions             # carried across derivation
 # verified: tests/test_custom_scalar_expressions.py
 ```
+
+### Footfall vibration map — `FootfallResult.to_results` (ADR 0109)
+
+`apeSees.footfall_walking(num_modes=..., body_weight=..., g=..., response_nodes=...)`
+(both `body_weight` and `g` are required, model units — no defaults)
+runs a walking-vibration check per AISC Design Guide 11 2nd ed. Chapter 7
+and returns a `FootfallResult`. `result.to_results(fem, path)` writes it as
+an ordinary one-frame native results file (`footfall_ap`, `footfall_ratio`,
+`footfall_fdom`, `NaN` off the response nodes), so it binds through
+`Results.from_fem(fem, path, kind="native")` like any other bare-fem run
+and the ratio map renders with the plain nodal-scalar viewer — not a
+recorder, not a `RESPONSE_CATALOG` entry. Evaluate `response_nodes=ops.nodes.get(pg="Slab")`
+(self excitation at every slab node) when the map is the point — two nodes
+render as a grey slab. The driver, its rules and the figure accessors
+(`frf`, `mode_table`, `to_dataframe`) are in
+[opensees-bridge.md](opensees-bridge.md) §Footfall; worked floor
+`examples/footfall_two_bay_shell.py`; how-to
+<https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>.
 
 ## 5. Plots and the desktop viewer
 

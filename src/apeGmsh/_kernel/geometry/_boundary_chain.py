@@ -106,12 +106,17 @@ def domain_frames(
     *,
     verb: str = "interface",
     role: str = "master",
+    elem_kind: str = "2D",
 ) -> DomainFrames:
     """Parse the domain elements once: centroids + node adjacency.
 
     Lifted verbatim out of :func:`edge_frames` (same checks, same order,
     same messages) so it can be computed once per resolve instead of once
     per surface.  ``label`` / ``verb`` / ``role`` only prefix the refusals.
+
+    ``elem_kind`` names the top dimension in them, for the 3D surface lane
+    (:func:`_surface_frames.surface_frames`), whose domain elements are
+    solids; the default keeps every 2D message byte-identical.
     """
     elem_tags = [int(t) for t in domain_elem_tags]
     elem_nodes = [np.asarray(n, dtype=int).ravel() for n in domain_elem_nodes]
@@ -121,7 +126,7 @@ def domain_frames(
             f"domain_elem_nodes ({len(elem_nodes)}) disagree in length.")
     if not elem_tags:
         raise ValueError(
-            f"{verb}{label}: no 2D domain elements were supplied — "
+            f"{verb}{label}: no {elem_kind} domain elements were supplied — "
             f"the outward sign (ADR 0093 D2) and the backing element "
             f"(INV-5) are both derived from them.")
 

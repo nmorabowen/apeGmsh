@@ -174,6 +174,57 @@ def test_g2_stage_constraint_master_checked() -> None:
         )
 
 
+# --- A1 — kinematic_coupling with dofs=None ties every DOF the slave has
+# BY COUNT (LadrunoKinematicCoupling.cpp:260-275); a u-p slave's pressure
+# DOF would be tied to the master's rotation. G2 refuses the default on any
+# slave whose ndf is not a translation / translation+rotation layout.
+
+def _kc(master, slaves, dofs=(), name=None):
+    return NodeGroupRecord(
+        kind="kinematic_coupling", name=name, master_node=master,
+        slave_nodes=list(slaves), dofs=list(dofs),
+    )
+
+
+def test_g2_kinematic_coupling_default_dofs_refuses_up_slave_3d() -> None:
+    with pytest.raises(BridgeError, match=r"slave node 3 has ndf 4.*dofs="):
+        validate_constraint_master_ndf(
+            _FemNC([_kc(1, (2, 3), name="footing")]), {1: 6, 2: 3, 3: 4}, 3, 4,
+        )
+
+
+def test_g2_kinematic_coupling_default_dofs_accepts_rigid_layouts() -> None:
+    # 3D: ndf 3 (translations) and ndf 6 (translations + rotations) slaves.
+    validate_constraint_master_ndf(
+        _FemNC([_kc(1, (2, 3))]), {1: 6, 2: 3, 3: 6}, 3, 3,
+    )
+    # 2D: ndf 2 and ndf 3 — an ndf-3 2D u-p node is indistinguishable BY
+    # COUNT from a (u, v, theta) node; the count-based gate lets it pass.
+    validate_constraint_master_ndf(
+        _FemNC([_kc(1, (2, 3))]), {1: 3, 2: 2, 3: 3}, 2, 2,
+    )
+
+
+def test_g2_kinematic_coupling_explicit_dofs_on_up_slave_ok() -> None:
+    validate_constraint_master_ndf(
+        _FemNC([_kc(1, (2,), dofs=(1, 2, 3))]), {1: 6, 2: 4}, 3, 4,
+    )
+
+
+def test_g2_kinematic_coupling_default_dofs_envelope_slave_checked() -> None:
+    # slave 2 absent from the map falls to the ndf-4 envelope -> refused.
+    with pytest.raises(BridgeError, match=r"slave node 2 has ndf 4.*dofs="):
+        validate_constraint_master_ndf(_FemNC([_kc(1, (2,))]), {1: 6}, 3, 4)
+
+
+def test_g2_kinematic_coupling_default_dofs_stage_pool_checked() -> None:
+    with pytest.raises(BridgeError, match=r"slave node 2 has ndf 4.*dofs="):
+        validate_constraint_master_ndf(
+            _FemNC([]), {1: 6, 2: 4}, 3, 6,
+            stage_constraint_records=[_kc(1, (2,))],
+        )
+
+
 # =====================================================================
 # G3 — validate_record_ndf_consistency
 # =====================================================================

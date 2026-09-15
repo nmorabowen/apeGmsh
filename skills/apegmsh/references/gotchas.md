@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -157,6 +157,25 @@ its `zeroA()` kills the fork's factorization reuse). `ModifiedNewton` forms
 it once per step. Worst on softening / arc-length runs. See
 [opensees-bridge.md](opensees-bridge.md); ADR 0082 G2.
 
+### ❌ `footfall_walking(..., solver="-fullGenLapack")` on consistent mass → ✅ default solver
+The D2 scale assertion refuses with "eigenvectors are NOT mass-normalised".
+That is a true positive: on build `1652f945c` LAPACK returns m̃ = 1.009–1.045
+under `c_mass=True`, ARPACK returns exactly 1 under both. Do not switch the
+model to lumped mass to "fix" it — switch the solver. See
+[opensees-bridge.md](opensees-bridge.md) §Footfall.
+
+### ❌ `footfall_walking(..., damp=0.0)` → ✅ Table 4-2 component sum (≥ 0.01)
+Refused on every channel. Before the fix an undamped mode made the modal
+denominator `0+0j` on the grid point that sits exactly on it, the argmax
+selected the NaN, and the map wrote all-NaN with no error.
+
+### ❌ Column lines fragmented into slab surfaces, then mesh → ✅ `remove_orphans()` first
+`g.model.boolean.fragment(bays, cols, dim=2)` consumes the column-top points
+and leaves stale `_metadata` entries; `generate()` raises
+`GeometryValidationError: model._metadata has stale entries`. Call
+`g.model.geometry.remove_orphans()` before `sync()` (the two-bay footfall
+example does this).
+
 ## Pitfalls not covered in the other references
 
 ### `remove_duplicates` tolerance is unit-dependent
@@ -269,3 +288,50 @@ interface use `g.constraints.contact()` (unilateral, fork-only) or `tie()`
 apeGmsh cannot know which, because element classes are assigned at
 `ops.element` time, *after* resolve; get it wrong and emit refuses with a
 `BridgeError` naming the ndf it actually found.
+
+## ASDPlasticMaterial3D deck contract (ADR 0105 / fork ADR-94)
+
+### ❌ Bare `pstrain`/`eqpstrain`/`PStress`/`J2Stress`/`VolStrain`/`J2Strain` in `elem_responses` → ✅ `material.<Token>`
+Plastic strain and the other ASDPlasticMaterial3D scalars are MATERIAL-level
+responses; the fork forwards them only under the `material.` prefix
+(`LadrunoRecorder.cpp` splits `material.<token>` into `material <k> <token>`
+per Gauss point). A bare token never reaches the material and records
+nothing — no error, no bucket, silently. `ops.recorder.Ladruno` / `MPCO` now
+refuse the bare spelling at construction, naming the `material.<token>` form
+to use instead.
+
+### ❌ `ASDPlasticMaterial3D` on `stdBrick`, trusting `strict_convergence` → ✅ `LadrunoBrick` / `TenNodeTetrahedron`
+`strict_convergence=True` (the ADR 0105 default on every typed helper) only
+reaches the analysis on a host MEASURED to propagate a material refusal.
+`stdBrick` swallows it unconditionally (fork ADR-94 B2: `Brick::update()`
+returns 0 regardless — measured 20/20 "success" on a deck `LadrunoBrick`
+refuses 0/20). The build warns `ASDPlasticHostWarning` once per deck, but a
+vanilla-host deck stays legal (it was the SSI-1 default) — it just means the
+fail-loud contract never reaches it.
+
+### ❌ Hand-building `MohrCoulombSoil`'s old 21-name parameter superset → ✅ let the helper emit exactly the schema
+Post fork ADR-94 the parser fails loud: an unknown model-parameter name
+aborts the `nDMaterial` command, and every parameter except `MassDensity` /
+`InitialP0` is required. The pre-ADR-94 21-name superset (twelve names
+foreign to the Mohr-Coulomb combination) is refused by the fork. Use
+`MohrCoulombSoil` / `MohrCoulombTensionCutoffSoil` / `HoekBrownRock`, or the
+generic `ASDPlasticMaterial3D(..., model_parameters=(...))` — apeGmsh
+validates the schema client-side (`ValueError` at construction, naming the
+foreign or missing names) for any combination in
+`_ASDP_PARAMS_BY_COMPONENT`.
+
+## DruckerPrager (fork ADR-95)
+
+### ❌ Believing a quadratic-element DP collapse load on a pre-`61b3efa04` build → ✅ probe first
+The vanilla UW `DruckerPrager` never assembles the tension-cutoff residual row,
+so a Gauss point past the cutoff keeps an unreturned stress and a pathological
+tangent. On a strip-footing deck every quadratic element (`LadrunoBrick20`,
+`TenNodeTetrahedron`, `BezierTet10`) dies on the step floor at 30–77 % of the
+Prandtl load while the linear `LadrunoBrick -bbar` plateaus at the right answer
+— a false collapse, not a mesh or material problem. Fork PR #803 (commit
+`31322a47a`) fixed it, merged as **`61b3efa04`** on 2026-09-08 — but an older
+engine, the venv's `1652f945c` included, still gives you the false number.
+Probe before trusting it:
+`material.ladrunoBranch` — a MATERIAL-level response like the ADR 0105 ones, so
+the bare token records nothing and is refused — replies empty on a pre-#803
+engine. The linear b-bar leg is *not* a discriminator: 1.085 before and after.

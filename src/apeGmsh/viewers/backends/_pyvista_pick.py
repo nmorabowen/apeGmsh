@@ -235,7 +235,7 @@ class PyVistaPickBackend:
         self._tags.clear()
         if self._rubberband_actor is not None:
             try:
-                self._plotter.renderer.RemoveActor2D(self._rubberband_actor)
+                self._plotter.renderer.RemoveActor(self._rubberband_actor)
             except Exception:
                 pass
             self._rubberband_actor = None
@@ -373,7 +373,11 @@ class PyVistaPickBackend:
         actor.GetProperty().SetColor(1.0, 1.0, 0.0)
         actor.GetProperty().SetLineWidth(1.5)
         actor.VisibilityOff()
-        self._plotter.renderer.AddActor2D(actor)
+        # ``AddActor`` buckets a vtkActor2D into Actors2D itself; VTK 9.7
+        # removed ``AddActor2D`` / ``RemoveActor2D`` (deprecated since 9.5).
+        # Unlike the legend title actor this call has never been guarded, so
+        # on 9.7 starting a rubber-band selection raised outright.
+        self._plotter.renderer.AddActor(actor)
         self._rubberband_pts = pts
         self._rubberband_actor = actor
 

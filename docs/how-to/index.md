@@ -42,6 +42,7 @@ task, not just the ones with a tidy page yet.
 - **[Run a pushover](../concepts/opensees-bridge.md)** — displacement-controlled nonlinear static analysis to a target drift.
 - **[Export to a Tcl or openseespy script](export-script.md)** — emit a standalone runnable deck with `ops.tcl` / `ops.py` instead of solving in-process.
 - **[Checkpoint & resume an analysis](checkpoint-resume.md)** — save committed solver state with `database`/`save`, recover it with `restore`, and benchmark that a restart reproduces the uninterrupted run.
+- **[Evaluate footfall vibration](footfall-vibration.md)** — check a floor or footbridge against walking-induced vibration (AISC Design Guide 11, 2nd ed.) and render the demand/capacity ratio as a viewer map.
 
 ## Results
 

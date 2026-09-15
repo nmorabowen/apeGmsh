@@ -303,3 +303,67 @@ def test_encode_refuses_more_than_one_nested_equaldof():
             phantom_node=900, phantom_ndf=2,
             phantom_coords=np.array([0.0, 0.0, 0.0]),
             equal_dof_records=[eq, eq]))
+
+
+# ======================================================================
+# 3D surface master (TIMs A10 S2) — the nine-float frame survives
+# ======================================================================
+
+def _surface_at_z(volume: int, z: float, tol: float = 1e-6) -> int:
+    for dim, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[2] - z) < tol and abs(bb[5] - z) < tol:
+            return abs(tag)
+    raise AssertionError(f"no boundary surface of volume {volume} at z={z}")
+
+
+def _interface_fem_3d(n: int = 2):
+    with apeGmsh(model_name="iface_h5_3d", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=n)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(3, [footing], name="footing")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [_surface_at_z(footing, 1.0)], name="skin")
+        g.constraints.interface(
+            "face", "skin", normal=NORMAL, tangential=TANGENTIAL,
+            name="SoilFooting")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def test_3d_interface_roundtrips_the_nine_float_frame(tmp_path):
+    fem = _interface_fem_3d()
+    src = fem.elements.interfaces
+    assert src and all(len(r.orient) == 9 for r in src)
+    back, _ = _roundtrip(fem, tmp_path)
+    got = back.elements.interfaces
+    assert len(got) == len(src)
+    for a, b in zip(got, src):
+        _eq(a, b)
+        assert len(a.orient) == 9
+    # positively: the triad comes back whole, not truncated to -orient
+    n, t1, t2 = (np.asarray(got[0].orient[i:i + 3]) for i in (0, 3, 6))
+    np.testing.assert_allclose(n, [0.0, 0.0, 1.0], atol=1e-12)
+    np.testing.assert_allclose(np.cross(n, t1), t2, atol=1e-12)
+    assert got[0].name == "SoilFooting"
+
+
+def test_2d_orient_column_is_untouched_by_the_3d_widening():
+    """The 2.32.0 columns are APPENDED: a 2D row still writes its six
+    floats into the same ``orient`` field, and flags no second tangent.
+    That is what keeps a 2D interface's payload what 2.29.0 wrote."""
+    from apeGmsh.mesh._femdata_h5_io import _encode_interface
+    from apeGmsh.mesh._record_h5 import interface_payload_dtype
+
+    names = interface_payload_dtype().names
+    assert names.index("orient") == 3          # unmoved since 2.29.0
+    assert names[-2:] == ("orient_t2", "has_orient_t2")
+
+    rec = _interface_fem().elements.interfaces[0]
+    row = _encode_interface(rec)
+    assert row[3] == pytest.approx((1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+    assert int(row[names.index("has_orient")]) == 1
+    assert int(row[-1]) == 0                   # has_orient_t2

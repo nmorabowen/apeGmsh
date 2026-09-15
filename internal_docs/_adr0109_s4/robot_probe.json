@@ -1,0 +1,194 @@
+{
+  "mass_per_len": 4400.0,
+  "modal_setup": {},
+  "excitation_forces_probe": [
+    {
+      "set": -1,
+      "put": "ok",
+      "in_place": 1,
+      "SetAnalysisParams": true,
+      "off_case": 1
+    },
+    {
+      "set": 0,
+      "put": "ok",
+      "in_place": 1,
+      "SetAnalysisParams": true,
+      "off_case": 1
+    },
+    {
+      "set": 1,
+      "put": "ok",
+      "in_place": 1,
+      "SetAnalysisParams": true,
+      "off_case": 1
+    },
+    {
+      "set": 2,
+      "put": "ok",
+      "in_place": 2,
+      "SetAnalysisParams": true,
+      "off_case": 2
+    },
+    {
+      "set": 3,
+      "put": "ok",
+      "in_place": 2,
+      "SetAnalysisParams": true,
+      "off_case": 2
+    },
+    {
+      "set": 4,
+      "put": "ok",
+      "in_place": 2,
+      "SetAnalysisParams": true,
+      "off_case": 2
+    },
+    {
+      "set": 5,
+      "put": "ok",
+      "in_place": 2,
+      "SetAnalysisParams": true,
+      "off_case": 2
+    },
+    {
+      "set": 10,
+      "put": "ok",
+      "in_place": 2,
+      "SetAnalysisParams": true,
+      "off_case": 2
+    }
+  ],
+  "calculate": true,
+  "modal_case_modes": [
+    {
+      "mode": 1,
+      "f": 5.503495529233439,
+      "T": 0.18170270052700235,
+      "damping": 0.03
+    },
+    {
+      "mode": 2,
+      "f": 22.012829348068173,
+      "T": 0.045428053985607224,
+      "damping": 0.03
+    },
+    {
+      "mode": 3,
+      "f": 25.57445317400846,
+      "T": 0.03910152030215484,
+      "damping": 0.03
+    },
+    {
+      "mode": 4,
+      "f": 49.51651272136015,
+      "T": 0.02019528325080586,
+      "damping": 0.03
+    }
+  ],
+  "footfall_case_modes": {
+    "case10": [
+      {
+        "mode": 1,
+        "f": 5.496249561397382,
+        "T": 0.1819422478599675,
+        "damping": 0.0
+      },
+      {
+        "mode": 2,
+        "f": 21.897647822482124,
+        "T": 0.04566700533804863,
+        "damping": 0.0
+      },
+      {
+        "mode": 3,
+        "f": 25.574453206132763,
+        "T": 0.03910152025303906,
+        "damping": 0.0
+      },
+      {
+        "mode": 4,
+        "f": 25.574453206132763,
+        "T": 0.03910152025303906,
+        "damping": 0.0
+      }
+    ]
+  },
+  "results": {
+    "case10": {
+      "ExcitationForces": 1,
+      "FootstepsNumber": 20,
+      "damping": 0.03,
+      "ExcitationMethod": 1,
+      "exc_nodes": "7",
+      "Frequency": 1.8320831871324605,
+      "A": 0.06328597880022988,
+      "RF_Resonant": 8.90859197815397,
+      "RF_Transient": 5.398621032898224,
+      "RF_Overall": 8.90859197815397,
+      "VRMS": 0.0007816395650047379,
+      "VRMQ": 0.0008796450583341395,
+      "ExcitationNode": 7.0
+    },
+    "case11": {
+      "ExcitationForces": 1,
+      "FootstepsNumber": 20,
+      "damping": 0.015,
+      "ExcitationMethod": 1,
+      "exc_nodes": "7",
+      "Frequency": 1.8320831871324605,
+      "A": 0.10906777728461066,
+      "RF_Resonant": 15.359502061877217,
+      "RF_Transient": 5.99267918945027,
+      "RF_Overall": 15.359502061877217,
+      "VRMS": 0.0008676502992728513,
+      "VRMQ": 0.0009642812017989544,
+      "ExcitationNode": 7.0
+    },
+    "case12": {
+      "ExcitationForces": 1,
+      "FootstepsNumber": 20,
+      "damping": 0.06,
+      "ExcitationMethod": 1,
+      "exc_nodes": "7",
+      "Frequency": 1.8320831871324605,
+      "A": 0.03329108394030172,
+      "RF_Resonant": 4.679124542702754,
+      "RF_Transient": 4.494034260066933,
+      "RF_Overall": 4.679124542702754,
+      "VRMS": 0.0006506689324457587,
+      "VRMQ": 0.000763733905846665,
+      "ExcitationNode": 7.0
+    },
+    "case13": {
+      "ExcitationForces": 1,
+      "FootstepsNumber": 20,
+      "damping": 0.03,
+      "ExcitationMethod": 2,
+      "exc_nodes": "4 7",
+      "Frequency": 1.8320831871324605,
+      "A": 0.06328597880022988,
+      "RF_Resonant": 8.90859197815397,
+      "RF_Transient": 5.398621032898224,
+      "RF_Overall": 8.90859197815397,
+      "VRMS": 0.0007816395650047379,
+      "VRMQ": 0.0008796450583341395,
+      "ExcitationNode": 7.0
+    },
+    "case14": {
+      "ExcitationForces": 2,
+      "FootstepsNumber": 20,
+      "damping": 0.03,
+      "ExcitationMethod": 1,
+      "exc_nodes": "7",
+      "Frequency": 1.8320831871324605,
+      "A": 0.05025708758885252,
+      "RF_Resonant": 10.051417517770505,
+      "RF_Transient": 6.399209837571545,
+      "RF_Overall": 10.051417517770505,
+      "VRMS": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+      "VRMQ": "COMError: (-2147467259, 'Unspecified error', (None, None, None, 0, None))",
+      "ExcitationNode": 7.0
+    }
+  }
+}

@@ -552,3 +552,162 @@ def test_unclaimed_interface_does_not_block_the_staged_h5_archive(tmp_path):
     ops = _staged(_fem([_iface(3, 4, name="RockLiner")]), claim=None)
     ops.h5(str(tmp_path / "model.h5"))
     assert (tmp_path / "model.h5").exists()
+
+
+# ======================================================================
+# 3D surface master — the same claim, one dimension up (TIMs A10 S4)
+# ======================================================================
+# The plan's own coverage gap: the staged route is dimension-blind by
+# construction (``emit_stage_interfaces`` threads ``ndm`` into the same
+# ``_emit_interface_record`` the flat pass uses), and the S3 adversarial
+# review MEASURED a 3-D claim landing correctly — but nothing pinned it,
+# so a 2-D-only regression in the stage pass would go green here.
+#
+# The frame is the flat-top one S1 builds for an outward ``+z``: two
+# tangents ``+x`` and ``+y``, with ``t2 == n x t1`` so the emit-time
+# triad check passes.
+ORIENT_3D = (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+
+
+def _iface3d(master: int, slave: int, *, name: str,
+             a_trib: float = 0.25) -> InterfaceRecord:
+    return InterfaceRecord(
+        kind=ConstraintKind.INTERFACE,
+        name=name,
+        master_node=master,
+        slave_node=slave,
+        backing_element=1,
+        orient=ORIENT_3D,
+        a_trib=a_trib,
+        normal_law=ENT_LAW,
+        tangential_law=EPP_LAW,
+        phantom_node=None,
+        phantom_coords=None,
+        phantom_ndf=None,
+        equal_dof_records=[],
+    )
+
+
+def _fem3d(interfaces) -> FEMStub:
+    """Two unit hexes stacked at ``z = 1`` sharing NO node: ``Rock``
+    (nodes 1-8) under ``Liner`` (nodes 9-16), so the four coincident
+    node pairs at ``z = 1`` are the topology a 3-D master pairs."""
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=list(range(1, 17)),
+            coords=[
+                (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0), (1.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+                (0.0, 0.0, 1.0), (1.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+                (0.0, 0.0, 2.0), (1.0, 0.0, 2.0),
+                (1.0, 1.0, 2.0), (0.0, 1.0, 2.0),
+            ],
+            node_pgs={"Base": [1, 2, 3, 4]},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={
+                "Rock": _ElementGroupView(
+                    ids=(1,), connectivity=((1, 2, 3, 4, 5, 6, 7, 8),),
+                ),
+                "Liner": _ElementGroupView(
+                    ids=(2,),
+                    connectivity=((9, 10, 11, 12, 13, 14, 15, 16),),
+                ),
+            },
+        ),
+    )
+    fem.elements.interfaces = list(interfaces)
+    return fem
+
+
+def _ops3d(fem):
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    for pg in ("Rock", "Liner"):
+        ops.element.stdBrick(pg=pg, material=mat)
+    return ops
+
+
+def _staged3d(fem, *, claim: "str | None" = "RockLiner"):
+    ops = _ops3d(fem)
+    with ops.stage(name="ground") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["Liner"])
+        if claim is not None:
+            s.interface(name=claim)
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    return ops
+
+
+def test_3d_claimed_interface_emits_only_inside_the_stage(tmp_path):
+    recs = [_iface3d(5, 9, name="RockLiner"),
+            _iface3d(6, 10, name="RockLiner")]
+    lines = _deck(_staged3d(_fem3d(recs)), tmp_path)
+
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == 2                      # emitted exactly ONCE per pair
+    # …and they are 3-D units: three -mat slots on -dir 1 2 3, the
+    # tangential tag repeated, the frame the record's (n, t1).
+    for ln in zl:
+        tok = ln.split()
+        assert tok[tok.index("-dir"):tok.index("-orient")] == [
+            "-dir", "1", "2", "3"]
+        mats = tok[tok.index("-mat") + 1:tok.index("-dir")]
+        assert len(mats) == 3 and mats[1] == mats[2]
+        assert tok[tok.index("-orient") + 1:] == [
+            "0.0", "0.0", "1.0", "1.0", "0.0", "0.0"]
+
+    block = _stage_block(lines, "install")
+    assert [ln for ln in block if ln.startswith("element zeroLength ")] == zl
+    base = lines[:lines.index("# === Stage: ground ===")]
+    assert not [ln for ln in base if ln.startswith("element zeroLength ")]
+    assert not [ln for ln in base if ln.startswith("uniaxialMaterial ENT ")]
+
+
+def test_3d_stage_block_order_topology_then_unit_then_analysis(tmp_path):
+    """The 3-D mirror of the 2-D ordering gate — the whole per-pair unit
+    (comment, two materials, element) inside the stage, before the
+    ``domainChange`` barrier."""
+    recs = [_iface3d(5, 9, name="RockLiner")]
+    block = _stage_block(_deck(_staged3d(_fem3d(recs)), tmp_path), "install")
+
+    i_liner = max(
+        i for i, ln in enumerate(block)
+        if ln.startswith("element stdBrick ") or ln.startswith("element brick ")
+    )
+    i_name = block.index("# RockLiner")
+    i_zl = next(i for i, ln in enumerate(block)
+                if ln.startswith("element zeroLength "))
+    i_barrier = block.index("domainChange")
+    assert i_liner < i_name < i_zl < i_barrier
+    assert block[i_name + 1].startswith("uniaxialMaterial ENT ")
+    assert block[i_name + 2].startswith("uniaxialMaterial ElasticPP ")
+    assert block[i_name + 3].startswith("element zeroLength ")
+
+
+def test_3d_staged_unit_is_byte_identical_to_the_unstaged_one(tmp_path):
+    """Tag continuity across the claim, in 3-D: the stage-claimed unit
+    carries the same material and element tags — and therefore the same
+    four lines — as the base-pass emit of the same model with no stages
+    at all. (An *unclaimed* staged model is not the reference: node 9
+    only comes online inside the stage, so ADR 0093 INV-6 refuses it.)"""
+    claimed = _deck(_staged3d(_fem3d(
+        [_iface3d(5, 9, name="RockLiner")])), tmp_path, "claimed.tcl")
+    unstaged = _deck(_ops3d(_fem3d(
+        [_iface3d(5, 9, name="RockLiner")])), tmp_path, "unstaged.tcl")
+    unit = [
+        "# RockLiner",
+        "uniaxialMaterial ENT 1 250000.0",
+        "uniaxialMaterial ElasticPP 2 25000.0 0.0025",
+    ]
+    i_c = claimed.index("# RockLiner")
+    i_u = unstaged.index("# RockLiner")
+    assert claimed[i_c:i_c + 3] == unit
+    assert claimed[i_c:i_c + 4] == unstaged[i_u:i_u + 4]

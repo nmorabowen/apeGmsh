@@ -44,7 +44,7 @@ neutral zone; ignore what else is in the file.
 **Read this before reading any data.** Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.
 
-Versions are **semver strings**, not integers — `"2.31.0"`, stored as
+Versions are **semver strings**, not integers — `"2.32.0"`, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.
 
@@ -55,7 +55,7 @@ independent version; they do not share a number.
 | `schema_version` | — | **no** — legacy envelope |
 
 The neutral zone is gated by **`neutral_schema_version` alone**. At the
-time of writing the writer stamps `2.31.0`.
+time of writing the writer stamps `2.32.0`.
 
 `schema_version` is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the

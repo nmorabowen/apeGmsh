@@ -554,6 +554,16 @@ def validate_adaptive_element_endpoints(
                 for n in node_tags
             }
             if len(set(eff.values())) > 1:
+                # Fork #808 / ADR 96: a 3-D zeroLength-family element now
+                # takes ANY pair whose two ends both carry ndf >= 3. It
+                # acts on DOFs 1-3 and every DOF past the third — a u-p
+                # node's pore pressure, a shell node's rotations — rides
+                # as an untouched passenger. In 2-D, and below the
+                # minimum build, the mismatch is still a warning plus an
+                # inert element: the silent no-spring this guard exists
+                # to catch.
+                if int(ndm) == 3 and min(eff.values()) >= 3:
+                    continue
                 raise BridgeError(
                     f"{cls} element {eid} connects nodes with differing "
                     f"effective ndf {eff} — OpenSees requires equal ndf at "
@@ -564,7 +574,10 @@ def validate_adaptive_element_endpoints(
                     f"end infers a different value. Fix: set the model "
                     f"envelope to match the structural side, attach an "
                     f"element to the ground node, or use separate coincident "
-                    f"nodes + g.constraints.equal_dof on the shared DOFs."
+                    f"nodes + g.constraints.equal_dof on the shared DOFs. "
+                    f"(The one exemption is a 3-D pair whose ends BOTH "
+                    f"carry ndf >= 3 — fork #808 / ADR 96, minimum build "
+                    f"TIMS_FORK_BATCH_MIN_BUILD — which this pair is not.)"
                 )
 
 
@@ -709,6 +722,35 @@ def validate_constraint_master_ndf(
     def ndf_of(n: int) -> int:
         return int(effective.get(int(n), int(envelope_ndf)))
 
+    # A1 — ``kinematic_coupling`` with ``dofs=None`` ties EVERY DOF the
+    # slave has, by COUNT: ``LadrunoKinematicCoupling.cpp:260-275`` walks
+    # c = 1..ndm+nrot and keeps each c the slave carries, so an ndf-4 u-p
+    # slave in 3D has its pore pressure (slot 4) tied to the master's θx
+    # by ``buildB`` (:335-350) — silently (the only warning sits behind
+    # ``!useDefault``).  Only a pure translation (ndm) or translation +
+    # rotation (ndm + nrot) layout is safe under the default; anything
+    # else must name its ``dofs=``.  A 2D u-p node (ndf 3) is
+    # indistinguishable BY COUNT from a (u, v, θ) node — this gate does
+    # not see it.
+    nrot = 3 if int(ndm) == 3 else 1
+    rigid_layouts = frozenset({int(ndm), int(ndm) + nrot})
+
+    def _check_default_coupling_slave(slave: int, name: object) -> None:
+        k = ndf_of(slave)
+        if k in rigid_layouts:
+            return
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"kinematic_coupling{label}: slave node {slave} has ndf {k}, "
+            f"which is neither a translation-only ({int(ndm)}) nor a "
+            f"translation+rotation ({int(ndm) + nrot}) layout in "
+            f"{int(ndm)}D — e.g. a u-p node whose DOF {int(ndm) + 1} is "
+            f"pore pressure. With dofs=None the fork ties every DOF the "
+            f"slave has BY COUNT (LadrunoKinematicCoupling.cpp:260-275), "
+            f"so that DOF would be tied to the master's rotation. Pass "
+            f"dofs= explicitly (e.g. dofs=[1, 2, 3] for translations only)."
+        )
+
     def _check_diaphragm(master: int) -> None:
         if ndf_of(master) != floor:
             raise BridgeError(
@@ -754,6 +796,12 @@ def validate_constraint_master_ndf(
                         _check_pair(
                             int(rec.master_node), int(slave), rec.dofs,
                             rec.kind,
+                        )
+                elif rec.kind == _CK.KINEMATIC_COUPLING:
+                    # empty dofs ⇒ the element's count-based default (A1)
+                    for slave in rec.slave_nodes:
+                        _check_default_coupling_slave(
+                            int(slave), getattr(rec, "name", None),
                         )
             elif isinstance(rec, NodePairRecord):
                 if rec.kind in dof_selective and rec.dofs:
@@ -1096,6 +1144,22 @@ class SPRemovalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ZeroVelocityRecord:
+    """One ``s.zero_velocities(...)`` directive — zeroes the nodal
+    velocity AND acceleration state at a stage boundary.
+
+    Stage-bound only — no top-level ``apeSees.zero_velocities``.
+    ``nodes=None`` means the whole domain (every node in
+    ``fem.nodes.ids``); an explicit tuple restricts the fan-out to that
+    node set.  Emit expands to one ``setNodeVel``/``setNodeAccel`` pair
+    per (node, DOF), with the DOF range taken from the node's effective
+    ndf (a u-p node has 4), immediately before the stage's ``analyze``.
+    """
+
+    nodes: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
 class ElementRemovalRecord:
     """One ``s.remove_element`` directive — drops elements from the
     Domain mid-analysis (Phase SSI-2.E).
@@ -1140,6 +1204,39 @@ class MaterialStageRecord:
 
     mat_tags: tuple[int, ...]
     stage: int
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateParameterRecord:
+    """One ``s.update_parameter`` directive — a typed pass-through over
+    the OpenSees ``parameter`` / ``addToParameter`` / ``updateParameter``
+    primitive that ``s.initial_stress`` and ``s.activate_absorbing``
+    already drive internally.
+
+    Stage-bound only.  Exactly one of ``pg`` / ``elements`` is non-None
+    (validated at the call site) — the target is ALWAYS an element,
+    because ``parameter`` / ``addToParameter`` only address ``node`` /
+    ``element`` / ``region`` / ``loadPattern``
+    (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter``,
+    ``OPS_addToParameter``).  A *material* parameter is reached THROUGH
+    an element: the element forwards the unmatched argv to its
+    integration-point materials (``LadrunoUP::setParameter``
+    ``LadrunoUP.cpp:1948-1971``), and the material matches on
+    ``argv[0] == name`` plus ``argv[1] == its own tag``
+    (``ManzariDafalias::setParameter`` ``ManzariDafalias.cpp:820-857``).
+    ``mat_tag`` carries that trailing tag; ``None`` means the parameter
+    is the element's own (``xPerm`` / ``yPerm`` / ``zPerm``).
+
+    No registry of "known" parameter names — the element / material
+    ``setParameter`` is the authority, and an unrecognised name is
+    already loud there.
+    """
+
+    name: str
+    value: float
+    pg: str | None
+    elements: tuple[int, ...] | None
+    mat_tag: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1292,6 +1389,14 @@ class StageRecord:
     # build time).  An element whose PG is not activated by any
     # stage stays global (emitted before stage 1).
     activated_pgs: tuple[str, ...] = ()
+    # Transient → static handover: nodal velocity / acceleration
+    # zeroing (``s.zero_velocities``).  Emitted LAST inside the stage
+    # block — after the analysis chain, the stage patterns and the
+    # optional ``reset``, immediately before ``analyze`` — so nothing
+    # can restore the kinematic state between the zeroing and the step
+    # that would otherwise read it.  Default ``()`` keeps existing
+    # construction sites working unmodified.
+    zero_velocity_records: tuple["ZeroVelocityRecord", ...] = ()
     # Phase SSI-2.D: stage-bound BC + recorder pools.  Populated by
     # ``_StageBuilder.fix / .mass / .region / .recorder`` (PR-B/C).
     # PR-A ships the dataclass slots + the validator surface; emit
@@ -1380,12 +1485,25 @@ class StageRecord:
     set_time: float | None = None
     set_creep_on: bool | None = None
     pre_analyze_reset: bool = False
+    # TIMs A8: optional per-stage profiler bracket (``s.profile``).
+    # ``None`` (default) keeps existing construction sites and tests
+    # working unmodified — no bracket emits for a stage that never
+    # calls ``s.profile``.
+    profile: "ProfileRecord | None" = None
     # ADR 0054 AB-3: ASDAbsorbingBoundary stage flip (``s.activate_absorbing``).
     # Emitted after the analysis chain is established (so the domain holds the
     # stage's elements) — one-shot ``parameter`` / ``addToParameter ... stage`` /
     # ``updateParameter 1`` per record.  Default ``()`` keeps existing
     # construction sites working unmodified.
     activate_absorbing_records: tuple["ActivateAbsorbingRecord", ...] = ()
+    # ``s.update_parameter`` — the typed pass-through over the same
+    # ``parameter`` / ``addToParameter`` / ``updateParameter`` primitive
+    # the two records above drive internally.  Emitted right after the
+    # absorbing flip (same slot rationale: the stage's elements are in
+    # the Domain, the chain is established, the analyze loop has not
+    # started).  Default ``()`` keeps existing construction sites
+    # working unmodified.
+    update_parameter_records: tuple["UpdateParameterRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1460,6 +1578,30 @@ class ActivateAbsorbingRecord:
 
     pg: str | None
     elements: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileRecord:
+    """One ``s.profile(...)`` directive (TIMs A8) — brackets THIS
+    stage's ``analyze`` loop with the Ladruno fork's stack profiler,
+    reported under the stage's own name.
+
+    ``deep`` / ``memory`` / ``per_step`` mirror the three ``start``
+    flags on :class:`~apeGmsh.opensees._internal.ns.profiler._ProfilerNS`
+    (``-deep`` / ``-memory`` / ``-perStep``) — the bridge-level
+    ``ops.profiler.*`` verbs bracket the WHOLE deck's appended
+    ``analyze`` call; this record reuses the same
+    ``Emitter.profiler(*args)`` Protocol method to bracket a SINGLE
+    stage's ``analyze`` loop instead. Emitted as ``profiler start
+    [flags]`` immediately before the stage's analyze loop and
+    ``profiler stop`` + ``profiler report <stage name>.h5`` immediately after (before
+    ``stage_close``) — filename derived from the stage's name so no
+    extra kwarg is needed.
+    """
+
+    deep: bool = False
+    memory: bool = False
+    per_step: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2144,6 +2286,34 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
                 if isinstance(key, str):
                     out.add(key)
     return out
+
+
+def _describe_pg_cells(fem: "FEMData", pg: str) -> str:
+    """Best-effort description of what physical group ``pg`` registers.
+
+    Used to build a useful error when a ``pg=`` element fan-out resolves
+    to zero elements: the group commonly still HAS cells registered on
+    the FEM snapshot's element-group registry (``fem.elements.physical``)
+    — e.g. a ``get_fem_data(dim=...)`` call excluded them from
+    ``fem.elements`` itself — so naming the registered count/dimension is
+    more useful than a bare "0 elements".
+    """
+    physical = getattr(fem.elements, "physical", None)
+    groups = getattr(physical, "_groups", None) if physical is not None else None
+    if not isinstance(groups, dict):
+        return f"pg {pg!r} has no registered cells on this snapshot"
+    matches = [
+        (dim, info) for (dim, _tag), info in groups.items()
+        if info.get("name") == pg
+    ]
+    if not matches:
+        return f"pg {pg!r} has no registered cells on this snapshot"
+    parts = []
+    for dim, info in sorted(matches):
+        eids = info.get("element_ids")
+        n = len(eids) if eids is not None else 0
+        parts.append(f"{n} dim-{dim} cell(s)")
+    return f"pg {pg!r} has " + ", ".join(parts)
 
 
 def needs_builder_ndf_bracket_for_token(
@@ -3143,19 +3313,22 @@ _UNSYMMETRIC_SAFE_SYSTEMS: frozenset[str] = frozenset(
 )
 
 
-def _ladruno_up_carrier_nodes(
+def _ladruno_up_carrier_blocks(
     fem: "FEMData", up_specs: "Sequence[Element]",
-) -> "set[int]":
-    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+) -> "Iterator[np.ndarray]":
+    """Yield ``(n_elem, n_carrier)`` pressure-CARRIER connectivity blocks.
 
-    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
-    it only on the vertex slots (mid-edge nodes are pure displacement).  The
-    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    One block per mesh element group of each LadrunoUP spec, sliced down to
+    the slots that actually carry ``p``: equal-order shapes carry it on every
+    node, Taylor–Hood shapes only on the leading vertex slots (mid-edge nodes
+    are pure displacement).  SINGLE SOURCE of the carrier-slot rule — both
+    :func:`_ladruno_up_carrier_nodes` (which wants the flat set) and
+    :func:`validate_up_pressure_datum` (which wants per-element rows, to walk
+    connectivity) read it from here.
     """
     from .._element_capabilities import LADRUNO_UP_TH_ETYPES
 
     th_vertex_count = {6: 3, 10: 4}
-    carrier: set[int] = set()
     for spec in up_specs:
         result = fem.elements.select(pg=spec.pg).groups()  # type: ignore[attr-defined]
         for group in _iter_element_groups(result):
@@ -3166,10 +3339,23 @@ def _ladruno_up_carrier_nodes(
             code = int(getattr(group.element_type, "code", -1))
             k = gconn.shape[1]
             if code in LADRUNO_UP_TH_ETYPES or k in th_vertex_count:
-                nv = th_vertex_count.get(k, k)
-                carrier.update(int(t) for t in gconn[:, :nv].ravel())
+                yield gconn[:, :th_vertex_count.get(k, k)]
             else:
-                carrier.update(int(t) for t in gconn.ravel())
+                yield gconn
+
+
+def _ladruno_up_carrier_nodes(
+    fem: "FEMData", up_specs: "Sequence[Element]",
+) -> "set[int]":
+    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+
+    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
+    it only on the vertex slots (mid-edge nodes are pure displacement).  The
+    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    """
+    carrier: set[int] = set()
+    for block in _ladruno_up_carrier_blocks(fem, up_specs):
+        carrier.update(int(t) for t in block.ravel())
     return carrier
 
 
@@ -3252,6 +3438,176 @@ def validate_ladruno_up_pressure_dof(
                 f"mixed-ndf / structure-on-soil idiom, ADR 0069 / fork guide "
                 f"§6.3)."
             )
+
+
+def up_pressure_components(
+    element_carriers: "Iterable[Sequence[int]]",
+) -> "dict[int, list[int]]":
+    """Connected components of the pressure graph, keyed by root node tag.
+
+    *element_carriers* is one sequence of pressure-CARRIER node tags per
+    element (mid-edge / non-pressure slots already dropped — dropping them is
+    what keeps a Taylor–Hood mesh ONE region instead of shattering it).  Two
+    carrier nodes are connected when some element carries both, which is
+    exactly the sparsity of the ``H`` seepage / ``S`` storage blocks: a
+    pressure DOF is coupled only to the pressure DOFs it shares an element
+    with.  Union-find, so the walk is ``O(N α(N))`` in the carrier count.
+
+    Returns ``{min node tag of the component: sorted node tags}``.
+    """
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    for conn in element_carriers:
+        head: int | None = None
+        for raw in conn:
+            tag = int(raw)
+            parent.setdefault(tag, tag)
+            if head is None:
+                head = tag
+                continue
+            ra, rb = find(head), find(tag)
+            if ra != rb:
+                parent[rb] = ra
+
+    groups: dict[int, list[int]] = {}
+    for tag in parent:
+        groups.setdefault(find(tag), []).append(tag)
+    return {min(members): sorted(members) for members in groups.values()}
+
+
+def validate_up_pressure_datum(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    *,
+    enforce: bool,
+    fix_records: "Iterable[FixRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    support_records: "Iterable[SupportRecord]" = (),
+) -> None:
+    """Refuse a STATIC u-p deck in which some pressure region has no datum.
+
+    A saturated (u-p) region whose pressure DOFs are ALL free is impervious:
+    its static tangent is singular in ``p`` (the ``H`` seepage block has the
+    constant-pressure vector in its null space, exactly like an all-Neumann
+    Laplacian, and static has no ``S/Δt`` storage term to regularise it).
+    Nothing downstream reports it: the fork MEASURED (2026-07-11) that every
+    serial general solver — UmfPack / FullGeneral / BandGeneral /
+    SparseGeneral — factorises the singular sealed system through round-off
+    and returns ``rc = 0`` with an arbitrary, solver-dependent pressure level,
+    because the p-RHS is consistent so no solver sees the rank deficiency
+    (``tests/test_ladruno_up_element_analytic.py:533-548``, a ``strict``
+    xfail pinning the refuted "it fails loudly" claim of fork ADR-71
+    §3.2/§7).  A silent wrong answer, so this is a build-time gate.
+
+    Contract:
+
+    * **Pressure node** — a LadrunoUP pressure CARRIER node
+      (:func:`_ladruno_up_carrier_blocks`): every node of an equal-order
+      shape, the vertex slots only of a Taylor–Hood shape.  LadrunoUP is the
+      only u-p element class in the capability registry, so it is the only
+      one walked; a stock ``quadUP`` / ``brickUP`` cannot reach emit at all
+      (:func:`infer_node_ndf` refuses an unregistered class).
+    * **Datum** — any single-point constraint on DOF ``ndm+1`` of a carrier
+      node: a broker or stage-claimed ``fix`` / ``s.support`` whose 0/1 mask
+      flags that slot, or a pattern ``sp`` whose 1-based DOF index is that
+      slot.  All three make the DOF constrained, which is what removes the
+      null space; ``fix`` alone would false-refuse the ``sp``-datum idiom.
+    * **Exempt** — everything the caller does not mark ``enforce``: H5
+      archival, and any deck that does not declare ``ops.analysis.Static()``.
+      A sealed region is PHYSICALLY CORRECT under Transient (undrained
+      loading: the storage term ``1/Q̄`` puts a nonzero diagonal on the p
+      rows, so the sealed tangent is regular — that is what the fork's own
+      Terzaghi lane runs), so refusing it there would be a false positive.
+
+    Known limitation (not enforced): a datum contributed only by a
+    stage-scoped ``s.support`` is counted for the whole model, though it holds
+    the DOF only inside its own stage; and a pressure DOF grounded indirectly
+    through ``equal_dof`` to a fixed one is not traced.
+    """
+    from ..element.solid import LadrunoUP
+
+    if not enforce:
+        return
+    up_specs = [s for s in elements if isinstance(s, LadrunoUP)]
+    if not up_specs:
+        return
+
+    components = up_pressure_components(
+        conn
+        for block in _ladruno_up_carrier_blocks(fem, up_specs)
+        for conn in block
+    )
+    if not components:
+        return
+
+    p_dof = int(ndm) + 1
+    carriers = {n for members in components.values() for n in members}
+
+    def _pg_or_nodes(rec: "FixRecord | SupportRecord") -> "list[int]":
+        if rec.nodes is not None:
+            return [int(n) for n in rec.nodes]
+        if rec.pg is not None:
+            return list(expand_pg_to_nodes(fem, rec.pg))
+        return []
+
+    datum: set[int] = set()
+    fix_like: "list[FixRecord | SupportRecord]" = [
+        *fix_records, *support_records,
+    ]
+    for frec in fix_like:
+        flags = frec.dofs
+        if len(flags) < p_dof or not flags[p_dof - 1]:
+            continue
+        datum.update(_pg_or_nodes(frec))
+    for srec in sp_records:
+        if int(srec.dof) != p_dof:
+            continue
+        if srec.target_kind == "pg":
+            datum.update(int(n) for n in expand_pg_to_nodes(fem, srec.target))
+        else:
+            datum.add(int(srec.target))
+    # A fix on a TH mid-edge node addresses a slot that node does not carry —
+    # it is not a pressure datum (G3 already refuses the over-long mask).
+    datum &= carriers
+
+    sealed = sorted(
+        root for root, members in components.items()
+        if not datum.intersection(members)
+    )
+    if not sealed:
+        return
+
+    mask = "(" + "0, " * int(ndm) + "1)"
+    raise BridgeError(
+        f"LadrunoUP node {sealed[0]}: its pressure region has NO fixed "
+        f"pressure DOF ({len(sealed)} of {len(components)} u-p region(s) in "
+        f"this model are sealed). A STATIC solve on an all-impervious "
+        f"region is SINGULAR in p, and it does not fail loudly: every serial "
+        f"general solver (UmfPack / FullGeneral / BandGeneral / "
+        f"SparseGeneral) factorises it through round-off and returns rc = 0 "
+        f"with an arbitrary, solver-dependent pressure level (fork "
+        f"tests/test_ladruno_up_element_analytic.py:533-548, MEASURED "
+        f"2026-07-11) — a silent wrong answer. Fix the pressure DOF (slot "
+        f"{p_dof}) of at least one carrier node of that region, typically a "
+        f"drained surface: ops.fix(pg=\"Top\", dofs={mask}). On a "
+        f"Taylor-Hood mesh (tri6 / tet10) that pg mask over-runs the "
+        f"mid-edge nodes' ndf={ndm} and G3 refuses it, so pass the VERTEX "
+        f"nodes of the drained surface as ops.fix(nodes=[...], dofs={mask}) "
+        f"instead. Each element-disconnected u-p region needs its own datum. "
+        f"(A sealed "
+        f"region is legitimate under ops.analysis.Transient() — the storage "
+        f"term regularises the p rows — and this gate only runs for a deck "
+        f"that declares ops.analysis.Static().)"
+    )
 
 
 _GENERAL_SOLVER_MSG = (
@@ -3383,6 +3739,114 @@ def validate_ladruno_up_solver(
         f"pressures (fork guide §2, the #1 u-p footgun). Declare a general "
         f"solver before build: {_GENERAL_SOLVER_MSG}."
     )
+
+
+_SERIAL_MUMPS_MSG = (
+    "`system Mumps` declared on a serial deck (`len(fem.partitions) <= 1`): "
+    "the Ladruno fork's desktop targets do not compile the serial "
+    "`MumpsSolver`, so `system Mumps` answers *unknown system type* on "
+    "`OpenSees.exe` and on the desktop openseespy build — leaving the run "
+    "on whatever SOE was already in place (ProfileSPD by default) rather "
+    "than stopping. Declare `ops.system.Pardiso()` for a threaded desktop "
+    "solve, or partition the mesh (`g.mesh.partitioning`) and run under "
+    "`OpenSeesMP`."
+)
+
+#: Class names emitting ``system Mumps``. apeGmsh's typed system primitives
+#: (``analysis/system.py``) expose a single :class:`Mumps`; ADR 0106 D5 also
+#: names a ``MumpsParallel`` that does not exist as a Python type.
+_SERIAL_MUMPS_CLASSES = frozenset({"Mumps"})
+
+
+def validate_serial_mumps(
+    *,
+    enforce: bool,
+    staged: bool,
+    partitioned: bool,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> None:
+    """ADR 0106 D5 — refuse an explicit ``Mumps`` system on a serial deck.
+
+    The Ladruno fork's desktop targets (``OpenSees.exe``, the desktop
+    openseespy build) never compile the serial ``MumpsSolver``: a
+    declared ``system Mumps`` answers *unknown system type* at runtime,
+    and a rejected ``system`` command does not abort the deck
+    (``OpenSees.exe`` exits 0 on a Tcl error) — the model silently solves
+    on whatever SOE was already in place instead. Refusing at build time
+    turns that wrong answer into a sentence.
+
+    Scope, mirroring :func:`validate_ladruno_up_solver`'s seam:
+
+    * ``enforce`` is False for emits that never drive a solve — H5
+      archival, model-only export, eigen-only decks — so those are
+      skipped entirely.
+    * **partitioned** decks are untouched: that is what Mumps is for
+      (ADR 0027 INV-5's auto-emitted fallback and ADR 0077 INV-8's
+      parallel-ARPACK requirement both only fire under partitioning).
+    * **staged**: each stage owns its analysis chain, so every stage's
+      own declared system is checked independently; a stage with no
+      declared system is not this gate's concern (that is
+      ``validate_ladruno_up_solver``'s missing-system case).
+    * **flat**: the effective (last-declared) system is the one
+      OpenSees uses at analyze; only it is checked.
+
+    Deliberately NO escape hatch — the declared solver does not exist on
+    these targets, so there is no reading under which the deck does what
+    it says.
+    """
+    if not enforce or partitioned:
+        return
+
+    if staged:
+        for name, system in stage_systems:
+            if system is not None and type(system).__name__ in _SERIAL_MUMPS_CLASSES:
+                raise BridgeError(f"{_SERIAL_MUMPS_MSG} (stage {name})")
+        return
+
+    if flat_systems and type(flat_systems[-1]).__name__ in _SERIAL_MUMPS_CLASSES:
+        raise BridgeError(_SERIAL_MUMPS_MSG)
+_STAGE_MARKER_UNSAFE = str.maketrans({
+    '"': "'", "[": "(", "]": ")", "{": "(", "}": ")", "\\": "/", "$": "_",
+})
+
+
+def stage_marker_name(name: str) -> str:
+    """The stage name as it appears on an ``APEGMSH_STAGE`` marker line.
+
+    ADR 0106 D2 — the marker is a runtime ``puts "..."`` / ``print("...")``
+    whose only job is to survive the S1 parser's ``(.+)$``, so the name is
+    normalised ONCE here for both emitters: ``"`` / ``[`` / ``]`` / ``{``
+    / ``}`` / ``\`` / ``$`` would close the string, trigger Tcl command
+    or variable substitution, or escape in Python; any whitespace run
+    (a newline included) collapses to one space.  Deterministic, so the
+    tcl and py lanes attribute to the same name.
+    """
+    return " ".join(str(name).translate(_STAGE_MARKER_UNSAFE).split())
+
+
+def deck_requests_solver_stats(
+    *,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> bool:
+    """ADR 0106 D2 — does this deck ask a solver for ``-stats`` anywhere?
+
+    Resolves the flat/staged system declarations the same way
+    :func:`validate_ladruno_up_solver` already resolves them (its
+    ``flat_systems`` / ``stage_systems`` shapes, reused verbatim by the
+    caller). Duck-types on ``.stats`` rather than naming ``Pardiso`` /
+    ``Mumps`` — both carry the flag and nothing else does. Answers a
+    plain "was it requested", independent of whether the deck's
+    analysis chain ever runs.
+    """
+    for system in flat_systems:
+        if getattr(system, "stats", False):
+            return True
+    for _name, system in stage_systems:
+        if system is not None and getattr(system, "stats", False):
+            return True
+    return False
 
 
 class ManzariTangentSolverWarning(UserWarning):
@@ -3660,6 +4124,62 @@ def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
                 f"propagates on every path today. Use that element, or "
                 f"leave max_substeps=0 (uncapped)."
             )
+
+
+class ASDPlasticHostWarning(UserWarning):
+    """An ``ASDPlasticMaterial3D`` sits on an element that swallows refusals.
+
+    After fork ADR-94 the material returns ``LADRUNO_MATERIAL_REFUSED``
+    from every failure site — but only a host that ACTS on the return
+    code turns that into a failed step.  ``stdBrick`` (``Brick::update()``
+    returns 0 unconditionally) was measured to report 20/20 successes on
+    a deck ``LadrunoBrick`` refuses 0/20 (fork ADR-94 B2, deliberately
+    left on the fork).  ``strict_convergence`` — on by default since
+    ADR 0105 — is therefore inert on such a host.
+
+    Fail-soft: a vanilla-host deck is legal and was the SSI-1 default;
+    it is the fail-loud contract that does not reach it.
+    """
+
+
+def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
+    """ADR 0105 D4 — warn once per deck when an ASDP material is swallowed.
+
+    Keyed on :func:`element_propagates_material_refusal`, the measured
+    per-element flag, not on element names: only a host MEASURED to
+    discard the return code (``False``) warns; an unmeasured one
+    (``None``) stays silent.  Materials are found through the wrapper
+    graph (``PlaneStrain(base=...)`` and friends), the way
+    :func:`validate_sanisand_substep_cap` finds a capped SANISAND.
+    """
+    from .._element_capabilities import element_propagates_material_refusal
+    from ..material.nd import ASDPlasticMaterial3D
+
+    hosts: dict[str, set[str]] = {}
+    for spec in elements:
+        cls = type(spec).__name__
+        if element_propagates_material_refusal(cls) is not False:
+            continue
+        if any(
+            isinstance(m, ASDPlasticMaterial3D)
+            for m in _material_graph(getattr(spec, "material", None))
+        ):
+            hosts.setdefault(cls, set()).add(str(getattr(spec, "pg", "?")))
+    if not hosts:
+        return
+    where = "; ".join(
+        f"{cls} (pg {', '.join(sorted(pgs))})" for cls, pgs in sorted(hosts.items())
+    )
+    warnings.warn(
+        f"ASDPlasticMaterial3D on {where}: material refusals are swallowed "
+        f"by this element (fork ADR-94 B2) — strict_convergence and every "
+        f"other fail-loud material contract never reach the analysis, so "
+        f"a non-converged or inadmissible state is committed as if it had "
+        f"converged. Use LadrunoBrick or TenNodeTetrahedron for a fail-loud "
+        f"deck.",
+        ASDPlasticHostWarning,
+        stacklevel=2,
+    )
 
 
 class WarnBodyForceDoubleCount(UserWarning):
@@ -5515,6 +6035,22 @@ def _interface_tangential_material(a_trib: float, law: object) -> "UniaxialMater
     )
 
 
+def _interface_is_3d(rec: object) -> bool:
+    """Is this a 3-D (dim-2 surface master) interface record?
+
+    Read off the record's OWN frame width, never off ``ndm``: six floats
+    is the 2-D line master's ``-orient`` argument, nine is the 3-D
+    surface master's ``(n, t1, t2)`` triad (ADR 0093 D2 / TIMs A10 S2).
+    The record is what carries the dimension, so a record reaching emit
+    through ``g.compose``, an h5 reload or a stage claim is classified
+    the same way on every route — and a record whose width disagrees
+    with the model's ``ndm`` is refused by :func:`_validate_interface_ndf`
+    rather than silently emitting the other dimension's element shape.
+    """
+    orient = getattr(rec, "orient", None)
+    return orient is not None and len(orient) == 9
+
+
 def _validate_interface_ndf(
     rec: object,
     effective_ndf: "Mapping[int, int]",
@@ -5537,21 +6073,35 @@ def _validate_interface_ndf(
     * ``slave_ndf=3`` declared against a 2-dof slave — the phantom and
       its equalDOF are pure noise, and the `equalDOF` would tie dofs the
       user never meant to bridge.
+
+    In 3-D (a nine-float record, TIMs A10 S3) there is no phantom to
+    declare — fork #808 / ADR 96 joins the mixed pair directly — so the
+    gate becomes ADR 96's own rule, imported from the resolver as
+    ``accepts_3d_ndf_pair`` rather than restated here.
     """
     name = getattr(rec, "name", None)
     label = f" {name!r}" if name else ""
-    if int(ndm) != 2:
-        raise BridgeError(
-            f"interface{label}: interface records only exist for 2D line "
-            f"masters (ADR 0093 D2), but the model is ndm={int(ndm)}."
-        )
-
     master = int(getattr(rec, "master_node"))
     slave = int(getattr(rec, "slave_node"))
     phantom = getattr(rec, "phantom_node", None)
 
     def ndf_of(n: int) -> int:
         return int(effective_ndf.get(int(n), int(envelope_ndf)))
+
+    if _interface_is_3d(rec):
+        _validate_interface_ndf_3d(
+            label, master, slave, phantom,
+            ndf_of(master), ndf_of(slave), ndm,
+        )
+        return
+
+    if int(ndm) != 2:
+        raise BridgeError(
+            f"interface{label}: this record carries a six-float frame, "
+            f"i.e. a 2D dim-1 line master (ADR 0093 D2), but the model is "
+            f"ndm={int(ndm)}. A 3D interface resolves a dim-2 surface "
+            f"master and carries a nine-float (n, t1, t2) frame."
+        )
 
     m_ndf, s_ndf = ndf_of(master), ndf_of(slave)
     if m_ndf != 2:
@@ -5594,6 +6144,143 @@ def _validate_interface_ndf(
         )
 
 
+def _validate_interface_ndf_3d(
+    label: str,
+    master: int,
+    slave: int,
+    phantom: "int | None",
+    m_ndf: int,
+    s_ndf: int,
+    ndm: int,
+) -> None:
+    """The 3-D half of :func:`_validate_interface_ndf` (TIMs A10 S3).
+
+    The rule is IMPORTED from the resolver
+    (:func:`~apeGmsh._kernel.resolvers._interface_resolver.accepts_3d_ndf_pair`),
+    never restated: the resolver's ``slave_ndf`` gate and this emit-time
+    gate must agree by construction, and a second copy is a second thing
+    to drift. The fork joins any 3-D pair with both ends ndf >= 3,
+    acting on DOFs 1-3 with every DOF past the third an untouched
+    passenger (fork #808 / ADR 96); a pair below that is a warning plus
+    an inert element there, so it is refused here, before a line is
+    written.
+
+    It is the *rule* and not ADR 96's list of example pairs: the list
+    omits ``(4, 6)`` — a u-p soil master under a shell raft — which the
+    fork takes like any other, and which the resolver's
+    ``slave_ndf=6`` already promises (adversarial review F1, measured on
+    build ``1652f945c``).
+
+    D4 does not cross over: in 3-D no phantom is minted at all (that is
+    what the fork's relaxation retires), so a record carrying one is a
+    resolver-contract violation rather than a user mistake.
+    """
+    from apeGmsh._kernel.resolvers._interface_resolver import (
+        _MIN_3D_NDF,
+        _NAMED_3D_NDF_PAIRS,
+        accepts_3d_ndf_pair,
+    )
+    from .._target import TIMS_FORK_BATCH_MIN_BUILD
+
+    if int(ndm) != 3:
+        raise BridgeError(
+            f"interface{label}: this record carries a nine-float "
+            f"(n, t1, t2) frame, i.e. a 3D dim-2 surface master (ADR 0093 "
+            f"D2 / TIMs A10), but the model is ndm={int(ndm)}. A 2D "
+            f"interface carries six floats."
+        )
+    if phantom is not None:
+        raise BridgeError(
+            f"interface{label}: pair (master={master}, slave={slave}) "
+            f"carries phantom node {int(phantom)}, but a 3D interface "
+            f"mints no phantom — fork #808 / ADR 96 joins the mixed pair "
+            f"directly, which is what retires the ADR 0093 D4 bridge in "
+            f"3D. A phantom here means the record and the resolver "
+            f"disagree."
+        )
+    if not accepts_3d_ndf_pair(m_ndf, s_ndf):
+        raise BridgeError(
+            f"interface{label}: pair (master={master}, slave={slave}) has "
+            f"ndf=({m_ndf}, {s_ndf}), which no 3D zeroLength accepts. The "
+            f"fork joins a 3D pair whose ends BOTH carry ndf >= "
+            f"{_MIN_3D_NDF}, acting on DOFs 1-3 with every DOF past the "
+            f"third an untouched passenger (fork #808 / ADR 96, minimum "
+            f"build {TIMS_FORK_BATCH_MIN_BUILD} = "
+            f"TIMS_FORK_BATCH_MIN_BUILD) — e.g. "
+            f"{list(_NAMED_3D_NDF_PAIRS)}, and any other pair over that "
+            f"floor. Below it the engine warns and leaves the element "
+            f"inert, so the interface would silently do nothing."
+        )
+
+
+#: How far the record's ``t2`` may sit from ``n x t1`` before the 3-D
+#: frame is refused (TIMs A10 S3).  Tight, because the resolver builds
+#: the triad exactly and ``g.compose`` only rotates it — anything looser
+#: would be tolerating a real error rather than float noise.
+_ORIENT_TRIAD_TOL = 1e-9
+
+
+def _validate_interface_orient_triad(rec: "InterfaceRecord") -> None:
+    """A 3-D record's frame must be orthonormal, and its third vector
+    must BE ``n x t1``.
+
+    ``zeroLength -orient x1 x2 x3 yp1 yp2 yp3`` takes only TWO vectors
+    and derives the third itself: local-1 is ``x``, local-2 is the part
+    of ``yp`` orthogonal to ``x``, local-3 is ``1 x 2``
+    (``ZeroLength::setUp``).  So emitting the record's ``(n, t1)`` gives
+    the element ``(n, t1, n x t1)`` — which is the record's own ``t2``
+    only if the record's triad is right-handed.  S1's ``_tangent_pair``
+    builds it that way; asserted here rather than trusted, because a
+    record can reach emit through ``g.compose`` (which rotates every
+    stacked vector), an h5 reload or a hand build, and a flipped ``t2``
+    would put the ``-dir 3`` slider on the opposite tangent with no
+    other symptom in the deck.
+
+    **Orthonormality is checked first (TIMs A10 S4).** The ``t2 == n x
+    t1`` rule alone passes a ``t1`` tilted OUT of the tangent plane, as
+    long as ``t2`` was built from the same skewed ``t1``: the S3
+    adversarial review MEASURED a 10-degree skew sailing through and
+    then being silently re-orthogonalised by ``ZeroLength::setUp``,
+    which gives the right answer for the WRONG frame — the springs act
+    along a triad the record does not describe, so a per-pair
+    ``spring_force_1`` no longer means what the record says it means.
+    Refused here instead, on the same 1e-9 budget.
+    """
+    frame = np.asarray(rec.orient, dtype=float).reshape(3, 3)
+    n, t1, t2 = frame[0], frame[1], frame[2]
+    n_err = abs(float(np.linalg.norm(n)) - 1.0)
+    t1_err = abs(float(np.linalg.norm(t1)) - 1.0)
+    dot_err = abs(float(np.dot(n, t1)))
+    if max(n_err, t1_err, dot_err) > _ORIENT_TRIAD_TOL:
+        name = getattr(rec, "name", None)
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"interface{label}: pair (master={int(rec.master_node)}, "
+            f"slave={int(rec.slave_node)}) carries a frame that is not "
+            f"ORTHONORMAL — |n|-1={n_err:.3e}, |t1|-1={t1_err:.3e}, "
+            f"n.t1={dot_err:.3e} (budget {_ORIENT_TRIAD_TOL:g}) for "
+            f"n={tuple(n)}, t1={tuple(t1)}. The zeroLength -orient "
+            f"argument is (x, yp) and ZeroLength::setUp silently "
+            f"re-orthogonalises it, so a skewed frame runs to a "
+            f"plausible answer whose springs act along a triad the "
+            f"record does not describe (ADR 0093 D2 / TIMs A10 S4)."
+        )
+    err = float(np.linalg.norm(np.cross(n, t1) - t2))
+    if err > _ORIENT_TRIAD_TOL:
+        name = getattr(rec, "name", None)
+        label = f" {name!r}" if name else ""
+        raise BridgeError(
+            f"interface{label}: pair (master={int(rec.master_node)}, "
+            f"slave={int(rec.slave_node)}) carries a frame whose t2="
+            f"{tuple(t2)} is not n x t1={tuple(np.cross(n, t1))} "
+            f"(off by {err:.3e} > {_ORIENT_TRIAD_TOL:g}). The zeroLength "
+            f"-orient argument is only (n, t1) and the engine derives "
+            f"local-3 as 1 x 2, so a left-handed record would put the "
+            f"second tangential slider on -t2 while the record says t2 "
+            f"(ADR 0093 D2 / TIMs A10 S3)."
+        )
+
+
 def _validate_interface_records(
     records: "Sequence[InterfaceRecord]",
     *,
@@ -5605,8 +6292,10 @@ def _validate_interface_records(
     deck half-written then aborted is worse than one never started.
 
     Shared by the base pass (:func:`emit_interfaces`, which validates
-    the WHOLE side-list including stage-claimed rows) and the stage
-    pass (:func:`emit_stage_interfaces`).
+    the WHOLE side-list including stage-claimed rows), the stage pass
+    (:func:`emit_stage_interfaces`) and the partitioned owner-rank plan
+    — so a refusal here reaches every route into
+    :func:`_emit_interface_record`, on every dimension.
     """
     for rec in records:
         _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
@@ -5619,6 +6308,8 @@ def _validate_interface_records(
                 f"frame, i.e. a normal law acting along global x — the "
                 f"silent sign error ADR 0093 INV-1 exists to kill."
             )
+        if _interface_is_3d(rec):
+            _validate_interface_orient_triad(rec)
         if rec.phantom_node is not None and rec.phantom_coords is None:
             raise BridgeError(
                 f"interface: record for pair (master="
@@ -5826,6 +6517,15 @@ def _emit_interface_record(
     owner-rank pass (ADR 0093 S8), so the D1 translation table and
     INV-1's node order exist in exactly one place.
 
+    Two element shapes, chosen off the record's frame width
+    (:func:`_interface_is_3d`) — never off ``ndm``, which the record may
+    outlive: a 2-D line master emits ``-mat mN mT -dir 1 2`` with the
+    record's six-float ``-orient``, a 3-D surface master (TIMs A10 S3)
+    emits ``-mat mN mT mT -dir 1 2 3`` with the first six of its nine.
+    See the comment at the ``args`` fork for why the tangential tag is
+    repeated rather than minted twice, and for what "two uncoupled
+    sliders" costs.
+
     ``pre_allocated`` is this record's ``(normal_mat_tag,
     tangential_mat_tag, element_tag)`` triple from
     :func:`allocate_interface_tags` — allocation is separated from
@@ -5874,12 +6574,43 @@ def _emit_interface_record(
     m_normal._emit(emitter, n_tag)
     m_tangential._emit(emitter, t_tag)
 
-    args: "list[int | float | str]" = [
-        int(rec.master_node), j_node,
-        "-mat", n_tag, t_tag,
-        "-dir", 1, 2,
-        "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
-    ]
+    args: "list[int | float | str]"
+    if _interface_is_3d(rec):
+        # TWO UNCOUPLED COULOMB SLIDERS, not a circular slip surface:
+        # dir 2 and dir 3 each carry the tangential law in full, so
+        # sliding along t1 and along t2 yield independently at
+        # ``tau_b * A_trib`` rather than on a combined
+        # ``|tau| <= tau_b * A_trib`` radius (the slip locus is a square
+        # in the tangent plane, not a circle, and is up to sqrt(2) too
+        # strong on the diagonal). That is the plan's own choice for S3
+        # — a uniaxial bundle is what ADR 0093 D1 translates to — and
+        # S4 measures what it costs.
+        #
+        # ONE tangential tag on both slots, not two: ZeroLength deep-
+        # copies every ``-mat`` entry (``ZeroLength.cpp:405``,
+        # ``theMaterial1d[i] = theMat[i]->getCopy()``), so the two
+        # sliders carry fully independent state from a single declared
+        # material — a second identical uniaxialMaterial line would buy
+        # nothing and double the deck's material count.
+        #
+        # Only the first six floats go out: ``-orient`` IS (n, t1), and
+        # the engine derives local-3 as ``1 x 2``, which
+        # :func:`_validate_interface_orient_triad` has already proven
+        # equals the record's t2.
+        args = [
+            int(rec.master_node), j_node,
+            "-mat", n_tag, t_tag, t_tag,
+            "-dir", 1, 2, 3,
+            "-orient",
+            *(float(v) for v in rec.orient[:6]),  # type: ignore[index]
+        ]
+    else:
+        args = [
+            int(rec.master_node), j_node,
+            "-mat", n_tag, t_tag,
+            "-dir", 1, 2,
+            "-orient", *(float(v) for v in rec.orient),  # type: ignore[union-attr]
+        ]
     # ADR 0049 node-pair convention for a minted (mesh-less) element:
     # sentinel fem_eid + the TRUE endpoint pair.  Without this the H5
     # emitter's sticky side channels leak the last mesh row's fem_eid
@@ -7544,6 +8275,22 @@ def allocate_element_tags(
         # (MISSING_FEM_ELEMENT_ID, (i, j)) via expand_spec_to_elements.
         fanout = expand_spec_to_elements(fem, spec)
         n = len(fanout)
+        # Fail loud on a PG-form element declaration that fans out to
+        # NOTHING (adversarial review of A10): a physical group with no
+        # elements of the primitive's dimension in this FEM snapshot used
+        # to emit the section/material lines and silently zero element
+        # lines. ``pg is None`` is the node-pair form, which always
+        # fans out to exactly one synthetic element and can never hit
+        # this branch.
+        pg = getattr(spec, "pg", None)
+        if n == 0 and pg is not None:
+            raise BridgeError(
+                f"{type(spec).__name__}(pg={pg!r}) selected 0 elements: "
+                f"{_describe_pg_cells(fem, pg)}, but none of them are "
+                f"present in the FEM snapshot handed to apeSees(fem) — "
+                f"check that get_fem_data(dim=...) was not called with a "
+                f"dim that excludes this group's cells."
+            )
         tag_start = tags.allocate_block("element", n)
         # Share the fan-out's arrays by reference — they are read-only
         # (memoised) so the plan and the fan-out cache alias one buffer
@@ -8028,6 +8775,60 @@ def emit_initial_stress_addtoparameter(
                 )
 
 
+def emit_update_parameters(
+    records: "Iterable[UpdateParameterRecord]",
+    emitter: "Emitter",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    tags: TagAllocator,
+    element_owner: "SortedIntToInt | None" = None,
+    partition_rank: int | None = None,
+) -> None:
+    """Emit ``s.update_parameter`` for each record.
+
+    Same element-resolution and per-rank contract as
+    :func:`emit_activate_absorbing` — the two verbs drive the same
+    OpenSees primitive, only the argv tail and the value differ.  A
+    fresh ``parameter`` tag is allocated per (record, rank) so each
+    block is self-contained and a later stage may re-declare.
+    """
+    is_partitioned_mode = partition_rank is not None
+    for rec in records:
+        if rec.elements is not None:
+            eids: tuple[int, ...] = rec.elements
+        elif rec.pg is not None:
+            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
+        else:  # pragma: no cover — validated at the call site
+            eids = ()
+        ops_tags: list[int] = []
+        for eid in eids:
+            if is_partitioned_mode and element_owner is not None:
+                owner = element_owner.get(int(eid))
+                if owner is None or owner != partition_rank:
+                    continue
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                if is_partitioned_mode:
+                    continue  # owned by another rank; silent skip OK.
+                raise BridgeError(
+                    f"update_parameter {rec.name!r}: element id {int(eid)} "
+                    "is not registered with any Element primitive (the "
+                    "updateParameter would silently no-op).  Either drop it "
+                    "from elements= or declare the matching Element "
+                    "primitive via ops.element.<Type>(pg=...)."
+                )
+            ops_tags.append(int(ops_tag))
+        if ops_tags:
+            pid = tags.allocate("parameter")
+            args: tuple[str | int, ...] = (
+                (rec.name,) if rec.mat_tag is None
+                else (rec.name, int(rec.mat_tag))
+            )
+            emitter.update_parameter(
+                pid, tuple(ops_tags), args, float(rec.value),
+            )
+
+
 def emit_activate_absorbing(
     records: "Iterable[ActivateAbsorbingRecord]",
     emitter: "Emitter",
@@ -8080,6 +8881,58 @@ def emit_activate_absorbing(
         if ops_tags:
             pid = tags.allocate("parameter")
             emitter.flip_element_stage(pid, tuple(ops_tags))
+
+
+def zero_velocity_target_nodes(
+    records: "Iterable[ZeroVelocityRecord]",
+    all_node_ids: "Iterable[int]",
+) -> "list[int]":
+    """Resolve a stage's ``s.zero_velocities`` pool to its node list.
+
+    ``nodes=None`` expands to ``all_node_ids`` (the whole domain).
+    Order is first-seen; duplicates across records collapse, so calling
+    the verb twice on overlapping sets does not double the deck.
+    """
+    out: list[int] = []
+    seen: set[int] = set()
+    domain: tuple[int, ...] | None = None
+    for rec in records:
+        if rec.nodes is None:
+            if domain is None:
+                domain = tuple(int(n) for n in all_node_ids)
+            targets: "Iterable[int]" = domain
+        else:
+            targets = rec.nodes
+        for nid in targets:
+            n = int(nid)
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+
+def emit_zero_velocities(
+    nodes: "Iterable[int]",
+    emitter: "Emitter",
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+) -> None:
+    """Emit the nodal velocity / acceleration zeroing for ``nodes``.
+
+    Per node, one ``setNodeVel`` then one ``setNodeAccel`` per DOF of
+    that node's effective ndf (``effective_ndf`` is the ADR 0048
+    inferred map; nodes absent from it fall back to the ``ops.model``
+    envelope).  Both commands carry ``-commit`` — see
+    :meth:`Emitter.set_node_vel` for why that is mandatory rather than
+    cosmetic.
+    """
+    for nid in nodes:
+        node = int(nid)
+        ndf = int(effective_ndf.get(node, envelope_ndf))
+        for dof in range(1, ndf + 1):
+            emitter.set_node_vel(node, dof, 0.0)
+        for dof in range(1, ndf + 1):
+            emitter.set_node_accel(node, dof, 0.0)
 
 
 def _plan_owner_ranks(

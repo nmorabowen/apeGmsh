@@ -491,6 +491,218 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
     rules); `skills/apegmsh/` re-sync. *(prose at top tier per the docs
     voice rule; mechanics light)*
 
+### 3D surface masters (TIMs A10, opened 2026-09-07)
+
+D2 deferred the dim-2 master, and the deferral held until the fork
+relaxed `ZeroLength::setDomain` (fork #808 / ADR 96, minimum build
+`a240b9183`): a 3D pair with both ndf ≥ 3 is now accepted and acts on
+DOFs 1–3 only, so the mixed ndf-3 skin against ndf-4 u–p soil the
+requester actually has is constructible. The scope, the surviving
+refusal gates and the four slices are in
+`internal_docs/plan_interface_3d.md`; they extend this register rather
+than open a second ADR, because every decision they touch is one of
+D1–D4.
+
+12. **S1 (3D) — kernel: per-node surface frames + tributary areas.**
+    `_kernel/geometry/_surface_frames.py`, the 3D sibling of
+    `_boundary_chain.py`: `surface_frames()` walks a dim-2 master's tri3
+    / quad4 facets, signs each facet normal against its owning solid's
+    centroid (the D2 sign-fix, one dimension up), averages them
+    uniformly per node — the literal sibling of the 2D `_node_normals`,
+    and the only weight under which a cube corner comes out at
+    `(1,1,1)/√3` — and accumulates `A_trib` from the same equal-share
+    fan-triangulated facet areas `distributing_coupling(weighting=
+    "area")` already uses (D3, no `thickness` in 3D). Two in-plane
+    tangents complete a right-handed `(n, t1, t2)`; `t1` is the global
+    axis least aligned with `n`, projected and normalised, ties to the
+    lowest index, so the frame is a pure function of `n` (ADR 0027).
+    The one rule with no 2D counterpart is the **reentrant fold
+    refusal**: `dot(n_i, n_j)` cannot tell a 90° convex corner from a
+    270° reentrant one — both are exactly zero — so the sense is read
+    from the facet centroids and the refusal is stated on the interior
+    dihedral, past 45° of reentrancy. Quadratic facets (tri6 / quad8 /
+    quad9) are refused **by name**: their mid-side nodes need a
+    shape-function-weighted split, and the linear rule would quietly
+    mis-weight every spring. *(kernel only — the three gates still
+    refuse a 3D model, which is S2's lift; tests
+    `tests/_kernel/geometry/test_surface_frames.py`, mutation-checked
+    on the sign-fix and on both directions of the fold constant.)*
+    *Landed 2026-09-07.*
+13. **S2 (3D) — composite: the three gates lifted, the record widened.**
+    `interface()` now takes a dim-1 line master in a 2D model or a
+    dim-2 surface master in a 3D one, and the wrong one for the model is
+    refused by name on the label. `resolve_interfaces` reads the model
+    dimension once and threads it (the `resolve_contacts` idiom): 2D
+    gathers boundary edges against the 2D continuum, 3D gathers ragged
+    tri3/quad4 facets against the 3D continuum and hands them to S1's
+    `surface_frames`. The two arguments whose meaning is dimensional are
+    checked at declaration too, as early as the live model shows its
+    dimension — `thickness` is the 2D depth and is **refused by name**
+    in 3D (a surface has a real area; `A_trib` is the facet-area
+    accumulation, D3), and `slave_ndf` takes `(None, 2, 3)` in 2D
+    against `(None, 3, 4, 6)` in 3D. **D4 does not cross over**: the
+    phantom bridge exists because `ZeroLength::setDomain` refused
+    `dofNd1 != dofNd2`, and in 3D it no longer does — fork #808 / ADR 96
+    takes every pair in `_ACCEPTED_3D_NDF_PAIRS` directly, with each DOF
+    past the third an untouched passenger, so a 3D pair mints no
+    phantom at all. That constant carries the minimum build
+    `TIMS_FORK_BATCH_MIN_BUILD` (`a240b9183`) as a citation, not a
+    runtime check: a build's ancestry is not derivable from a hash.
+    `InterfaceRecord.orient` widens from six floats to **six or nine** —
+    the first six are the zeroLength `-orient` argument at either
+    dimension, and 3D appends `t2` because the Coulomb law acts on two
+    tangents. On h5 that is an APPENDED `orient_t2` / `has_orient_t2`
+    pair (neutral 2.32.0, presence-probed on read): the `orient` column
+    does not move, so a 2D row is byte-for-byte what 2.29.0 wrote.
+    **Emission is still S3**, and saying so is part of the slice:
+    `_refuse_3d_interface_emission` in `build.py` refuses a nine-float
+    record in the shared whole-pool gate — keyed on the record, so
+    compose / h5 / a stage claim are all covered — naming S3 rather than
+    letting `_emit_interface_record`'s hard-coded `-dir 1 2` emit a
+    2D-shaped element. *(tests: the 3D box + footing skin in
+    `test_interface_verb.py`, the hand-built slab in
+    `test_interface_resolver.py`, the frame's h5 round-trip, and the
+    refusal read off a real `apeSees` deck attempt.)* *Landed
+    2026-09-08.*
+14. **S3 (3D) — emit: three directions, one frame, two uncoupled
+    sliders.** The refusal S2 left standing is gone; a nine-float record
+    emits `element zeroLength <tag> <master> <slave> -mat mN mT mT
+    -dir 1 2 3 -orient n t1`. Three things are decided here. **The frame
+    is the record's first six floats, not its nine**: `-orient` takes
+    only `(x, yp)` and the engine derives local-3 as `1 x 2`
+    (`ZeroLength::setUp`), so sending `(n, t1)` yields exactly
+    `(n, t1, n x t1)` — which is the record's own `t2` only if the triad
+    is right-handed. That is *asserted* before emission
+    (`_validate_interface_orient_triad`, 1e-9) rather than trusted,
+    because a record can arrive through `g.compose` (which rotates every
+    stacked vector), an h5 reload or a hand build, and a flipped `t2`
+    would put the second slider on the opposite tangent with no other
+    symptom in the deck. **The tangential tag is repeated, not minted
+    twice**: `ZeroLength` deep-copies every `-mat` slot
+    (`ZeroLength.cpp:405`, `theMat[i]->getCopy()`), so the two sliders
+    carry independent state from one declared material and a second
+    identical `uniaxialMaterial` line would only inflate the deck.
+    **The two tangential sliders are UNCOUPLED** — dir 2 and dir 3 each
+    carry the full `tau_b * A_trib`, so the slip locus in the tangent
+    plane is a square, not the circle a real Coulomb cone would give,
+    and is up to sqrt(2) too strong on the diagonal. That is the plan's
+    own choice (D1 translates to a uniaxial bundle, and a coupled
+    surface is a different material); S4 measures what it costs. The
+    emit-time ndf gate grows a 3D branch that mirrors the resolver's
+    `_ACCEPTED_3D_NDF_PAIRS` by **importing** it — one table, so the
+    declaration gate and the emit gate cannot drift — and refuses a
+    phantom in 3D outright, since D4 has nothing left to bridge there.
+    `validate_adaptive_element_endpoints`, the generic equal-ndf guard
+    on the whole zeroLength family, gains the same exemption stated the
+    fork's way: unequal ndf is accepted iff `ndm == 3` and both ends
+    carry ndf >= 3 (fork #808 / ADR 96, `TIMS_FORK_BATCH_MIN_BUILD`);
+    every 2D mismatch is still refused, because there the fork still
+    only warns and leaves the element inert. Nothing was needed on the
+    recorder side: `n_springs` is per-element metadata read from
+    `META/NUM_COMPONENTS`, so a 3-spring pair comes back as
+    `spring_force_0..2` with no catalog change. *(tests: the golden
+    Tcl/Py lines, the left-handed-frame refusal, the accepted-pair table
+    parametrised both ways, staged and partitioned 3D emission byte-
+    compared against flat, the two-box e2e deck counted against the
+    mesh's own coincident pairs, and a live fork smoke on both a `(3,3)`
+    and a `(4,3)` u-p deck — mutation-checked by emitting `-dir 1 2 4`,
+    which makes the fork print "passenger mode … element disabled".)*
+    *Landed 2026-09-08.*
+15. **S4 (3D) — verification: the deck is not merely well-formed, it is
+    right.** S1–S3 made a 3D master resolve and emit; none of them could
+    say the answer was correct, because ADR 96 turned every way of
+    getting it wrong into a *quiet* wrong — a warning plus an inert
+    element, or a frame the engine silently re-orthogonalises. S4 is the
+    measurement, and every number below is a COMPARISON rather than a
+    hand value, because only a comparison fails for the right reason.
+    Fork build `1652f945c`.
+
+    **The 2D acceptance case, rotated into 3D.** A strip footing on a
+    slab, the same `ENT` + `epp` laws, solved once as plane strain of
+    thickness `t` and once as its 3D twin extruded ONE element deep to
+    the same `t` with every out-of-plane DOF fixed. The twin is exact
+    *by construction*, and that is the design decision worth recording:
+    one element deep splits each 2D pair into the two z-layer pairs
+    above and below it, each taking half its `A_trib` — asserted before
+    a solver number is read — and splits each nodal load the same way,
+    so the ONLY residual left is floating-point summation order.
+    Measured: cap settlement `-6.34596966103573388e-03` (2D) against
+    `-6.34596966103573475e-03` (3D), **rel 1.4e-16**; interface
+    normal-spring sum `-2.9999999999999995e+06` against
+    `-3.0000000000000000e+06`, **rel 1.6e-16**, both equal to the
+    applied `-3.0e6`. The gate is 1e-12 relative — four orders of slack,
+    for a different solver's summation order and nothing else.
+    Mutation-checked by doubling a 3D record's `A_trib` at emit: the
+    settlement and per-pair force checks fail while the *total* still
+    balances, which is precisely why the equilibrium check S10 leaned on
+    cannot, alone, verify a tributary.
+
+    **Three springs, read back (D6 in 3D).** S3 claimed the recorder
+    needed nothing because `n_springs` is per-element metadata; claimed,
+    never measured. `Results.from_mpco` returns `spring_force_0..2` and
+    no fourth channel, matched against the engine's own `eleResponse
+    basicForce` at 1e-12. The out-of-plane tangent reads exactly `0.0`
+    — its DOF is held by the plane-strain fixities, so that zero is a
+    prediction the frame has to earn, not a coincidence; the in-plane
+    tangent carries only the two bodies' Poisson mismatch (`180.4` N
+    against `747296` N normal).
+
+    **The u–p passenger DOF at model scale.** The `(4,3)` pair with a
+    real `LadrunoUP` soil, a pressure datum declared through the ADR
+    0074 / A2 gate's own mechanism (the deck PASSES
+    `validate_up_pressure_datum`; dropping the DOF-4 flag refuses the
+    same deck by name, which is asserted rather than assumed), and
+    `p = 1e6` imposed on an interface node. Against the fork's own G3
+    twin — the same mesh with `equalDOF 1 2 3` in place of the
+    interface — the pore-pressure field agrees to **rel 1.5e-17**
+    (worst `1.455e-11` on `1.0e6`) even though the two ties have
+    entirely different mechanics; and `eleResponse force` is
+    `ndf1 + ndf2 = 7` wide with the master's DOF-4 slot exactly `0.0` on
+    every pair, the fork's G2 assertion reproduced through apeGmsh. With
+    `p = 0` the `(4,3)` deck reproduces the all-brick `(3,3)` twin to
+    **rel 1.4e-16**, so the mixed-ndf join itself costs nothing.
+
+    **A master spanning two faces.** The S3 review recorded the
+    corner-wrap case as not constructible through the verb. It is — the
+    blocker was the *slave*: two separate slave bodies put two nodes at
+    the corner and the resolver's ambiguity refusal fires first, while
+    ONE conformal slave (three boxes fragmented) puts one node there.
+    15 pairs across two unit faces, the 3 seam nodes carrying the
+    averaged `(1,0,1)/√2` D2 predicts, INV-3 closing on `2.0` with a
+    seam node taking a quarter cell from each side, and the deck running
+    with zero fork refusals and every pair in compression under a
+    diagonal push. The reentrant mirror is refused at resolve naming the
+    node, both facets and the 270° dihedral.
+
+    **One production change, and it is a refusal.**
+    `_validate_interface_orient_triad` now checks ORTHONORMALITY before
+    the `t2 == n x t1` rule, on the same 1e-9 budget. The cross-product
+    rule alone passes a `t1` tilted out of the tangent plane whenever
+    `t2` was built from that same skewed `t1`, and the S3 review
+    measured the consequence: `ZeroLength::setUp` re-orthogonalises it
+    and the run gives the right answer for a triad the record does not
+    describe — so a per-pair `spring_force_1` stops meaning what the
+    record says it means. "The engine corrects it" is not a reason to
+    let it through; it is the reason it is invisible.
+
+    *(tests: `tests/opensees/integration_ladruno/
+    test_interface_3d_verification.py` for everything needing the
+    engine; the corner-wrap record rules and the reentrant refusal in
+    `test_interface_verb.py`; the skew and degenerate frames in
+    `test_interface_emit.py`; and the plan's named coverage gap closed
+    with 3D deck-level cases in `test_interface_staged_emit.py` and
+    `test_interface_partitioned_emit.py`, `per_rank=True` included.)*
+    *Landed 2026-09-08 — the A10 ladder is complete.*
+
+    *Still owed, and named:* the S10 `tie` comparison. It became
+    *constructible* here — `tie` takes a dim-2 surface master, which
+    `interface()` now does too — but it was not built: `tie`'s default
+    enforcement is itself a penalty (`ASDEmbeddedNodeElement`), so it
+    would compare one penalty against another, and S10's amendment
+    already chose `equal_dof` as the stronger bonded reference for
+    exactly that reason. The 3D `equalDOF` twin above is that comparison,
+    one dimension up.
+
 ## Alternatives rejected
 
 - **The `_DISPATCH` MP-constraint lane.** The verb emits elements, not MP

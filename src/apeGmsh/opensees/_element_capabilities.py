@@ -120,6 +120,18 @@ class _ElemSpec:
     # keeps today's scalar behaviour unchanged.
     ndf_floor_per_slot : dict[int, tuple[int, ...]] | None = None
 
+    # Whether the element ACTS on a material's refused trial strain (ADR
+    # 0105 D4 / fork ADR-94 B2).  ``True``: the element returns the
+    # material's failure code and the step fails (``LadrunoBrick``,
+    # ``TenNodeTetrahedron`` — fork verdict §3).  ``False``: MEASURED to
+    # discard every material return code, so ``strict_convergence`` and
+    # every other fail-loud material contract is invisible on it
+    # (``stdBrick``: ``Brick::update()`` assigns the code and returns 0
+    # unconditionally; pinned by the fork's
+    # ``test_R2_strict_convergence_is_a_noop_on_stdbrick``).  ``None``:
+    # not measured either way — the gate stays silent rather than guess.
+    propagates_material_refusal : bool | None = None
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
@@ -290,6 +302,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={11: (0,1,2,3,4,5,6,7,8,9)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     "stdBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -299,6 +312,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
         cpp_class_name="Brick",
+        propagates_material_refusal=False,
     ),
     "bbarBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -329,6 +343,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork 20-node serendipity quadratic hex (tag 33018, ADR 72), the
     # second-order sibling of LadrunoBrick. Token == C++ class name == registry
@@ -775,6 +790,19 @@ def element_ndf_strict(class_name: str) -> bool:
     return spec is not None and spec.ndf_floor_per_slot is not None
 
 
+def element_propagates_material_refusal(class_name: str) -> "bool | None":
+    """Whether an ``Element`` subclass acts on a material's refusal.
+
+    ``True`` / ``False`` are the MEASURED answers on the registry entry
+    (:attr:`_ElemSpec.propagates_material_refusal`); ``None`` is
+    "unknown" — an unregistered class, or a registered one nobody has
+    measured — and the ADR 0105 D4 gate never warns on ``None``.
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    return None if spec is None else spec.propagates_material_refusal
+
+
 def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
     """Return the set of ``ndm`` values an ``Element`` subclass supports, or
     ``None`` when unclassifiable (no :data:`_ELEM_REGISTRY` entry).
@@ -1156,3 +1184,80 @@ def cpp_class_name_for_pgs(
     if len(names) == 1:
         return next(iter(names))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Runtime capability probes (ADR 0108)
+# ---------------------------------------------------------------------------
+
+#: How many floats the fork's ``ladrunoBranch`` material response returns —
+#: ``[branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, I1,
+#: detAmin]`` (``DruckerPrager::getLadrunoBranch()``, fork ADR-95).  The
+#: names of those eight columns live on the READ side
+#: (``results.readers._ladruno_element_io._MATERIAL_BUCKET_TOKENS``); the
+#: bridge deliberately knows only the width, so the layering stays
+#: results -> opensees and not back.
+LADRUNO_BRANCH_WIDTH = 8
+
+#: Element classes whose ``setResponse`` forwards ``material <gp> <token>``
+#: to the NDMaterial, so the probe below can be aimed at one of their
+#: elements (fork ADR-95 forwards ``ladrunoBranch`` on exactly these).
+LADRUNO_BRANCH_ELEMENT_CLASSES: frozenset[str] = frozenset({
+    "LadrunoBrick",
+    "LadrunoBrick20",
+    "BezierTet10",
+    "TenNodeTetrahedron",
+})
+
+
+def probe_ladruno_branch(
+    ops: Any, element_tag: int, *, gauss_point: int = 1,
+) -> bool:
+    """True when this engine answers the ADR-95 DruckerPrager diagnostic.
+
+    Calls ``ops.eleResponse(element_tag, "material", "<gp>",
+    "ladrunoBranch")`` on a live domain and reports whether it came back
+    with the documented :data:`LADRUNO_BRANCH_WIDTH` floats.
+
+    **An empty reply is the capability probe.**  Every engine older than
+    fork build ``61b3efa04``
+    (:data:`~apeGmsh.opensees.material.nd.DP_ADR95_MIN_FORK_BUILD`) — and
+    every stock openseespy — parses a ``DruckerPrager`` deck identically
+    and answers ``[]`` here, because the response did not exist.  That
+    same engine also gets the tension-cutoff return map wrong, so the
+    empty list is not just "no diagnostic": it is "do not believe this
+    run's collapse load on quadratic solid elements".  The ASD-DP sibling
+    (``ASDPlasticMaterial3D`` + ``DruckerPrager_YF``) needs a second,
+    later floor, ``67474aeb7``, for its apex classification; there is no
+    response token for that one, so it cannot be probed this way —
+    compare :func:`apeGmsh.opensees.emitter.live.get_backend_build`.
+
+    ``element_tag`` must name an element of a class in
+    :data:`LADRUNO_BRANCH_ELEMENT_CLASSES` using a UW ``DruckerPrager``
+    material; anything else answers ``[]`` for reasons that have nothing
+    to do with the build, and the caller would misread it as an old
+    engine.  ``gauss_point`` is 1-based, as OpenSees counts them.
+
+    Raises ``ValueError`` on a reply that is neither empty nor exactly
+    eight long: a third width means the fork changed the response and
+    every by-position name downstream is now wrong — louder is better
+    than a mislabelled census.
+    """
+    vals = ops.eleResponse(
+        int(element_tag), "material", str(int(gauss_point)), "ladrunoBranch",
+    )
+    n = len(vals)
+    if n == 0:
+        return False
+    if n != LADRUNO_BRANCH_WIDTH:
+        raise ValueError(
+            f"ops.eleResponse({element_tag}, 'material', "
+            f"'{gauss_point}', 'ladrunoBranch') returned {n} values; fork "
+            f"ADR-95 documents exactly {LADRUNO_BRANCH_WIDTH} "
+            f"([branch, gamma0, gamma1, f1_trial, f2_trial, forcedAccept, "
+            f"I1, detAmin]). Refusing to answer the probe: a changed width "
+            f"means the by-position column names in the .ladruno reader "
+            f"(material.ladrunoBranch) no longer describe what the engine "
+            f"writes."
+        )
+    return True

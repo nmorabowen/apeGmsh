@@ -57,6 +57,7 @@ from .analysis import Static, Transient, VariableTransient
 from .constraint_handler import Lagrange, Penalty, Transformation
 from .complex_eigen import ComplexEigenResult
 from .eigen import EigenResult
+from .footfall_result import FootfallResult
 from .modal import (
     FrequencyResponseResult,
     ModalHistoryResult,
@@ -193,4 +194,6 @@ __all__ = [
     "ComplexEigenResult",
     # parallel distributed-FEAST modal harvest (ADR 0077 Tier 1)
     "ParallelModalResult",
+    # footfall vibration walking evaluation (ADR 0109)
+    "FootfallResult",
 ]
