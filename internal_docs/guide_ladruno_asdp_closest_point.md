@@ -390,6 +390,17 @@ and are handed to the fork's owner as separate follow-on PRs (ADR-97 verdict
 - **StiffSoil stays refused under `Closest_Point`** (both `StiffSoilCap` and
   `StiffSoilShear`); `StiffSoil_EL` received two unrelated NaN fixes under
   `Backward_Euler` in ADR-97 P5, orthogonal to `Closest_Point` support.
+- **F8 (fork PR #836, 2026-09-15): `Backward_Euler`'s DP apex classification
+  was wrong under dilatant flow, not just associated.** Before #836,
+  `Backward_Euler` unioned the Euclidean apex test with ADR-97's own
+  elastic-metric one, and the union stays too wide whenever
+  `DP_etabar > DP_eta·G/K` (from about ψ ≈ 2.3°, up to ~10× too wide at
+  associated flow) — a silent apex projection with a zero `Continuum`
+  tangent, not a refusal. `Closest_Point` was never affected: it always used
+  the elastic-metric test alone. See
+  `guide_ladruno_adr95_druckerprager_fix.md` §4 and ADR 0105's 2026-09-15
+  amendment; the min-build constant is `ASDP_DILATANT_APEX_MIN_BUILD` in
+  `material/nd.py`.
 
 ## 8. Minimal end-to-end example (openseespy, runs on the fork today)
 

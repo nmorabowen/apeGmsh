@@ -535,6 +535,15 @@ class Ladder:
 
     Pass to ``s.run(..., strategy=ladder)`` (staged) or
     ``apeSees.analyze(..., strategy=ladder)`` (flat live runs).
+
+    Each escalation to a relaxed-tolerance rung is harvested live into
+    ``strategy_events`` (:attr:`apeGmsh.opensees.emitter.live.LiveRunner
+    .strategy_events`). Fork WP F8 measured the ASD associated
+    Drucker-Prager leg needing its third rung on 92.9 % of converged
+    steps where the equivalent UW leg needed none, on curves that
+    otherwise agreed to 0.075 % — so report the relaxed-rung count
+    alongside any ASD-vs-UW agreement figure, not just the peak/curve
+    match.
     """
 
     rungs: tuple[SolutionAlgorithm | Substep, ...]
