@@ -12,9 +12,13 @@ slots (`commitLatched` is the only per-instance slot, `latched` is
 per-Newton-iteration, and neither sums like the first four). A single
 classification module, `_internal/analyze_rc.py`, turns `-4` into
 `AnalysisAbortedError` at the three seams that retry (`Substep.drive`,
-the live rung ladder, and the interop static solve), so subdividing and
-rung escalation stop and the message says to restart from the last good
-checkpoint; `-33086` stays the retryable trial-time signal. The
+the live rung ladder, and the interop static solve), and the emitted
+Python and Tcl rung ladders stop on `-4` the same way, so subdividing
+and rung escalation stop and the message says to restart from the last
+good checkpoint. The message does not name a cause: the fork returns
+`-4` for any refused commit, the IMPL-EX latch or another integrator or
+domain commit failure, and a partial commit is unrecoverable either way.
+`-33086` stays the retryable trial-time signal. The
 `propagates_material_refusal` element table is populated from the fork's
 refusal roster (17 of 27 registry entries carry a value, up from 3), and
 `validate_sanisand_substep_cap` is keyed on that table like
