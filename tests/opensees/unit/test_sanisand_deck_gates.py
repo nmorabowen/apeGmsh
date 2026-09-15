@@ -9,9 +9,10 @@
   it cannot integrate. That only helps if the element acts on the refusal;
   under one that discards the return code the analysis converges on a
   partially integrated stress, which is worse than the uncapped
-  force-accept it replaces. So the cap is refused outright anywhere but
-  :class:`LadrunoBrick` — an ALLOW-list, because the fork's finding is
-  that only that element propagates on every path today.
+  force-accept it replaces. So the cap is refused on any element MEASURED
+  to discard the return code (fork PR #838's refusal-propagation roster),
+  keyed on :func:`element_propagates_material_refusal` — not on a
+  ``LadrunoBrick``-only allow-list.
 """
 from __future__ import annotations
 
@@ -25,7 +26,11 @@ from apeGmsh.opensees._internal.build import (
     validate_manzari_convergence_test,
     validate_sanisand_substep_cap,
 )
-from apeGmsh.opensees.element.solid import LadrunoBrick, stdBrick
+from apeGmsh.opensees.element.solid import (
+    LadrunoBrick,
+    TenNodeTetrahedron,
+    stdBrick,
+)
 from apeGmsh.opensees.material.nd import (
     ElasticIsotropic,
     LadrunoSANISAND,
@@ -156,6 +161,14 @@ class TestSubstepCapGate:
     def test_capped_on_ladruno_brick_is_allowed(self) -> None:
         validate_sanisand_substep_cap(
             [LadrunoBrick(pg="soil", material=_sand(max_substeps=80))]
+        )
+
+    def test_capped_on_ten_node_tetrahedron_is_allowed(self) -> None:
+        """Regression: the old ``LadrunoBrick``-only allow-list wrongly
+        refused ``TenNodeTetrahedron``, which the capability table (and the
+        fork's roster) mark as FORWARD."""
+        validate_sanisand_substep_cap(
+            [TenNodeTetrahedron(pg="soil", material=_sand(max_substeps=80))]
         )
 
     @pytest.mark.parametrize("formulation", ["std", "bbar", "uri", "ssp"])

@@ -51,13 +51,36 @@ class TestCapabilityFlag:
         assert element_propagates_material_refusal("stdBrick") is False
 
     def test_unmeasured_is_none_not_false(self) -> None:
-        """An unmeasured element must not be reported as swallowing."""
+        """An unmeasured element must not be reported as swallowing.
+
+        ``ShellMITC3`` is section-based (``mat_family="section"``), not a
+        direct ``NDMaterial`` host, so fork PR #838's refusal-propagation
+        roster (52 ``NDMaterial``-hosting elements) does not cover it.
+        """
         assert element_propagates_material_refusal("NoSuchElement") is None
-        assert element_propagates_material_refusal("FourNodeQuad") is None
+        assert element_propagates_material_refusal("ShellMITC3") is None
 
     def test_every_registry_entry_carries_a_tri_state_flag(self) -> None:
         for name, spec in _ELEM_REGISTRY.items():
             assert spec.propagates_material_refusal in (True, False, None), name
+
+    def test_the_fork_838_roster_pins_representative_elements(self) -> None:
+        """Pin a handful of the fork PR #838 roster's verdicts so a future
+        edit to ``_ELEM_REGISTRY`` cannot silently drift from it.
+
+        ``LadrunoBrick`` is SENTINEL-only (forwards exactly
+        ``LADRUNO_MATERIAL_REFUSED``, ADR-33/34) but still ``True`` here —
+        that sentinel is exactly what a capped SANISAND raises.
+        ``TenNodeTetrahedron`` and ``FourNodeQuad`` are FORWARD.
+        ``SSPquad`` is DISCARD.  ``ShellMITC3`` is outside the roster
+        entirely (not an ``NDMaterial`` host) and stays ``None``.
+        """
+        assert element_propagates_material_refusal("LadrunoBrick") is True
+        assert element_propagates_material_refusal("TenNodeTetrahedron") is True
+        assert element_propagates_material_refusal("FourNodeQuad") is True
+        assert element_propagates_material_refusal("SSPquad") is False
+        assert element_propagates_material_refusal("stdBrick") is False
+        assert element_propagates_material_refusal("ShellMITC3") is None
 
 
 class TestHostGate:

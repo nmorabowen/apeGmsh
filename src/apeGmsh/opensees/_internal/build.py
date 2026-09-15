@@ -4060,15 +4060,6 @@ def validate_manzari_convergence_test(
         _check(flat_tests[-1], "global")
 
 
-#: Elements known to propagate a material's refusal on EVERY path, and so
-#: safe to carry a ``max_substeps``-capped SANISAND.  An ALLOW-list, not a
-#: deny-list: under an element that discards the return code a capped
-#: material is WORSE than an uncapped one (a partially integrated stress
-#: accepted as converged, versus a fully integrated degraded one), and the
-#: fork's own finding is that only this element propagates today.
-_REFUSAL_PROPAGATING_ELEMENTS: frozenset[str] = frozenset({"LadrunoBrick"})
-
-
 def _material_graph(prim: object) -> "list[object]":
     """``prim`` and every material it wraps, transitively.
 
@@ -4093,36 +4084,46 @@ def _material_graph(prim: object) -> "list[object]":
 
 
 def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
-    """Refuse a ``max_substeps`` cap under an element that swallows refusals.
+    """Refuse a ``max_substeps`` cap under an element MEASURED to swallow it.
 
-    The cap only helps because the material REFUSES an increment it cannot
-    integrate and something upstream acts on that.  Under an element that
-    discards the return code the refusal is invisible: the analysis takes a
-    partially integrated stress with a partial tangent and reports
-    convergence.  That is a silently wrong answer, not a slow one, so this
-    raises rather than warns — the same call the ADR-0074 D4 u-p gate makes.
+    The cap makes the material REFUSE, at commit, an increment its
+    ``-maxSubsteps`` companion cannot integrate — a COMMIT-time refusal.
+    Since fork PR #838, ``Domain::commit()`` aborts any commit-time refusal
+    element-independently (the material declares it out of band via
+    ``ladrunoNoteCommitRefusal()``; a discarding element can no longer
+    swallow it — see :func:`element_propagates_material_refusal`), so this
+    build-time gate is now a belt on top of that runtime abort rather than
+    the only thing standing between a capped material and a silently wrong
+    answer. It still earns its keep: it fails at build time instead of at
+    analyze time, and it still matters on any build predating #838. Keyed
+    on the measured per-element flag (fork PR #838's refusal-propagation
+    audit, ``Ladruno_implementation/LEDGER_quirks.md`` "Element refusal
+    roster"), not on a name allow-list: only a host MEASURED to discard the
+    return code (``False``) raises; an unmeasured host (``None``) stays
+    silent, the same policy :func:`validate_asdplastic_host` uses.
     """
+    from .._element_capabilities import element_propagates_material_refusal
     from ..material.nd import LadrunoSANISAND
 
     for spec in elements:
         cls = type(spec).__name__
-        if cls in _REFUSAL_PROPAGATING_ELEMENTS:
+        if element_propagates_material_refusal(cls) is not False:
             continue
         for mat in _material_graph(getattr(spec, "material", None)):
             if not isinstance(mat, LadrunoSANISAND) or not mat.max_substeps:
                 continue
             raise BridgeError(
                 f"LadrunoSANISAND(max_substeps={mat.max_substeps}) reaches "
-                f"{cls!r} (pg {getattr(spec, 'pg', '?')!r}), which is not "
-                f"known to propagate a material refusal. The cap makes the "
-                f"material REFUSE an increment it cannot integrate; an "
+                f"{cls!r} (pg {getattr(spec, 'pg', '?')!r}), which is "
+                f"MEASURED to discard a material's refusal. The cap makes "
+                f"the material REFUSE an increment it cannot integrate; an "
                 f"element that discards that return code hands the analysis "
                 f"a PARTIALLY integrated stress with a partial tangent and "
                 f"it converges on it — worse than the uncapped force-accept, "
-                f"which at least integrates the whole increment. Only "
-                f"{', '.join(sorted(_REFUSAL_PROPAGATING_ELEMENTS))} "
-                f"propagates on every path today. Use that element, or "
-                f"leave max_substeps=0 (uncapped)."
+                f"which at least integrates the whole increment. Use an "
+                f"element MEASURED to propagate a material refusal (e.g. "
+                f"LadrunoBrick, LadrunoQuad, TenNodeTetrahedron), or leave "
+                f"max_substeps=0 (uncapped)."
             )
 
 
@@ -4135,7 +4136,10 @@ class ASDPlasticHostWarning(UserWarning):
     returns 0 unconditionally) was measured to report 20/20 successes on
     a deck ``LadrunoBrick`` refuses 0/20 (fork ADR-94 B2, deliberately
     left on the fork).  ``strict_convergence`` — on by default since
-    ADR 0105 — is therefore inert on such a host.
+    ADR 0105 — is therefore inert on such a host.  This is the TRIAL-time
+    path (``setTrialStrain``): it still needs a forwarding element after
+    fork PR #838, unlike a COMMIT-time refusal, which ``Domain::commit()``
+    now aborts element-independently regardless of host.
 
     Fail-soft: a vanilla-host deck is legal and was the SSI-1 default;
     it is the fail-loud contract that does not reach it.
@@ -4171,12 +4175,12 @@ def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
         f"{cls} (pg {', '.join(sorted(pgs))})" for cls, pgs in sorted(hosts.items())
     )
     warnings.warn(
-        f"ASDPlasticMaterial3D on {where}: material refusals are swallowed "
-        f"by this element (fork ADR-94 B2) — strict_convergence and every "
-        f"other fail-loud material contract never reach the analysis, so "
-        f"a non-converged or inadmissible state is committed as if it had "
-        f"converged. Use LadrunoBrick or TenNodeTetrahedron for a fail-loud "
-        f"deck.",
+        f"ASDPlasticMaterial3D on {where}: TRIAL-time material refusals are "
+        f"swallowed by this element (fork ADR-94 B2) — strict_convergence "
+        f"and every other fail-loud material contract never reach the "
+        f"analysis, so a non-converged or inadmissible state is committed "
+        f"as if it had converged. Use LadrunoBrick or TenNodeTetrahedron "
+        f"for a fail-loud deck.",
         ASDPlasticHostWarning,
         stacklevel=2,
     )

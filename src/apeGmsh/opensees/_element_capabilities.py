@@ -121,15 +121,23 @@ class _ElemSpec:
     ndf_floor_per_slot : dict[int, tuple[int, ...]] | None = None
 
     # Whether the element ACTS on a material's refused trial strain (ADR
-    # 0105 D4 / fork ADR-94 B2).  ``True``: the element returns the
-    # material's failure code and the step fails (``LadrunoBrick``,
-    # ``TenNodeTetrahedron`` — fork verdict §3).  ``False``: MEASURED to
-    # discard every material return code, so ``strict_convergence`` and
+    # 0105 D4 / fork ADR-94 B2).  Values below are taken from the fork's
+    # refusal-propagation audit, fork PR #838, "Element refusal roster"
+    # (``Ladruno_implementation/LEDGER_quirks.md``) — the single
+    # authoritative copy, 52 ``NDMaterial``-hosting elements classified as
+    # FORWARD / SENTINEL / DISCARD.  ``True``: FORWARD (any nonzero
+    # material code reaches ``update()``'s return) or SENTINEL
+    # (``LadrunoBrick`` — filters for exactly ``LADRUNO_MATERIAL_REFUSED``,
+    # per ADR-33/34, not a plain forwarder, but the sentinel it forwards is
+    # exactly what a capped SANISAND raises).  ``False``: DISCARD — MEASURED
+    # to discard every material return code, so ``strict_convergence`` and
     # every other fail-loud material contract is invisible on it
     # (``stdBrick``: ``Brick::update()`` assigns the code and returns 0
     # unconditionally; pinned by the fork's
-    # ``test_R2_strict_convergence_is_a_noop_on_stdbrick``).  ``None``:
-    # not measured either way — the gate stays silent rather than guess.
+    # ``test_R2_strict_convergence_is_a_noop_on_stdbrick``).  ``None``: the
+    # roster does not cover this element (not an ``NDMaterial`` host —
+    # section-based shells, uniaxial trusses/beams, raw-float elements) or
+    # it is otherwise unmeasured — the gate stays silent rather than guess.
     propagates_material_refusal : bool | None = None
 
     def get_slots(self, ndm: int) -> tuple[str, ...]:
@@ -294,6 +302,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={4: (0, 1, 2, 3)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        propagates_material_refusal=False,
     ),
     "TenNodeTetrahedron": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -322,6 +331,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
         cpp_class_name="BbarBrick",
+        propagates_material_refusal=False,
     ),
     "SSPbrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -330,6 +340,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        propagates_material_refusal=False,
     ),
     # Ladruno-fork unified 8-node hex (tag 33002). Token == C++ class name ==
     # registry key ("LadrunoBrick"), so no cpp_class_name / alias. Standard
@@ -360,6 +371,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={17: GMSH_HEX20_TO_SERENDIPITY},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork unified Biot u-p saturated-porous continuum (tag 33017,
     # ADR 0074). Token == C++ class name == registry key ("LadrunoUP"), so no
@@ -398,6 +410,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
             6: _up_slot_floors(6, 2),
             10: _up_slot_floors(10, 3),
         },
+        propagates_material_refusal=True,
     ),
     # ASDEA staged absorbing-boundary brick (ADR 0054). Token == C++ class ==
     # registry key. Takes raw G/v/rho + a btype string (NOT a matTag), so
@@ -433,6 +446,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
         cpp_class_name="FourNodeQuad",
+        propagates_material_refusal=True,
     ),
     "tri31": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -442,6 +456,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
         cpp_class_name="Tri31",
+        propagates_material_refusal=True,
     ),
     # Gmsh tri6 (etype 9) node ordering matches the OpenSees SixNodeTri
     # shape-function ordering 1-on-1 (corners 1-3, then mid-edges
@@ -454,6 +469,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
         cpp_class_name="SixNodeTri",
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork Bézier (Bernstein) quadratic triangle. Token == C++
     # class name == registry key ("BezierTri6"), so no cpp_class_name and
@@ -468,6 +484,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={9: (0,1,2,3,4,5)},
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork Bézier (Bernstein) quadratic tetrahedron. Token ==
     # class name == registry key. Gmsh tet10 (etype 11) edge order
@@ -482,6 +499,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={11: (0,1,2,3,4,5,6,7,8,9)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     "SSPquad": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -490,6 +508,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "matTag", "thick", "eleType"),
         has_gauss=True,
+        propagates_material_refusal=False,
     ),
     # Ladruno-fork unified 4-node plane continuum (tag 33007), 2D sibling of
     # LadrunoBrick. Token == C++ class name == registry key ("LadrunoQuad"),
@@ -505,6 +524,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork 3-node constant-strain triangle (tag 33008), thin 2D sibling
     # of LadrunoQuad. Token == C++ class name == registry key ("LadrunoCST"),
@@ -520,6 +540,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={2: (0,1,2)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
     # Ladruno-fork 6-node linear-strain triangle (tag 33016, ADR 70 P3) — the
     # second-order sibling of LadrunoCST. Token == C++ class name == registry
@@ -537,6 +558,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={9: (0,1,2,3,4,5)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+        propagates_material_refusal=True,
     ),
 
     # ── 3-D shell (section-based) ──────────────────────────────────────────
