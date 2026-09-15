@@ -257,6 +257,17 @@ class Substep:
     regrows above the nominal, so growth only ever *recovers* ground
     lost to halving unless a cap is declared explicitly.
 
+    There is no separate ``growth`` knob here — ``regrow`` (below) IS
+    apeGmsh's growth factor, applied after ``regrow_after`` good steps
+    (ADR 0057 §2's own growth rule). Fork WP F10 measured that on an
+    IMPL-EX-controlled self-weight SANISAND deck, growth ``x1.25`` was
+    NOT enough headroom to avoid stalling on the control's own refusal
+    floor; only ``x1.0`` (``regrow`` effectively pinned to the default
+    step) or a control tolerance loose enough to make the control
+    nearly inert reached the target. That is a finding about the
+    *material's* control tolerance, not a recommended ``regrow``
+    value — apeGmsh has no default opinion on it beyond ``2.0`` above.
+
     ``budget`` is the number of **consecutive** halvings allowed to
     rescue ONE increment (ADR 0057 §2's ``max_halvings``), not a
     run-wide total: the regrow probe re-fails by construction every
