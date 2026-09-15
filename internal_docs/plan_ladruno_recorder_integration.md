@@ -116,6 +116,13 @@ lags the writer.
 and legacy**. Partitions: `<stem>.part-<N>.ladruno`, 0-indexed, contiguous, glob
 regex `^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$` (error on a gap).
 
+**An aborted commit writes no row at all (fork PR #838, F7).** When
+`Domain::commit()` refuses a step (IMPL-EX commit-time latch), it returns
+early and skips both the recorder loop and the `commitTag` bump for that
+step. `STEP[T]`/`TIME[T]` therefore have no entry for an aborted step — a
+reader inferring "the run reached step N" from the row count under-counts
+by exactly the number of aborted steps.
+
 ### Verified layout — live build `605affeb`, FORMAT_VERSION 1 (deltas vs the doc)
 
 Captured by dumping real fixtures (`tests/fixtures/ladruno/*.ladruno`,
