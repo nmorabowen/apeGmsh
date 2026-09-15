@@ -537,7 +537,7 @@ class Ladder:
     ``apeSees.analyze(..., strategy=ladder)`` (flat live runs).
 
     Each escalation to a relaxed-tolerance rung is harvested live into
-    ``strategy_events`` (:attr:`apeGmsh.opensees.emitter.live.LiveRunner
+    ``strategy_events`` (:attr:`apeGmsh.opensees.emitter.live.LiveOpsEmitter
     .strategy_events`). Fork WP F8 measured the ASD associated
     Drucker-Prager leg needing its third rung on 92.9 % of converged
     steps where the equivalent UW leg needed none, on curves that

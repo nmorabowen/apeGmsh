@@ -1433,7 +1433,16 @@ def _control_from_values(
     # schema 2.33.0 — the -alUpdate cadence (absent column ⇒ None, which
     # IS the fork default, so an older file's meaning is unchanged).
     if al_update is not None:
-        extras["al_update"] = _AL_UPDATE_CODES[int(al_update)]
+        code = int(al_update)
+        if not 0 <= code < len(_AL_UPDATE_CODES):
+            from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+            raise MalformedH5Error(
+                f"cpl_al_update carries {code}, which is not a known "
+                f"-alUpdate cadence code (expected one of "
+                f"{list(range(len(_AL_UPDATE_CODES)))} = "
+                f"{list(_AL_UPDATE_CODES)})."
+            )
+        extras["al_update"] = _AL_UPDATE_CODES[code]
     common = dict(
         k=k_val,
         kr=_opt_scalar(kr),

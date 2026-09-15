@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-15T06:29:04Z",
+  "generated": "2026-09-15T06:56:27Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -2647,6 +2647,12 @@
       "signature": "analyze_explicit(*, duration: 'float', safety: 'float' = 0.9, dt_max: 'float | None' = None) -> \"'ExplicitRunResult'\"",
       "skill": "references/opensees-bridge.md",
       "doc": "Run an explicit transient over ``duration``, auto-sized to ``dt_cr``."
+    },
+    "ops.augment": {
+      "symbol": "ops.augment",
+      "signature": "augment(*, element: 'int', tol: 'float' = 1e-08, max_passes: 'int' = 10) -> \"'AbstractContextManager[list[float]]'\"",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Run an ADR-41 held-load augmentation sweep on a live run and"
     },
     "ops.beamIntegration.HingeEndpoint": {
       "symbol": "ops.beamIntegration.HingeEndpoint",

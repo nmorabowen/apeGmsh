@@ -42,7 +42,7 @@ _AUGMENT_FORK_REQUIRED = (
     "ops.augment(...) requires the Ladruno fork build of OpenSees — the "
     "held-load augmentation sweep (ladrunoBeginAugment / ladrunoEndAugment) "
     "and the LadrunoKinematicCoupling 'constraintViolation' response are "
-    "fork-only. Point APEGMSH_OPENSEES_BIN at the fork's dist\bin."
+    r"fork-only. Point APEGMSH_OPENSEES_BIN at the fork's dist\bin."
 )
 
 #: Raised by :meth:`LiveOpsEmitter.profiler` when the live openseespy build
@@ -1228,8 +1228,9 @@ class LiveOpsEmitter:
         Yields
         ------
         list[float]
-            The violation after each pass, in order. Empty only when
-            ``max_passes < 1``. Convergence is ``history[-1] < tol``.
+            The violation after each pass, in order. The block is only
+            entered once the sweep converged, so ``history[-1] < tol``
+            always holds inside it.
 
         Raises
         ------
@@ -1237,7 +1238,15 @@ class LiveOpsEmitter:
             On a stock (non-fork) build; on a nested sweep; or when a held
             pass fails to converge (``analyze(1) != 0`` — the inner solve
             at fixed ``λ`` diverging is a real failure, not a slow sweep).
+        BridgeError
+            (a ``RuntimeError``) before the sweep starts when no integrator
+            has been recorded through this emitter — there would be nothing
+            to restore and ``LoadControl 0.0`` would stay installed; and
+            after the passes when ``tol`` was never met within
+            ``max_passes``, with the violation history in the message.
         """
+        from .._internal.build import BridgeError
+
         self._stock_build_gate(_AUGMENT_FORK_REQUIRED)
         if self._in_augment:
             raise RuntimeError(
@@ -1247,11 +1256,24 @@ class LiveOpsEmitter:
                 "flag for the outer one — leaving it running with recorders "
                 "silently frozen. Nesting is refused."
             )
+        if self._last_integrator is None:
+            raise BridgeError(
+                "LiveOpsEmitter.augment: no integrator has been recorded "
+                "through this emitter, so the held passes' "
+                "`integrator LoadControl 0.0` could not be undone afterwards "
+                "— every later analyze() would return 0 while the load never "
+                "advances. Issue integrator(...) through the bridge (e.g. "
+                "ops.integrator.LoadControl(...), which the built model "
+                "emits) before running the sweep."
+            )
         history: list[float] = []
-        self._in_augment = True
         self._ops.ladrunoBeginAugment()
+        # Only latch AFTER a successful begin: a raising begin left no sweep
+        # open, and a latched flag would refuse every later augment().
+        self._in_augment = True
         try:
             self._ops.integrator("LoadControl", 0.0)
+            converged = False
             for i in range(int(max_passes)):
                 rc = int(self._ops.analyze(1))
                 if rc != 0:
@@ -1267,7 +1289,18 @@ class LiveOpsEmitter:
                 )
                 history.append(gap)
                 if gap < float(tol):
+                    converged = True
                     break
+            if not converged:
+                raise BridgeError(
+                    f"LiveOpsEmitter.augment: element {element} did not reach "
+                    f"tol={float(tol):g} within max_passes="
+                    f"{int(max_passes)}. Violation history: "
+                    f"{[f'{g:.6e}' for g in history]}. An unconverged sweep "
+                    "leaves the penalty gap standing, so it must not pass "
+                    "silently — raise max_passes, relax tol, or raise the "
+                    "coupling's k (the gap contracts as c/K_t)."
+                )
             yield history
         finally:
             self._in_augment = False

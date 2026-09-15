@@ -177,7 +177,13 @@ The supported way to close the gap *within* a step is the held-load
 augmentation sweep, wrapped as a context manager on the live emitter:
 
 ```python
+import openseespy.opensees as osp
+
 ops.analyze(steps=1)                       # the real step, any algorithm
+# apeGmsh keeps no name -> emitted-tag map (the constraint name rides the
+# comment channel only), so read the tag off the live domain: the coupling
+# is the last element the tag allocator handed out.
+tag = max(int(t) for t in osp.getEleTags())
 with ops.augment(element=tag, tol=1e-8, max_passes=10) as gaps:
     pass                                   # passes already ran on entry
 # read displacements HERE — LoadControl 0.0 holds the LOAD, not a
@@ -190,7 +196,11 @@ It brackets `ladrunoBeginAugment` / `ladrunoEndAugment` in `try/finally`
 sample), forces `integrator('LoadControl', 0.0)` for the held passes
 whatever drove the real step, polls
 `eleResponse(tag, 'constraintViolation')`, restores the caller's integrator
-and refuses to nest. `al_update="iter"` is an expert opt-in that the fork
+and refuses to nest. It also refuses to *start* unless an integrator was
+issued through the bridge (there would be nothing to restore, and
+`LoadControl 0.0` would silently stay installed), and raises with the
+violation history if `tol` is not met within `max_passes` — an unconverged
+sweep must not read like a converged one. `al_update="iter"` is an expert opt-in that the fork
 refuses at the first `update()` outside full Newton + `LoadControl`; prefer
 the sweep.
 
