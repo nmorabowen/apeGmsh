@@ -408,10 +408,22 @@ __all__ = [
 #: (2.31.0).  Per ADR 0023's two-version reader window, readers tolerate
 #: 2.31.x and 2.32.x.
 #:
+#: v2.33.0 (September 2026, fork PR #839 — the `-alUpdate` AL Uzawa
+#: cadence): additive — adds ``cpl_al_update`` (uint8 code 0=unset /
+#: 1=commit / 2=iter) to ``_coupling_control_fields`` and its per-slave
+#: vlen mirror ``sr_cpl_al_update`` on
+#: ``surface_coupling_payload_dtype``, so a ``kinematic_coupling``
+#: carrying ``al_update=`` round-trips.  ``0`` means the flag is omitted
+#: and the fork's own default cadence (``commit``) applies — which is
+#: exactly what a pre-2.33.0 file meant — so an older file decodes to
+#: the same deck it always emitted.  Per ADR 0023's two-version reader
+#: window, readers tolerate 2.32.x and 2.33.x; a 2.32.x file lacks the
+#: columns (probed via ``p.dtype.names``) and decodes ``al_update=None``.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.32.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.33.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1312,6 +1324,12 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
     )
 
 
+#: ``cpl_al_update`` uint8 codes (schema 2.33.0): 0 = unset (``-alUpdate``
+#: omitted ⇒ the fork's own default cadence), 1 = ``"commit"``,
+#: 2 = ``"iter"``.
+_AL_UPDATE_CODES: tuple[str | None, ...] = (None, "commit", "iter")
+
+
 def _encode_control(ctrl: Any) -> tuple[Any, ...]:
     """Encode a :class:`CouplingControl` (or ``None``) into the ``cpl_*``
     columns (schema 2.12.0; host auto-scalers 2.13.0).  ``cpl_has`` is the
@@ -1327,6 +1345,8 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
             np.uint8(0), nan, np.int64(-1), nan,
             # EmbeddedNodeControl pressure tie (schema 2.18.0).
             np.uint8(0), nan,
+            # AL Uzawa cadence (schema 2.33.0).
+            np.uint8(0),
         )
     k_auto = ctrl.k == "auto"
     # pressure / kp live on EmbeddedNodeControl only; a base CouplingControl
@@ -1346,6 +1366,7 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
         float(ctrl.bipenalty_wcap) if ctrl.bipenalty_wcap is not None else nan,
         np.uint8(1 if pressure else 0),
         float(kp) if kp is not None else nan,
+        np.uint8(_AL_UPDATE_CODES.index(getattr(ctrl, "al_update", None))),
     )
 
 
@@ -1362,6 +1383,9 @@ def _decode_control(p: Any) -> Any:
     pk: dict[str, Any] = {}
     if "cpl_pressure" in names:
         pk = dict(pressure=p["cpl_pressure"], kp=p["cpl_kp"])
+    # schema 2.33.0 AL-cadence column — presence-probed independently.
+    if "cpl_al_update" in names:
+        pk["al_update"] = p["cpl_al_update"]
     if "cpl_k_auto" in names:
         return _control_from_values(
             p["cpl_has"], p["cpl_k"], p["cpl_kr"],
@@ -1380,6 +1404,7 @@ def _control_from_values(
     *, k_auto: Any = None, k_alpha: Any = None,
     host: Any = None, wcap: Any = None,
     pressure: Any = None, kp: Any = None,
+    al_update: Any = None,
 ) -> Any:
     """Values-level core of :func:`_decode_control` — also used by the
     ``sr_cpl_*`` lane decode in :func:`_decode_surface_coupling`, where
@@ -1405,6 +1430,10 @@ def _control_from_values(
             host=host_eid if host_eid >= 0 else None,
             bipenalty_wcap=_opt_scalar(wcap),
         )
+    # schema 2.33.0 — the -alUpdate cadence (absent column ⇒ None, which
+    # IS the fork default, so an older file's meaning is unchanged).
+    if al_update is not None:
+        extras["al_update"] = _AL_UPDATE_CODES[int(al_update)]
     common = dict(
         k=k_val,
         kr=_opt_scalar(kr),
@@ -1556,6 +1585,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_cpl_wcap: list[float] = []
     sr_cpl_pressure: list[Any] = []
     sr_cpl_kp: list[float] = []
+    sr_cpl_al_update: list[Any] = []
     nan = float("nan")
     for ir in srs:
         m = [int(x) for x in np.asarray(ir.master_nodes).reshape(-1)]
@@ -1591,7 +1621,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
             _SR_ENFORCE_CODE.get(getattr(ir, "enforce", "penalty"), 0))
         (c_has, c_k, c_kr, c_enf, c_dtcr, c_abs,
          c_auto, c_alpha, c_host, c_wcap,
-         c_pressure, c_kp) = _encode_control(ir.control)
+         c_pressure, c_kp, c_alupd) = _encode_control(ir.control)
         sr_cpl_has.append(c_has)
         sr_cpl_k.append(c_k)
         sr_cpl_kr.append(c_kr)
@@ -1604,6 +1634,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_cpl_wcap.append(c_wcap)
         sr_cpl_pressure.append(c_pressure)
         sr_cpl_kp.append(c_kp)
+        sr_cpl_al_update.append(c_alupd)
     return (
         np.asarray(rec.master_nodes, dtype=np.int64),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1638,6 +1669,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_cpl_wcap, dtype=np.float64),
         np.asarray(sr_cpl_pressure, dtype=np.uint8),
         np.asarray(sr_cpl_kp, dtype=np.float64),
+        np.asarray(sr_cpl_al_update, dtype=np.uint8),
         np.asarray(sr_stiffness_auto, dtype=np.uint8),
     )
 
@@ -3409,6 +3441,13 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                 p["sr_cpl_pressure"], dtype=np.uint8).reshape(-1)
             sr_c_kp = np.asarray(
                 p["sr_cpl_kp"], dtype=np.float64).reshape(-1)
+        # AL Uzawa cadence per slave (schema 2.33.0; probed
+        # independently). Pre-2.33.0 files decode ``al_update=None``,
+        # which IS the fork default cadence.
+        has_sr_cpl_alupd = "sr_cpl_al_update" in names
+        if has_sr_cpl_alupd:
+            sr_c_alupd = np.asarray(
+                p["sr_cpl_al_update"], dtype=np.uint8).reshape(-1)
         # enforce route per slave (ADR 0068, schema 2.14.0; probed
         # independently). Pre-2.14.0 files fall back to "penalty".
         has_sr_enforce = "sr_enforce" in names
@@ -3450,6 +3489,8 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                     **(dict(
                         pressure=sr_c_pressure[i], kp=sr_c_kp[i],
                     ) if has_sr_cpl_pressure else {}),
+                    **(dict(al_update=sr_c_alupd[i])
+                       if has_sr_cpl_alupd else {}),
                 )
             else:
                 control = None

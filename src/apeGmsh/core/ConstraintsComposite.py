@@ -2295,7 +2295,7 @@ class ConstraintsComposite:
     def kinematic_coupling(self, master_label, slave_label, *,
                            master_point=(0., 0., 0.), dofs=None,
                            k=None, k_alpha=None, host=None,
-                           kr=None, enforce="penalty",
+                           kr=None, enforce="penalty", al_update=None,
                            bipenalty_dtcr=None, bipenalty_wcap=None,
                            absolute=False,
                            name=None) -> KinematicCouplingDef:
@@ -2365,6 +2365,19 @@ class ConstraintsComposite:
             ``"al"`` = augmented Lagrangian (near-exact rigidity at moderate
             ``k``; **implicit only** — cannot combine with the bipenalty
             knobs).
+        al_update : ``"commit"`` | ``"iter"``, optional
+            Where the augmented-Lagrangian Uzawa recursion advances
+            (``-alUpdate``; **RBE2 only** — the RBE3 / embedded paths
+            refuse it). ``None`` (default) omits the flag and inherits the
+            fork default ``commit`` (one update per *committed* step), so a
+            deck that never sets it is byte-identical to one built before
+            the token existed. Requires ``enforce="al"``. ``"iter"``
+            (one update per equilibrium iteration) is an expert opt-in: the
+            fork refuses it at the first ``update()`` unless the active
+            algorithm is full Newton **and** the active static integrator
+            is ``LoadControl``. To close the constraint gap *within* a step
+            under any algorithm, keep the default and run the held-load
+            augmentation sweep instead (``ops.augment(...)`` on a live run).
         bipenalty_dtcr : float, optional
             Explicit-dynamics critical-time-step target (``-bipenalty
             -dtcr``); lumps a penalty mass on any massless tied DOF so the
@@ -2397,7 +2410,8 @@ class ConstraintsComposite:
             non-positive ``k``/``kr``/``bipenalty_dtcr``/``bipenalty_wcap``;
             ``al`` + a bipenalty knob; ``k="auto"`` or ``bipenalty_wcap``
             without ``host``; ``k_alpha`` without ``k="auto"``; a dangling
-            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``);
+            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``;
+            ``al_update`` not in {commit, iter} or set without ``enforce="al"``);
             a ``g.decouple_node`` handle without ``label=``; a label that
             names both a decoupled node and a Part/PG; an ambiguous
             duplicate decoupled label.
@@ -2409,6 +2423,7 @@ class ConstraintsComposite:
             master_point=master_point, dofs=dofs,
             control=CouplingControl(
                 k=k, k_alpha=k_alpha, host=host, kr=kr, enforce=enforce,
+                al_update=al_update,
                 bipenalty_dtcr=bipenalty_dtcr, bipenalty_wcap=bipenalty_wcap,
                 absolute=absolute,
             ),

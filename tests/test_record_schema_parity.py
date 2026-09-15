@@ -314,6 +314,8 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     # EmbeddedNodeControl pressure tie (schema 2.18.0, ADR 0069 follow-up).
     "sr_cpl_pressure":    "cpl_pressure",
     "sr_cpl_kp":          "cpl_kp",
+    # AL Uzawa cadence (schema 2.33.0, fork PR #839).
+    "sr_cpl_al_update":   "cpl_al_update",
     # stiffness="auto" sentinel (schema 2.27.0, silent-failures slice B).
     "sr_stiffness_auto":  "stiffness_auto",
 }

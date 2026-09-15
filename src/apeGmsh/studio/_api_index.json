@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-10T15:53:56Z",
+  "generated": "2026-09-15T06:29:04Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -358,7 +358,7 @@
     },
     "g.constraints.kinematic_coupling": {
       "symbol": "g.constraints.kinematic_coupling",
-      "signature": "kinematic_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), dofs=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'KinematicCouplingDef'",
+      "signature": "kinematic_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), dofs=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', al_update=None, bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'KinematicCouplingDef'",
       "skill": "references/api-cheatsheet.md",
       "doc": "RBE2 / kinematic coupling — a reference node rigidly drives a"
     },
