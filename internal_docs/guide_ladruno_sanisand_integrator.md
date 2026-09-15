@@ -92,20 +92,27 @@ non-zero. All three rules below are implemented; the third is a **raise**, not a
 3. **The element must propagate a material refusal, or the cap makes things worse.** Under an
    element that discards the return code, a capped material returns a *partially integrated*
    stress with a partial tangent, and the analysis accepts it as converged — worse than the old
-   force-accept, which at least integrated the whole increment. Today only `LadrunoBrick`
-   propagates on every path.
+   force-accept, which at least integrated the whole increment. Fork PR #838 audited all 52
+   `NDMaterial`-hosting elements — 26 FORWARD, 1 SENTINEL (`LadrunoBrick`), 25 DISCARD — so the
+   old "only `LadrunoBrick` propagates on every path" was an artefact of nobody having read the
+   other 51.
 
-   - **Safe:** `LadrunoBrick` (all formulations).
-   - **Refuse to emit:** `stdBrick`/`Brick`, `BrickUP`, `BBarBrickUP`, the `QuadUP` family
-     (`FourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`) — these have no
-     return channel at all (`setTrialStrain` is called inside a `void formResidAndTangent`).
+   - **Safe:** every FORWARD element plus `LadrunoBrick` — among them `LadrunoBrick20`,
+     `LadrunoQuad`, `LadrunoCST`, `LadrunoLST`, `LadrunoUP`, `TenNodeTetrahedron`,
+     `FourNodeQuad`, `SixNodeTri`, `Tri31`, `BezierTri6`, `BezierTet10`, and the whole `QuadUP`
+     family (`FourNodeQuadUP`, `Nine_Four_Node_QuadUP`, `Twenty_Eight_Node_BrickUP`), which do
+     accumulate the return code in `update()`.
+   - **Refuse to emit:** the measured DISCARD hosts — `stdBrick`/`Brick`, `BbarBrick`,
+     `BrickUP`, `BBarBrickUP`, `SSPquad`, `SSPbrick`, `FourNodeTetrahedron` — whose `update()`
+     drops the code or does not exist. The roster in `LEDGER_quirks.md` is the full list.
 
-   `validate_sanisand_substep_cap` raises at the emit seam. It is an **allow-list**
-   (`_REFUSAL_PROPAGATING_ELEMENTS = {LadrunoBrick}`), not the refuse-list sketched above — the
-   operative sentence is the positive one, "only `LadrunoBrick` propagates on every path today",
-   and most of the refuse-list elements are fork elements apeGmsh does not expose at all.
-   `LadrunoBrick20` is a separate C++ class rather than a formulation, so it is off the list
-   until someone reads its return paths. The material graph is walked transitively, so a
+   `validate_sanisand_substep_cap` raises at the emit seam. Since fork PR #838 (2026-09-15) it
+   is keyed on `element_propagates_material_refusal(cls) is False`, the same table
+   `validate_asdplastic_host` reads, populated from the fork's element refusal roster
+   (`Ladruno_implementation/LEDGER_quirks.md`). Elements the roster has not measured stay `None`
+   and pass. Commit-time refusals are element-independent since #838 (`Domain::commit()`
+   latches them and `analyze()` returns `-4`); only trial-time refusals still need a forwarding
+   element. The material graph is walked transitively, so a
    `PlaneStrain` / `LogStrain` wrapper cannot hide a capped model one level down.
 
 ## 4. Convergence test on SANISAND decks — confirmed in our own suite

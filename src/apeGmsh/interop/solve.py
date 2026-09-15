@@ -17,6 +17,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from ..opensees._internal.analyze_rc import check_analyze_rc
 from .etabs_import import (
     apply_subgrade_springs,
     build_opensees,
@@ -146,7 +147,10 @@ def _run_static(ops, *, tol: float, max_iter: int) -> bool:
     o.test("NormDispIncr", tol, max_iter)
     o.algorithm("Linear")
     o.analysis("Static")
-    return o.analyze(1) == 0
+    # ``converged`` collapses every rc to a bool, which is right for
+    # ordinary non-convergence and wrong for a commit-time material
+    # refusal — that one raises instead (see ``_internal.analyze_rc``).
+    return check_analyze_rc(o.analyze(1), where="solve_and_extract") == 0
 
 
 def _joint_tag_map(fem, model: StructuralModel) -> dict[str, int]:

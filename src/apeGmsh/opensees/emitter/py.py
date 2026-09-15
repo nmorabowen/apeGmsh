@@ -15,6 +15,7 @@ not pollute prior state.
 """
 from __future__ import annotations
 
+from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build import stage_marker_name
 
 from typing import Any, Literal, Sequence
@@ -582,9 +583,22 @@ class PyEmitter:
         )
         self._lines.append("ops.algorithm(*_apesees_rungs[_apesees_r])")
         self._lines.indent = prev_indent + "        "
-        self._lines.append(f"if {call} == 0:")
+        self._lines.append(f"_apesees_rc = {call}")
+        self._lines.append("if _apesees_rc == 0:")
         self._lines.indent = prev_indent + "            "
         self._lines.append("break")
+        self._lines.indent = prev_indent + "        "
+        # A refused COMMIT is not non-convergence: walking the rest of
+        # the ladder would re-analyze a partially committed domain.
+        # Same verdict the live emitter reaches through
+        # ``_internal.analyze_rc.check_analyze_rc``.
+        self._lines.append(f"if _apesees_rc == {COMMIT_ABORT_RC}:")
+        self._lines.indent = prev_indent + "            "
+        self._lines.append(
+            'raise RuntimeError("apeGmsh: analyze aborted at increment '
+            f'%d/{n}{where} (pseudo-time %g) -- {COMMIT_ABORT_MESSAGE}" '
+            "% (_apesees_i + 1, ops.getTime()))"
+        )
         self._lines.indent = prev_indent + "    "
         self._lines.append("else:")
         self._lines.indent = prev_indent + "        "

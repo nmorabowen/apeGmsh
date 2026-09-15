@@ -142,6 +142,16 @@ paths.
 The material graph is walked transitively, so a `PlaneStrain` or
 `LogStrain` wrapper cannot hide a capped model one level down.
 
+**Amendment (2026-09-15, fork PR #838).** The allow-list above is retired.
+The fork audited all 52 `NDMaterial`-hosting elements (26 FORWARD, 1
+SENTINEL, 25 DISCARD — `Ladruno_implementation/LEDGER_quirks.md`, "Element
+refusal roster"), so "only `LadrunoBrick` propagates" was never true; it was
+the only element anyone had read. `validate_sanisand_substep_cap` now keys
+on the measured per-element flag and raises only on a host measured to
+DISCARD, which turns the rule into a deny-list — the asymmetry argument
+above still holds, but it no longer has to be paid for by refusing elements
+nobody had checked. `LadrunoBrick20` is FORWARD and is allowed.
+
 ## Consequences
 
 **Positive.**
@@ -162,8 +172,9 @@ The material graph is walked transitively, so a `PlaneStrain` or
 **Neutral / forward-looking.**
 - `_UNSYMMETRIC_SAFE_SYSTEMS` is the shared extension point for any future
   gate that needs "a solver that holds a full unsymmetric matrix".
-- `_REFUSAL_PROPAGATING_ELEMENTS` is a one-line addition per element as the
-  fork's return-code plumbing spreads.
+- The substep-cap gate reads `_ElemSpec.propagates_material_refusal` (the
+  one-element allow-list was retired when fork PR #838 shipped its element
+  refusal roster); a new element is one row in `_element_capabilities.py`.
 - No new material and no new classTag: fork ADR-90 rejected the
   viscoplastic wrapper on measured grounds, and `33022` stays reserved and
   unbuilt.
