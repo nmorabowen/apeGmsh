@@ -7075,6 +7075,8 @@ def _emit_rigid_diaphragms(
 def _coupling_control_flags(
     rec: object,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None",
+    *,
+    allow_al_update: bool = False,
 ) -> "list[int | float | str]":
     """Flag tail for a coupling record's :class:`CouplingControl`.
 
@@ -7084,10 +7086,26 @@ def _coupling_control_flags(
     control names a host but the map is absent (a legacy direct caller) or
     doesn't contain the eid (the host element never emitted) — emitting the
     raw FEM eid would silently scale the penalty off the wrong element.
+
+    ``allow_al_update`` is the RBE2 gate (fork PR #839): ``-alUpdate`` is a
+    ``LadrunoKinematicCoupling``-only token, but :class:`CouplingControl` is
+    shared with ``LadrunoDistributingCoupling`` (RBE3) and
+    ``LadrunoEmbeddedNode``.  Only :func:`_emit_kinematic_couplings` passes
+    ``True``; every other emit path refuses a control carrying it rather
+    than emitting a flag the fork's parser rejects.
     """
     control: "CouplingControl | None" = getattr(rec, "control", None)
     if control is None:
         return []
+    if getattr(control, "al_update", None) is not None and not allow_al_update:
+        name = getattr(rec, "name", None) or "<unnamed>"
+        raise ValueError(
+            f"coupling {name!r}: al_update (-alUpdate) is a "
+            "LadrunoKinematicCoupling-only token (fork PR #839) — this "
+            "record emits a different coupling element, whose parser "
+            "rejects the flag. Drop al_update, or move the knob to a "
+            "kinematic_coupling (RBE2)."
+        )
     host = getattr(control, "host", None)
     if host is None:
         return control.emit_flags()
@@ -7160,14 +7178,18 @@ def _emit_kinematic_couplings(
         ]
         if rec.dofs:
             args += ["-dof", *(int(d) for d in rec.dofs)]
-        args += _coupling_control_flags(rec, fem_eid_to_ops_tag)
+        args += _coupling_control_flags(
+            rec, fem_eid_to_ops_tag, allow_al_update=True,
+        )
         emitter.element("LadrunoKinematicCoupling", ele_tag, *args)
 
 
 #: ``stiffness="auto"`` scale factor: K = ALPHA · E_host · L_char.  A few
 #: orders above the host element stiffness is all the ASD penalty needs
 #: (K → ∞ only wrecks conditioning); 1e3 mirrors the fork coupling
-#: elements' ``k_alpha`` default.
+#: elements' ``k_alpha`` default and sits **inside** the fork's measured
+#: ``1e2…1e4 × k_host`` selection band (PR #839 §3.3), so the value is
+#: unchanged by that work.
 AUTO_STIFFNESS_ALPHA: float = 1.0e3
 
 
@@ -7193,6 +7215,20 @@ def make_auto_stiffness_resolver(
     The node→E and node→xyz maps are built lazily on the first record
     resolved, so handing a resolver to an emit pass that encounters no
     ``"auto"`` record costs nothing.
+
+    **This is a CONDITIONING control, not a rigidity setting** (fork PR
+    #839 §3.3).  ``AUTO_STIFFNESS_ALPHA = 1e3`` pins K to the host's own
+    order of magnitude — exactly the regime where the residual constraint
+    gap is largest — and it **cannot hold a rigid footing**: the fork
+    measures the penalty gap as ``err = c/K_t`` exactly, so an auto-scaled
+    tie lands around ``1e-4…1e-3`` of the push and stays there.  For a
+    genuinely rigid tie use ``enforce="al"`` at a **moderate** ``K_t``
+    plus the held-load augmentation sweep
+    (:meth:`LiveOpsEmitter.augment`), which drives the gap to the solver
+    floor instead.  Cranking ``k`` up is the wrong lever twice over:
+    conditioning degrades linearly in ``K_t`` while the rigidity error
+    stops improving, and a hand-set numeric ``k`` above ``1e6 × k_host``
+    now draws a once-only fork warning whenever a ``-host`` is named.
     """
     specs = tuple(elements)
     maps: dict[str, dict[int, Any]] = {}

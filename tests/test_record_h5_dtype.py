@@ -54,11 +54,11 @@ def test_node_pair_payload_fields() -> None:
 
 # CouplingControl columns shared by node_group + interpolation payloads
 # (neutral schema 2.12.0; host auto-scalers 2.13.0; EmbeddedNodeControl
-# pressure tie 2.18.0).
+# pressure tie 2.18.0; AL Uzawa cadence 2.33.0).
 _CPL_FIELDS = (
     "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr", "cpl_absolute",
     "cpl_k_auto", "cpl_k_alpha", "cpl_host", "cpl_wcap",
-    "cpl_pressure", "cpl_kp",
+    "cpl_pressure", "cpl_kp", "cpl_al_update",
 )
 
 #: Default (control=None) values for the _CPL_FIELDS tail when building
@@ -66,7 +66,7 @@ _CPL_FIELDS = (
 _CPL_NONE = (
     np.uint8(0), float("nan"), float("nan"), np.uint8(0), float("nan"),
     np.uint8(0), np.uint8(0), float("nan"), np.int64(-1), float("nan"),
-    np.uint8(0), float("nan"),
+    np.uint8(0), float("nan"), np.uint8(0),
 )
 
 
@@ -134,6 +134,8 @@ def test_surface_coupling_payload_fields() -> None:
         "sr_cpl_k_auto", "sr_cpl_k_alpha", "sr_cpl_host", "sr_cpl_wcap",
         # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
         "sr_cpl_pressure", "sr_cpl_kp",
+        # AL Uzawa cadence per slave (schema 2.33.0 mirror).
+        "sr_cpl_al_update",
         # stiffness="auto" sentinel per slave (schema 2.27.0 mirror).
         "sr_stiffness_auto",
     )

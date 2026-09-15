@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-10T15:53:56Z",
+  "generated": "2026-09-15T06:56:27Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -358,7 +358,7 @@
     },
     "g.constraints.kinematic_coupling": {
       "symbol": "g.constraints.kinematic_coupling",
-      "signature": "kinematic_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), dofs=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'KinematicCouplingDef'",
+      "signature": "kinematic_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), dofs=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', al_update=None, bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'KinematicCouplingDef'",
       "skill": "references/api-cheatsheet.md",
       "doc": "RBE2 / kinematic coupling — a reference node rigidly drives a"
     },
@@ -2647,6 +2647,12 @@
       "signature": "analyze_explicit(*, duration: 'float', safety: 'float' = 0.9, dt_max: 'float | None' = None) -> \"'ExplicitRunResult'\"",
       "skill": "references/opensees-bridge.md",
       "doc": "Run an explicit transient over ``duration``, auto-sized to ``dt_cr``."
+    },
+    "ops.augment": {
+      "symbol": "ops.augment",
+      "signature": "augment(*, element: 'int', tol: 'float' = 1e-08, max_passes: 'int' = 10) -> \"'AbstractContextManager[list[float]]'\"",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Run an ADR-41 held-load augmentation sweep on a live run and"
     },
     "ops.beamIntegration.HingeEndpoint": {
       "symbol": "ops.beamIntegration.HingeEndpoint",

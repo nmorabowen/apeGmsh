@@ -257,6 +257,17 @@ class Substep:
     regrows above the nominal, so growth only ever *recovers* ground
     lost to halving unless a cap is declared explicitly.
 
+    There is no separate ``growth`` knob here — ``regrow`` (below) IS
+    apeGmsh's growth factor, applied after ``regrow_after`` good steps
+    (ADR 0057 §2's own growth rule). Fork WP F10 measured that on an
+    IMPL-EX-controlled self-weight SANISAND deck, growth ``x1.25`` was
+    NOT enough headroom to avoid stalling on the control's own refusal
+    floor; only ``x1.0`` (``regrow`` effectively pinned to the default
+    step) or a control tolerance loose enough to make the control
+    nearly inert reached the target. That is a finding about the
+    *material's* control tolerance, not a recommended ``regrow``
+    value — apeGmsh has no default opinion on it beyond ``2.0`` above.
+
     ``budget`` is the number of **consecutive** halvings allowed to
     rescue ONE increment (ADR 0057 §2's ``max_halvings``), not a
     run-wide total: the regrow probe re-fails by construction every
@@ -535,6 +546,15 @@ class Ladder:
 
     Pass to ``s.run(..., strategy=ladder)`` (staged) or
     ``apeSees.analyze(..., strategy=ladder)`` (flat live runs).
+
+    Each escalation to a relaxed-tolerance rung is harvested live into
+    ``strategy_events`` (:attr:`apeGmsh.opensees.emitter.live.LiveOpsEmitter
+    .strategy_events`). Fork WP F8 measured the ASD associated
+    Drucker-Prager leg needing its third rung on 92.9 % of converged
+    steps where the equivalent UW leg needed none, on curves that
+    otherwise agreed to 0.075 % — so report the relaxed-rung count
+    alongside any ASD-vs-UW agreement figure, not just the peak/curve
+    match.
     """
 
     rungs: tuple[SolutionAlgorithm | Substep, ...]

@@ -359,3 +359,132 @@ def test_h5_roundtrip_none_control_stays_none() -> None:
     )
     assert _roundtrip(ng).control is None
     assert _roundtrip(ir).control is None
+
+
+# ── -alUpdate (fork PR #839 / F9) ────────────────────────────────────────
+
+def test_al_update_none_is_byte_identical() -> None:
+    # The whole point of the default: a deck that never sets the knob is
+    # byte-identical to one built before the token existed.
+    assert CouplingControl(enforce="al").emit_flags() == ["-enforce", "al"]
+    assert CouplingControl().al_update is None
+
+
+@pytest.mark.parametrize("mode", ["commit", "iter"])
+def test_al_update_emits_right_after_enforce(mode: str) -> None:
+    c = CouplingControl(k=1e6, enforce="al", al_update=mode)
+    assert c.emit_flags() == ["-k", 1e6, "-enforce", "al", "-alUpdate", mode]
+    assert not c.is_default
+
+
+@pytest.mark.parametrize("bad", ["Commit", "ITER", "", "always", "step"])
+def test_rejects_bad_al_update(bad: str) -> None:
+    with pytest.raises(ValueError, match="al_update must be one of"):
+        CouplingControl(enforce="al", al_update=bad)
+
+
+def test_h5_decode_refuses_an_out_of_range_al_update_code() -> None:
+    # A corrupt / future ``cpl_al_update`` code must name the field and the
+    # value, not surface as a bare IndexError from the code table.
+    from apeGmsh.mesh import _femdata_h5_io as io
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    with pytest.raises(MalformedH5Error, match="cpl_al_update carries 7"):
+        io._control_from_values(
+            1, 1e10, float("nan"), 0, float("nan"), 0, al_update=7,
+        )
+
+
+@pytest.mark.parametrize("mode", ["commit", "iter"])
+def test_al_update_requires_enforce_al(mode: str) -> None:
+    # The fork warns-and-ignores; apeGmsh refuses rather than emit a flag
+    # the engine will silently drop.
+    with pytest.raises(ValueError, match="no effect without enforce='al'"):
+        CouplingControl(al_update=mode)
+
+
+def test_embedded_control_refuses_al_update() -> None:
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+
+    with pytest.raises(ValueError, match="LadrunoKinematicCoupling-only"):
+        EmbeddedNodeControl(enforce="al", al_update="commit")
+
+
+def test_kinematic_emit_carries_al_update() -> None:
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2, 3], dofs=[],
+        control=CouplingControl(k=1e6, enforce="al", al_update="iter"),
+    )
+    e = RecordingEmitter()
+    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    flat = [c for c in e.calls if c[0] == "element"][0][1]
+    assert flat[0] == "LadrunoKinematicCoupling"
+    assert flat[2:] == (
+        1, 2, 2, 3, "-k", 1e6, "-enforce", "al", "-alUpdate", "iter",
+    )
+    assert flat.count("-alUpdate") == 1
+
+
+def test_distributing_emit_refuses_al_update() -> None:
+    # -alUpdate is LadrunoKinematicCoupling-only; the RBE3 parser rejects it.
+    rec = InterpolationRecord(
+        kind="distributing", slave_node=1, master_nodes=[2, 3, 4],
+        control=CouplingControl(enforce="al", al_update="commit"),
+        name="ring",
+    )
+    e = RecordingEmitter()
+    with pytest.raises(
+        ValueError, match="'ring'.*LadrunoKinematicCoupling-only",
+    ):
+        _emit_one_interpolation(e, rec, TagAllocator())
+
+
+def test_penalty_al_embedded_emit_refuses_al_update() -> None:
+    # The LadrunoEmbeddedNode path shares CouplingControl too.
+    rec = InterpolationRecord(
+        kind="tie", slave_node=1, master_nodes=[2, 3, 4],
+        weights=np.array([0.3, 0.3, 0.4]), enforce="penalty_al",
+        control=CouplingControl(enforce="al", al_update="iter"),
+    )
+    e = RecordingEmitter()
+    with pytest.raises(ValueError, match="LadrunoKinematicCoupling-only"):
+        _emit_one_interpolation(e, rec, TagAllocator())
+
+
+def test_public_knob_reaches_the_emitted_token() -> None:
+    # The public g.constraints.kinematic_coupling signature carries the
+    # knob, and a record built from it emits -alUpdate exactly once.
+    import inspect
+
+    from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
+
+    params = inspect.signature(
+        ConstraintsComposite.kinematic_coupling).parameters
+    assert "al_update" in params
+    assert params["al_update"].default is None
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2], dofs=[],
+        control=CouplingControl(enforce="al", al_update="commit"),
+    )
+    e = RecordingEmitter()
+    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    flat = [c for c in e.calls if c[0] == "element"][0][1]
+    assert flat[-2:] == ("-alUpdate", "commit")
+
+
+@pytest.mark.parametrize("mode", ["commit", "iter"])
+def test_h5_roundtrip_al_update(mode: str) -> None:
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2, 3], dofs=[],
+        control=CouplingControl(k=1e6, enforce="al", al_update=mode),
+    )
+    out = _roundtrip(rec)
+    assert out.control == CouplingControl(k=1e6, enforce="al", al_update=mode)
+
+
+def test_h5_roundtrip_al_update_none_stays_none() -> None:
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2], dofs=[],
+        control=CouplingControl(k=1e6, enforce="al"),
+    )
+    assert _roundtrip(rec).control.al_update is None

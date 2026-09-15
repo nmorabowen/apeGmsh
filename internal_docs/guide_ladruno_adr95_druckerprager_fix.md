@@ -131,6 +131,18 @@ as a deck rule.
 | `ASDPlasticMaterial3D` + `DruckerPrager_YF` | cone + apex projection; the region test is now in the ELASTIC metric (fork ADR-94 wp/94f, PR #832, merged 2026-09-08) with a flank-first apex fallback behind it. PR #815 had made the projection live but classified in the EUCLIDEAN metric (`p − p_apex ≥ η·q`), which at ψ = 0 sent over-apex states with small shear to a flank map that cannot move p | **Usable on zero-dilatancy footing decks from #832 on.** Measured on the ADR-95 deck after the fix: `h20uri` TARGET at s/B 0.15, q/q_exact 0.9758 against the repaired UW-DP 0.9757, zero flank refusals (pre-fix: FLOOR at 0.01122 with 435). Linear control 1.0850, unchanged. On a pre-#832 engine the caveat stands: the quadratic leg walls at the footing edge. |
 | `LadrunoSANISAND` | no apex to return to; the substepper's cost explodes as p → 0 (implicit legs drown at ~10 s per attempt); IMPL-EX finishes with `-Pmin` holding the edge points at +0.1 kPa | as in `guide_ladruno_sanisand_integrator.md` / ADR 0103: `maxSubsteps` (the fork's CP1 deck uses 1000; 0 = uncapped lets one `analyze()` block for 15–45 min), `-implex` for footing decks, keep `-Pmin`. Read the late part of an IMPL-EX curve with the floor in mind. |
 
+**2026-09-15, fork PR #836 (WP F8).** The row above was ψ = 0 only. #832's
+elastic-metric apex test was *unioned* with the Euclidean one, and the union
+stays wrong for any dilatant flow (`DP_etabar > DP_eta·G/K`, from about
+ψ ≈ 2.3°) up to ~10× too wide at associated flow — a silent apex projection
+with a zero `Continuum` tangent, not a refusal. #836 makes the elastic-metric
+test *replace* the Euclidean one for `DruckerPrager_YF`, so ψ = 0 is
+untouched by construction. Any stored ASD `DruckerPrager_YF` result with
+`DP_etabar > DP_eta·G/K` from a build before `ASDP_DILATANT_APEX_MIN_BUILD`
+(`material/nd.py`) is suspect for that reason even where the load path looks
+fine. See `guide_ladruno_asdp_closest_point.md` §7 and ADR 0105's 2026-09-15
+amendment.
+
 ## 5. A live-gate suggestion (`ladruno_fork` marker)
 
 One discriminating assertion separates pre- and post-#803 engines in a minute: the fork's Prandtl
