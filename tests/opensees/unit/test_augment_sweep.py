@@ -19,6 +19,8 @@ measured and that get the sweep wrong when missed:
 """
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
@@ -89,18 +91,28 @@ def test_sweep_call_sequence_and_integrator_restore() -> None:
 def test_sweep_stops_at_tol_before_max_passes() -> None:
     ops = _FakeOps(gaps=[1e-9, 1e-12, 1e-14])
     le = _emitter(ops)
+    le.integrator("LoadControl", 1.0)
     with le.augment(element=1, tol=1e-8, max_passes=10) as gaps:
         pass
     assert gaps == [1e-9]
     assert sum(1 for c in ops.calls if c[0] == "analyze") == 1
 
 
-def test_sweep_respects_max_passes() -> None:
+def test_unconverged_sweep_fails_loud_with_the_history() -> None:
+    # A sweep that never meets ``tol`` leaves the penalty gap standing;
+    # returning quietly would read exactly like a converged one.
     ops = _FakeOps(gaps=[1e-2] * 10)
     le = _emitter(ops)
-    with le.augment(element=1, tol=1e-8, max_passes=3) as gaps:
-        pass
-    assert len(gaps) == 3
+    le.integrator("LoadControl", 1.0)
+    with pytest.raises(RuntimeError, match="did not reach tol") as exc:
+        with le.augment(element=1, tol=1e-8, max_passes=3):
+            pass
+    assert "1.000000e-02" in str(exc.value)     # the violation history
+    assert "max_passes=3" in str(exc.value)
+    # the finally still ran: augment ended and the integrator came back
+    assert ("end",) in ops.calls
+    assert ops.calls[-1] == ("integrator", "LoadControl", 1.0)
+    assert le._in_augment is False
 
 
 def test_end_augment_runs_even_when_the_body_raises() -> None:
@@ -121,6 +133,7 @@ def test_end_augment_runs_even_when_the_body_raises() -> None:
 def test_failed_held_pass_fails_loud_and_still_ends() -> None:
     ops = _FakeOps(gaps=[1e-2], rcs=[-3])
     le = _emitter(ops)
+    le.integrator("LoadControl", 1.0)
     with pytest.raises(RuntimeError, match="held-load pass 1"):
         with le.augment(element=5):
             pass
@@ -130,6 +143,7 @@ def test_failed_held_pass_fails_loud_and_still_ends() -> None:
 def test_nesting_is_refused_without_clearing_the_outer_flag() -> None:
     ops = _FakeOps(gaps=[1e-11, 1e-11])
     le = _emitter(ops)
+    le.integrator("LoadControl", 1.0)
     with le.augment(element=1):
         with pytest.raises(RuntimeError, match="already open"):
             with le.augment(element=1):
@@ -139,14 +153,45 @@ def test_nesting_is_refused_without_clearing_the_outer_flag() -> None:
     assert ops.calls.count(("end",)) == 1
 
 
-def test_no_integrator_seen_leaves_loadcontrol_zero_in_place() -> None:
-    # Nothing to restore when the caller never went through this emitter's
-    # ``integrator`` — better than guessing at a default.
+def test_no_integrator_seen_refuses_to_start_the_sweep() -> None:
+    # With nothing to restore, the sweep would leave ``LoadControl 0.0``
+    # installed and every later analyze() would return 0 while the load
+    # never advances. Refuse BEFORE ladrunoBeginAugment.
     ops = _FakeOps(gaps=[1e-11])
     le = _emitter(ops)
-    with le.augment(element=1):
+    with pytest.raises(RuntimeError, match="no integrator has been recorded"):
+        with le.augment(element=1):
+            pass
+    assert ops.calls == []          # not even ``begin`` was issued
+    assert le._in_augment is False
+
+
+def test_a_raising_begin_does_not_latch_the_augment_flag() -> None:
+    # ``_in_augment`` may only latch once a sweep is really open: a
+    # begin that raised left none, and a latched flag would refuse every
+    # later augment() for the life of the emitter.
+    class _BadBeginOps(_FakeOps):
+        def __init__(self) -> None:
+            super().__init__(gaps=[1e-11])
+            self.fail_begin = True
+
+        def ladrunoBeginAugment(self) -> None:    # noqa: N802
+            if self.fail_begin:
+                raise RuntimeError("boom")
+            super().ladrunoBeginAugment()
+
+    ops = _BadBeginOps()
+    le = _emitter(ops)
+    le.integrator("LoadControl", 1.0)
+    with pytest.raises(RuntimeError, match="boom"):
+        with le.augment(element=1):
+            pass
+    assert le._in_augment is False
+    # a later sweep on a healthy build is accepted, not refused as nested
+    ops.fail_begin = False
+    with le.augment(element=1) as gaps:
         pass
-    assert ops.calls[-1] == ("end",)
+    assert gaps == [1e-11]
 
 
 def test_stock_build_is_refused() -> None:
@@ -154,6 +199,44 @@ def test_stock_build_is_refused() -> None:
         pass                       # no ``criticalTimeStep``
 
     le = _emitter(_StockOps())
-    with pytest.raises(RuntimeError, match="requires the Ladruno fork build"):
+    with pytest.raises(RuntimeError, match="requires the Ladruno fork build") \
+            as exc:
         with le.augment(element=1):
             pass
+    # the path hint must survive as a literal backslash path, not \x08
+    assert r"dist\bin" in str(exc.value)
+
+
+# ── the public forwarder: ops.augment(...) ───────────────────────────────
+
+def test_facade_augment_requires_a_live_analysis() -> None:
+    # The gate message, ConstraintsComposite and guide_constraints all tell
+    # users to call ``ops.augment(...)``; it has to exist on the bridge and
+    # say why it cannot run without a live step.
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+    bridge = apeSees(cast("object", make_two_node_beam()))
+    with pytest.raises(BridgeError, match="no live analysis has run"):
+        with bridge.augment(element=1):
+            pass
+
+
+def test_facade_augment_forwards_to_the_live_emitter() -> None:
+    from apeGmsh.opensees import apeSees
+
+    from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+    ops = _FakeOps(gaps=[1e-11])
+    le = _emitter(ops)
+    le.integrator("LoadControl", 1.0)
+
+    bridge = apeSees(cast("object", make_two_node_beam()))
+    bridge._live_emitter = le            # what a live analyze(...) leaves
+    with bridge.augment(element=42, tol=1e-9, max_passes=4) as gaps:
+        pass
+    assert gaps == [1e-11]
+    # the kwargs arrived intact on the emitter's sweep
+    assert ("eleResponse", 42, "constraintViolation") in ops.calls

@@ -177,6 +177,7 @@ from .recorder import FilterableRecorder, Ladruno
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
@@ -9057,6 +9058,65 @@ class apeSees:
                 "and read results.nodes.get(component='constraint_tie_force_x')."
             )
         return self._live_emitter.ladruno_projection_tie_force(node, dof)
+
+    def augment(
+        self, *, element: int, tol: float = 1.0e-8, max_passes: int = 10,
+    ) -> "AbstractContextManager[list[float]]":
+        """Run an ADR-41 held-load augmentation sweep on a live run and
+        yield its per-pass constraint-violation history.
+
+        The supported way to close an ``enforce="al"`` coupling's constraint
+        gap **within** one step (fork PR #839 §3.2): ``enforce="al"`` alone
+        advances its Uzawa recursion once per *committed* step, so a single
+        push leaves the penalty gap ``c/K_t`` standing. Forwards to
+        :meth:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter.augment`, which
+        owns the whole recipe (``ladrunoBeginAugment`` →
+        ``integrator LoadControl 0.0`` → held passes polling
+        ``constraintViolation`` → ``ladrunoEndAugment`` + the caller's
+        integrator restored). Read that docstring for the semantics; the
+        passes all run on **entry**, so the ``with`` body is a placeholder
+        and displacements must be read **after** the block::
+
+            ops.analyze(steps=1)                 # the real step
+            with ops.augment(element=tag, tol=1e-8) as gaps:
+                pass
+            assert gaps[-1] < 1e-8
+
+        Parameters
+        ----------
+        element : int
+            Emitted OpenSees tag of the ``LadrunoKinematicCoupling``.
+            apeGmsh has **no name → emitted-tag lookup** (the constraint
+            name rides the comment channel only), so the tag has to come
+            from the live domain: ``max(openseespy.opensees.getEleTags())``
+            when the coupling is the last element emitted, or a scan of a
+            written ``model.h5`` for the ``"LadrunoKinematicCoupling"``
+            ``type_token`` (``OpenSeesModel.elements()``).
+        tol : float, default 1e-8
+            Stop once the violation falls below this.
+        max_passes : int, default 10
+            Hard cap on held-load passes; exceeding it raises.
+
+        Raises
+        ------
+        BridgeError
+            When no live analysis has run; when no integrator was recorded
+            through the live emitter; when ``tol`` is not met within
+            ``max_passes``. Also on a stock (non-fork) build, or a nested
+            sweep (``RuntimeError``).
+        """
+        if self._live_emitter is None:
+            raise BridgeError(
+                "apeSees.augment: no live analysis has run. Call "
+                "analyze(...) first (the live path) — the sweep drives the "
+                "in-process domain that step left standing. There is no "
+                "deck-emission equivalent: ladrunoBeginAugment / "
+                "ladrunoEndAugment are issued interactively around held "
+                "passes, not written into a Tcl / py deck."
+            )
+        return self._live_emitter.augment(
+            element=element, tol=tol, max_passes=max_passes,
+        )
 
     def _require_live_for_contact_query(self, verb: str) -> "LiveOpsEmitter":
         """The shared no-live-analysis guard for the contact queries."""

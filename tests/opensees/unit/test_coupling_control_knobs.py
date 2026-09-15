@@ -383,6 +383,18 @@ def test_rejects_bad_al_update(bad: str) -> None:
         CouplingControl(enforce="al", al_update=bad)
 
 
+def test_h5_decode_refuses_an_out_of_range_al_update_code() -> None:
+    # A corrupt / future ``cpl_al_update`` code must name the field and the
+    # value, not surface as a bare IndexError from the code table.
+    from apeGmsh.mesh import _femdata_h5_io as io
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    with pytest.raises(MalformedH5Error, match="cpl_al_update carries 7"):
+        io._control_from_values(
+            1, 1e10, float("nan"), 0, float("nan"), 0, al_update=7,
+        )
+
+
 @pytest.mark.parametrize("mode", ["commit", "iter"])
 def test_al_update_requires_enforce_al(mode: str) -> None:
     # The fork warns-and-ignores; apeGmsh refuses rather than emit a flag
