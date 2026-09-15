@@ -940,6 +940,15 @@ class LadrunoSANISAND(NDMaterial):
         control (``-implexControl err_tol reduction_limit``). ``None``
         (default) omits the flag. Required when ``implex_factor`` is
         ``"control"`` or ``"controlIter"``.
+
+        Fork WP F10 measured one self-weight strip-footing deck
+        reaching its target with the control OFF where the control ON
+        stalled on the harness's growth rule — but that deck's minimum
+        confinement sits at only **1.27x** the fork's own measured
+        low-confinement corner (``p' >= 5 kPa``, printed on every
+        control-off run, below which IMPL-EX is unusable without the
+        control). That is **not** a general finding that the control
+        is unneeded at low confinement, and apeGmsh must not imply one.
     implex_factor
         Selects the IMPL-EX extrapolation factor scheme
         (``-implexFactor {fixed|control|controlIter}``). ``None``
