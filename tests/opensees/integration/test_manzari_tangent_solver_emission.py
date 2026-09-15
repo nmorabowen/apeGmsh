@@ -18,7 +18,6 @@ pytest.importorskip("gmsh")
 from apeGmsh import apeGmsh  # noqa: E402
 from apeGmsh.opensees import apeSees  # noqa: E402
 from apeGmsh.opensees._internal.build import (  # noqa: E402
-    BridgeError,
     ManzariConvergenceTestWarning,
     ManzariTangentSolverWarning,
 )
@@ -141,12 +140,22 @@ def test_uncapped_sanisand_emits_no_maxsubsteps(tmp_path: Path) -> None:
     assert "-maxSubsteps" not in line
 
 
-def test_capped_sanisand_is_refused_under_a_quad(tmp_path: Path) -> None:
-    """FourNodeQuad does not propagate a material refusal."""
+def test_capped_sanisand_is_allowed_under_a_quad(tmp_path: Path) -> None:
+    """FourNodeQuad FORWARDS a material refusal, so the cap is legal.
+
+    Fork PR #838's refusal-propagation roster measured ``FourNodeQuad``
+    as FORWARD (``update()`` accumulates the ``setTrialStrain`` codes
+    and returns them), so the ``max_substeps`` gate — now keyed on that
+    table rather than on a ``{LadrunoBrick}`` allow-list — must let the
+    deck through and emit the flag.
+    """
+    out = tmp_path / "deck.tcl"
     with apeGmsh(model_name="sand_capped_quad") as g:
         ops = _bridge(_sand_column(g), max_substeps=80)
         ops.system.UmfPack()
-        with pytest.raises(
-            BridgeError, match="propagate a material refusal"
-        ):
-            ops.tcl(str(tmp_path / "deck.tcl"))
+        ops.tcl(str(out))
+    line = next(
+        ln for ln in out.read_text(encoding="utf-8").splitlines()
+        if "LadrunoSANISAND" in ln
+    )
+    assert "-maxSubsteps 80" in line
