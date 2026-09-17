@@ -87,8 +87,13 @@ non-zero. All three rules below are implemented; the third is a **raise**, not a
 1. **Default `0` = uncapped = today.** A deck that does not ask for it must be byte-identical.
 2. **It is inert on schemes that never reach `ModifiedEuler`** — exactly the condition
    `honor_tol_r` already checks. Reuse `_SCHEMES_REACHING_MODIFIED_EULER` and emit the same
-   shape of warning. (Note `int_scheme=7` is *correctly* excluded: `MaxStrainInc` has no case
-   for it and falls through to `ForwardEuler`, despite the `INT_MAXSTR_MFE` name.)
+   shape of warning. The set is `{0, 1, 2}`, not `{0, 1}`: scheme 2 reaches `ModifiedEuler`
+   too, CONDITIONALLY, when `BackwardEuler_CPPM`'s own recursive-halving ladder falls back
+   to `explicit_integrator` on non-convergence or ladder exhaustion, which hits the same
+   `default:` case ModifiedEuler answers. That fallback is exactly what WP-108 (#845) fixed
+   apeGmsh's own copy of the false "NO EFFECT" claim over — see §3a below. (Note
+   `int_scheme=7` is *correctly* excluded: `MaxStrainInc` has no case for it and falls
+   through to `ForwardEuler`, despite the `INT_MAXSTR_MFE` name.)
 3. **The element must propagate a material refusal, or the cap makes things worse.** Under an
    element that discards the return code, a capped material returns a *partially integrated*
    stress with a partial tangent, and the analysis accepts it as converged — worse than the old
@@ -114,6 +119,55 @@ non-zero. All three rules below are implemented; the third is a **raise**, not a
    latches them and `analyze()` returns `-4`); only trial-time refusals still need a forwarding
    element. The material graph is walked transitively, so a
    `PlaneStrain` / `LogStrain` wrapper cannot hide a capped model one level down.
+
+## 3a. `IntScheme 2` — the WP-105 verdict (PARTIAL, #844)
+
+Fork WP-105 asked whether scheme 2 (`BackwardEuler_CPPM`) is a general robustness
+improvement over the scheme-1 default. It measured against build `634824e1f` and touched no
+source file — this is documentation only, and it lands as guidance rather than a warning
+(see §3, above: apeGmsh raises no warning on `int_scheme=2` for the same reason it does not
+warn on `tan_type=2` — a good, error-controlled scheme is not the thing the existing
+scheme-3/5 warnings are for). The verdict is PARTIAL, and the two halves point in opposite
+directions.
+
+At a material point — a companion return, a prescribed strain increment, zero free DOF —
+scheme 2 is a genuine improvement over scheme 1 at the campaign increment and coarser:
+
+| `dEz` | accuracy vs scheme 1 | cost vs scheme 1 |
+|---|---|---|
+| `1e-5` | matches to `1.3e-3` / `2.9e-3` max relative stress deviation (`p0 = 100` / `20` kPa) | **0.64x — scheme 2 is *slower* here** |
+| `1e-4` (the campaign increment) | **3.7-4.3x more accurate** | **4.2-7.6x cheaper** |
+| `4.6e-4` | **7-30x more accurate** | **10-13x cheaper** |
+
+As the primary integrator of a load-controlled BVP, it is refuted. Under a global Newton at
+`dEz >= 1e-4` it stalls in 8 of 8 free-standing drained-triaxial arms (scheme 1: 1 of 8), and
+loosening the global tolerance from `1e-9` to `1e-7` does not rescue it; a failing step costs
+12-134 s against a 30 ms normal one. On the real CP1/ADR-95 bearing leg (`x10z8`,
+`h1.0_e0.6944`, 1200 s of wall clock each) the two schemes reached very different depths:
+
+| arm | steps committed | `s/B` reached | rung / step size |
+|---|---|---|---|
+| scheme 1 (baseline) | 51 | 0.019 | — |
+| scheme 2 | 11 | 4e-5 — **475x shallower for the same wall clock** | `ds` pinned at 25x the subdivision floor; 100% of committed steps on the relaxed rung 3 |
+
+That last column is why §3.3(e) below and the `Ladder` docstring both insist on quoting the
+rung histogram next to any scheme comparison: a `s/B` figure alone hides that every one of
+those 11 steps only committed on the loosest rung available.
+
+ADR-92 D3's stated rationale for the scheme-1 default was also checked and corrected on its
+own terms: it said 58-74% of scheme 2's calls integrate explicitly at low `p`. Measured: 0 of
+1820 steps on every replayed triaxial path at `p0 = 100`/`20` kPa, and 0 of 80 on the descent
+of a `p -> p_min` path. The 58-74% figure reproduces (53%) only once the point is pinned at
+`p_min` with a zero deviator. D3's conclusion — keep scheme 1 as the default — survives; the
+number it was justified with does not.
+
+Not verified, and not licensed by any of the above: plane strain, `LadrunoUP` (u-p), cyclic
+or reversal loading, `implex=True` combined with `int_scheme=2` (`implex` was `False` in
+every WP-105 arm), and parallel runs. The bearing leg never reached a comparable `s/B`
+between the two schemes, so no capacity, plateau or limit-point claim is licensed either.
+
+Full tables: `Ladruno_files/testbed/hypo_bearing/adr92_f12/F12_intscheme2_verdict.md`; guide
+text at `LadrunoSANISAND_implex_guide.md:129-147` (§3) and §9 (`:567`).
 
 ## 4. Convergence test on SANISAND decks — confirmed in our own suite
 

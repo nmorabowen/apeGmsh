@@ -217,6 +217,23 @@ class TestSubstepCapGate:
             [stdBrick(pg="soil", material=ElasticIsotropic(E=1e4, nu=0.3))]
         )
 
+    def test_fires_for_int_scheme_2_on_a_discard_host(self) -> None:
+        """The gate is keyed on the element, not the scheme (WP-108 #845).
+
+        Before #845 the false NO-EFFECT warning made ``int_scheme=2`` +
+        ``max_substeps`` look inert; it was, since #838, "gated and
+        warned about" — now that the warning is corrected the pair is
+        "gated only". Confirm the gate still fires on a measured DISCARD
+        host regardless.
+        """
+        with pytest.raises(BridgeError, match="propagate a material refusal"):
+            validate_sanisand_substep_cap(
+                [stdBrick(
+                    pg="soil",
+                    material=_sand(max_substeps=80, int_scheme=2),
+                )]
+            )
+
     def test_only_the_offending_element_matters(self) -> None:
         """A safe element in the same deck does not excuse an unsafe one."""
         capped = _sand(max_substeps=80)
@@ -237,7 +254,7 @@ class TestSubstepCapField:
         with pytest.raises(ValueError, match="max_substeps must be >= 0"):
             _sand(max_substeps=-1)
 
-    @pytest.mark.parametrize("scheme", [2, 45])
+    @pytest.mark.parametrize("scheme", [45])
     def test_warns_when_the_scheme_skips_modified_euler(
         self, scheme: int
     ) -> None:
@@ -246,7 +263,10 @@ class TestSubstepCapField:
         with pytest.warns(SanisandIntegrationWarning, match="NO EFFECT"):
             _sand(max_substeps=80, int_scheme=scheme)
 
-    @pytest.mark.parametrize("scheme", [0, 1])
+    # 2 reaches ModifiedEuler CONDITIONALLY, via BackwardEuler_CPPM's
+    # fallback on non-convergence or ladder exhaustion (fork #845) — silent
+    # here alongside 0 and 1.
+    @pytest.mark.parametrize("scheme", [0, 1, 2])
     def test_silent_when_the_scheme_reaches_modified_euler(
         self, scheme: int
     ) -> None:

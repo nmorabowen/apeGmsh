@@ -554,7 +554,10 @@ class Ladder:
     steps where the equivalent UW leg needed none, on curves that
     otherwise agreed to 0.075 % — so report the relaxed-rung count
     alongside any ASD-vs-UW agreement figure, not just the peak/curve
-    match.
+    match; the same discipline applies to any SANISAND integrator-scheme
+    comparison (fork WP-105: a scheme-2 leg committed 100 % of its steps
+    on rung 3), where quoting ``s/B`` alone compares two different
+    analyses.
     """
 
     rungs: tuple[SolutionAlgorithm | Substep, ...]
