@@ -175,10 +175,12 @@ answer on the engine, and mirroring that is the only way the two stay in step.
 Exactly one entry is `True`: `"LadrunoQuad"` (`_element_capabilities.py:520`).
 
 The guide's three-way condition — *"LadrunoQuad std/bbar/ssp under `-geom linear`,
-not `-eas`"* — **over-specifies the apeGmsh side.** `LadrunoQuad`
-(`element/solid.py:1172`) has `formulation in ("std", "bbar", "ssp")`, raises on
-`"eas"` in `__post_init__`, and has no `geom` axis at all (only `LadrunoBrick`
-has `-geom`). The element half therefore reduces to "the element is a
+not `-eas`"* — **over-specifies the apeGmsh side.** The fork element does carry
+both axes, and refuses `-eas` and `-geom finite` itself. apeGmsh's `LadrunoQuad`
+*primitive* (`element/solid.py:1172`) cannot reach either: it has
+`formulation in ("std", "bbar", "ssp")`, raises on `"eas"` in `__post_init__`,
+and has no `geom` field at all (among apeGmsh primitives only `LadrunoBrick`
+exposes `-geom`). The element half therefore reduces to "the element is a
 `LadrunoQuad`".
 
 The **material** half is where the guide is too weak, and this is the one place
@@ -211,7 +213,7 @@ adopts it; until then, a `None` here is a refusal, not an invitation to guess.
 `OpenSeesCapabilities` (`_target.py:66-101`) gains
 `has_threaded_update: bool | None = None`. It must not derive from
 `hasattr(ops, "profiler")` the way `has_fork`, `has_profiler` and
-`has_ladruno_up` all do today (`probe_live_capabilities()`, `:196-212`), and it
+`has_ladruno_up` all do today (`probe_live_capabilities()`, `:196-226`), and it
 must not derive from `ops.ladrunoBuild()` either — that stamp is captured by CMake
 at **configure** time and lags every incremental `build.bat`, understating the
 binary each time (guide §5).
@@ -313,6 +315,18 @@ the D5 probe must leave `echo` at its default `true`. The subprocess lanes are
 already safe — `stream_run` merges the child's stderr into stdout
 (`_run.py:175-176`) and tees every line to the log — which makes the subprocess
 lane the *more* honest of the two here.
+
+Two fork-side fallbacks stay outside the D3 roster, and the announcement is the
+only witness to the first and nothing witnesses the second. With the deep
+profiler armed (`ops_profiler::theProfiler().deep()`, `Domain.cpp:2608-2617`) the
+loop runs serial and says so; apeGmsh has its own `profiler` verb on the live
+bridge, so a user can arm it and ask for threads in the same session, and the
+roster does not refuse that — the run is correct, only serial, and the fork's
+line is what tells them. With fewer than two elements (`Domain.cpp:2628-2629`)
+the loop runs serial and prints **nothing**, despite the fork's own note that
+none of its fallbacks is silent. Neither is a hazard, so neither earns a raise;
+both are named here so that a serial run under `ladruno_threads(4)` is not read
+as a bug in the roster.
 
 ### D8 — The docs page gains a verbs entry, and loses a wrong sentence
 
