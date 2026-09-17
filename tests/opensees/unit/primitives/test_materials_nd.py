@@ -952,6 +952,15 @@ class TestNDMaterialNamespace:
         assert m.honor_tol_r is False
         assert ops.tag_for(m) == 1
 
+    def test_LadrunoSANISAND_p_re_is_reachable_via_namespace(self) -> None:
+        # A field added to the dataclass alone is invisible through the
+        # namespace's hand-spelled signature -- same rationale as the
+        # implex seam test below.
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoSANISAND(**_LS_KWARGS, p_re=1.0)
+        assert isinstance(m, LadrunoSANISAND)
+        assert m.p_re == 1.0
+
     def test_LadrunoSANISAND_implex_seam_is_reachable_via_namespace(
         self,
     ) -> None:
@@ -1081,6 +1090,12 @@ _LS_TAIL_DEFAULT = (1, 2, 1, 1e-7, 1e-7)
 #: ``P_atm = 101.0``).
 _LS_FLAGS_DEFAULT = (
     "-Presidual", 0.0, "-Pmin", 1.0e-3 * 101.0, "-honorTolR", 0,
+)
+
+#: The same flag block with ``p_re=1.0`` opted in — ``-pRe`` sits between
+#: ``-Presidual`` and ``-Pmin``, per the fork guide's synopsis ordering.
+_LS_FLAGS_WITH_PRE = (
+    "-Presidual", 0.0, "-pRe", 1.0, "-Pmin", 1.0e-3 * 101.0, "-honorTolR", 0,
 )
 
 
@@ -1218,6 +1233,7 @@ class TestLadrunoSANISAND:
         assert (m.int_scheme, m.tan_type, m.jaco_type) == (1, 2, 1)
         assert (m.tol_f, m.tol_r) == (1e-7, 1e-7)
         assert m.p_residual == 0.0
+        assert m.p_re == 0.0
         assert m.p_min is None
         assert m.honor_tol_r is False
 
@@ -1336,6 +1352,74 @@ class TestLadrunoSANISAND:
     def test_rejects_negative_p_residual(self) -> None:
         with pytest.raises(ValueError, match="p_residual must be >= 0"):
             LadrunoSANISAND(**_LS_KWARGS, p_residual=-1.0)
+
+    # p_re (fork PR #842) — the elastic-only stiffness floor. Default 0.0
+    # must stay byte-identical to a deck built before this field existed.
+    def test_p_re_unset_matches_default_golden(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+             + _LS_FLAGS_DEFAULT, {}),
+        ]
+
+    def test_p_re_explicit_zero_matches_default_golden(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, p_re=0.0)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+             + _LS_FLAGS_DEFAULT, {}),
+        ]
+
+    # Token position: -pRe sits between -Presidual and -Pmin, and no
+    # positional follows any flag (a hard parse error in OPS_LadrunoSANISAND).
+    def test_p_re_positive_emits_between_presidual_and_pmin(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, p_re=1.0)._emit(rec, tag=7)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoSANISAND", 7) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+             + _LS_FLAGS_WITH_PRE, {}),
+        ]
+        args = rec.calls[0][1]
+        flag_idx = [
+            i for i, a in enumerate(args)
+            if isinstance(a, str) and a.startswith("-")
+        ]
+        # 23 positionals (18 + 5-tail) at indices 2..24; the flag tail now
+        # carries 4 flags (was 3) at indices shifted by the extra -pRe pair.
+        assert min(flag_idx) == 25
+        assert flag_idx == [25 + 2 * k for k in range(4)]
+
+    def test_rejects_negative_p_re(self) -> None:
+        with pytest.raises(ValueError, match="p_re must be >= 0"):
+            LadrunoSANISAND(**_LS_KWARGS, p_re=-1.0)
+
+    def test_rejects_negative_p_re_message_names_stiffness(self) -> None:
+        # It is a STIFFNESS floor, unlike p_residual (a strength one) --
+        # the refusal message must not be mistaken for the other one.
+        with pytest.raises(ValueError, match="STIFFNESS"):
+            LadrunoSANISAND(**_LS_KWARGS, p_re=-1.0)
+
+    def test_p_re_above_tenth_p_atm_warns(self) -> None:
+        with pytest.warns(SanisandIntegrationWarning, match="0.1\\*P_atm"):
+            LadrunoSANISAND(**_LS_KWARGS, p_re=0.5 * 101.0)
+
+    def test_p_re_at_or_below_resolved_p_min_warns(self) -> None:
+        # p_min resolves to 1.0e-3*P_atm = 0.101 here; p_re == p_min is the
+        # boundary case the fork's own NOTE covers ("<=", not "<").
+        with pytest.warns(SanisandIntegrationWarning, match="p_min"):
+            LadrunoSANISAND(**_LS_KWARGS, p_re=1.0e-3 * 101.0)
+
+    def test_p_re_between_p_min_and_tenth_p_atm_is_silent(self) -> None:
+        # Default P_atm=101.0, default p_min resolves to 0.101; p_re=1.0
+        # is above p_min and well under 0.1*P_atm=10.1 -- the documented
+        # pairing the fork parser accepts silently.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SanisandIntegrationWarning)
+            LadrunoSANISAND(**_LS_KWARGS, p_re=1.0)
 
     # U6: honor_tol_r is read at exactly one site, inside ModifiedEuler();
     # schemes that do not route there make it a silent no-op — warn.

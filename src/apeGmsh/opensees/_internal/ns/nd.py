@@ -288,6 +288,7 @@ class _NDMaterialNS(_BridgeNamespace):
         tol_f: float = 1e-7,
         tol_r: float = 1e-7,
         p_residual: float = 0.0,
+        p_re: float = 0.0,
         p_min: float | None = None,
         honor_tol_r: bool = False,
         max_substeps: int = 0,
@@ -300,7 +301,9 @@ class _NDMaterialNS(_BridgeNamespace):
 
         The fork subclass of :meth:`ManzariDafalias` with settable
         low-stress constants: ``p_residual`` (default ``0.0``,
-        cohesionless) and ``p_min`` (default ``None`` → ``1.0e-3 *
+        cohesionless), ``p_re`` (default ``0.0`` = off, an elastic-only
+        stiffness floor — see the class docstring for why it is not a
+        recommendation) and ``p_min`` (default ``None`` → ``1.0e-3 *
         P_atm``, resolved at emit time).  The first 18 keywords and the
         five-argument integration tail are identical to
         :meth:`ManzariDafalias` — except ``tan_type``, which defaults to
@@ -348,6 +351,7 @@ class _NDMaterialNS(_BridgeNamespace):
                 tol_f=tol_f,
                 tol_r=tol_r,
                 p_residual=p_residual,
+                p_re=p_re,
                 p_min=p_min,
                 honor_tol_r=honor_tol_r,
                 max_substeps=max_substeps,
