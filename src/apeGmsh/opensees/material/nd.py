@@ -70,6 +70,7 @@ __all__ = [
     "ASDP_MIN_FORK_BUILD",
     "SANISAND_IMPLEX_FACTOR_MIN_BUILD",
     "SANISAND_SCHEME2_CAP_MIN_BUILD",
+    "SANISAND_PRE_FLOOR_MIN_BUILD",
     "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
@@ -819,7 +820,7 @@ class LadrunoSANISAND(NDMaterial):
         nDMaterial LadrunoSANISAND tag G0 nu e_init Mc c lambda_c e0 ksi \
             P_atm m h0 ch nb A0 nd z_max cz Rho \
             [IntScheme TanType JacoType TolF TolR] \
-            [-Presidual pr] [-Pmin pmin] [-honorTolR 0|1]             [-maxSubsteps n] [-implex] [-implexControl tol rlim]             [-implexFactor fixed|control|controlIter]
+            [-Presidual pr] [-pRe pre] [-Pmin pmin] [-honorTolR 0|1]             [-maxSubsteps n] [-implex] [-implexControl tol rlim]             [-implexFactor fixed|control|controlIter]
 
     The fork's thin C++ subclass of the ``ManzariDafalias`` material
     (Ghofrani & Arduino, U. Washington, after Dafalias & Manzari 2004).
@@ -933,6 +934,62 @@ class LadrunoSANISAND(NDMaterial):
         ``p`` wherever the model divides by it.  Must be ``>= 0``.
         Default ``0.0`` (cohesionless — the physically correct value;
         vanilla hardcodes ``1.0e-2 * P_atm``).
+    p_re
+        Elastic-only stiffness floor (fork PR #842, ``-pRe``, build
+        :data:`SANISAND_PRE_FLOOR_MIN_BUILD`): inside the three
+        ``GetElasticModuli`` overloads only, ``pn = p + p_re`` before the
+        ``sqrt(max(pn, p_min)/P_atm)`` factor, and nowhere else.  Must be
+        ``>= 0``.  Default ``0.0`` = off = byte-identical to a deck built
+        before this field existed.
+
+        It is **not** ``p_residual``, which floors STRENGTH (``GetF``,
+        ``psi``, ``M^b``, ``M^d``, ``D``) and never reaches the moduli;
+        ``p_re`` floors STIFFNESS and never reaches the strength side. It
+        is not a cohesion, and it is not ``p_min``, which clamps the
+        STRESS rather than the tangent.
+
+        Three claims, kept apart. (1) Capacity-neutrality is a
+        **Gauss-point** claim, not a BVP one: at ``p0 = 1.01`` kPa a
+        ``p_re = 1`` kPa floor moves ``eta/M^b`` by under ``1e-5`` where
+        an equivalent ``p_residual`` moves it +18.1% — the bounding state
+        ``eta = M^b`` is unmoved because the moduli never enter that
+        identity. (2) It is **path-changing everywhere**: the plastic
+        modulus term ``L`` changes by ``lambda*E/(Kp + lambda*E)`` vs
+        ``E/(Kp + E)`` with ``lambda = sqrt((p + p_re)/p)`` — ``1.41`` at
+        ``p' = 1`` kPa — neutral only in the limit ``b:n -> 0``, i.e. at
+        the bounding surface. (3) On the fork's own surcharged strip
+        footing (``B = 2`` m, ``--surcharge 7.65`` kPa, ``h0 = 1.0`` m)
+        it measured WORSE on every axis at ``p_re = 1`` kPa (``s/B``
+        0.0603 → 0.0389 in the same wall time, median substeps 26348 →
+        50789, 16/80 subdivisions vs 0/80; both arms wall-terminated so
+        neither ``q`` is a capacity) — the live ring there sits at
+        ``p_min = 6.25`` kPa, not at the floor, and the floor does not
+        know where the ring is. This is **why the default stays 0**: not
+        adopted anywhere in apeGmsh, and not a recommendation.
+
+        Where it does help: at ``p0 = 0.5`` kPa the unfloored point ran
+        1570 substeps/step and stalled at step 13; ``p_re = 1`` kPa took
+        it to 4.8/step, 40/40 — and it is **not monotone**
+        (``p_re = 0.1`` kPa failed at step 1).
+
+        Any explicit-dynamics path that sizes ``dt`` from a material
+        estimate must budget for the consequence: a floored ``G``
+        shortens the critical time step by ``1/sqrt((p + p_re)/p)``, up
+        to 41% at ``p' = 1`` kPa.
+
+        Inert in the ``mElastFlag == 0`` (gravity/K0) stage: the
+        ``sqrt(pn/P_atm)`` factor is dropped there entirely, so a stage-0
+        deck with ``p_re`` set is bit-identical to one without it. The
+        only zero-strain observable is the initial elastic operator after
+        ``updateMaterialStage ... 1`` + ``revertToStart``, which scales
+        every eigenmode by exactly ``sqrt((P_atm + p_re)/P_atm)``.
+
+        Requires a fork build at or after
+        :data:`SANISAND_PRE_FLOOR_MIN_BUILD`; an older parser refuses
+        ``-pRe`` as an unknown flag at parse time (loud, not silent), so
+        this is documented, not enforced. The fork's repeat-refusal for a
+        doubled ``-pRe`` has no apeGmsh analogue and needs none — a
+        dataclass field cannot be given twice.
     p_min
         Minimum-pressure floor ``m_Pmin``.  Must be ``> 0`` if given;
         ``None`` (default) resolves to ``1.0e-3 * P_atm`` **at emit
@@ -1035,6 +1092,7 @@ class LadrunoSANISAND(NDMaterial):
 
     # the fork's two constants + the seam flag
     p_residual: float = 0.0
+    p_re: float = 0.0               # fork PR #842: elastic-only stiffness floor
     p_min: float | None = None      # None -> resolved to 1.0e-3 * P_atm
     honor_tol_r: bool = False
     max_substeps: int = 0           # 0 = uncapped = vanilla's behaviour
@@ -1088,6 +1146,39 @@ class LadrunoSANISAND(NDMaterial):
             raise ValueError(
                 f"LadrunoSANISAND: p_min must be > 0 if given, got "
                 f"{self.p_min!r}. Pass None for the default 1.0e-3*P_atm."
+            )
+        if self.p_re < 0:
+            raise ValueError(
+                f"LadrunoSANISAND: p_re must be >= 0, got {self.p_re!r}. "
+                f"It is a STIFFNESS floor: G, K ~ sqrt(max(p + p_re, p_min)"
+                f"/P_atm). It adds NO strength -- use p_residual for that."
+            )
+        if self.p_re > 0.1 * self.P_atm:
+            _factor = ((self.P_atm + self.p_re) / self.P_atm) ** 0.5
+            warnings.warn(
+                f"LadrunoSANISAND: p_re={self.p_re!r} is above 0.1*P_atm "
+                f"({0.1 * self.P_atm!r}). The floor is not local to the "
+                f"free-surface ring -- it multiplies G, K by "
+                f"sqrt((p + p_re)/p) at every Gauss point ({_factor!r} at "
+                f"p = P_atm itself), and it shortens the explicit critical "
+                f"dt in the same proportion. Accepted; declare it.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
+            )
+        # p_min resolved exactly as _emit resolves it -- kept inline rather
+        # than a shared helper, since it is one line in each of two places.
+        _p_min_resolved = (
+            self.p_min if self.p_min is not None else 1.0e-3 * self.P_atm
+        )
+        if 0 < self.p_re <= _p_min_resolved:
+            warnings.warn(
+                f"LadrunoSANISAND: p_re={self.p_re!r} <= p_min="
+                f"{_p_min_resolved!r}, so as p -> 0 the p_min stress clamp "
+                f"already dominates the floor and the ring gains NO "
+                f"stiffness; the floor still perturbs G, K wherever p is "
+                f"comparable to p_re. Raise p_re above p_min, or drop it.",
+                SanisandIntegrationWarning,
+                stacklevel=2,
             )
         if (
             self.honor_tol_r
@@ -1198,6 +1289,14 @@ class LadrunoSANISAND(NDMaterial):
         # P_atm at build time, so -Pmin stays out of the class of
         # arguments whose value you must run the model to learn.
         args += ["-Presidual", self.p_residual]
+        # -pRe is the SECOND flag that does not always emit (see -maxSubsteps
+        # below): its default 0.0 IS vanilla's behaviour (no stiffness
+        # floor), so an unset deck must stay byte-identical to one built
+        # before this field existed. Canonical token only -- the fork
+        # accepts synonyms (-pre/-Pre/-PRe/-Pelastic/-pelastic) for a memo's
+        # sake; apeGmsh does not add a second spelling to keep in sync.
+        if self.p_re:
+            args += ["-pRe", self.p_re]
         args += [
             "-Pmin",
             self.p_min if self.p_min is not None else 1.0e-3 * self.P_atm,
@@ -1443,6 +1542,13 @@ SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
 #: and prints one false "NO EFFECT" warning line; the absent warning on
 #: a newer build must not be used as a feature probe.
 SANISAND_SCHEME2_CAP_MIN_BUILD = "049b295fc"
+
+#: Minimum fork build for ``LadrunoSANISAND``'s ``-pRe`` elastic-only
+#: stiffness floor (``ops.ladrunoBuild()``, fork PR #842). Documented, not
+#: enforced (same as :data:`ASDP_MIN_FORK_BUILD` — a bare hash cannot prove
+#: ancestry). An older parser does not silently ignore the token: ``-pRe``
+#: is not in its accepted flag set, so it is refused loudly at parse time.
+SANISAND_PRE_FLOOR_MIN_BUILD = "1133279a5"
 
 #: Minimum fork build for the DILATANT-flow Drucker-Prager apex fix
 #: (``ops.ladrunoBuild()``, fork PR #836). Documented, not enforced (same as
