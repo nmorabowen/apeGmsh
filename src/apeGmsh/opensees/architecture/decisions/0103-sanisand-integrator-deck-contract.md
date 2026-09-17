@@ -123,7 +123,8 @@ emit, so a deck that never asks for a cap stays byte-identical to the one
 it produced before the field existed. (The other three flags always emit
 because their defaults differ from vanilla's; this one's default *is*
 vanilla's.) It warns, like `honor_tol_r`, on a scheme that never reaches
-`ModifiedEuler`.
+`ModifiedEuler` (corrected by the 2026-09-16 amendment below — scheme 2
+reaches it too, conditionally).
 
 `validate_sanisand_substep_cap` **raises** if a capped material reaches any
 element not known to propagate a material refusal. This is an
@@ -151,6 +152,28 @@ on the measured per-element flag and raises only on a host measured to
 DISCARD, which turns the rule into a deny-list — the asymmetry argument
 above still holds, but it no longer has to be paid for by refusing elements
 nobody had checked. `LadrunoBrick20` is FORWARD and is allowed.
+
+**Amendment (2026-09-16, fork PRs #844/#845).** Two corrections, both
+documentation — neither moves D1's decision.
+
+(a) D1's default stays `tan_type=2`. Fork WP-105 (#844) qualifies what
+that default *means* under `int_scheme=2`: it is the algorithmic tangent
+except on a step where `BackwardEuler_CPPM`'s ladder falls back to
+`ModifiedEuler`, whose chained tangent silently overwrites it. Nothing
+reports which steps fell back, so the tangent a scheme-2 deck actually
+ran is not a static property of the deck.
+
+(b) D4's claim above — "it warns, like `honor_tol_r`, on a scheme that
+never reaches `ModifiedEuler`" — was wrong for scheme 2. Fork PR #845
+found `LadrunoSANISAND::schemeReachesModifiedEuler()` returning `false`
+for `mScheme == 2`, when `BackwardEuler_CPPM`'s own fallback reaches
+exactly that seam on non-convergence or ladder exhaustion (measured: a
+`-maxSubsteps 100` cap turned a 40/40-step uncapped run into a refusal at
+step 18). `_SCHEMES_REACHING_MODIFIED_EULER` is now `{0, 1, 2}`; the
+`honor_tol_r` / `max_substeps` "NO EFFECT" warning apeGmsh printed for
+`int_scheme=2` was false and is gone (build `049b295fc`). The gate this
+section otherwise describes is unaffected — it is keyed on the element,
+not the scheme.
 
 ## Consequences
 

@@ -36,6 +36,7 @@ from apeGmsh.opensees.material.nd import (
     SanisandIntegrationWarning,
     StagedStrain,
 )
+from apeGmsh.opensees.material.nd import _SCHEMES_REACHING_MODIFIED_EULER
 from apeGmsh.opensees.element.solid import LadrunoBrick, LadrunoQuad
 
 
@@ -1338,22 +1339,35 @@ class TestLadrunoSANISAND:
 
     # U6: honor_tol_r is read at exactly one site, inside ModifiedEuler();
     # schemes that do not route there make it a silent no-op — warn.
-    # (2 and 45 skip ModifiedEuler; 0 and 1 reach it.  3/5 would ALSO
-    # raise the dead-scheme warning, so they stay out of this test.)
-    @pytest.mark.parametrize("scheme", [2, 45])
+    # (45 skips ModifiedEuler; 0, 1 and 2 reach it — 2 conditionally, via
+    # BackwardEuler_CPPM's fallback to ModifiedEuler on non-convergence or
+    # ladder exhaustion (fork #845).  3/5 would ALSO raise the dead-scheme
+    # warning, so they stay out of this test.)
+    @pytest.mark.parametrize("scheme", [45])
     def test_honor_tol_r_warns_when_scheme_skips_modified_euler(
         self, scheme: int
     ) -> None:
         with pytest.warns(SanisandIntegrationWarning, match="NO EFFECT"):
             LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme, honor_tol_r=True)
 
-    @pytest.mark.parametrize("scheme", [0, 1])
+    @pytest.mark.parametrize("scheme", [0, 1, 2])
     def test_honor_tol_r_silent_when_scheme_reaches_modified_euler(
         self, scheme: int
     ) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("error", SanisandIntegrationWarning)
             LadrunoSANISAND(**_LS_KWARGS, int_scheme=scheme, honor_tol_r=True)
+
+    # WP-108 / fork #845: the predicate itself, independent of the warnings
+    # it feeds.  2 reaches ModifiedEuler CONDITIONALLY (BackwardEuler_CPPM's
+    # fallback); 45 never does; 7 (INT_MAXSTR_MFE) falls through to
+    # ForwardEuler in both inner branches, not ModifiedEuler; 3 is an
+    # unrelated uncontrolled scheme.
+    def test_schemes_reaching_modified_euler_predicate(self) -> None:
+        assert 2 in _SCHEMES_REACHING_MODIFIED_EULER
+        assert 45 not in _SCHEMES_REACHING_MODIFIED_EULER
+        assert 7 not in _SCHEMES_REACHING_MODIFIED_EULER
+        assert 3 not in _SCHEMES_REACHING_MODIFIED_EULER
 
     # U8: field names match ManzariDafalias exactly (capital-C `Ch`
     # included), so a deck migrates by swapping the class.

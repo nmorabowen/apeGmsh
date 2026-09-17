@@ -69,6 +69,7 @@ __all__ = [
     "ASDPlasticIntegrationWarning",
     "ASDP_MIN_FORK_BUILD",
     "SANISAND_IMPLEX_FACTOR_MIN_BUILD",
+    "SANISAND_SCHEME2_CAP_MIN_BUILD",
     "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
@@ -440,17 +441,28 @@ _SANISANDMS_TAIL_DEFAULTS: tuple[int, int, int, float, float] = (
 
 #: Integration schemes whose dispatch actually reaches
 #: ``ManzariDafalias::ModifiedEuler()`` — the ONE site that reads the
-#: ``-honorTolR`` seam.  Mirrors the fork's own
+#: ``-honorTolR`` / ``-maxSubsteps`` seam.  Mirrors the fork's own
 #: ``LadrunoSANISAND::schemeReachesModifiedEuler`` (read the dispatch, not
-#: the names): 0 (MAXENE_MFE) and 1 (ModifiedEuler) route there; so does
-#: any value the base switch does not enumerate, via
-#: ``explicit_integrator``'s ``default:``.  7 is named INT_MAXSTR_MFE and
-#: does NOT — its inner switch selects ForwardEuler in BOTH branches.  45
-#: already honours ``mTolR`` unconditionally, which is WHY the seam was
-#: needed for ModifiedEuler and not for it.
-_SCHEMES_REACHING_MODIFIED_EULER: frozenset[int] = frozenset({0, 1}) | frozenset(
-    s for s in range(10, 100) if s != 45
-)
+#: the names): 0 (MAXENE_MFE) and 1 (ModifiedEuler) route there directly.
+#: So does 2 (``INT_LSANISAND_BackwardEuler``) — but only CONDITIONALLY:
+#: ``BackwardEuler_CPPM``'s own recursive-halving ladder falls back to
+#: ``explicit_integrator`` on non-convergence or ladder exhaustion, and
+#: that call hits the base switch's ``default:`` -> ModifiedEuler, the
+#: same seam. The predicate answers "can the cap ever bind on this
+#: scheme", not "does every step of this scheme route there" —
+#: conditional, fallback-only routing still earns membership (fork
+#: `LadrunoSANISAND.cpp:1193-1215`, build `049b295fc`). Measured directly:
+#: a `-maxSubsteps 100` cap turned a run that completed 40/40 steps
+#: uncapped (up to 1282 substeps) into one that refuses at step 18 (#845).
+#: 7 is named INT_MAXSTR_MFE and does NOT reach it — its inner switch
+#: selects ForwardEuler in BOTH branches.  45 already honours ``mTolR``
+#: unconditionally, which is WHY the seam was needed for ModifiedEuler
+#: and not for it.
+_SCHEMES_REACHING_MODIFIED_EULER: frozenset[int] = frozenset({0, 1, 2})
+# The fork's own catch-all is `s > 9 && s != 45` over [0, 255]; apeGmsh
+# does not mirror it here because __post_init__ (below) already refuses
+# any int_scheme outside (0..9, 45), so no value > 9 (other than 45) can
+# ever reach this set's membership test.
 
 
 def _validate_sanisand_bounds(
@@ -852,6 +864,38 @@ class LadrunoSANISAND(NDMaterial):
         (RungeKutta4) and ``5`` (ForwardEuler) emit a
         :class:`SanisandIntegrationWarning` — they integrate with no
         error control, exactly as on :class:`ManzariDafalias`.
+
+        ``2`` (``BackwardEuler_CPPM``) was measured by fork WP-105 (#844):
+        **use it where the strain increment is given, do not make it the
+        primary integrator of a load- or displacement-controlled BVP
+        without a cap on the ladder.** At a material point, against
+        scheme 1, it is 3.7-4.3x more accurate and 4.2-7.6x cheaper at
+        the campaign increment ``dEz=1e-4`` (7-30x more accurate,
+        10-13x cheaper at ``dEz=4.6e-4``); at ``dEz=1e-5`` it is *slower*
+        at ``p0=100`` kPa (0.64x) and only 1.2x faster at ``p0=20`` kPa.
+        As a load-controlled BVP's primary integrator it
+        stalled 8 of 8 free-standing drained-triaxial arms under a
+        global Newton (scheme 1: 1 of 8), and on the ADR-95 bearing leg
+        it was 475x shallower than scheme 1 for the same wall clock;
+        failing steps cost 12-134 s against a 30 ms normal step.
+
+        Two source facts follow from this: (i) ``CPPM`` can never report
+        failure — ``ManzariDafalias::integrate()`` discards
+        ``BackwardEuler_CPPM``'s return value and the ladder always ends
+        ``errFlag=1`` after up to 512 half-increments, so a step that
+        could not converge still reports success; (ii) ``tan_type=2``
+        under scheme 2 is the algorithmic tangent *except* on a step
+        where the CPPM ladder falls back to ``ModifiedEuler``, whose
+        chained tangent silently overwrites it — which step that is is
+        not reported anywhere.
+
+        Not verified: plane strain, :class:`LadrunoUP` (u-p), cyclic /
+        reversal loading, ``implex=True`` combined with ``int_scheme=2``
+        (``implex`` was ``False`` in every WP-105 arm), and parallel
+        runs. No warning is raised on ``int_scheme=2`` — unlike schemes
+        3/5, it is error-controlled and is the better operator in its
+        own (material-point) regime, so a warning would be wrong in the
+        case the fork's measurement qualified.
     tan_type
         Tangent operator (``$TanType``), default ``2`` — the
         **consistent** (continuum elasto-plastic) tangent, unlike
@@ -1390,6 +1434,15 @@ ASDP_CLOSEST_POINT_MIN_BUILD = "7e93e4381"
 #: of a real refusal (``LadrunoSANISAND.cpp:655-670``, a branch that
 #: predates P2-9 in fork ``4870f802c6``).
 SANISAND_IMPLEX_FACTOR_MIN_BUILD = "179da6ffb"
+
+#: Minimum fork build for the fix to the false "``-maxSubsteps`` /
+#: ``-honorTolR`` has NO EFFECT with ``IntScheme 2``" warning (fork PR
+#: #845). DOCUMENTARY ONLY: the behaviour it gates is not new — the cap
+#: always bound on scheme 2, on every build — what changed is only
+#: whether the binary *says* so. An older build runs the identical deck
+#: and prints one false "NO EFFECT" warning line; the absent warning on
+#: a newer build must not be used as a feature probe.
+SANISAND_SCHEME2_CAP_MIN_BUILD = "049b295fc"
 
 #: Minimum fork build for the DILATANT-flow Drucker-Prager apex fix
 #: (``ops.ladrunoBuild()``, fork PR #836). Documented, not enforced (same as
