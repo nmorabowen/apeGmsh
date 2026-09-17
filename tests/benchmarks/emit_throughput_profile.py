@@ -61,6 +61,12 @@ Two jobs:
      R-table does not own the growth.  Either way the real number prints.
    * A missing anchor ABORTS the run -- a silently-rotted span reads as
      "unattributed", which corrupts G0a.
+   * The gate verdict prints in BOTH branches, under a common
+     "gate verdict: " prefix -- WITHIN ERROR BOUND or
+     "*** DISCARDED - G0a error bound exceeded".  A discard is a
+     measurement outcome that must be as visible as a pass, and a
+     reader (or a grep) must never have to infer the verdict from the
+     ABSENCE of a line.
    * RSS prints "unavailable" where it cannot be measured, never 0.0.
 
 Two recipes:
@@ -1244,6 +1250,14 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         g0a_err = abs(g0a_sampled - g0a_cons)
         gate_ok = g0a_err <= bound
         gate_status = "ok" if gate_ok else "discarded_error_bound"
+        # BOTH branches print a line prefixed "  gate verdict: " — a
+        # discard is a MEASUREMENT OUTCOME, not a missing verdict, and
+        # the cp1252 smoke test greps this prefix to prove the print
+        # path ran.  Printing it only on the pass branch made "the
+        # report printed" indistinguishable from "this cell passed the
+        # gate" (nightly Benchmarks red from 2026-08-26).  The
+        # "*** DISCARDED" spelling is preserved verbatim inside the
+        # discard line so log-greps for it keep working.
         if gate_ok:
             print(f"  gate verdict: WITHIN ERROR BOUND "
                   f"(|G0a(sampled) - G0a(conservative)| = {g0a_err:.3f} "
@@ -1261,7 +1275,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                   f"  <- GATE NUMBER (error <= {bound:.2f})")
         else:
             g0a = None
-            print(f"  *** DISCARDED - G0a error bound exceeded "
+            print(f"  gate verdict: *** DISCARDED - G0a error bound exceeded "
                   f"(|G0a(sampled) - G0a(conservative)| = {g0a_err:.3f} "
                   f"> {bound:.2f}; raw shortfall {shortfall:,} B = "
                   f"{shortfall / 1e6:,.2f} MB). A discarded cell has no "

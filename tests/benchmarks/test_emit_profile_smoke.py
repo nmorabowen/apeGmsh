@@ -14,6 +14,7 @@ would prove nothing (the exact reason the breakage survived review).
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -51,17 +52,36 @@ def test_help_renders_on_cp1252_stdout() -> None:
     assert "~9% low" in out
 
 
+_VERDICT_PREFIX = "gate verdict: "
+_VERDICT_OK = "gate verdict: WITHIN ERROR BOUND"
+_VERDICT_DISCARD = "gate verdict: *** DISCARDED - G0a error bound exceeded"
+
+
 @pytest.mark.bench
-def test_mem_cell_report_prints_on_cp1252_stdout() -> None:
+def test_mem_cell_report_prints_on_cp1252_stdout(tmp_path: Path) -> None:
     """One tiny --mem cell end-to-end (~45 s): the whole
     ``report_instrumented`` print path must survive a cp1252 console —
-    G2/G3 run exactly this pipeline with stdout redirected."""
+    G2/G3 run exactly this pipeline with stdout redirected.
+
+    This is a PRINT-PATH test, not a gate test.  Whether this tiny cell
+    passes the G0a error bound is a measurement outcome of the machine
+    it runs on — on the shared GitHub runner it discards — so asserting
+    only the pass-branch text conflated "the report printed" with "this
+    cell passed the gate" (the nightly Benchmarks job was red on that
+    conflation from 2026-08-26).  The instrument now prints a verdict
+    line in both branches under one prefix, and the assertions below
+    require exactly one verdict, one of the two known spellings, and
+    agreement with ``gate_status`` in the JSON record the campaign
+    aggregator consumes — so the test still proves the verdict print
+    path ran, and can no longer be satisfied by a half-printed report.
+    """
+    json_path = tmp_path / "smoke_cell.json"
     proc = subprocess.run(
         [
             sys.executable, str(_SCRIPT),
             "--recipe", "box", "--sizes", "6", "--parts", "2",
             "--mem", "--stream", "--staged", "--repeats", "1",
-            "--tm-frames", "4",
+            "--tm-frames", "4", "--json", str(json_path),
         ],
         capture_output=True, env=_cp1252_env(), timeout=600,
     )
@@ -73,6 +93,29 @@ def test_mem_cell_report_prints_on_cp1252_stdout() -> None:
         "per-term at anchor",
         "R8 at anchor",
         "G0a(conservative)",
-        "gate verdict",
+        _VERDICT_PREFIX.strip(),
     ):
         assert marker in out, f"missing {marker!r} in report output"
+
+    # One cell (one size x one repeat) => exactly one verdict, and it
+    # must be one of the two spellings the instrument can print.
+    n_verdicts = out.count(_VERDICT_PREFIX)
+    n_ok = out.count(_VERDICT_OK)
+    n_discard = out.count(_VERDICT_DISCARD)
+    assert n_verdicts == 1, (
+        f"expected exactly 1 verdict line for 1 cell, saw {n_verdicts}"
+    )
+    assert n_ok + n_discard == 1, (
+        "the verdict line matched neither known spelling "
+        f"(ok={n_ok}, discarded={n_discard}) - the instrument's verdict "
+        "wording changed without this contract being updated"
+    )
+
+    # The printed branch must agree with the machine-readable record.
+    records = json.loads(json_path.read_text(encoding="utf-8"))
+    assert len(records) == 1, f"expected 1 json record, got {len(records)}"
+    expected = "ok" if n_ok else "discarded_error_bound"
+    assert records[0].get("gate_status") == expected, (
+        f"printed verdict says {expected!r} but the json record says "
+        f"{records[0].get('gate_status')!r}"
+    )
