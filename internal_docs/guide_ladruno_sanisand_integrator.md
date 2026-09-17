@@ -135,7 +135,7 @@ scheme 2 is a genuine improvement over scheme 1 at the campaign increment and co
 
 | `dEz` | accuracy vs scheme 1 | cost vs scheme 1 |
 |---|---|---|
-| `1e-5` | matches to `1.3e-3` / `2.9e-3` max relative stress deviation (`p0 = 100` / `20` kPa) | **0.64x — scheme 2 is *slower* here** |
+| `1e-5` | matches to `1.3e-3` / `2.9e-3` max relative stress deviation (`p0 = 100` / `20` kPa) | **0.64x at `p0 = 100` kPa — scheme 2 is *slower* there** (1.2x faster at `p0 = 20` kPa) |
 | `1e-4` (the campaign increment) | **3.7-4.3x more accurate** | **4.2-7.6x cheaper** |
 | `4.6e-4` | **7-30x more accurate** | **10-13x cheaper** |
 
@@ -150,7 +150,7 @@ loosening the global tolerance from `1e-9` to `1e-7` does not rescue it; a faili
 | scheme 1 (baseline) | 51 | 0.019 | — |
 | scheme 2 | 11 | 4e-5 — **475x shallower for the same wall clock** | `ds` pinned at 25x the subdivision floor; 100% of committed steps on the relaxed rung 3 |
 
-That last column is why §3.3(e) below and the `Ladder` docstring both insist on quoting the
+That last column is why the adoption guide (`ladruno_adoption_2026-09-16.md` §3.3(e)) and the `Ladder` docstring both insist on quoting the
 rung histogram next to any scheme comparison: a `s/B` figure alone hides that every one of
 those 11 steps only committed on the loosest rung available.
 

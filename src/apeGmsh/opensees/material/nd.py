@@ -871,8 +871,9 @@ class LadrunoSANISAND(NDMaterial):
         without a cap on the ladder.** At a material point, against
         scheme 1, it is 3.7-4.3x more accurate and 4.2-7.6x cheaper at
         the campaign increment ``dEz=1e-4`` (7-30x more accurate,
-        10-13x cheaper at ``dEz=4.6e-4``); it is *slower* at ``dEz=1e-5``
-        (0.64x). As a load-controlled BVP's primary integrator it
+        10-13x cheaper at ``dEz=4.6e-4``); at ``dEz=1e-5`` it is *slower*
+        at ``p0=100`` kPa (0.64x) and only 1.2x faster at ``p0=20`` kPa.
+        As a load-controlled BVP's primary integrator it
         stalled 8 of 8 free-standing drained-triaxial arms under a
         global Newton (scheme 1: 1 of 8), and on the ADR-95 bearing leg
         it was 475x shallower than scheme 1 for the same wall clock;
