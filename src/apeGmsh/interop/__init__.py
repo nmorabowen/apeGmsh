@@ -2,6 +2,7 @@
 
 Phase 2 entry point for the apeETABS -> apeGmsh pipeline (ADR 0009).
 """
+
 from .etabs_import import (
     AreaGroup,
     DiaphragmSpec,
@@ -15,20 +16,24 @@ from .etabs_import import (
 )
 from .model import AREA_MODIFIER_NAMES, AreaModifiers, StructuralModel
 from .solve import SolveResult, solve_and_extract
+from .strut_tie import StrutTieOverlays, strut_tie_overlays, write_strut_tie_overlays
 
 __all__ = [
+    "AreaGroup",
+    "DiaphragmSpec",
+    "FrameGroup",
+    "ImportResult",
+    "RestraintGroup",
+    "SolveResult",
+    "SpringGround",
     "StructuralModel",
     "AreaModifiers",
     "AREA_MODIFIER_NAMES",
-    "import_structural_model",
+    "StrutTieOverlays",
     "apply_subgrade_springs",
     "build_opensees",
+    "import_structural_model",
     "solve_and_extract",
-    "SolveResult",
-    "ImportResult",
-    "FrameGroup",
-    "AreaGroup",
-    "RestraintGroup",
-    "DiaphragmSpec",
-    "SpringGround",
+    "strut_tie_overlays",
+    "write_strut_tie_overlays",
 ]
