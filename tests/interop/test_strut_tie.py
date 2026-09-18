@@ -7,6 +7,7 @@ column stub so the far column face is a physical boundary.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 from pathlib import Path
@@ -69,3 +70,48 @@ def test_schema_and_case_are_checked() -> None:
         strut_tie_overlays(bad)
     with pytest.raises(StopIteration):
         strut_tie_overlays(model, case="nope", mesh_size=60.0)
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.slow
+def test_corbel_pushover_curve_rises_then_stops() -> None:
+    from apeGmsh.interop.strut_tie import strut_tie_pushover
+
+    model = _load("corbel.stm.json")
+    result = strut_tie_pushover(
+        model,
+        mesh_size=45.0,
+        extra_fixed_planes=(("x", -400.0, (0, 1)),),
+        target_displacement=0.3,
+        steps=10,
+    )
+    curve = result.overlays["fe_curve"]
+    pts = curve["points"]
+    assert len(pts) >= 4
+    assert pts[0] == [0.0, 0.0]
+    deltas = [p[0] for p in pts]
+    assert all(b > a for a, b in itertools.pairwise(deltas))
+    assert curve["capacity"] > 0.0
+    assert curve["capacity"] == max(p[1] for p in pts)
+    assert curve["stopped"] in ("target", "divergence", "post_peak")
+    # First increment is elastic: load rises with displacement.
+    assert pts[1][1] > 0.0
+    json.dumps(result.overlays, allow_nan=False)
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.slow
+def test_pile_cap_pushover_writes_both_overlays(tmp_path: Path) -> None:
+    out = write_strut_tie_overlays(
+        FIXTURES / "pile_cap.stm.json",
+        tmp_path / "cap.overlays.json",
+        mesh_size=300.0,
+        pushover=True,
+        target_displacement=0.3,
+        steps=3,
+        max_halvings=3,
+    )
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert "fe_trajectories" in data
+    assert data["fe_curve"]["capacity"] > 0.0
+    assert data["fe_summary_nonlinear"]["Gc"] > data["fe_summary_nonlinear"]["Gf"]
