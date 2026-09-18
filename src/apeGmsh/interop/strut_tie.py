@@ -24,9 +24,9 @@ Two runs share one FE model:
     dominant load direction; ``capacity`` is the peak load. This is the
     physics oracle of ADR-0014 §9: by the lower-bound theorem the FE
     capacity should not fall below the strut-and-tie nominal capacity.
-    Reinforcement is **not** modelled here — the curve is the plain
-    concrete's — so a tie-governed region peaks early; the FE tie/rebar
-    lane is the follow-up.
+    By default the model's ties are placed as conformal ``Steel02``
+    truss bars of the tie's steel area (perfect bond, no anchorage
+    model); ``reinforced=False`` gives the plain concrete's curve.
 
 Both carry ``fe_summary``: applied and reacted resultants, node and
 element counts, mesh size and material parameters.
@@ -79,6 +79,7 @@ FT_COEFFICIENT_0_33: float = 0.33  # direct tensile strength ≈ 0.33·√f'c, M
 GF_MC2010_COEFFICIENT: float = 0.073  # Gf = 73·f'c^0.18 N/m → 0.073·f'c^0.18 N/mm
 GF_MC2010_EXPONENT: float = 0.18
 GC_OVER_GF_250: float = 250.0
+REBAR_MATERIAL_NAME: str = "stm_rebar"
 _AXES = {"x": 0, "y": 1, "z": 2}
 
 
@@ -116,6 +117,10 @@ class _FEModel:
     nodal: dict[int, np.ndarray]
     applied: np.ndarray
     control_row: int
+    fy: float
+    Es: float
+    ties: dict[str, float]
+    """Tie id → steel area (mm²) of the bars placed in the mesh; empty when not reinforced."""
 
 
 def _v(a: Any) -> np.ndarray:
@@ -166,8 +171,18 @@ def _build(
     mesh_size: float | None,
     extra_fixed_planes: Sequence[tuple[str, float, Sequence[int]]],
     verbose: bool,
+    reinforced: bool = False,
 ) -> _FEModel:
-    """Mesh the region and resolve supports and loads onto mesh nodes."""
+    """Mesh the region and resolve supports and loads onto mesh nodes.
+
+    With ``reinforced=True`` every tie of the model becomes one CAD line
+    between its two nodes (nodes shared between ties), embedded in the
+    host before meshing so the mesh conforms to it (shared nodes,
+    perfect bond); :func:`_elements` then emits one ``CorotTruss`` per
+    line cell with the tie's steel area against the uniaxial material
+    named :data:`REBAR_MATERIAL_NAME`, which the caller registers.
+    Anchorage is not modelled — a bar ends where the tie ends.
+    """
     if model.get("schema_version") != 1:
         raise ValueError(
             f"unsupported strut-and-tie schema_version {model.get('schema_version')!r}"
@@ -228,7 +243,7 @@ def _build(
                 for i in range(len(tags))
             ]
             loop = geo.add_curve_loop(lines)
-            entity = geo.add_plane_surface(loop)
+            entity = geo.add_plane_surface(loop, label="Region")
             g.model.sync()
             g.physical.add(2, [entity], name="Region")
         else:
@@ -239,12 +254,37 @@ def _build(
                 float(hi[0] - lo[0]),
                 float(hi[1] - lo[1]),
                 float(hi[2] - lo[2]),
+                label="Region",
             )
             g.model.sync()
             g.physical.add(3, [entity], name="Region")
+        ties_modelled: dict[str, float] = {}
+        if reinforced and model.get("ties"):
+            # One CAD point per STM node (shared by every tie ending there —
+            # a second point at the same place would give the mesher
+            # zero-volume elements), one line per tie, all embedded in the
+            # host so the mesh conforms to them. Each line is its own
+            # physical group, which is how the bridge finds its cells.
+            point_of: dict[str, int] = {}
+
+            def point(nid: str) -> int:
+                if nid not in point_of:
+                    x, y, z = (float(c) for c in nodes_stm[nid]["xyz"])
+                    point_of[nid] = geo.add_point(x, y, z, mesh_size=size)
+                return point_of[nid]
+
+            line_tags: list[int] = []
+            for t in model["ties"]:
+                a, b = t["nodes"]
+                tag = geo.add_line(point(a), point(b))
+                g.model.sync()
+                g.physical.add(1, [tag], name=f"tie_{t['id']}")
+                line_tags.append(tag)
+                ties_modelled[t["id"]] = float(t["n_bars"]) * float(t["bar"]["Ab"])
+            g.mesh.editing.embed(line_tags, entity, dim=1, in_dim=ndm)
         g.mesh.sizing.set_global_size(size)
         g.mesh.generation.generate(ndm)
-        fem = g.mesh.queries.get_fem_data(dim=ndm)
+        fem = g.mesh.queries.get_fem_data(dim=None if ties_modelled else ndm)
 
     ids = np.asarray(fem.nodes.ids, dtype=int)
     coords = np.asarray(fem.nodes.coords, dtype=float)
@@ -331,6 +371,9 @@ def _build(
         nodal=nodal,
         applied=applied,
         control_row=control_row,
+        fy=float(model["steel"]["fy"]),
+        Es=float(model["steel"]["Es"]),
+        ties=ties_modelled,
     )
 
 
@@ -341,6 +384,8 @@ def _elements(ops: Any, fe: _FEModel, mat: Any) -> None:
         )
     else:
         ops.element.FourNodeTetrahedron(pg="Region", material=mat)
+    for tie_id, area in fe.ties.items():
+        ops.element.CorotTruss(pg=f"tie_{tie_id}", A=area, material=REBAR_MATERIAL_NAME)
 
 
 def _restraints_and_loads(ops: Any, fe: _FEModel) -> None:
@@ -375,6 +420,7 @@ def _summary(
         "n_nodes": len(fe.ids),
         "n_elements": len(live.getEleTags() or []),
         "mesh_size": fe.size,
+        "ties_modelled": dict(fe.ties),
     }
     out.update(extra)
     return out
@@ -410,6 +456,7 @@ def strut_tie_overlays(
     mesh_size: float | None = None,
     extra_fixed_planes: Sequence[tuple[str, float, Sequence[int]]] = (),
     glyph_fraction: float = 0.6,
+    reinforced: bool = False,
     verbose: bool = False,
 ) -> StrutTieOverlays:
     """Mesh, solve linearly and glyph the D-region of an apeConcrete model JSON.
@@ -428,6 +475,9 @@ def strut_tie_overlays(
         coordinate is fixed in those DOFs (0-based: ``(0, 1)`` is x and y).
     glyph_fraction
         Longest glyph as a fraction of the element size.
+    reinforced
+        Place the ties as elastic truss bars (see :func:`_build`); off by
+        default so the glyphs show the plain elastic load path.
     """
     fe = _build(
         model,
@@ -435,11 +485,14 @@ def strut_tie_overlays(
         mesh_size=mesh_size,
         extra_fixed_planes=extra_fixed_planes,
         verbose=verbose,
+        reinforced=reinforced,
     )
     E = EC_COEFFICIENT_4700 * math.sqrt(fe.fc)
     ops = apeSees(fe.fem)
     ops.model(ndm=fe.ndm, ndf=fe.ndm)
     mat = ops.nDMaterial.ElasticIsotropic(E=E, nu=POISSON_RATIO)
+    if fe.ties:
+        ops.uniaxialMaterial.ElasticMaterial(E=fe.Es, name=REBAR_MATERIAL_NAME)
     _elements(ops, fe, mat)
     _restraints_and_loads(ops, fe)
     ops.constraints.Plain()
@@ -541,6 +594,8 @@ def strut_tie_pushover(
     Gf: float | None = None,
     Gc: float | None = None,
     max_halvings: int = 6,
+    reinforced: bool = True,
+    hardening_b: float = 0.01,
     verbose: bool = False,
 ) -> StrutTieOverlays:
     """Push the D-region under displacement control with the fork's
@@ -559,11 +614,17 @@ def strut_tie_pushover(
         Tensile strength (MPa), tensile and compressive fracture energies
         (N/mm); defaults in the module docstring.
 
+    reinforced, hardening_b
+        Place the model's ties as conformal truss bars with ``Steel02``
+        (``fy``, ``Es`` from the model's steel, kinematic hardening ratio
+        ``hardening_b``); ``reinforced=False`` gives the plain concrete's
+        curve.
+
     Notes
     -----
     Requires the Ladruno fork of OpenSees (``LadrunoConcrete3D``); on
-    stock ``openseespy`` the bridge raises at emit. The curve is the
-    plain concrete's — ties are not modelled.
+    stock ``openseespy`` the bridge raises at emit. Bars are perfectly
+    bonded and end where the tie ends: anchorage is not modelled.
     """
     fe = _build(
         model,
@@ -571,6 +632,7 @@ def strut_tie_pushover(
         mesh_size=mesh_size,
         extra_fixed_planes=extra_fixed_planes,
         verbose=verbose,
+        reinforced=reinforced,
     )
     fc = fe.fc
     E = EC_COEFFICIENT_4700 * math.sqrt(fc)
@@ -592,6 +654,10 @@ def strut_tie_pushover(
     mat = ops.nDMaterial.LadrunoConcrete3D(
         E=E, nu=POISSON_RATIO, fc=fc, ft=ft_v, Gf=gf_v, Gc=gc_v, auto_regularize=True
     )
+    if fe.ties:
+        ops.uniaxialMaterial.Steel02(
+            fy=fe.fy, E=fe.Es, b=hardening_b, name=REBAR_MATERIAL_NAME
+        )
     _elements(ops, fe, mat)
     _restraints_and_loads(ops, fe)
     ops.constraints.Plain()
@@ -642,7 +708,10 @@ def strut_tie_pushover(
             "points": points,
             "capacity": capacity,
             "capacity_factor": capacity / reference if reference else 0.0,
-            "source": f"apeGmsh + LadrunoConcrete3D ({element_name}, plain concrete)",
+            "source": (
+                f"apeGmsh + LadrunoConcrete3D ({element_name}, "
+                f"{'ties as Steel02 truss bars' if fe.ties else 'plain concrete'})"
+            ),
             "case": fe.case,
             "control": {
                 "node": control_node,

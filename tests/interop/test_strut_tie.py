@@ -91,8 +91,12 @@ def test_corbel_pushover_curve_rises_then_stops() -> None:
     assert pts[0] == [0.0, 0.0]
     deltas = [p[0] for p in pts]
     assert all(b > a for a, b in itertools.pairwise(deltas))
-    assert curve["capacity"] > 0.0
     assert curve["capacity"] == max(p[1] for p in pts)
+    # Reinforced: the tie bars carry the region well past the plain-concrete
+    # cracking peak (about 136 kN on this mesh without bars).
+    assert curve["capacity"] > 150.0e3
+    assert "ties as Steel02" in curve["source"]
+    assert result.overlays["fe_summary"]["ties_modelled"]["T1"] > 0.0
     assert curve["stopped"] in ("target", "divergence", "post_peak")
     # First increment is elastic: load rises with displacement.
     assert pts[1][1] > 0.0
@@ -114,4 +118,5 @@ def test_pile_cap_pushover_writes_both_overlays(tmp_path: Path) -> None:
     data = json.loads(out.read_text(encoding="utf-8"))
     assert "fe_trajectories" in data
     assert data["fe_curve"]["capacity"] > 0.0
+    assert len(data["fe_summary_nonlinear"]["ties_modelled"]) == 4
     assert data["fe_summary_nonlinear"]["Gc"] > data["fe_summary_nonlinear"]["Gf"]

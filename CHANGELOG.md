@@ -707,11 +707,19 @@ with `LadrunoConcrete3D` (`ft = 0.33·√f'c`, `Gf = 0.073·f'c^0.18` N/mm,
 under displacement control on the node beneath the load plate, with
 adaptive step halving on Newton failure and a post-peak stop, returning
 `fe_curve` (`[[delta, P], ...]`, `capacity`, `capacity_factor`, the load
-factors and why it stopped). The curve is the plain concrete's — ties
-are not modelled — so it is the elastic-cracking oracle, not yet the
-lower-bound capacity oracle of apeConcrete ADR-0014 §9; the embedded
-rebar lane is the follow-up. `write_strut_tie_overlays(..., pushover=True)`
-writes both blocks in one file.
+factors and why it stopped). By default (`reinforced=True`) every tie of
+the model becomes one CAD line between its nodes (one shared point per
+node, so ties meeting at a node do not leave the mesher a zero-volume
+element between coincident points), embedded in the host before meshing
+and emitted as `CorotTruss` cells of the tie's steel area against a
+`Steel02` (`fy`, `Es` from the model's steel, `b = 0.01`) — perfect
+bond, no anchorage model — so the curve is
+the reinforced region's and the peak is the lower-bound capacity oracle
+of apeConcrete ADR-0014 §9; `reinforced=False` gives the plain concrete's
+cracking curve, and the linear run takes the same flag with an elastic
+bar. `fe_summary.ties_modelled` lists the bars and their areas.
+`write_strut_tie_overlays(..., pushover=True)` writes both blocks in one
+file.
 
 ### FIXED — ``Pardiso`` / ``Mumps`` always emit ``-matrixType`` (incl. 0)
 
