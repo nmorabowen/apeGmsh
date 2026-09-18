@@ -4274,6 +4274,22 @@ stage-activated gated element whose bracket fires mid-deck (INV-4), and
 previously emitted and either died late or ran wrong.</p>
 <p><code>repros/repro4_builder_scoped_wipe.py</code> is the executable survival
 table, measured against the fork binary.</p>
+<h3 id="added-strut-and-tie-fe-overlay-consumer-apegmshinteropstrut_tie">ADDED — strut-and-tie FE overlay consumer (<code>apeGmsh.interop.strut_tie</code>)<a class="headerlink" href="#added-strut-and-tie-fe-overlay-consumer-apegmshinteropstrut_tie" title="Permanent link">&para;</a></h3>
+<p>The apeGmsh side of apeConcrete's strut-and-tie tool (apeConcrete
+ADR-0014 §6). <code>strut_tie_overlays(model_json)</code> reads the model JSON that
+<code>apeConcrete.stm.model_to_dict</code> writes (schema 1), meshes the D-region
+(<code>Tri31</code> plane stress for plane regions, <code>FourNodeTetrahedron</code> for
+solids, <code>E = 4700·√f'c</code>, ν = 0.2), fixes the support plates, applies the
+load plates, runs one linear static step on the live domain and returns
+the <code>overlays</code> block <code>apeConcrete.plotting.write_stm_viewer</code> draws:
+<code>fe_trajectories</code> (per-element principal-stress glyphs, compression
+along σ₃ and tension along σ₁, lengths normalised by the 90th-percentile
+stress) and <code>fe_summary</code> (applied vs reacted resultants, counts, mesh
+size). <code>write_strut_tie_overlays</code> is the file form. apeConcrete is not
+imported — the JSON is the seam. Tests (<code>tests/interop/test_strut_tie.py</code>,
+<code>live</code>) check load balance on a corbel and a four-pile cap from committed
+fixtures. The nonlinear <code>LadrunoConcrete3D</code> load–deformation mode is the
+next step.</p>
 <h3 id="fixed-pardiso-mumps-always-emit-matrixtype-incl-0">FIXED — <code>Pardiso</code> / <code>Mumps</code> always emit <code>-matrixType</code> (incl. 0)<a class="headerlink" href="#fixed-pardiso-mumps-always-emit-matrixtype-incl-0" title="Permanent link">&para;</a></h3>
 <p><code>Pardiso(matrix_type="unsymmetric")</code> mapped to code <code>0</code> then
 <code>if code:</code> treated that as false, so decks showed bare
