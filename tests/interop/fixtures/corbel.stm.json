@@ -1,0 +1,223 @@
+{
+ "schema_version": 1,
+ "title": "Corbel",
+ "concrete": {
+  "name": "f'c = 28 MPa",
+  "fc": 28.0,
+  "wc": 2.4e-05,
+  "lambda": 1.0
+ },
+ "steel": {
+  "name": "fy = 420 MPa (MKS)",
+  "fy": 420.0,
+  "Es": 199947.96150188247,
+  "probable_stress_factor": 1.25
+ },
+ "region": {
+  "kind": "plane",
+  "thickness": 350.0,
+  "outline": [
+   [
+    -400.0,
+    -450.0
+   ],
+   [
+    0.0,
+    -450.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    350.0,
+    0.0
+   ],
+   [
+    350.0,
+    450.0
+   ],
+   [
+    0.0,
+    450.0
+   ],
+   [
+    -400.0,
+    450.0
+   ]
+  ],
+  "extrude": null
+ },
+ "plates": [
+  {
+   "id": "bearing",
+   "center": [
+    200.0,
+    450.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "length_l1": 150.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "rect",
+   "kind": "load",
+   "supporting_area_A2": null
+  }
+ ],
+ "nodes": [
+  {
+   "id": "A",
+   "xyz": [
+    200.0,
+    400.0,
+    0.0
+   ],
+   "plate": "bearing",
+   "back_face_width": 100.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "B",
+   "xyz": [
+    -350.0,
+    400.0,
+    0.0
+   ],
+   "plate": null,
+   "back_face_width": 100.0,
+   "length": 80.0,
+   "face_normal": null
+  },
+  {
+   "id": "C",
+   "xyz": [
+    -40.0,
+    0.0,
+    0.0
+   ],
+   "plate": null,
+   "back_face_width": 90.0,
+   "length": 80.0,
+   "face_normal": [
+    0.0,
+    1.0,
+    0.0
+   ]
+  }
+ ],
+ "struts": [
+  {
+   "id": "S1",
+   "nodes": [
+    "A",
+    "C"
+   ],
+   "beta_s_row": "f",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  }
+ ],
+ "ties": [
+  {
+   "id": "T1",
+   "nodes": [
+    "A",
+    "B"
+   ],
+   "bar": {
+    "designation": "\u00d820",
+    "db": 20.0,
+    "Ab": 314.1592653589793
+   },
+   "n_bars": 3,
+   "width": 100.0,
+   "anchorage_i": null,
+   "anchorage_j": {
+    "kind": "hook_90",
+    "length_beyond_node": 400.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   }
+  }
+ ],
+ "supports": [
+  {
+   "node": "B",
+   "directions": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ]
+   ]
+  },
+  {
+   "node": "C",
+   "directions": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ]
+   ]
+  }
+ ],
+ "load_cases": [
+  {
+   "name": "Vu",
+   "loads": [
+    {
+     "node": "A",
+     "force": [
+      60000.0,
+      -300000.0,
+      0.0
+     ]
+    }
+   ]
+  }
+ ],
+ "distributed_reinforcement": {
+  "kind": "none",
+  "ratio_x": 0.0,
+  "ratio_y": 0.0,
+  "angle_alpha1": null,
+  "spacing": null,
+  "planes": 1,
+  "plane_spacing": null
+ },
+ "routing": {
+  "member": "corbel",
+  "seismic_sdc_d_f": false,
+  "shear_Vu": 300000.0,
+  "web_width_bw": 350.0,
+  "effective_depth_d": 400.0,
+  "shear_span_av": 200.0,
+  "primary_tension_area_Asc": null
+ }
+}

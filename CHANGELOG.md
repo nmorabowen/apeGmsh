@@ -686,6 +686,23 @@ previously emitted and either died late or ran wrong.
 
 ``repros/repro4_builder_scoped_wipe.py`` is the executable survival
 table, measured against the fork binary.
+### ADDED — strut-and-tie FE overlay consumer (`apeGmsh.interop.strut_tie`)
+
+The apeGmsh side of apeConcrete's strut-and-tie tool (apeConcrete
+ADR-0014 §6). `strut_tie_overlays(model_json)` reads the model JSON that
+`apeConcrete.stm.model_to_dict` writes (schema 1), meshes the D-region
+(`Tri31` plane stress for plane regions, `FourNodeTetrahedron` for
+solids, `E = 4700·√f'c`, ν = 0.2), fixes the support plates, applies the
+load plates, runs one linear static step on the live domain and returns
+the `overlays` block `apeConcrete.plotting.write_stm_viewer` draws:
+`fe_trajectories` (per-element principal-stress glyphs, compression
+along σ₃ and tension along σ₁, lengths normalised by the 90th-percentile
+stress) and `fe_summary` (applied vs reacted resultants, counts, mesh
+size). `write_strut_tie_overlays` is the file form. apeConcrete is not
+imported — the JSON is the seam. Tests (`tests/interop/test_strut_tie.py`,
+`live`) check load balance on a corbel and a four-pile cap from committed
+fixtures. The nonlinear `LadrunoConcrete3D` load–deformation mode is the
+next step.
 
 ### FIXED — ``Pardiso`` / ``Mumps`` always emit ``-matrixType`` (incl. 0)
 

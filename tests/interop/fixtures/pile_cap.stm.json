@@ -1,0 +1,510 @@
+{
+ "schema_version": 1,
+ "title": "Pile cap",
+ "concrete": {
+  "name": "f'c = 28 MPa",
+  "fc": 28.0,
+  "wc": 2.4e-05,
+  "lambda": 1.0
+ },
+ "steel": {
+  "name": "fy = 420 MPa (MKS)",
+  "fy": 420.0,
+  "Es": 199947.96150188247,
+  "probable_stress_factor": 1.25
+ },
+ "region": {
+  "kind": "solid",
+  "thickness": null,
+  "outline": [],
+  "extrude": [
+   0.0,
+   1000.0
+  ]
+ },
+ "plates": [
+  {
+   "id": "column",
+   "center": [
+    0.0,
+    0.0,
+    1000.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "length_l1": 500.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": 500.0,
+   "shape": "rect",
+   "kind": "load",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "pile1",
+   "center": [
+    600.0,
+    600.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "length_l1": 400.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "circle",
+   "kind": "support",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "pile2",
+   "center": [
+    -600.0,
+    600.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "length_l1": 400.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "circle",
+   "kind": "support",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "pile3",
+   "center": [
+    -600.0,
+    -600.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "length_l1": 400.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "circle",
+   "kind": "support",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "pile4",
+   "center": [
+    600.0,
+    -600.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    0.0,
+    -1.0
+   ],
+   "length_l1": 400.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "circle",
+   "kind": "support",
+   "supporting_area_A2": null
+  }
+ ],
+ "nodes": [
+  {
+   "id": "C",
+   "xyz": [
+    0.0,
+    0.0,
+    900.0
+   ],
+   "plate": "column",
+   "back_face_width": 200.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "P1",
+   "xyz": [
+    600.0,
+    600.0,
+    100.0
+   ],
+   "plate": "pile1",
+   "back_face_width": 200.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "P2",
+   "xyz": [
+    -600.0,
+    600.0,
+    100.0
+   ],
+   "plate": "pile2",
+   "back_face_width": 200.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "P3",
+   "xyz": [
+    -600.0,
+    -600.0,
+    100.0
+   ],
+   "plate": "pile3",
+   "back_face_width": 200.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "P4",
+   "xyz": [
+    600.0,
+    -600.0,
+    100.0
+   ],
+   "plate": "pile4",
+   "back_face_width": 200.0,
+   "length": null,
+   "face_normal": null
+  }
+ ],
+ "struts": [
+  {
+   "id": "S1",
+   "nodes": [
+    "C",
+    "P1"
+   ],
+   "beta_s_row": "f",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "S2",
+   "nodes": [
+    "C",
+    "P2"
+   ],
+   "beta_s_row": "f",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "S3",
+   "nodes": [
+    "C",
+    "P3"
+   ],
+   "beta_s_row": "f",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "S4",
+   "nodes": [
+    "C",
+    "P4"
+   ],
+   "beta_s_row": "f",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  }
+ ],
+ "ties": [
+  {
+   "id": "T1",
+   "nodes": [
+    "P3",
+    "P4"
+   ],
+   "bar": {
+    "designation": "\u00d825",
+    "db": 25.0,
+    "Ab": 490.8738521234052
+   },
+   "n_bars": 2,
+   "width": 200.0,
+   "anchorage_i": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   },
+   "anchorage_j": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   }
+  },
+  {
+   "id": "T2",
+   "nodes": [
+    "P4",
+    "P1"
+   ],
+   "bar": {
+    "designation": "\u00d825",
+    "db": 25.0,
+    "Ab": 490.8738521234052
+   },
+   "n_bars": 2,
+   "width": 200.0,
+   "anchorage_i": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   },
+   "anchorage_j": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   }
+  },
+  {
+   "id": "T3",
+   "nodes": [
+    "P1",
+    "P2"
+   ],
+   "bar": {
+    "designation": "\u00d825",
+    "db": 25.0,
+    "Ab": 490.8738521234052
+   },
+   "n_bars": 2,
+   "width": 200.0,
+   "anchorage_i": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   },
+   "anchorage_j": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   }
+  },
+  {
+   "id": "T4",
+   "nodes": [
+    "P2",
+    "P3"
+   ],
+   "bar": {
+    "designation": "\u00d825",
+    "db": 25.0,
+    "Ab": 490.8738521234052
+   },
+   "n_bars": 2,
+   "width": 200.0,
+   "anchorage_i": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   },
+   "anchorage_j": {
+    "kind": "hook_90",
+    "length_beyond_node": 250.0,
+    "cover_term_cb": null,
+    "side_cover": null,
+    "extension_cover": null,
+    "bar_spacing_s": null,
+    "epoxy_coated": false,
+    "top_bar": false
+   }
+  }
+ ],
+ "supports": [
+  {
+   "node": "P1",
+   "directions": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "node": "P2",
+   "directions": [
+    [
+     -0.0,
+     -1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "node": "P3",
+   "directions": [
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "node": "P4",
+   "directions": [
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  }
+ ],
+ "load_cases": [
+  {
+   "name": "Pu",
+   "loads": [
+    {
+     "node": "C",
+     "force": [
+      0.0,
+      0.0,
+      -2000000.0
+     ]
+    },
+    {
+     "node": "P1",
+     "force": [
+      0.0,
+      0.0,
+      500000.0
+     ]
+    },
+    {
+     "node": "P2",
+     "force": [
+      0.0,
+      0.0,
+      500000.0
+     ]
+    },
+    {
+     "node": "P3",
+     "force": [
+      0.0,
+      0.0,
+      500000.0
+     ]
+    },
+    {
+     "node": "P4",
+     "force": [
+      0.0,
+      0.0,
+      500000.0
+     ]
+    }
+   ]
+  }
+ ],
+ "distributed_reinforcement": {
+  "kind": "none",
+  "ratio_x": 0.0,
+  "ratio_y": 0.0,
+  "angle_alpha1": null,
+  "spacing": null,
+  "planes": 1,
+  "plane_spacing": null
+ },
+ "routing": {
+  "member": "pile_cap",
+  "seismic_sdc_d_f": false,
+  "shear_Vu": null,
+  "web_width_bw": null,
+  "effective_depth_d": null,
+  "shear_span_av": null,
+  "primary_tension_area_Asc": null
+ }
+}
