@@ -83,6 +83,9 @@ GF_MC2010_EXPONENT: float = 0.18
 GC_OVER_GF_250: float = 250.0
 REBAR_MATERIAL_NAME: str = "stm_rebar"
 WELD_MATERIAL_NAME: str = "stm_weld"
+MAX_INCREMENT_0_05: float = (
+    0.05  # mm per displacement step, the plateau of the step study
+)
 WELD_PLATE_THICKNESS_25: float = 25.0  # mm, the specimen plates of SP-208 Part 3
 _AXES = {"x": 0, "y": 1, "z": 2}
 
@@ -849,6 +852,7 @@ def strut_tie_pushover(
     extra_fixed_planes: Sequence[tuple[str, float, Sequence[int]]] = (),
     target_displacement: float | None = None,
     steps: int = 25,
+    max_increment: float | None = MAX_INCREMENT_0_05,
     ft: float | None = None,
     Gf: float | None = None,
     Gc: float | None = None,
@@ -920,6 +924,13 @@ def strut_tie_pushover(
         default one path per loaded plate, half a mesh size inside the
         concrete under its centre — the bearing state a material's return
         map has to survive.
+    max_increment
+        Cap on the displacement increment (mm): ``steps`` is raised so
+        that ``target / steps`` does not exceed it. The plateau of both
+        materials moves with the step (ASD implicit: 601 kN at 0.05 mm,
+        770 kN at 0.34 mm on the Cook and Mitchell corbel), so a page
+        that leaves ``target`` at the diagonal/200 default must not also
+        leave the step at a fortieth of it. ``None`` disables the cap.
     tolerance, fallback_algorithms, fallback_tolerance_factor
         ``NormDispIncr`` tolerance (mm). A fallback is a name or a
         ``(name, *args)`` tuple, e.g. ``("NewtonLineSearch", "-type",
@@ -953,6 +964,8 @@ def strut_tie_pushover(
     gf_v = Gf if Gf is not None else GF_MC2010_COEFFICIENT * fc**GF_MC2010_EXPONENT
     gc_v = Gc if Gc is not None else GC_OVER_GF_250 * gf_v
     target = target_displacement if target_displacement is not None else fe.diag / 200.0
+    if max_increment is not None and max_increment > 0.0:
+        steps = max(steps, math.ceil(target / max_increment))
     if steps < 1 or target <= 0.0:
         raise ValueError("steps must be >= 1 and target_displacement > 0")
 
@@ -1148,6 +1161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--target-displacement", type=float, default=None)
     parser.add_argument("--steps", type=int, default=25)
+    parser.add_argument("--max-increment", type=float, default=MAX_INCREMENT_0_05)
     parser.add_argument(
         "--reinforced", action=argparse.BooleanOptionalAction, default=True
     )
@@ -1172,6 +1186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         kwargs = {
             "target_displacement": args.target_displacement,
             "steps": args.steps,
+            "max_increment": args.max_increment,
             "reinforced": args.reinforced,
             "weld_plates": args.weld_plates,
             "implex": args.implex,

@@ -27,6 +27,10 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### CHANGED — strut-and-tie pushover: `max_increment` (0.05 mm) caps the displacement step
+
+`steps` is raised so `target / steps <= max_increment`; `--max-increment` on the CLI, `None` disables. Without it the consumer's default target (diagonal/200) over 25 steps gave 0.34 mm increments on the Cook and Mitchell corbel and a 770 kN plateau where 0.05 mm gives 601 kN — the page defaults were quietly changing the answer. `fe_curve.control.reached` is the displacement reached in mm, not a flag.
+
 ### FIXED — `write_strut_tie_overlays` now carries `fe_stress_paths` from a pushover into the file (it dropped them; only the CLI/web lane noticed)
 
 ### ADDED — strut-and-tie pushover: `material="asd"` and Gauss-point stress paths
