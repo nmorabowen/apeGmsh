@@ -1,0 +1,372 @@
+{
+ "schema_version": 1,
+ "title": "SP-208 Part 3 \u00a72 \u2014 Cook & Mitchell (1988) double corbel",
+ "concrete": {
+  "name": "40.4 at testing",
+  "fc": 40.4,
+  "wc": 2.3563119576936926e-05,
+  "lambda": 1.0
+ },
+ "steel": {
+  "name": "No. 15 tested",
+  "fy": 444.0,
+  "Es": 199947.96150188247,
+  "probable_stress_factor": 1.25
+ },
+ "region": {
+  "kind": "plane",
+  "thickness": 350.0,
+  "outline": [
+   [
+    -125.0,
+    -850.0
+   ],
+   [
+    125.0,
+    -850.0
+   ],
+   [
+    125.0,
+    -350.0
+   ],
+   [
+    325.0,
+    -200.0
+   ],
+   [
+    325.0,
+    0.0
+   ],
+   [
+    125.0,
+    0.0
+   ],
+   [
+    125.0,
+    300.0
+   ],
+   [
+    -125.0,
+    300.0
+   ],
+   [
+    -125.0,
+    0.0
+   ],
+   [
+    -325.0,
+    0.0
+   ],
+   [
+    -325.0,
+    -200.0
+   ],
+   [
+    -125.0,
+    -350.0
+   ]
+  ],
+  "extrude": null
+ },
+ "plates": [
+  {
+   "id": "L1",
+   "center": [
+    -275.0,
+    0.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "length_l1": 50.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": 300.0,
+   "shape": "rect",
+   "kind": "load",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "L2",
+   "center": [
+    275.0,
+    0.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "length_l1": 50.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": 300.0,
+   "shape": "rect",
+   "kind": "load",
+   "supporting_area_A2": null
+  },
+  {
+   "id": "base",
+   "center": [
+    0.0,
+    -850.0,
+    0.0
+   ],
+   "normal": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "length_l1": 250.0,
+   "axis1": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "length_l2": null,
+   "shape": "rect",
+   "kind": "support",
+   "supporting_area_A2": null
+  }
+ ],
+ "nodes": [
+  {
+   "id": "L1",
+   "xyz": [
+    -275.0,
+    -33.0,
+    0.0
+   ],
+   "plate": "L1",
+   "back_face_width": 66.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "L2",
+   "xyz": [
+    275.0,
+    -33.0,
+    0.0
+   ],
+   "plate": "L2",
+   "back_face_width": 66.0,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "C1",
+   "xyz": [
+    -105.4,
+    -339.15,
+    0.0
+   ],
+   "plate": null,
+   "back_face_width": 21.7,
+   "length": 39.2,
+   "face_normal": [
+    0.0,
+    1.0,
+    0.0
+   ]
+  },
+  {
+   "id": "C2",
+   "xyz": [
+    105.4,
+    -339.15,
+    0.0
+   ],
+   "plate": null,
+   "back_face_width": 21.7,
+   "length": 39.2,
+   "face_normal": [
+    0.0,
+    1.0,
+    0.0
+   ]
+  },
+  {
+   "id": "B1",
+   "xyz": [
+    -105.4,
+    -850.0,
+    0.0
+   ],
+   "plate": "base",
+   "back_face_width": 39.2,
+   "length": null,
+   "face_normal": null
+  },
+  {
+   "id": "B2",
+   "xyz": [
+    105.4,
+    -850.0,
+    0.0
+   ],
+   "plate": "base",
+   "back_face_width": 39.2,
+   "length": null,
+   "face_normal": null
+  }
+ ],
+ "struts": [
+  {
+   "id": "S1",
+   "nodes": [
+    "L1",
+    "C1"
+   ],
+   "beta_s_row": "d",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "S2",
+   "nodes": [
+    "L2",
+    "C2"
+   ],
+   "beta_s_row": "d",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "SH",
+   "nodes": [
+    "C1",
+    "C2"
+   ],
+   "beta_s_row": "c",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "SC1",
+   "nodes": [
+    "C1",
+    "B1"
+   ],
+   "beta_s_row": "c",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  },
+  {
+   "id": "SC2",
+   "nodes": [
+    "C2",
+    "B2"
+   ],
+   "beta_s_row": "c",
+   "width": null,
+   "transverse_width": null,
+   "longitudinal_bar_area_As": 0.0
+  }
+ ],
+ "ties": [
+  {
+   "id": "T",
+   "nodes": [
+    "L1",
+    "L2"
+   ],
+   "bar": {
+    "designation": "No. 15",
+    "db": 16.0,
+    "Ab": 200.0
+   },
+   "n_bars": 4,
+   "width": 66.0,
+   "anchorage_i": null,
+   "anchorage_j": null
+  }
+ ],
+ "supports": [
+  {
+   "node": "B1",
+   "directions": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ]
+   ]
+  },
+  {
+   "node": "B2",
+   "directions": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ]
+   ]
+  }
+ ],
+ "load_cases": [
+  {
+   "name": "V",
+   "loads": [
+    {
+     "node": "L1",
+     "force": [
+      -94200.0,
+      -471000.0,
+      0.0
+     ]
+    },
+    {
+     "node": "L2",
+     "force": [
+      94200.0,
+      -471000.0,
+      0.0
+     ]
+    }
+   ]
+  }
+ ],
+ "distributed_reinforcement": {
+  "kind": "single_direction",
+  "ratio_x": 0.007619047619047619,
+  "ratio_y": 0.0,
+  "angle_alpha1": 1.0647,
+  "spacing": 75.0,
+  "planes": 2,
+  "plane_spacing": 290.0
+ },
+ "routing": {
+  "member": "corbel",
+  "seismic_sdc_d_f": false,
+  "shear_Vu": 471000.0,
+  "web_width_bw": 350.0,
+  "effective_depth_d": 317.0,
+  "shear_span_av": 150.0,
+  "primary_tension_area_Asc": 800.0
+ }
+}
