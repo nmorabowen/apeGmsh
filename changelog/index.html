@@ -4288,8 +4288,25 @@ stress) and <code>fe_summary</code> (applied vs reacted resultants, counts, mesh
 size). <code>write_strut_tie_overlays</code> is the file form. apeConcrete is not
 imported — the JSON is the seam. Tests (<code>tests/interop/test_strut_tie.py</code>,
 <code>live</code>) check load balance on a corbel and a four-pile cap from committed
-fixtures. The nonlinear <code>LadrunoConcrete3D</code> load–deformation mode is the
-next step.</p>
+fixtures. <code>strut_tie_pushover</code> is the nonlinear half: the same FE model
+with <code>LadrunoConcrete3D</code> (<code>ft = 0.33·√f'c</code>, <code>Gf = 0.073·f'c^0.18</code> N/mm,
+<code>Gc = 250·Gf</code>, auto-regularised, <code>UmfPack</code> for the unsymmetric tangent)
+under displacement control on the node beneath the load plate, with
+adaptive step halving on Newton failure and a post-peak stop, returning
+<code>fe_curve</code> (<code>[[delta, P], ...]</code>, <code>capacity</code>, <code>capacity_factor</code>, the load
+factors and why it stopped). By default (<code>reinforced=True</code>) every tie of
+the model becomes one CAD line between its nodes (one shared point per
+node, so ties meeting at a node do not leave the mesher a zero-volume
+element between coincident points), embedded in the host before meshing
+and emitted as <code>CorotTruss</code> cells of the tie's steel area against a
+<code>Steel02</code> (<code>fy</code>, <code>Es</code> from the model's steel, <code>b = 0.01</code>) — perfect
+bond, no anchorage model — so the curve is
+the reinforced region's and the peak is the lower-bound capacity oracle
+of apeConcrete ADR-0014 §9; <code>reinforced=False</code> gives the plain concrete's
+cracking curve, and the linear run takes the same flag with an elastic
+bar. <code>fe_summary.ties_modelled</code> lists the bars and their areas.
+<code>write_strut_tie_overlays(..., pushover=True)</code> writes both blocks in one
+file.</p>
 <h3 id="fixed-pardiso-mumps-always-emit-matrixtype-incl-0">FIXED — <code>Pardiso</code> / <code>Mumps</code> always emit <code>-matrixType</code> (incl. 0)<a class="headerlink" href="#fixed-pardiso-mumps-always-emit-matrixtype-incl-0" title="Permanent link">&para;</a></h3>
 <p><code>Pardiso(matrix_type="unsymmetric")</code> mapped to code <code>0</code> then
 <code>if code:</code> treated that as false, so decks showed bare
