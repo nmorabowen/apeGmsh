@@ -81,6 +81,8 @@ GF_MC2010_COEFFICIENT: float = 0.073  # Gf = 73·f'c^0.18 N/m → 0.073·f'c^0.1
 GF_MC2010_EXPONENT: float = 0.18
 GC_OVER_GF_250: float = 250.0
 REBAR_MATERIAL_NAME: str = "stm_rebar"
+WELD_MATERIAL_NAME: str = "stm_weld"
+WELD_PLATE_THICKNESS_25: float = 25.0  # mm, the specimen plates of SP-208 Part 3
 _AXES = {"x": 0, "y": 1, "z": 2}
 
 
@@ -121,6 +123,7 @@ class _FEModel:
     fy: float
     Es: float
     ties: dict[str, float]
+    welds: dict[str, float] = field(default_factory=dict)
     """Tie id → steel area (mm²) of the bars placed in the mesh; empty when not reinforced."""
 
 
@@ -173,8 +176,18 @@ def _build(
     extra_fixed_planes: Sequence[tuple[str, float, Sequence[int]]],
     verbose: bool,
     reinforced: bool = False,
+    weld_plates: bool = False,
+    plate_thickness: float = WELD_PLATE_THICKNESS_25,
 ) -> _FEModel:
     """Mesh the region and resolve supports and loads onto mesh nodes.
+
+    With ``weld_plates=True`` (plane regions, with ``reinforced``) every
+    loaded bearing plate is welded to the bars that end under it, the way
+    test specimens are built: the plate is a chain of stiff elastic bars
+    along its contact line (area = ``plate_thickness`` × plate width), a
+    stiff link joins the plate centre to the tie node, the normal load
+    component is spread over the plate nodes as before, and the tangential
+    component goes into the tie node — through the weld, not the concrete.
 
     With ``reinforced=True`` every tie of the model becomes one CAD line
     between its two nodes (nodes shared between ties), embedded in the
@@ -234,6 +247,30 @@ def _build(
     size = mesh_size if mesh_size is not None else diag / 25.0
     thickness = float(region.get("thickness") or 0.0)
 
+    # -- welded plates ---------------------------------------------------------
+    # gmsh cannot embed a curve that touches the outline (its 1-D
+    # intersection check never converges), so the plate chain is placed a
+    # quarter mesh size inside the concrete, parallel to the contact line.
+    weld_plan: list[tuple[str, str, np.ndarray, np.ndarray, float]] = []
+    weld_offset = 0.25 * float(size)
+    if weld_plates:
+        if not plane or not reinforced:
+            raise ValueError("weld_plates needs a plane region and reinforced=True")
+        seen: set[str] = set()
+        for ld in chosen["loads"]:
+            nid = ld["node"]
+            pid = nodes_stm[nid].get("plate")
+            if pid is None or plates[pid].get("kind") != "load" or pid in seen:
+                continue
+            seen.add(pid)
+            p = plates[pid]
+            n_hat = _v(p["normal"])
+            n_hat = n_hat / (float(np.linalg.norm(n_hat)) or 1.0)
+            a_hat = _v(p.get("axis1", [1.0, 0.0, 0.0]))
+            a_hat = a_hat / (float(np.linalg.norm(a_hat)) or 1.0)
+            centre = _v(p["center"]) - n_hat * weld_offset
+            weld_plan.append((pid, nid, centre, a_hat, float(p["length_l1"]) / 2.0))
+
     # -- mesh ---------------------------------------------------------------
     with apeGmsh(model_name="stm_overlay", verbose=verbose) as g:
         geo = g.model.geometry
@@ -260,6 +297,7 @@ def _build(
             g.model.sync()
             g.physical.add(3, [entity], name="Region")
         ties_modelled: dict[str, float] = {}
+        welds_modelled: dict[str, float] = {}
         if reinforced and model.get("ties"):
             # One CAD point per STM node (shared by every tie ending there —
             # a second point at the same place would give the mesher
@@ -282,10 +320,31 @@ def _build(
                 g.physical.add(1, [tag], name=f"tie_{t['id']}")
                 line_tags.append(tag)
                 ties_modelled[t["id"]] = float(t["n_bars"]) * float(t["bar"]["Ab"])
+            for pid, nid, centre, a_hat, half in weld_plan:
+                p = plates[pid]
+                width = float(p.get("length_l2") or thickness)
+                pa, pb = centre - a_hat * half, centre + a_hat * half
+                ta = geo.add_point(float(pa[0]), float(pa[1]), z0, mesh_size=size)
+                tc = geo.add_point(
+                    float(centre[0]), float(centre[1]), z0, mesh_size=size
+                )
+                tb = geo.add_point(float(pb[0]), float(pb[1]), z0, mesh_size=size)
+                chain = [geo.add_line(ta, tc), geo.add_line(tc, tb)]
+                weld = geo.add_line(tc, point(nid))
+                g.model.sync()
+                g.physical.add(1, chain, name=f"plate_{pid}")
+                g.physical.add(1, [weld], name=f"weld_{pid}")
+                welds_modelled[f"plate_{pid}"] = plate_thickness * width
+                bar_area = sum(
+                    ties_modelled[t["id"]] for t in model["ties"] if nid in t["nodes"]
+                )
+                welds_modelled[f"weld_{pid}"] = bar_area or plate_thickness * width
+                line_tags += [*chain, weld]
             g.mesh.editing.embed(line_tags, entity, dim=1, in_dim=ndm)
         g.mesh.sizing.set_global_size(size)
         g.mesh.generation.generate(ndm)
         fem = g.mesh.queries.get_fem_data(dim=None if ties_modelled else ndm)
+    welded_plates = {pid: centre for pid, _, centre, _, _ in weld_plan}
 
     ids = np.asarray(fem.nodes.ids, dtype=int)
     coords = np.asarray(fem.nodes.coords, dtype=float)
@@ -344,7 +403,22 @@ def _build(
             continue  # a reaction the STM model carried as a load
         force = _v(ld["force"])
         rows = rows_for(nid)
-        share = force / float(rows.size)
+        force_on_plate = force
+        if pid is not None and pid in welded_plates:
+            # Welded: the normal component bears on the plate chain (just
+            # inside the concrete), the tangential one enters the bars
+            # through the weld.
+            shifted = {**plates[pid], "center": welded_plates[pid].tolist()}
+            rows = _plate_nodes(coords, shifted, plane=plane, tol_n=tol_n, tol_t=tol_t)
+            if rows.size == 0:
+                rows = np.array([_nearest(coords, welded_plates[pid])])
+            n_hat = _v(plates[pid]["normal"])
+            n_hat = n_hat / (float(np.linalg.norm(n_hat)) or 1.0)
+            normal_part = n_hat * float(np.dot(force, n_hat))
+            node_row = _nearest(coords, _v(nodes_stm[nid]["xyz"]))
+            nodal[node_row] = nodal.get(node_row, np.zeros(3)) + (force - normal_part)
+            force_on_plate = normal_part
+        share = force_on_plate / float(rows.size)
         for r in rows:
             nodal[int(r)] = nodal.get(int(r), np.zeros(3)) + share
         applied += force
@@ -375,6 +449,7 @@ def _build(
         fy=float(model["steel"]["fy"]),
         Es=float(model["steel"]["Es"]),
         ties=ties_modelled,
+        welds=welds_modelled,
     )
 
 
@@ -387,6 +462,8 @@ def _elements(ops: Any, fe: _FEModel, mat: Any) -> None:
         ops.element.FourNodeTetrahedron(pg="Region", material=mat)
     for tie_id, area in fe.ties.items():
         ops.element.CorotTruss(pg=f"tie_{tie_id}", A=area, material=REBAR_MATERIAL_NAME)
+    for pg, area in fe.welds.items():
+        ops.element.CorotTruss(pg=pg, A=area, material=WELD_MATERIAL_NAME)
 
 
 def _restraints_and_loads(ops: Any, fe: _FEModel) -> None:
@@ -619,6 +696,8 @@ def strut_tie_pushover(
     max_halvings: int = 6,
     reinforced: bool = True,
     hardening_b: float = 0.01,
+    weld_plates: bool = False,
+    plate_thickness: float = WELD_PLATE_THICKNESS_25,
     tolerance: float = 1e-6,
     fallback_algorithms: Sequence[str] = ("KrylovNewton", "ModifiedNewton"),
     fallback_tolerance_factor: float = 100.0,
@@ -645,6 +724,14 @@ def strut_tie_pushover(
         (``fy``, ``Es`` from the model's steel, kinematic hardening ratio
         ``hardening_b``); ``reinforced=False`` gives the plain concrete's
         curve.
+    weld_plates, plate_thickness
+        Weld each loaded plate to the bars under it (plane regions):
+        the plate is a chain of stiff elastic bars of area
+        ``plate_thickness × width`` along its contact line, a stiff link
+        joins its centre to the tie node, and the tangential load
+        component enters the tie node rather than the concrete. This is
+        how the SP-208 Part 3 specimens were built; without it the bars
+        end at the node and H pulls on the concrete under the plate.
     tolerance, fallback_algorithms, fallback_tolerance_factor
         ``NormDispIncr`` tolerance (mm) of the Newton iteration. When a
         step fails, each fallback algorithm is tried in turn at
@@ -666,6 +753,8 @@ def strut_tie_pushover(
         extra_fixed_planes=extra_fixed_planes,
         verbose=verbose,
         reinforced=reinforced,
+        weld_plates=weld_plates,
+        plate_thickness=plate_thickness,
     )
     fc = fe.fc
     E = EC_COEFFICIENT_4700 * math.sqrt(fc)
@@ -691,6 +780,8 @@ def strut_tie_pushover(
         ops.uniaxialMaterial.Steel02(
             fy=fe.fy, E=fe.Es, b=hardening_b, name=REBAR_MATERIAL_NAME
         )
+    if fe.welds:
+        ops.uniaxialMaterial.ElasticMaterial(E=fe.Es, name=WELD_MATERIAL_NAME)
     _elements(ops, fe, mat)
     _restraints_and_loads(ops, fe)
     ops.constraints.Plain()
@@ -748,7 +839,8 @@ def strut_tie_pushover(
             "capacity_factor": capacity / reference if reference else 0.0,
             "source": (
                 f"apeGmsh + LadrunoConcrete3D ({element_name}, "
-                f"{'ties as Steel02 truss bars' if fe.ties else 'plain concrete'})"
+                f"{'ties as Steel02 truss bars' if fe.ties else 'plain concrete'}"
+                f"{', plates welded to the bars' if fe.welds else ''})"
             ),
             "case": fe.case,
             "control": {
@@ -845,6 +937,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--reinforced", action=argparse.BooleanOptionalAction, default=True
     )
+    parser.add_argument(
+        "--weld-plates", action="store_true", help="weld loaded plates to the bars"
+    )
     args = parser.parse_args(argv)
     kwargs: dict[str, Any] = {}
     if args.pushover:
@@ -852,6 +947,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "target_displacement": args.target_displacement,
             "steps": args.steps,
             "reinforced": args.reinforced,
+            "weld_plates": args.weld_plates,
         }
     out = write_strut_tie_overlays(
         args.model,

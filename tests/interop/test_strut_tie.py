@@ -206,3 +206,41 @@ def test_cli_writes_the_linear_overlays(tmp_path: Path) -> None:
     assert data["fe_trajectories"]["segments"]
     assert "fe_curve" not in data
     assert math.isclose(data["fe_summary"]["applied"][1], -300.0e3)
+
+
+def test_welded_plates_add_plate_chains_and_welds() -> None:
+    """``weld_plates`` places each loaded plate as a stiff bar chain a quarter
+    mesh size inside the concrete, welded to the tie node, and routes the
+    tangential load into the tie node. Pushover numbers on the Cook and
+    Mitchell corbel (40 mm, 2026-09-19): peak 412 kN per side at the 3 mm
+    target, 0.87 × the prediction, against 369 kN without the weld — closer,
+    still below, with the two No. 10 ties and the column bars still absent."""
+    from apeGmsh.interop.strut_tie import _build
+
+    model = _load("cook_mitchell_corbel.stm.json")
+    fe = _build(
+        model,
+        case=None,
+        mesh_size=60.0,
+        extra_fixed_planes=(),
+        verbose=False,
+        reinforced=True,
+        weld_plates=True,
+    )
+    assert set(fe.welds) == {"plate_L1", "weld_L1", "plate_L2", "weld_L2"}
+    assert fe.welds["plate_L1"] == pytest.approx(25.0 * 300.0)
+    assert fe.welds["weld_L1"] == pytest.approx(800.0)  # the tie's bars
+    # the outward H goes to the tie node, the vertical V to the plate rows
+    horizontal = [r for r, f in fe.nodal.items() if abs(f[0]) > 0.0]
+    assert len(horizontal) == 2
+    assert math.isclose(fe.applied[1], -2 * 471.0e3)
+    with pytest.raises(ValueError, match="weld_plates needs"):
+        _build(
+            model,
+            case=None,
+            mesh_size=60.0,
+            extra_fixed_planes=(),
+            verbose=False,
+            reinforced=False,
+            weld_plates=True,
+        )
