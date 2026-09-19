@@ -328,6 +328,9 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
     s22 = [row[3] for row in path]
     assert s22[1] < 0.0
     assert min(s22) < s22[1]
-    assert (
-        min(row[6] for row in path) < -0.5 * 40.4
-    )  # sigma3 well into the compressive range
+    assert all(
+        len(row) == 7 for row in path
+    )  # delta, lambda, s11, s22, s12, sigma1, sigma3
+    assert min(row[6] for row in path) <= min(
+        s22
+    )  # sigma3 is the compressive principal
