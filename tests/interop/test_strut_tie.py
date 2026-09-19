@@ -16,6 +16,8 @@ import numpy as np
 import pytest
 
 from apeGmsh.interop.strut_tie import (
+    _parse_fixed_plane,
+    main,
     strut_tie_overlays,
     strut_tie_pushover,
     write_strut_tie_overlays,
@@ -175,3 +177,32 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper() -> None:
     )
     assert result.overlays["fe_summary"]["ties_modelled"]["T"] > 0.0
     assert result.n_elements > 500
+
+
+# ---------------------------------------------------------------------------
+# The command line (what the office web app launches in the OpenSees venv)
+# ---------------------------------------------------------------------------
+def test_fixed_plane_syntax() -> None:
+    assert _parse_fixed_plane("x=-400:01") == ("x", -400.0, (0, 1))
+    assert _parse_fixed_plane("z=0:2") == ("z", 0.0, (2,))
+    with pytest.raises(ValueError, match="AXIS=VALUE:DOFS"):
+        _parse_fixed_plane("nonsense")
+
+
+def test_cli_writes_the_linear_overlays(tmp_path: Path) -> None:
+    out = tmp_path / "corbel.overlays.json"
+    rc = main(
+        [
+            str(FIXTURES / "corbel.stm.json"),
+            str(out),
+            "--mesh-size",
+            "60",
+            "--fix-plane",
+            "x=-400:01",
+        ]
+    )
+    assert rc == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["fe_trajectories"]["segments"]
+    assert "fe_curve" not in data
+    assert math.isclose(data["fe_summary"]["applied"][1], -300.0e3)
