@@ -48,6 +48,10 @@ def test_corbel_plane_stress_overlay_balances_the_load() -> None:
     # Equilibrium: reactions balance the applied load.
     applied, reactions = np.array(result.applied), np.array(result.reactions)
     assert math.isclose(applied[1], -300.0e3)
+    assert result.overlays["fe_summary"]["backend"] in (
+        "ladruno-fork",
+        "stock-openseespy",
+    )
     assert np.allclose(reactions[:2], -applied[:2], rtol=1e-3, atol=1.0)
     json.dumps(result.overlays, allow_nan=False)
 
@@ -313,6 +317,10 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
     curve = result.overlays["fe_curve"]
     per_side = curve["capacity"] / 2.0
     assert curve["material"] == "asd"
+    assert curve["backend"] in ("ladruno-fork", "stock-openseespy")
+    assert curve["increment"] <= 0.05 + 1e-12  # max_increment raised the steps
+    assert curve["steps"] * curve["increment"] == pytest.approx(2.0)
+    assert result.overlays["fe_summary"]["backend"] == curve["backend"]
     assert "ASDConcrete3D" in curve["source"]
     assert (
         1.05 * COOK_MITCHELL_STM_PREDICTION_N
