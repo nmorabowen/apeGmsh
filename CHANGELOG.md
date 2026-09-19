@@ -27,6 +27,23 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — strut-and-tie pushover: `weld_plates`, the plates welded to the bars
+
+`strut_tie_pushover(..., weld_plates=True, plate_thickness=25.0)` and
+`--weld-plates` on the CLI model each loaded bearing plate the way test
+specimens are built: a chain of stiff elastic bars of area `plate_thickness
+x width` a quarter mesh size inside the concrete along the contact line, a
+stiff link of the bars' own area from its centre to the tie node, the normal
+load component spread over the chain and the tangential component put into
+the tie node — through the weld, not the concrete. (gmsh never converges its
+1-D intersection check on an embedded curve that touches the outline, hence
+the inset.) On the Cook and Mitchell double corbel at 40 mm the peak moves
+from 369 kN per side (0.78 x the strut-and-tie prediction, then softening)
+to 412 kN at the 3 mm target (0.87 x, still rising, 57 fallback steps): the
+load introduction was most of the gap, the rest is the two No. 10 ties and
+the column bars the FE does not carry. `fe_curve.source` says when plates
+are welded.
+
 ### ADDED — `python -m apeGmsh.interop.strut_tie`, the overlay writer's command line
 
 `main(argv)` wraps `write_strut_tie_overlays`: `model.stm.json out.json
