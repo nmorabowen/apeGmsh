@@ -27,6 +27,15 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — `python -m apeGmsh.interop.strut_tie`, the overlay writer's command line
+
+`main(argv)` wraps `write_strut_tie_overlays`: `model.stm.json out.json
+[--case NAME] [--mesh-size MM] [--fix-plane AXIS=VALUE:DOFS ...] [--pushover
+[--target-displacement MM] [--steps N] [--no-reinforced]]`. Hosts that run
+apeConcrete in another interpreter (the stdlib `stm_server` and the office
+web app, through `apeConcrete.plotting.fe_jobs.FeJobRunner`) launch this in
+the OpenSees venv instead of importing apeGmsh.
+
 ### ADDED — strut-and-tie pushover: solver fallbacks, and the Cook–Mitchell corbel as the physics oracle (apeConcrete ADR-0014 §9)
 
 `strut_tie_pushover` gains `tolerance` (NormDispIncr, default 1e-6),

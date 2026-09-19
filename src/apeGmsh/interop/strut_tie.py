@@ -58,6 +58,7 @@ How the STM model maps to the FE model (documented, not clever):
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from dataclasses import dataclass, field
@@ -800,6 +801,75 @@ def write_strut_tie_overlays(
     return target
 
 
+def _parse_fixed_plane(text: str) -> tuple[str, float, tuple[int, ...]]:
+    """``x=-400:01`` → ``("x", -400.0, (0, 1))`` (0-based DOFs)."""
+    try:
+        axis, rest = text.split("=", 1)
+        value, dofs = rest.split(":", 1)
+        return axis.strip(), float(value), tuple(int(c) for c in dofs.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"--fix-plane expects AXIS=VALUE:DOFS, e.g. x=-400:01, got {text!r}"
+        ) from exc
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """``python -m apeGmsh.interop.strut_tie model.stm.json out.json [options]``.
+
+    The command-line face of :func:`write_strut_tie_overlays`, for hosts
+    that cannot import apeGmsh (the office web app runs apeConcrete in
+    another interpreter and launches this in the OpenSees venv).
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m apeGmsh.interop.strut_tie",
+        description="FE overlays for a strut-and-tie model JSON (apeConcrete ADR-0014 §6).",
+    )
+    parser.add_argument("model", help="model JSON (apeConcrete.stm.model_to_dict form)")
+    parser.add_argument("out", help="overlays JSON to write")
+    parser.add_argument(
+        "--case", default=None, help="load case name (default: the only one)"
+    )
+    parser.add_argument("--mesh-size", type=float, default=None, help="mesh size (mm)")
+    parser.add_argument(
+        "--fix-plane",
+        action="append",
+        default=[],
+        metavar="AXIS=VALUE:DOFS",
+        help="fix a whole face, e.g. x=-400:01 (repeatable)",
+    )
+    parser.add_argument(
+        "--pushover", action="store_true", help="add the nonlinear curve"
+    )
+    parser.add_argument("--target-displacement", type=float, default=None)
+    parser.add_argument("--steps", type=int, default=25)
+    parser.add_argument(
+        "--reinforced", action=argparse.BooleanOptionalAction, default=True
+    )
+    args = parser.parse_args(argv)
+    kwargs: dict[str, Any] = {}
+    if args.pushover:
+        kwargs = {
+            "target_displacement": args.target_displacement,
+            "steps": args.steps,
+            "reinforced": args.reinforced,
+        }
+    out = write_strut_tie_overlays(
+        args.model,
+        args.out,
+        case=args.case,
+        mesh_size=args.mesh_size,
+        extra_fixed_planes=tuple(_parse_fixed_plane(t) for t in args.fix_plane),
+        pushover=args.pushover,
+        **kwargs,
+    )
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
+
+
 __all__ = [
     "EC_COEFFICIENT_4700",
     "FT_COEFFICIENT_0_33",
@@ -808,6 +878,7 @@ __all__ = [
     "GF_MC2010_EXPONENT",
     "POISSON_RATIO",
     "StrutTieOverlays",
+    "main",
     "strut_tie_overlays",
     "strut_tie_pushover",
     "write_strut_tie_overlays",
