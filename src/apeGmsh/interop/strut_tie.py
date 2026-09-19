@@ -64,7 +64,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -126,6 +126,7 @@ class _FEModel:
     ties: dict[str, float]
     welds: dict[str, float] = field(default_factory=dict)
     bars: dict[str, float] = field(default_factory=dict)
+    bearing_points: dict[str, np.ndarray] = field(default_factory=dict)
     """Tie id → steel area (mm²) of the bars placed in the mesh; empty when not reinforced."""
 
 
@@ -460,6 +461,7 @@ def _build(
 
     # -- loads ---------------------------------------------------------------
     nodal: dict[int, np.ndarray] = {}
+    bearing_points: dict[str, np.ndarray] = {}
     applied = np.zeros(3)
     control_row = -1
     control_force = 0.0
@@ -471,6 +473,12 @@ def _build(
         force = _v(ld["force"])
         rows = rows_for(nid)
         force_on_plate = force
+        if pid is not None:
+            n_p = _v(plates[pid]["normal"])
+            n_p = n_p / (float(np.linalg.norm(n_p)) or 1.0)
+            bearing_points[f"bearing_{pid}"] = (
+                _v(plates[pid]["center"]) - n_p * 0.5 * size
+            )[:ndm]
         if pid is not None and pid in welded_plates:
             # Welded: the normal component bears on the plate chain (just
             # inside the concrete), the tangential one enters the bars
@@ -518,6 +526,7 @@ def _build(
         ties=ties_modelled,
         welds=welds_modelled,
         bars=bars_modelled,
+        bearing_points=bearing_points,
     )
 
 
@@ -758,6 +767,80 @@ def _step(
     return rc
 
 
+ConcreteModel = Literal["ladruno", "asd"]
+
+
+class _StressPaths:
+    """Stress history of the element nearest each requested point."""
+
+    def __init__(
+        self, live: Any, fe: _FEModel, requested: Mapping[str, Sequence[float]] | None
+    ) -> None:
+        self.live = live
+        self.ncomp = 3 if fe.plane else 6
+        self.components = (
+            ["s11", "s22", "s12"]
+            if fe.plane
+            else ["s11", "s22", "s33", "s12", "s23", "s13"]
+        )
+        tags = [
+            int(t) for t in (live.getEleTags() or []) if len(live.eleNodes(int(t))) >= 3
+        ]
+        centroids = {
+            t: np.mean(
+                [list(live.nodeCoord(int(n)))[: fe.ndm] for n in live.eleNodes(t)],
+                axis=0,
+            )
+            for t in tags
+        }
+        wanted: dict[str, np.ndarray] = {}
+        if requested:
+            wanted = {k: _v(v)[: fe.ndm] for k, v in requested.items()}
+        else:
+            wanted = {k: v for k, v in fe.bearing_points.items()}
+        self.paths: dict[str, dict[str, Any]] = {}
+        for label, q in wanted.items():
+            if not tags:
+                break
+            tag = min(tags, key=lambda t: float(np.linalg.norm(centroids[t] - q)))
+            self.paths[label] = {
+                "element": tag,
+                "centroid": [float(x) for x in centroids[tag]],
+                "components": self.components,
+                "path": [],
+            }
+
+    def record(self, delta: float, lam: float) -> None:
+        for entry in self.paths.values():
+            raw = _v(self.live.eleResponse(int(entry["element"]), "stresses"))
+            if raw.size == 0 or raw.size % self.ncomp:
+                continue
+            comp = raw.reshape(-1, self.ncomp).mean(axis=0)
+            if self.ncomp == 3:
+                t = np.array([[comp[0], comp[2]], [comp[2], comp[1]]])
+            else:
+                t = np.array(
+                    [
+                        [comp[0], comp[3], comp[5]],
+                        [comp[3], comp[1], comp[4]],
+                        [comp[5], comp[4], comp[2]],
+                    ]
+                )
+            w = np.linalg.eigvalsh(t)
+            entry["path"].append(
+                [
+                    float(delta),
+                    float(lam),
+                    *[float(x) for x in comp],
+                    float(w[-1]),
+                    float(w[0]),
+                ]
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.paths
+
+
 def strut_tie_pushover(
     model: Mapping[str, Any],
     *,
@@ -782,6 +865,8 @@ def strut_tie_pushover(
     ),
     implex: bool = False,
     extra_bars: Sequence[Mapping[str, Any]] = (),
+    material: ConcreteModel = "ladruno",
+    stress_paths: Mapping[str, Sequence[float]] | None = None,
     fallback_tolerance_factor: float = 100.0,
     verbose: bool = False,
 ) -> StrutTieOverlays:
@@ -822,6 +907,19 @@ def strut_tie_pushover(
     extra_bars
         Reinforcement outside the strut-and-tie model (stirrups, column
         bars) as ``{"id", "points", "area"}`` polylines; see :func:`_build`.
+    material
+        ``"ladruno"`` (``LadrunoConcrete3D``, the fork's plastic-damage
+        model) or ``"asd"`` (stock ``ASDConcrete3D``, same E, ν, f'c, ft,
+        Gf, Gc and IMPL-EX switch). Two materials that agree bracket the
+        model; two that disagree point at a return map.
+    stress_paths
+        ``{label: (x, y, z)}`` points whose nearest element has its stress
+        recorded at every converged step, as ``fe_stress_paths`` in the
+        overlays: ``{label: {"element", "centroid", "components", "path":
+        [[delta, lambda, s11, s22, s12, sigma1, sigma3], ...]}}``. By
+        default one path per loaded plate, half a mesh size inside the
+        concrete under its centre — the bearing state a material's return
+        map has to survive.
     tolerance, fallback_algorithms, fallback_tolerance_factor
         ``NormDispIncr`` tolerance (mm). A fallback is a name or a
         ``(name, *args)`` tuple, e.g. ``("NewtonLineSearch", "-type",
@@ -866,16 +964,23 @@ def strut_tie_pushover(
 
     ops = apeSees(fe.fem)
     ops.model(ndm=fe.ndm, ndf=fe.ndm)
-    mat = ops.nDMaterial.LadrunoConcrete3D(
-        E=E,
-        nu=POISSON_RATIO,
-        fc=fc,
-        ft=ft_v,
-        Gf=gf_v,
-        Gc=gc_v,
-        auto_regularize=True,
-        implex=implex,
-    )
+    if material == "asd":
+        mat = ops.nDMaterial.ASDConcrete3D(
+            E=E, v=POISSON_RATIO, fc=fc, ft=ft_v, Gf=gf_v, Gc=gc_v, implex=implex
+        )
+    elif material == "ladruno":
+        mat = ops.nDMaterial.LadrunoConcrete3D(
+            E=E,
+            nu=POISSON_RATIO,
+            fc=fc,
+            ft=ft_v,
+            Gf=gf_v,
+            Gc=gc_v,
+            auto_regularize=True,
+            implex=implex,
+        )
+    else:
+        raise ValueError(f"material must be 'ladruno' or 'asd', got {material!r}")
     if fe.ties or fe.bars:
         ops.uniaxialMaterial.Steel02(
             fy=fe.fy, E=fe.Es, b=hardening_b, name=REBAR_MATERIAL_NAME
@@ -897,6 +1002,7 @@ def strut_tie_pushover(
     live = emitter.ops
 
     points: list[list[float]] = [[0.0, 0.0]]
+    paths = _StressPaths(live, fe, stress_paths)
     lambdas: list[float] = [0.0]
     stopped = "target"
     reached = 0.0
@@ -921,6 +1027,7 @@ def strut_tie_pushover(
         lam = float(live.getTime())
         lambdas.append(lam)
         points.append([abs(reached), lam * reference])
+        paths.record(abs(reached), lam)
         if halvings == 0 and abs(current) < abs(du):
             current = min(abs(du), 2.0 * abs(current)) * sign
             live.integrator("DisplacementControl", control_node, dof, current)
@@ -933,12 +1040,14 @@ def strut_tie_pushover(
     reactions = _reactions(live, fe)
     element_name = "Tri31 plane stress" if fe.plane else "FourNodeTetrahedron"
     overlays: dict[str, Any] = {
+        "fe_stress_paths": paths.to_dict(),
         "fe_curve": {
             "points": points,
             "capacity": capacity,
             "capacity_factor": capacity / reference if reference else 0.0,
             "source": (
-                f"apeGmsh + LadrunoConcrete3D ({element_name}, "
+                f"apeGmsh + {'ASDConcrete3D' if material == 'asd' else 'LadrunoConcrete3D'} "
+                f"({element_name}, "
                 f"{'ties as Steel02 truss bars' if fe.ties else 'plain concrete'}"
                 f"{', plates welded to the bars' if fe.welds else ''}"
                 f"{', ' + str(len(fe.bars)) + ' extra bars' if fe.bars else ''}"
@@ -954,6 +1063,7 @@ def strut_tie_pushover(
             "stopped": stopped,
             "load_factors": lambdas,
             "fallback_steps": fallback_steps,
+            "material": material,
             "tolerance": tolerance,
         },
         "fe_summary": _summary(
@@ -1046,6 +1156,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--implex", action="store_true", help="IMPL-EX concrete integration"
     )
     parser.add_argument(
+        "--material",
+        choices=("ladruno", "asd"),
+        default="ladruno",
+        help="concrete model",
+    )
+    parser.add_argument(
         "--bars", default=None, help="JSON list of extra bars {id, points, area}"
     )
     args = parser.parse_args(argv)
@@ -1057,6 +1173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reinforced": args.reinforced,
             "weld_plates": args.weld_plates,
             "implex": args.implex,
+            "material": args.material,
             "extra_bars": json.loads(Path(args.bars).read_text(encoding="utf-8"))
             if args.bars
             else (),

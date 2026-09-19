@@ -27,6 +27,26 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — strut-and-tie pushover: `material="asd"` and Gauss-point stress paths
+
+`strut_tie_pushover(..., material="ladruno"|"asd")` / `--material` runs the
+same model with stock `ASDConcrete3D` (same E, nu, f'c, ft, Gf, Gc and IMPL-EX
+switch) instead of the fork's `LadrunoConcrete3D`. `stress_paths={label:
+(x, y, z)}` records the nearest element's stress at every converged step as
+`fe_stress_paths` (`[delta, lambda, s11, s22, s12, sigma1, sigma3]` rows);
+by default one path per loaded plate, half a mesh size under its centre.
+`fe_curve.material` names the model.
+
+Cook and Mitchell corbel, welded plates + hoops + column bars, 40 mm:
+ASDConcrete3D implicit converges under plain Newton in ~20 s to a plateau
+of 601 kN per side (1.28 x the prediction, 1.20 x the measured 502 kN) where
+LadrunoConcrete3D implicit stalls at 410 kN with 21 million "return map did
+not converge" step-cuts; ASD IMPL-EX 627 kN. The two materials agree from
+above once Ladruno is allowed to run (its IMPL-EX sequence 683/614/574 kN),
+so the shared overshoot is the model (plane stress under a 50 mm plate,
+perfect bond) and the Ladruno implicit shortfall is its return map under
+the bearing state — the recorded path is where that investigation starts.
+
 ### ADDED — strut-and-tie pushover: extra bars, line search with bisection, IMPL-EX
 
 `strut_tie_pushover(..., extra_bars=[{"id", "points", "area"}, ...])` and

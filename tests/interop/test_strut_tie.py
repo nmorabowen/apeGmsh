@@ -285,3 +285,52 @@ def test_extra_bars_are_arranged_and_placed() -> None:
     assert set(fe.bars) == {"hoop1", "hoop2", "col_left", "col_right"}
     assert fe.bars["col_left"] == pytest.approx(600.0)
     assert set(fe.welds) == {"plate_L1", "weld_L1", "plate_L2", "weld_L2"}
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.slow
+def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() -> None:
+    """The second concrete model, stock ``ASDConcrete3D``, on the welded and
+    reinforced Cook and Mitchell corbel: it converges under plain Newton in
+    seconds to a plateau of ≈600 kN per side (2026-09-19: 601 kN, 1.28 × the
+    prediction, 1.20 × the measured 502 kN) where ``LadrunoConcrete3D``'s
+    implicit return map stalls at 410 kN. The two materials therefore
+    bracket the model; the bearing-element stress path recorded here is
+    the data a fork investigation of the Ladruno return map starts from."""
+    model = _load("cook_mitchell_corbel.stm.json")
+    bars = _load("cook_mitchell_bars.json")
+    result = strut_tie_pushover(
+        model,
+        mesh_size=40.0,
+        target_displacement=2.0,
+        steps=40,
+        max_halvings=4,
+        weld_plates=True,
+        extra_bars=bars,
+        material="asd",
+    )
+    curve = result.overlays["fe_curve"]
+    per_side = curve["capacity"] / 2.0
+    assert curve["material"] == "asd"
+    assert "ASDConcrete3D" in curve["source"]
+    assert (
+        1.05 * COOK_MITCHELL_STM_PREDICTION_N
+        < per_side
+        < 1.5 * COOK_MITCHELL_STM_PREDICTION_N
+    )
+    paths = result.overlays["fe_stress_paths"]
+    assert set(paths) == {"bearing_L1", "bearing_L2"}
+    path = paths["bearing_L1"]["path"]
+    assert len(path) >= 10
+    assert paths["bearing_L1"]["components"] == ["s11", "s22", "s12"]
+    # under the plate: vertical compression that builds up, then the
+    # element unloads as it crushes — the path is the record of both
+    s22 = [row[3] for row in path]
+    assert s22[1] < 0.0
+    assert min(s22) < s22[1]
+    assert all(
+        len(row) == 7 for row in path
+    )  # delta, lambda, s11, s22, s12, sigma1, sigma3
+    assert min(row[6] for row in path) <= min(
+        s22
+    )  # sigma3 is the compressive principal
