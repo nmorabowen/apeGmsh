@@ -318,6 +318,8 @@ def test_asd_material_reaches_a_plateau_and_records_the_bearing_stress_path() ->
     per_side = curve["capacity"] / 2.0
     assert curve["material"] == "asd"
     assert curve["backend"] in ("ladruno-fork", "stock-openseespy")
+    assert curve["element"] == "Tri31"
+    assert 0.0 < curve["reached_fraction"] <= 1.0 + 1e-9
     assert curve["increment"] <= 0.05 + 1e-12  # max_increment raised the steps
     assert curve["steps"] * curve["increment"] == pytest.approx(2.0)
     assert result.overlays["fe_summary"]["backend"] == curve["backend"]

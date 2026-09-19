@@ -533,8 +533,17 @@ def _build(
     )
 
 
-def _elements(ops: Any, fe: _FEModel, mat: Any) -> None:
-    if fe.plane:
+PlaneElement = Literal["Tri31", "LadrunoCST"]
+
+
+def _elements(
+    ops: Any, fe: _FEModel, mat: Any, element: PlaneElement = "Tri31"
+) -> None:
+    if fe.plane and element == "LadrunoCST":
+        ops.element.LadrunoCST(
+            pg="Region", thickness=fe.thickness, material=mat, plane_type="PlaneStress"
+        )
+    elif fe.plane:
         ops.element.Tri31(
             pg="Region", thickness=fe.thickness, material=mat, plane_type="PlaneStress"
         )
@@ -879,6 +888,7 @@ def strut_tie_pushover(
     implex: bool = False,
     extra_bars: Sequence[Mapping[str, Any]] = (),
     material: ConcreteModel = "ladruno",
+    element: PlaneElement = "Tri31",
     stress_paths: Mapping[str, Sequence[float]] | None = None,
     fallback_tolerance_factor: float = 100.0,
     verbose: bool = False,
@@ -925,6 +935,13 @@ def strut_tie_pushover(
         model) or ``"asd"`` (stock ``ASDConcrete3D``, same E, ν, f'c, ft,
         Gf, Gc and IMPL-EX switch). Two materials that agree bracket the
         model; two that disagree point at a return map.
+    element
+        Plane continuum element: stock ``Tri31`` (default, runs on stock
+        openseespy) or the fork's ``LadrunoCST`` on the same 3-node mesh.
+        They differ in how they treat the material's return codes and in
+        their characteristic length; the default will move to
+        ``LadrunoCST`` as a deliberate changelog line once the fork's
+        return-code guard (its ADR 115) lands, because the numbers move.
     stress_paths
         ``{label: (x, y, z)}`` points whose nearest element has its stress
         recorded at every converged step, as ``fe_stress_paths`` in the
@@ -1009,7 +1026,7 @@ def strut_tie_pushover(
         )
     if fe.welds:
         ops.uniaxialMaterial.ElasticMaterial(E=fe.Es, name=WELD_MATERIAL_NAME)
-    _elements(ops, fe, mat)
+    _elements(ops, fe, mat, element)
     _restraints_and_loads(ops, fe)
     ops.constraints.Plain()
     ops.numberer.RCM()
@@ -1060,7 +1077,7 @@ def strut_tie_pushover(
 
     capacity = max(p[1] for p in points)
     reactions = _reactions(live, fe)
-    element_name = "Tri31 plane stress" if fe.plane else "FourNodeTetrahedron"
+    element_name = f"{element} plane stress" if fe.plane else "FourNodeTetrahedron"
     overlays: dict[str, Any] = {
         "fe_stress_paths": paths.to_dict(),
         "fe_curve": {
@@ -1086,8 +1103,10 @@ def strut_tie_pushover(
             "load_factors": lambdas,
             "fallback_steps": fallback_steps,
             "backend": _backend_tag(live),
+            "element": element if fe.plane else "FourNodeTetrahedron",
             "steps": steps,
             "increment": target / steps,
+            "reached_fraction": abs(reached) / target,
             "material": material,
             "tolerance": tolerance,
         },
@@ -1190,6 +1209,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="concrete model",
     )
     parser.add_argument(
+        "--element",
+        choices=("Tri31", "LadrunoCST"),
+        default="Tri31",
+        help="plane element",
+    )
+    parser.add_argument(
         "--bars", default=None, help="JSON list of extra bars {id, points, area}"
     )
     args = parser.parse_args(argv)
@@ -1203,6 +1228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "weld_plates": args.weld_plates,
             "implex": args.implex,
             "material": args.material,
+            "element": args.element,
             "extra_bars": json.loads(Path(args.bars).read_text(encoding="utf-8"))
             if args.bars
             else (),
