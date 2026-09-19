@@ -175,6 +175,43 @@ step 18). `_SCHEMES_REACHING_MODIFIED_EULER` is now `{0, 1, 2}`; the
 section otherwise describes is unaffected — it is keyed on the element,
 not the scheme.
 
+**Amendment (2026-09-18, fork PRs #847/#849).** D1's default stays
+`tan_type=2`; what it hands the element changed underneath it.
+
+(a) **Every `tan_type=1/2` result before fork #847 used a wrong tangent.**
+`ManzariDafalias::GetElastoPlasticTangent` had two Voigt defects: the flow
+direction was converted to covariant form twice (about 2x on the shear
+coupling terms), and the denominator used a mismatched contraction (7.6 %
+too large). `tan_type=2` chains that function, so D1's default carried it
+into every `LadrunoSANISAND` deck apeGmsh emitted. `ModifiedEuler`
+(`int_scheme=1`) also never wrote the `tan_type=1` tangent, so that combination
+handed the element a stale elastic matrix. Converged answers under a
+force-residual test (D3's `NormUnbalance`) barely moved — ±0.4 % on the
+fork's strip footing to `s/B = 0.012` — because the residual, not the
+tangent, sets the accepted point. What moved is cost: `tan_type=2` now
+takes 2.6 Newton iterations per step instead of 7.1. A result produced
+under a displacement-increment test (the one D3 warns on) is the one to
+re-run.
+
+(b) **`tan_type=2` is now a sound speed choice, and D1 stands.** Both
+tangents are now the derivatives of their own stress updates (fork gate:
+0.03 % against an independent tensor-algebra formula).
+
+(c) **Cap the substeps whenever `tan_type != 0`.** An uncapped
+`tan_type=2` leg on the fork's strip deck stalled on `ModifiedEuler`'s
+substep ceiling for over 20 minutes; with `max_substeps=20000` two runs
+were bit-identical. This is a recommendation, not a gate: D4's element
+rule still decides where a cap is safe to emit.
+
+(d) **`flip_alpha_in`.** Fork #849 made `-flipAlphaIn init` the engine
+default; it was `vanilla`. Under `vanilla`, `alpha - alpha_in` sits at
+round-off after the stage flip and the first plastic step follows the sign
+of a round-off number (1.511 vs 1.824 kPa across MKL thread counts on the
+TIMs strip). The new `LadrunoSANISAND.flip_alpha_in` field is `None` by
+default and then emits nothing, so a deck follows whichever engine runs it
+— the same byte-identity rule as `max_substeps` in D4. Pass `"vanilla"`
+only to reproduce a pre-#849 result.
+
 ## Consequences
 
 **Positive.**

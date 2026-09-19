@@ -1518,6 +1518,45 @@ class TestLadrunoSANISAND:
         assert not [a for a in args
                     if isinstance(a, str) and a.startswith("-implex")]
 
+    # fork ADR 92 P2-7c / PR #849: -flipAlphaIn. None must emit nothing so
+    # the deck follows the engine default ("init" since #849).
+    def test_flip_alpha_in_default_emits_no_token(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS)._emit(rec, tag=7)
+        assert "-flipAlphaIn" not in rec.calls[0][1]
+
+    @pytest.mark.parametrize("mode", ["init", "vanilla"])
+    def test_flip_alpha_in_emits_last(self, mode: str) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(**_LS_KWARGS, flip_alpha_in=mode)._emit(rec, tag=9)
+        assert rec.calls[0][1] == (
+            ("LadrunoSANISAND", 9) + _LS_REQUIRED + _LS_TAIL_DEFAULT
+            + _LS_FLAGS_DEFAULT + ("-flipAlphaIn", mode)
+        )
+
+    def test_flip_alpha_in_follows_the_implex_seam(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoSANISAND(
+            **_LS_KWARGS, max_substeps=20000, implex=True,
+            implex_factor="fixed", flip_alpha_in="init",
+        )._emit(rec, tag=3)
+        assert rec.calls[0][1][-7:] == (
+            "-maxSubsteps", 20000, "-implex", "-implexFactor", "fixed",
+            "-flipAlphaIn", "init",
+        )
+
+    @pytest.mark.parametrize("bad", ["Init", "VANILLA", "", "none", "auto"])
+    def test_rejects_unknown_flip_alpha_in(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="flip_alpha_in must be"):
+            LadrunoSANISAND(**_LS_KWARGS, flip_alpha_in=bad)  # type: ignore[arg-type]
+
+    def test_flip_alpha_in_is_reachable_via_namespace(self) -> None:
+        # The namespace signature is hand-spelled; a dataclass-only field
+        # would be invisible through ops.nDMaterial.
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoSANISAND(**_LS_KWARGS, flip_alpha_in="vanilla")
+        assert m.flip_alpha_in == "vanilla"
+
     def test_rejects_implex_control_without_implex(self) -> None:
         # F1: the fork refuses ANY -implex* flag without the base -implex,
         # and -implexControl is one of them.

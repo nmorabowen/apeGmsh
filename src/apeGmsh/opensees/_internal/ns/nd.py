@@ -295,6 +295,7 @@ class _NDMaterialNS(_BridgeNamespace):
         implex: bool = False,
         implex_control: tuple[float, float] | None = None,
         implex_factor: Literal["fixed", "control", "controlIter"] | None = None,
+        flip_alpha_in: Literal["init", "vanilla"] | None = None,
         name: str | None = None,
     ) -> LadrunoSANISAND:
         """Register a :class:`LadrunoSANISAND` fork SANISAND-2004 material.
@@ -321,6 +322,12 @@ class _NDMaterialNS(_BridgeNamespace):
         token, so the fork's own ``fixed`` default applies and the deck
         stays byte-identical to one built before the field existed; see
         the class for why ``control`` is measured-REFUTED.
+
+        ``flip_alpha_in`` (``-flipAlphaIn init|vanilla``) sets how
+        ``alpha_in`` is initialised at the stage flip.  ``None`` omits the
+        token and follows the engine default, which became ``"init"``
+        (thread-deterministic) in fork PR #849; pass ``"vanilla"`` only
+        to reproduce a pre-#849 result.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -358,6 +365,7 @@ class _NDMaterialNS(_BridgeNamespace):
                 implex=implex,
                 implex_control=implex_control,
                 implex_factor=implex_factor,
+                flip_alpha_in=flip_alpha_in,
             ),
             name=name,
         )
