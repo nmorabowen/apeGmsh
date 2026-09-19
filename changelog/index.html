@@ -3583,6 +3583,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3733,6 +3744,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3870,6 +3892,8 @@ today's behaviour on an older engine. Emitted last, after the IMPL-EX seam.
 ADR 0103 gains a 2026-09-18 amendment: re-run <code>tan_type != 0</code> results
 produced under a displacement-increment test, and cap substeps
 (<code>max_substeps=20000</code>) whenever <code>tan_type != 0</code>.</p>
+<h3 id="added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment">ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment<a class="headerlink" href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" title="Permanent link">&para;</a></h3>
+<p><code>fe_summary.backend</code> and <code>fe_curve.backend</code> are <code>"ladruno-fork"</code> or <code>"stock-openseespy"</code> (the live emitter's own rule, <code>criticalTimeStep</code>); <code>fe_curve.steps</code> and <code>fe_curve.increment</code> (mm) record the step actually used. Two payloads from the same inputs differed by 18 % between the fork and stock on CT 115 with nothing in the file saying why; now the file says.</p>
 <h3 id="changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step">CHANGED — strut-and-tie pushover: <code>max_increment</code> (0.05 mm) caps the displacement step<a class="headerlink" href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" title="Permanent link">&para;</a></h3>
 <p><code>steps</code> is raised so <code>target / steps &lt;= max_increment</code>; <code>--max-increment</code> on the CLI, <code>None</code> disables. Without it the consumer's default target (diagonal/200) over 25 steps gave 0.34 mm increments on the Cook and Mitchell corbel and a 770 kN plateau where 0.05 mm gives 601 kN — the page defaults were quietly changing the answer. <code>fe_curve.control.reached</code> is the displacement reached in mm, not a flag.</p>
 <h3 id="fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed">FIXED — <code>write_strut_tie_overlays</code> now carries <code>fe_stress_paths</code> from a pushover into the file (it dropped them; only the CLI/web lane noticed)<a class="headerlink" href="#fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed" title="Permanent link">&para;</a></h3>
