@@ -571,10 +571,19 @@ def _reactions(live: Any, fe: _FEModel) -> np.ndarray:
     return reactions
 
 
+def _backend_tag(live: Any) -> str:
+    """Which OpenSees answered: the same rule the live emitter applies
+    (``criticalTimeStep`` is a fork-only symbol). Two payloads from the same
+    inputs can differ by 20–30 % between the fork and stock openseespy, so
+    every overlay names its backend."""
+    return "ladruno-fork" if hasattr(live, "criticalTimeStep") else "stock-openseespy"
+
+
 def _summary(
     fe: _FEModel, live: Any, reactions: np.ndarray, **extra: Any
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
+        "backend": _backend_tag(live),
         "applied": fe.applied.tolist(),
         "reactions": reactions.tolist(),
         "n_nodes": len(fe.ids),
@@ -1076,6 +1085,9 @@ def strut_tie_pushover(
             "stopped": stopped,
             "load_factors": lambdas,
             "fallback_steps": fallback_steps,
+            "backend": _backend_tag(live),
+            "steps": steps,
+            "increment": target / steps,
             "material": material,
             "tolerance": tolerance,
         },

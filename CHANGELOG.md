@@ -27,6 +27,10 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
+
+`fe_summary.backend` and `fe_curve.backend` are `"ladruno-fork"` or `"stock-openseespy"` (the live emitter's own rule, `criticalTimeStep`); `fe_curve.steps` and `fe_curve.increment` (mm) record the step actually used. Two payloads from the same inputs differed by 18 % between the fork and stock on CT 115 with nothing in the file saying why; now the file says.
+
 ### CHANGED — strut-and-tie pushover: `max_increment` (0.05 mm) caps the displacement step
 
 `steps` is raised so `target / steps <= max_increment`; `--max-increment` on the CLI, `None` disables. Without it the consumer's default target (diagonal/200) over 25 steps gave 0.34 mm increments on the Cook and Mitchell corbel and a 770 kN plateau where 0.05 mm gives 601 kN — the page defaults were quietly changing the answer. `fe_curve.control.reached` is the displacement reached in mm, not a flag.
