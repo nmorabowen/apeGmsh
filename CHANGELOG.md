@@ -33,7 +33,7 @@ produced under a displacement-increment test, and cap substeps
 
 ### ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
 
-`fe_summary.backend` and `fe_curve.backend` are `"ladruno-fork"` or `"stock-openseespy"` (the live emitter's own rule, `criticalTimeStep`); `fe_curve.steps` and `fe_curve.increment` (mm) record the step actually used. Two payloads from the same inputs differed by 18 % between the fork and stock on CT 115 with nothing in the file saying why; now the file says.
+`fe_summary.backend` and `fe_curve.backend` are `"ladruno-fork"` or `"stock-openseespy"` (the live emitter's own rule, `criticalTimeStep`); `fe_curve.steps` and `fe_curve.increment` (mm) record the step actually used. Two payloads from the same inputs appeared to differ by 18 % between the fork and stock on CT 115 with nothing in the file saying why; at the capped 0.05 mm increment the builds differ by 0.79 % (912.5 vs 905.3 kN per side, Tri31), so the 18 % was coarse stepping interacting with the spurious cuts, not the backend. The field earned its place on its first live run: it reported `stock-openseespy` on a host everyone assumed was serving the fork.
 
 ### CHANGED — strut-and-tie pushover: `max_increment` (0.05 mm) caps the displacement step
 
