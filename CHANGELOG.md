@@ -27,6 +27,30 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — strut-and-tie pushover: extra bars, line search with bisection, IMPL-EX
+
+`strut_tie_pushover(..., extra_bars=[{"id", "points", "area"}, ...])` and
+`--bars file.json` place reinforcement the strut-and-tie model does not carry
+(stirrups, column bars) as the same conformal Steel02 bars. Every embedded
+line — ties, welds, plate chains, extra bars — now goes through one planar
+arrangement that shares coincident points and splits lines where they cross
+(`_arrange`); a crossing without a shared node, or an embedded line touching
+the outline, sends gmsh's 1-D intersection check into an endless loop, so
+bar ends must sit inside the region. `fallback_algorithms` entries may be
+`(name, *args)` tuples; the default is now KrylovNewton, then
+`NewtonLineSearch -type Bisection`, then ModifiedNewton. `implex=True` /
+`--implex` runs `LadrunoConcrete3D` with IMPL-EX.
+
+Cook and Mitchell double corbel at 40 mm, plates welded, two No. 10 hoops and
+two column-bar lines added (fixture `cook_mitchell_bars.json`): implicit
+integration peaks at 410 kN per side (0.87 x the 471 kN prediction) and stops
+at 0.65 mm in 7 min; IMPL-EX reaches a plateau of 683 kN with 0.1 mm steps
+(22 s) and 614 kN with 0.025 mm steps (1.30 x the prediction, 1.22 x the
+measured 502 kN). The measurement now sits inside a two-sided bracket —
+implicit under, by premature numerical failure at the bearing; IMPL-EX over,
+by the damage delay its extrapolation introduces — and the step-size study is
+what should decide the IMPL-EX value used.
+
 ### ADDED — strut-and-tie pushover: `weld_plates`, the plates welded to the bars
 
 `strut_tie_pushover(..., weld_plates=True, plate_thickness=25.0)` and
