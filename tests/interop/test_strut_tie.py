@@ -244,3 +244,44 @@ def test_welded_plates_add_plate_chains_and_welds() -> None:
             reinforced=False,
             weld_plates=True,
         )
+
+
+def test_extra_bars_are_arranged_and_placed() -> None:
+    """Hoops and column bars outside the strut-and-tie model, split where
+    they cross the tie, the welds and each other, so gmsh can embed them.
+
+    Cook and Mitchell corbel, 40 mm, welded plates + 2 hoops + 2 column
+    bar lines (2026-09-19): implicit integration peaks at 410 kN per side
+    (0.87 × the 471 kN prediction) and stops at 0.65 mm; IMPL-EX reaches a
+    plateau of 683 kN at 0.1 mm steps and 614 kN at 0.025 mm steps (1.30 ×,
+    1.22 × the measured 502 kN). The measurement sits inside that bracket:
+    implicit under (premature numerical failure), IMPL-EX over (delayed
+    damage by extrapolation)."""
+    from apeGmsh.interop.strut_tie import _arrange, _build
+
+    pts, segs = _arrange(
+        {
+            "a": [np.array([0.0, 0.0, 0.0]), np.array([10.0, 0.0, 0.0])],
+            "b": [np.array([5.0, -5.0, 0.0]), np.array([5.0, 5.0, 0.0])],
+            "c": [np.array([10.0, 0.0, 0.0]), np.array([10.0, 5.0, 0.0])],
+        },
+        tol=1e-6,
+    )
+    assert len(pts) == 6  # the crossing and the shared end are single points
+    assert {k: len(v) for k, v in segs.items()} == {"a": 2, "b": 2, "c": 1}
+
+    model = _load("cook_mitchell_corbel.stm.json")
+    bars = _load("cook_mitchell_bars.json")
+    fe = _build(
+        model,
+        case=None,
+        mesh_size=60.0,
+        extra_fixed_planes=(),
+        verbose=False,
+        reinforced=True,
+        weld_plates=True,
+        extra_bars=bars,
+    )
+    assert set(fe.bars) == {"hoop1", "hoop2", "col_left", "col_right"}
+    assert fe.bars["col_left"] == pytest.approx(600.0)
+    assert set(fe.welds) == {"plate_L1", "weld_L1", "plate_L2", "weld_L2"}

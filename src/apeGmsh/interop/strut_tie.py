@@ -59,6 +59,7 @@ How the STM model maps to the FE model (documented, not clever):
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 from dataclasses import dataclass, field
@@ -124,6 +125,7 @@ class _FEModel:
     Es: float
     ties: dict[str, float]
     welds: dict[str, float] = field(default_factory=dict)
+    bars: dict[str, float] = field(default_factory=dict)
     """Tie id → steel area (mm²) of the bars placed in the mesh; empty when not reinforced."""
 
 
@@ -168,6 +170,56 @@ def _dominant_dofs(directions: Sequence[Sequence[float]], ndf: int) -> set[int]:
     return dofs
 
 
+def _arrange(
+    polylines: dict[str, list[np.ndarray]], tol: float
+) -> tuple[list[np.ndarray], dict[str, list[tuple[int, int]]]]:
+    """Split a set of planar polylines at every mutual crossing or T-junction.
+
+    Embedded curves that cross without sharing a point send gmsh's 1-D
+    intersection check into an endless loop, so every bar, tie, weld and
+    plate chain is cut where it meets another. Returns the unique points
+    and, per polyline name, its segments as point-index pairs.
+    """
+    pts: list[np.ndarray] = []
+
+    def index(q: np.ndarray) -> int:
+        for i, r in enumerate(pts):
+            if float(np.linalg.norm(r[:2] - q[:2])) <= tol:
+                return i
+        pts.append(q.copy())
+        return len(pts) - 1
+
+    segs: list[tuple[str, np.ndarray, np.ndarray]] = []
+    for name, chain in polylines.items():
+        for a, b in itertools.pairwise(chain):
+            segs.append((name, np.asarray(a, dtype=float), np.asarray(b, dtype=float)))
+    cuts: list[list[float]] = [[] for _ in segs]
+    for i, (_, a, b) in enumerate(segs):
+        for j, (_, c, d) in enumerate(segs):
+            if j <= i:
+                continue
+            r, q = b[:2] - a[:2], d[:2] - c[:2]
+            den = r[0] * q[1] - r[1] * q[0]
+            if abs(den) < 1e-12:
+                continue  # parallel or collinear: overlaps are not split
+            w = c[:2] - a[:2]
+            t = (w[0] * q[1] - w[1] * q[0]) / den
+            u = (w[0] * r[1] - w[1] * r[0]) / den
+            eps = tol / max(float(np.linalg.norm(r)), 1e-12)
+            eps2 = tol / max(float(np.linalg.norm(q)), 1e-12)
+            if -eps <= t <= 1.0 + eps and -eps2 <= u <= 1.0 + eps2:
+                cuts[i].append(min(max(t, 0.0), 1.0))
+                cuts[j].append(min(max(u, 0.0), 1.0))
+    out: dict[str, list[tuple[int, int]]] = {name: [] for name in polylines}
+    for (name, a, b), ts in zip(segs, cuts, strict=True):
+        params = sorted({0.0, 1.0, *ts})
+        chain_idx = [index(a + (b - a) * t) for t in params]
+        for i0, i1 in itertools.pairwise(chain_idx):
+            if i0 != i1:
+                out[name].append((i0, i1))
+    return pts, out
+
+
 def _build(
     model: Mapping[str, Any],
     *,
@@ -178,6 +230,7 @@ def _build(
     reinforced: bool = False,
     weld_plates: bool = False,
     plate_thickness: float = WELD_PLATE_THICKNESS_25,
+    extra_bars: Sequence[Mapping[str, Any]] = (),
 ) -> _FEModel:
     """Mesh the region and resolve supports and loads onto mesh nodes.
 
@@ -188,6 +241,11 @@ def _build(
     stiff link joins the plate centre to the tie node, the normal load
     component is spread over the plate nodes as before, and the tangential
     component goes into the tie node — through the weld, not the concrete.
+
+    ``extra_bars`` are reinforcement the strut-and-tie model does not
+    carry (stirrups, column bars): ``{"id", "points": [[x, y, z], ...],
+    "area"}`` polylines placed as the same conformal Steel02 bars. Every
+    embedded line is split where it crosses another (:func:`_arrange`).
 
     With ``reinforced=True`` every tie of the model becomes one CAD line
     between its two nodes (nodes shared between ties), embedded in the
@@ -298,48 +356,57 @@ def _build(
             g.physical.add(3, [entity], name="Region")
         ties_modelled: dict[str, float] = {}
         welds_modelled: dict[str, float] = {}
-        if reinforced and model.get("ties"):
-            # One CAD point per STM node (shared by every tie ending there —
-            # a second point at the same place would give the mesher
-            # zero-volume elements), one line per tie, all embedded in the
-            # host so the mesh conforms to them. Each line is its own
-            # physical group, which is how the bridge finds its cells.
-            point_of: dict[str, int] = {}
-
-            def point(nid: str) -> int:
-                if nid not in point_of:
-                    x, y, z = (float(c) for c in nodes_stm[nid]["xyz"])
-                    point_of[nid] = geo.add_point(x, y, z, mesh_size=size)
-                return point_of[nid]
-
-            line_tags: list[int] = []
-            for t in model["ties"]:
+        bars_modelled: dict[str, float] = {}
+        if reinforced and (model.get("ties") or extra_bars):
+            # Every embedded line — ties, welds, plate chains, extra bars —
+            # goes through one planar arrangement so shared points are
+            # shared and crossings are split; a second CAD point at the
+            # same place, or two curves crossing without a node, breaks
+            # the mesher.
+            polylines: dict[str, list[np.ndarray]] = {}
+            for t in model.get("ties", []):
                 a, b = t["nodes"]
-                tag = geo.add_line(point(a), point(b))
-                g.model.sync()
-                g.physical.add(1, [tag], name=f"tie_{t['id']}")
-                line_tags.append(tag)
+                polylines[f"tie_{t['id']}"] = [
+                    _v(nodes_stm[a]["xyz"]),
+                    _v(nodes_stm[b]["xyz"]),
+                ]
                 ties_modelled[t["id"]] = float(t["n_bars"]) * float(t["bar"]["Ab"])
             for pid, nid, centre, a_hat, half in weld_plan:
                 p = plates[pid]
                 width = float(p.get("length_l2") or thickness)
-                pa, pb = centre - a_hat * half, centre + a_hat * half
-                ta = geo.add_point(float(pa[0]), float(pa[1]), z0, mesh_size=size)
-                tc = geo.add_point(
-                    float(centre[0]), float(centre[1]), z0, mesh_size=size
-                )
-                tb = geo.add_point(float(pb[0]), float(pb[1]), z0, mesh_size=size)
-                chain = [geo.add_line(ta, tc), geo.add_line(tc, tb)]
-                weld = geo.add_line(tc, point(nid))
-                g.model.sync()
-                g.physical.add(1, chain, name=f"plate_{pid}")
-                g.physical.add(1, [weld], name=f"weld_{pid}")
+                polylines[f"plate_{pid}"] = [
+                    centre - a_hat * half,
+                    centre,
+                    centre + a_hat * half,
+                ]
+                polylines[f"weld_{pid}"] = [centre, _v(nodes_stm[nid]["xyz"])]
                 welds_modelled[f"plate_{pid}"] = plate_thickness * width
                 bar_area = sum(
-                    ties_modelled[t["id"]] for t in model["ties"] if nid in t["nodes"]
+                    ties_modelled[t["id"]]
+                    for t in model.get("ties", [])
+                    if nid in t["nodes"]
                 )
                 welds_modelled[f"weld_{pid}"] = bar_area or plate_thickness * width
-                line_tags += [*chain, weld]
+            for bar in extra_bars:
+                polylines[f"bar_{bar['id']}"] = [_v(q) for q in bar["points"]]
+                bars_modelled[str(bar["id"])] = float(bar["area"])
+            points, segments = _arrange(polylines, tol=1e-6 * diag + 1e-9)
+            point_tags = [
+                geo.add_point(
+                    float(q[0]),
+                    float(q[1]),
+                    float(q[2]) if len(q) > 2 else z0,
+                    mesh_size=size,
+                )
+                for q in points
+            ]
+            line_tags: list[int] = []
+            for name, pairs in segments.items():
+                tags_of = [geo.add_line(point_tags[i], point_tags[j]) for i, j in pairs]
+                g.model.sync()
+                if tags_of:
+                    g.physical.add(1, tags_of, name=name)
+                line_tags += tags_of
             g.mesh.editing.embed(line_tags, entity, dim=1, in_dim=ndm)
         g.mesh.sizing.set_global_size(size)
         g.mesh.generation.generate(ndm)
@@ -450,6 +517,7 @@ def _build(
         Es=float(model["steel"]["Es"]),
         ties=ties_modelled,
         welds=welds_modelled,
+        bars=bars_modelled,
     )
 
 
@@ -464,6 +532,8 @@ def _elements(ops: Any, fe: _FEModel, mat: Any) -> None:
         ops.element.CorotTruss(pg=f"tie_{tie_id}", A=area, material=REBAR_MATERIAL_NAME)
     for pg, area in fe.welds.items():
         ops.element.CorotTruss(pg=pg, A=area, material=WELD_MATERIAL_NAME)
+    for bar_id, area in fe.bars.items():
+        ops.element.CorotTruss(pg=f"bar_{bar_id}", A=area, material=REBAR_MATERIAL_NAME)
 
 
 def _restraints_and_loads(ops: Any, fe: _FEModel) -> None:
@@ -662,8 +732,14 @@ def strut_tie_overlays(
 # ---------------------------------------------------------------------------
 
 
+AlgorithmSpec = str | tuple[str, ...]
+
+
 def _step(
-    live: Any, fallback_algorithms: Sequence[str], tolerance: float, factor: float
+    live: Any,
+    fallback_algorithms: Sequence[AlgorithmSpec],
+    tolerance: float,
+    factor: float,
 ) -> int:
     """One ``analyze(1)``: 0 when Newton converged, 1 when a fallback
     algorithm did, -1 when nothing did. Leaves Newton and the base
@@ -671,9 +747,9 @@ def _step(
     if int(live.analyze(1)) == 0:
         return 0
     rc = -1
-    for name in fallback_algorithms:
+    for spec in fallback_algorithms:
         live.test("NormDispIncr", tolerance * factor, 200)
-        live.algorithm(name)
+        live.algorithm(*((spec,) if isinstance(spec, str) else spec))
         if int(live.analyze(1)) == 0:
             rc = 1
             break
@@ -699,7 +775,13 @@ def strut_tie_pushover(
     weld_plates: bool = False,
     plate_thickness: float = WELD_PLATE_THICKNESS_25,
     tolerance: float = 1e-6,
-    fallback_algorithms: Sequence[str] = ("KrylovNewton", "ModifiedNewton"),
+    fallback_algorithms: Sequence[AlgorithmSpec] = (
+        "KrylovNewton",
+        ("NewtonLineSearch", "-type", "Bisection"),
+        "ModifiedNewton",
+    ),
+    implex: bool = False,
+    extra_bars: Sequence[Mapping[str, Any]] = (),
     fallback_tolerance_factor: float = 100.0,
     verbose: bool = False,
 ) -> StrutTieOverlays:
@@ -732,8 +814,18 @@ def strut_tie_pushover(
         component enters the tie node rather than the concrete. This is
         how the SP-208 Part 3 specimens were built; without it the bars
         end at the node and H pulls on the concrete under the plate.
+    implex
+        Run ``LadrunoConcrete3D`` with its IMPL-EX integration: the
+        tangent is then always positive definite and Newton does not
+        stall at cracking, at the price of a step-size-dependent
+        extrapolation error — keep the steps small.
+    extra_bars
+        Reinforcement outside the strut-and-tie model (stirrups, column
+        bars) as ``{"id", "points", "area"}`` polylines; see :func:`_build`.
     tolerance, fallback_algorithms, fallback_tolerance_factor
-        ``NormDispIncr`` tolerance (mm) of the Newton iteration. When a
+        ``NormDispIncr`` tolerance (mm). A fallback is a name or a
+        ``(name, *args)`` tuple, e.g. ``("NewtonLineSearch", "-type",
+        "Bisection")``. of the Newton iteration. When a
         step fails, each fallback algorithm is tried in turn at
         ``tolerance × fallback_tolerance_factor`` with 200 iterations
         before the increment is halved; the plastic-damage tangent is
@@ -755,6 +847,7 @@ def strut_tie_pushover(
         reinforced=reinforced,
         weld_plates=weld_plates,
         plate_thickness=plate_thickness,
+        extra_bars=extra_bars,
     )
     fc = fe.fc
     E = EC_COEFFICIENT_4700 * math.sqrt(fc)
@@ -774,9 +867,16 @@ def strut_tie_pushover(
     ops = apeSees(fe.fem)
     ops.model(ndm=fe.ndm, ndf=fe.ndm)
     mat = ops.nDMaterial.LadrunoConcrete3D(
-        E=E, nu=POISSON_RATIO, fc=fc, ft=ft_v, Gf=gf_v, Gc=gc_v, auto_regularize=True
+        E=E,
+        nu=POISSON_RATIO,
+        fc=fc,
+        ft=ft_v,
+        Gf=gf_v,
+        Gc=gc_v,
+        auto_regularize=True,
+        implex=implex,
     )
-    if fe.ties:
+    if fe.ties or fe.bars:
         ops.uniaxialMaterial.Steel02(
             fy=fe.fy, E=fe.Es, b=hardening_b, name=REBAR_MATERIAL_NAME
         )
@@ -840,7 +940,9 @@ def strut_tie_pushover(
             "source": (
                 f"apeGmsh + LadrunoConcrete3D ({element_name}, "
                 f"{'ties as Steel02 truss bars' if fe.ties else 'plain concrete'}"
-                f"{', plates welded to the bars' if fe.welds else ''})"
+                f"{', plates welded to the bars' if fe.welds else ''}"
+                f"{', ' + str(len(fe.bars)) + ' extra bars' if fe.bars else ''}"
+                f"{', IMPL-EX' if implex else ''})"
             ),
             "case": fe.case,
             "control": {
@@ -940,6 +1042,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--weld-plates", action="store_true", help="weld loaded plates to the bars"
     )
+    parser.add_argument(
+        "--implex", action="store_true", help="IMPL-EX concrete integration"
+    )
+    parser.add_argument(
+        "--bars", default=None, help="JSON list of extra bars {id, points, area}"
+    )
     args = parser.parse_args(argv)
     kwargs: dict[str, Any] = {}
     if args.pushover:
@@ -948,6 +1056,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "steps": args.steps,
             "reinforced": args.reinforced,
             "weld_plates": args.weld_plates,
+            "implex": args.implex,
+            "extra_bars": json.loads(Path(args.bars).read_text(encoding="utf-8"))
+            if args.bars
+            else (),
         }
     out = write_strut_tie_overlays(
         args.model,
