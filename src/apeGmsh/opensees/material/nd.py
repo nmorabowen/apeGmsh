@@ -820,7 +820,7 @@ class LadrunoSANISAND(NDMaterial):
         nDMaterial LadrunoSANISAND tag G0 nu e_init Mc c lambda_c e0 ksi \
             P_atm m h0 ch nb A0 nd z_max cz Rho \
             [IntScheme TanType JacoType TolF TolR] \
-            [-Presidual pr] [-pRe pre] [-Pmin pmin] [-honorTolR 0|1]             [-maxSubsteps n] [-implex] [-implexControl tol rlim]             [-implexFactor fixed|control|controlIter]
+            [-Presidual pr] [-pRe pre] [-Pmin pmin] [-honorTolR 0|1]             [-maxSubsteps n] [-implex] [-implexControl tol rlim]             [-implexFactor fixed|control|controlIter]             [-flipAlphaIn init|vanilla]
 
     The fork's thin C++ subclass of the ``ManzariDafalias`` material
     (Ghofrani & Arduino, U. Washington, after Dafalias & Manzari 2004).
@@ -1060,6 +1060,20 @@ class LadrunoSANISAND(NDMaterial):
         MEASURED-REFUTED on the fork's R3 registered arm; ``"controlIter"``
         is TIMs-campaign-only. Neither is a general recommendation —
         pick one only with a specific, sourced reason to.
+    flip_alpha_in
+        How ``alpha_in`` is set when ``updateMaterialStage`` flips the
+        material plastic (``-flipAlphaIn {init|vanilla}``, fork ADR 92
+        P2-7c). ``None`` (default) **omits** the token, so the deck
+        follows the engine's own default, which **became ``"init"`` in
+        fork PR #849** (it was ``"vanilla"`` before). Under ``"vanilla"``
+        ``alpha - alpha_in`` sits at round-off after the flip and the
+        first plastic step's loading/reversal branch follows the sign of
+        a round-off number, so the result depended on the MKL thread
+        count (1.511 vs 1.824 kPa on the TIMs strip); ``"init"`` is
+        thread-deterministic. Pass ``"vanilla"`` only to reproduce a
+        result produced before #849 (the fork then warns once per
+        material when it hits the round-off case); pass ``"init"`` to
+        pin today's behaviour on an older engine.
     """
 
     # 18 positionals — same names and order as ManzariDafalias
@@ -1102,7 +1116,18 @@ class LadrunoSANISAND(NDMaterial):
     implex_control: tuple[float, float] | None = None   # (err_tol, reduction_limit); None = off
     implex_factor: Literal["fixed", "control", "controlIter"] | None = None
 
+    # fork ADR 92 P2-7c / PR #849: None = engine default ("init" since #849)
+    flip_alpha_in: Literal["init", "vanilla"] | None = None
+
     def __post_init__(self) -> None:
+        if self.flip_alpha_in is not None and self.flip_alpha_in not in (
+            "init", "vanilla",
+        ):
+            raise ValueError(
+                f"LadrunoSANISAND: flip_alpha_in must be 'init', 'vanilla' "
+                f"or None, got {self.flip_alpha_in!r}. None omits the flag "
+                f"and follows the engine default ('init' since fork #849)."
+            )
         _validate_sanisand_bounds(
             "LadrunoSANISAND",
             G0=self.G0,
@@ -1315,6 +1340,11 @@ class LadrunoSANISAND(NDMaterial):
             args += ["-implexControl", *self.implex_control]
         if self.implex_factor is not None:
             args += ["-implexFactor", self.implex_factor]
+        # -flipAlphaIn is an option word, not an -implex* companion; like
+        # -maxSubsteps it only emits when asked, so an unset deck follows
+        # whichever engine runs it (default "init" since fork #849).
+        if self.flip_alpha_in is not None:
+            args += ["-flipAlphaIn", self.flip_alpha_in]
         emitter.nDMaterial("LadrunoSANISAND", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
