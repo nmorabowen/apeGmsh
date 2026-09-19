@@ -3583,6 +3583,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-pushover-weld_plates-the-plates-welded-to-the-bars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie pushover: weld_plates, the plates welded to the bars
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3678,6 +3689,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-pushover-weld_plates-the-plates-welded-to-the-bars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie pushover: weld_plates, the plates welded to the bars
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3760,6 +3782,21 @@ today's behaviour on an older engine. Emitted last, after the IMPL-EX seam.
 ADR 0103 gains a 2026-09-18 amendment: re-run <code>tan_type != 0</code> results
 produced under a displacement-increment test, and cap substeps
 (<code>max_substeps=20000</code>) whenever <code>tan_type != 0</code>.</p>
+<h3 id="added-strut-and-tie-pushover-weld_plates-the-plates-welded-to-the-bars">ADDED — strut-and-tie pushover: <code>weld_plates</code>, the plates welded to the bars<a class="headerlink" href="#added-strut-and-tie-pushover-weld_plates-the-plates-welded-to-the-bars" title="Permanent link">&para;</a></h3>
+<p><code>strut_tie_pushover(..., weld_plates=True, plate_thickness=25.0)</code> and
+<code>--weld-plates</code> on the CLI model each loaded bearing plate the way test
+specimens are built: a chain of stiff elastic bars of area <code>plate_thickness
+x width</code> a quarter mesh size inside the concrete along the contact line, a
+stiff link of the bars' own area from its centre to the tie node, the normal
+load component spread over the chain and the tangential component put into
+the tie node — through the weld, not the concrete. (gmsh never converges its
+1-D intersection check on an embedded curve that touches the outline, hence
+the inset.) On the Cook and Mitchell double corbel at 40 mm the peak moves
+from 369 kN per side (0.78 x the strut-and-tie prediction, then softening)
+to 412 kN at the 3 mm target (0.87 x, still rising, 57 fallback steps): the
+load introduction was most of the gap, the rest is the two No. 10 ties and
+the column bars the FE does not carry. <code>fe_curve.source</code> says when plates
+are welded.</p>
 <h3 id="added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line">ADDED — <code>python -m apeGmsh.interop.strut_tie</code>, the overlay writer's command line<a class="headerlink" href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" title="Permanent link">&para;</a></h3>
 <p><code>main(argv)</code> wraps <code>write_strut_tie_overlays</code>: <code>model.stm.json out.json
 [--case NAME] [--mesh-size MM] [--fix-plane AXIS=VALUE:DOFS ...] [--pushover
