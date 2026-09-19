@@ -3583,6 +3583,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh.interop.strut_tie, the overlay writer's command line
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-strut-and-tie-pushover-solver-fallbacks-and-the-cookmitchell-corbel-as-the-physics-oracle-apeconcrete-adr-0014-9" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3667,6 +3678,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh.interop.strut_tie, the overlay writer's command line
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-strut-and-tie-pushover-solver-fallbacks-and-the-cookmitchell-corbel-as-the-physics-oracle-apeconcrete-adr-0014-9" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3738,6 +3760,13 @@ today's behaviour on an older engine. Emitted last, after the IMPL-EX seam.
 ADR 0103 gains a 2026-09-18 amendment: re-run <code>tan_type != 0</code> results
 produced under a displacement-increment test, and cap substeps
 (<code>max_substeps=20000</code>) whenever <code>tan_type != 0</code>.</p>
+<h3 id="added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line">ADDED — <code>python -m apeGmsh.interop.strut_tie</code>, the overlay writer's command line<a class="headerlink" href="#added-python-m-apegmshinteropstrut_tie-the-overlay-writers-command-line" title="Permanent link">&para;</a></h3>
+<p><code>main(argv)</code> wraps <code>write_strut_tie_overlays</code>: <code>model.stm.json out.json
+[--case NAME] [--mesh-size MM] [--fix-plane AXIS=VALUE:DOFS ...] [--pushover
+[--target-displacement MM] [--steps N] [--no-reinforced]]</code>. Hosts that run
+apeConcrete in another interpreter (the stdlib <code>stm_server</code> and the office
+web app, through <code>apeConcrete.plotting.fe_jobs.FeJobRunner</code>) launch this in
+the OpenSees venv instead of importing apeGmsh.</p>
 <h3 id="added-strut-and-tie-pushover-solver-fallbacks-and-the-cookmitchell-corbel-as-the-physics-oracle-apeconcrete-adr-0014-9">ADDED — strut-and-tie pushover: solver fallbacks, and the Cook–Mitchell corbel as the physics oracle (apeConcrete ADR-0014 §9)<a class="headerlink" href="#added-strut-and-tie-pushover-solver-fallbacks-and-the-cookmitchell-corbel-as-the-physics-oracle-apeconcrete-adr-0014-9" title="Permanent link">&para;</a></h3>
 <p><code>strut_tie_pushover</code> gains <code>tolerance</code> (NormDispIncr, default 1e-6),
 <code>fallback_algorithms</code> (default <code>("KrylovNewton", "ModifiedNewton")</code>) and
