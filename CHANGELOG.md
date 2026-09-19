@@ -27,6 +27,10 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### ADDED — strut-and-tie pushover: `element` (Tri31 | LadrunoCST) and `reached_fraction`
+
+`strut_tie_pushover(element=)` / `--element` picks the plane continuum element on the same 3-node mesh; `fe_curve.element` and `fe_curve.reached_fraction` (reached / target) are recorded, so a run that stopped at 15 % of its push reads as a fragment rather than as a capacity. Context: the web-tools session found that every plane element in the fork treats a material's informational negative return codes as step failures (only LadrunoBrick has the SENTINEL guard; fork ADR 115 proposed), so the fallback steps and the early `post_peak` stops on the corbel — 40 CPU-minutes for 8 % of a push with LadrunoConcrete3D — are largely spurious cutting, on any material. Until that lands, `stopped: post_peak` at a small `reached_fraction` is not a capacity and `max_increment` must not be tuned against these curves. The default stays `Tri31` (it runs on stock openseespy); moving it to `LadrunoCST` is the deliberate second half of that fix and will be its own changelog line.
+
 ### ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
 
 `fe_summary.backend` and `fe_curve.backend` are `"ladruno-fork"` or `"stock-openseespy"` (the live emitter's own rule, `criticalTimeStep`); `fe_curve.steps` and `fe_curve.increment` (mm) record the step actually used. Two payloads from the same inputs differed by 18 % between the fork and stock on CT 115 with nothing in the file saying why; now the file says.
