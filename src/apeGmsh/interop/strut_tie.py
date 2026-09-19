@@ -1100,6 +1100,8 @@ def write_strut_tie_overlays(
         )
         overlays["fe_curve"] = curve.overlays["fe_curve"]
         overlays["fe_summary_nonlinear"] = curve.overlays["fe_summary"]
+        if curve.overlays.get("fe_stress_paths"):
+            overlays["fe_stress_paths"] = curve.overlays["fe_stress_paths"]
     target = Path(out_json)
     target.write_text(json.dumps(overlays, allow_nan=False), encoding="utf-8")
     return target

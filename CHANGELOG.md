@@ -27,6 +27,8 @@ ADR 0103 gains a 2026-09-18 amendment: re-run `tan_type != 0` results
 produced under a displacement-increment test, and cap substeps
 (`max_substeps=20000`) whenever `tan_type != 0`.
 
+### FIXED — `write_strut_tie_overlays` now carries `fe_stress_paths` from a pushover into the file (it dropped them; only the CLI/web lane noticed)
+
 ### ADDED — strut-and-tie pushover: `material="asd"` and Gauss-point stress paths
 
 `strut_tie_pushover(..., material="ladruno"|"asd")` / `--material` runs the
