@@ -15,7 +15,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh.interop.strut_tie import strut_tie_overlays, write_strut_tie_overlays
+from apeGmsh.interop.strut_tie import (
+    strut_tie_overlays,
+    strut_tie_pushover,
+    write_strut_tie_overlays,
+)
 
 pytestmark = pytest.mark.live
 
@@ -120,3 +124,54 @@ def test_pile_cap_pushover_writes_both_overlays(tmp_path: Path) -> None:
     assert data["fe_curve"]["capacity"] > 0.0
     assert len(data["fe_summary_nonlinear"]["ties_modelled"]) == 4
     assert data["fe_summary_nonlinear"]["Gc"] > data["fe_summary_nonlinear"]["Gf"]
+
+
+# ---------------------------------------------------------------------------
+# The physics oracle of apeConcrete ADR-0014 §9: a published corbel with
+# a measured failure load
+# ---------------------------------------------------------------------------
+COOK_MITCHELL_STM_PREDICTION_N = 471.0e3  # per side, tie yield (SP-208 Part 3 §2)
+COOK_MITCHELL_MEASURED_N = 502.0e3  # per side
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.slow
+def test_cook_mitchell_double_corbel_pushover_against_the_paper() -> None:
+    """ACI SP-208 Part 3 §2, Cook and Mitchell (1988) double corbel:
+    strut-and-tie prediction 471 kN per side (tie yield, 4 No. 15 at
+    444 MPa), measured 502 kN. The fixture is the apeConcrete anchor's
+    ``model_to_dict`` output (``tests/golden/test_sp208_cook_mitchell_
+    corbel_anchor.py`` there); the load case is V = 471 kN per side with
+    H = 0.2·V outward, so ``capacity_factor`` reads directly as
+    FE peak / strut-and-tie prediction.
+
+    State of the bracket on 2026-09-18 (40 mm Tri31 mesh, 718 elements,
+    KrylovNewton/ModifiedNewton fallbacks): the FE peaks at ≈369 kN per
+    side, 0.78 of the prediction, then softens; with H removed it peaks
+    at ≈440 kN (0.93). The lower-bound ordering FE ≥ STM is therefore
+    **not met yet**, and the diagnosis is the load introduction, not the
+    concrete: in the specimen the plates were welded to the bars, so V
+    and H went straight into the tie, while here the bars end at the
+    load node and H pulls on the concrete under a 50 × 300 plate. Column
+    bars and the two No. 10 ties are absent too. This test pins the
+    current state with a wide bracket so a change in either direction —
+    a welded-plate option lifting the peak, or a regression lowering
+    it — is noticed and re-documented.
+    """
+    model = _load("cook_mitchell_corbel.stm.json")
+    result = strut_tie_pushover(
+        model, mesh_size=40.0, target_displacement=3.0, steps=30, max_halvings=5
+    )
+    curve = result.overlays["fe_curve"]
+    per_side = curve["capacity"] / 2.0
+    assert curve["stopped"] == "post_peak"  # a real peak, not a solver failure
+    assert curve["fallback_steps"] >= 0
+    assert curve["tolerance"] == 1e-6
+    assert (
+        0.7 * COOK_MITCHELL_STM_PREDICTION_N < per_side < 1.1 * COOK_MITCHELL_MEASURED_N
+    )
+    assert math.isclose(
+        curve["capacity_factor"], per_side / COOK_MITCHELL_STM_PREDICTION_N
+    )
+    assert result.overlays["fe_summary"]["ties_modelled"]["T"] > 0.0
+    assert result.n_elements > 500

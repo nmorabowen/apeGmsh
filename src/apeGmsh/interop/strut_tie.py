@@ -582,6 +582,28 @@ def strut_tie_overlays(
 # ---------------------------------------------------------------------------
 # Nonlinear — load–deformation curve
 # ---------------------------------------------------------------------------
+
+
+def _step(
+    live: Any, fallback_algorithms: Sequence[str], tolerance: float, factor: float
+) -> int:
+    """One ``analyze(1)``: 0 when Newton converged, 1 when a fallback
+    algorithm did, -1 when nothing did. Leaves Newton and the base
+    tolerance in place afterwards."""
+    if int(live.analyze(1)) == 0:
+        return 0
+    rc = -1
+    for name in fallback_algorithms:
+        live.test("NormDispIncr", tolerance * factor, 200)
+        live.algorithm(name)
+        if int(live.analyze(1)) == 0:
+            rc = 1
+            break
+    live.test("NormDispIncr", tolerance, 60)
+    live.algorithm("Newton")
+    return rc
+
+
 def strut_tie_pushover(
     model: Mapping[str, Any],
     *,
@@ -596,6 +618,9 @@ def strut_tie_pushover(
     max_halvings: int = 6,
     reinforced: bool = True,
     hardening_b: float = 0.01,
+    tolerance: float = 1e-6,
+    fallback_algorithms: Sequence[str] = ("KrylovNewton", "ModifiedNewton"),
+    fallback_tolerance_factor: float = 100.0,
     verbose: bool = False,
 ) -> StrutTieOverlays:
     """Push the D-region under displacement control with the fork's
@@ -619,6 +644,13 @@ def strut_tie_pushover(
         (``fy``, ``Es`` from the model's steel, kinematic hardening ratio
         ``hardening_b``); ``reinforced=False`` gives the plain concrete's
         curve.
+    tolerance, fallback_algorithms, fallback_tolerance_factor
+        ``NormDispIncr`` tolerance (mm) of the Newton iteration. When a
+        step fails, each fallback algorithm is tried in turn at
+        ``tolerance × fallback_tolerance_factor`` with 200 iterations
+        before the increment is halved; the plastic-damage tangent is
+        non-symmetric and Newton alone stalls at cracking. The curve
+        records how many steps needed a fallback.
 
     Notes
     -----
@@ -663,7 +695,7 @@ def strut_tie_pushover(
     ops.constraints.Plain()
     ops.numberer.RCM()
     ops.system.UmfPack()
-    ops.test.NormDispIncr(tol=1e-6, max_iter=60)
+    ops.test.NormDispIncr(tol=tolerance, max_iter=60)
     ops.algorithm.Newton()
     du = sign * target / steps
     ops.integrator.DisplacementControl(node=control_node, dof=dof, dU=du)
@@ -677,15 +709,20 @@ def strut_tie_pushover(
     stopped = "target"
     reached = 0.0
     current = du
+    fallback_steps = 0
     while abs(reached) < target - 1e-12:
-        rc = live.analyze(1)
+        rc = _step(live, fallback_algorithms, tolerance, fallback_tolerance_factor)
+        if rc > 0:
+            fallback_steps += 1
         halvings = 0
-        while rc != 0 and halvings < max_halvings:
+        while rc < 0 and halvings < max_halvings:
             halvings += 1
             current *= 0.5
             live.integrator("DisplacementControl", control_node, dof, current)
-            rc = live.analyze(1)
-        if rc != 0:
+            rc = _step(live, fallback_algorithms, tolerance, fallback_tolerance_factor)
+            if rc > 0:
+                fallback_steps += 1
+        if rc < 0:
             stopped = "divergence"
             break
         reached = float(live.nodeDisp(control_node, dof))
@@ -721,6 +758,8 @@ def strut_tie_pushover(
             },
             "stopped": stopped,
             "load_factors": lambdas,
+            "fallback_steps": fallback_steps,
+            "tolerance": tolerance,
         },
         "fe_summary": _summary(
             fe, live, reactions, E=E, nu=POISSON_RATIO, fc=fc, ft=ft_v, Gf=gf_v, Gc=gc_v
