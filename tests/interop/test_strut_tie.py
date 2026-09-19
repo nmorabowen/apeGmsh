@@ -124,6 +124,7 @@ def test_pile_cap_pushover_writes_both_overlays(tmp_path: Path) -> None:
     data = json.loads(out.read_text(encoding="utf-8"))
     assert "fe_trajectories" in data
     assert data["fe_curve"]["capacity"] > 0.0
+    assert "fe_stress_paths" in data  # the bearing paths travel with the file
     assert len(data["fe_summary_nonlinear"]["ties_modelled"]) == 4
     assert data["fe_summary_nonlinear"]["Gc"] > data["fe_summary_nonlinear"]["Gf"]
 
