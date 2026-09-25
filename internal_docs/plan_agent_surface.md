@@ -59,6 +59,14 @@ the count. The rows this plan acts on were re-checked by hand.
 
    Each is under 100 lines, and each item points at a file and heading.
    Every cited file, test, commit and PR was checked.
+   **Coordination with #1170** (a parallel, viewers-only surface):
+   `apegmsh-viewer-results` stays the single `AGENTS.md` entry for
+   `results/` and `viewers/`, and routes viewer internals to #1170's
+   `apegmsh-viewers-change` and `apegmsh-viewers-visual-check`. Its own
+   Qt/VTK items were dropped so the two guides cannot disagree. One of
+   them was wrong: #1170's probe shows `add_key_event` fires only while
+   the viewport has focus, rather than VTK swallowing the key
+   (`internal_docs/viewer_lessons.md` in #1170).
    *Accept:* `sync_skill.py --check` and `test_skill_docs_drift.py` still
    pass (the new directories sit beside the mirror, not in it).
 3. **`scripts/check_quirks.py`**, stdlib only, about 2 s:
@@ -145,3 +153,8 @@ the count. The rows this plan acts on were re-checked by hand.
   `viewers/session/_host.py`. `test_dock_invariant.py` does not scan that
   file, and whether the call touches a navigation dock has not been read.
 - Scoped rules for the fail-loud and h5py `.get()` lessons (see *Rejected*).
+- **Hand-off from #1170:** `results/capture/spec.py` `_stable_section_tag`
+  promises a "Deterministic" tag but uses the builtin `hash()` of a
+  string, which is salted per process. #1170's G-HASH guard covers only
+  `viewers/`. Merge order: #1170 first, since this PR's viewer-results
+  guide points at its two guides.

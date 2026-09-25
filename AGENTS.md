@@ -112,7 +112,7 @@ that points at the lesson; it never copies it.
 | Doing this | Read first |
 |---|---|
 | Adding or changing an OpenSees primitive, a fork (Ladruno) feature, the emit path, a FEMData stream or the H5 schema | [`.claude/skills/apegmsh-bridge-feature/SKILL.md`](.claude/skills/apegmsh-bridge-feature/SKILL.md) |
-| Changing `viewers/` or `results/`: Qt/VTK windows and docks, readers, derived results | [`.claude/skills/apegmsh-viewer-results/SKILL.md`](.claude/skills/apegmsh-viewer-results/SKILL.md) |
+| Changing `results/` or `viewers/`: readers, derived results, the results↔viewer boundary. It routes viewer internals to `apegmsh-viewers-change` and visual proof to `apegmsh-viewers-visual-check` (#1170) | [`.claude/skills/apegmsh-viewer-results/SKILL.md`](.claude/skills/apegmsh-viewer-results/SKILL.md) |
 | Writing an ADR, a plan, a CHANGELOG section, a docs page, an example or the skill | [`.claude/skills/apegmsh-adr-docs/SKILL.md`](.claude/skills/apegmsh-adr-docs/SKILL.md) |
 
 A lesson that bites again and names a pattern a machine can see becomes
