@@ -875,6 +875,28 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
+
+`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
+the one line `@AGENTS.md`, and its old behavioural guidelines moved in
+verbatim. It adds the map this repo never had: each CI lane's local
+command and trap, and the merge lessons that until now lived only in the
+maintainer's agent memory (`--base main`, no required checks, push-after-
+merge orphans, shared-literal merges, the editable install that points at
+main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
+`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
+at the lesson instead of copying it.
+
+`scripts/check_quirks.py` turns three lessons that bit again after being
+written down into rules, run as the last step of `static-gates`:
+`adr-number` (two ADRs with one number, or one missing from the index —
+#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
+a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
+omitting a FEMData stream — #707, #912/#913). Each was proven against the
+commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
+at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
+Plan and evidence: `internal_docs/plan_agent_surface.md`.
+
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
 `examples/footfall_two_bay_shell.py` builds two 6 m by 6 m bays of 200 mm

@@ -165,6 +165,14 @@ jobs:
             echo "::notice::mypy errors dropped to ${count} — lower MYPY_BASELINE in tests.yml to lock in the gain"
           fi
 
+      # Quirk lint (AGENTS.md): lessons that bit again after being written
+      # down, held as rules — ADR number collisions, schema versions
+      # hard-coded in tests, a compose/H5 rebuild that drops a FEMData
+      # stream. Stdlib-only and a couple of seconds. Last in the job so a
+      # red lint never hides ruff or mypy.
+      - name: Quirk lint (scripts/check_quirks.py)
+        run: python scripts/check_quirks.py
+
   # Real-window Qt lifecycle tests (ADR 0084 D7, fork F-B). These 15
   # tests across 9 files build actual ResultsViewer/QtInteractor
   # windows; they were deselected by addopts (`-m "not qt"`) and
