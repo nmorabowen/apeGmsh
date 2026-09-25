@@ -875,6 +875,19 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
+
+`results/capture/spec.py`'s fallback tag for a layered-shell section or
+material name promised to be deterministic, but it took the builtin
+`hash()` of the name, which Python salts per process: `"LayeredShell_A"`
+was `1509370562` under `PYTHONHASHSEED=1` and `1288700299` under `=2`. It
+is now `zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1`, pinned by
+`tests/results/test_stable_section_tag.py` (two subprocesses with
+different seeds, and a fixed value). No file changes: the fallback only
+runs when the OpenSees back-reference carries the legacy `_sections` /
+`_elem_assignments` attributes, which the `apeSees` bridge does not, and
+the layer writer never writes these tags to disk.
+
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
 `examples/footfall_two_bay_shell.py` builds two 6 m by 6 m bays of 200 mm
