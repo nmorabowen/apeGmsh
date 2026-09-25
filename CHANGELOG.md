@@ -875,6 +875,17 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a load pattern keeps its arrow colour between sessions
+
+`viewers/ui/loads_tab.py::pattern_color` picked the colour of a load
+pattern's arrows (and its Loads-tab label) with `abs(hash(name))`.
+`hash()` of a string is randomized per process (`PYTHONHASHSEED`), so the
+same pattern changed colour from one session to the next. It now uses
+`zlib.crc32`, as the Physical Group and Module colour modes do since #374
+and 184b5734. Guarded by `tests/viewers/test_pattern_color_stable.py`
+(two interpreters under different hash seeds) and, once #1170 lands, by
+G-HASH in `tests/viewers/test_viewer_recurrence_guards.py`.
+
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
 `examples/footfall_two_bay_shell.py` builds two 6 m by 6 m bays of 200 mm

@@ -12,6 +12,7 @@ This panel never modifies state — it reads from
 """
 from __future__ import annotations
 
+import zlib
 from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,8 +55,14 @@ _PATTERN_PALETTE = [
 
 
 def pattern_color(name: str) -> str:
-    """Stable color from a pattern name via hash."""
-    return _PATTERN_PALETTE[abs(hash(name)) % len(_PATTERN_PALETTE)]
+    """Stable color from a pattern name via zlib.crc32."""
+    # zlib.crc32 instead of Python's hash() — hash() is randomized
+    # across processes (PYTHONHASHSEED), so the same pattern would get
+    # a different arrow color in each session. crc32 is stable.
+    # Same fix as the color modes in #374 / 184b5734.
+    return _PATTERN_PALETTE[
+        zlib.crc32(name.encode("utf-8")) % len(_PATTERN_PALETTE)
+    ]
 
 
 class LoadsTabPanel:
