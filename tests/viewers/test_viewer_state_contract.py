@@ -8,7 +8,7 @@ fires dispatcher events; the reconciler (the dispatcher's pumps + the
 RenderBackend implementations) is the only artifact writer and the
 dispatcher the only caller of ``render()``.
 
-Three guards, in the established AST-guard pattern
+Four guards, in the established AST-guard pattern
 (``test_diagrams_pure_no_pyvista.py`` / ``test_scene_ir_pure.py`` /
 ``test_viewers_pure_h5_consumer.py``):
 
@@ -18,6 +18,9 @@ Three guards, in the established AST-guard pattern
 * **G-IMPORT**   — no ``pyvista`` / ``vtk*`` / ``pyvistaqt`` imports
   and no imports of ``apeGmsh.viewers.backends`` (absolute or
   relative).
+* **G-ACTORS**   — nothing outside a diagram reads its ``_actors``.
+  Unlike the three above it scans ALL of ``viewers/**`` with a hard
+  zero and no allowlist; see its section at the bottom of this file.
 
 Scope grows in lockstep with adoption (ADR 0056 Part 5): V2 guarded
 ``ui/**``; V3 added ``mesh_viewer.py`` + ``overlays/**`` when the
@@ -340,3 +343,170 @@ def test_g_artifact_no_actor_flag_calls() -> None:
 
 def test_g_import_no_backend_imports() -> None:
     _check("G-IMPORT", _IMPORT_ALLOW, _backend_imports)
+
+
+# ── G-ACTORS — a diagram's ``_actors`` is dead outside the diagram ──
+#
+# Context item 1 of ADR 0056 is this bug. Since the ADR 0042 R-B
+# migration every diagram draws through backend layer handles and never
+# fills ``Diagram._actors``; the field survives in ``diagrams/_base.py``
+# only for the legacy teardown path. So code that walks ``d._actors``
+# from OUTSIDE the diagram does nothing, and says nothing:
+#
+# * PR #593 (674cdceb, 2026-06-10) — ``pump_gate`` flipped
+#   ``d._actors``: the composition gate was a no-op for all 11 kinds.
+# * PR #620 (a345918d, 2026-06-11) — ``_sync_layer_grids``, in the SAME
+#   file, still walked ``d._actors``: contour / fiber / layer / spring
+#   layers stayed at the reference configuration under deformation.
+#
+# #593 fixed its instance and wrote the lesson down; the second
+# instance sat ~130 lines away and shipped anyway. This guard greps the
+# pattern instead of trusting a reader to. Scope is ALL of
+# ``viewers/**`` with a hard zero and no allowlist: the pump code has
+# already moved once (``_pump_set.py``, ADR 0084 D7) and will move
+# again. Receivers ``self`` / ``cls`` are an owner reading its own
+# field — ``Diagram`` itself, and ``ResultsPickEngine``, whose
+# unrelated ``_actors`` registry is its own. Anything else is a
+# foreign read: route through the diagram's reconciler-callee methods
+# (``set_visible`` / ``apply_effective_visibility`` /
+# ``sync_substrate_points``) instead.
+#
+# Mutation acceptance on the real commits (recorded in
+# internal_docs/plan_agent_surface_viewers.md): 674cdceb^ -> 2 hits,
+# 674cdceb -> 1 (the #620 site, a day before #620), a345918d^ -> 1,
+# a345918d -> 0.
+
+_ACTORS_ATTR = "_actors"
+_OWNER_NAMES = frozenset({"self", "cls"})
+_ATTR_BUILTINS = frozenset({"getattr", "hasattr", "setattr"})
+
+
+def _is_owner(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and node.id in _OWNER_NAMES
+
+
+def _foreign_actor_reads(tree: ast.AST) -> list[tuple[int, str]]:
+    """``<x>._actors`` and ``getattr(<x>, "_actors", ...)`` (also
+    ``hasattr`` / ``setattr``) where ``x`` is not ``self`` / ``cls``.
+
+    AST-based, so a docstring or comment that NAMES the pattern (the
+    ``results_viewer.py`` post-mortem note does) is not a hit.
+    """
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == _ACTORS_ATTR:
+            if not _is_owner(node.value):
+                hits.append((node.lineno, f"{ast.unparse(node.value)}._actors"))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _ATTR_BUILTINS
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == _ACTORS_ATTR
+            and not _is_owner(node.args[0])
+        ):
+            hits.append(
+                (node.lineno, f"{node.func.id}({ast.unparse(node.args[0])}, '_actors')")
+            )
+    return hits
+
+
+def foreign_actor_reads_under(viewers_dir: Path) -> list[str]:
+    """Every G-ACTORS hit under ``viewers_dir`` as ``rel:line: expr``.
+
+    Takes the root as an argument so the same collector can be run
+    against a ``git archive`` of a historical tree (mutation acceptance).
+    """
+    found: list[str] = []
+    for path in sorted(viewers_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = path.relative_to(viewers_dir).as_posix()
+        found.extend(f"{rel}:{ln}: {what}" for ln, what in _foreign_actor_reads(tree))
+    return found
+
+
+def test_g_actors_scope_covers_the_pump_homes() -> None:
+    # If the scan ever stops seeing the files the two incidents lived in
+    # (and the module the pumps moved to), it would pass vacuously.
+    scanned = {p.relative_to(VIEWERS_DIR).as_posix() for p in VIEWERS_DIR.rglob("*.py")}
+    assert {"results_viewer.py", "_pump_set.py", "diagrams/_base.py"} <= scanned
+
+
+def test_g_actors_no_foreign_diagram_actor_reads() -> None:
+    hits = foreign_actor_reads_under(VIEWERS_DIR)
+    assert not hits, (
+        "G-ACTORS (ADR 0056 context item 1; PRs #593 / #620) — "
+        "Diagram._actors is never populated since the ADR 0042 R-B "
+        "migration, so walking it from outside a diagram is a silent "
+        "no-op. Call the diagram's own set_visible / "
+        "apply_effective_visibility / sync_substrate_points instead. If "
+        "the object is not a Diagram, rename its private field rather "
+        "than reaching into it:\n  " + "\n  ".join(hits)
+    )
+
+
+# Self-test: the collector must see the incident shapes and nothing else.
+_G_ACTORS_FLAGGED = {
+    # The #593 pump_gate shape.
+    "pr593_gate": (
+        "def pump_gate(registry, gate):\n"
+        "    for d in registry.diagrams():\n"
+        "        for actor in d._actors:  # noqa: SLF001\n"
+        "            actor.SetVisibility(gate(d))\n"
+    ),
+    # The #620 _sync_layer_grids shape (a comprehension this time).
+    "pr620_sync": (
+        "def _sync_layer_grids(registry, pts):\n"
+        "    grids = [a.GetMapper().GetInput() for d in registry.diagrams()"
+        " for a in d._actors]\n"
+    ),
+    "through_an_owner_attribute": "def f(self):\n    return self._diagram._actors\n",
+    "getattr_laundering": "def f(d):\n    return getattr(d, '_actors', [])\n",
+    "hasattr_probe": "def f(d):\n    return hasattr(d, '_actors')\n",
+}
+_G_ACTORS_CLEAN = {
+    # The base class owns the field (legacy teardown path).
+    "owner_self": (
+        "class Diagram:\n"
+        "    def detach(self):\n"
+        "        for actor in self._actors:\n"
+        "            actor.remove()\n"
+        "        self._actors = []\n"
+    ),
+    "owner_cls": "class D:\n    @classmethod\n    def f(cls):\n        return cls._actors\n",
+    # The sanctioned route: the diagram's reconciler-callee methods.
+    "fix_shape": (
+        "def pump_gate(registry, gate, pts):\n"
+        "    for d in registry.diagrams():\n"
+        "        d.apply_effective_visibility(gate(d))\n"
+        "        d.sync_substrate_points(pts)\n"
+    ),
+    # Naming the pattern in prose is not using it.
+    "docstring_and_comment": (
+        'def f():\n    """The old walk over ``d._actors`` was dead code."""\n'
+        "    # d._actors is never populated\n    return None\n"
+    ),
+    # Different attributes that merely end in "actors".
+    "similar_names": (
+        "def f(self, r):\n"
+        "    return r.dim_actors, self._explode_actors, r.dim_wire_actors\n"
+    ),
+}
+
+
+def test_g_actors_collector_flags_the_incident_shapes() -> None:
+    missed = [
+        name for name, src in _G_ACTORS_FLAGGED.items()
+        if not _foreign_actor_reads(ast.parse(src))
+    ]
+    assert not missed, f"G-ACTORS collector went blind to: {missed}"
+
+
+def test_g_actors_collector_passes_the_sanctioned_shapes() -> None:
+    noisy = {
+        name: _foreign_actor_reads(ast.parse(src))
+        for name, src in _G_ACTORS_CLEAN.items()
+    }
+    noisy = {k: v for k, v in noisy.items() if v}
+    assert not noisy, f"G-ACTORS collector flagged sanctioned code: {noisy}"
