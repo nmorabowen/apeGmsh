@@ -84,3 +84,24 @@ def test_every_rendering_diagram_overrides_sync_substrate_points() -> None:
         "or recompute owned geometry — and add a shift/reset case to "
         "tests/viewers/test_diagram_deform_follow.py."
     )
+
+
+def test_every_rendering_diagram_overrides_set_visible() -> None:
+    # The base ``Diagram.set_visible`` walks ``self._actors``, which no
+    # diagram has populated since the ADR 0042 R-B migration — the dead
+    # list behind #593 (composition gate a silent no-op) and #620. A kind
+    # that inherits it has a show/hide toggle, and a gate
+    # (``apply_effective_visibility`` routes through it), that do
+    # nothing. G-ACTORS in test_viewer_state_contract.py exempts
+    # ``self._actors`` (the base owns the field), so this completeness
+    # check is what closes that hole. All kinds override it today.
+    missing = [
+        cls.__name__ for cls in _all_diagram_classes()
+        if cls.set_visible is Diagram.set_visible
+    ]
+    assert not missing, (
+        f"{missing} inherit(s) the base set_visible, which walks the dead "
+        "_actors list — show/hide and the composition gate would be silent "
+        "no-ops (the #593 bug class). Override set_visible to toggle the "
+        "diagram's backend layer handles."
+    )

@@ -114,15 +114,22 @@ def removed_vtk_api(tree: ast.AST) -> Hits:
 
 # ── G-QAPP-ENV ───────────────────────────────────────────────────────
 _ENV_GUARD = "prepare_qt_environment"
+# A scope is something callable from elsewhere: the module, or a named
+# function. A lambda or a class body belongs to the scope it is written
+# in. The walk DESCENDS into both, where it used to skip them, so a
+# construction there is no longer invisible (review of #1170). A class
+# body runs in place, and a lambda can only run after it is defined, so
+# a guard earlier in the enclosing scope covers both.
+_SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
-    """Nodes of ``scope`` without descending into nested defs/classes."""
+    """Nodes of ``scope`` without descending into nested named functions."""
     stack = list(ast.iter_child_nodes(scope))
     while stack:
         node = stack.pop()
         yield node
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if not isinstance(node, _SCOPES):
             stack.extend(ast.iter_child_nodes(node))
 
 
@@ -133,6 +140,10 @@ def _called_name(call: ast.Call) -> str | None:
     if isinstance(func, ast.Attribute):
         return func.attr
     return None
+
+
+def _pos(node: ast.AST) -> tuple[int, int]:
+    return (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
 
 
 def _env_guard_names(tree: ast.AST) -> set[str]:
@@ -160,9 +171,12 @@ def _env_guard_names(tree: ast.AST) -> set[str]:
 def unguarded_qapplication(tree: ast.AST) -> Hits:
     """``QApplication(...)`` with no earlier env-guard call in the same scope.
 
-    The scope is the innermost enclosing function, or the module body.
-    ``QApplication.instance()`` is a lookup, not a construction, and is
-    not matched.
+    The scope is the innermost enclosing named function, or the module;
+    lambdas and class bodies count as part of it. "Earlier" is by source
+    position (line, then column), so a
+    same-line ``prepare_qt_environment(); app = QApplication([])`` is
+    guarded and the reverse order is not. ``QApplication.instance()`` is
+    a lookup, not a construction, and is not matched.
     """
     hits: Hits = []
     if not any(
@@ -170,33 +184,59 @@ def unguarded_qapplication(tree: ast.AST) -> Hits:
     ):
         return hits
     guard_names = _env_guard_names(tree)
-    scopes = [tree] + [
-        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    for scope in scopes:
+    for scope in (n for n in ast.walk(tree) if isinstance(n, _SCOPES)):
         calls = [n for n in _own_nodes(scope) if isinstance(n, ast.Call)]
-        guards = [c.lineno for c in calls if _called_name(c) in guard_names]
+        guards = [_pos(c) for c in calls if _called_name(c) in guard_names]
         for call in calls:
-            if _called_name(call) == "QApplication" and not any(g < call.lineno for g in guards):
+            if _called_name(call) == "QApplication" and not any(g < _pos(call) for g in guards):
                 hits.append((call.lineno, "QApplication(...) before prepare_qt_environment()"))
     return hits
 
 
 # ── G-GHOST-BIT ──────────────────────────────────────────────────────
 HIDDENCELL = 0x20  # vtkDataSetAttributes.HIDDENCELL; 0x01 is DUPLICATECELL
+HIDDENPOINT = 0x02  # vtkDataSetAttributes.HIDDENPOINT, the POINT-array bit
 _BIT_OPS = (ast.BitAnd, ast.BitOr, ast.BitXor)
 
 
-def wrong_ghost_bit(tree: ast.AST) -> Hits:
-    """A hidden-cell constant, or a literal mask on a ghost array, that is not 0x20.
+def _expected_bit(expr: ast.AST) -> int | None:
+    """The hidden bit an expression's ghost array must use, or ``None``
+    when the expression does not name a ghost array."""
+    text = ast.unparse(expr).lower()
+    if "ghost" not in text:
+        return None
+    return HIDDENPOINT if "point" in text else HIDDENCELL
 
-    Two shapes: ``*HIDDEN*CELL* = <int>`` with the wrong value (the #781 /
-    #878 constants), and ``<...ghost...> & <int literal>`` with the wrong
-    value (the #878 ``results_pick`` mask). A mask through a NAMED
-    constant is not read, because the constant's own definition is what
+
+def wrong_ghost_bit(tree: ast.AST) -> Hits:
+    """A hidden-cell constant, or a literal written into / masked against a
+    ghost array, that is not the hidden bit.
+
+    Shapes read:
+
+    * ``HIDDEN...CELL = <int>`` in an UPPER-CASE constant name (the #781 /
+      #878 constants); a lower-case counter such as
+      ``self._n_hidden_cells = 0`` is not a constant;
+    * ``<ghost...> & | ^ <int literal>``, either operand order, ``~``
+      included (the #878 ``results_pick`` mask);
+    * ``<ghost...> &= |= ^= <int literal>``;
+    * ``<ghost...>[i] = <int literal>`` other than 0 (clearing).
+
+    A ghost array is an expression whose source names ``ghost``. A
+    ``point`` ghost array must use HIDDENPOINT (0x02); anything else uses
+    HIDDENCELL (0x20).
+
+    Known hole, pinned by the self-test: a ghost array held under a name
+    without ``ghost`` (``arr & 1``) is not read. The rule skips what it
+    cannot identify rather than guessing. A mask through a NAMED constant
+    is not read either, because the constant's own definition is what
     gets checked.
     """
     hits: Hits = []
+
+    def _bad(value: int | None, bit: int) -> bool:
+        return value is not None and value not in (bit, ~bit)
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -206,33 +246,54 @@ def wrong_ghost_bit(tree: ast.AST) -> Hits:
                     target.attr if isinstance(target, ast.Attribute) else ""
                 )
                 upper = name.upper()
-                if "HIDDEN" in upper and "CELL" in upper and value is not None and value != HIDDENCELL:
+                if (
+                    name == upper and "HIDDEN" in upper and "CELL" in upper
+                    and value is not None and value != HIDDENCELL
+                ):
                     hits.append((node.lineno, f"{name} = {value:#04x} (HIDDENCELL is 0x20)"))
+                if isinstance(target, ast.Subscript) and value not in (None, 0):
+                    bit = _expected_bit(target.value)
+                    if bit is not None and value != bit:
+                        hits.append((
+                            node.lineno,
+                            f"{ast.unparse(target)} = {value} (hidden bit is {bit:#04x})",
+                        ))
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, _BIT_OPS):
+            bit = _expected_bit(node.target)
+            if bit is not None and _bad(_int_literal(node.value), bit):
+                hits.append((node.lineno, f"ghost mask {ast.unparse(node)} (hidden bit is {bit:#04x})"))
         elif isinstance(node, ast.BinOp) and isinstance(node.op, _BIT_OPS):
             for lit, other in ((node.right, node.left), (node.left, node.right)):
-                value = _int_literal(lit)
-                if value is None or value in (HIDDENCELL, ~HIDDENCELL):
-                    continue
-                if "ghost" in ast.unparse(other).lower():
-                    hits.append((node.lineno, f"ghost mask {ast.unparse(node)} (HIDDENCELL is 0x20)"))
+                bit = _expected_bit(other)
+                if bit is not None and _bad(_int_literal(lit), bit):
+                    hits.append((node.lineno, f"ghost mask {ast.unparse(node)} (hidden bit is {bit:#04x})"))
     return hits
 
 
 # ── G-HASH ───────────────────────────────────────────────────────────
 def builtin_hash(tree: ast.AST) -> Hits:
-    """Builtin ``hash(...)`` calls outside a ``__hash__`` method."""
+    """Every use of the builtin ``hash`` outside a ``__hash__`` method.
+
+    A use, not only a call: ``key=hash`` and ``h = hash`` pass the same
+    per-process value on. Lambdas, class bodies and comprehensions are
+    walked like any other scope.
+    """
     hits: Hits = []
-    if not any(isinstance(n, ast.Name) and n.id == "hash" for n in ast.walk(tree)):
-        return hits
-    scopes = [tree] + [
-        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    for scope in scopes:
-        if getattr(scope, "name", None) == "__hash__":
-            continue
-        for node in _own_nodes(scope):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "hash":
-                hits.append((node.lineno, f"{ast.unparse(node)} (randomized per process)"))
+
+    def visit(node: ast.AST, in_dunder: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            dunder = in_dunder or (
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and child.name == "__hash__"
+            )
+            if (
+                not dunder and isinstance(child, ast.Name)
+                and child.id == "hash" and isinstance(child.ctx, ast.Load)
+            ):
+                hits.append((child.lineno, "builtin hash (randomized per process)"))
+            visit(child, dunder)
+
+    visit(tree, False)
     return hits
 
 
@@ -306,6 +367,10 @@ def test_g_hash() -> None:
 
 
 # ── Self-test: each collector sees its incident shapes and nothing else ──
+# Every case is either an incident shape, a sanctioned alternative found in
+# the tree, or a hole found by the #1170 review (a hole found is a test
+# added). The mutation pass recorded in the plan doc kills each mutant
+# through at least one case here.
 _FLAGGED: dict[str, list[tuple[str, str]]] = {
     "G-VTK-REMOVED": [
         ("pr1122_title", "def f(self, a):\n    self._plotter.renderer.AddActor2D(a)\n"),
@@ -320,6 +385,8 @@ _FLAGGED: dict[str, list[tuple[str, str]]] = {
             "    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])\n")),
         ("guard_after_construction", (
             "def f():\n    app = QApplication([])\n    prepare_qt_environment()\n")),
+        ("guard_after_on_the_same_line", (
+            "def f():\n    app = QApplication([]); prepare_qt_environment()\n")),
         ("pr743_helper_without_guard", (
             "class W:\n    def _lazy_qt(self):\n        from qtpy import QtWidgets\n"
             "        return QtWidgets\n    def __init__(self):\n"
@@ -327,15 +394,34 @@ _FLAGGED: dict[str, list[tuple[str, str]]] = {
         ("guard_only_in_another_function", (
             "def g():\n    prepare_qt_environment()\n"
             "def f():\n    return QtWidgets.QApplication([])\n")),
+        ("in_a_lambda", "mk = lambda: QtWidgets.QApplication([])\n"),
+        ("in_a_class_body", "class A:\n    app = QtWidgets.QApplication([])\n"),
+        ("in_a_method_after_a_guarded_class_line", (
+            "class A:\n    prepare_qt_environment()\n"
+            "    def make(self):\n        return QtWidgets.QApplication([])\n")),
+        # Pins the strict ``<``: the only way two calls share a position is
+        # a guard used as the receiver of ``.QApplication``, which does not
+        # count as having run first.
+        ("guard_as_receiver", "def f():\n    return prepare_qt_environment().QApplication([])\n"),
     ],
     "G-GHOST-BIT": [
         ("pr781_backend_const", "_GHOST_HIDDEN_CELL = 0x01\n"),
         ("pr878_annotated_const", "HIDDENCELL: int = 0x01\n"),
         ("pr878_pick_mask", "def f(mask, ghosts):\n    return mask & ~(ghosts & 0x01)\n"),
+        ("literal_on_the_left", "def f(ghosts):\n    return 0x01 & ghosts\n"),
+        ("or_mask", "def f(ghosts):\n    return ghosts | 0x01\n"),
+        ("clearing_the_wrong_bit", "def f(ghosts):\n    return ghosts & ~0x01\n"),
+        ("augmented", "def f(ghosts, ids):\n    ghosts[ids] |= 0x01\n"),
+        ("subscript_write", "def f(ghost, idx):\n    ghost[idx] = 1\n"),
+        ("point_array_wrong_bit", "def f(point_ghosts):\n    return point_ghosts & 0x01\n"),
     ],
     "G-HASH": [
         ("pr374_palette", "def idle(label, pal):\n    return pal[abs(hash(label)) % len(pal)]\n"),
         ("module_level", "SEED = hash('x')\n"),
+        ("in_a_lambda", "color = lambda n: PAL[abs(hash(n)) % 7]\n"),
+        ("class_body_comprehension", "class T:\n    COL = {n: PAL[hash(n) % 7] for n in N}\n"),
+        ("as_a_key", "def f(x):\n    return sorted(x, key=hash)\n"),
+        ("aliased", "h = hash\n"),
     ],
 }
 _CLEAN: dict[str, list[tuple[str, str]]] = {
@@ -356,14 +442,31 @@ _CLEAN: dict[str, list[tuple[str, str]]] = {
             "    def __init__(self):\n        QtWidgets = self._lazy_qt()\n"
             "        app = QtWidgets.QApplication.instance()\n        if app is None:\n"
             "            app = QtWidgets.QApplication([])\n")),
+        ("guard_first_on_the_same_line", (
+            "def f():\n    prepare_qt_environment(); app = QApplication([])\n")),
+        ("guarded_lambda", "mk = lambda: (prepare_qt_environment(), QtWidgets.QApplication([]))\n"),
+        ("lambda_after_the_guard", (
+            "def f():\n    prepare_qt_environment()\n"
+            "    return lambda: QtWidgets.QApplication([])\n")),
+        ("class_body_after_the_guard", (
+            "def f():\n    prepare_qt_environment()\n"
+            "    class A:\n        app = QtWidgets.QApplication([])\n    return A\n")),
         ("lookup_only", "def f():\n    return QtWidgets.QApplication.instance()\n"),
     ],
     "G-GHOST-BIT": [
         ("fix_const", "HIDDENCELL: int = 0x20\n_GHOST_HIDDEN_CELL = 0x20\n"),
+        ("point_constant", "HIDDENPOINT: int = 0x02\n"),
         ("named_mask", "def f(ghosts):\n    return ghosts & HIDDENCELL\n"),
         ("literal_0x20", "def f(ghosts):\n    return ghosts | 0x20\n"),
+        ("clearing_the_hidden_bit", "def f(ghosts):\n    return ghosts & ~0x20\n"),
+        ("fix_subscript_write", "def f(ghost, idx):\n    ghost[idx] = 0x20\n    ghost[:] = 0\n"),
+        ("point_array_right_bit", "def f(point_ghosts):\n    return point_ghosts & 0x02\n"),
+        ("lower_case_counter", "class V:\n    def __init__(self):\n        self._n_hidden_cells = 0\n"),
         ("float_opacity", "GHOST_OPACITY = 0.3\nGHOST_DIM_OPACITY = 0.1\n"),
         ("not_a_ghost_mask", "def f(flags):\n    return flags & 0x01\n"),
+        # KNOWN HOLE, pinned so a change in behaviour is noticed: a ghost
+        # array under a name without "ghost" is not identifiable.
+        ("known_hole_unnamed_ghost_array", "def f(arr):\n    return arr & 1\n"),
     ],
     "G-HASH": [
         ("fix_shape", "import zlib\ndef idle(label, pal):\n"
@@ -371,6 +474,7 @@ _CLEAN: dict[str, list[tuple[str, str]]] = {
         ("dunder_hash", "class K:\n    def __hash__(self):\n        return hash((self.a, self.b))\n"),
         ("prose", "def f():\n    # zlib.crc32 instead of Python's hash()\n    return 0\n"),
         ("method_named_hash", "def f(h):\n    return h.hash()\n"),
+        ("keyword_named_hash", "def f(g):\n    return g(hash=1)\n"),
     ],
 }
 

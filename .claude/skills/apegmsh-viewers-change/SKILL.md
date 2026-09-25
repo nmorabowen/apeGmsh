@@ -21,11 +21,10 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 
 ## Before you start
 
-- [ ] Read the ADR that owns the surface. The index is in
-      `src/apeGmsh/opensees/architecture/decisions/README.md`:
-      - render seam 0042; pick 0045/0047; state and events 0056;
-      - concurrent geometries 0058; cascade freeze 0084;
-      - design system, window and legend 0087–0090; stills 0094; results session 0098.
+- [ ] Read the ADR that owns the surface (index: `decisions/README.md` under
+      `src/apeGmsh/opensees/architecture/`): render seam 0042; pick 0045/0047; state and events 0056; concurrent
+      geometries 0058; cascade freeze 0084; design system to legend 0087–0090; stills 0094;
+      results session 0098.
 - [ ] The results viewer is where fixing one thing breaks another. Before touching pumps, the
       dispatcher, batches or session restore, read
       `internal_docs/results_viewer_adversarial_review.md` › "Fixing X breaks Y".
@@ -47,12 +46,11 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 - [ ] Pumps must fail loudly, through `_failures.py` (ADR 0084 › "Pumps are loud"). The
       autouse `pump_failures` fixture fails the test. `except Exception: pass` hides errors;
       see `viewer_bench/README.md` › "Side trap found on the way".
-- [ ] Batching several geometries? First read ADR 0084 › "Do not add a multi-geometry batching
-      call site".
-- [ ] A new diagram kind:
-      - lives in `diagrams/` and registers (`test_diagram_kind_registry.py`);
-      - overrides `sync_substrate_points` (`test_deform_follow_contract.py`);
-      - imports no vtk (`tests/test_diagrams_pure_no_pyvista.py`).
+- [ ] Batching several geometries? First read ADR 0084 › "multi-geometry batching call site".
+- [ ] A new diagram kind lives in `diagrams/` and registers (`test_diagram_kind_registry.py`),
+      overrides `sync_substrate_points` and `set_visible` (`test_deform_follow_contract.py`;
+      the base `set_visible` walks the dead `_actors`), and imports no vtk
+      (`tests/test_diagrams_pure_no_pyvista.py`).
 - [ ] **Fixed one instance of a pattern? Grep for its siblings before pushing.** Every viewer
       guard incident was a sibling site the first fix missed: #593→#620, #1122→#1123,
       #743→#782, #781→#878, #374→184b5734.
@@ -67,21 +65,19 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 - [ ] Whatever opens a GL context or interactor closes it on dispose or close. See ADR 0098
       › "Amendment 1 caution 1 in a new place". The teardown test must assert that the
       *product* closed it, not the fixture (06f82f9a).
-- [ ] The pane host is never the central widget. See `viewer_bench/README.md` › "Fixed by
-      ADR 0098 Amendment 3".
-- [ ] Docks are construction-time; never call `restoreDockWidget`. See
-      `test_dock_invariant.py` › "returned 3+ times".
+- [ ] The pane host is never the central widget. See `viewer_bench/README.md`
+      › "Fixed by ADR 0098 Amendment 3".
+- [ ] Navigation docks (outline, browser) are construction-time; never `restoreDockWidget` them.
+      See `test_dock_invariant.py` › "returned 3+ times", which scans only the mesh and model
+      viewers. Session pane docks call it by design (`session/_host.py`, ADR 0098 A3.3).
 - [ ] A key the window documents as global is a `QShortcut` with `ApplicationShortcut`, because
       `add_key_event` only fires while the viewport has focus. Tab needs an `eventFilter`.
       See `internal_docs/viewer_lessons.md` › "Key bindings in a VTK-hosted window". The digit
       keys are guarded by `test_dim_filter_keys.py`.
-- [ ] **[guard]** `test_viewer_recurrence_guards.py` holds patterns that a fix removed at one
-      site while a sibling site survived:
-      - G-VTK-REMOVED: no VTK method a supported release removed (`vtk>=9.2` has no upper
-        bound). Add a `REMOVED_VTK_API` row when VTK removes the next one.
-      - G-GHOST-BIT: the hidden-cell bit is 0x20. Import `HIDDENCELL`; never spell it.
-      - G-HASH: no builtin `hash()` for colours or indices. It changes per process, so use
-        `zlib.crc32`.
+- [ ] **[guard]** `test_viewer_recurrence_guards.py` holds patterns a fix removed at one site
+      while a sibling survived. G-VTK-REMOVED: no method a supported VTK removed (`vtk>=9.2`
+      is unbounded; add a `REMOVED_VTK_API` row for the next one). G-GHOST-BIT: the hidden
+      bit is 0x20, so import `HIDDENCELL`. G-HASH: no builtin `hash()`; use `zlib.crc32`.
 - [ ] **[guard]** Style follows ADR 0087: no literal colours, no shouted labels, no dangling
       QSS. See `test_viewer_style_contract.py`.
 
@@ -93,12 +89,11 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 - [ ] A test that opens a real window is `@pytest.mark.qt` and runs one file per process:
       `pytest -m qt tests/viewers/<file>`. A command-line `-m` replaces addopts, so repeat
       `and not qt`; see `.github/workflows/tests.yml` › "`not qt` must be repeated".
-- [ ] Test the widget a person uses, not only the session IR. See bb0f3388, "gates for the
-      class of defect the bench keeps finding":
-      - `test_inspector_picker_law.py` asserts on the Add button;
-      - `test_session_capability_parity.py` must list any dropped capability.
-- [ ] Added a new open or load door? Add it to `DOORS` in `test_every_door_opens.py` › "A new
-      door must be appended".
+- [ ] Test the widget a person uses, not only the session IR (bb0f3388, "gates for the class
+      of defect the bench keeps finding"): `test_inspector_picker_law.py` asserts on the Add
+      button, and `test_session_capability_parity.py` must list any dropped capability.
+- [ ] Added a new open or load door? Add it to `DOORS`; see
+      `test_every_door_opens.py` › "A new door must be".
 - [ ] Break each new test once: revert the fix and watch it fail. 03666479 is
       "mutation-proven".
 - [ ] Viewer test traps (`caplog`, `importorskip`, `timeout=`, GL exhaustion, offscreen at

@@ -211,12 +211,11 @@ _IMPORT_ALLOW: dict[str, int] = {
     "results_viewer.py": 8,
     "overlays/clip_plane_overlay.py": 1,
     "overlays/constraint_overlay.py": 1,
-    "overlays/glyph_helpers.py": 1,
+    # glyph_helpers / measure_overlay / origin_markers_overlay dropped
+    # out (0 hits, stale since before #1170; removed with the ratchet fix).
     "overlays/local_axes_overlay.py": 1,
-    "overlays/measure_overlay.py": 1,
     "overlays/mesh_tangent_normal_overlay.py": 1,
     "overlays/moment_glyph.py": 1,
-    "overlays/origin_markers_overlay.py": 1,
     "overlays/probe_overlay.py": 1,
     "overlays/tangent_normal_overlay.py": 1,
 }
@@ -306,7 +305,10 @@ def _check(
                 f"  {rel}: {len(hits)} violation(s) (allowlisted: {budget})"
                 f" — {detail}"
             )
-        elif hits and len(hits) < budget:
+        elif len(hits) < budget:
+            # A budget whose file dropped to ZERO hits is stale too (it
+            # used to pass silently under ``elif hits and ...``; #1170
+            # review): delete the entry rather than keep a dead waiver.
             failures.append(
                 f"  {rel}: allowlist says {budget} but only {len(hits)} "
                 f"remain — ratchet the {guard} allowlist down (ADR 0056)."
@@ -366,7 +368,12 @@ def test_g_import_no_backend_imports() -> None:
 # already moved once (``_pump_set.py``, ADR 0084 D7) and will move
 # again. Receivers ``self`` / ``cls`` are an owner reading its own
 # field — ``Diagram`` itself, and ``ResultsPickEngine``, whose
-# unrelated ``_actors`` registry is its own. Anything else is a
+# unrelated ``_actors`` registry is its own. The exemption hides one
+# dead walk on purpose: the base ``Diagram.set_visible`` still iterates
+# ``self._actors``. It is live only for a kind that does NOT override
+# ``set_visible``, so that hole is closed by an override-completeness
+# check instead (``test_deform_follow_contract.py``,
+# ``test_every_rendering_diagram_overrides_set_visible``). Anything else is a
 # foreign read: route through the diagram's reconciler-callee methods
 # (``set_visible`` / ``apply_effective_visibility`` /
 # ``sync_substrate_points``) instead.
@@ -464,6 +471,7 @@ _G_ACTORS_FLAGGED = {
     "through_an_owner_attribute": "def f(self):\n    return self._diagram._actors\n",
     "getattr_laundering": "def f(d):\n    return getattr(d, '_actors', [])\n",
     "hasattr_probe": "def f(d):\n    return hasattr(d, '_actors')\n",
+    "setattr_reset": "def f(d):\n    setattr(d, '_actors', [])\n",
 }
 _G_ACTORS_CLEAN = {
     # The base class owns the field (legacy teardown path).
@@ -510,3 +518,18 @@ def test_g_actors_collector_passes_the_sanctioned_shapes() -> None:
     }
     noisy = {k: v for k, v in noisy.items() if v}
     assert not noisy, f"G-ACTORS collector flagged sanctioned code: {noisy}"
+
+
+def test_ratchet_fails_on_a_budget_with_zero_hits(tmp_path, monkeypatch) -> None:
+    # The two-way ratchet must also fail when a budgeted file has NO hits
+    # left; the pre-#1170 ``elif hits and ...`` let three such stale
+    # G-IMPORT budgets pass.
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "clean.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "VIEWERS_DIR", tmp_path)
+    try:
+        _check("G-TEST", {"ui/clean.py": 1}, lambda tree: [])
+    except AssertionError as exc:
+        assert "ratchet the G-TEST allowlist down" in str(exc)
+    else:
+        raise AssertionError("a budget of 1 over 0 hits passed the ratchet")

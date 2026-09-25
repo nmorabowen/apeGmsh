@@ -1,6 +1,8 @@
 # Plan: an agent surface for the viewers (task guides + recurrence guards)
 
-Revision 1. Not yet adversarially reviewed.
+Revision 2 — adversarial review (Opus): "ship-with-changes", applied
+2026-09-25. Dispositions are in "Revision 2 — review dispositions" below.
+Revision 1 was the first draft.
 
 **Status.** Built on branch `claude/agent-surface-viewers`, cut from `main` @
 `299eb071` on 2026-09-25. Draft PR. **Merge only after the fix for
@@ -79,10 +81,11 @@ and 3 are earned.
      headless stills from `python -m apeGmsh.viewers render`, the
      conftest pixel band, a live window launched as a subprocess and
      stopped by PID, and the pane-host screenshot template.
-   - *Accept:* the guides are 115 and 127 lines, front-matter included,
-     against the playbook's "about 100". Every item points into an
-     archive: 19 file › "phrase" pointers, all resolved by a one-off
-     script on 2026-09-25. Each guide says the end-user skill
+   - *Accept:* the guides are 110 and 111 lines, with 11 lines of
+     front-matter each, against the playbook's "about 100". Every item
+     points into an archive: 20 file › "phrase" pointers. On 2026-09-25 a
+     one-off script checked that each phrase greps on a single line of
+     its target. Each guide says the end-user skill
      `apegmsh-helper` is out of scope.
 2. **Memory lessons moved into the repo**, in `internal_docs/viewer_lessons.md`.
    These are the viewer traps that lived only in agent memory:
@@ -103,6 +106,10 @@ and 3 are earned.
    - **G-ACTORS** joins `tests/viewers/test_viewer_state_contract.py`.
      Its incident is ADR 0056's own context item 1. Unlike G-RENDER /
      G-ARTIFACT / G-IMPORT, it scans all of `viewers/**` with a hard zero.
+     Its `self` exemption hides the base `Diagram.set_visible` walk over
+     `self._actors`. That hole is closed by an override-completeness check
+     in `test_deform_follow_contract.py`: every kind must override
+     `set_visible`. See the Revision 2 dispositions.
    - **G-VTK-REMOVED, G-QAPP-ENV, G-GHOST-BIT, G-HASH** go in the new
      `tests/viewers/test_viewer_recurrence_guards.py`. They are pure
      `ast`, over all of `viewers/**`, with a hard zero and no allowlist.
@@ -164,6 +171,20 @@ and 3 are earned.
   incident behind it here. The pointers were checked once by a script.
 - **Guarding `sections/`** (2 `QApplication` sites, both compliant). Out
   of scope by the owner's decision.
+- **Closing the G-ACTORS `self` hole by guarding `diagrams/_base.py`
+  directly** (revision 2). The base owns `_actors`, and its `detach` walk
+  is legitimate teardown. The real fix, deleting the dead walk from
+  `Diagram.set_visible`, is a production-code change, which this work
+  package does not make. What turns the dead walk into a bug is a kind
+  that inherits it, so the rule is an override-completeness check
+  instead. Its mutant (a kind's `set_visible` override deleted at
+  runtime) is killed.
+- **Lambdas and class bodies as their own G-QAPP-ENV scopes**
+  (revision 2). That would flag `class A: app = QApplication([])` inside
+  a function that has already called the guard, although a class body
+  runs in place, after the guard. Instead, the walk descends into both
+  (it used to skip them) and counts them as part of the enclosing
+  scope. Both variants are mutants, and both are killed.
 
 ## Results
 
@@ -198,17 +219,24 @@ collector run over it. Sites are listed as `file:line`.
 
 ### Self-tests, runtime, gates
 
-- **Cases.** G-ACTORS has 5 flagged and 5 sanctioned shapes. The recurrence
-  guards have 12 flagged and 15 sanctioned. Both files also carry a
-  scope-sanity test.
-- **Runtime.** Scanning all 203 `viewers/**` files takes 3.5 s for the
-  four recurrence guards (1.6 s of that is parsing) and 1.6 s for
-  G-ACTORS. The test file runs in 4.5 s under pytest.
-- **ruff 0.15.9** (the CI pin) is clean on both test files. mypy is not
-  applicable: CI runs mypy only on `src/apeGmsh/opensees`.
-- **pytest** on the guard files: 17 passed and 1 failed. The failure is
-  `test_g_hash`, the live incident. `tests/test_changelog_structure.py`:
-  4 passed. `scripts/sync_skill.py --check`: in sync.
+- **Cases (revision 2).**
+  - G-ACTORS: 6 flagged and 5 sanctioned shapes.
+  - Recurrence guards: 27 flagged and 26 sanctioned. One of the
+    sanctioned cases is a pinned known hole.
+  - Both files carry a scope-sanity test.
+  - The state-contract file also carries a ratchet self-test.
+- **Runtime.** Scanning all 203 `viewers/**` files takes 3.5–6.7 s for
+  the four recurrence guards and 1.6–3.7 s for G-ACTORS. That is the
+  range over two runs on a loaded dev box; about 1.6 s of it is parsing.
+- **ruff 0.15.9** (the CI pin) is clean on all four touched test files.
+  mypy is not applicable: CI runs mypy only on `src/apeGmsh/opensees`.
+- **pytest** (revision 1, as first published; the revision 2 rerun is in
+  its own section below): `test_viewer_recurrence_guards.py` +
+  `test_viewer_state_contract.py` gave 14 passed and 1 failed. The
+  failure is `test_g_hash`, the live incident. Revision 1's "17 passed"
+  had counted `test_dim_filter_keys.py`'s 3 tests without saying so.
+  `tests/test_changelog_structure.py`: 4 passed.
+  `scripts/sync_skill.py --check`: in sync.
 
 ### The key-binding contradiction: resolved
 
@@ -223,9 +251,10 @@ A probe (pyvistaqt 0.11.4, VTK 9.5.2, Windows) showed:
 - an `ApplicationShortcut` fires in all three cases.
 
 So the 08-13 incident was real, but its mechanism was focus, not
-swallowing. The code and the test are authoritative; the test docstring
-names the wrong mechanism. Recorded in `viewer_lessons.md` › "Key
-bindings in a VTK-hosted window", and the guide points there.
+swallowing. The code and the test are authoritative. Revision 2 corrected
+the test docstring, which had named the wrong mechanism. The finding is
+recorded in `viewer_lessons.md` › "Key bindings in a VTK-hosted window",
+and the guide points there.
 
 ### The visual-check procedure: run once for real (2026-09-25)
 
@@ -268,26 +297,64 @@ Per the work-package rules, the site is neither fixed nor waived here.
 
 ## Coordination
 
-A concurrent session is porting the agent surface to apeGmsh as a whole.
-It owns `AGENTS.md` and `CLAUDE.md` (branch
-`guppi/agent-surface-port-c45d85`). This PR creates neither file, and
-does not touch `.claude/skills/apegmsh-helper/`. `.gitignore` already
-tracks `.claude/skills/`; that was verified and left unchanged.
+The apeGmsh-wide agent-surface port is **PR #1171** (branch
+`claude/agent-surface`). Revision 1 of this doc named a stale branch,
+`guppi/agent-surface-port-c45d85`. #1171 owns `AGENTS.md` and
+`CLAUDE.md`. This PR creates neither, does not touch
+`.claude/skills/apegmsh-helper/`, and does not touch #1171's branch or
+files. `.gitignore` already tracks `.claude/skills/`; that was verified
+and left unchanged.
 
-**That port must add this one row to its `AGENTS.md` task-guide table:**
+**Routing: one row, #1171's.** #1171's `AGENTS.md` already routes
+`viewers/` to its own guide:
 
-```markdown
-| Changing or visually verifying the viewers (`src/apeGmsh/viewers/`, `tests/viewers/`, `viewer_bench/`) | [`apegmsh-viewers-change`](.claude/skills/apegmsh-viewers-change/SKILL.md), then [`apegmsh-viewers-visual-check`](.claude/skills/apegmsh-viewers-visual-check/SKILL.md) |
-```
+> `| Changing viewers/ or results/: … | .claude/skills/apegmsh-viewer-results/SKILL.md |`
 
-If that port adds a repo-wide lint, the viewer guards stay where they are,
-as AST tests in `tests/viewers/`. They are not a second copy of the lint.
+That stays the single "read first" entry for the viewers. There is **no
+second row**. Instead, #1171's `apegmsh-viewer-results` guide links on to
+this PR's two guides:
+- `apegmsh-viewers-change`, before changing viewer code;
+- `apegmsh-viewers-visual-check`, before claiming a viewer change works.
+
+**The key-binding fix #1171 needs.** On #1171's branch,
+`.claude/skills/apegmsh-viewer-results/SKILL.md:59-60` says a shortcut
+without `Qt.ApplicationShortcut` loses the key because "the interactor
+eats the key". The mechanism is focus, not eating, as measured in
+"The key-binding contradiction: resolved" above:
+- `add_key_event` (and any viewport-level binding) fires only while the
+  viewport has keyboard focus;
+- an `ApplicationShortcut` fires wherever focus is.
+
+Suggested wording: *"Keys the window documents as global use a
+`QShortcut` with `Qt.ApplicationShortcut`: `plotter.add_key_event` fires
+only while the viewport has focus (see
+`internal_docs/viewer_lessons.md`, 'Key bindings in a VTK-hosted
+window')."*
+
+The coordinator has sent that session this note. This PR does not edit
+#1171.
+
+**Handed off to #1171:** `src/apeGmsh/results/capture/spec.py:1175`
+(`_stable_section_tag`). It is documented as "Deterministic" but uses
+`abs(hash(name))`: the G-HASH class, outside the viewer scope.
+
+If #1171 adds a repo-wide lint, the viewer guards stay where they are, as
+AST tests in `tests/viewers/`. They are not a second copy of the lint.
 
 ## Found along the way (not triaged, not fixed)
 
 - **`results/capture/spec.py:1175`.** `_stable_section_tag` is documented
   as "Deterministic", but it uses `abs(hash(name))`. That is the G-HASH
-  class, outside the viewer scope, and belongs to the apeGmsh-wide port.
+  class, outside the viewer scope. Handed off to #1171 (see
+  Coordination).
+- **`scratchpad_shots/render_scalar_bar_sheets.py:117` and `:163`** still
+  call `RemoveActor2D` / `AddActor2D`. It is a scratch script, outside
+  `viewers/`, so G-VTK-REMOVED does not scan it. On VTK 9.7 it would
+  raise. Out of scope, note only.
+- **`APEGMSH_EXPECT_GL` is honoured by only three test files**
+  (`test_render.py`, `test_render_live.py`, `test_viewers_main.py`).
+  Everywhere else a GL skip still reads as green, even in the `suite`
+  lane, which sets the variable.
 - **`tests/viewers/_render_screenshots.py` and `manual_check.py`.** Both
   open `elasticFrame.mpco` with `model_h5=elasticFrame.model.h5`, and
   `tests/fixtures/results/` has only the `.mpco`. I verified that the
@@ -301,6 +368,71 @@ as AST tests in `tests/viewers/`. They are not a second copy of the lint.
   dark background, and the top label ran into the title. That is one
   still under this machine's saved theme; not triaged.
 
+## Revision 2 — review dispositions (2026-09-25)
+
+Adversarial review (Opus): "ship-with-changes". Every finding below was
+re-verified by running it before acting on it.
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | MAJOR | The plan and PR named a stale branch for the apeGmsh-wide port and proposed a second routing row. #1171's own guide says "the interactor eats the key". | **Fixed.** Coordination now names PR #1171 and keeps #1171's row as the only one; its guide links to these two. The key fix #1171 needs is given with file:line (`apegmsh-viewer-results/SKILL.md:59-60`). `spec.py:1175` is handed off to #1171. |
+| 2 | MAJOR | The G-HASH and G-QAPP-ENV walks skipped `Lambda` and `ClassDef`, and G-HASH read calls only. | **Fixed.** G-HASH reads every `Load` use of `hash` outside `__hash__`. G-QAPP-ENV descends into lambdas and class bodies. Self-test cases added for each shape (`lambda`, class-body comprehension, `key=hash`, `h = hash`, `QApplication` in a lambda or class body). |
+| 3 | MINOR | "Never call `restoreDockWidget`" was wrong in general: `session/_host.py:494` calls it by design (ADR 0098 A3.3.3). | **Fixed.** The guide item is scoped to navigation docks, notes that `test_dock_invariant.py` scans only the mesh and model viewers, and names the session exception. |
+| 4 | MINOR | G-GHOST-BIT missed `ghost[idx] = 1`, `ghosts[ids] \|= 0x01` and `arr & 1`, and flagged `self._n_hidden_cells = 0` and `point_ghosts & 0x02`. | **Fixed where evidence justifies:** subscript writes, augmented masks, UPPER-CASE-only constants, and HIDDENPOINT (0x02) for `point` ghost arrays. **Pinned as a known hole:** `arr & 1` on a name without "ghost" (a `_CLEAN` case says so). |
+| 5 | MINOR | 7 of 15 one-line mutants survived. | **Fixed.** A 21-mutant pass (the reviewer's 7, adapted, plus 14 more): **21/21 killed**. Plus 1 runtime mutant for the `set_visible` check, also killed. Table below. |
+| 6 | MINOR | G-ACTORS's `self` exemption hides the dead walk in `Diagram.set_visible` (`_base.py:532`). | **Decided: an override-completeness check**, `test_every_rendering_diagram_overrides_set_visible` in `test_deform_follow_contract.py`. It passes today (all 15 kinds override) and fails when an override is deleted. Rationale under "Rejected approaches". |
+| 7 | MINOR | Three `_IMPORT_ALLOW` budgets of 1 had 0 hits and passed through `elif hits and …`. | **Fixed.** The ratchet now fails on `len(hits) < budget`. The three stale entries (`glyph_helpers`, `measure_overlay`, `origin_markers_overlay`) are deleted. A ratchet self-test was added. |
+| 8 | MINOR | The CHANGELOG said "red on purpose… merges after it", which will be false once merged. | **Fixed.** Reworded to stay true after the merge order is followed. The section is still insert-only against `main`. |
+| 9 | NIT | Five items: the dim-keys docstring said "swallows"; the pass count was wrong; two pointer phrases spanned line breaks; `APEGMSH_EXPECT_GL` coverage was not stated; the §6 traps had no pointers. | **Fixed:** the docstring is corrected; the count reads 14/1 (see the gates section); both phrases now grep on one line (all 20 checked); the `EXPECT_GL` coverage (3 files) is in the guide and under "Found along the way"; the traps moved to `viewer_lessons.md` with sources, so the guide is 111 lines. |
+| 10 | note | `scratchpad_shots/render_scalar_bar_sheets.py:117,163` still uses `AddActor2D` / `RemoveActor2D`. | **Noted** under "Found along the way". Out of scope. |
+
+### Mutation pass (revision 2)
+
+Each mutant is a one-line change to a collector. It counts as **killed**
+when that file's self-tests fail on it.
+
+| Mutant | Result |
+|---|---|
+| R1 hidden-bit test `not in (bit, ~bit)` → `!= bit` | killed |
+| R2 literal-on-left operand order dropped | killed |
+| R3 `_BIT_OPS = (BitAnd,)` | killed |
+| R4 `~` (Invert) branch dropped | killed |
+| R5 `HIDDEN and CELL` → `HIDDEN` | killed |
+| R6 guard position `<` → `<=` | killed (pinned by `guard_as_receiver`) |
+| R7 `setattr` removed from G-ACTORS | killed |
+| M8 `RemoveActor2D` row dropped | killed |
+| M9 G-VTK-REMOVED reads nothing | killed |
+| M10 no transitive guard helpers (`_lazy_qt`) | killed |
+| M11 walk skips lambdas and class bodies again | killed |
+| M11b lambdas and class bodies as their own scopes | killed |
+| M12 guard position by line only | killed |
+| M13 `__hash__` exemption dropped | killed |
+| M14 G-HASH reads calls only | killed |
+| M15 constant check no longer UPPER-CASE-only | killed |
+| M16 point-array bit ignored | killed |
+| M17 augmented-assign branch dropped | killed |
+| M18 subscript-write branch dropped | killed |
+| M19 G-ACTORS owner exemption for every receiver | killed |
+| M20 ratchet ignores zero-hit budgets | killed |
+| runtime: `ContourDiagram.set_visible` deleted | killed |
+
+### Reruns (revision 2)
+
+- **Acceptance.** All five rows rerun on the same `git archive` trees give
+  the same counts as the table above. The test functions FAIL on every
+  pre-fix and intermediate tree and PASS on the final fix trees and HEAD.
+  G-HASH is the exception: it passes only on the `loads_tab.py`-patched
+  scratch copy.
+- **pytest.**
+  - `test_viewer_recurrence_guards.py`: 6 passed, 1 failed (`test_g_hash`, the live incident).
+  - `test_viewer_state_contract.py`: 9 passed.
+  - `test_deform_follow_contract.py`: 3 passed.
+  - `test_dim_filter_keys.py`: 3 passed.
+  - `tests/test_changelog_structure.py`: 4 passed.
+  - Total: 25 passed, 1 failed.
+- **ruff 0.15.9:** clean on the four touched test files.
+- **`scripts/sync_skill.py --check`:** in sync.
+
 ## Open questions
 
 - **`test_dim_filter_keys.py` has a hole.** Its collector reads only a
@@ -308,9 +440,6 @@ as AST tests in `tests/viewers/`. They are not a second copy of the lint.
   `for _key in (...): plotter.add_key_event(_key, ...)` is invisible. It
   caught 44f8dd50^ only through the literal `"4"` line. Should it
   resolve loop-bound keys?
-- **The ADR 0056 ratchet has a gap.** A budgeted file whose hits drop to
-  0 passes silently (`elif hits and len(hits) < budget`), so its stale
-  budget stays. Should it fail on `len(hits) < budget` alone?
 - **Letter shortcuts.** Should the mesh and model viewers' `add_key_event`
   letters (`h`/`i`/`r`/`u`/`y`/`e`/`n`/`b`) work with focus in a dock?
   If yes, they need `ApplicationShortcut` as the digits did.

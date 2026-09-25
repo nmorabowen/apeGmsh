@@ -41,10 +41,16 @@ Each guard flags its incident on the real pre-fix tree and passes on the
 fix commit. The full record is in
 `internal_docs/plan_agent_surface_viewers.md`.
 
-G-HASH is red on purpose. It flags a live third site,
-`ui/loads_tab.py::pattern_color`, which gives load arrows a different
-colour in every process. The fix for that site lands in its own PR, and
-this one merges after it.
+G-HASH also found a live third site, `ui/loads_tab.py::pattern_color`,
+which gave load arrows a different colour in every process. That site
+was fixed in its own PR, ahead of this guard.
+
+**Existing guards tightened.**
+
+- The ADR 0056 allowlist ratchet now also fails on a budget whose file
+  has no hits left. Three stale `G-IMPORT` budgets were deleted.
+- `test_deform_follow_contract.py` now requires every diagram kind to
+  override `set_visible`, because the base walks the dead `_actors`.
 
 ### CHANGED — engine default can alter answers: `-flipAlphaIn init` (fork #849), the corrected SANISAND tangent (fork #847), and `LadrunoSANISAND.flip_alpha_in`
 

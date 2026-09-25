@@ -64,9 +64,10 @@ The rule that follows:
   `ApplicationShortcut` (`win.add_shortcut(..., application=True)`).
 - Keep `add_key_event` for keys that are meant to be viewport-only.
 
-The code and `test_dim_filter_keys.py` are authoritative. The phrase
-"swallows those keypresses" in the test docstring names the wrong
-mechanism.
+Two sources are authoritative: the code, and this entry for the
+mechanism. `test_dim_filter_keys.py`'s docstring said "swallows those
+keypresses", which names the wrong mechanism; it was corrected on
+2026-09-25. The earlier memory note is superseded.
 
 Related traps, taken from memory's `feedback_vtk_keyboard_shortcuts.md`:
 - **Tab** (ADR 0045 S5 review, PR #479). pyvistaqt sets `WheelFocus`,
@@ -148,3 +149,32 @@ eyes.
 
 Offscreen stills and live windows both work on the dev desktop. The
 procedure is in `.claude/skills/apegmsh-viewers-visual-check/SKILL.md`.
+
+## Traps when capturing stills and live windows
+
+Moved here from the visual-check guide so each trap carries its source.
+
+- **Offscreen Qt on Windows.** `QT_QPA_PLATFORM=offscreen` plus any
+  `QtInteractor` is a native access violation. `ViewerWindow.__init__`
+  raises `RuntimeError` on purpose (`ui/viewer_window.py`, the
+  `platformName() == "offscreen"` check). Offscreen Qt also has an empty
+  font database, so every label renders as tofu
+  (`scratchpad_shots/render_contact_sheet.py` docstring). A live window
+  needs the native platform: unset the variable in the child's
+  environment.
+- **Tear a shown pane down hard.** Hide it, call `dispose()` and
+  `deleteLater()`, then pump events. Without that, the next interactor
+  in the process hangs or crashes (`tests/viewers/manual_legend_gesture.py`,
+  module docstring and teardown). Run one real-window test file per
+  process.
+- **Closing a `SessionWindow` writes `QSettings("apeGmsh",
+  "ResultsSession")`** (`session/_window.py`, `_layout_settings`). A
+  capture script patches `_layout_settings` to a temp ini, as
+  `scratchpad_shots/take_pane_host_shots.py` does. Theme and density are
+  also persisted, so snapshot and restore them.
+- **Plot panes have no still.** `session.render` raises
+  `NotImplementedError` for a plot pane (`session/_stills.py`). Only a live
+  window shows one.
+- **`Results.export_animation` flashes a real window.** It runs the full
+  `ResultsViewer.show(run_loop=False)`, so it is not a headless still
+  (ADR 0094, path A, "Window flashes").
