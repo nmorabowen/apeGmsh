@@ -63,10 +63,14 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
 | `docs-check` | `mkdocs build --strict` | runs on changes to `docs/`, `src/`, `README`, `CHANGELOG` and `mkdocs.yml` |
 | quirk lint (last step of `static-gates`) | `python scripts/check_quirks.py` (self-test: `tests/test_check_quirks.py`) | lessons that recurred after being written down, held as rules. Each finding names its lesson. Fix the code, or waive one site with `# apegmsh-lint: <rule>-ok <reason>`. Never waive a real bug to go green |
 
-- **Never judge a change by the raw full-tree count on Windows.** One
-  process over all of `tests/` cascades into hundreds of errors from
-  ordering pollution and cp1252 capture, even on a clean tree. Run the
-  touched areas, or diff against a baseline run of the same command on
+- **Judge a local run against a baseline, not a raw count.** On the
+  maintainer's machine `import opensees` resolves to the installed Ladruno
+  fork (`C:\Program Files\Ladruno\OpenSees\bin\opensees.pyd`). That
+  un-skips the `ladruno_fork` tests, which then fail against a stale build
+  ("element type LadrunoLST is unknown"); CI never runs them. Use CI's
+  selection (`-m "not live and not subprocess and not bench and not qt"`,
+  since a bare `-m "not qt"` also runs the bench cases), exclude
+  `tests/opensees/integration_ladruno`, or diff against the same command on
   `origin/main`.
 - **Warn-as-contract code** ("warns iff X") is verified with
   `pytest <files> -W error::<Category>`. A bare `pytest` passes while the
