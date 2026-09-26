@@ -66,7 +66,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
     # Per-class element groups
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
-    elements_grp = group.get("ELEMENTS")
+    elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for ds_name in elements_grp:
             parsed = _parse_element_name(ds_name)
@@ -98,7 +98,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
     # Physical groups from MPCO regions (MODEL/SETS/SET_<tag>).
     # STKO selection sets live in the .cdata sidecar (not parsed here).
     pg_dict: dict[tuple[int, int], dict] = {}
-    sets_grp = group.get("SETS")
+    sets_grp = (group["SETS"] if "SETS" in group else None)
     if sets_grp is not None:
         for tag_idx, set_name in enumerate(sets_grp.keys()):
             sub = sets_grp[set_name]

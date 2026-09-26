@@ -3325,7 +3325,7 @@ def _filter_kind_counts(f: "Any") -> "dict[str, int]":
     droppable analysis content.  Metadata-only (no bulk record reads).
     """
     counts: "dict[str, int]" = {}
-    ops_zone = f.get("opensees") if "opensees" in f else None
+    ops_zone = f["opensees"] if "opensees" in f else None
     if ops_zone is None or not hasattr(ops_zone, "keys"):
         return counts
     for child, _noun in _FILTER_WARN_KINDS:
