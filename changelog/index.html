@@ -4761,6 +4761,17 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-_stable_section_tag-is-the-same-in-every-process-crc-32-not-hash">FIXED — <code>_stable_section_tag</code> is the same in every process (CRC-32, not <code>hash()</code>)<a class="headerlink" href="#fixed-_stable_section_tag-is-the-same-in-every-process-crc-32-not-hash" title="Permanent link">&para;</a></h3>
+<p><code>results/capture/spec.py</code>'s fallback tag for a layered-shell section or
+material name promised to be deterministic, but it took the builtin
+<code>hash()</code> of the name, which Python salts per process: <code>"LayeredShell_A"</code>
+was <code>1509370562</code> under <code>PYTHONHASHSEED=1</code> and <code>1288700299</code> under <code>=2</code>. It
+is now <code>zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1</code>, pinned by
+<code>tests/results/test_stable_section_tag.py</code> (two subprocesses with
+different seeds, and a fixed value). No file changes: the fallback only
+runs when the OpenSees back-reference carries the legacy <code>_sections</code> /
+<code>_elem_assignments</code> attributes, which the <code>apeSees</code> bridge does not, and
+the layer writer never writes these tags to disk.</p>
 <h3 id="fixed-changelog-every-heading-has-a-blank-line-above-it-and-a-test-holds-it">FIXED — CHANGELOG: every <code>###</code> heading has a blank line above it, and a test holds it<a class="headerlink" href="#fixed-changelog-every-heading-has-a-blank-line-above-it-and-a-test-holds-it" title="Permanent link">&para;</a></h3>
 <p>The <code>merge=union</code> driver never conflicts: when two PRs insert sections at
 the anchor it keeps both, but it can drop the blank line between them, so
