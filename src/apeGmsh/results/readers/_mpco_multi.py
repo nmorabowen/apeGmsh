@@ -8,7 +8,8 @@ mid-analysis a partition's MODEL describes only the rank-local
 topology) and the corresponding ``RESULTS`` slice.
 
 Boundary nodes are typically replicated across partitions — each rank
-keeps a local copy with identical kinematics. Elements are disjoint:
+keeps a local copy with identical kinematics, but a reaction or an
+unbalanced load there is only that rank's share. Elements are disjoint:
 each element lives on exactly one rank.
 
 This module exposes :class:`MPCOMultiPartitionReader`, a thin façade
@@ -21,7 +22,9 @@ that wraps N :class:`MPCOReader` instances and implements the same
   single row, first partition wins on coords) + concatenated
   per-element-class groups.
 - **Component discovery** — union across partitions.
-- **Slab reads** — node reads merge by ID; element/gauss/line-station/
+- **Slab reads** — node reads merge by ID, keeping the first copy of
+  kinematics and summing the copies of reactions and unbalanced loads
+  (see :func:`_merge_node_slabs`); element/gauss/line-station/
   fiber/layer reads concatenate along the spatial axis.
 
 Per the existing protocol, ``partitions(stage_id)`` returns one
@@ -48,6 +51,11 @@ from .._slabs import (
     SpringSlab,
 )
 from ._mpco import MPCOReader
+from ._mpco_translation import (
+    PARTITION_REDUCTION_NONE,
+    PARTITION_REDUCTION_SUM,
+    PARTITION_REDUCTION_UNSUPPORTED,
+)
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -266,7 +274,10 @@ class MPCOMultiPartitionReader:
             )
             for r in self._readers
         ]
-        return _merge_node_slabs(slabs, component)
+        return _merge_node_slabs(
+            slabs, component,
+            _node_reduction(self._readers, self._paths, stage_id, component),
+        )
 
     def read_elements(
         self,
@@ -391,21 +402,55 @@ def _first_nonempty_time(slabs) -> ndarray:
     return np.array([], dtype=np.float64)
 
 
-def _merge_node_slabs(slabs: list[NodeSlab], component: str) -> NodeSlab:
-    """Union node IDs across partitions, fill values per-partition.
+def _node_reduction(readers, paths, stage_id: str, component: str) -> str:
+    """The one reduction kind every partition reports for ``component``.
 
-    Boundary nodes appear in multiple partitions with identical
-    kinematics; we keep one row per unique ID. First partition that
-    has the node wins (subsequent duplicates are ignored).
+    Partitions that do not record the component (``None``) have no say.
+    Partitions that disagree are refused: the stitch would have to guess.
     """
+    per_part = [
+        (p.name, r.node_partition_reduction(stage_id, component))
+        for r, p in zip(readers, paths)
+    ]
+    kinds = {k for _, k in per_part if k is not None}
+    if len(kinds) > 1:
+        raise ValueError(
+            f"Partitions disagree on PARTITION_REDUCTION for {component!r}: "
+            f"{[(n, k) for n, k in per_part if k is not None]}. The part "
+            "files are not from one run."
+        )
+    return kinds.pop() if kinds else PARTITION_REDUCTION_NONE
+
+
+def _merge_node_slabs(
+    slabs: list[NodeSlab], component: str,
+    reduction: str = PARTITION_REDUCTION_NONE,
+) -> NodeSlab:
+    """Union node IDs across partitions, one column per unique ID.
+
+    A node on a partition interface is in several partitions.
+    ``reduction`` says how its copies combine (Ladruno schema §7.1):
+
+    - ``"NONE"``: the copies are the same (kinematics); the first
+      partition that has the node wins.
+    - ``"SUM"``: each rank stored only its own elements' share
+      (reactions, unbalanced loads); the copies are added. A node held
+      by one partition keeps its value.
+    - ``"UNSUPPORTED"``: each copy is a partial that no sum recovers;
+      refused.
+    """
+    if reduction == PARTITION_REDUCTION_UNSUPPORTED:
+        raise ValueError(
+            f"{component!r} is PARTITION_REDUCTION=UNSUPPORTED: each "
+            "partition file holds only its own rank's partial, and no "
+            "sum of the partials gives the model value. Read the part "
+            "files one at a time, or rerun serially."
+        )
     if not slabs:
         return _empty_node(component)
     time = _first_nonempty_time(slabs)
     T = int(time.size)
-    pieces: list[tuple[ndarray, ndarray]] = []
-    for sl in slabs:
-        if sl.node_ids.size:
-            pieces.append((sl.node_ids, sl.values))
+    pieces = [sl for sl in slabs if sl.node_ids.size]
     if not pieces:
         return NodeSlab(
             component=component,
@@ -413,22 +458,24 @@ def _merge_node_slabs(slabs: list[NodeSlab], component: str) -> NodeSlab:
             node_ids=np.array([], dtype=np.int64),
             time=time,
         )
-    all_ids = np.concatenate([ids for ids, _ in pieces])
-    master_ids = np.unique(all_ids)
-    n_total = int(master_ids.size)
-    id_to_col = {int(n): i for i, n in enumerate(master_ids)}
-    values = np.full((T, n_total), np.nan, dtype=np.float64)
-    for ids, vals in pieces:
-        cols = np.array(
-            [id_to_col[int(n)] for n in ids], dtype=np.int64,
-        )
-        # First-write wins: only fill columns that are still NaN.
-        mask = np.isnan(values[0, cols])
-        if mask.any():
-            target_cols = cols[mask]
-            values[:, target_cols] = vals[:, mask]
+    all_ids = np.concatenate([sl.node_ids for sl in pieces])
+    all_vals = np.concatenate([sl.values for sl in pieces], axis=1)
+    # ``return_index`` uses a stable sort: ``first`` is the column of
+    # each node's first copy in partition order.
+    master_ids, first, inverse = np.unique(
+        all_ids, return_index=True, return_inverse=True,
+    )
+    if reduction == PARTITION_REDUCTION_SUM:
+        # Group the copies of each node next to each other, then add
+        # each group. Every master ID has at least one copy, so the
+        # group starts are strictly increasing.
+        order = np.argsort(inverse, kind="stable")
+        starts = np.searchsorted(inverse[order], np.arange(master_ids.size))
+        values = np.add.reduceat(all_vals[:, order], starts, axis=1)
+    else:
+        values = all_vals[:, first]
     return NodeSlab(
-        component=component, values=values,
+        component=component, values=np.asarray(values, dtype=np.float64),
         node_ids=master_ids, time=time,
     )
 

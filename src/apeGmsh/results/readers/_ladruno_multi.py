@@ -10,7 +10,9 @@ protocol with read-time stitching — the sibling of
 The stitch logic (node-union, element-concat, FEM merge) is solver
 neutral, so the heavy lifting is **reused verbatim** from ``_mpco_multi``
 rather than re-implemented. What differs from MPCO is only the per-file
-reader class and the ``.ladruno`` partition-filename grammar.
+reader class and the ``.ladruno`` partition-filename grammar. The node
+merge takes each result's ``PARTITION_REDUCTION`` attribute from the part
+files (reactions sum across partitions, kinematics keep one copy).
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ from ._mpco_multi import (
     _concat_spring_slabs,
     _merge_node_slabs,
     _merge_partition_fems,
+    _node_reduction,
 )
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -206,6 +209,24 @@ class LadrunoMultiPartitionReader:
             [r.read_nodes(stage_id, component, node_ids=node_ids,
                           time_slice=time_slice) for r in self._readers],
             component,
+            _node_reduction(self._readers, self._paths, stage_id, component),
+        )
+
+    def read_energy(self, stage_id: str, **_kw):
+        """Refused: energy balance is ``PARTITION_REDUCTION=UNSUPPORTED``.
+
+        Each rank's ``energyBalance`` (``ON_DOMAIN`` and ``ON_REGIONS``)
+        covers only its own elements, and the error terms do not add, so
+        no stitched value is correct. Record energy in a serial run, or
+        read one rank's balance with
+        ``Results.from_ladruno(<part file>, merge_partitions=False)``.
+        """
+        raise ValueError(
+            "energyBalance is PARTITION_REDUCTION=UNSUPPORTED in a "
+            "partitioned .ladruno: each part file holds only its own "
+            "rank's balance, and no sum of the parts gives the model's. "
+            "Record energy in a serial run, or read one rank's balance "
+            "with Results.from_ladruno(<part file>, merge_partitions=False)."
         )
 
     def _per_partition(self, read) -> list:
