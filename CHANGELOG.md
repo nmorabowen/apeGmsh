@@ -14,6 +14,18 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
+
+`scripts/check_quirks.py` read every file with `read_text("utf-8")`. A file
+starting with a UTF-8 byte-order mark then failed to parse and was skipped
+silently, so no rule saw it; a file in another encoding raised
+`UnicodeDecodeError` and aborted the whole scan. Files are now decoded with
+`tokenize.detect_encoding` (BOM and `# -*- coding: -*-` cookies honoured);
+one that still cannot be decoded is skipped like a `SyntaxError`, and the
+scan continues. Found by the adversarial review of the agent-surface port
+(`internal_docs/plan_agent_surface.md`, "Follow-up"); three new cases in
+`tests/test_check_quirks.py`.
+
 ### ADDED — 2-D finite strain reaches the bridge: `ops.nDMaterial.LogStrain2D` + `geom=` on the plane elements
 
 - `LogStrain2D` (ND_TAG 33016) is the fork's **only**

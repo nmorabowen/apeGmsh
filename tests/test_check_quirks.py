@@ -366,3 +366,34 @@ def test_the_command_exits_nonzero_on_a_finding(
     _write(tmp_path, "tests/test_a.py", 'def t(m):\n    assert m.schema_version == "2.1.0"\n')
     assert quirks.main(["--root", str(tmp_path)]) == 1
     assert "[schema-literal]" in capsys.readouterr().out
+
+
+# --- reading files: encodings must not blind or crash the scan ----------------
+
+_SWALLOW = "def f():\n    try:\n        g()\n    except KeyError:\n        pass\n"
+
+
+def _raw(root: Path, rel: str, data: bytes) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+def test_a_file_with_a_bom_is_still_scanned(tmp_path: Path) -> None:
+    # read_text("utf-8") kept the BOM, ast.parse refused it, and the file was skipped.
+    _raw(tmp_path, RESOLVER, b"\xef\xbb\xbf" + _SWALLOW.encode())
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:4"]
+
+
+def test_a_file_with_a_coding_cookie_is_still_scanned(tmp_path: Path) -> None:
+    src = "# -*- coding: latin-1 -*-\n# caf\xe9\n" + _SWALLOW
+    _raw(tmp_path, RESOLVER, src.encode("latin-1"))
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:6"]
+
+
+def test_an_undecodable_file_is_skipped_not_fatal(tmp_path: Path) -> None:
+    # Not valid Python (no cookie, not UTF-8): skip it like a SyntaxError, and
+    # keep scanning the rest instead of aborting the whole run.
+    _raw(tmp_path, RESOLVER, b"# caf\xe9\nx = 1\n")
+    _write(tmp_path, FACTORY, _SWALLOW)
+    assert _found(tmp_path) == ["resolve-swallow:_fem_factory.py:4"]
