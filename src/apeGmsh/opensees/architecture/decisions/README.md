@@ -7,6 +7,11 @@ considered and rejected, and the **consequences**.
 ADRs are append-only. If a later decision reverses or amends an
 earlier one, write a new ADR that supersedes it; do not edit history.
 
+Take the next number from this directory **on `origin/main`**, not from a
+worktree's copy, and add the index row below in the same PR: an unindexed
+ADR makes its number look free (a second 0065 landed in #676). Both are
+enforced by `scripts/check_quirks.py` (rule `adr-number`).
+
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-decouple-from-gmsh-session.md) | Decouple the bridge from the gmsh session | Accepted |

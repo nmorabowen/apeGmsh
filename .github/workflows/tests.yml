@@ -68,6 +68,20 @@ jobs:
             tests/test_skill_docs_drift.py \
             tests/studio/test_lookup.py
 
+      # A PR merged into a stacked base lands on a branch that is orphaned
+      # when the previous PR merges, so its work never reaches main
+      # (#295-#297; #858 was still missing two months later, recovered in
+      # #1169). Only main is protected, so this flags the PR red; it cannot
+      # block the merge. Runs even when a lock above failed.
+      - name: PR base is main
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.base_ref != 'main' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "::error::This PR targets '$BASE_REF', not main. A PR merged into a stacked base never reaches main. Retarget it (gh pr edit $PR_NUMBER --base main), then push a commit: a re-run reuses the old merge ref and a base edit does not trigger CI."
+          exit 1
+
   # Emit-cost regression tripwire for the ADR 0038 10k x 4 gate cell.
   #
   # The nightly benchmarks.yml runs the full 24-cell matrix but asserts
@@ -164,6 +178,14 @@ jobs:
           if [ "${count}" -lt "${MYPY_BASELINE}" ]; then
             echo "::notice::mypy errors dropped to ${count} — lower MYPY_BASELINE in tests.yml to lock in the gain"
           fi
+
+      # Quirk lint (AGENTS.md): lessons that bit again after being written
+      # down, held as rules — ADR number collisions, schema versions
+      # hard-coded in tests, a compose/H5 rebuild that drops a FEMData
+      # stream. Stdlib-only and a couple of seconds. Last in the job so a
+      # red lint never hides ruff or mypy.
+      - name: Quirk lint (scripts/check_quirks.py)
+        run: python scripts/check_quirks.py
 
   # Real-window Qt lifecycle tests (ADR 0084 D7, fork F-B). These 15
   # tests across 9 files build actual ResultsViewer/QtInteractor

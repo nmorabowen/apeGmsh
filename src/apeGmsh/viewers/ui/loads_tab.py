@@ -12,7 +12,8 @@ This panel never modifies state — it reads from
 """
 from __future__ import annotations
 
-from typing import Any, Callable, TYPE_CHECKING
+import zlib
+from typing import Any, Callable, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.LoadsComposite import LoadsComposite
@@ -53,9 +54,28 @@ _PATTERN_PALETTE = [
 ]
 
 
-def pattern_color(name: str) -> str:
-    """Stable color from a pattern name via hash."""
-    return _PATTERN_PALETTE[abs(hash(name)) % len(_PATTERN_PALETTE)]
+def pattern_color(name: str, cases: Sequence[str] | None = None) -> str:
+    """Color of a load pattern, the same in every session.
+
+    ``cases`` is ``g.loads.cases()``, the patterns in declaration order.
+    A declared pattern takes the palette slot of its index there
+    (wrapping after the palette), so the first seven patterns never
+    share a color. Declaring a pattern earlier in the script shifts the
+    colors of the later ones; the Loads tab shows each color next to its
+    name. Never pass the order of ``view.nodes.loads``: it is read back
+    from h5 groups, which list alphabetically.
+
+    A name not in ``cases`` falls back to zlib.crc32 of the name.
+    """
+    if cases is not None and name in cases:
+        idx = cases.index(name)
+    else:
+        # zlib.crc32 instead of Python's hash() — hash() is randomized
+        # across processes (PYTHONHASHSEED), so the same pattern would
+        # get a different arrow color in each session. crc32 is stable.
+        # Same fix as the color modes in #374 / 184b5734.
+        idx = zlib.crc32(name.encode("utf-8"))
+    return _PATTERN_PALETTE[idx % len(_PATTERN_PALETTE)]
 
 
 class LoadsTabPanel:
@@ -201,7 +221,8 @@ class LoadsTabPanel:
         self._fem_warning.setVisible(self._view is None and has_defs)
 
         n = len(defs)
-        n_pats = len(self._loads.cases())
+        cases = self._loads.cases()
+        n_pats = len(cases)
         self._header.setText(
             f"Loads ({n} def{'s' if n != 1 else ''}, "
             f"{n_pats} pattern{'s' if n_pats != 1 else ''})"
@@ -226,7 +247,7 @@ class LoadsTabPanel:
             root.setFlags(root.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             root.setCheckState(0, Qt.CheckState.Unchecked)
 
-            color = QtGui.QColor(pattern_color(pat_name))
+            color = QtGui.QColor(pattern_color(pat_name, cases))
             root.setForeground(0, QtGui.QBrush(color))
             font = root.font(0)
             font.setBold(True)
