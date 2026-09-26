@@ -1279,6 +1279,10 @@ class MeshViewer:
         force_len = char_len * 0.05 * self._overlay_model.scale('force_arrow')
         moment_len = char_len * 0.05 * self._overlay_model.scale('moment_arrow')
         origin = registry.origin_shift
+        # Declaration order, not the order of ``view.nodes.loads``
+        # (alphabetical once read back from h5) — see ``pattern_color``.
+        loads_comp = getattr(self._parent, 'loads', None)
+        cases = loads_comp.cases() if loads_comp is not None else None
 
         by_pat: dict[str, list] = {}
         for r in view.nodes.loads:
@@ -1312,7 +1316,7 @@ class MeshViewer:
                         m_dirs.append(mxyz / mmag)
                         m_mags.append(mmag)
 
-            color = pattern_color(pat)
+            color = pattern_color(pat, cases)
 
             if f_positions:
                 pos_arr = np.array(f_positions, dtype=float)
