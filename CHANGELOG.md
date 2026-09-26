@@ -14,6 +14,24 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — live capture: `DomainCaptureSpec.layers` works on a bridge-attached spec
+
+A `layers` record resolved against `DomainCaptureSpec(opensees=ops)` read the
+legacy `g.opensees` registries (`_sections` / `_elem_assignments`), which the
+`apeSees` bridge does not have, so it always resolved to "no layered-section
+metadata" and `_LayerCapturer` refused it. The lookup now walks the bridge's
+`Element` primitives whose `section` is a `LayeredShell` /
+`LayeredShellFiberSection`, fans each `pg` out with the emitter's own
+`expand_pg_to_elements`, and takes the section and layer-material tags from
+`apeSees.tag_for` (the tags the emitted `section LayeredShell` line carries).
+The dead legacy walk and its helpers are removed. The layer capturer also
+now takes the fem↔ops element-tag translator like the other capturers: a
+shell's `fem_eid` sits after gmsh's point and line elements, so querying
+`ops.eleType(fem_eid)` found no element (it was skipped even with the
+metadata present). Live test: one `ASDShellQ4` with concrete
+(`PlateFromPlaneStress`) and two `PlateRebar` layers under in-plane shear,
+read back with `Results.from_native`.
+
 ### FIXED — live capture: truss `axial_force` through `DomainCaptureSpec.gauss`
 
 `DomainCaptureSpec.gauss(components="axial_force")` raised "not valid for

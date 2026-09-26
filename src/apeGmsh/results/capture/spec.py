@@ -782,72 +782,81 @@ class DomainCaptureSpec:
         fem: "FEMData",
         element_ids: ndarray,
     ) -> Optional[LayerSectionMetadata]:
-        """Build LayerSectionMetadata from the OpenSees back-reference.
+        """Build LayerSectionMetadata from the attached ``apeSees`` bridge.
 
-        ``_sections`` / ``_elem_assignments`` belonged to the legacy
-        ``g.opensees`` composite removed in Phase 8; the ``apeSees``
-        bridge carries neither, so these dereferences raised
-        ``AttributeError`` on any bridge-attached spec with a ``layers``
-        record. Answer ``None`` — "no layered-section metadata" — which
-        is what this already returns when no bridge is attached at all,
-        rather than crashing the whole resolve.
+        Walks the bridge's ``Element`` primitives for those whose
+        ``section`` is a :class:`LayeredShell` /
+        :class:`LayeredShellFiberSection`, fans each one's ``pg`` out to
+        ``fem_eid``\ s with the same helper the emitter uses, and keeps the
+        ones this record targets. Section and layer-material tags are the
+        bridge-allocated tags (``apeSees.tag_for``) — the tags the emitted
+        ``section LayeredShell`` line carries.
 
-        Porting the lookup onto the bridge's ``Section`` primitives (the
-        way :meth:`_lookup_class_hint_for_pgs` was ported onto its
-        ``Element`` ones) is the real fix; it is a layered-shell change,
-        not a σ_zz one, so it is deliberately left out of this commit.
+        Answers ``None`` — "no layered-section metadata" — when there is
+        no bridge, or none of the record's elements sits on a layered
+        section; ``_LayerCapturer`` then refuses the record loudly.
+
+        This used to read ``_sections`` / ``_elem_assignments``, which
+        belonged to the legacy ``g.opensees`` composite removed in
+        Phase 8. The bridge carries neither, so a bridge-attached
+        ``layers`` record always resolved to ``None`` and could not be
+        captured at all.
         """
-        if self._opensees is None:
+        bridge = self._opensees
+        if bridge is None:
             return None
+        from ...opensees._internal.build import expand_pg_to_elements
+        from ...opensees._internal.types import Element
+        from ...opensees.section.plate import (
+            LayeredShell,
+            LayeredShellFiberSection,
+        )
 
-        sections_registry = getattr(self._opensees, "_sections", None)
-        elem_assignments = getattr(self._opensees, "_elem_assignments", None)
-        if not sections_registry or not elem_assignments:
-            return None
-
-        pg_to_layered_section: dict[str, str] = {}
-        for pg_name, assign in elem_assignments.items():
-            sec_name = assign.get("material")
-            if sec_name is None or sec_name not in sections_registry:
-                continue
-            sec_def = sections_registry[sec_name]
-            if not _is_layered_shell_section(sec_def):
-                continue
-            pg_to_layered_section[pg_name] = sec_name
-
-        if not pg_to_layered_section:
-            return None
-
-        record_id_set = set(int(e) for e in element_ids.tolist())
-        eid_to_sec_name: dict[int, str] = {}
-        for pg_name, sec_name in pg_to_layered_section.items():
-            try:
-                pg_eids = fem.elements.physical.element_ids(pg_name)
-            except Exception:
-                continue
-            for eid in np.asarray(pg_eids, dtype=np.int64).tolist():
-                if int(eid) in record_id_set:
-                    eid_to_sec_name[int(eid)] = sec_name
-
-        if not eid_to_sec_name:
-            return None
-
-        sec_tags = getattr(self._opensees, "_sec_tags", {}) or {}
+        wanted = set(int(e) for e in element_ids.tolist())
+        names = {
+            id(prim): name
+            for name, prim in (getattr(bridge, "_names", None) or {}).items()
+        }
         sections: dict[int, LayerSectionDef] = {}
         eid_to_sec_tag: dict[int, int] = {}
-        for eid, sec_name in eid_to_sec_name.items():
-            sec_tag = int(
-                sec_tags.get(sec_name, _stable_section_tag(sec_name)),
-            )
-            eid_to_sec_tag[eid] = sec_tag
-            if sec_tag in sections:
+        for prim in getattr(bridge, "_primitives", ()):
+            if not isinstance(prim, Element):
                 continue
-            sec_def = sections_registry[sec_name]
-            sections[sec_tag] = _layered_shell_section_def(
-                sec_tag=sec_tag, name=sec_name, raw=sec_def,
-                opensees=self._opensees,
-            )
+            sec = getattr(prim, "section", None)
+            pg = getattr(prim, "pg", None)
+            if pg is None or not isinstance(
+                sec, (LayeredShell, LayeredShellFiberSection),
+            ):
+                continue
+            hit = [
+                int(e) for e in expand_pg_to_elements(fem, pg).eids.tolist()
+                if int(e) in wanted
+            ]
+            if not hit:
+                continue
+            sec_tag = _bridge_tag(bridge, sec)
+            if sec_tag not in sections:
+                sections[sec_tag] = LayerSectionDef(
+                    section_tag=sec_tag,
+                    section_name=names.get(
+                        id(sec), f"{type(sec).__name__}_{sec_tag}",
+                    ),
+                    n_layers=len(sec.layers),
+                    thickness=np.asarray(
+                        [float(layer.thickness) for layer in sec.layers],
+                        dtype=np.float64,
+                    ),
+                    material_tags=np.asarray(
+                        [_bridge_tag(bridge, layer.material)
+                         for layer in sec.layers],
+                        dtype=np.int64,
+                    ),
+                )
+            for eid in hit:
+                eid_to_sec_tag[eid] = sec_tag
 
+        if not eid_to_sec_tag:
+            return None
         return LayerSectionMetadata(
             sections=sections,
             element_to_section=eid_to_sec_tag,
@@ -1113,67 +1122,22 @@ def _resolve_element_selectors(
 # Layered-shell section helpers
 # =====================================================================
 
-_LAYERED_SHELL_TYPES = frozenset({
-    "LayeredShell",
-    "LayeredShellFiberSection",
-})
+def _bridge_tag(bridge: Any, prim: Any) -> int:
+    """The tag ``bridge`` allocated to ``prim``; fail loud if it has none.
 
-
-def _is_layered_shell_section(sec_def: dict[str, Any]) -> bool:
-    return sec_def.get("section_type", "") in _LAYERED_SHELL_TYPES
-
-
-def _layered_shell_section_def(
-    *, sec_tag: int, name: str, raw: dict[str, Any],
-    opensees: Any = None,
-) -> "LayerSectionDef":
-    """Normalise a registered LayeredShell section's params."""
-    params = raw.get("params") or {}
-    layers = params.get("layers")
-    if layers is not None:
-        thicknesses = [float(t) for _, t in layers]
-        material_refs = [m for m, _ in layers]
-    else:
-        thicknesses = [float(t) for t in (params.get("thicknesses") or ())]
-        material_refs = list(params.get("materials") or ())
-    material_tags = [
-        _resolve_material_tag(m, opensees) for m in material_refs
-    ]
-    if len(thicknesses) != len(material_tags):
+    Every primitive an emitted deck references is registered (emit raises
+    ``BridgeError`` otherwise), so a missing tag here means the section or
+    its layer material was built outside the bridge.
+    """
+    tag = bridge.tag_for(prim)
+    if tag is None:
         raise ValueError(
-            f"LayeredShell section {name!r}: thickness count "
-            f"({len(thicknesses)}) does not match material-tag count "
-            f"({len(material_tags)})."
+            f"DomainCaptureSpec: {type(prim).__name__} is not registered "
+            f"with the attached apeSees bridge, so its tag is unknown. "
+            f"Build it through ops.section.* / ops.nDMaterial.* (or "
+            f"ops.register(...)) before resolving a layers record."
         )
-    if not thicknesses:
-        raise ValueError(
-            f"LayeredShell section {name!r} has zero layers — check "
-            f"params={params!r}."
-        )
-    return LayerSectionDef(
-        section_tag=sec_tag,
-        section_name=name,
-        n_layers=len(thicknesses),
-        thickness=np.asarray(thicknesses, dtype=np.float64),
-        material_tags=np.asarray(material_tags, dtype=np.int64),
-    )
-
-
-def _resolve_material_tag(
-    mat_ref: Any, opensees: Any,
-) -> int:
-    """Convert an int (already-a-tag) or a name to an integer tag."""
-    if isinstance(mat_ref, (int, np.integer)):
-        return int(mat_ref)
-    name = str(mat_ref)
-    if opensees is not None:
-        nd_tags = getattr(opensees, "_nd_mat_tags", {}) or {}
-        uni_tags = getattr(opensees, "_uni_mat_tags", {}) or {}
-        if name in nd_tags:
-            return int(nd_tags[name])
-        if name in uni_tags:
-            return int(uni_tags[name])
-    return _stable_section_tag(name)
+    return int(tag)
 
 
 def _stable_section_tag(name: str) -> int:

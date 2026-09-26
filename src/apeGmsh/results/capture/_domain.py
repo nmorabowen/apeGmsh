@@ -542,14 +542,13 @@ class DomainCapture:
                     _FiberCapturer(rec, tag_map=self._tag_map),
                 )
             elif rec.category == "layers":
-                # NOTE: the layer capturer indexes the fem-keyed
-                # ``element_to_section`` metadata by element id, so the
-                # translate-record-to-ops shortcut the other capturers use
-                # would break it. Composed-model layered-shell capture is
-                # a rare combo; deferred (tag_map not passed ⇒ record stays
-                # fem, behaviour unchanged). See ADR 0043 §slice 1.3.
+                # The capturer re-keys its fem-keyed ``element_to_section``
+                # metadata onto ops tags itself (see _LayerCapturer), so it
+                # takes the translator like every other element capturer:
+                # a shell mesh's fem_eids sit after gmsh's lower-dimension
+                # elements and are NOT the ops tags even uncomposed.
                 self._layer_capturers.append(
-                    _LayerCapturer(rec, self._fem),
+                    _LayerCapturer(rec, self._fem, tag_map=self._tag_map),
                 )
             else:
                 self._element_level_records.append(rec)
@@ -2227,6 +2226,19 @@ class _LayerCapturer:
         self._rec = _record_eids_to_ops(record, tag_map)
         self._tag_map = tag_map
         self._fem = fem
+        if tag_map is not None and meta.element_to_section:
+            # The record's ids are now ops tags; key the section lookup
+            # the same way (``write_to`` maps element_index back to fem).
+            from dataclasses import replace
+            fem_ids = np.fromiter(
+                meta.element_to_section, dtype=np.int64,
+                count=len(meta.element_to_section),
+            )
+            ops_ids = tag_map.to_ops(fem_ids)
+            meta = replace(meta, element_to_section={
+                int(o): meta.element_to_section[int(f)]
+                for f, o in zip(fem_ids.tolist(), np.asarray(ops_ids).tolist())
+            })
         self._meta = meta
         self._times: list[float] = []
         comps = set(record.components)
@@ -2471,7 +2483,9 @@ class _LayerCapturer:
             writer.write_layers_group(
                 stage_id, partition_id,
                 group_id=f"{self._rec.name}_{class_name}_{i}",
-                element_index=np.asarray(element_index, dtype=np.int64),
+                element_index=_index_to_fem(
+                    np.asarray(element_index, dtype=np.int64), self._tag_map,
+                ),
                 gp_index=np.asarray(gp_index, dtype=np.int64),
                 layer_index=np.asarray(layer_index, dtype=np.int64),
                 sub_gp_index=np.asarray(sub_gp_index, dtype=np.int64),
