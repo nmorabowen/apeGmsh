@@ -1730,7 +1730,7 @@ Callback factories for live preferences sliders:
 
 #### `viewers/ui/loads_tab.py`
 - `_qt()` — module helper.
-- `pattern_color(name)` — deterministic color assignment.
+- `pattern_color(name, cases=None)` — color by declaration order in `cases` (`g.loads.cases()`); crc32 fallback.
 - `LoadsTabPanel` **[helper]**
   - `.__init__(self, ...)`
   - `.refresh(self)`
