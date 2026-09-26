@@ -2406,9 +2406,32 @@ class PlateRebar(NDMaterial):
         The uniaxial steel law. Emitted before this material (via
         :meth:`dependencies`); the C++ side takes its own copy.
     angle
-        Bar direction in **degrees**, measured from the shell element's
-        local x axis (``0`` = local x, ``90`` = local y). Any finite value;
-        OpenSees takes ``cos``/``sin`` of it.
+        Bar direction in **degrees**, measured from the x axis of the
+        section frame the shell hands its layers (``0`` = that x axis,
+        ``90`` = its y axis). Any finite value; OpenSees takes
+        ``cos``/``sin`` of it, so ``0`` and ``180`` are the same bar.
+
+    Notes
+    -----
+    **The section x axis depends on the build, for** ``ASDShellQ4`` **without
+    a** ``-local`` **axis.** The element rotates its strain into a section
+    frame by an angle it computes in ``setDomain``. By default that frame's
+    x axis is the mid-side vector from edge 1-4 to edge 2-3.
+
+    * Fork, and upstream from PR #1606 (merged 2025-05-16): the section x
+      axis is that mid-side vector.
+    * Older upstream, including PyPI openseespy 3.7.1.x: the default
+      branch declares a second ``e1`` that hides the outer one. The angle
+      becomes ``acos(0) = +90`` deg, so the section x axis is the element's
+      local **y** axis, and every ``PlateRebar`` angle lands 90 deg away
+      from the fork.
+
+    The explicit ``-local`` branch is correct on both builds. apeGmsh's
+    ``ASDShellQ4(local_cs=)`` does not reach it, because it emits a
+    ``-localCS`` flag that ASDShellQ4 does not parse. So on an old upstream
+    build, swap the angles (``0`` <-> ``90``) to get the fork's layout.
+    ``tests/opensees/live/test_plate_rebar_layers_live.py`` records the
+    measured swap.
     """
 
     material: UniaxialMaterial

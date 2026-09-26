@@ -8,11 +8,31 @@ uniform and the axial stiffness is closed-form::
 
     k = b / L * (E_c * h_c + E_s * sum(t_i * cos(angle_i)**4))
 
-so a bar at 0 deg adds ``E_s * t`` and a bar at 90 deg adds nothing. Swapping
-the two bar angles changes which thickness counts, which checks the emitted
-argument order, the dependency order (uniaxial before ``PlateRebar``, nD
-before ``PlateFromPlaneStress``) and the angle convention (degrees from the
-shell local x axis) against a real build.
+where ``angle_i`` is measured from global X. A bar along X adds
+``E_s * t`` and a bar across it adds nothing. Swapping the two bar angles
+changes which thickness counts. That checks the emitted argument order, the
+dependency order (uniaxial before ``PlateRebar``, nD before
+``PlateFromPlaneStress``) and that ``angle`` is in degrees.
+
+**Which bar lies along X depends on the build.** ``PlateRebar``'s angle is
+measured in the section frame, and ``ASDShellQ4`` rotates the strain from
+its element frame into that section frame by an angle it computes in
+``setDomain``. Without ``-local``, the section x axis should be the
+mid-side vector from edge 1-4 to edge 2-3, which is +X for this square:
+
+* **Fork, and upstream from PR #1606 (merged 2025-05-16):** the section x
+  axis is that mid-side vector. 0 deg lies along X.
+* **Older upstream, including PyPI openseespy 3.7.1.x (the CI
+  ``live-stock`` job):** the default branch declares a second ``e1`` that
+  hides the outer one. The outer ``e1`` stays zero, so the angle becomes
+  ``acos(0) = +90`` deg. The section x axis is then the element local y
+  axis, and 90 deg lies along X.
+
+The build-independent assertions are therefore that the two stiffnesses
+match the expected pair {with T_A along X, with T_B along X} in either
+order, and that swapping the angles swaps them. Measured: 1.5625e-5 and
+1.6393e-5 m, in opposite order on the two builds. The ``-local`` option
+takes the other code path, which is correct on both builds.
 
 Gated by the ``live`` marker; needs ``openseespy`` (stock or the fork — both
 materials are stock OpenSees).
@@ -97,16 +117,28 @@ def _pull(angle_a: float, angle_b: float, section_ns: str = "LayeredShell") -> f
     return float(emitter.ops.nodeDisp(2, 1))
 
 
+def _expected(t_along_x: float) -> float:
+    return P / (E_C * H_C + E_S * t_along_x)
+
+
 @pytest.mark.live
-@pytest.mark.parametrize(
-    ("angle_a", "angle_b", "t_along_x"),
-    [(0.0, 90.0, T_A), (90.0, 0.0, T_B)],
-)
-def test_plate_rebar_layers_add_axial_stiffness_along_their_angle(
-    angle_a: float, angle_b: float, t_along_x: float,
-) -> None:
-    expected = P / (E_C * H_C + E_S * t_along_x)
-    assert _pull(angle_a, angle_b) == pytest.approx(expected, rel=1e-6)
+def test_plate_rebar_layers_add_axial_stiffness_along_their_angle() -> None:
+    u_0_90 = _pull(0.0, 90.0)
+    u_90_0 = _pull(90.0, 0.0)
+    # The two orientations give the expected pair of answers; which one
+    # belongs to which depends on the build's ASDShellQ4 section frame
+    # (see the module docstring).
+    assert sorted([u_0_90, u_90_0]) == pytest.approx(
+        sorted([_expected(T_A), _expected(T_B)]), rel=1e-6,
+    )
+    # And the angle matters: swapping the bars changes the stiffness.
+    assert u_0_90 != pytest.approx(u_90_0, rel=1e-3)
+
+
+@pytest.mark.live
+def test_plate_rebar_angle_is_a_direction_not_a_sense() -> None:
+    # Build-independent: 0 and 180 deg are the same bar, on any section frame.
+    assert _pull(180.0, 90.0) == pytest.approx(_pull(0.0, 90.0), rel=1e-9)
 
 
 @pytest.mark.live
@@ -115,7 +147,7 @@ def test_layered_shell_fiber_section_keyword_parses_live() -> None:
     interpreter registers (``section type LayeredShellFiberSection is
     unknown``). It now emits ``LayeredShell``, which builds, and gives the
     same answer as the ``LayeredShell`` primitive."""
-    expected = P / (E_C * H_C + E_S * T_A)
     got = _pull(0.0, 90.0, section_ns="LayeredShellFiberSection")
-    assert got == pytest.approx(expected, rel=1e-6)
     assert got == pytest.approx(_pull(0.0, 90.0, section_ns="LayeredShell"), rel=1e-12)
+    # A real layered answer, on either build's section frame.
+    assert min(abs(got / _expected(t) - 1.0) for t in (T_A, T_B)) < 1e-6
