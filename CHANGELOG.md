@@ -37,6 +37,20 @@ was). `AGENTS.md`, the ADR/docs guide and the workflow doc now say
 "directly below the anchor, the first thing under the header", and the
 workflow doc records the drift and what a branch cut before the move
 should do after merging `main`.
+
+### FIXED — CHANGELOG: every `###` heading has a blank line above it, and a test holds it
+
+The `merge=union` driver never conflicts: when two PRs insert sections at
+the anchor it keeps both, but it can drop the blank line between them, so
+one section's last paragraph runs straight into the next `###` header. It
+happened three times on 2026-09-25 alone, and 56 older sections carried
+it. This inserts those 56 blank lines, and nothing else changes.
+`tests/test_changelog_structure.py` gains
+`test_every_section_heading_has_a_blank_line_before_it`, which fails on
+the shape. It flags the real mangled merge of #1172's first refresh
+(`403a3e06`, line 890) and passes its repair; headings inside fenced code
+samples are skipped.
+
 ### ADDED — viewer agent surface: two task guides and five recurrence guards
 
 Agents working on the viewers now get the viewers' own lessons at the
@@ -86,6 +100,7 @@ was fixed in its own PR, ahead of this guard.
   has no hits left. Three stale `G-IMPORT` budgets were deleted.
 - `test_deform_follow_contract.py` now requires every diagram kind to
   override `set_visible`, because the base walks the dead `_actors`.
+
 ### FIXED — load patterns are coloured by declaration order, the same in every session
 
 The mesh viewer's load arrows and the Loads tab coloured each pattern with
@@ -396,6 +411,7 @@ than a shared vocabulary.
   driver deck ends at `I1 = 8.08` against a cutoff of `0.4487` — never
   returned — the probe answers `False`, and the recorder writes no bucket.
   Mutating the probe kills 6 of 6 tests in the gate.
+
 ### FIXED — `tail_monitor` walked off the end of a half-appended SWMR frame
 
 Appending one frame to a Monitor sink is three separate writes on the
@@ -472,6 +488,7 @@ whose per-material routing still hard-codes `catalog_token == "strain"`.
 Also deferred: names for `ladrunoTangent`, the tension/corner censuses, and
 a `ladruno_fork` live gate — which needs the fork rebuilt, since our venv
 build `1652f945c` is pre-fix.
+
 ### ADDED — `Closest_Point` / `Algorithmic`, the ASDPlasticMaterial3D closest-point return map (ADR 0107, fork ADR-97)
 
 `ASDPlasticMaterial3D` and the three D5 helpers (`MohrCoulombSoil`,
@@ -616,6 +633,7 @@ fields are left at their defaults, namespace reachability end to end, and
 each refusal above. Out of scope for this change: an
 `implexGuards`/`implexDetail` response reader and an `ops.ladrunoBuild()`
 runtime check — both deferred slices.
+
 ### ADDED — `LadrunoSANISAND` `implexGuards` is readable and recordable (ADR 92 P2-9, TIMs A12 follow-up)
 
 The fork's 7-slot `implexGuards` guard census now has canonical component
@@ -961,6 +979,7 @@ previously emitted and either died late or ran wrong.
 
 ``repros/repro4_builder_scoped_wipe.py`` is the executable survival
 table, measured against the fork binary.
+
 ### ADDED — strut-and-tie FE overlay consumer (`apeGmsh.interop.strut_tie`)
 
 The apeGmsh side of apeConcrete's strut-and-tie tool (apeConcrete
@@ -1006,6 +1025,46 @@ as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
 
+### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
+
+`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
+(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
+`except` handler that only passes, continues, returns or assigns an empty
+value, or logs — whatever it catches — and any `contextlib.suppress`, is a
+finding. The lesson recurred: `_fem_factory` once downgraded every resolve
+error to a warning (fixed 3aecb417), and nine days later the chain-phase
+router re-added `except (KeyError, TypeError): return False`, which silently
+dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
+flags both on their pre-fix trees and passes the fixes; the four legitimate
+silent handlers in scope carry waivers that state why. `lock-tests` now fails
+a PR whose base is not `main` (#858 merged into a stacked base and was missing
+from `main` for two months). `AGENTS.md` corrects "`main` has no required
+status checks" (it requires five, and takes squash merges only), says how to
+confirm a merge reached `main`, and adds two test conventions; the bridge and
+ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
+items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
+
+### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
+
+`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
+the one line `@AGENTS.md`, and its old behavioural guidelines moved in
+verbatim. It adds the map this repo never had: each CI lane's local
+command and trap, and the merge lessons that until now lived only in the
+maintainer's agent memory (`--base main`, no required checks, push-after-
+merge orphans, shared-literal merges, the editable install that points at
+main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
+`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
+at the lesson instead of copying it.
+
+`scripts/check_quirks.py` turns three lessons that bit again after being
+written down into rules, run as the last step of `static-gates`:
+`adr-number` (two ADRs with one number, or one missing from the index —
+#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
+a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
+omitting a FEMData stream — #707, #912/#913). Each was proven against the
+commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
+at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
+Plan and evidence: `internal_docs/plan_agent_surface.md`.
 
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
@@ -1117,6 +1176,7 @@ catch is narrowed to `AttributeError` / `TypeError` / `ValueError` (a
 missing VTK method, a missing/malformed title or anchor, a non-numeric
 font size) and surfaces via a new `ScalarBarTitleWarning` instead of
 disappearing silently.
+
 ### FIXED — bridge: three fail-loud hygiene gaps (binary-as-directory, silent empty pg= elements, banner quoting)
 
 Three small hygiene fixes to the OpenSees bridge, bundled in one PR.
@@ -1208,6 +1268,7 @@ per-symbol suffixes would risk exactly the silent mislabelling this
 table exists to catch, so it is left as a follow-up pending either a
 fork source read of the MPCO-side response tagging or a live MPCO
 recording to inspect.
+
 ### ADDED — interface() 3D S4: the 3D interface is verified against the 2D case, the u-p passenger DOF and a corner
 
 S1 built the kernel, S2 lifted the gates, S3 made the deck emit. None of
@@ -1429,6 +1490,7 @@ reaches a declaration. Under a partitioned staged deck the marker rides the
 same global scope `stage_open` and `analyze` already use, so it runs once per
 rank's own process without disturbing a byte of any `if {[getPID] == K} { ...
 }` rank guard.
+
 ### ADDED — the `system Pardiso -stats` parser, alone (ADR 0106 S1)
 
 A new pure, stdlib-only `apeGmsh.opensees._solver_stats` module: the fork
@@ -1451,6 +1513,7 @@ multi-block-reduction ones.
 Not wired anywhere (S2/S3): no emitter emits `APEGMSH_STAGE` yet, nothing
 calls this parser, and `apeSees.tcl` / `apeSees.py` still return `None`.
 Nothing changes for any run.
+
 ### FIXED — pyvista 0.49 / VTK 9.7: the horizontal legend's title actor leaked its scalar bar, and `pyvista.trame` needs `trame-pyvista`
 
 pyvista 0.49.0 pulls VTK 9.7.0, which removed `vtkRenderer.AddActor2D` /
@@ -1483,6 +1546,7 @@ declared on a serial (non-partitioned) deck, naming the offending stage on
 a staged deck. Partitioned decks, the ADR 0027 auto-emitted `Mumps`/`UmfPack`
 fallback, and the ADR 0077 parallel-ARPACK path are all unaffected.
 Independently revertable.
+
 ### ADDED — interface() 3D S1: per-node outward frames and tributary areas on a surface master
 
 `g.constraints.interface()` still refuses a 3D model, exactly as before.
@@ -1509,6 +1573,7 @@ Nothing calls it yet. ADR 0093's register (entries 12–15) now carries the
 3D slices: S2 lifts the three refusal gates for a dim-2 master and widens
 `InterfaceRecord.orient` from six floats to the second tangent's nine, and
 S3 emits that frame as the per-pair `zeroLength -orient`.
+
 ### ADDED — ADR 0106 proposed: capture and parse `system Pardiso -stats`, per stage
 
 The fork prints a `PARDISO stats:` block on stderr after **every** numeric
@@ -1583,6 +1648,7 @@ reads as `me, capHit`; a `material.psi` bucket labelled `yieldDistance` reads
 as `state_parameter`) is renamed **silently** — that predates this entry, but
 #820 makes the file's names authoritative, so the disagreement is now
 detectable and should warn.
+
 ### CHANGED — the 2026-09-07 fork batch is recorded: minimum build `a240b9183`, the ADR 96 passenger-DOF contract, and the per-factorisation `Pardiso -stats` block
 
 The fork merged eight PRs on 2026-09-07 (#805, #808, #810, #811, #812, #814,
@@ -1733,6 +1799,7 @@ guard (`ZeroLength.cpp:611-673`; a phantom at either ndf would either
 mismatch or hand the spring a pore-pressure slot), and the slice order once
 that lands (3D per-facet frames and surface tributary, the gates, per-pair
 `-orient` with two tangents, a rotated 2D verification case). No code change.
+
 ### ADDED — `g.mesh.structured.build_graded_box` — mechanism block + geometric grading in one call (PM-01 A9)
 
 A footing-on-soil model wants three things at once from its mesh, and
@@ -1782,6 +1849,7 @@ when fed the same far-field seed; the verb itself seeds at `h`, the
 declared near-field cell, which buys a denser far field (51×51×26 grid
 lines at `r = 1.2` against the study's 49×49×24) rather than a coarser
 one.
+
 ### ADDED — `ops.strategy.Substep`: an adaptive step controller that runs to criterion (ADR 0104 / ADR 0057 Phase B)
 
 `ops.strategy.Ladder` has escalated the solution *algorithm* since ADR 0057
@@ -1864,6 +1932,7 @@ step per attempt, since the step size has to be pushed into the integrator every
 time it changes, and it covers that case only (under the sp platen `getTime()`
 is a settlement, not a force, so that driver is three methods written against
 the `SubstepDriver` Protocol).
+
 ### ADDED — `s.profile(deep=, memory=, per_step=)` brackets a single stage's analyze loop with the Ladruno profiler (TIMs A8)
 
 `ops.profiler.*` brackets the *whole* deck's appended `analyze` call —
@@ -1884,6 +1953,7 @@ H5 archival of `s.profile` refuses loudly (mirrors the existing
 `phantom_node_tags` refusal in `H5Emitter.set_stage_records`) rather than
 silently dropping the declaration on a `to_h5` round-trip — use
 `ops.tcl(path)` / `ops.py(path)` for a profiled staged deck.
+
 ### ADDED — `s.imposed_path(...)`: prescribed motion on any DOF, inside a stage
 
 `ops.imposed_displacement` maps `ux` / `uy` / `uz` onto DOFs 1-3 and
@@ -1915,6 +1985,7 @@ bound is the `ops.model(ndf=)` **envelope**, an upper bound on any node's
 ndf — the per-node *effective* map (ADR 0048) resolves at build time from
 every declared element's PG fan-out and cannot be probed per call without
 a full mesh walk. `ops.imposed_displacement` is untouched.
+
 ### ADDED — `s.update_parameter(...)`: a typed pass-through over `updateParameter`
 
 `s.initial_stress` and `s.activate_absorbing` already drive the OpenSees
@@ -1951,6 +2022,7 @@ partitioned path (per rank, same element-ownership filter). A fresh
 `parameter` tag per record and per rank keeps each block self-contained,
 so a later stage may re-declare. H5 archival of the verb is deferred and
 fail-loud.
+
 ### ADDED — `s.zero_velocities()`: the transient → static handover
 
 A static stage inherits the previous transient stage's committed nodal
@@ -1981,6 +2053,7 @@ the flat and the partitioned emit paths — under MP each rank emits only
 the slice of the target set it owns (INV-4). H5 archival of the verb is
 deferred and fail-loud: the staged archive raises `NotImplementedError`
 rather than write a deck that silently replays the artefact.
+
 ### ADDED — a build-time pressure-datum check for static u-p decks (A2)
 
 A saturated (u-p) region whose pore-pressure DOFs are **all free** is
@@ -2018,6 +2091,7 @@ model's u-p regions are sealed, and the fix — pin the pressure DOF of one
 node of that region, typically a drained surface. On a Taylor–Hood mesh it
 also names the vertex-node idiom, because the obvious whole-pg mask over-runs
 the mid-edge nodes' `ndf` and G3 refuses it.
+
 ### FIXED — `kinematic_coupling` refuses a u–p slave under `dofs=None` (TIMs A1)
 
 `g.constraints.kinematic_coupling(..., dofs=None)` emits the fork element
@@ -2329,6 +2403,7 @@ carries.
 
 The first consumer is an apeWorkbench browser reader (h5wasm, no h5py,
 no apeGmsh import); the golden is the artifact it conforms against.
+
 ### DOCS — `h5-schema.md` registry re-sync + doc-sync ratchet
 
 `src/apeGmsh/opensees/architecture/h5-schema.md` had drifted well
@@ -2363,6 +2438,7 @@ doc's zone-registry "Current" cells against the live
 and asserts each is named somewhere in the doc — both fail loud (proven
 by deliberately reverting the doc and re-running before restoring it)
 instead of the doc quietly going stale again.
+
 ### ADDED — studio contract 1.8.0: a progress sidecar, run durations, and a version stamp on disk (ADR 0095 Amendment 11)
 
 Three additive gaps closed at once, all found while an out-of-process
@@ -2694,6 +2770,7 @@ plane-strain block stays genuinely ambiguous between `LadrunoLST` and
 `BezierTri6`, whose Gauss orders differ; that now raises and asks for a
 `class_hint`, exactly as the 9-column `stress` block these two already
 share.
+
 ### ADDED — a plane-strain `stress_zz` request now records the real σ_zz
 
 `ops.recorder.declare(gauss=(..., "stress_zz"), ...)` used to be a silent
@@ -2731,6 +2808,7 @@ Read side: a recorded-but-NaN `stress_zz` column now falls back to
 ν-recovery with a message that names the material as the cause, distinct
 from the existing "cannot classify this element" warning. A genuinely
 recorded, finite σ_zz is used verbatim and raises nothing.
+
 ### CHANGED — ADR 0098 §11 S6d: docs and skill move onto the session
 
 The last S6 slice. Documentation stops describing the retired Geometry /
@@ -3366,6 +3444,7 @@ one realize and one render, while a theme change forces all four.
 New: `tests/viewers/test_pane_host.py` (the sixteen `[off]` criteria +
 four mutation tests) and `tests/viewers/test_pane_host_window_qt.py`
 (criteria 18-20 on real GL, beside the existing probe).
+
 ### FIXED — `doctor` no longer ships one developer's venv path
 
 `python -m apeGmsh doctor` printed a hardcoded home directory on every
@@ -3400,6 +3479,7 @@ home directory (D2 is exempt; it echoes where apeGmsh actually resides,
 discovered at runtime). The three D6 lanes were rewritten around
 `apeGmsh` itself instead of `baseUnits` — they previously skipped
 everywhere the office package was absent, which is to say on CI.
+
 ### FIXED — habitat template shipped one machine's paths (ADR 0095 S7a)
 
 Every `studio init` on a machine that was not the template author's
@@ -3440,6 +3520,7 @@ habitat (postmortem `2026-08-17_frame-example`, F1/F3/F4).
   fails `studio init` with a bare `ModuleNotFoundError` that reads like a
   bug rather than a version gap. WARN, never fail: an already-stamped
   habitat does not need the stamper.
+
 ### FIXED — `[all]` now includes the `mcp` extra
 
 `pip install "apeGmsh[all]"` installed the `apeGmsh.studio` package
@@ -3510,6 +3591,7 @@ openseespy / the Ladruno classic exe and is not CI-run — see the
 implementing PR for the local verify transcripts. `docs/how-to/studio-habitat.md`
 gains "Use the example library"; the `apegmsh` skill's Studio
 paragraph and `workflows.md` name the door.
+
 ### ADDED — habitat template: visual-talk convention + apeCAD/apeSketch requisites
 
 apeCAD and apeSketch (spatial-intent CAD scratchpad and hand-ink bridge)
@@ -3792,12 +3874,14 @@ spend. Observe open / mutate closed: skill errors and working
 ImageMage steps promote by reviewed PR or script comments, not by
 session residue writing `SKILL.md` or new CAD MCP verbs. 0095 INV-10
 stands. S0 is the ADR only (S1–S5 named, not shipped).
+
 ### ADDED — studio CAD quotations (name + overall size)
 
 Studio ModelViewer opens with part and entity labels on, each showing
 the AABB size in metres (cotas). Toggle still lives on the View tab.
 `--phase model` and `--phase mesh` remain separate processes so the
 CAD window can stay up while the mesh generates.
+
 ### ADDED — Cursor MCP config; quiet the Ladruno stdout banner
 
 S4a leftover: `.cursor/mcp.json` launches `scripts/studio-mcp.ps1` →
@@ -3873,6 +3957,7 @@ before `apeSees` / `Results`. A successful stop writes
 element counts) — what exists, not what was clicked. Skip-remesh keys
 on `(source hash, phase)` so a model preview is not reused as a mesh
 preview. Geometry preview of a solving script no longer runs the solve.
+
 ### FIXED — assess closeout (ADR 0094 Amendment 1)
 
 Planar 2-D winding is degeneracy-only (clockwise slabs are not
@@ -4017,6 +4102,7 @@ the workload kills the interpreter outright.
 child's mesh reproduces an in-process build's area, `EIxx_c`, `GJ` and
 `Mp_xx`, and the rebuilt analyzer still solves stress on demand. The
 three B6 worker tests pass **unchanged**.
+
 ### CHANGED — ADR 0094 Accepted: skill teaches `assess()`, Q1–Q3 closed
 
 After-solve check is `fem.assess()` / `results.assess(figures=True)` then
@@ -4096,6 +4182,7 @@ by hand.
   — both already existed on `results.elements.gauss.get`. A contour that
   overrides the recovery bypasses the shared visual store (its float16 cache
   and global colour range hold default-recovery values) and re-reads per step.
+
 ### ADDED — labelled `g.decouple_node` as RBE2/RBE3 master (ADR 0049 OQ2 slice)
 
 `g.constraints.kinematic_coupling` and `g.constraints.distributing_coupling`
@@ -4190,6 +4277,7 @@ already have their own entries above.
 - Docs: `docs/api/constraints.md` gains a Tier 6 section,
   `docs/concepts/constraints.md` places interface springs against tie /
   contact / embedded, and `skills/apegmsh/` carries the verb.
+
 ### FIXED — partitioned-contact review fixes: displacement-driven decks refuse instead of freeing the ghost DOF, and the cut-master backstop no longer disengages on a partial facet map (ADR 0092 review F1–F8)
 
 The 2026-08-13 adversarial review of the landed partitioned-contact emit
@@ -4329,6 +4417,7 @@ this: `_per_partition`'s missing-rank tolerance does not wrap
 `read_layers`/`read_springs` (harmless only while both are
 always-empty stubs), and `opensees_model()` reads partition 0 only.
 Gated `subprocess` + `slow` with loud env skips, so CI skips it.
+
 ### FIXED — `split="parts"` silently dropped `g.constraints.interface()` (ADR 0093)
 
 `BuiltModel._emit_split` ran every other additive side-list pass
@@ -4420,6 +4509,7 @@ numeric `*_auto_chain` twins in
   byte identity against the flat deck, the all-shared-cut degenerate
   fixture, foreign-slave ghosting with ndf parity + SP replay + INV-7,
   the new refusals, determinism).
+
 ### ADDED — ADR 0092 S5: the partitioned-contact numeric twin actually runs (serial vs 2-rank MPI, ≤ 2e−14)
 
 `tests/opensees/subprocess/test_contact_partitioned_numeric_twin.py` — the
@@ -4528,6 +4618,7 @@ workaround: declare the chain explicitly).
   `internal_docs/guide_sections.md`, and skill reference §10
   (`references/section-properties.md`) + cheatsheet entry. **ADR 0080 is
   Accepted** — B1–B7 shipped as #840–#847 plus this slice.
+
 ### FIXED — offscreen render: GL skip, step range, deform field (ADR 0094 S1)
 
 `results.render` / `fem.render` no longer treat every exception as
@@ -4625,6 +4716,7 @@ machine-read stdout. Note this cannot silence the office venv's startup
 banner: `ladruno_opensees.pth` runs the fork's `_ladruno_opensees_boot`
 before any module here, and only the launching shell's environment
 pre-empts that. It does take effect wherever the boot is deferred.
+
 ### ADDED — `fem.render` / `results.render` offscreen stills (ADR 0094 S1)
 
 `apeGmsh.viewers.render` writes one Qt-look PNG from the viewer scene /
@@ -4686,6 +4778,7 @@ package (used by `examples/moment_curvature_fiber_section.ipynb`) and
 the pending wire-vs-delete decisions (`bind_vis_mgr`, silent
 `_styles.py` knobs, `picking()` vs ADR 0047, `results/schema/_native.py`
 constants).
+
 ### ADDED — skill-docs drift lane: quoted signatures checked against the live code
 
 `tests/test_skill_docs_drift.py` machine-checks the agent skill docs
@@ -4916,6 +5009,7 @@ will now stay elastic for the whole run. Documented in
 `internal_docs/guide_opensees.md` §2.1; a typed
 `s.update_material_stage(...)` between-stage mutator is proposed (not
 implemented) in `opensees/architecture/_DEFERRED.md`.
+
 ### ADDED — the live backend reports WHICH engine build it resolved
 
 `get_backend_name()` has always answered fork-or-stock, never *which* fork
@@ -5035,6 +5129,7 @@ exact; the conforming-gap L1 measure is subsumed by the stricter flat +
 coincident v1 scope; and the export-side `LadrunoBrick20(lumped=True)`
 requirement for mortar-tied hex20 under `LadrunoProjection` is exposed
 on the element but not yet verified as a combination.
+
 ### FIXED — `guide_constraints.md` said mortar was unimplemented; it has shipped twice since
 
 The maintainer guide carried two generations of drift. Its Level 4 entry
@@ -5232,6 +5327,7 @@ cursor request standing that nothing could ever retract (the scope
 gizmo's review finding F10 — now also fixed in
 `ClipGizmoInteractor.uninstall()`, which previously skipped the cursor
 withdrawal).
+
 ### CHANGED — `tie`/`tied_contact`/`embedded` default to `stiffness="auto"`, resolved at emit from the host material (neutral schema 2.27.0)
 
 The silent-failures program, slice B — the real fix behind the slice-3
@@ -5341,6 +5437,7 @@ partitioned brackets stay legitimate; `from_model(case, allow_empty=True)`
 is the per-import escape hatch. `interop.etabs_import` now registers
 only load patterns that actually produced defs (an all-zero-magnitude
 ETABS placeholder pattern no longer registers an unimportable name).
+
 ### FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
 
 The reader-side translator fix (2d159362) made element-level reads on a
@@ -5406,6 +5503,7 @@ subprocess, and `show_web`.
   `test_log_router.py`. The coverage-based gate keeps the stub-paired
   `AddDiagramDialog` fixtures resolving to no model-h5 source, so those
   tests are untouched.
+
 ### FIXED — staged × partitioned × MP constraints: a dropped constraint, and ghost BCs that never tracked their owner (ADR 0034, ADR 0027 INV-2)
 
 Two defects in the same intersection, the second only reachable once the
@@ -5648,6 +5746,7 @@ were added and mutation-tested: omit the fix, blanket-fix every ghost, fix the
 phantoms, let owned nodes leak into `foreign_node_tags`, or feed the stage pass
 the global-only map — each is caught by its own test. The FEAST backend was
 never affected (flat deck, no ghost nodes).
+
 ### FIXED — element results were SILENTLY WRONG for uncomposed solid models (`from_mpco` / `from_ladruno` / domain capture)
 
 **Correctness fix — silently wrong results.** `Results.from_mpco` and
@@ -5856,6 +5955,7 @@ the fork is built and installed with Intel MKL.
   `matrix_type` modes solve the reference cantilever and agree with `UmfPack` to
   1e-12. They still skip themselves when the bound `openseespy` has no
   `system Pardiso`, so the suite stays green on a stock build.
+
 ### ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe
 
 Three new diagram kinds, all answering a question about **time** rather than
@@ -5949,6 +6049,7 @@ Supporting changes, all small and shared:
   round-trip, the settings panels, the matplotlib chart, and real-offscreen-VTK
   integration). The exhaustive `_EXPECTED` topology map and the dialog's
   kind-count canary are updated.
+
 ### FIXED — a short `ops.fix(dofs=...)` mask was rejected by OpenSees instead of leaving the trailing DOFs free
 
 - `ops.mass` and `ops.load` fit their vectors to the node's ndf
@@ -6579,6 +6680,7 @@ Supporting changes, all small and shared:
   panel path, no-solve-on-UI-thread (patched-solver counter), composite `e_ref`
   column values, plastic-tab presence, offscreen screenshot smoke — no blocking
   event loop in any test.
+
 ### CHANGED — ADR 0077 parallel modal analysis flipped to Accepted; PyMP backend parked
 
 ADR 0077 moves **Proposed → Accepted** (2026-07-17): P0–P4 are implemented and live-verified (PRs #800 / #806 / #807 — Tier-0 serial gather, replicated distributed-FEAST `modal_deck`, eigenvalue + mode-shape harvest, `to_native` viewer binding). The remaining P5 cluster e2e is recorded as **deployment-gated, not a design gate** — the chain rides the unchanged deck-agnostic ADR 0060 path (`Cluster.submit(binary=…)` → `Job.fetch` → `ParallelModalResult.from_job`) and waits only on the fork `-feast` build reaching the cluster. Unlock 2a (the PyMP `.py` backend, `modal_deck(target="pymp")`) is **parked on demand** with its rationale corrected in place: PyMP is itself a fork artifact (the deployed pyd predates FEAST), so the route buys nothing wherever the classic-Tcl exes can be deployed. Docs-only.
@@ -6613,6 +6715,7 @@ ADR 0077 moves **Proposed → Accepted** (2026-07-17): P0–P4 are implemented a
   memoization one-solve count, AISC W14×90 catalog round trip (A/Ix/Iy/J), the SRC
   encased-W composite end-to-end (cut → fragment → conformal analyzer → deck line),
   swapped-rectangle axis refutation, 2-D vs 3-D form selection.
+
 ### ADDED — parallel modal Tier-1 P4 complete: `ParallelModalResult.to_native` viewer binding (ADR 0077)
 
 `ParallelModalResult.to_native(path, fem)` writes the harvested distributed-FEAST mode shapes as **mode-kind stages** in a native results H5 — the exact `DomainCapture.capture_modes` layout (`mode_<k>` / `kind="mode"` / eigenvalue + frequency_hz + period_s + mode_index attrs / `displacement_x/y/z` + `rotation_x/y/z` at a single `time=[0.0]` station) — so the existing surface consumes the distributed run with **zero new viewer code**: `Results.from_native(path)` → `r.modes` (metadata + per-mode nodal fields) → `r.viewer()`. The `mode_shapes.json` sidecar gains an `"ndm"` key (emit: `modal_deck` passes the model ndm through `eigen_feast_parallel(shape_ndm=)`; a sidecar without the key reads as 3-D — the only decks the first P3 rev emitted), so the column→component mapping follows the `capture_modes` convention exactly: `displacement_*` = the first `min(3, ndm, ndf)` shape columns, `rotation_x/y/z` when the deck recorded `ndf >= 6` (a 2-D `ndf=3` deck maps in-plane displacements only). Non-positive eigenvalues warn and write `frequency_hz = period_s = 0` (same contract as `capture_modes`); a run dir without the P3 shape harvest fails loud. Verified live against a real serial-FEAST harvest (two-column frame): `to_native` → `Results.modes` round-trips every displacement/rotation component exactly. Locked by 6 cases in `tests/test_parallel_modal_to_native.py` (ndf=6 round-trip incl. rotations, 2-D in-plane mapping, missing-`ndm` 3-D default, no-sidecar fail-loud, spurious-mode warn) + the extended deck-text pin. **ADR 0077 P4 is complete** — remaining phases are P5 (cluster e2e + fork deploy) and the on-demand 2a PyMP backend.
@@ -6745,6 +6848,7 @@ The two fork ADR-44 commands that **commit domain state** join the Emitter Proto
 ### ADDED — `modalProperties` surface: `apeSees.modal_properties` + `ModalPropertiesResult` (ADR 0075, slice 1 of 5)
 
 First slice of the Ladruno modal-family consumption (ADR 0075; fork ADRs 43/44/45/46). The Emitter Protocol gains `modal_properties(*, unorm=False, out=None)` — upstream OpenSees `modalProperties` (Petracca's `DomainModalProperties`), the prerequisite state for every fork modal-response command: the live emitter passes `-return` and hands back the properties dict; Tcl/py emit `modalProperties [-unorm] [-file $out]`; H5 no-ops (runtime retrieval, no schema bump); recording captures. A new bridge driver `apeSees.modal_properties(num_modes, *, solver=..., unorm=False)` runs `eigen` → `modalProperties -return` on a fresh live domain (no analysis chain needed, staged models refused) and returns a frozen `ModalPropertiesResult`: eigenvalues + derived `omega`/`freq`/`periods`, the raw properties dict, component-keyed accessors (`participation_factors("MX")`, `mass_ratios`, `cumulative_mass_ratios` — percent, components `MX/MY/MZ/RMX/RMY/RMZ`, 2-D: `MX/MY/RMZ`), `total_mass` / `center_of_mass`, and the lazy `mode_shape(node, mode)` reader (EigenResult staleness contract). Also lands the shared `_damping_channel_args` exactly-one-of validator (`damp=` | `rayleigh=(a0,a1)` | `modal_damp=[ξ…]` → verbatim fork flags) for the upcoming ADR-44 drivers, and a pin that a registered **standalone** timeSeries emits without any pattern referencing it (the `-baseAccel`/`-inputPSD` excitation channels rely on this). Locked by `tests/opensees/unit/test_apesees_modal_validation.py` + emitter emit-text pins + `tests/opensees/live/test_modal_properties_live.py` (tip-mass cantilever: ~100 % MX mass in mode 1, `Γ₁·φ_tip,x = 1` hand identity — runs on stock openseespy, no fork marker).
+
 ### FIXED — `LadrunoUP` (ADR 0074) adversarial-review hardening: DOF-aliasing guard, etype legality, solver-gate rescope, replay bracket, silent-capture warning
 
 Ten findings from an adversarial review of the LadrunoUP emission runway, most closing **silent-wrong-results** paths the count-based gates missed. **Rotation-vs-pressure DOF aliasing (new guard)** — a 2-D frame element (`elasticBeamColumn` &c., floor `ndm+1`) sharing a saturated equal-order LadrunoUP carrier node put its *rotation* DOF in the *pore-pressure* slot (`ndm+1`); both require `ndf=ndm+1`, so `infer_node_ndf` and the disjoint-set guard both passed and the fork setDomain checks only the DOF count — the run assembled bending stiffness into the pressure row with `rc=0`. `validate_ladruno_up_pressure_dof` now fails loud (pure-translation neighbours like trusses, and TH mid-edge shares, are correctly untouched) with the ADR-0069 separate-node fix. **Shape legality is now by Gmsh ETYPE, not node count** — an 8-node serendipity `quad8` surface in a 3-D model (or a 3-node `line3` curve in 2-D) aliased a legal count (`8`≈H8 / `3`≈T3) and emitted a degenerate element that singularized at run; the legality pass reads each element-group's true etype (also vectorized — the per-element straight-side loop became column-slice array ops, ~24× faster at 100k tet10, and equal-order pgs skip per-row boxing). **Solver gate (D4) rescoped** to what the deck emits-and-solves: a *declared* symmetric/diagonal system is still refused unconditionally (a model-only Tcl export catches `ProfileSPD`), but a *missing* system only raises for solve-bearing emits — so H5 archival, eigen-only, and model-only-skeleton exports are no longer falsely refused; staged decks validate each stage's own system (a `system=None` stage that analyzes now raises; a stray never-emitted global system no longer false-rejects); a partitioned deck with no system rides the ADR-0027 auto-emitted general Mumps/UmfPack. **`body=` bypassed the double-count guard** — LadrunoUP names its always-on self-weight `body` (accelerations), so `validate_body_force_double_count` (which grepped `body_force`) never warned on a `from_model` gravity overlap; it now reads either attribute (direction-only collinearity, so the unit difference is moot). **H5 replay lost the builder bracket** — the compose / `from_h5` replay re-emitted element lines after one global `model(ndm,ndf)`, so a mixed-envelope equal-order LadrunoUP archive replayed into a deck the fork parser refuses (`ndf != ndm+1`); replay now brackets gated element runs (coalesced, envelope-restored) in both the flat and staged paths. **Gauss capture no longer silently drops** — `LadrunoUP` is `has_gauss=True` with no `RESPONSE_CATALOG` layout, so a gauss recorder on a u-p pg captured nothing with zero signal; `DomainCapture` now emits a consolidated warning (mirroring the line-station path) steering the user to the node / `.ladruno` pressure channels. **Per-TYPE live fork verification** — the fork-only-element gate keyed on a single boolean, so a build knowing `LadrunoQuad` would wave an unknown `LadrunoUP` through unverified; it now tracks verified types in a set. **Single-source shape tables** — the shape / mid-edge / builder-ndf tables (previously duplicated across `element/solid.py`, `_internal/build.py`, and the registry) collapse into `_element_capabilities` (mid-edge order cross-referenced to `apeGmsh._basis`); `_BUILDER_NDF_GATED["LadrunoUP"]` references the registry's `ndf_required` instead of a second copy. New coverage: `tests/opensees/unit/test_ladruno_up_replay_and_forkgate.py` (replay bracket + per-type gate) and `tests/results/test_gauss_skip_warning.py`, plus DOF-aliasing / etype-legality / rescoped-solver cases in `test_ladruno_up_build_gates.py` and a model-only-export-allowed case + `body`-double-count case in the integration suites.
@@ -6810,6 +6914,7 @@ Retires the remaining build-side per-entity Python containers behind the emit pa
 ### CHANGED — columnar `MassSet` storage (ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3)
 
 `fem.nodes.masses` (`MassSet`) no longer keeps one resident `MassRecord` dataclass per node — at LOH.1 scale (~7M nodes) that boxed graph cost ~3–5 GB. It now stores masses in three parallel columns (`_node_ids: int64[N]`, `_mass: float64[N,6]`, `_names: dict[int,str]` sparse) and constructs a **transient** `MassRecord` on the fly when iterated / indexed. The resident store drops from ~400–700 B/node to **56 B/node** (measured 28.7 MB at 512k nodes). `MassRecord` (the view/API type) gains `slots=True`; nothing set ad-hoc attributes on it. The public surface is unchanged (`__iter__` / `__len__` / `__bool__` / `__getitem__` / `by_kind` / `by_node` / `total_mass` / `summary` / `_with_record`), and membership (`rec in fem.nodes.masses`) still works by dataclass value-equality. **Consumer-inventory finding:** every consumer (the OpenSees bridge `_emit_masses` / `_emit_masses_partitioned` / bucketed partitioned `mass_from_model` paths, the mass viewer tab, compose, h5 io) only reads `m.node_id` / `m.mass` / `m.name` — none rely on record identity (`is`) or in-place mutation, so transient records are safe. Producers: (a) the in-session resolver (`MassesComposite.resolve`) builds the columnar set directly from the sorted per-node accumulator — never boxing a records list (`mass_records` becomes a lazy property); (b) the numpy-native `_read_masses` at `FEMData.from_h5` **adopts** the already-columnar `/masses` compound dataset's `node_id` / `mass` columns with a single copy instead of boxing 7M records (measured `from_h5` peak 628 → 468 MB at 512k nodes); `_write_masses` fills the compound payload straight from the columns. The compose tag-rewrite (`tag_rewrite_spec` node_id offset) gains a **vectorized columnar fast path** (`_rewrite_mass_set` = one `node_ids + offset` array add; sparse-name namespace-prefix) and the compose merge concatenates host + bundle mass columns in one shot, retiring the O(N²) per-record `with_mass` append loop. No `model.h5` schema change — `/masses` was already columnar; SchemaVersion untouched, decks byte-identical (float `repr` preserved bit-for-bit, verified with awkward floats: 0.1, 1e-300, 17-significant-digit values). Verified: full `tests/opensees` (5035 passed), `tests/mesh` + compose + mass suites, a new float-identity/round-trip gate (`tests/test_mass_columnar_float_identity.py`), and a non-collected memory benchmark (`tests/benchmarks/mass_columnar_memory_profile.py`). ruff + mypy clean on touched files (no new diagnostics). Out of scope (optional C4): `NodalLoadSet` / SP records share the pattern but are untouched.
+
 ### CHANGED — columnar element plan + columnar PG fan-out (ADR 0065 v2 / plan_emit_memory_columnar.md B1+B4)
 
 Cuts the dominant emit-time RAM term for large models — the per-element Python object graph (per-element plan tuples + ~54M boxed connectivity ints, ~4–6 GB at the LOH.1 ~6.7M-hex reference). The element fan-out and the pre-allocated element plan now keep their **resident** form columnar (int64 arrays straight off the FEMData group arrays, which are already numpy) and box a row only **transiently** at iteration. Two new internal containers in `opensees/_internal/build.py`: **`PGElementFanout`** (`.eids: int64[N]`, `.conn: int64[N,k]` or object-padded per-row for mixed-npe groups) replaces the memoised `list[tuple[int, tuple[int, ...]]]` returned by `expand_pg_to_elements` / `expand_spec_to_elements`; **`ElementPlanRows`** (`.eids`, `.conn`, `.tag_start`) replaces each spec's `list[tuple[int, tuple[int, ...], int]]` in `allocate_element_tags`. Both are duck-typed to the old list-of-tuples — iterating yields the exact same `(eid, conn)` / `(eid, conn, tag)` tuples in the same order, and `__len__` / `__getitem__` / `bool` behave like the old list — so every existing consumer (the flat / split / staged / partitioned emit loops, the `fem_eid_to_ops_tag` dict comprehensions, the recorder / rayleigh / damping region fan-outs, `sweep_asdconcrete_element_size`, `ModelData.oriented_elements`) is unchanged. `TagAllocator` gains **`allocate_block(kind, n)`** — reserves a spec's `N` element tags in one call with identical per-kind sequential counter semantics (element tags are allocated only in this one pass, so a spec's tags stay the contiguous block `[tag_start, tag_start+N)`; row `i`'s tag is `tag_start + i` positionally). `bucket_pre_allocated_by_rank` now yields per-rank **`ElementPlanRows` row-subset views** (arrays indexed by the owned-row positions, carrying explicit per-row tags) instead of re-materialising a tuple graph per rank — so partitioned / staged-partitioned emits no longer rebuild the boxed plan per rank. Node-pair (`pg=None`) specs are a 1-row fan-out carrying the `MISSING_FEM_ELEMENT_ID` (-1) sentinel, which fits int64 and is filtered out of the tag maps by value exactly as before. **Byte-identical** emitted Tcl + Py decks for flat, partitioned (multi-rank), staged+partitioned, per-rank fragment files, and split-module emit (the existing byte-identity fixtures + full `tests/opensees` suite pass). No new public API (both containers are internal). B2 (retiring the `fem_eid_to_ops_tag` dicts) and B3 remain deferred.
@@ -6840,6 +6945,7 @@ Exposes the fork `contactPlane` command via `g.constraints.contact_plane(slave, 
 ### FIXED — `viewers/ui/_open_results.py` imports `OpenSeesModel` via the allowed package surface
 
 Follow-up to the File → Open Results… feature (#757): `build_results`'s native path imported `OpenSeesModel` from the `apeGmsh.opensees.opensees_model` **submodule**, which `tests/test_viewers_pure_h5_consumer.py::test_viewers_have_no_mesh_or_opensees_imports` forbids — `viewers/` may only reach it through the package top-level (`apeGmsh.opensees`). #757's CI `suite` job flagged this, but the PR auto-merged before the fix landed (the repo has no required status checks, so `--auto` merged immediately while `suite` was still running), shipping the violation to `main`. This one-line change routes the import through `from apeGmsh.opensees import OpenSeesModel`, restoring the curated `suite` to green. No behaviour change.
+
 ### ADDED — `g.constraints.contact(..., cell=)` broad-phase cell-size knob (ADR 0073)
 
 Exposes the fork `LadrunoContact` `-cell <frac>` option — the broad-phase spatial-hash bucket size as a fraction of the median segment diagonal (a performance-tuning knob; a huge value ⇒ one bucket ⇒ brute force). Applies to **both** formulations (NTS + mortar); omitted ⇒ the fork default. `ContactDef` requires it strictly positive (mirroring the fork parser's "need a positive frac"). Threads `cell` through the full lane — `g.constraints.contact` → `ContactDef` → `ContactRecord` → `contact_args` (emits `-cell` after the extension modifiers, before `-outward`) → deck emit — and **round-trips through `model.h5`** via an additive `cell` column on `contact_payload_dtype` (neutral schema **2.22.0 → 2.23.0**, presence-probed so an in-window 2.22.x file decodes `cell=None`; omitted-knob round-trip stays byte-identical). Closes one of the three ADR 0073 "still deferred" contact leftovers (the `-epsTie` alias and the `contactPlane` rigid-plane command remain). Locked by `tests/opensees/unit/test_contact_emit.py` (emit both lanes + numeric-kn triple padding + strictly-positive validation) and `tests/mesh/test_contact_h5_roundtrip.py` (`cell` folded into `_eq` + the NTS extensions round-trip). Static gates green (ruff opensees hard gate + mypy 0); 137 contact/parity/emission tests pass.
@@ -6851,9 +6957,11 @@ The post-solve `ResultsViewer` window now carries a leftmost **File** menu with 
 ### FIXED — `enforce="equation"` ties round-trip through `model.h5` without a deviation warning (ADR 0068, Open item 4 resolved)
 
 The H5 *deck* emitter no longer raises `H5EquationConstraintDeviationWarning` for an `enforce="equation"` tie (EQ_Constraint). The warning was over-conservative: the equation tie is a resolved `InterpolationRecord`, and the **neutral** zone already persists its `enforce` route **and** the projection `weights` (schema 2.14.0) — everything `_emit_equation_tie` needs. So an equation-tied `model.h5` already round-trips via `FEMData.from_h5` → `apeSees(fem).tcl()/py()/run()` (the forward emit re-runs `_emit_one_interpolation` → `_emit_equation_tie`), exactly like the g.embed / g.constraints.contact / g.reinforce ties, which all no-op silently in the deck zone. The deck emitter now matches them (silent no-op + `_skipped_equation_constraints` counter); `H5EquationConstraintDeviationWarning` is retained in `__all__` as a **dormant** back-compat class (no longer raised). No schema bump — the ADR 0068 premise that this needed an `equationConstraint` group was stale. With this, **no fork-feature carries an H5 deviation warning** (reinforce / contact / embed / equation all recover via the neutral zone); the standalone `/opensees` deck-zone replay stays the shared low-priority follow-on. Locked by `tests/test_equation_tie_emission.py` (`test_h5_deck_emitter_equation_tie_no_deviation_warning` + `test_equation_tie_reemits_identically_after_h5_record_roundtrip`). ADR 0068 Open item 4 + both handoff docs updated.
+
 ### ADDED — results-viewer animation export (video / GIF) — interactive button + headless `Results.export_animation`
 
 The results viewer can now export the time history as an **MP4 video or animated GIF**. The encoding engine (`apeGmsh.viewers.animation.export_animation` — drive the director step-by-step, capture `plotter.screenshot` frames, encode via `imageio`) already existed but was reachable only through a method that required the blocking `viewer.show()` to have run first (which tears the plotter down on return), so in practice nothing could call it. Two reachable entry points now wire it up: **(1) a 🎬 Export button on the Time Scrubber** in `results.viewer()` — opens a save dialog (`*.mp4` / `*.gif`, suffix selects the format), captures every step at the scrubber's current FPS, and runs behind a cancelable `QProgressDialog` with a wait cursor + status-bar result (cancel via raising out of the new `progress` callback deletes the partial file and restores the user's step). The frames are exactly what's on screen — deformation, contours, camera, theme. **(2) a headless `Results.export_animation(path, *, fps=30, step_stride=1, stage=None, deform=None, camera=None, window_size=(1280,720), setup=None)`** that reuses the full Qt viewer off-screen: it builds the real viewer via the new `ResultsViewer.show(run_loop=False)` (constructs the window + scene + deform pump, realizes the GL surface for screenshots, but never enters the blocking event loop), applies `stage` / `deform` (a scale, or `(field, scale)`) / `camera`, runs the optional `setup(plotter, director)` hook for custom diagrams, exports, and tears down — **without** closing the caller's `Results` HDF5 handle (`_own_results_close` guard on `_on_close`). MP4 needs the `apegmsh[animation]` extra (`imageio-ffmpeg`); GIF is Pillow-only. `export_animation` gained an optional `progress(done, total)` callback (1-based, fires per frame; raising cancels). Locked by `tests/viewers/test_animation.py` (+4: progress-callback invoked 1..total, cancel-via-exception restores the step, and a headless `Results.export_animation` GIF round-trip that asserts the borrowed Results stays queryable afterward). `APEGMSH_SKIP_VIEWER` short-circuits the headless path for CI / `nbconvert`.
+
 ### FIXED — global `ops.damping.rayleigh` no longer silently dropped under partitioned (MPI) emit (ADR 0053 × ADR 0027)
 
 A **global** `ops.damping.rayleigh(...)` declared outside any stage was emitted in the flat (single-process) deck but **silently absent** from the partitioned (OpenSeesMP) deck — zero `rayleigh` lines — so an `np>1` run came out **undamped** (a plane-wave absorbing-boundary model showed a uniform ~14 % / max 45 % seq↔np4 surface discrepancy; the plane-wave handoff's load-bearing finding #1). Root cause: `apeSees._emit_partitioned` never called the global damping emitters that `_emit_flat` runs driver-post — stage-bound damping survived (re-emitted per stage by `_emit_stages_partitioned`), but the bridge's *global* `rayleigh_records` / `damping_attach_records` were dropped. The fix adds `_emit_global_damping_partitioned`, called once after the per-rank fan-out for both staged and non-staged decks. It **mirrors the stage-bound partitioned damping pass**: `rayleigh` (bare global *and* region-scoped `on=`) and the Damping-object `region -ele … -damp` attaches are emitted **once outside any `partition_open` block** — correct under OpenSeesMP because `MeshRegion::setElements` keeps "only those elements in the domain" (foreign `-ele` tags from other ranks are silently skipped), so each rank binds its locally-owned subset, and a bare `rayleigh` applies to each rank's local domain. The global pool is therefore **not** treated more restrictively than the stage pool (an earlier draft fail-louded on the region-scoped/attach forms, which was an arbitrary asymmetry — the stage path already emits the identical global `region -ele` line). **Modal** damping (`ops.damping.modal` → `eigen` + `modalDamping`) is the one form that fails loud (`BridgeError`): a bare `eigen` solves each rank's *local* subdomain under OpenSeesMP, so the modes — and the modalDamping built from them — would be **wrong**, not merely unwired (the stage path likewise refuses per-stage modal). Locked by `tests/opensees/integration/test_emit_partitioned_global_damping.py` (5: bare global rayleigh emits once outside the rank blocks on Tcl + Py; the staged finding-#1 scenario; region-scoped `-rayleigh` + Damping-object `-damp` emit as global region lines outside the blocks; modal fails loud). Full `tests/opensees` suite green (4966 passed); ruff (opensees hard gate) + mypy clean. Emission is unit-verified without MPI; a live OpenSeesMP run is the final confirmation.
@@ -6881,6 +6989,7 @@ The B0 human-decision gate for Track B (`element="beam"` dowel rebar + twist) is
 ### FIXED — retired the false `H5ReinforceDeviationWarning` on reinforced `apeSees.h5` decks (ADR 0067 P5.1, A4 minimal)
 
 `apeSees(fem).h5(path)` no longer warns that "the H5 deck will be missing its embedded reinforcement" — a claim that became **false** once A1 (#706) made `fem.elements.reinforce_ties` round-trip through the **neutral** zone. Because `apeSees.h5` writes that neutral zone into the *same* archive as the `/opensees` deck zone, a reinforced `model.h5` already carries its ties: it round-trips via `FEMData.from_h5` → `apeSees(fem).tcl()/py()/run()` (the forward path re-runs `emit_reinforce_ties`). `H5Emitter.embedded_rebar` is now a **silent** deck-zone no-op and the `H5ReinforceDeviationWarning` class (+ `__all__` entry + emission) is removed. A dedicated `/opensees/constraints/reinforceTie` deck record + `OpenSeesModel.build()` deck-replay (the "A4 full" item) stays **deferred** — not needed for any cage workflow, and gated behind the broader fact that `_replay_into` does not replay MP constraints either (documented in `internal_docs/plan_rebar_p5.md` §"A4 full"). Locked by `tests/opensees/unit/test_reinforce_emit.py::test_h5_defers_deck_zone_without_warning` (no warning + no deck-zone reinforce record) and `tests/test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_neutral_zone` (a reinforced `apeSees.h5` → `read_fem_h5` recovers all ties, no warning). Reinforce + opensees-h5 + rebar suites green (the two failing `tests/opensees/h5` cases are the pre-existing openseespy-Windows-DLL `ImportError`, not this change).
+
 ### ADDED — cross-partition `equationConstraint` replication under OpenSeesMP (ADR 0068 P5, Open item 2)
 
 An `enforce="equation"` tie (`g.constraints.tie(..., enforce="equation")`) that straddles a partition boundary now emits under partitioned / OpenSeesMP output instead of fail-louding (`NotImplementedError`). `_plan_rank_constraints` (`opensees/_internal/build.py`) replicates the tie on **every rank that owns the slave OR any master** — the `rigidDiaphragm` replicate-on-owning-ranks rule, *not* the single-canonical-host-rank element rule the penalty (`ASDEmbeddedNodeElement`) tie uses (which, applied to a domain-level `EQ_Constraint`, would drop the constraint on slave-owning ranks and falsely error on a partition-cut master face — the adversarial finding that motivated the original fail-loud). A new `_RankConstraintPlan.equation_records` lane collects the per-rank ties; each owning rank ghost-declares the foreign slave/master nodes first (reusing `_add_foreign_or_phantom`) and emits byte-identical `equationConstraint` rows via `_emit_one_interpolation` → `_emit_equation_tie`. Because the equation route allocates no element tag, replicating it across ranks is tag-stream-neutral (penalty-tie tag determinism is unchanged). The cross-rank EQ-capable handler (`LadrunoProjection`/`Lagrange`, auto-emitted per Open item 1) resolves the constraint graph across subdomains. Locked by `tests/opensees/integration/test_emit_partitioned_replicate_on_both.py` (`test_cross_rank_equationConstraint_replicates_on_owning_ranks`: 3 per-DOF rows on both owning ranks, byte-identical, foreign-node decls precede them; `test_equationConstraint_single_owning_rank_no_spurious_replication`: a rank-local tie emits only on its owning rank). ruff clean + mypy baseline 0; the partitioned integration sweep stays green. The emission logic is unit-verified without MPI; a live OpenSeesMP run is the final confirmation when a multi-rank fork build is available.
@@ -6888,6 +6997,7 @@ An `enforce="equation"` tie (`g.constraints.tie(..., enforce="equation")`) that 
 ### CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)
 
 When an `enforce="equation"` tie is present and the user declared no constraint handler, `BuiltModel._maybe_auto_emit_constraint_handler` now picks the EQ-capable handler by the **registered integrator** instead of always emitting `Lagrange`: an **explicit** integrator (`CentralDifference`/`CentralDifferenceLadruno`/`ExplicitBathe`/`ExplicitBatheLNVD`/`ExplicitDifference`) auto-emits the fork **`LadrunoProjection`** (Δt-neutral, momentum-conserving — a Lagrange multiplier's massless DOF would break the explicit mass solve); **implicit / no integrator** keeps **`Lagrange`** (exact). The classifier is the new shared `_is_explicit_integrator`, refactored out of `apeSees._check_explicit_solver_compat` so the two call sites can't drift. Declaring a handler is still the override (respected as before), so no `tie_handler=` kwarg was needed; INV-4 still fail-louds on `Transformation`/`Auto` + an equation tie; and a *soft* `OpenSeesAutoEmitWarning` now fires when a user explicitly pairs `Lagrange` with an explicit integrator + an equation tie (the massless-multiplier hazard). Locked by `tests/test_constraint_emission_phase7b.py` (`TestEquationTieHandlerAutoDetect`: explicit→LadrunoProjection, implicit→Lagrange, no-integrator→Lagrange, user-Lagrange+explicit→warns-but-respected). ruff clean + mypy baseline 0 held.
+
 ### FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)
 
 A multi-agent adversarial review of the P5.1 work (A1 H5 persistence + A2/A3 compose) confirmed a small cluster of serialization-boundary gaps; the rest of the review verified the design is sound (snapshot_id correctly excludes ties, compose tag-offset/accumulation/cross-Part guard all correct). Fixes: `_encode_reinforce_tie` now **fails loud** on a malformed `ReinforceTieRecord` instead of writing a record that would decode to garbage or emit an invalid `LadrunoEmbeddedRebar` — it rejects empty `host_nodes` (a tie must couple ≥ 1 host node), an empty-but-non-`None` `weights` array (keeps the `None` vs `[]` distinction unambiguous), and a `weights` length that doesn't match `host_nodes` (the documented "parallel" invariant). `_decode_reinforce_tie` mirrors the length check defensively so a corrupted file is refused loudly rather than silently emitting a wrong element. The cross-Part guard (`_guard_reinforce_cross_part`) gains a comment documenting its "node in no named Part is unconstrained" semantics (fires only on ≥ 2 distinct named Parts — avoids false positives on partial Part maps while still catching the real host-nodes-split-across-Parts case). Locked by `tests/mesh/test_reinforce_tie_h5_roundtrip.py` (encode rejects empty host / empty-array weights / mismatched weights; a pre-2.15.0 (2.14.0, no-`/reinforce_ties`-group) file still reads within the two-version window → empty ties). Known open items (documented, not regressions): partitioned-tie dedup, and bond-name re-emit requires the (namespace-prefixed) `LadrunoBondSlip` material to be declared after compose but before `apeSees.build()`.
@@ -6975,6 +7085,7 @@ When the active standard is `ACI318_seismic` and the `TieLayout` leaves `hinge_s
 ### CHANGED — partitioned coupling/embedded split-across-ranks fail-loud now names the recovery path
 
 When a `kinematic_coupling` (RBE2), `distributing_coupling` (RBE3), or `embeddedNode` (`ASDEmbeddedNodeElement`) has its required node set fragmented so that no single OpenSeesMP rank can assemble the one element, the build still fails loud (unchanged, deliberate — ADR 0027 treats this as a partitioner-input condition, not a recoverable one), but the two messages (`_canonical_coupling_rank` / `_canonical_host_rank` in `opensees/_internal/build.py`) now point at the remedy: re-partition **from the mesh phase** with `g.mesh.partitioning.partition_explicit(...)`, placing every required node's incident elements on one rank. New `guide_partitioning.md` §7.1 documents the case end-to-end — why element-backed couplings need a single canonical rank (vs idempotent `equalDOF`/`rigidDiaphragm` replication), why a boundary node is fine but a node-only contact between two bodies can split (METIS cuts by shared faces/edges, not nodes — `_build_dual_graph`), the `partition_explicit` recovery recipe, the chain-phase-freeze caveat (you must rebuild from the mesh phase, ADR 0038), and a note that the super-vertex-contraction partitioner that would make clusters indivisible to METIS is feasible-but-unbuilt. Docs + message strings only; no behavior change (the `split across partitions` match substring is preserved — 13/13 affected tests pass, mypy clean).
+
 ### ADDED — `ops.pattern.H5DRM` typed DRM load pattern (ADR 0066, D-1)
 
 `ops.pattern.H5DRM(h5drm=, factor=1.0, crd_scale=1000.0, distance_tolerance=1.0, transform=None, x0=(0,0,0))` — a typed, field-carrying load pattern that drives a soil box with a regional incident wavefield read from an `.h5drm` dataset (e.g. a ShakerMaker synthetic) via OpenSees' H5DRM pattern. It owns the error-prone **frame handshake** validated in the OpenSees fork DRM study (ADR 0066 / PR #296): the defaults encode a model built centred at the lateral origin, z-down, in metres, so the default `crd_scale=1000` (km→m) with an identity `transform` and zero `x0` reproduces the dataset's station coordinates exactly. Emits the canonical 18-arg `pattern H5DRM tag file factor crd_scale dist_tol 1 T00..T22 x00..x02` line (Tcl + openseespy; `do_transform` always `1`) and round-trips through `model.h5` generically (no series, no body). Unlike every other pattern it has **no** `series=` — the motion history lives in the file. The 3-DOF≤8-node / no-base-input-mixing guards (which need the FEM snapshot) and the dataset-keyed box builder (`g.parts.add_DRM_box_from_h5drm`) + exterior buffer (`g.drm_buffer`) land in D-2/D-3. Plan: `internal_docs/plan_drm_h5drm_adr0066.md`.
