@@ -247,14 +247,11 @@ def _one_quad() -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
-@pytest.mark.parametrize(
-    ("section_ns", "token"),
-    [("LayeredShellFiberSection", "LayeredShellFiberSection"),
-     ("LayeredShell", "LayeredShell")],
-)
+@pytest.mark.parametrize("section_ns", ["LayeredShellFiberSection", "LayeredShell"])
 def test_layered_section_with_two_plate_rebar_layers_emits_in_order(
-    section_ns: str, token: str,
+    section_ns: str,
 ) -> None:
+    token = "LayeredShell"  # both primitives emit the registered keyword
     ops = apeSees(cast("object", _one_quad()))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
     # The deck order comes from the dependency walk, not from registration

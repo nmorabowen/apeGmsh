@@ -1,7 +1,7 @@
 """Live check of ``PlateRebar`` / ``PlateFromPlaneStress`` shell layers.
 
 One ``ASDShellQ4`` (1 x 1, in the XY plane, local x = global X) with a
-four-layer ``LayeredShell`` section — concrete (via ``PlateFromPlaneStress``),
+four-layer layered section — concrete (via ``PlateFromPlaneStress``),
 two ``PlateRebar`` layers of different thickness, concrete — pulled in
 uniaxial membrane tension along X. With ``nu = 0`` the strain field is
 uniform and the axial stiffness is closed-form::
@@ -55,7 +55,7 @@ def _one_quad() -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
-def _pull(angle_a: float, angle_b: float) -> float:
+def _pull(angle_a: float, angle_b: float, section_ns: str = "LayeredShell") -> float:
     ops = apeSees(cast("object", _one_quad()))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
 
@@ -64,11 +64,10 @@ def _pull(angle_a: float, angle_b: float) -> float:
     conc_layer = ops.nDMaterial.PlateFromPlaneStress(material=conc, G_out=E_C / 2)
     bar_a = ops.nDMaterial.PlateRebar(material=steel, angle=angle_a)
     bar_b = ops.nDMaterial.PlateRebar(material=steel, angle=angle_b)
-    # ``LayeredShell`` builds the C++ LayeredShellFiberSection; it is the
-    # only keyword the Tcl and Python interpreters register for it (the
-    # ``LayeredShellFiberSection`` primitive's own token is unknown to both),
-    # and the C++ parser wants at least three layers.
-    sec = ops.section.LayeredShell(layers=(
+    # Both primitives emit ``section LayeredShell`` (the only keyword the
+    # interpreters register for the C++ LayeredShellFiberSection); the C++
+    # parser wants at least three layers.
+    sec = getattr(ops.section, section_ns)(layers=(
         ShellLayer(material=conc_layer, thickness=H_C / 2),
         ShellLayer(material=bar_a, thickness=T_A),
         ShellLayer(material=bar_b, thickness=T_B),
@@ -108,3 +107,15 @@ def test_plate_rebar_layers_add_axial_stiffness_along_their_angle(
 ) -> None:
     expected = P / (E_C * H_C + E_S * t_along_x)
     assert _pull(angle_a, angle_b) == pytest.approx(expected, rel=1e-6)
+
+
+@pytest.mark.live
+def test_layered_shell_fiber_section_keyword_parses_live() -> None:
+    """Regression: ``LayeredShellFiberSection`` used to emit a keyword that no
+    interpreter registers (``section type LayeredShellFiberSection is
+    unknown``). It now emits ``LayeredShell``, which builds, and gives the
+    same answer as the ``LayeredShell`` primitive."""
+    expected = P / (E_C * H_C + E_S * T_A)
+    got = _pull(0.0, 90.0, section_ns="LayeredShellFiberSection")
+    assert got == pytest.approx(expected, rel=1e-6)
+    assert got == pytest.approx(_pull(0.0, 90.0, section_ns="LayeredShell"), rel=1e-12)

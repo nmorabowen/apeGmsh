@@ -152,7 +152,9 @@ wall = ops.section.LayeredShell(layers=(
 ))
 ```
 
-OpenSees needs at least three layers. The third helper,
+A layered section needs at least three layers. `LayeredShell` and
+`LayeredShellFiberSection` are the same OpenSees class and emit the same
+`section LayeredShell` line. The third helper,
 `ops.nDMaterial.PlaneStressRebar`, is the plane-stress version of `PlateRebar`
 for plane-stress quads. It is **not** a valid shell layer, so `ShellLayer`
 refuses it. It is also classic-Tcl only, because openseespy does not register
