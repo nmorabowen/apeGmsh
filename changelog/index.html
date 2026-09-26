@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3667,6 +3678,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3749,6 +3771,16 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan">FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan<a class="headerlink" href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" title="Permanent link">&para;</a></h3>
+<p><code>scripts/check_quirks.py</code> read every file with <code>read_text("utf-8")</code>. A file
+starting with a UTF-8 byte-order mark then failed to parse and was skipped
+silently, so no rule saw it; a file in another encoding raised
+<code>UnicodeDecodeError</code> and aborted the whole scan. Files are now decoded with
+<code>tokenize.detect_encoding</code> (BOM and <code># -*- coding: -*-</code> cookies honoured);
+one that still cannot be decoded is skipped like a <code>SyntaxError</code>, and the
+scan continues. Found by the adversarial review of the agent-surface port
+(<code>internal_docs/plan_agent_surface.md</code>, "Follow-up"); three new cases in
+<code>tests/test_check_quirks.py</code>.</p>
 <h3 id="fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one">FIXED — Studio <code>pid_alive</code> on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one<a class="headerlink" href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" title="Permanent link">&para;</a></h3>
 <p><code>apeGmsh.studio._host_state.pid_alive</code> (used by <code>read_host</code>, <code>clear_host</code> and
 the busy lock) returned True whenever <code>OpenProcess</code> succeeded. A process that
