@@ -4,6 +4,9 @@ Tests stamping ``/meta/schema_version`` or ``/meta/opensees_schema_version``
 in synthetic h5 fixtures must import from here so the next minor bump
 is a one-file edit.  Per ADR 0023's two-version reader window,
 ``*_PRIOR_MINOR`` is the oldest version the current reader accepts.
+Comparing a schema version against a literal anywhere else in ``tests/``
+fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
+and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
 OPENSEES_CURRENT     = "2.21.0"  # SSI-2.E (/opensees/stages/*/update_material_stage)
 OPENSEES_PRIOR_MINOR = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)

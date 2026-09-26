@@ -34,6 +34,8 @@ def test_h5emitter_constructor_overrides() -> None:
         snapshot_id="abc123",
     )
     meta = e._meta_attrs()
+    # apegmsh-lint: schema-literal-ok the constructor override above, echoed
+    # back; never the current version, so no bump can stale it.
     assert meta["schema_version"] == "1.2.3"
     assert meta["model_name"] == "cantilever"
     assert meta["apeGmsh_version"] == "0.99.0-test"
