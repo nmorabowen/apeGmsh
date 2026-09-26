@@ -4657,6 +4657,25 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-agent-surface-agentsmd-three-task-guides-and-a-quirk-lint-in-ci">ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI<a class="headerlink" href="#added-agent-surface-agentsmd-three-task-guides-and-a-quirk-lint-in-ci" title="Permanent link">&para;</a></h3>
+<p><code>AGENTS.md</code> is now the single source every agent reads; <code>CLAUDE.md</code> is
+the one line <code>@AGENTS.md</code>, and its old behavioural guidelines moved in
+verbatim. It adds the map this repo never had: each CI lane's local
+command and trap, and the merge lessons that until now lived only in the
+maintainer's agent memory (<code>--base main</code>, no required checks, push-after-
+merge orphans, shared-literal merges, the editable install that points at
+main). Three task guides in <code>.claude/skills/</code> — <code>apegmsh-bridge-feature</code>,
+<code>apegmsh-viewer-results</code>, <code>apegmsh-adr-docs</code> — are checklists that point
+at the lesson instead of copying it.</p>
+<p><code>scripts/check_quirks.py</code> turns three lessons that bit again after being
+written down into rules, run as the last step of <code>static-gates</code>:
+<code>adr-number</code> (two ADRs with one number, or one missing from the index —</p>
+<h1 id="676677-741-817-schema-literal-a-test-pinning-a-schema-version-to">676/#677, #741, #817), <code>schema-literal</code> (a test pinning a schema version to<a class="headerlink" href="#676677-741-817-schema-literal-a-test-pinning-a-schema-version-to" title="Permanent link">&para;</a></h1>
+<p>a literal — #642, #738), <code>compose-streams</code> (the compose or model.h5 rebuild
+omitting a FEMData stream — #707, #912/#913). Each was proven against the
+commit that had the bug. <code>test_h5_partitions</code>' back-compat test, hand-edited
+at eleven schema bumps, now reads <code>OPENSEES_PRIOR_MINOR</code> from the fixture.
+Plan and evidence: <code>internal_docs/plan_agent_surface.md</code>.</p>
 <h3 id="added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109">ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)<a class="headerlink" href="#added-worked-example-footfall-vibration-of-a-two-bay-flat-slab-on-columns-adr-0109" title="Permanent link">&para;</a></h3>
 <p><code>examples/footfall_two_bay_shell.py</code> builds two 6 m by 6 m bays of 200 mm
 slab as shell elements on six columns as beam elements, fragmented so the
