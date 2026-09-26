@@ -2,6 +2,68 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)** · **fiber diagrams sit at the beam's TRUE integration stations (`FiberSlab.station_natural_coord` from MPCO GP_X / .ladruno GP_PARAM / live integrationPoints)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion** · **`g.constraints.distributing_coupling` (RBE3) ships — emits the fork `LadrunoDistributingCoupling` (tag 33011), replacing the `NotImplementedError` stub** · **degraded GP world-coordinate reconstructions are loud (`WarnGaussCoordsApproximate`)** · **diagram scalar-state consolidation — `ScalarColorSupport` mixin + base `_scoped_results` (a `set_fmt` now survives colormap changes on every diagram)** · **viewers consume the remaining recorder channels — diagrams orient from `.ladruno` LOCAL_AXES + `plot.energy` / `plot.node_envelope` + dim-based plot facets** · **static gauss contours (`plot.contour(topology="gauss", averaging="averaged"|"discrete")`) + `plot.fibers` dot cloud** · **local-axes overlay triads resolve recorder-first (parity with the diagram frames)** · **partitioned-deck `getPID` shim guards with `info commands` (every MPI rank built rank 0's submodel)** · **partitioned emit: shared-node `mass` / pattern `load` lines dedup to the node's primary rank (OpenSeesMP sums them — interface nodes carried 2–3× mass)** · **Ladruno recorder whole-model energy channel (`ops.recorder.Ladruno(energy=True)` → `-G energy`, emitted last)** · **deform-follow regression fixed — contour / fiber-section / layer-stack / spring-force diagrams ride the deformed substrate again (dead `_sync_layer_grids` walk removed)** · **declarative diagram-kind registry (ADR 0058 S0) — four drifting per-kind tables collapse into `@register_diagram_kind`; loads/reactions survive session restore + presets; reactions catalog options un-shadowed** · **geometry→scene resolution seam (ADR 0058 S1) — `director.scene_for(geometry)` + registry `scene_resolver`, per-geometry DEFORM pump + scoped fan-out, `reference_points` moves onto `FEMSceneData`; copy cost measured (~7 MB / 2 ms at 124k cells → plain copies for S2, no COW)** · **absorbing-boundary guide (`internal_docs/guide_absorbing_boundary.md`)** · **remote HPC job submission (`apeGmsh.hpc` — `Cluster.submit`/`Job` over SSH + SLURM, ADR 0060)** · **`ops.run_remote` one-call remote analysis + `Job.wait` (ADR 0060 sugar)** · **coupling control knobs — `g.constraints.kinematic_coupling` / `distributing_coupling` accept `k` / `kr` / `enforce` / `bipenalty_dtcr` / `absolute` (`CouplingControl`, neutral schema 2.12.0)** · **coupling-knob H5 schema completion — `sr_cpl_*` mirror lane on `surface_coupling` + dtype/parity test reconciliation (post-#630 main fix)** · **partitioned staged H5 archival — last staged guard lifted, rank-agnostic stage capture (ADR 0055 Phase 5 / P5.1, schema 2.19.0)** · **staged `domainChange` is unconditional — pure-loading stages no longer merge into the previous `MODEL_STAGE` in the MPCO/Ladruno recorders (+ numeric stage-stamp ordering in the readers + viewer positional stage pairing)** · **RBE3 tributary-area weighting — `distributing_coupling(weighting="area")` computes per-independent areas and emits `-w`** · **RBE2 partitioned (OpenSeesMP) emit — single-canonical-rank routing for `kinematic_coupling` (was fail-loud)** · **docs: `guide_constraints.md` coupling sections reconciled (fork RBE2/RBE3 emit targets, knobs, area weighting, mortar refusal)** · **per-rank Tcl deck emission — driver + `ranks/rank<K>_<seq>.tcl` sourced fragments (`apeSees.tcl(per_rank=True)`, ADR 0061)** · **ADR 0055 ACCEPTED — compose filtered-audit (`compose_inspect`['filtered']) + real-staged-archive FILTER verification (Phase 3); staged-H5 runway complete** · **partitioned staged flat replay + domain-capture gate retired (ADR 0055 Phase 5 / P5.2 + P5.3)** · **coupling host auto-scalers (`k="auto"` / `k_alpha` / `host` / `bipenalty_wcap`)** · **concurrent geometry rendering — per-geometry `visible` flag (ADR 0058 S2b)**
 
+<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
+     Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR,
+     directly below this comment. This comment IS the top of Unreleased:
+     nothing goes between it and the "## Unreleased" header.
+     Do NOT edit any existing line — in particular the single-line
+     "## Unreleased — ..." ledger above is FROZEN (your section title is
+     the highlight itself). CHANGELOG.md merges with the union driver
+     (.gitattributes), which silently keeps BOTH sides of any edit to an
+     existing line instead of conflicting. tests/test_changelog_structure.py
+     guards the duplicated-header mangling and this comment's position.
+     Workflow + rationale: internal_docs/changelog_workflow.md -->
+
+### CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there
+
+`internal_docs/changelog_workflow.md` said to insert each section
+"directly below the anchor comment at the top of `## Unreleased`". The
+two named one place only while the anchor was the first thing under the
+header. #974 (2026-08-15) put a section above it, and PRs then split
+between the two places: by this change 33 sections sat above the anchor,
+which had sunk to line 868, and about 90 below it. The anchor moves back
+under the header, so "below the anchor" is the top of Unreleased again.
+The sections already in the file stay where they are.
+
+`tests/test_changelog_structure.py` gains
+`test_entry_anchor_is_top_of_unreleased`: exactly one anchor, and it is
+the first non-blank line under the header. Over main's history it
+passes on every commit from the anchor's arrival (2026-06-12) up to
+#974's merge, and fails on every commit from that merge until this
+change. It also fails on the second anchor that a union merge brings
+back when the move deletes a blank line with the comment, so the move
+leaves both blank lines in place (two blank lines where the anchor
+was). `AGENTS.md`, the ADR/docs guide and the workflow doc now say
+"directly below the anchor, the first thing under the header", and the
+workflow doc records the drift and what a branch cut before the move
+should do after merging `main`.
+
+### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
+
+`results/capture/spec.py`'s fallback tag for a layered-shell section or
+material name promised to be deterministic, but it took the builtin
+`hash()` of the name, which Python salts per process: `"LayeredShell_A"`
+was `1509370562` under `PYTHONHASHSEED=1` and `1288700299` under `=2`. It
+is now `zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1`, pinned by
+`tests/results/test_stable_section_tag.py` (two subprocesses with
+different seeds, and a fixed value). No file changes: the fallback only
+runs when the OpenSees back-reference carries the legacy `_sections` /
+`_elem_assignments` attributes, which the `apeSees` bridge does not, and
+the layer writer never writes these tags to disk.
+
+### FIXED — CHANGELOG: every `###` heading has a blank line above it, and a test holds it
+
+The `merge=union` driver never conflicts: when two PRs insert sections at
+the anchor it keeps both, but it can drop the blank line between them, so
+one section's last paragraph runs straight into the next `###` header. It
+happened three times on 2026-09-25 alone, and 56 older sections carried
+it. This inserts those 56 blank lines, and nothing else changes.
+`tests/test_changelog_structure.py` gains
+`test_every_section_heading_has_a_blank_line_before_it`, which fails on
+the shape. It flags the real mangled merge of #1172's first refresh
+(`403a3e06`, line 890) and passes its repair; headings inside fenced code
+samples are skipped.
+
 ### ADDED — viewer agent surface: two task guides and five recurrence guards
 
 Agents working on the viewers now get the viewers' own lessons at the
@@ -67,6 +129,47 @@ name. A pattern the loads composite does not know falls back to
 `zlib.crc32` of its name, as the colour modes do since #374 and 184b5734.
 `loads_tab.pattern_color(name, cases=None)` keeps its one-argument form.
 Guarded by `tests/viewers/test_pattern_color_stable.py`.
+
+### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
+
+`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
+(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
+`except` handler that only passes, continues, returns or assigns an empty
+value, or logs — whatever it catches — and any `contextlib.suppress`, is a
+finding. The lesson recurred: `_fem_factory` once downgraded every resolve
+error to a warning (fixed 3aecb417), and nine days later the chain-phase
+router re-added `except (KeyError, TypeError): return False`, which silently
+dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
+flags both on their pre-fix trees and passes the fixes; the four legitimate
+silent handlers in scope carry waivers that state why. `lock-tests` now fails
+a PR whose base is not `main` (#858 merged into a stacked base and was missing
+from `main` for two months). `AGENTS.md` corrects "`main` has no required
+status checks" (it requires five, and takes squash merges only), says how to
+confirm a merge reached `main`, and adds two test conventions; the bridge and
+ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
+items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
+
+### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
+
+`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
+the one line `@AGENTS.md`, and its old behavioural guidelines moved in
+verbatim. It adds the map this repo never had: each CI lane's local
+command and trap, and the merge lessons that until now lived only in the
+maintainer's agent memory (`--base main`, no required checks, push-after-
+merge orphans, shared-literal merges, the editable install that points at
+main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
+`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
+at the lesson instead of copying it.
+
+`scripts/check_quirks.py` turns three lessons that bit again after being
+written down into rules, run as the last step of `static-gates`:
+`adr-number` (two ADRs with one number, or one missing from the index —
+#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
+a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
+omitting a FEMData stream — #707, #912/#913). Each was proven against the
+commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
+at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
+Plan and evidence: `internal_docs/plan_agent_surface.md`.
 
 ### CHANGED — engine default can alter answers: `-flipAlphaIn init` (fork #849), the corrected SANISAND tangent (fork #847), and `LadrunoSANISAND.flip_alpha_in`
 
@@ -934,83 +1037,6 @@ Same trap on typed ``Mumps``. Both now always emit ``-matrixType N``
 as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
-
-<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
-     Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
-     Do NOT edit any existing line — in particular the single-line
-     "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight itself). CHANGELOG.md merges with the union driver
-     (.gitattributes), which silently keeps BOTH sides of any edit to an
-     existing line instead of conflicting — duplicated-header mangling is
-     guarded by tests/test_changelog_structure.py.
-     Workflow + rationale: internal_docs/changelog_workflow.md -->
-
-### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
-
-`results/capture/spec.py`'s fallback tag for a layered-shell section or
-material name promised to be deterministic, but it took the builtin
-`hash()` of the name, which Python salts per process: `"LayeredShell_A"`
-was `1509370562` under `PYTHONHASHSEED=1` and `1288700299` under `=2`. It
-is now `zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1`, pinned by
-`tests/results/test_stable_section_tag.py` (two subprocesses with
-different seeds, and a fixed value). No file changes: the fallback only
-runs when the OpenSees back-reference carries the legacy `_sections` /
-`_elem_assignments` attributes, which the `apeSees` bridge does not, and
-the layer writer never writes these tags to disk.
-
-### FIXED — CHANGELOG: every `###` heading has a blank line above it, and a test holds it
-
-The `merge=union` driver never conflicts: when two PRs insert sections at
-the anchor it keeps both, but it can drop the blank line between them, so
-one section's last paragraph runs straight into the next `###` header. It
-happened three times on 2026-09-25 alone, and 56 older sections carried
-it. This inserts those 56 blank lines, and nothing else changes.
-`tests/test_changelog_structure.py` gains
-`test_every_section_heading_has_a_blank_line_before_it`, which fails on
-the shape. It flags the real mangled merge of #1172's first refresh
-(`403a3e06`, line 890) and passes its repair; headings inside fenced code
-samples are skipped.
-
-### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
-
-`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
-(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
-`except` handler that only passes, continues, returns or assigns an empty
-value, or logs — whatever it catches — and any `contextlib.suppress`, is a
-finding. The lesson recurred: `_fem_factory` once downgraded every resolve
-error to a warning (fixed 3aecb417), and nine days later the chain-phase
-router re-added `except (KeyError, TypeError): return False`, which silently
-dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
-flags both on their pre-fix trees and passes the fixes; the four legitimate
-silent handlers in scope carry waivers that state why. `lock-tests` now fails
-a PR whose base is not `main` (#858 merged into a stacked base and was missing
-from `main` for two months). `AGENTS.md` corrects "`main` has no required
-status checks" (it requires five, and takes squash merges only), says how to
-confirm a merge reached `main`, and adds two test conventions; the bridge and
-ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
-items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
-
-### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
-
-`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
-the one line `@AGENTS.md`, and its old behavioural guidelines moved in
-verbatim. It adds the map this repo never had: each CI lane's local
-command and trap, and the merge lessons that until now lived only in the
-maintainer's agent memory (`--base main`, no required checks, push-after-
-merge orphans, shared-literal merges, the editable install that points at
-main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
-`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
-at the lesson instead of copying it.
-
-`scripts/check_quirks.py` turns three lessons that bit again after being
-written down into rules, run as the last step of `static-gates`:
-`adr-number` (two ADRs with one number, or one missing from the index —
-#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
-a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
-omitting a FEMData stream — #707, #912/#913). Each was proven against the
-commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
-at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
-Plan and evidence: `internal_docs/plan_agent_surface.md`.
 
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
