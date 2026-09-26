@@ -119,9 +119,11 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   set/dict/list literal, because git sees no textual conflict (#605 + #606
   → #608). After merging a PR that shares a literal with an open one,
   re-run the other's tests on the merge.
-- **CHANGELOG: insert one section at the anchor and never edit existing
-  lines** ([changelog_workflow.md](internal_docs/changelog_workflow.md),
-  guarded by `tests/test_changelog_structure.py`).
+- **CHANGELOG: insert one section directly below the anchor comment, the
+  first thing under `## Unreleased`, and never edit existing lines**
+  ([changelog_workflow.md](internal_docs/changelog_workflow.md), guarded
+  by `tests/test_changelog_structure.py`). Nothing goes between the header
+  and the anchor: one section there (#974) left the anchor at line 868.
 - **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -`
   sets the body to a literal "-".
 - **Skill changes:** edit `skills/apegmsh/`, run

@@ -6,8 +6,11 @@
 
 ## How to add an entry (the whole workflow)
 
-Insert **one contiguous section** directly below the anchor comment at
-the top of `## Unreleased` (newest first):
+Insert **one contiguous section** directly below the anchor comment
+(`<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT … -->`). The anchor
+is the first thing under the `## Unreleased` header, so directly below it
+is the top of Unreleased, and the newest entry is always first. Never
+insert between the header and the anchor:
 
 ```markdown
 ### ADDED — short highlight title (ADR/PR reference if any)
@@ -23,7 +26,11 @@ Rules:
    (entries up to 2026-06-12 live there; nothing is ever appended).
 2. One section per PR, contiguous (title + body, no interleaved
    edits elsewhere in the file).
-3. Keep a blank line before and after your section.
+3. Keep a blank line before and after your section. A union merge of two
+   sections at the anchor can drop the blank line between them; the
+   structure test fails on a `###` heading with none above it.
+4. The anchor stays the first non-blank line under the header, and
+   there is exactly one (`test_entry_anchor_is_top_of_unreleased`).
 
 That's it. No fragments directory, no assembly step.
 
@@ -74,8 +81,37 @@ for edits to existing lines it is silent corruption. Hence:
 * the frozen-ledger rule and the insert-only rule above;
 * `tests/test_changelog_structure.py` fails the suite when the known
   mangling signature appears (duplicated `## Unreleased` line,
-  missing anchor, conflict markers, or a dropped `.gitattributes`
-  entry), so a bad merge turns main red instead of shipping.
+  missing anchor, conflict markers, a dropped `.gitattributes`
+  entry, or a `###` heading with no blank line above it), so a bad
+  merge turns main red instead of shipping.
+  It also fails when anything sits between the header and the anchor,
+  or when there are two anchors (see the next section).
+
+## How the anchor drifted, and the move back (2026-09-25)
+
+The anchor went in right under the header, so "directly below the
+anchor" and "the top of Unreleased" named the same place. Nothing held
+it there. PR #974 (2026-08-15) inserted its section between the header
+and the anchor. From then on the two phrases in this file named
+different places, and each PR picked one. By 2026-09-25, 33 sections
+had gone above the anchor, pushing it down to line 868, and about 90 had
+gone below it. #1171's section, merged 2026-09-25, sat about 850 lines
+below the one #1166 had added on 2026-09-19.
+
+The anchor now sits under the header again, and
+`test_entry_anchor_is_top_of_unreleased` keeps it there. The move
+deleted the nine comment lines and left both blank lines around them,
+so the old position now reads as two blank lines. That is deliberate.
+Under union, a branch that still inserts below the old position merges
+cleanly only if an unchanged line separates its insertion from the
+deletion. When the deletion took a blank line with it, the simulated
+merges of #1172 and #1174 brought the old anchor back as a second copy.
+
+If your branch was cut before the move, merge `origin/main` and check
+where your section landed. If it went below the old anchor, it now
+sits where the anchor was, after the two blank lines (about line 900
+at the move). If it landed above the anchor, the test fails. Either
+way, move it directly below the anchor.
 
 ## Migrating an in-flight PR (opened before 2026-06-12)
 

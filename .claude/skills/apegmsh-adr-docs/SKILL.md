@@ -36,14 +36,16 @@ the quoted heading. `decisions/` is
 
 ## CHANGELOG
 
-- [ ] Insert **one contiguous section** at the anchor under
-      `## Unreleased`, and never edit existing lines
+- [ ] Insert **one contiguous section** directly below the anchor
+      comment, which is the first thing under `## Unreleased`. Never put
+      it between the header and the anchor, and never edit existing lines
       (`internal_docs/changelog_workflow.md` "How to add an entry").
 - [ ] Keep a blank line before and after the section. The union merge
       driver never conflicts, it mangles: headers separated from their
-      bodies and blank lines dropped, both repaired inside #773 and #783. Read your
-      section back after merging `main`. `tests/test_changelog_structure.py`
-      catches only the structural damage.
+      bodies and blank lines dropped (repaired inside #773 and #783, and
+      three times on 2026-09-25). Read your section back after merging
+      `main`. `tests/test_changelog_structure.py` fails on a `###` heading
+      with no blank line above it, but not on a header split from its body.
 
 ## The docs site
 
