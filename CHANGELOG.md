@@ -945,6 +945,35 @@ flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — partitioned reactions are summed across part files, not taken from rank 0 (`PARTITION_REDUCTION`)
+
+Under OpenSeesMP, each rank writes its own `.part-N.ladruno` or
+`.part-N.mpco`. A node on a partition interface appears in several of
+these files. Its displacements are the same in every copy. Its
+reaction, however, is only the share from that rank's own elements, and
+the true value is the sum of the copies. The node stitch
+(`_merge_node_slabs`) kept the first partition's copy for every result.
+In the fork's reproduction (nmorabowen/OpenSees#861), a support shared
+by two ranks read `(0, 10)` where the serial run gives `(20, 30)`, so
+base shear from partitioned reactions was under-reported.
+
+The stitch now follows each result group's `PARTITION_REDUCTION`
+attribute (Ladruno schema §7.1):
+
+- `NONE` keeps the first copy, as before.
+- `SUM` adds the copies.
+- `UNSUPPORTED` raises.
+
+For files without the attribute (older `.ladruno` files and every
+`.mpco`), the kind is taken from the result name: `REACTION*`,
+`UNBALANCED*` and `RAYLEIGH*` sum, and everything else keeps one copy.
+Partitions that disagree on the kind are refused. `energy()` on a
+partitioned `.ladruno` now raises a clear `ValueError`, because each
+rank's balance is a partial that no sum recovers. Element, Gauss and
+fiber concatenation is unchanged. The per-file readers expose
+`node_partition_reduction(stage_id, component)`, and the merge sums
+with `np.add.reduceat` rather than a Python loop.
+
 ### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
 
 `results/capture/spec.py`'s fallback tag for a layered-shell section or
