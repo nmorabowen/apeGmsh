@@ -37,6 +37,70 @@ was). `AGENTS.md`, the ADR/docs guide and the workflow doc now say
 "directly below the anchor, the first thing under the header", and the
 workflow doc records the drift and what a branch cut before the move
 should do after merging `main`.
+### ADDED — viewer agent surface: two task guides and five recurrence guards
+
+Agents working on the viewers now get the viewers' own lessons at the
+moment they act, instead of having to find them in the archive.
+
+**Guides.**
+
+- `.claude/skills/apegmsh-viewers-change/` is a checklist for changing
+  viewer code. Every item points into the ADR, test docstring or archive
+  entry that explains it.
+- `.claude/skills/apegmsh-viewers-visual-check/` is the procedure for
+  proving that a change *looks* right:
+  - headless reference and candidate stills (`python -m apeGmsh.viewers render`);
+  - what to inspect in them;
+  - driving input programmatically;
+  - stopping a launched viewer by its PID.
+- `internal_docs/viewer_lessons.md` takes in the viewer traps that until
+  now lived only in agent memory. Among them: `add_key_event` fires only
+  while the viewport has focus, which settles a contradiction between
+  memory and `test_dim_filter_keys.py`.
+
+**Guards.** The viewers' most repeated failure was a fix that repaired
+the reported site while the same pattern survived at a sibling site. The
+five new AST guards each come from such a pair of fixes:
+
+- **G-ACTORS**, in `test_viewer_state_contract.py`: nothing outside a
+  diagram reads its dead `_actors` (#593, then #620).
+- In the new `tests/viewers/test_viewer_recurrence_guards.py`:
+  - **G-VTK-REMOVED**: no VTK 9.7-removed `AddActor2D`/`RemoveActor2D`
+    (#1122, then #1123).
+  - **G-QAPP-ENV**: `prepare_qt_environment()` runs before every
+    `QApplication(...)` (#743, then #782).
+  - **G-GHOST-BIT**: the hidden-cell bit is 0x20 (#781, then #878).
+  - **G-HASH**: no builtin `hash()` for colours (#374, then 184b5734).
+
+Each guard flags its incident on the real pre-fix tree and passes on the
+fix commit. The full record is in
+`internal_docs/plan_agent_surface_viewers.md`.
+
+G-HASH also found a live third site, `ui/loads_tab.py::pattern_color`,
+which gave load arrows a different colour in every process. That site
+was fixed in its own PR, ahead of this guard.
+
+**Existing guards tightened.**
+
+- The ADR 0056 allowlist ratchet now also fails on a budget whose file
+  has no hits left. Three stale `G-IMPORT` budgets were deleted.
+- `test_deform_follow_contract.py` now requires every diagram kind to
+  override `set_visible`, because the base walks the dead `_actors`.
+### FIXED — load patterns are coloured by declaration order, the same in every session
+
+The mesh viewer's load arrows and the Loads tab coloured each pattern with
+`abs(hash(name))`. A string's `hash()` is randomized per process
+(`PYTHONHASHSEED`), so a pattern changed colour from one session to the
+next. Now the n-th pattern declared (`g.loads.cases()`) takes the n-th of
+the seven palette colours, wrapping after seven, so a script run again
+gets the same colours and the first seven patterns never share one. A
+name digest was not enough: in seven slots `dead` and `live` land on the
+same colour under crc32. Declaring a pattern earlier in the script shifts
+the colours of the later ones; the Loads tab shows each colour next to its
+name. A pattern the loads composite does not know falls back to
+`zlib.crc32` of its name, as the colour modes do since #374 and 184b5734.
+`loads_tab.pattern_color(name, cases=None)` keeps its one-argument form.
+Guarded by `tests/viewers/test_pattern_color_stable.py`.
 
 ### CHANGED — engine default can alter answers: `-flipAlphaIn init` (fork #849), the corrected SANISAND tangent (fork #847), and `LadrunoSANISAND.flip_alpha_in`
 
@@ -901,6 +965,25 @@ as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
 
+
+### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
+
+`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
+(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
+`except` handler that only passes, continues, returns or assigns an empty
+value, or logs — whatever it catches — and any `contextlib.suppress`, is a
+finding. The lesson recurred: `_fem_factory` once downgraded every resolve
+error to a warning (fixed 3aecb417), and nine days later the chain-phase
+router re-added `except (KeyError, TypeError): return False`, which silently
+dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
+flags both on their pre-fix trees and passes the fixes; the four legitimate
+silent handlers in scope carry waivers that state why. `lock-tests` now fails
+a PR whose base is not `main` (#858 merged into a stacked base and was missing
+from `main` for two months). `AGENTS.md` corrects "`main` has no required
+status checks" (it requires five, and takes squash merges only), says how to
+confirm a merge reached `main`, and adds two test conventions; the bridge and
+ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
+items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
 
 ### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
 

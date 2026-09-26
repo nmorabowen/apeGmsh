@@ -24,7 +24,10 @@ the quoted heading. `decisions/` is
       worktree's copy. Add the index row to `decisions/README.md` in the
       same PR. An unindexed ADR makes its number look free: a second 0065
       landed (#676 → #677), and 0072 and 0074 had to be renumbered (#741,
-      #817). The `adr-number` quirk rule fails both mistakes.
+      #817). The `adr-number` quirk rule fails both mistakes. Re-check
+      `origin/main` right before merging: `main` does not require an
+      up-to-date branch, so two open PRs that took one number both stay
+      green, and the rule only goes red on `main` afterwards.
 - [ ] ADRs are append-only. Amend with a dated section or a superseding
       ADR, never by rewriting the decision (`decisions/README.md`, first
       paragraph).

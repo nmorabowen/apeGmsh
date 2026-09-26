@@ -56,7 +56,10 @@ the quoted heading. Paths are from the repo root; `arch/` means
 - [ ] Fail loud. A resolver or chain phase that swallows an error and
       returns `None`/`False` turns a missing tie or contact into a silent
       no-op (45340ac3, "chain-phase sessions fail loud instead of silently
-      dropping defs"; `tests/test_resolution_contract.py`).
+      dropping defs"; `tests/test_resolution_contract.py`). The
+      `resolve-swallow` quirk rule holds this in `_kernel/resolvers/**` and
+      `mesh/_fem_factory.py`; a handler that really may stay silent carries
+      a waiver that says why.
 
 ## Schema
 
@@ -75,6 +78,13 @@ the quoted heading. Paths are from the repo root; `arch/` means
 - [ ] Emit cost is gated against a committed baseline (`emit-cost-gate`,
       `tests/benchmarks/test_emit_regression_gate.py`). A 2-3x slowdown
       once reported PASS for 124 commits (#876).
+- [ ] A contact with a numeric `kn` always emits the full `kn kt mu`
+      triple: the fork parser aborts on a bare `kn` followed by more flags,
+      and the short form came back in #744 the day ADR 0073 recorded it
+      (ADR 0073, "bare numeric `kn`"; `tests/opensees/unit/test_contact_emit.py`).
+- [ ] A partitioned or staged emit change is checked against the
+      sequential run field by field, not by "it ran": a stage-claimed MP
+      tie and ghost BCs were silently dropped once (49ff0766).
 
 ## Gates before the PR
 
