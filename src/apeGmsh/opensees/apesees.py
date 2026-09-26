@@ -7810,7 +7810,12 @@ class BuiltModel:
         from .analysis.constraint_handler import (
             Lagrange as _Lag, LadrunoProjection as _Proj, Penalty as _Pen,
         )
-        global_eq = self._has_equation_constraints()
+        # Read the field directly (not _has_equation_constraints): the guard
+        # is also driven on duck-typed stand-ins that carry only fem +
+        # stage_records (tests/test_staged_eq_handler_guard.py).
+        global_eq = _fem_has_equation_ties(self.fem) or bool(
+            getattr(self, "equation_constraint_records", ()),
+        )
         eq_ok = (_Lag, _Pen, _Proj)
         for stage in self.stage_records:
             needs_eq = global_eq or _records_have_equation_tie(
