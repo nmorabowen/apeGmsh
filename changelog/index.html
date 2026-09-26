@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned reactions are summed across part files, not taken from rank 0 (PARTITION_REDUCTION)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3634,6 +3645,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — partitioned reactions are summed across part files, not taken from rank 0 (PARTITION_REDUCTION)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3683,6 +3705,32 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction">FIXED — partitioned reactions are summed across part files, not taken from rank 0 (<code>PARTITION_REDUCTION</code>)<a class="headerlink" href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" title="Permanent link">&para;</a></h3>
+<p>Under OpenSeesMP, each rank writes its own <code>.part-N.ladruno</code> or
+<code>.part-N.mpco</code>. A node on a partition interface appears in several of
+these files. Its displacements are the same in every copy. Its
+reaction, however, is only the share from that rank's own elements, and
+the true value is the sum of the copies. The node stitch
+(<code>_merge_node_slabs</code>) kept the first partition's copy for every result.
+In the fork's reproduction (nmorabowen/OpenSees#861), a support shared
+by two ranks read <code>(0, 10)</code> where the serial run gives <code>(20, 30)</code>, so
+base shear from partitioned reactions was under-reported.</p>
+<p>The stitch now follows each result group's <code>PARTITION_REDUCTION</code>
+attribute (Ladruno schema §7.1):</p>
+<ul>
+<li><code>NONE</code> keeps the first copy, as before.</li>
+<li><code>SUM</code> adds the copies.</li>
+<li><code>UNSUPPORTED</code> raises.</li>
+</ul>
+<p>For files without the attribute (older <code>.ladruno</code> files and every
+<code>.mpco</code>), the kind is taken from the result name: <code>REACTION*</code>,
+<code>UNBALANCED*</code> and <code>RAYLEIGH*</code> sum, and everything else keeps one copy.
+Partitions that disagree on the kind are refused. <code>energy()</code> on a
+partitioned <code>.ladruno</code> now raises a clear <code>ValueError</code>, because each
+rank's balance is a partial that no sum recovers. Element, Gauss and
+fiber concatenation is unchanged. The per-file readers expose
+<code>node_partition_reduction(stage_id, component)</code>, and the merge sums
+with <code>np.add.reduceat</code> rather than a Python loop.</p>
 <h3 id="changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there">CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there<a class="headerlink" href="#changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there" title="Permanent link">&para;</a></h3>
 <p><code>internal_docs/changelog_workflow.md</code> said to insert each section
 "directly below the anchor comment at the top of <code>## Unreleased</code>". The
