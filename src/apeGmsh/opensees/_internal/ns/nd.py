@@ -26,15 +26,19 @@ from ...material.nd import (
     LadrunoRCFiniteStrain,
     LadrunoSANISAND,
     LogStrain,
+    LogStrain2D,
     ManzariDafalias,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     MohrCoulombTensionCutoffSoil as _build_mohr_coulomb_tc_soil,
     HoekBrownRock as _build_hoek_brown_rock,
     PlaneStrain,
+    PlaneStressRebar,
+    PlateFromPlaneStress,
+    PlateRebar,
     SAniSandMS,
     StagedStrain,
 )
-from ..types import NDMaterial
+from ..types import NDMaterial, UniaxialMaterial
 from ._base import _BridgeNamespace
 
 
@@ -571,6 +575,63 @@ class _NDMaterialNS(_BridgeNamespace):
         base = self._bridge._resolve(base, base=NDMaterial)
         return self._bridge._register(PlaneStrain(base=base), name=name)
 
+    # -- shell-layer helpers (stock) --------------------------------------
+
+    def PlateRebar(
+        self, *,
+        material: UniaxialMaterial | str,
+        angle: float,
+        name: str | None = None,
+    ) -> PlateRebar:
+        """Register a :class:`PlateRebar` smeared-rebar shell layer.
+
+        ``nDMaterial PlateRebar tag uniTag angle`` — a PlateFiber material
+        (valid ``LayeredShellFiberSection`` layer) carrying the uniaxial
+        ``material`` along ``angle`` degrees from the shell local x axis.
+        ``material`` accepts the registered uniaxial handle or its name.
+        """
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
+        return self._bridge._register(
+            PlateRebar(material=material, angle=angle), name=name
+        )
+
+    def PlateFromPlaneStress(
+        self, *,
+        material: NDMaterial | str,
+        G_out: float,
+        name: str | None = None,
+    ) -> PlateFromPlaneStress:
+        """Register a :class:`PlateFromPlaneStress` shell-layer wrapper.
+
+        ``nDMaterial PlateFromPlaneStress tag psTag G_out`` — lifts a
+        plane-stress law to a PlateFiber material (valid
+        ``LayeredShellFiberSection`` layer) with transverse shear modulus
+        ``G_out``. ``material`` accepts the registered nD handle or its name.
+        """
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            PlateFromPlaneStress(material=material, G_out=G_out), name=name
+        )
+
+    def PlaneStressRebar(
+        self, *,
+        material: UniaxialMaterial | str,
+        angle: float,
+        name: str | None = None,
+    ) -> PlaneStressRebar:
+        """Register a :class:`PlaneStressRebar` plane-stress smeared rebar.
+
+        ``nDMaterial PlaneStressRebarMaterial tag uniTag angle`` — a
+        PlaneStress material (order 3), **not** a shell layer (use
+        :meth:`PlateRebar` there). Classic-Tcl only: openseespy does not
+        register the keyword. ``material`` accepts the registered uniaxial
+        handle or its name.
+        """
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
+        return self._bridge._register(
+            PlaneStressRebar(material=material, angle=angle), name=name
+        )
+
     # -- Ladruno fork — J2 plasticity family ------------------------------
 
     def LadrunoJ2(
@@ -883,6 +944,35 @@ class _NDMaterialNS(_BridgeNamespace):
         """
         inner = self._bridge._resolve(inner, base=NDMaterial)
         return self._bridge._register(LogStrain(inner=inner), name=name)
+
+    def LogStrain2D(
+        self, *,
+        inner: NDMaterial | str,
+        plane_type: str = "PlaneStrain",
+        name: str | None = None,
+    ) -> LogStrain2D:
+        """Register a :class:`LogStrain2D` plane Hencky finite-strain lift.
+
+        Ladruno fork (``ND_TAG`` 33016); see :class:`LogStrain2D`. The 2-D
+        sibling of :meth:`LogStrain` and the fork's only
+        ``FiniteStrainND2DMaterial`` — this is what
+        ``LadrunoQuad`` / ``LadrunoCST`` / ``LadrunoLST`` need under
+        ``geom="finite"`` (they reject the 3-D :class:`LogStrain`). The
+        ``inner`` is still a 3-D (order-6) small-strain material and accepts
+        the registered handle or its registered name.
+
+        Pass the 3-D material **directly** — pre-wrapping it in
+        :meth:`PlaneStrain` gives an order-3 face that the fork refuses
+        ("inner nDMaterial must be a 3D (order-6) material"). This class is
+        itself the plane presentation; see :class:`LogStrain2D`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        inner = self._bridge._resolve(inner, base=NDMaterial)
+        return self._bridge._register(
+            LogStrain2D(inner=inner, plane_type=plane_type), name=name,
+        )
 
     def InitDefGrad(
         self, *,

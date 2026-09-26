@@ -28,13 +28,15 @@ OpenSees command shapes::
                                          [-divergence f] [-verbose]
     integrator LadrunoIndirectControl    incr -dof node dof coef [-dof ...]
                                          [-iter numIter [dMin dMax]]
+    integrator LadrunoLoadControl        dlam [num_iter min_lam max_lam]
+                                         [-extrapolate frac] [-tangentPredictor]
 
 The ``min_*`` / ``max_*`` step-bracket parameters on LoadControl and
 DisplacementControl are only meaningful in tandem with ``num_iter``;
 the dataclasses reject "min/max set but num_iter unset" at
 construction.
 
-Six integrators are **fork-only** — they require the OpenSees *Ladruno
+Seven integrators are **fork-only** — they require the OpenSees *Ladruno
 fork* build to *run*. Emission works on any build (it's just an
 ``integrator <Type> ...`` line); the fork requirement bites only at
 ``ops.analyze(...)`` / ``ops.run()``:
@@ -48,6 +50,9 @@ fork* build to *run*. Emission works on any build (it's just an
   :class:`LadrunoArcLength` (adaptive / viscous-stabilized arc-length)
   and :class:`LadrunoIndirectControl` (weighted multi-DOF control),
   plus the matrix-free quasi-static :class:`LadrunoDynamicRelaxation`.
+* :class:`LadrunoLoadControl` — a stock ``LoadControl`` superset whose
+  ``-tangentPredictor`` fixes the non-homogeneous ``sp`` pathology
+  (fork ADR-80).
 
 .. note:: openseespy greedy-read quirk
 
@@ -86,6 +91,7 @@ __all__ = [
     "LadrunoArcLength",
     "LadrunoDynamicRelaxation",
     "LadrunoIndirectControl",
+    "LadrunoLoadControl",
     "LadrunoHHT",
     "LadrunoGeneralizedAlpha",
     "CentralDifferenceSMS",
@@ -991,6 +997,113 @@ class LadrunoIndirectControl(Integrator):
                 assert self.dmax is not None  # __post_init__ guarantee
                 args += [self.dmin, self.dmax]
         emitter.integrator("LadrunoIndirectControl", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoLoadControl — LoadControl + the ADR-80 sp predictors (fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoLoadControl(Integrator):
+    """``integrator LadrunoLoadControl dlam [num_iter min_lam max_lam]
+    [-extrapolate frac] [-tangentPredictor]`` — **fork-only**.
+
+    The *Ladruno fork*'s superset of stock :class:`LoadControl`
+    (``INTEGRATOR_TAG`` 33015, a ``StaticIntegrator``; fork ADR-80). The
+    positional ``dlam [num_iter min_lam max_lam]`` block is stock
+    ``LoadControl``'s and validates the same way; the fork reads it only
+    as a full triple, so ``num_iter`` without a bracket is emitted with
+    ``(dlam, dlam)`` — the parser's own default. Two optional predictors
+    target the non-homogeneous ``sp`` (prescribed displacement) pathology
+    under ``constraints Transformation``, where the driven layer is
+    overstrained on iteration 1 and spuriously yields:
+
+    * ``tangent_predictor`` (``-tangentPredictor``, **default on**) —
+      forms the prescribed-motion forcing as ``-K·Δu_D`` on the committed
+      state before the ``sp`` values are enforced. This is the ADR-80 fix;
+      it passed its acceptance gate (cutbacks 23 → 0). Stateless, so it
+      also fires on the first increment, after a cutback, and when the
+      integrator is re-issued.
+    * ``extrapolate`` (``-extrapolate frac``, default ``None`` = off) —
+      linear extrapolation of the last committed increment. Built and
+      safe, but it **FAILED** its acceptance gate (cutbacks 23 → 23), and
+      it is inert when the integrator is re-issued every step. Kept for
+      completeness; do not use it as the ``sp`` fix.
+
+    The fork refuses to compose the two (different increment origins
+    would double-count), so setting ``extrapolate`` requires
+    ``tangent_predictor=False``. With ``tangent_predictor=False`` and no
+    ``extrapolate`` the integrator is stock ``LoadControl``. Emission works
+    on any build; the fork (``-tangentPredictor`` since 2026-09-04) is
+    required only to *run*.
+    """
+
+    dlam: float
+    num_iter: int | None = None
+    min_lam: float | None = None
+    max_lam: float | None = None
+    tangent_predictor: bool = True
+    extrapolate: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.num_iter is not None and self.num_iter < 1:
+            raise ValueError(
+                "LadrunoLoadControl: num_iter must be >= 1, got "
+                f"{self.num_iter}."
+            )
+        if (self.min_lam is None) != (self.max_lam is None):
+            raise ValueError(
+                "LadrunoLoadControl: supply both min_lam and max_lam, or "
+                f"neither (got min_lam={self.min_lam!r}, "
+                f"max_lam={self.max_lam!r})."
+            )
+        if self.min_lam is not None and self.num_iter is None:
+            raise ValueError(
+                "LadrunoLoadControl: min_lam/max_lam require num_iter to "
+                "be set."
+            )
+        if (
+            self.min_lam is not None
+            and self.max_lam is not None
+            and self.min_lam > self.max_lam
+        ):
+            raise ValueError(
+                "LadrunoLoadControl: min_lam must be <= max_lam, got "
+                f"min_lam={self.min_lam}, max_lam={self.max_lam}."
+            )
+        if self.extrapolate is not None and self.extrapolate < 0.0:
+            raise ValueError(
+                "LadrunoLoadControl: extrapolate must be >= 0 (the fork "
+                f"clamps a negative frac to 0), got {self.extrapolate}."
+            )
+        if self.extrapolate is not None and self.tangent_predictor:
+            raise ValueError(
+                "LadrunoLoadControl: extrapolate and tangent_predictor do "
+                "not compose (the fork disables -extrapolate when both are "
+                "given). tangent_predictor defaults to True; pass "
+                "tangent_predictor=False to use extrapolate instead."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        args: list[float | int | str] = [self.dlam]
+        if self.num_iter is not None:
+            # The fork reads numIter only as a full triple (stock's parse
+            # rule): a bare numIter would be read as an option token.
+            # Default the bracket to the stock parser's own (dlam, dlam).
+            if self.min_lam is not None:
+                assert self.max_lam is not None  # __post_init__ guarantee
+                args += [self.num_iter, self.min_lam, self.max_lam]
+            else:
+                args += [self.num_iter, self.dlam, self.dlam]
+        if self.extrapolate is not None:
+            args += ["-extrapolate", self.extrapolate]
+        if self.tangent_predictor:
+            args.append("-tangentPredictor")
+        emitter.integrator("LadrunoLoadControl", *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

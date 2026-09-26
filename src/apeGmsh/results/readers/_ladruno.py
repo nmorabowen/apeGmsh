@@ -53,7 +53,11 @@ from ._mpco import (
     _empty_node_slab,
     _empty_spring_slab,
 )
-from ._mpco_translation import canonical_node_component
+from ._mpco_translation import (
+    PARTITION_REDUCTIONS,
+    canonical_node_component,
+    partition_reduction_from_name,
+)
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -396,6 +400,34 @@ class LadrunoReader:
                 if canonical_node_component(res_name, label.strip()) == component:
                     return res_name, col
         return None
+
+    def node_partition_reduction(
+        self, stage_id: str, component: str,
+    ) -> "Optional[str]":
+        """How the partition copies of ``component`` combine.
+
+        Returns ``"NONE"``, ``"SUM"`` or ``"UNSUPPORTED"``, read from the
+        ``PARTITION_REDUCTION`` attribute of the result group that holds
+        the component, or from the group name when the file predates the
+        attribute. ``None`` when the file does not record the component.
+        """
+        on_nodes = _child(self._resolve_stage_group(stage_id), "RESULTS/ON_NODES")
+        if on_nodes is None:
+            return None
+        loc = self._locate_node_component(on_nodes, component)
+        if loc is None:
+            return None
+        res_name, _ = loc
+        res = on_nodes[res_name]
+        if "PARTITION_REDUCTION" not in res.attrs:
+            return partition_reduction_from_name(res_name)
+        kind = _decode(res.attrs["PARTITION_REDUCTION"]).strip("\x00 ").upper()
+        if kind not in PARTITION_REDUCTIONS:
+            raise ValueError(
+                f"{self._path}: {res_name}/PARTITION_REDUCTION is {kind!r}; "
+                f"expected one of {PARTITION_REDUCTIONS}."
+            )
+        return kind
 
     def read_nodes(
         self,

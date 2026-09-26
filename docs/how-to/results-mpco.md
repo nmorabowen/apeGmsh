@@ -97,6 +97,9 @@ data came from MPCO.
   double-count trap.
 - **Multi-partition runs:** pass any one part to `from_mpco("run.part-0.mpco",
   model_h5="model.h5")` — `.part-N` siblings are auto-discovered and merged.
+  At a node shared by several ranks, displacements and other kinematics
+  keep one copy, and reactions and unbalanced forces are summed, because
+  each rank stores only its own elements' share.
   Pass `merge_partitions=False` to read only the named partition.
 - **MPCO vs native capture:** use MPCO for STKO interoperability and parallel
   runs; use `spec.capture(...)` when you control a plain openseespy build and

@@ -154,8 +154,11 @@ class _SectionNS(_BridgeNamespace):
         layers: tuple[ShellLayer, ...],
         name: str | None = None,
     ) -> LayeredShellFiberSection:
-        """``section LayeredShellFiberSection`` — fiber-based stacked
-        layered plate section."""
+        """Layered plate section under its C++ name (``LayeredShellFiberSection``).
+
+        Emits ``section LayeredShell ...``, the only keyword OpenSees
+        registers for that class; same as :meth:`LayeredShell`. Needs at
+        least three layers."""
         return self._bridge._register(
             LayeredShellFiberSection(layers=layers), name=name
         )

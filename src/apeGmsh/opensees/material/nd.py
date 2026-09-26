@@ -24,6 +24,7 @@ The Tcl signatures these classes emit:
 """
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass
 import re
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
 from .._internal.tag_resolution import resolve_tag
-from .._internal.types import NDMaterial, Primitive
+from .._internal.types import NDMaterial, Primitive, UniaxialMaterial
 from ..emitter.base import Emitter
 
 
@@ -64,6 +65,9 @@ __all__ = [
     "MohrCoulombTensionCutoffSoil",
     "HoekBrownRock",
     "PlaneStrain",
+    "PlateRebar",
+    "PlateFromPlaneStress",
+    "PlaneStressRebar",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
     "ASDPlasticIntegrationWarning",
@@ -79,6 +83,7 @@ __all__ = [
     "LadrunoRCFiniteStrain",
     "LadrunoCohesiveHingeBiaxial",
     "LogStrain",
+    "LogStrain2D",
     "InitDefGrad",
     "StagedStrain",
 ]
@@ -2356,6 +2361,219 @@ class PlaneStrain(NDMaterial):
 
 
 # ---------------------------------------------------------------------------
+# Shell-layer helpers — PlateRebar / PlateFromPlaneStress / PlaneStressRebar
+# ---------------------------------------------------------------------------
+#
+# Stock OpenSees (Yuli Huang & Xinzheng Lu; PlaneStressRebar by fmk), verified
+# against the fork source ``SRC/material/nD/{PlateRebar,PlateFromPlaneStress,
+# PlaneStressRebar}Material.cpp``. ``LayeredShellFiberSection`` (and the
+# ``LayeredShell`` alias, which the parser routes to the same class) asks each
+# layer for ``getCopy("PlateFiber")`` and calls ``exit(-1)`` — killing the
+# process — when a layer answers null (``LayeredShellFiberSection.cpp:175``).
+# ``PlateRebar`` and ``PlateFromPlaneStress`` answer ``"PlateFiber"`` only;
+# ``PlaneStressRebar`` answers ``"PlaneStress"`` / ``"PlaneStress2D"`` only.
+
+
+def _require_finite(who: str, name: str, value: float) -> None:
+    if not math.isfinite(value):
+        raise ValueError(f"{who}: {name} must be finite, got {value!r}.")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlateRebar(NDMaterial):
+    """``nDMaterial PlateRebar`` — a smeared rebar layer for layered shells.
+
+    Tcl signature (stock OpenSees; ``PlateRebarMaterial`` is an alias)::
+
+        nDMaterial PlateRebar $tag $uniTag $angle
+
+    Turns a uniaxial steel law into a **PlateFiber** material (strain order
+    5: ``eps11, eps22, gamma12, gamma23, gamma31``) that carries stress only
+    along one direction in the shell plane. The bar strain is the membrane
+    strain projected on that direction; the transverse-shear components get
+    no stiffness. Use it as a :class:`~apeGmsh.opensees.section.plate.ShellLayer`
+    of a :class:`~apeGmsh.opensees.section.plate.LayeredShell` section (the
+    C++ ``LayeredShellFiberSection``), with the smeared steel thickness
+    ``A_s / spacing`` as the layer thickness.
+
+    **Valid layer.** Its ``getCopy`` answers ``"PlateFiber"`` only, which is
+    what ``LayeredShellFiberSection`` asks for. It cannot be used by a
+    plane-stress element, and :class:`PlateFromPlaneStress` cannot wrap it.
+
+    Parameters
+    ----------
+    material
+        The uniaxial steel law. Emitted before this material (via
+        :meth:`dependencies`); the C++ side takes its own copy.
+    angle
+        Bar direction in **degrees**, measured from the x axis of the
+        section frame the shell hands its layers (``0`` = that x axis,
+        ``90`` = its y axis). Any finite value; OpenSees takes
+        ``cos``/``sin`` of it, so ``0`` and ``180`` are the same bar.
+
+    Notes
+    -----
+    **The section x axis depends on the build, for** ``ASDShellQ4`` **without
+    a** ``-local`` **axis.** The element rotates its strain into a section
+    frame by an angle it computes in ``setDomain``. By default that frame's
+    x axis is the mid-side vector from edge 1-4 to edge 2-3.
+
+    * Fork, and upstream from PR #1606 (merged 2025-05-16): the section x
+      axis is that mid-side vector.
+    * Older upstream, including PyPI openseespy 3.7.1.x: the default
+      branch declares a second ``e1`` that hides the outer one. The angle
+      becomes ``acos(0) = +90`` deg, so the section x axis is the element's
+      local **y** axis, and every ``PlateRebar`` angle lands 90 deg away
+      from the fork.
+
+    The explicit ``-local`` branch is correct on both builds. apeGmsh's
+    ``ASDShellQ4(local_cs=)`` does not reach it, because it emits a
+    ``-localCS`` flag that ASDShellQ4 does not parse. So on an old upstream
+    build, swap the angles (``0`` <-> ``90``) to get the fork's layout.
+    ``tests/opensees/live/test_plate_rebar_layers_live.py`` records the
+    measured swap.
+    """
+
+    material: UniaxialMaterial
+    angle: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, UniaxialMaterial):
+            raise TypeError(
+                "PlateRebar: material must be a UniaxialMaterial primitive, "
+                f"got {type(self.material).__name__!r}."
+            )
+        _require_finite("PlateRebar", "angle", self.angle)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        emitter.nDMaterial("PlateRebar", tag, mat_tag, self.angle)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlateFromPlaneStress(NDMaterial):
+    """``nDMaterial PlateFromPlaneStress`` — a plane-stress law as a shell layer.
+
+    Tcl signature (stock OpenSees; ``PlateFromPlaneStressMaterial`` is an
+    alias)::
+
+        nDMaterial PlateFromPlaneStress $tag $psTag $OutOfPlaneModulus
+
+    Lifts a plane-stress material to a **PlateFiber** material (strain
+    order 5). The in-plane components go to the wrapped law; the two
+    transverse-shear components get an uncoupled linear modulus ``G_out``.
+    This is the usual way to put a plane-stress concrete law into a layered
+    RC shell.
+
+    **Valid layer.** Its ``getCopy`` answers ``"PlateFiber"`` only, which is
+    what the C++ ``LayeredShellFiberSection`` behind
+    :class:`~apeGmsh.opensees.section.plate.LayeredShell` asks for.
+
+    Parameters
+    ----------
+    material
+        The wrapped nD material. OpenSees takes ``getCopy("PlaneStress")``
+        of it without checking the result, so it must have a plane-stress
+        view: a 2-D/plane-stress material, or any 3-D material (the base
+        class condenses a 3-D law to plane stress). :class:`PlateRebar` and
+        :class:`PlateFromPlaneStress` itself have no such view and are
+        refused. Emitted before this material (via :meth:`dependencies`).
+    G_out
+        Out-of-plane (transverse) shear modulus. Must be finite and ``> 0``.
+    """
+
+    material: NDMaterial
+    G_out: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, NDMaterial):
+            raise TypeError(
+                "PlateFromPlaneStress: material must be an NDMaterial "
+                f"primitive, got {type(self.material).__name__!r}."
+            )
+        if isinstance(self.material, (PlateRebar, PlateFromPlaneStress)):
+            raise TypeError(
+                "PlateFromPlaneStress: material must have a plane-stress "
+                f"view; {type(self.material).__name__} answers "
+                "getCopy('PlateFiber') only, and OpenSees would dereference "
+                "the null copy. Wrap the plane-stress law instead."
+            )
+        _require_finite("PlateFromPlaneStress", "G_out", self.G_out)
+        if self.G_out <= 0:
+            raise ValueError(
+                f"PlateFromPlaneStress: G_out must be > 0, got {self.G_out!r}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        emitter.nDMaterial("PlateFromPlaneStress", tag, mat_tag, self.G_out)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlaneStressRebar(NDMaterial):
+    """``nDMaterial PlaneStressRebarMaterial`` — smeared rebar for plane stress.
+
+    Tcl signature (stock OpenSees, classic Tcl interpreter)::
+
+        nDMaterial PlaneStressRebarMaterial $tag $uniTag $angle
+
+    The plane-stress sibling of :class:`PlateRebar`: a uniaxial steel law
+    acting along one in-plane direction, as a **PlaneStress** material
+    (strain order 3: ``eps11, eps22, gamma12``). Use it in plane-stress
+    continuum elements (e.g. ``FourNodeQuad`` with ``plane_type=
+    "PlaneStress"``).
+
+    **Not a shell layer.** Its ``getCopy`` answers ``"PlaneStress"`` /
+    ``"PlaneStress2D"`` only. ``LayeredShellFiberSection`` asks for
+    ``"PlateFiber"`` and calls ``exit(-1)`` on the null answer, so
+    :class:`~apeGmsh.opensees.section.plate.ShellLayer` refuses it; use
+    :class:`PlateRebar` for shell layers.
+
+    .. note::
+       **Tcl only.** The keyword is registered in the classic Tcl
+       interpreter (``TclModelBuilderNDMaterialCommand.cpp``) but not in
+       the Python interpreter's material map
+       (``OpenSeesNDMaterialCommands.cpp``), so openseespy — stock or the
+       Ladruno fork — answers ``material type PlaneStressRebarMaterial is
+       unknown``. Emission works through every emitter; only a Tcl deck
+       run by ``OpenSees.exe`` builds it.
+
+    Parameters
+    ----------
+    material
+        The uniaxial steel law. Emitted before this material (via
+        :meth:`dependencies`).
+    angle
+        Bar direction in **degrees** from the element's local x axis. Any
+        finite value.
+    """
+
+    material: UniaxialMaterial
+    angle: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, UniaxialMaterial):
+            raise TypeError(
+                "PlaneStressRebar: material must be a UniaxialMaterial "
+                f"primitive, got {type(self.material).__name__!r}."
+            )
+        _require_finite("PlaneStressRebar", "angle", self.angle)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        emitter.nDMaterial("PlaneStressRebarMaterial", tag, mat_tag, self.angle)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
+# ---------------------------------------------------------------------------
 # ASDConcrete3D — Petracca plastic-damage, crack-band-regularized concrete
 # ---------------------------------------------------------------------------
 #
@@ -2862,6 +3080,104 @@ class LogStrain(NDMaterial):
     def _emit(self, emitter: Emitter, tag: int) -> None:
         inner_tag = resolve_tag(emitter, self.inner)
         emitter.nDMaterial("LogStrain", tag, inner_tag)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.inner,)
+
+
+# ---------------------------------------------------------------------------
+# LogStrain2D — plane Hencky finite-strain lift wrapper (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+#: The two plane views a 2-D material can present (OPS_LogStrain2D.cpp).
+_PLANE_TYPES_2D: tuple[str, ...] = ("PlaneStrain", "PlaneStress")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LogStrain2D(NDMaterial):
+    r"""``nDMaterial LogStrain2D`` — plane Hencky finite-strain lift.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33016**)::
+
+        nDMaterial LogStrain2D tag innerTag <-planeStrain|-planeStress>
+
+    The 2-D sibling of :class:`LogStrain`: the same logarithmic (Hencky)
+    strain-space lift, presented as a **plane** material. It is the fork's
+    only ``FiniteStrainND2DMaterial``, so it is what every
+    ``Ladruno*(geom="finite")`` plane element needs — the 3-D
+    :class:`LogStrain` is rejected by those elements.
+
+    The inner is still a **3-D (order-6)** small-strain ``nDMaterial``; the
+    wrapper condenses it to the plane view. Same isotropy caveat as
+    :class:`LogStrain`: exact and objective only for an isotropic inner.
+
+    .. note::
+       Fork-only. Emission works on any build; errors at ``ops.run()`` on
+       stock ``openseespy``.
+
+    .. note::
+       ``plane_type="PlaneStress"`` is accepted by the material but is not
+       reachable from any fork plane element today: ``LadrunoQuad`` /
+       ``LadrunoCST`` / ``LadrunoLST`` all refuse ``-geom finite`` outside
+       plane strain (the finite plane-stress view omits the thickness
+       stretch in the volume weight, ADR 70), and those classes raise at
+       construction. It is exposed rather than hidden because the
+       restriction lives on the *elements*, not here.
+
+    .. warning::
+       Do **not** pre-wrap the inner in :class:`PlaneStrain`. That wrapper
+       presents an order-3 plane face, and the fork probes the inner for a
+       ``"ThreeDimensional"`` order-6 copy::
+
+           nDMaterial LogStrain2D 3 : inner nDMaterial 2 must be a 3D
+           (order-6) material
+
+       It is the natural wrong guess — "it feeds a 2-D element, so wrap it
+       for 2-D" — but ``LogStrain2D`` *is* the plane presentation and does
+       that job itself. Hand it the 3-D material directly::
+
+           inner = ops.nDMaterial.ElasticIsotropic(E=2e8, nu=0.25)
+           mat   = ops.nDMaterial.LogStrain2D(inner=inner)          # right
+           mat   = ops.nDMaterial.LogStrain2D(                      # WRONG
+               inner=ops.nDMaterial.PlaneStrain(base=inner))
+
+    Parameters
+    ----------
+    inner
+        The wrapped small-strain **3-D (order-6)** :class:`NDMaterial` —
+        e.g. :class:`ElasticIsotropic`, :class:`LadrunoJ2`,
+        :class:`DruckerPrager`. Held by reference; its tag is resolved at
+        emit time and the bridge emits it **before** the wrapper (via
+        :meth:`dependencies`). See the warning above about
+        :class:`PlaneStrain`.
+    plane_type
+        ``"PlaneStrain"`` (default, matching the fork) or ``"PlaneStress"``.
+    """
+
+    is_finite_strain: ClassVar[bool] = True
+
+    inner: NDMaterial
+    plane_type: str = "PlaneStrain"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inner, NDMaterial):
+            raise TypeError(
+                "LogStrain2D: inner must be an NDMaterial primitive, got "
+                f"{type(self.inner).__name__!r}."
+            )
+        if self.plane_type not in _PLANE_TYPES_2D:
+            raise ValueError(
+                f"LogStrain2D: plane_type must be one of {_PLANE_TYPES_2D}, "
+                f"got {self.plane_type!r}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        inner_tag = resolve_tag(emitter, self.inner)
+        # The fork defaults to plane strain, so the default flag is elided.
+        args: list[int | str] = [inner_tag]
+        if self.plane_type != "PlaneStrain":
+            args.append("-planeStress")
+        emitter.nDMaterial("LogStrain2D", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.inner,)

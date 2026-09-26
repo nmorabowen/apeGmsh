@@ -68,6 +68,7 @@ from apeGmsh.opensees.analysis.integrator import (
     LadrunoGeneralizedAlpha,
     LadrunoHHT,
     LadrunoIndirectControl,
+    LadrunoLoadControl,
     LoadControl,
     Newmark,
 )
@@ -1674,6 +1675,128 @@ class TestLadrunoIndirectControl:
         assert i.dependencies() == ()
 
 
+class TestLadrunoLoadControl:
+    def test_default_emits_tangent_predictor(self) -> None:
+        e = RecordingEmitter()
+        LadrunoLoadControl(dlam=0.1)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("LadrunoLoadControl", 0.1, "-tangentPredictor"), {})
+        ]
+
+    def test_predictor_off_is_bare_stock_form(self) -> None:
+        e = RecordingEmitter()
+        LadrunoLoadControl(dlam=0.1, tangent_predictor=False)._emit(e, tag=1)
+        assert e.calls == [("integrator", ("LadrunoLoadControl", 0.1), {})]
+
+    def test_triple_then_flag(self) -> None:
+        e = RecordingEmitter()
+        LadrunoLoadControl(
+            dlam=0.1, num_iter=4, min_lam=0.01, max_lam=0.2,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            (
+                "integrator",
+                ("LadrunoLoadControl", 0.1, 4, 0.01, 0.2, "-tangentPredictor"),
+                {},
+            )
+        ]
+
+    def test_bare_num_iter_emits_full_triple(self) -> None:
+        # The fork reads numIter only as a full triple; a bare one would be
+        # read as an option token. The bracket defaults to (dlam, dlam).
+        e = RecordingEmitter()
+        LadrunoLoadControl(dlam=0.1, num_iter=4)._emit(e, tag=1)
+        assert e.calls == [
+            (
+                "integrator",
+                ("LadrunoLoadControl", 0.1, 4, 0.1, 0.1, "-tangentPredictor"),
+                {},
+            )
+        ]
+
+    def test_extrapolate_emits_with_value(self) -> None:
+        e = RecordingEmitter()
+        LadrunoLoadControl(
+            dlam=0.1, tangent_predictor=False, extrapolate=1.0,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("LadrunoLoadControl", 0.1, "-extrapolate", 1.0), {})
+        ]
+
+    def test_tcl_line(self) -> None:
+        e = TclEmitter()
+        LadrunoLoadControl(
+            dlam=-0.05, num_iter=3, min_lam=-0.1, max_lam=-0.01,
+        )._emit(e, tag=1)
+        assert (
+            "integrator LadrunoLoadControl -0.05 3 -0.1 -0.01 -tangentPredictor"
+            in e.lines()
+        )
+
+    def test_tcl_line_extrapolate(self) -> None:
+        e = TclEmitter()
+        LadrunoLoadControl(
+            dlam=0.1, tangent_predictor=False, extrapolate=0.5,
+        )._emit(e, tag=1)
+        assert "integrator LadrunoLoadControl 0.1 -extrapolate 0.5" in e.lines()
+
+    def test_py_line(self) -> None:
+        e = PyEmitter()
+        LadrunoLoadControl(dlam=0.1)._emit(e, tag=1)
+        assert (
+            "ops.integrator('LadrunoLoadControl', 0.1, '-tangentPredictor')"
+            in e.lines()
+        )
+
+    def test_py_line_triple(self) -> None:
+        e = PyEmitter()
+        LadrunoLoadControl(
+            dlam=0.1, num_iter=4, min_lam=0.01, max_lam=0.2,
+            tangent_predictor=False,
+        )._emit(e, tag=1)
+        assert (
+            "ops.integrator('LadrunoLoadControl', 0.1, 4, 0.01, 0.2)"
+            in e.lines()
+        )
+
+    def test_both_predictors_raise(self) -> None:
+        with pytest.raises(ValueError, match="do not compose"):
+            LadrunoLoadControl(dlam=0.1, extrapolate=1.0)
+
+    def test_both_predictors_explicit_raise(self) -> None:
+        with pytest.raises(ValueError, match="do not compose"):
+            LadrunoLoadControl(
+                dlam=0.1, tangent_predictor=True, extrapolate=0.0,
+            )
+
+    def test_negative_extrapolate_raises(self) -> None:
+        with pytest.raises(ValueError, match="extrapolate must be >= 0"):
+            LadrunoLoadControl(
+                dlam=0.1, tangent_predictor=False, extrapolate=-0.5,
+            )
+
+    def test_num_iter_below_one_raises(self) -> None:
+        with pytest.raises(ValueError, match="num_iter must be >= 1"):
+            LadrunoLoadControl(dlam=0.1, num_iter=0)
+
+    def test_half_bracket_raises(self) -> None:
+        with pytest.raises(ValueError, match="both min_lam and max_lam"):
+            LadrunoLoadControl(dlam=0.1, num_iter=4, min_lam=0.01)
+
+    def test_bracket_requires_num_iter(self) -> None:
+        with pytest.raises(ValueError, match="require num_iter"):
+            LadrunoLoadControl(dlam=0.1, min_lam=0.01, max_lam=0.2)
+
+    def test_inverted_bracket_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_lam must be <= max_lam"):
+            LadrunoLoadControl(
+                dlam=0.1, num_iter=4, min_lam=0.2, max_lam=0.01,
+            )
+
+    def test_dependencies_empty(self) -> None:
+        assert LadrunoLoadControl(dlam=0.1).dependencies() == ()
+
+
 class TestIntegratorNamespace:
     def test_load_control(self) -> None:
         ops = _make_ops()
@@ -1762,6 +1885,23 @@ class TestIntegratorNamespace:
         )
         assert isinstance(i, LadrunoIndirectControl)
         assert i.controls == ((5, 1, 1.0), (7, 1, -1.0))
+
+    def test_ladruno_load_control(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.LadrunoLoadControl(dlam=0.1)
+        assert isinstance(i, LadrunoLoadControl)
+        assert i.tangent_predictor is True
+        assert i.extrapolate is None
+
+    def test_ladruno_load_control_extrapolate(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.LadrunoLoadControl(
+            dlam=0.1, num_iter=4, min_lam=0.01, max_lam=0.2,
+            tangent_predictor=False, extrapolate=1.0,
+        )
+        assert isinstance(i, LadrunoLoadControl)
+        assert (i.num_iter, i.min_lam, i.max_lam) == (4, 0.01, 0.2)
+        assert i.extrapolate == 1.0
 
 
 # ===========================================================================
