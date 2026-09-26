@@ -25,6 +25,7 @@ one that still cannot be decoded is skipped like a `SyntaxError`, and the
 scan continues. Found by the adversarial review of the agent-surface port
 (`internal_docs/plan_agent_surface.md`, "Follow-up"); three new cases in
 `tests/test_check_quirks.py`.
+
 ### FIXED — Studio `pid_alive` on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one
 
 `apeGmsh.studio._host_state.pid_alive` (used by `read_host`, `clear_host` and
