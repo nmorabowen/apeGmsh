@@ -49,6 +49,7 @@
 - Recovered from #858, which merged on 2026-07-25 into a stacked base branch
   (`claude/apegmsh-facet-extractor-bug-e37f5c`) instead of `main`, so none of
   this reached `main` until now.
+
 ### FIXED — partitioned reactions are summed across part files, not taken from rank 0 (`PARTITION_REDUCTION`)
 
 Under OpenSeesMP, each rank writes its own `.part-N.ladruno` or
