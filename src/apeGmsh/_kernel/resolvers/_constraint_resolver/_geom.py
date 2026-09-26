@@ -178,7 +178,7 @@ def _project_point_to_face(
         J = np.column_stack([dx_dxi, dx_deta])   # (3, 2)
         try:
             delta, *_ = np.linalg.lstsq(J, -residual, rcond=None)
-        except np.linalg.LinAlgError:
+        except np.linalg.LinAlgError:  # apegmsh-lint: resolve-swallow-ok Newton-step fallback; the caller checks the distance against the tie tolerance
             break
         xi  += delta[0]
         eta += delta[1]
