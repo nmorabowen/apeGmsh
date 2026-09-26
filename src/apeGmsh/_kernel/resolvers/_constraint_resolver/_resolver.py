@@ -573,7 +573,7 @@ class ConstraintResolver:
 
                 try:
                     xi_eta, proj, dist = _project_point_to_face(s_xyz, fc)
-                except Exception:
+                except Exception:  # apegmsh-lint: resolve-swallow-ok per-face fallback; slaves that project nowhere raise/warn below
                     continue
 
                 if dist > defn.tolerance:

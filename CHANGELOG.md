@@ -888,6 +888,25 @@ runs when the OpenSees back-reference carries the legacy `_sections` /
 `_elem_assignments` attributes, which the `apeSees` bridge does not, and
 the layer writer never writes these tags to disk.
 
+### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
+
+`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
+(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
+`except` handler that only passes, continues, returns or assigns an empty
+value, or logs — whatever it catches — and any `contextlib.suppress`, is a
+finding. The lesson recurred: `_fem_factory` once downgraded every resolve
+error to a warning (fixed 3aecb417), and nine days later the chain-phase
+router re-added `except (KeyError, TypeError): return False`, which silently
+dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
+flags both on their pre-fix trees and passes the fixes; the four legitimate
+silent handlers in scope carry waivers that state why. `lock-tests` now fails
+a PR whose base is not `main` (#858 merged into a stacked base and was missing
+from `main` for two months). `AGENTS.md` corrects "`main` has no required
+status checks" (it requires five, and takes squash merges only), says how to
+confirm a merge reached `main`, and adds two test conventions; the bridge and
+ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
+items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
+
 ### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
 
 `AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is

@@ -194,6 +194,137 @@ def test_compose_streams_is_silent_without_the_class(tmp_path: Path) -> None:
     assert _found(tmp_path) == []
 
 
+# --- resolve-swallow: 3aecb417, and 06ccd266 -> 45340ac3 ---------------------
+
+RESOLVER = "src/apeGmsh/_kernel/resolvers/_router.py"
+FACTORY = "src/apeGmsh/mesh/_fem_factory.py"
+
+
+def _handler(root: Path, caught: str, body: str, rel: str = RESOLVER) -> None:
+    except_line = f"except {caught}:" if caught else "except:"
+    _write(root, rel, f"def f(log, np):\n    try:\n        nodes = g()\n    {except_line}\n"
+                      f"        {body}\n    return nodes\n")
+
+
+def test_resolve_swallow_flags_the_chain_phase_router_shape(tmp_path: Path) -> None:
+    _write(tmp_path, RESOLVER, """\
+        def try_chain_phase_route(session, defn):
+            try:
+                new_fem = route_def_to_fem(session._fem, defn)
+            except (KeyError, TypeError):
+                return False
+            return True
+        """)
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:4"]
+
+
+def test_resolve_swallow_flags_the_logged_fem_factory_shape(tmp_path: Path) -> None:
+    _write(tmp_path, FACTORY, """\
+        def build(session, log):
+            try:
+                session.constraints.resolve()
+            except Exception as exc:
+                log.warning("constraint resolve failed: %s", exc)
+        """)
+    assert _found(tmp_path) == ["resolve-swallow:_fem_factory.py:4"]
+
+
+def test_resolve_swallow_flags_a_predicate_named_copy_of_the_incident(tmp_path: Path) -> None:
+    # A name is not a contract: `is_routable` with the router's body is the incident.
+    _write(tmp_path, RESOLVER, """\
+        def is_routable(session, defn):
+            try:
+                route_def_to_fem(session._fem, defn)
+                return True
+            except (KeyError, TypeError):
+                return False
+        """)
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:5"]
+
+
+def test_resolve_swallow_reaches_subpackages(tmp_path: Path) -> None:
+    _handler(tmp_path, "KeyError", "pass", rel="src/apeGmsh/_kernel/resolvers/_sub/_y.py")
+    assert _found(tmp_path) == ["resolve-swallow:_y.py:4"]
+
+
+@pytest.mark.parametrize("caught", [
+    "", "Exception", "KeyError", "(KeyError, TypeError)", "MortarTieError", "np.linalg.LinAlgError",
+])
+def test_resolve_swallow_flags_whatever_is_caught(tmp_path: Path, caught: str) -> None:
+    # The resolvers' own errors subclass broad ones (MortarTieError(ValueError)).
+    _handler(tmp_path, caught, "return None")
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:4"]
+
+
+@pytest.mark.parametrize("body", [
+    "pass", "...", "return", "return False", "return []", "return {}", "return set()",
+    "return np.array([], dtype=int)", "return np.empty(0)", "log.warning('x')",
+    "log.critical('x')", "warnings.warn('x')", "print('x')", "nodes = []",
+    "nodes: list = []", "log.warning('x')\n        return set()",
+    "if log:\n            log.warning('x')\n        else:\n            pass",
+])
+def test_resolve_swallow_flags_every_silent_body(tmp_path: Path, body: str) -> None:
+    _handler(tmp_path, "KeyError", body)
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:4"]
+
+
+def test_resolve_swallow_flags_contextlib_suppress(tmp_path: Path) -> None:
+    _write(tmp_path, RESOLVER, "def f():\n    with contextlib.suppress(KeyError):\n        return g()\n")
+    assert _found(tmp_path) == ["resolve-swallow:_router.py:2"]
+
+
+@pytest.mark.parametrize("body", [
+    "raise",                                                        # re-raise
+    "raise ValueError('no such label') from None",                  # translate
+    "if strict:\n            raise\n        return False",          # the 45340ac3 fix
+    "if lenient:\n            log.warning('x')\n        else:\n            raise",
+    "return self._default_nodes", "return True", "return 'fallback'", "return [0]",
+    "self._misses += 1\n        return False",                      # unreadable: stay silent
+])
+def test_resolve_swallow_passes_a_handler_that_is_not_provably_silent(
+    tmp_path: Path, body: str
+) -> None:
+    _handler(tmp_path, "KeyError", body)
+    assert _found(tmp_path) == []
+
+
+@pytest.mark.parametrize("rel", ["src/apeGmsh/core/_x.py", "src/apeGmsh/mesh/_compose.py"])
+def test_resolve_swallow_ignores_code_outside_the_resolution_scope(tmp_path: Path, rel: str) -> None:
+    # _compose.py is scanned (compose-streams) but is not resolution code.
+    _handler(tmp_path, "KeyError", "return False", rel=rel)
+    assert _found(tmp_path) == []
+
+
+def test_resolve_swallow_waiver_on_the_except_line(tmp_path: Path) -> None:
+    _write(tmp_path, RESOLVER, """\
+        def has_target(self, target):
+            try:
+                self.nodes_for(target)
+                return True
+            except KeyError:  # apegmsh-lint: resolve-swallow-ok the predicate's contract
+                return False
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_resolve_swallow_stale_waiver_is_a_finding(tmp_path: Path) -> None:
+    _write(tmp_path, RESOLVER, """\
+        def f():
+            try:
+                g()
+            except KeyError:  # apegmsh-lint: resolve-swallow-ok was silent once
+                raise
+        """)
+    assert _found(tmp_path) == ["waiver:_router.py:4"]
+
+
+def test_resolve_swallow_scope_exists_in_this_checkout() -> None:
+    # A moved or renamed path would turn the rule off silently; pin it here.
+    for path in quirks.SWALLOW_SCOPE:
+        target = quirks.REPO / path
+        assert target.is_file() or any(target.rglob("*.py")), f"{path} moved: update SWALLOW_SCOPE"
+
+
 # --- waivers -------------------------------------------------------------------
 
 

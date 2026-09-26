@@ -50,6 +50,14 @@ COMPOSITES = ("ElementComposite", "NodeComposite")
 SCHEMA_FIXTURE = Path("tests/fixtures/schema.py")
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 
+#: The name-resolution code, where the contract is "fail loud". Elsewhere a
+#: broad `except` is usually deliberate (gmsh raises bare `Exception`).
+SWALLOW_SCOPE = (Path("src/apeGmsh/_kernel/resolvers"), Path("src/apeGmsh/mesh/_fem_factory.py"))
+LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "log", "critical", "fatal"}
+LOG_FUNCS = {"warn", "print"}
+EMPTY_CTORS = {"set", "frozenset", "dict", "list", "tuple"}
+EMPTY_ARRAYS = {"array", "asarray", "empty", "zeros"}
+
 WAIVER = re.compile(r"#\s*apegmsh-lint:\s*(?P<rule>[a-z-]+?)-ok\b(?P<reason>.*)$")
 
 RULES: dict[str, str] = {
@@ -70,6 +78,14 @@ RULES: dict[str, str] = {
         "accepts, so that stream is silently dropped. Pass every parameter of "
         "{cls}.__init__. Lesson: #707 (compose must carry every FEMData stream); "
         "recurred for embed_ties, contacts and contact_planes (fixed #912/#913)"
+    ),
+    "resolve-swallow": (
+        "name resolution swallows an error: this handler only passes, continues, "
+        "returns or assigns an empty value, or logs, so a missing target becomes a "
+        "silent no-op. Raise (or re-raise on the strict path). Lesson: _fem_factory "
+        "downgraded every resolve error to a warning (fixed 3aecb417); re-added nine "
+        "days later in the chain-phase router (06ccd266), where a tie against a "
+        "destroyed physical group was silently dropped (fixed 45340ac3)"
     ),
 }
 
@@ -221,9 +237,87 @@ def check_compose_streams(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple
             )
 
 
+def _in_swallow_scope(rel: str) -> bool:
+    return any(rel == p.as_posix() or rel.startswith(p.as_posix() + "/") for p in SWALLOW_SCOPE)
+
+
+def _empty(node: ast.expr | None) -> bool:
+    """None, a falsy literal, an empty container, or an empty-array call."""
+    if node is None:
+        return True
+    if isinstance(node, ast.Constant):
+        return not node.value
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return not node.elts
+    if isinstance(node, ast.Dict):
+        return not node.keys
+    if isinstance(node, ast.Call):
+        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        if name in EMPTY_CTORS and isinstance(node.func, ast.Name):
+            return not node.args and not node.keywords
+        if name in EMPTY_ARRAYS and node.args:
+            return _empty(node.args[0])
+    return False
+
+
+def _is_log_call(stmt: ast.stmt) -> bool:
+    if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+        return False
+    func = stmt.value.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in LOG_METHODS
+    return isinstance(func, ast.Name) and func.id in LOG_FUNCS
+
+
+def _silent(body: list[ast.stmt]) -> bool:
+    """Every statement provably swallows. Anything else (a raise, a real value,
+    another call or assignment) is not provably silent, so the rule stays quiet."""
+    for stmt in body:
+        if isinstance(stmt, (ast.Pass, ast.Continue, ast.Break)):
+            continue
+        if isinstance(stmt, ast.Return) and _empty(stmt.value):
+            continue
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue
+        if _is_log_call(stmt):
+            continue
+        if isinstance(stmt, ast.If) and _silent(stmt.body) and _silent(stmt.orelse):
+            continue
+        if (isinstance(stmt, ast.Assign) and _empty(stmt.value)
+                and all(isinstance(t, ast.Name) for t in stmt.targets)):
+            continue
+        if (isinstance(stmt, ast.AnnAssign) and stmt.value is not None
+                and _empty(stmt.value) and isinstance(stmt.target, ast.Name)):
+            continue
+        return False
+    return True
+
+
+def check_resolve_swallow(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """Any handler, whatever it catches, whose body only swallows; any `suppress(...)`.
+
+    No exemption by exception type or function name: the resolvers' own
+    errors subclass broad ones, and a predicate-named copy of the router
+    incident is still the incident. Legitimate sites carry a waiver.
+    """
+    if not _in_swallow_scope(rel):
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and _silent(node.body):
+            yield node.lineno, RULES["resolve-swallow"]
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                ctx = item.context_expr
+                if isinstance(ctx, ast.Call) and (
+                    getattr(ctx.func, "id", None) or getattr(ctx.func, "attr", None)
+                ) == "suppress":
+                    yield node.lineno, RULES["resolve-swallow"]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
     "compose-streams": check_compose_streams,
+    "resolve-swallow": check_resolve_swallow,
 }
 
 
@@ -275,6 +369,9 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
 
 def _python_files(root: Path) -> list[Path]:
     found = [root / path for path in CARRY_ALL if (root / path).is_file()]
+    for path in SWALLOW_SCOPE:
+        target = root / path
+        found += [target] if target.is_file() else sorted(target.rglob("*.py")) if target.is_dir() else []
     tests = root / "tests"
     if tests.is_dir():
         found += sorted(tests.rglob("*.py"))
