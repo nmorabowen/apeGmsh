@@ -4761,6 +4761,17 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-changelog-every-heading-has-a-blank-line-above-it-and-a-test-holds-it">FIXED — CHANGELOG: every <code>###</code> heading has a blank line above it, and a test holds it<a class="headerlink" href="#fixed-changelog-every-heading-has-a-blank-line-above-it-and-a-test-holds-it" title="Permanent link">&para;</a></h3>
+<p>The <code>merge=union</code> driver never conflicts: when two PRs insert sections at
+the anchor it keeps both, but it can drop the blank line between them, so
+one section's last paragraph runs straight into the next <code>###</code> header. It
+happened three times on 2026-09-25 alone, and 56 older sections carried
+it. This inserts those 56 blank lines, and nothing else changes.
+<code>tests/test_changelog_structure.py</code> gains
+<code>test_every_section_heading_has_a_blank_line_before_it</code>, which fails on
+the shape. It flags the real mangled merge of #1172's first refresh
+(<code>403a3e06</code>, line 890) and passes its repair; headings inside fenced code
+samples are skipped.</p>
 <h3 id="added-quirk-lint-resolve-swallow-name-resolution-fails-loud-and-a-pr-base-is-main-ci-step">ADDED — quirk lint <code>resolve-swallow</code> (name resolution fails loud) and a "PR base is main" CI step<a class="headerlink" href="#added-quirk-lint-resolve-swallow-name-resolution-fails-loud-and-a-pr-base-is-main-ci-step" title="Permanent link">&para;</a></h3>
 <p><code>scripts/check_quirks.py</code> gains <code>resolve-swallow</code>: in the name-resolution code
 (<code>src/apeGmsh/_kernel/resolvers/**</code>, <code>src/apeGmsh/mesh/_fem_factory.py</code>) an
