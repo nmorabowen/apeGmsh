@@ -33,8 +33,9 @@ the quoted heading. `decisions/` is
 
 ## CHANGELOG
 
-- [ ] Insert **one contiguous section** at the anchor under
-      `## Unreleased`, and never edit existing lines
+- [ ] Insert **one contiguous section** directly below the anchor
+      comment, which is the first thing under `## Unreleased`. Never put
+      it between the header and the anchor, and never edit existing lines
       (`internal_docs/changelog_workflow.md` "How to add an entry").
 - [ ] Keep a blank line before and after the section. The union merge
       driver never conflicts, it mangles: headers separated from their
