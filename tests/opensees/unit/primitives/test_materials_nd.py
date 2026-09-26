@@ -698,6 +698,59 @@ class TestLadrunoConcrete3D:
         with pytest.raises(ValueError, match="either e or a non-default kupfer"):
             self._base(e=0.7, kupfer=1.25)
 
+    # -- fork flags from wp/concrete3d-oracle-diagnosis / -flow-potential --
+
+    def test_new_flags_default_to_the_build_default(self) -> None:
+        m = self._base()
+        assert m.tension_law is None and m.eps_fc is None
+        assert m.gc_legacy is False and m.flow_potential is None
+        rec = RecordingEmitter()
+        m._emit(rec, tag=1)
+        assert not any(
+            isinstance(a, str) and a in (
+                "-tensionLaw", "-epsFc", "-gcLegacy", "-flowPotential")
+            for a in rec.calls[0][1]
+        )
+
+    @pytest.mark.parametrize("law", ["bilinear", "exp"])
+    def test_tension_law_emits_its_token(self, law: str) -> None:
+        rec = RecordingEmitter()
+        self._base(tension_law=law)._emit(rec, tag=1)
+        assert rec.calls[0][1][8:] == ("-tensionLaw", law)
+
+    @pytest.mark.parametrize("fp", ["cdpm2", "legacy"])
+    def test_flow_potential_emits_its_token(self, fp: str) -> None:
+        rec = RecordingEmitter()
+        self._base(flow_potential=fp)._emit(rec, tag=1)
+        assert rec.calls[0][1][8:] == ("-flowPotential", fp)
+
+    def test_eps_fc_and_gc_legacy_emit(self) -> None:
+        rec = RecordingEmitter()
+        self._base(eps_fc=2e-3)._emit(rec, tag=1)
+        assert rec.calls[0][1][8:] == ("-epsFc", 2e-3)
+        rec = RecordingEmitter()
+        self._base(gc_legacy=True)._emit(rec, tag=1)
+        assert rec.calls[0][1][8:] == ("-gcLegacy",)
+
+    def test_all_new_flags_in_order(self) -> None:
+        rec = RecordingEmitter()
+        self._base(
+            tension_law="exp", eps_fc=1e-3, flow_potential="legacy",
+        )._emit(rec, tag=1)
+        assert rec.calls[0][1][8:] == (
+            "-tensionLaw", "exp", "-epsFc", 1e-3, "-flowPotential", "legacy",
+        )
+
+    @pytest.mark.parametrize("kw, match", [
+        ({"tension_law": "linear"}, "tension_law must be one of"),
+        ({"flow_potential": "cdp"}, "flow_potential must be one of"),
+        ({"eps_fc": 0.0}, "eps_fc must be > 0"),
+        ({"eps_fc": 1e-3, "gc_legacy": True}, "exclusive"),
+    ])
+    def test_new_flags_are_validated(self, kw: dict, match: str) -> None:
+        with pytest.raises(ValueError, match=match):
+            self._base(**kw)
+
     def test_rejects_As_below_one(self) -> None:
         with pytest.raises(ValueError, match="As must be >= 1"):
             self._base(As=0.5)

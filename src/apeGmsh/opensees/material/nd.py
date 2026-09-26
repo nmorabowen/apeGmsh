@@ -75,6 +75,8 @@ __all__ = [
     "SANISAND_IMPLEX_FACTOR_MIN_BUILD",
     "SANISAND_SCHEME2_CAP_MIN_BUILD",
     "SANISAND_PRE_FLOOR_MIN_BUILD",
+    "LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD",
+    "LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD",
     "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
@@ -1597,6 +1599,21 @@ SANISAND_PRE_FLOOR_MIN_BUILD = "1133279a5"
 #: failure is silent and presents as "the element walls while still
 #: hardening", not as a wrong number.
 ASDP_DILATANT_APEX_MIN_BUILD = "2db3f0889"
+
+#: Minimum fork build for ``LadrunoConcrete3D``'s ``-tensionLaw``,
+#: ``-epsFc`` and ``-gcLegacy`` (fork branch wp/concrete3d-oracle-diagnosis,
+#: commit ``1334d1e24``). The same commit made the bilinear CDPM2 tension law
+#: and ``Gc``-as-energy the defaults, so a flag-free deck means different
+#: things either side of it. Documented, not enforced (same as
+#: :data:`ASDP_MIN_FORK_BUILD`); an older parser refuses the tokens loudly
+#: (``unknown option``).
+LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD = "1334d1e24"
+
+#: Minimum fork build for ``LadrunoConcrete3D``'s ``-flowPotential
+#: cdpm2|legacy`` (commit ``916576661`` on wp/concrete3d-flow-potential, the
+#: full CDPM2 plastic potential as default). Documented, not enforced; an
+#: older parser refuses the token loudly.
+LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD = "916576661"
 
 
 class ASDPlasticIntegrationWarning(UserWarning):
@@ -3373,7 +3390,9 @@ class LadrunoConcrete3D(NDMaterial):
             [-e e | -kupfer fcc/fc] [-Df Df] [-As As] [-rho rho] \
             [-hardening qh0 Hp] [-ductility Ah Bh Ch Dh] [-lch lch] \
             [-autoRegularization] [-implex] [-eta eta] \
-            [-ctTemper none|alphat|proj] [-hoop K [-hoopFy fy]]
+            [-ctTemper none|alphat|proj] [-hoop K [-hoopFy fy]] \
+            [-tensionLaw bilinear|exp] [-epsFc epsFc | -gcLegacy] \
+            [-flowPotential cdpm2|legacy]
 
     The fork's flagship solid-concrete material: a CDPM2-grade isotropic
     plastic-damage model with a single Lubliner/Lee-Fenves yield surface,
@@ -3440,6 +3459,32 @@ class LadrunoConcrete3D(NDMaterial):
         ``>= 0``) and its yield ``fy`` (``-hoopFy``; ``> 0``). Active ONLY
         through the ``BeamFiber`` view (e.g. ``NDFiberSection3d``); inert
         for solid 3-D / plane views.
+    tension_law
+        Post-peak tension softening law: ``"bilinear"`` (CDPM2, Grassl 2013
+        Eq. 58) or ``"exp"`` (exponential) — ``-tensionLaw``. ``None``
+        (default) emits nothing and takes the BUILD's default, which changed
+        with the flag: bilinear from :data:`LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD`
+        on. Pin it when a result must not depend on the build.
+    eps_fc
+        Raw CDPM2 compressive softening strain ``eps_fc`` (``-epsFc``;
+        ``> 0``), bypassing ``Gc``. ``None`` (default): ``Gc`` is used —
+        as a physical compressive fracture energy on builds at or after
+        :data:`LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD`.
+    gc_legacy
+        Emit ``-gcLegacy``: the pre-energy reading, ``eps_fc = Gc / (fc *
+        lch)`` at the current ``lch`` (``Gc`` is then not an energy).
+        Exclusive with ``eps_fc`` (the parser keeps whichever comes last).
+    flow_potential
+        Plastic potential: ``"cdpm2"`` (full CDPM2 potential, Eq. 22-29) or
+        ``"legacy"`` (the v1 flow) — ``-flowPotential``. ``None`` emits
+        nothing (build default: ``cdpm2`` from
+        :data:`LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD` on).
+
+    **Build floors.** The four options above are documented, not enforced
+    (a bare hash cannot prove ancestry — the :data:`ASDP_MIN_FORK_BUILD`
+    convention). An older build does not ignore them: its parser prints
+    ``unknown option '-tensionLaw'`` and refuses the material, so a deck
+    that sets them fails loud there rather than running the old law.
     """
 
     _CT_TEMPER: ClassVar[frozenset[str]] = frozenset({"none", "alphat", "proj"})
@@ -3464,6 +3509,13 @@ class LadrunoConcrete3D(NDMaterial):
     ct_temper: str = "none"
     hoop_k: float = 0.0
     hoop_fy: float = 1.0e30
+    tension_law: str | None = None
+    eps_fc: float | None = None
+    gc_legacy: bool = False
+    flow_potential: str | None = None
+
+    _TENSION_LAWS: ClassVar[frozenset[str]] = frozenset({"bilinear", "exp"})
+    _FLOW_POTENTIALS: ClassVar[frozenset[str]] = frozenset({"cdpm2", "legacy"})
 
     def __post_init__(self) -> None:
         if self.E <= 0:
@@ -3533,6 +3585,34 @@ class LadrunoConcrete3D(NDMaterial):
             raise ValueError(
                 f"LadrunoConcrete3D: hoop_fy must be > 0, got {self.hoop_fy!r}"
             )
+        if self.tension_law is not None and (
+            self.tension_law not in self._TENSION_LAWS
+        ):
+            raise ValueError(
+                "LadrunoConcrete3D: tension_law must be one of "
+                f"{sorted(self._TENSION_LAWS)} or None, got "
+                f"{self.tension_law!r}"
+            )
+        if self.flow_potential is not None and (
+            self.flow_potential not in self._FLOW_POTENTIALS
+        ):
+            raise ValueError(
+                "LadrunoConcrete3D: flow_potential must be one of "
+                f"{sorted(self._FLOW_POTENTIALS)} or None, got "
+                f"{self.flow_potential!r}"
+            )
+        if self.eps_fc is not None:
+            if not (self.eps_fc > 0):
+                raise ValueError(
+                    f"LadrunoConcrete3D: eps_fc must be > 0, got "
+                    f"{self.eps_fc!r}"
+                )
+            if self.gc_legacy:
+                raise ValueError(
+                    "LadrunoConcrete3D: eps_fc and gc_legacy are exclusive "
+                    "(-epsFc sets eps_fc directly, -gcLegacy derives it from "
+                    "Gc; the parser keeps whichever comes last)."
+                )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         args: list[float | int | str] = [
@@ -3566,6 +3646,14 @@ class LadrunoConcrete3D(NDMaterial):
             args += ["-hoop", self.hoop_k]
             if self.hoop_fy != 1.0e30:
                 args += ["-hoopFy", self.hoop_fy]
+        if self.tension_law is not None:
+            args += ["-tensionLaw", self.tension_law]
+        if self.eps_fc is not None:
+            args += ["-epsFc", self.eps_fc]
+        if self.gc_legacy:
+            args.append("-gcLegacy")
+        if self.flow_potential is not None:
+            args += ["-flowPotential", self.flow_potential]
         emitter.nDMaterial("LadrunoConcrete3D", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:

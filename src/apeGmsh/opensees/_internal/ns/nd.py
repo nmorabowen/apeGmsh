@@ -730,6 +730,10 @@ class _NDMaterialNS(_BridgeNamespace):
         ct_temper: str = "none",
         hoop_k: float = 0.0,
         hoop_fy: float = 1.0e30,
+        tension_law: str | None = None,
+        eps_fc: float | None = None,
+        gc_legacy: bool = False,
+        flow_potential: str | None = None,
         name: str | None = None,
     ) -> LadrunoConcrete3D:
         """Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete.
@@ -750,6 +754,8 @@ class _NDMaterialNS(_BridgeNamespace):
                 hardening=hardening, ductility=ductility,
                 lch=lch, auto_regularize=auto_regularize, implex=implex,
                 eta=eta, ct_temper=ct_temper, hoop_k=hoop_k, hoop_fy=hoop_fy,
+                tension_law=tension_law, eps_fc=eps_fc, gc_legacy=gc_legacy,
+                flow_potential=flow_potential,
             ),
             name=name,
         )

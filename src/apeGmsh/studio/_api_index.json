@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T15:15:34Z",
+  "generated": "2026-09-26T15:20:55Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3340,7 +3340,7 @@
     },
     "ops.nDMaterial.LadrunoConcrete3D": {
       "symbol": "ops.nDMaterial.LadrunoConcrete3D",
-      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 1.0, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.5), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
+      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 1.0, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.5), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, tension_law: 'str | None' = None, eps_fc: 'float | None' = None, gc_legacy: 'bool' = False, flow_potential: 'str | None' = None, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete."
     },

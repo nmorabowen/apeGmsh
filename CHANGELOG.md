@@ -14,6 +14,25 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `LadrunoConcrete3D(tension_law=, eps_fc=, gc_legacy=, flow_potential=)` — the fork's new CDPM2 flags
+
+`tension_law="bilinear"|"exp"` (`-tensionLaw`), `eps_fc=` (`-epsFc`, a raw
+CDPM2 compressive softening strain that bypasses `Gc`), `gc_legacy=True`
+(`-gcLegacy`, the old `eps_fc = Gc/(fc·lch)` reading) and
+`flow_potential="cdpm2"|"legacy"` (`-flowPotential`) on the primitive and
+`ops.nDMaterial.LadrunoConcrete3D`. Each defaults to `None` / `False` and then
+emits nothing, so the build's default applies. `eps_fc` and `gc_legacy` are
+exclusive; unknown law / potential names raise. The build floors follow the
+repo's documented-not-enforced convention: `LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD
+= "1334d1e24"` (first three flags; the same commit made the bilinear law and
+`Gc`-as-energy the defaults) and `LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD =
+"916576661"`. An older parser refuses the tokens (`unknown option`), so the
+deck fails loud there. Fork-only live test, which skips on a build without
+`-tensionLaw`: one `LadrunoBrick` past its tensile peak carries a different
+residual stress under the two laws, and `eps_fc` / `gc_legacy` build and run
+(passed on the 2026-09-26 build; `-flowPotential` is newer than that build,
+so it is emit-tested only).
+
 ### FIXED — `ASDShellQ4(local_cs=)` emits `-local x y z`; `drilling_nt_alpha` replaced by `drilling_stab` / `drilling_nl` — BREAKING
 
 `ASDShellQ4` and `ASDShellT3` emitted `-localCS x1 x2 x3 y1 y2 y3`, and

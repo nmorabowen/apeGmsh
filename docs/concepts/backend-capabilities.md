@@ -147,6 +147,13 @@ are unaffected and run on any build.
 `LadrunoConcrete3D`, `LadrunoJ2`, `LadrunoJ2Finite`, `LadrunoRCConcrete`,
 `LadrunoRCFiniteStrain`, `LadrunoRebarBuckling`, `LadrunoUniaxialJ2`
 
+`LadrunoConcrete3D`'s `tension_law=` / `eps_fc=` / `gc_legacy=` need fork
+build `1334d1e24` or later, and `flow_potential=` needs `916576661`. An older
+build refuses the material (`unknown option`) rather than ignoring them. The
+same `1334d1e24` commit changed the defaults (bilinear tension law, `Gc` read
+as a compressive fracture energy), so a deck that sets none of them means
+different things on either side of it; pin `tension_law` when that matters.
+
 The vanilla `DruckerPrager` runs on any build, but its tension-cutoff
 return map is only correct from fork build `61b3efa04` on (fork ADR-95).
 An older engine parses the same deck and answers differently — quadratic
