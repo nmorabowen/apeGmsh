@@ -23,7 +23,9 @@ Rules:
    (entries up to 2026-06-12 live there; nothing is ever appended).
 2. One section per PR, contiguous (title + body, no interleaved
    edits elsewhere in the file).
-3. Keep a blank line before and after your section.
+3. Keep a blank line before and after your section. A union merge of two
+   sections at the anchor can drop the blank line between them; the
+   structure test fails on a `###` heading with none above it.
 
 That's it. No fragments directory, no assembly step.
 
@@ -74,8 +76,9 @@ for edits to existing lines it is silent corruption. Hence:
 * the frozen-ledger rule and the insert-only rule above;
 * `tests/test_changelog_structure.py` fails the suite when the known
   mangling signature appears (duplicated `## Unreleased` line,
-  missing anchor, conflict markers, or a dropped `.gitattributes`
-  entry), so a bad merge turns main red instead of shipping.
+  missing anchor, conflict markers, a dropped `.gitattributes`
+  entry, or a `###` heading with no blank line above it), so a bad
+  merge turns main red instead of shipping.
 
 ## Migrating an in-flight PR (opened before 2026-06-12)
 
