@@ -51,6 +51,7 @@ was fixed in its own PR, ahead of this guard.
   has no hits left. Three stale `G-IMPORT` budgets were deleted.
 - `test_deform_follow_contract.py` now requires every diagram kind to
   override `set_visible`, because the base walks the dead `_actors`.
+
 ### FIXED — load patterns are coloured by declaration order, the same in every session
 
 The mesh viewer's load arrows and the Loads tab coloured each pattern with
