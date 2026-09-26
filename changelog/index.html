@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — Studio pid_alive on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3656,6 +3667,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — Studio pid_alive on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3727,6 +3749,18 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one">FIXED — Studio <code>pid_alive</code> on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one<a class="headerlink" href="#fixed-studio-pid_alive-on-windows-an-exited-child-read-as-alive-and-a-pid-past-32-bits-wrapped-onto-a-live-one" title="Permanent link">&para;</a></h3>
+<p><code>apeGmsh.studio._host_state.pid_alive</code> (used by <code>read_host</code>, <code>clear_host</code> and
+the busy lock) returned True whenever <code>OpenProcess</code> succeeded. A process that
+has exited can still be opened while anyone holds its handle, a parent's
+<code>Popen</code> included, so a crashed host or busy-lock owner could still read as
+alive. It now reads <code>GetExitCodeProcess</code> and requires <code>STILL_ACTIVE</code>. PIDs
+above <code>0xFFFFFFFF</code> read as dead: ctypes wrapped them modulo <code>2**32</code>, so
+<code>2**32 + os.getpid()</code> probed this process and read alive. The probe now loads
+its own <code>kernel32</code> with <code>use_last_error=True</code> and reads the error through
+<code>ctypes.get_last_error()</code>. It no longer sets <code>argtypes</code> on the process-wide
+<code>ctypes.windll.kernel32</code> or calls <code>GetLastError</code> raw. Tests:
+<code>tests/studio/test_pid_alive.py</code>.</p>
 <h3 id="added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default">ADDED — <code>ops.integrator.LadrunoLoadControl</code> — the fork's <code>sp</code> load-control integrator, <code>-tangentPredictor</code> on by default<a class="headerlink" href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" title="Permanent link">&para;</a></h3>
 <p>The fork's ADR-80 superset of stock <code>LoadControl</code> (<code>INTEGRATOR_TAG</code> 33015, a
 <code>StaticIntegrator</code>): <code>dlam [num_iter min_lam max_lam]</code> exactly as
