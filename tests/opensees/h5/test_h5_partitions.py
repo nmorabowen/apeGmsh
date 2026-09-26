@@ -32,7 +32,7 @@ from apeGmsh.opensees.emitter.h5_reader import (
     PartitionEmittedRecord,
 )
 
-from tests.fixtures.schema import OPENSEES_CURRENT
+from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_PRIOR_MINOR
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     accepts (two-version window); a 2.19.0 stamp would now be REFUSED
     (outside the window — the hard floor).
     """
-    e = H5Emitter(schema_version="2.20.0")
+    e = H5Emitter(schema_version=OPENSEES_PRIOR_MINOR)
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.node(2, 1.0, 0.0, 0.0)
@@ -257,7 +257,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     e.write(str(out))
 
     with h5_reader.open(str(out)) as m:
-        assert m.schema_version == "2.20.0"
+        assert m.schema_version == OPENSEES_PRIOR_MINOR
         recs = m.partitions()
         assert recs == []
 
