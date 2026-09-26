@@ -130,6 +130,34 @@ onto a flexural section). To watch a fiber section reproduce first-yield and
 plastic moments against hand calculations, work through
 [Fiber sections & moment–curvature](../examples/fiber-moment-curvature.md).
 
+The layers of a layered shell are nD materials that OpenSees can copy as
+*PlateFiber* materials (five strain components). Three stock helpers build
+them. `ops.nDMaterial.PlateFromPlaneStress` turns a plane-stress law into a
+layer and adds a transverse shear modulus `G_out`. `ops.nDMaterial.PlateRebar`
+turns a uniaxial steel law into a smeared bar layer at `angle` degrees from
+the shell's local x axis. Its thickness is the steel area per unit width,
+`A_s / s`:
+
+```python
+steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+conc  = ops.nDMaterial.PlateFromPlaneStress(material=concrete_ps, G_out=12.5e9)
+bar_x = ops.nDMaterial.PlateRebar(material=steel, angle=0.0)    # along local x
+bar_y = ops.nDMaterial.PlateRebar(material=steel, angle=90.0)   # along local y
+
+wall = ops.section.LayeredShell(layers=(
+    ShellLayer(material=conc,  thickness=0.09),
+    ShellLayer(material=bar_x, thickness=0.00113),   # 12 mm bars @ 100 mm
+    ShellLayer(material=bar_y, thickness=0.00113),
+    ShellLayer(material=conc,  thickness=0.09),
+))
+```
+
+OpenSees needs at least three layers. The third helper,
+`ops.nDMaterial.PlaneStressRebar`, is the plane-stress version of `PlateRebar`
+for plane-stress quads. It is **not** a valid shell layer, so `ShellLayer`
+refuses it. It is also classic-Tcl only, because openseespy does not register
+the `PlaneStressRebarMaterial` keyword.
+
 ## Sections you compute: the analyzer
 
 Between the drawn shape and the declared constants sits an obvious gap: where

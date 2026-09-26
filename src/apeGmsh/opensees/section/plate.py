@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._internal.types import NDMaterial, Primitive, Section
+from ..material.nd import PlaneStressRebar
 from ._tag_resolver import resolve_mat_tag
 
 if TYPE_CHECKING:
@@ -153,6 +154,15 @@ class ShellLayer:
     thickness: float
 
     def __post_init__(self) -> None:
+        if isinstance(self.material, PlaneStressRebar):
+            # LayeredShellFiberSection asks each layer for
+            # getCopy("PlateFiber"); PlaneStressRebar answers null and the
+            # C++ side calls exit(-1), killing the interpreter.
+            raise TypeError(
+                "ShellLayer: PlaneStressRebar is a plane-stress material "
+                "with no PlateFiber view, and OpenSees exits the process "
+                "on such a layer. Use PlateRebar for a smeared rebar layer."
+            )
         if self.thickness <= 0:
             raise ValueError(
                 f"ShellLayer: thickness must be > 0, got {self.thickness}."
