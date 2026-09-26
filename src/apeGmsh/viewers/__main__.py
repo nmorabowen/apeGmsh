@@ -69,7 +69,7 @@ def _is_model_only(path: Path) -> bool:
                 return False
             if any(str(k).startswith("MODEL_STAGE[") for k in f.keys()):
                 return False
-            info = f.get("INFO")
+            info = (f["INFO"] if "INFO" in f else None)
             if info is not None and "GENERATOR" in info.attrs:
                 return False
             return "meta" in f and "nodes" in f

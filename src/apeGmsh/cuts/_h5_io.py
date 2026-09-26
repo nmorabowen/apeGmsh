@@ -320,7 +320,7 @@ def read_cuts_and_sweeps(
 
     with h5_reader.open(str(path), meta_path=meta_path) as model:
         f = model.handle
-        cuts_group = f.get("opensees/cuts")
+        cuts_group = (f["opensees/cuts"] if "opensees/cuts" in f else None)
         if cuts_group is not None:
             names = sorted(
                 cuts_group.keys(),
@@ -329,7 +329,7 @@ def read_cuts_and_sweeps(
             cuts = tuple(
                 _read_cut_from_group(cuts_group[name]) for name in names
             )
-        sweeps_group = f.get("opensees/sweeps")
+        sweeps_group = (f["opensees/sweeps"] if "opensees/sweeps" in f else None)
         if sweeps_group is not None:
             names = sorted(
                 sweeps_group.keys(),

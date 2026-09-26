@@ -62,7 +62,7 @@ def _generator_is_ladruno(f: Any) -> bool:
             v = v.reshape(-1)[0] if v.size else b""
         return v.decode() if isinstance(v, bytes) else str(v)
 
-    info = f.get("INFO")
+    info = (f["INFO"] if "INFO" in f else None)
     if info is not None and "GENERATOR" in info.attrs:
         return _decode(info.attrs["GENERATOR"]) == "Ladruno"
     if "GENERATOR" in f.attrs:

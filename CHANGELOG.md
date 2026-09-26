@@ -14,6 +14,21 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — HDF5 readers probe optional children with `name in group`, not `Group.get("...")`
+
+On the manylinux HDF5 build, `Group.get(name)` on a missing name can raise a
+random `UnicodeDecodeError` instead of returning `None` — green on Windows,
+intermittently red on Linux (PR #261). The MPCO readers were swept and
+guarded long ago; 26 probes in nine other readers were not: the `model.h5`
+reader (`opensees/emitter/h5_reader.py`, 12), the `.ladruno` and MPCO FEMData
+and results readers, the cuts I/O and session, compose, and the viewers'
+open-file paths. Each is now `group[name] if name in group else None` — the
+same value, checked without opening a missing object.
+`tests/test_results_mpco_get_hazard.py` extends its AST guard to the seven
+of those files where every literal `.get` was a child probe; the two larger
+readers also make dict `attrs.get(...)` reads, so they are fixed but not
+guarded by that heuristic.
+
 ### FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
 
 `scripts/check_quirks.py` read every file with `read_text("utf-8")`. A file
