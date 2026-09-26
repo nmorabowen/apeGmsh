@@ -142,6 +142,7 @@ not by whether the method "feels" static:
 | `ArcLength` | `StaticIntegrator` | static |
 | `LadrunoArcLength` | `StaticIntegrator` | static |
 | `LadrunoIndirectControl` | `StaticIntegrator` | static |
+| `LadrunoLoadControl` | `StaticIntegrator` | static |
 | `Newmark`, `HHT` | `TransientIntegrator` | transient |
 | `LadrunoHHT` | `HHT` | transient |
 | `LadrunoGeneralizedAlpha` | `GeneralizedAlpha` | transient |
