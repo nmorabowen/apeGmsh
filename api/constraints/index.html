@@ -19521,7 +19521,7 @@ slave_nodes : set[int]
 </span><span id="__span-0-573"><a id="__codelineno-0-573" name="__codelineno-0-573"></a>
 </span><span id="__span-0-574"><a id="__codelineno-0-574" name="__codelineno-0-574"></a>            <span class="k">try</span><span class="p">:</span>
 </span><span id="__span-0-575"><a id="__codelineno-0-575" name="__codelineno-0-575"></a>                <span class="n">xi_eta</span><span class="p">,</span> <span class="n">proj</span><span class="p">,</span> <span class="n">dist</span> <span class="o">=</span> <span class="n">_project_point_to_face</span><span class="p">(</span><span class="n">s_xyz</span><span class="p">,</span> <span class="n">fc</span><span class="p">)</span>
-</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a>            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a>            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>  <span class="c1"># apegmsh-lint: resolve-swallow-ok per-face fallback; slaves that project nowhere raise/warn below</span>
 </span><span id="__span-0-577"><a id="__codelineno-0-577" name="__codelineno-0-577"></a>                <span class="k">continue</span>
 </span><span id="__span-0-578"><a id="__codelineno-0-578" name="__codelineno-0-578"></a>
 </span><span id="__span-0-579"><a id="__codelineno-0-579" name="__codelineno-0-579"></a>            <span class="k">if</span> <span class="n">dist</span> <span class="o">&gt;</span> <span class="n">defn</span><span class="o">.</span><span class="n">tolerance</span><span class="p">:</span>
