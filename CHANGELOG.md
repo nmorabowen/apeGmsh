@@ -14,6 +14,95 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
+
+The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a
+`StaticIntegrator`): `dlam [num_iter min_lam max_lam]` exactly as
+`LoadControl`, plus `tangent_predictor: bool = True` (`-tangentPredictor`) and
+`extrapolate: float | None = None` (`-extrapolate frac`). The tangent predictor
+is the fix for non-homogeneous `sp` under `constraints Transformation`: it forms
+the prescribed-motion forcing as `-K·Δu_D` on the committed state, and passed
+the fork's gate (cutbacks 23 → 0, iterations 224 → 12). `-extrapolate` FAILED
+its gate (cutbacks 23 → 23) and stays off; the two refuse to compose, so both
+set raises `ValueError`. The default is on because `sp` displacement
+protocols are meant to run under it; `tangent_predictor=False` with no
+`extrapolate` is stock `LoadControl`. `num_iter` without a bracket is emitted
+with `(dlam, dlam)` — the fork reads the three only together.
+
+The in-process run is gated twice. Like every fork integrator it refuses a
+stock build. It also refuses a fork build that predates it (2026-08-04):
+such a build prints `unknown integrator type` and keeps the previous
+integrator (probed on a 2026-06-25 fork build). The check is the
+`ladrunoLoadControl` runtime command, which shipped in the same fork commit.
+After the integrator is set, `ladrunoLoadControl tangentPredictor` confirms
+the predictor is armed, because builds from before 2026-09-04 ignore the flag
+and run stock `LoadControl`. Re-issuing the integrator builds a new object,
+which is harmless for the stateless tangent route but resets `-extrapolate`.
+The docstring shows how to resize an in-process march with
+`live.ladrunoLoadControl('setDeltaLambda', v)` instead. No new bridge verb was
+added: the substep driver covers only `DisplacementControl`.
+
+### FIXED — `LayeredShellFiberSection` now emits `section LayeredShell` (the old line parsed nowhere), and layered sections need at least 3 layers
+
+OpenSees has one layered-shell class, the C++ `LayeredShellFiberSection`, and
+registers it only under the keyword `LayeredShell`. This holds in the classic
+Tcl interpreter, the Python interpreter and the newer runtime. The
+`LayeredShellFiberSection` primitive emitted `section LayeredShellFiberSection
+...`, which every build rejected with `section type LayeredShellFiberSection is
+unknown`. So a deck using it never ran; only the `LayeredShell` primitive
+worked. Both primitives now emit the same `section LayeredShell` line. The
+class name is kept, so scripts don't change, and no deprecation is needed,
+because the old output never worked. The results side already accepted both
+tokens. A model archived to H5 before this fix still carries the old token,
+and a deck rebuilt from that archive with `OpenSeesModel.build` still won't
+parse. Re-emit it from the script instead. A live regression test builds the
+section on the local fork build.
+
+`LayeredShell` and `LayeredShellFiberSection` now refuse fewer than 3 layers
+with `ValueError` (`MIN_SHELL_LAYERS`). Before, one layer was enough to pass
+validation, and the C++ parser then failed with "number of layers must be
+larger than 2". **Breaking** only for code that built a 1- or 2-layer section,
+and such a section never ran. Split a layer (e.g. top and bottom cover) to
+reach the minimum.
+
+### ADDED — shell-layer nD materials: `ops.nDMaterial.PlateRebar`, `PlateFromPlaneStress`, `PlaneStressRebar`
+
+Three stock OpenSees helpers, so a layered RC shell can carry smeared steel
+in a chosen direction and a plane-stress concrete law. Keywords and argument
+order were checked against the fork source.
+
+- `PlateRebar(material=<uniaxial>, angle=<deg>)` emits
+  `nDMaterial PlateRebar $tag $uniTag $angle`. The angle is in degrees from
+  the shell local x axis.
+- `PlateFromPlaneStress(material=<nD>, G_out=<float>)` emits
+  `nDMaterial PlateFromPlaneStress $tag $psTag $G_out`. `G_out` is the
+  transverse shear modulus and must be `> 0`.
+- `PlaneStressRebar(material=<uniaxial>, angle=<deg>)` emits
+  `nDMaterial PlaneStressRebarMaterial $tag $uniTag $angle`. It works in
+  classic Tcl only: openseespy (stock and the fork) does not register the
+  keyword.
+
+`PlateRebar` and `PlateFromPlaneStress` are PlateFiber materials (order 5),
+so they are valid `ShellLayer`s. `PlaneStressRebar` is a plane-stress
+material (order 3) and is not. `LayeredShellFiberSection` calls `exit(-1)`
+on a layer that has no PlateFiber copy, so `ShellLayer` now refuses a
+`PlaneStressRebar` with `TypeError`. `PlateFromPlaneStress` refuses to wrap
+the two PlateFiber-only materials, whose null plane-stress copy OpenSees
+would dereference. Each wrapper returns its inner material from
+`dependencies()`, so the inner is always emitted first. A live test runs
+one `ASDShellQ4` with a four-layer section (concrete, two `PlateRebar`s,
+concrete) against the closed-form axial stiffness.
+
+The `PlateRebar` angle is measured in the section frame that `ASDShellQ4`
+hands its layers, and that frame depends on the build. Before upstream PR
+#1606 (merged 2025-05-16), which includes PyPI openseespy 3.7.1.x, the
+default-orientation branch hid its `e1` behind a second declaration. That
+turned the section frame +90 deg from the element's local x axis. So 0 and
+90 deg swap between those builds and the fork, and the live test asserts the
+unordered pair of stiffnesses. `ASDShellQ4(local_cs=)` cannot pin the frame
+to work around this, because it emits `-localCS`, a flag ASDShellQ4 ignores
+without an error.
+
 ### ADDED — 2-D finite strain reaches the bridge: `ops.nDMaterial.LogStrain2D` + `geom=` on the plane elements
 
 - `LogStrain2D` (ND_TAG 33016) is the fork's **only**

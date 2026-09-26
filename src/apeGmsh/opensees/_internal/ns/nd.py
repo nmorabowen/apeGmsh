@@ -32,10 +32,13 @@ from ...material.nd import (
     MohrCoulombTensionCutoffSoil as _build_mohr_coulomb_tc_soil,
     HoekBrownRock as _build_hoek_brown_rock,
     PlaneStrain,
+    PlaneStressRebar,
+    PlateFromPlaneStress,
+    PlateRebar,
     SAniSandMS,
     StagedStrain,
 )
-from ..types import NDMaterial
+from ..types import NDMaterial, UniaxialMaterial
 from ._base import _BridgeNamespace
 
 
@@ -571,6 +574,63 @@ class _NDMaterialNS(_BridgeNamespace):
         """
         base = self._bridge._resolve(base, base=NDMaterial)
         return self._bridge._register(PlaneStrain(base=base), name=name)
+
+    # -- shell-layer helpers (stock) --------------------------------------
+
+    def PlateRebar(
+        self, *,
+        material: UniaxialMaterial | str,
+        angle: float,
+        name: str | None = None,
+    ) -> PlateRebar:
+        """Register a :class:`PlateRebar` smeared-rebar shell layer.
+
+        ``nDMaterial PlateRebar tag uniTag angle`` — a PlateFiber material
+        (valid ``LayeredShellFiberSection`` layer) carrying the uniaxial
+        ``material`` along ``angle`` degrees from the shell local x axis.
+        ``material`` accepts the registered uniaxial handle or its name.
+        """
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
+        return self._bridge._register(
+            PlateRebar(material=material, angle=angle), name=name
+        )
+
+    def PlateFromPlaneStress(
+        self, *,
+        material: NDMaterial | str,
+        G_out: float,
+        name: str | None = None,
+    ) -> PlateFromPlaneStress:
+        """Register a :class:`PlateFromPlaneStress` shell-layer wrapper.
+
+        ``nDMaterial PlateFromPlaneStress tag psTag G_out`` — lifts a
+        plane-stress law to a PlateFiber material (valid
+        ``LayeredShellFiberSection`` layer) with transverse shear modulus
+        ``G_out``. ``material`` accepts the registered nD handle or its name.
+        """
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            PlateFromPlaneStress(material=material, G_out=G_out), name=name
+        )
+
+    def PlaneStressRebar(
+        self, *,
+        material: UniaxialMaterial | str,
+        angle: float,
+        name: str | None = None,
+    ) -> PlaneStressRebar:
+        """Register a :class:`PlaneStressRebar` plane-stress smeared rebar.
+
+        ``nDMaterial PlaneStressRebarMaterial tag uniTag angle`` — a
+        PlaneStress material (order 3), **not** a shell layer (use
+        :meth:`PlateRebar` there). Classic-Tcl only: openseespy does not
+        register the keyword. ``material`` accepts the registered uniaxial
+        handle or its name.
+        """
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
+        return self._bridge._register(
+            PlaneStressRebar(material=material, angle=angle), name=name
+        )
 
     # -- Ladruno fork — J2 plasticity family ------------------------------
 
