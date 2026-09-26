@@ -28,6 +28,7 @@ same value, checked without opening a missing object.
 of those files where every literal `.get` was a child probe; the two larger
 readers also make dict `attrs.get(...)` reads, so they are fixed but not
 guarded by that heuristic.
+
 ### FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
 
 `scripts/check_quirks.py` read every file with `read_text("utf-8")`. A file
