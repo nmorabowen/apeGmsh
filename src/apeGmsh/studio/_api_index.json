@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-25T22:06:06Z",
+  "generated": "2026-09-26T04:51:47Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3200,6 +3200,12 @@
       "skill": "references/opensees-bridge.md",
       "doc": "``integrator LadrunoIndirectControl incr -dof ...`` — **fork-only**."
     },
+    "ops.integrator.LadrunoLoadControl": {
+      "symbol": "ops.integrator.LadrunoLoadControl",
+      "signature": "LadrunoLoadControl(*, dlam: 'float', num_iter: 'int | None' = None, min_lam: 'float | None' = None, max_lam: 'float | None' = None, tangent_predictor: 'bool' = True, extrapolate: 'float | None' = None) -> 'LadrunoLoadControl'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "``integrator LadrunoLoadControl dlam ...`` — **fork-only**; ``sp`` protocols."
+    },
     "ops.integrator.LoadControl": {
       "symbol": "ops.integrator.LoadControl",
       "signature": "LoadControl(*, dlam: 'float', num_iter: 'int | None' = None, min_lam: 'float | None' = None, max_lam: 'float | None' = None) -> 'LoadControl'",
@@ -3397,6 +3403,24 @@
       "signature": "PlaneStrain(*, base: 'NDMaterial | str', name: 'str | None' = None) -> 'PlaneStrain'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`PlaneStrain` 2-D wrapper around a 3-D nDMaterial."
+    },
+    "ops.nDMaterial.PlaneStressRebar": {
+      "symbol": "ops.nDMaterial.PlaneStressRebar",
+      "signature": "PlaneStressRebar(*, material: 'UniaxialMaterial | str', angle: 'float', name: 'str | None' = None) -> 'PlaneStressRebar'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlaneStressRebar` plane-stress smeared rebar."
+    },
+    "ops.nDMaterial.PlateFromPlaneStress": {
+      "symbol": "ops.nDMaterial.PlateFromPlaneStress",
+      "signature": "PlateFromPlaneStress(*, material: 'NDMaterial | str', G_out: 'float', name: 'str | None' = None) -> 'PlateFromPlaneStress'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlateFromPlaneStress` shell-layer wrapper."
+    },
+    "ops.nDMaterial.PlateRebar": {
+      "symbol": "ops.nDMaterial.PlateRebar",
+      "signature": "PlateRebar(*, material: 'UniaxialMaterial | str', angle: 'float', name: 'str | None' = None) -> 'PlateRebar'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlateRebar` smeared-rebar shell layer."
     },
     "ops.nDMaterial.SAniSandMS": {
       "symbol": "ops.nDMaterial.SAniSandMS",
@@ -3636,7 +3660,7 @@
       "symbol": "ops.section.LayeredShellFiberSection",
       "signature": "LayeredShellFiberSection(*, layers: 'tuple[ShellLayer, ...]', name: 'str | None' = None) -> 'LayeredShellFiberSection'",
       "skill": "references/opensees-bridge.md",
-      "doc": "``section LayeredShellFiberSection`` — fiber-based stacked"
+      "doc": "Layered plate section under its C++ name (``LayeredShellFiberSection``)."
     },
     "ops.section.W_fiber": {
       "symbol": "ops.section.W_fiber",

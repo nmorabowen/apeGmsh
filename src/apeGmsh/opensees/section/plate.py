@@ -9,9 +9,10 @@ Four section types live here:
   ``ASDShellQ4``.
 * :class:`LayeredShell` — stacked nDMaterial layers (a thin-shell
   composite section) for ``ShellMITC4`` and friends.
-* :class:`LayeredShellFiberSection` — same shape as ``LayeredShell``
-  but routed through OpenSees's ``LayeredShellFiberSection`` C++
-  class (the in-tree fiber-based stack).
+* :class:`LayeredShellFiberSection` — the same section under the C++
+  class name. OpenSees registers ``LayeredShellFiberSection`` only
+  under the ``LayeredShell`` keyword, so both primitives emit
+  ``section LayeredShell``.
 * :class:`LadrunoShellModifier` — a *decorator* that applies
   ETABS-style stiffness modifiers to any of the above (fork-only,
   Ladruno ADR 91).
@@ -26,8 +27,7 @@ The OpenSees commands per the manual:
 * ``section ElasticMembranePlateSection $tag $E $nu $h <$rho>
   <$Ep_mod>``
 * ``section LayeredShell $tag $nLayers $matTag1 $h1 ... $matTagN $hN``
-* ``section LayeredShellFiberSection $tag $nLayers $matTag1 $h1 ...
-  $matTagN $hN``
+* (``LayeredShellFiberSection`` emits the ``LayeredShell`` line above.)
 * ``section LadrunoShellModifier $tag $innerSecTag <-f11 v> ...
   <-mass v>``
 """
@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._internal.types import NDMaterial, Primitive, Section
+from ..material.nd import PlaneStressRebar
 from ._tag_resolver import resolve_mat_tag
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ __all__ = [
     "ShellModifierNonlinearInnerWarning",
     "ElasticMembranePlateSection",
     "LadrunoShellModifier",
+    "MIN_SHELL_LAYERS",
     "LayeredShell",
     "LayeredShellFiberSection",
     "ShellLayer",
@@ -153,18 +155,34 @@ class ShellLayer:
     thickness: float
 
     def __post_init__(self) -> None:
+        if isinstance(self.material, PlaneStressRebar):
+            # LayeredShellFiberSection asks each layer for
+            # getCopy("PlateFiber"); PlaneStressRebar answers null and the
+            # C++ side calls exit(-1), killing the interpreter.
+            raise TypeError(
+                "ShellLayer: PlaneStressRebar is a plane-stress material "
+                "with no PlateFiber view, and OpenSees exits the process "
+                "on such a layer. Use PlateRebar for a smeared rebar layer."
+            )
         if self.thickness <= 0:
             raise ValueError(
                 f"ShellLayer: thickness must be > 0, got {self.thickness}."
             )
 
 
+#: The C++ parser (``OPS_LayeredShellFiberSection``) rejects fewer layers
+#: with "number of layers must be larger than 2".
+MIN_SHELL_LAYERS = 3
+
+
 def _validate_layers(
     cls_name: str, layers: tuple[ShellLayer, ...]
 ) -> None:
-    if not layers:
+    if len(layers) < MIN_SHELL_LAYERS:
         raise ValueError(
-            f"{cls_name}: at least one ShellLayer is required."
+            f"{cls_name}: OpenSees needs at least {MIN_SHELL_LAYERS} "
+            f"ShellLayers, got {len(layers)}. Split a thick layer in two "
+            f"(e.g. top and bottom cover) to reach the minimum."
         )
 
 
@@ -186,7 +204,8 @@ class LayeredShell(Section):
     ----------
     layers
         Tuple of :class:`ShellLayer` describing each through-thickness
-        layer (bottom to top). At least one layer is required.
+        layer (bottom to top). At least three layers are required; the
+        OpenSees parser refuses fewer.
 
     Notes
     -----
@@ -215,18 +234,22 @@ class LayeredShell(Section):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class LayeredShellFiberSection(Section):
-    """``section LayeredShellFiberSection`` — stacked nDMaterial layers
-    (fiber-based variant).
+    """``LayeredShellFiberSection`` — :class:`LayeredShell` under its C++ name.
 
-    Same input shape as :class:`LayeredShell`; emits the OpenSees
-    ``LayeredShellFiberSection`` type token instead. The C++ class
-    behind it integrates the layers as fibers through the thickness.
+    Emits ``section LayeredShell $tag $nLayers ...``, the same line as
+    :class:`LayeredShell`. OpenSees has one class for layered shells,
+    ``LayeredShellFiberSection``, and registers it only under the
+    ``LayeredShell`` keyword in the Tcl interpreter, the Python
+    interpreter, and the newer runtime. Before this was fixed the
+    primitive emitted ``section LayeredShellFiberSection``, and no
+    interpreter accepted that line. The class name is kept so existing
+    scripts still work.
 
     Parameters
     ----------
     layers
         Tuple of :class:`ShellLayer` describing each through-thickness
-        layer.
+        layer (bottom to top). At least three layers are required.
     """
 
     layers: tuple[ShellLayer, ...]
@@ -240,7 +263,8 @@ class LayeredShellFiberSection(Section):
             mat_tag = resolve_mat_tag(emitter, layer.material)
             params.append(mat_tag)
             params.append(layer.thickness)
-        emitter.section("LayeredShellFiberSection", tag, *params)
+        # The only keyword OpenSees registers for this C++ class.
+        emitter.section("LayeredShell", tag, *params)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return _layer_dependencies(self.layers)

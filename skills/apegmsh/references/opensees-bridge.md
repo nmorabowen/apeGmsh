@@ -248,6 +248,12 @@ prior-tier BC inside a stage use `s.remove_bc(...)` (the
 `g.constraints.bc`-reading alias of `s.remove_sp`; `dofs=` are 1-based
 DOF indices, not the fix flag vector).
 
+An `sp` **displacement protocol** (unit `p.sp(..., value=1.0)` under a
+`Path` series, stepped by the load factor) runs under the fork's
+`ops.integrator.LadrunoLoadControl(dlam=...)` — `-tangentPredictor` is on
+by default and is the ADR-80 fix for the Transformation-handler `sp`
+overstrain. See `ladruno.md` (Analysis cluster).
+
 ## Moment-tensor seismic source (ADR 0062)
 
 Embed an earthquake **point source** inside the continuum; the bridge emits the
@@ -790,7 +796,7 @@ peak", not like a bug.
 the method feels):
 
 - **static** — `LoadControl`, `DisplacementControl`, `ArcLength`,
-  `LadrunoArcLength`, `LadrunoIndirectControl`
+  `LadrunoArcLength`, `LadrunoIndirectControl`, `LadrunoLoadControl`
 - **transient** — `Newmark`, `HHT`, `LadrunoHHT`,
   `LadrunoGeneralizedAlpha`, all explicit schemes
   (`CentralDifference`, `ExplicitDifference`, `ExplicitBathe*`,
