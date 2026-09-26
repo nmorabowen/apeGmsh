@@ -76,16 +76,40 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   `pytest <files> -W error::<Category>`. A bare `pytest` passes while the
   warning fires where the contract says it must stay silent (#317 →
   #321).
+- **A test restores the process state it touches.** Snapshot and restore
+  `sys.modules` (or use `monkeypatch`) when stubbing gmsh/pyvista or
+  purging `apeGmsh.*`, never call a raw `gmsh.finalize()` in a fixture, and
+  keep `tests/__init__.py` (without it `tests/opensees` shadowed the
+  `opensees` module: #1055; guarded by `tests/test_import_namespacing.py`).
+  Earlier leaks: 624a9c2c (gmsh refcount), #742 (a live-ops cache).
+- **Never run a process-killing native call in the shared pytest
+  process**: a real `QtInteractor`/`ViewerWindow` under offscreen Qt on
+  Windows (`viewers/ui/viewer_window.py` now raises instead), a 3-D global
+  `recombine()`, or gmsh/openseespy from a worker thread. Use a subprocess
+  or skip (3165568c, 06f82f9a: Linux CI segfaults, 2026-08-17).
 
 ## How work lands
 
 - **`--base main` on every PR**, including sequenced ones. Hand-stacking
   with `--base <prev-branch>` merged three PRs into orphaned branches
-  (#295–#297, recovered by #298).
-- **`main` has no required status checks.** "Zero checks visible" is not
-  "green", and `gh pr merge --auto` merges immediately. Run the suite
-  locally before merging when CI has not visibly run (#630 during an
-  Actions stall, #757 under `--auto`).
+  (#295–#297, recovered by #298), and #858 merged into a stacked base on
+  2026-07-25 and was missing from `main` for two months (recovered by
+  #1169). `lock-tests` fails a PR whose base is not `main`, but only `main`
+  is protected, so it flags rather than blocks. After retargeting, push a
+  commit: a re-run reuses the old merge ref.
+- **`main` requires five checks** (`lock-tests`, `emit-cost-gate`,
+  `static-gates`, `suite`, `live-stock`), not an up-to-date branch, and
+  takes squash merges only (`gh pr merge --squash`). "Zero checks visible"
+  still means the PR is conflicting or Actions is stalled, not "green".
+  Never use `--auto`: it ignores the lanes that are not required, and
+  #757 merged under it mid-run before any check was required. Run the
+  suite locally when CI has not visibly run (#630 merged during an
+  Actions stall).
+- **After merging, confirm it reached `main`:**
+  `gh api repos/{owner}/{repo}/compare/main...<merge-sha> --jq .status`
+  reads `behind` or `identical`; `diverged` means it did not (#858).
+  `git merge-base --is-ancestor` cannot tell you: once the head branch is
+  auto-deleted the orphaned merge commit is on no fetched ref.
 - **Before pushing to a PR branch, check `gh pr view <N> --json state`.**
   A push after the merge lands on an orphaned branch (#335 → #336).
   Before merging a branch you just pushed, wait until `headRefOid` equals

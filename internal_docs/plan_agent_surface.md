@@ -103,7 +103,9 @@ the count. The rows this plan acts on were re-checked by hand.
 - **A fail-loud rule** (an `except` that only returns `None`/`False`/`pass`).
   It has 26 hits scoped to resolvers and composites, and 958 repo-wide. The
   incident is real (45340ac3), but classifying 26 sites is its own work
-  package. It stays a guide item.
+  package. It stays a guide item. *Built in the follow-up below as
+  `resolve-swallow`, scoped to the resolvers and `_fem_factory.py` (4 sites,
+  each classified and waived); the composites stay out of scope.*
 - **An h5py `.get()` rule over all readers.** 54 hits today, some of them
   dict noise; the existing guard covers `_mpco*.py`. It stays a guide item,
   and a scoped rule is an open question.
@@ -115,7 +117,9 @@ the count. The rows this plan acts on were re-checked by hand.
   rebuilds, where noise is zero and both historical incidents lived.
 - **Rules for process lessons** (red-main merges, stacked bases,
   push-after-merge). They are not code patterns; required status checks,
-  a repository setting, would cure the largest class.
+  a repository setting, would cure the largest class. *(Follow-up: `main`
+  already requires five checks, and they cannot see a stacked base, since
+  only `main` is protected; the follow-up adds a flag for that one.)*
 - **A studio guide.** Studio is 59 of 301 commits, but the sweep found no
   recurring studio lesson to point at. Add one when a lesson bites twice.
 
@@ -147,8 +151,14 @@ the count. The rows this plan acts on were re-checked by hand.
 - **Recover #858.** `ec6508e0` (LogStrain2D + `geom=` on the plane
   elements, 2026-07-24) merged into
   `claude/apegmsh-facet-extractor-bug-e37f5c` and never reached `main`.
+  *Recovered by #1169 (open; its fork live tests still need a current fork
+  build).*
 - **Required status checks on `main`.** This would cure rows 3–4, the
-  largest recurring class (about 9 red-main episodes).
+  largest recurring class (about 9 red-main episodes). *Already in place
+  (verified 2026-09-26, `branches/main/protection`): `lock-tests`,
+  `emit-cost-gate`, `static-gates`, `suite`, `live-stock`, with
+  `strict: false`. What `main` does not require is an up-to-date branch —
+  the #605 + #606 shape.*
 - **Watch item:** 13082b74 (08-19) calls `restoreDockWidget` in
   `viewers/session/_host.py`. `test_dock_invariant.py` does not scan that
   file, and whether the call touches a navigation dock has not been read.
@@ -158,3 +168,80 @@ the count. The rows this plan acts on were re-checked by hand.
   string, which is salted per process. #1170's G-HASH guard covers only
   `viewers/`. Merge order: #1170 first, since this PR's viewer-results
   guide points at its two guides.
+
+## Follow-up (2026-09-26): `resolve-swallow` and the PR-base step
+
+A second port, run in parallel on `guppi/agent-surface-port-c45d85`,
+became this follow-up once the owner chose #1171 as the base. It carries
+only what #1171 lacked; everything it duplicated (its own `AGENTS.md`, guides,
+an ADR rule, a viewer `_actors` rule now held by #1170's G-ACTORS, a lessons
+archive and a PR guide that repeated "How work lands") was dropped.
+
+**Shape.**
+1. **`resolve-swallow`** in `scripts/check_quirks.py`: in
+   `src/apeGmsh/_kernel/resolvers/**` and `src/apeGmsh/mesh/_fem_factory.py`,
+   any `except` handler (whatever it catches) whose body only passes,
+   continues, returns or assigns an empty value (`None`, `False`, `[]`,
+   `set()`, `np.array([])`, ...), logs or prints, or an `if` whose branches
+   all do, plus any `contextlib.suppress`. A raise on any path passes; a body
+   the rule cannot read is skipped. No exemption by exception type or
+   function name: `_UnroutableTarget(TypeError)` and `MortarTieError(ValueError)`
+   subclass broad errors, and a predicate-named copy of the router incident
+   is still the incident.
+   *Accept:* flags its incidents on the pre-fix trees, passes the fixes;
+   the checkout is clean with every silent site waived for a stated reason.
+2. **"PR base is main"**, last in `lock-tests`: fails a `pull_request` whose
+   base is not `main`. It flags; it cannot block (stacked bases are not
+   protected). *Accept:* #858 and #296 both ran `lock-tests`, so the step
+   would have turned them red.
+3. **`AGENTS.md` / guide corrections**, each verified: `main` does require
+   five checks (the "no required status checks" line was wrong) and takes
+   squash merges only; how to confirm a merge reached `main`
+   (`gh api …/compare`, since `git merge-base` errors on an orphaned merge);
+   re-check the ADR number right before merging (`strict: false`); two test
+   conventions (restore process state; no process-killing native calls in
+   the shared pytest process); two bridge items (contact `kn kt mu` triple,
+   #744; partitioned/staged drops, 49ff0766).
+
+**Results.**
+
+| Tree | Expected | Got |
+|---|---|---|
+| `06ccd266` (router swallow introduced) | flags the router | `_chain_phase_router.py:61` |
+| `45340ac3^` / `45340ac3` (router fix) | flag / router clean | `:93` / router clean |
+| `3aecb417^` / `3aecb417` (`_fem_factory` fix) | flag / clean | `_fem_factory.py:366, 381, 415` / clean |
+| this branch | clean | clean, 4 waivers |
+
+The four waivers, each read: `_constraint_resolver/_resolver.py:576`
+(per-face projection fallback; zero projected slaves raise, partial
+projection warns), `_constraint_resolver/_geom.py:181` (Newton-step fallback;
+the caller checks the distance against the tie tolerance), `_source.py:178`
+and `:553` (`has_target`: `True` iff `nodes_for` would not raise). The rule
+over its history also hit one benign site (`_fem_factory` `except
+AttributeError: pass` around a flag stamp, deleted as dead code 9c077830).
+
+Self-test: 28 new cases (64 in the file). Mutation gate on copies: 19
+one-line mutations of the new code (registration, scope, every empty and
+log form, `if`/`else`, assignments, `suppress`) — all 19 turn the self-test
+red; the first run's survivor (dropping the scope check) exposed a missing
+case for a scanned-but-out-of-scope file, now added. The scope is pinned by
+`test_resolve_swallow_scope_exists_in_this_checkout`, since `scan()` skips a
+missing path silently by design.
+
+**Review.** The parallel port had two independent Opus reviews (lint holes;
+doc facts). The holes relevant here — exemptions by type and name, empty
+calls, assignment and log forms, `suppress`, subpackages — are cases above.
+Holes in the shared machinery, left to `check_quirks.py`'s owner (measured
+2026-09-26 with the scan on a temp tree): `scan_file` reads text as UTF-8, so
+a file with a BOM is skipped silently (every rule off for it) and a
+non-UTF-8 file raises `UnicodeDecodeError` and aborts the whole scan. No such
+file exists in the scanned tree today. (Waivers are read from real comment
+tokens, so a waiver-shaped string does not suppress anything — checked.)
+
+**Rejected.** A scope-missing *finding* inside `scan()` — every rule here is
+silent without its input, and the self-tests rely on that; a pinned-scope
+test does the job. A separate lessons archive and PR guide — `AGENTS.md`
+"How work lands" and the three guides already hold those lessons.
+
+**Open.** Narrow the tie projection loop's `except Exception` to what
+`_project_point_to_face` can raise? The `restoreDockWidget` watch item above.
