@@ -246,7 +246,8 @@ class TestASDShellQ4Construction:
         assert ele.pg == "Plate"
         assert ele.section is s
         assert ele.corotational is False
-        assert ele.drilling_nt_alpha is None
+        assert ele.drilling_stab is None
+        assert ele.drilling_nl is False
         assert ele.local_cs is None
 
     def test_construct_full(self) -> None:
@@ -255,12 +256,12 @@ class TestASDShellQ4Construction:
             pg="Plate",
             section=s,
             corotational=True,
-            drilling_nt_alpha=0.05,
-            local_cs=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+            drilling_stab=0.05,
+            local_cs=(1.0, 0.0, 0.0),
         )
         assert ele.corotational is True
-        assert ele.drilling_nt_alpha == 0.05
-        assert ele.local_cs == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        assert ele.drilling_stab == 0.05
+        assert ele.local_cs == (1.0, 0.0, 0.0)
 
 
 class TestASDShellQ4Validation:
@@ -268,17 +269,42 @@ class TestASDShellQ4Validation:
         "cs",
         [
             (1.0,),
-            (1.0, 0.0, 0.0),
+            (1.0, 0.0),
             (1.0, 0.0, 0.0, 0.0, 1.0),  # 5
             (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),  # 7
         ],
     )
-    def test_local_cs_must_be_six_tuple(
+    def test_local_cs_must_be_three_tuple(
         self, cs: tuple[float, ...]
     ) -> None:
         s = _section()
-        with pytest.raises(ValueError, match="6-tuple"):
+        with pytest.raises(ValueError, match="3-tuple"):
             ASDShellQ4(pg="Plate", section=s, local_cs=cs)
+
+    def test_legacy_six_tuple_is_refused_with_the_fix(self) -> None:
+        # The 6-tuple emitted '-localCS', which the element never parsed.
+        with pytest.raises(ValueError, match=r"local_cs=\(1\.0, 0\.0, 0\.0\)"):
+            ASDShellQ4(pg="Plate", section=_section(),
+                       local_cs=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+
+    def test_zero_local_axis_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="zero vector"):
+            ASDShellQ4(pg="Plate", section=_section(), local_cs=(0, 0, 0))
+
+    def test_drilling_nt_alpha_is_refused(self) -> None:
+        # '-drillingNT' is not an ASDShellQ4 option; it was ignored.
+        with pytest.raises(ValueError, match="drillingStab"):
+            ASDShellQ4(pg="Plate", section=_section(), drilling_nt_alpha=0.05)
+
+    @pytest.mark.parametrize("v", [-0.1, 1.5])
+    def test_drilling_stab_range(self, v: float) -> None:
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            ASDShellQ4(pg="Plate", section=_section(), drilling_stab=v)
+
+    def test_drilling_stab_and_nl_are_exclusive(self) -> None:
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            ASDShellQ4(pg="Plate", section=_section(),
+                       drilling_stab=0.1, drilling_nl=True)
 
 
 class TestASDShellQ4Emit:
@@ -308,44 +334,55 @@ class TestASDShellQ4Emit:
             )
         ]
 
-    def test_emit_with_drilling_nt(self) -> None:
+    def test_emit_with_drilling_stab(self) -> None:
         s = _section()
-        ele = ASDShellQ4(pg="Plate", section=s, drilling_nt_alpha=0.05)
+        ele = ASDShellQ4(pg="Plate", section=s, drilling_stab=0.05)
         e = _prepare_emitter(s, sec_tag=8, nodes=(41, 42, 43, 44))
         ele._emit(e, tag=20)
         assert e.calls == [
             (
                 "element",
                 ("ASDShellQ4", 20, 41, 42, 43, 44, 8,
-                 "-drillingNT", 0.05),
+                 "-drillingStab", 0.05),
+                {},
+            )
+        ]
+
+    def test_emit_with_drilling_nl(self) -> None:
+        s = _section()
+        ele = ASDShellQ4(pg="Plate", section=s, drilling_nl=True)
+        e = _prepare_emitter(s, sec_tag=8, nodes=(41, 42, 43, 44))
+        ele._emit(e, tag=20)
+        assert e.calls == [
+            (
+                "element",
+                ("ASDShellQ4", 20, 41, 42, 43, 44, 8, "-drillingNL"),
                 {},
             )
         ]
 
     def test_emit_with_local_cs(self) -> None:
         s = _section()
-        cs = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-        ele = ASDShellQ4(pg="Plate", section=s, local_cs=cs)
+        ele = ASDShellQ4(pg="Plate", section=s, local_cs=(0, 1, 0))
         e = _prepare_emitter(s, sec_tag=8, nodes=(41, 42, 43, 44))
         ele._emit(e, tag=20)
         assert e.calls == [
             (
                 "element",
                 ("ASDShellQ4", 20, 41, 42, 43, 44, 8,
-                 "-localCS", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                 "-local", 0.0, 1.0, 0.0),
                 {},
             )
         ]
 
     def test_emit_with_all_flags(self) -> None:
         s = _section()
-        cs = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
         ele = ASDShellQ4(
             pg="Plate",
             section=s,
             corotational=True,
-            drilling_nt_alpha=0.1,
-            local_cs=cs,
+            drilling_stab=0.1,
+            local_cs=(1.0, 0.0, 0.0),
         )
         e = _prepare_emitter(s, sec_tag=8, nodes=(41, 42, 43, 44))
         ele._emit(e, tag=20)
@@ -354,8 +391,8 @@ class TestASDShellQ4Emit:
                 "element",
                 ("ASDShellQ4", 20, 41, 42, 43, 44, 8,
                  "-corotational",
-                 "-drillingNT", 0.1,
-                 "-localCS", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                 "-drillingStab", 0.1,
+                 "-local", 1.0, 0.0, 0.0),
                 {},
             )
         ]
@@ -411,11 +448,11 @@ class TestASDShellT3Construction:
             section=s,
             corotational=True,
             drilling_dof=6,
-            local_cs=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+            local_cs=(1.0, 0.0, 0.0),
         )
         assert ele.corotational is True
         assert ele.drilling_dof == 6
-        assert ele.local_cs == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        assert ele.local_cs == (1.0, 0.0, 0.0)
 
 
 class TestASDShellT3Validation:
@@ -424,14 +461,15 @@ class TestASDShellT3Validation:
         [
             (1.0,),
             (1.0, 0.0, 0.0, 0.0, 1.0),  # 5
+            (1.0, 0.0, 0.0, 0.0, 1.0, 0.0),  # 6: the unparsed -localCS form
             (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),  # 7
         ],
     )
-    def test_local_cs_must_be_six_tuple(
+    def test_local_cs_must_be_three_tuple(
         self, cs: tuple[float, ...]
     ) -> None:
         s = _section()
-        with pytest.raises(ValueError, match="6-tuple"):
+        with pytest.raises(ValueError, match="local x axis"):
             ASDShellT3(pg="Tri", section=s, local_cs=cs)
 
 
@@ -478,28 +516,26 @@ class TestASDShellT3Emit:
 
     def test_emit_with_local_cs(self) -> None:
         s = _section()
-        cs = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-        ele = ASDShellT3(pg="Tri", section=s, local_cs=cs)
+        ele = ASDShellT3(pg="Tri", section=s, local_cs=(1.0, 0.0, 0.0))
         e = _prepare_emitter(s, sec_tag=5, nodes=(51, 52, 53))
         ele._emit(e, tag=22)
         assert e.calls == [
             (
                 "element",
                 ("ASDShellT3", 22, 51, 52, 53, 5,
-                 "-localCS", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                 "-local", 1.0, 0.0, 0.0),
                 {},
             )
         ]
 
     def test_emit_with_all_flags(self) -> None:
         s = _section()
-        cs = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
         ele = ASDShellT3(
             pg="Tri",
             section=s,
             corotational=True,
             drilling_dof=6,
-            local_cs=cs,
+            local_cs=(1.0, 0.0, 0.0),
         )
         e = _prepare_emitter(s, sec_tag=5, nodes=(51, 52, 53))
         ele._emit(e, tag=22)
@@ -509,7 +545,7 @@ class TestASDShellT3Emit:
                 ("ASDShellT3", 22, 51, 52, 53, 5,
                  "-corotational",
                  "-drillingDOF", 6,
-                 "-localCS", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                 "-local", 1.0, 0.0, 0.0),
                 {},
             )
         ]

@@ -14,6 +14,28 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `ASDShellQ4(local_cs=)` emits `-local x y z`; `drilling_nt_alpha` replaced by `drilling_stab` / `drilling_nl` — BREAKING
+
+`ASDShellQ4` and `ASDShellT3` emitted `-localCS x1 x2 x3 y1 y2 y3`, and
+`ASDShellQ4(drilling_nt_alpha=)` emitted `-drillingNT a`. Neither parser knows
+either token (`OPS_ASDShellQ4` / `OPS_ASDShellT3` take `-local` with three
+components, `-drillingStab v`, `-drillingNL`), and their option loops have no
+else branch, so both were read and discarded: every model ran on the default
+local frame and drilling stabilization. `local_cs` is now the local x axis
+`(x1, x2, x3)`, emitted as `-local`; the element projects it onto the shell
+plane and derives y from the normal. It is also the section frame of a layered
+section's layers, so it pins `PlateRebar` angles on any build (the explicit
+branch is correct on the fork and on old upstream alike). A 6-tuple, and
+`drilling_nt_alpha`, now raise with the replacement named rather than being
+converted: those scripts ran on the default frame, and switching them to the
+requested one without a word would change their answers. `ASDShellQ4` gains
+`drilling_stab` (`-drillingStab`, `[0, 1]`) and `drilling_nl` (`-drillingNL`),
+mutually exclusive like the parser. Live tests assert the effect, since an
+unknown flag is accepted silently: a 0 deg `PlateRebar` layer stiffens an X
+pull only when `local_cs=(1, 0, 0)` (exact to 1e-6 either way), and
+`drilling_stab=0.01` reproduces the default while `1.0` stiffens the drilling
+rotation.
+
 ### ADDED — `ASDConcrete3D(tangent="secant"|"numerical")` exposes the parser's `-tangent`
 
 `ASDConcrete3D` (raw constructor, `from_fc`, and `ops.nDMaterial.ASDConcrete3D`)

@@ -67,11 +67,35 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def _check_local_cs(type_name: str, local_cs: tuple[float, ...]) -> None:
-    """``-localCS`` requires exactly six floats (x1, x2, x3, y1, y2, y3)."""
-    if len(local_cs) != 6:
+    """``-local`` takes the local x axis: exactly three floats, not all zero.
+
+    The ASD shells' parsers (``ASDShellQ4.cpp`` / ``ASDShellT3.cpp``,
+    ``strcmp(type, "-local")``) read three components and build the rest of
+    the frame themselves (x projected onto the shell plane, z the normal,
+    y = z cross x). They have no ``-localCS``: that token, and its six
+    values, fell through the option loop unread, so the element silently
+    kept its default frame. A 6-tuple is refused rather than truncated: a
+    script that passed one was running on the default frame, and quietly
+    switching it to the requested one would change its answers unannounced.
+    """
+    if len(local_cs) == 6:
         raise ValueError(
-            f"{type_name}: local_cs= must be a 6-tuple "
-            f"(x1, x2, x3, y1, y2, y3), got {len(local_cs)} entries."
+            f"{type_name}: local_cs= takes the local x axis only, "
+            f"(x1, x2, x3), emitted as '-local x1 x2 x3'. The old 6-tuple "
+            f"form emitted '-localCS', which the element does not parse, so "
+            f"it always ran on the default frame. Pass local_cs="
+            f"{tuple(local_cs[:3])!r}; the element derives y from the "
+            f"normal."
+        )
+    if len(local_cs) != 3:
+        raise ValueError(
+            f"{type_name}: local_cs= must be a 3-tuple (x1, x2, x3), the "
+            f"local x axis; got {len(local_cs)} entries."
+        )
+    if not any(float(c) != 0.0 for c in local_cs):
+        raise ValueError(
+            f"{type_name}: local_cs= must not be the zero vector (the element "
+            f"reads a zero -local vector as 'use the default frame')."
         )
 
 
@@ -199,11 +223,9 @@ class ShellDKGQ(Element):
 class ASDShellQ4(Element):
     """``element ASDShellQ4`` — 4-node ASD shell.
 
-    Phase 2γ scope ships the canonical positional arguments plus the
-    three most-used optional flags: ``-corotational``, ``-drillingNT
-    alpha``, and ``-localCS x1 x2 x3 y1 y2 y3``. Other ASDShell* flags
-    (e.g. ``-noEAS``, ``-drillingStab K``) are deferred — see the
-    Phase 2γ report.
+    Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``,
+    ``-drillingStab $v`` / ``-drillingNL`` (mutually exclusive) and
+    ``-local $x1 $x2 $x3``. ``-noeas`` is not exposed.
 
     Parameters
     ----------
@@ -214,16 +236,29 @@ class ASDShellQ4(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    drilling_stab
+        If supplied, append ``-drillingStab <v>``: the drilling
+        stabilization factor, in ``[0, 1]`` (the parser clamps to that
+        range; the default without the flag is 0.01).
+    drilling_nl
+        Append ``-drillingNL`` (nonlinear drilling DOF treatment). The
+        parser refuses it together with ``-drillingStab``.
     drilling_nt_alpha
-        If supplied, append ``-drillingNT <alpha>``.
+        **Refused.** It emitted ``-drillingNT``, which ASDShellQ4 does not
+        parse (the token fell through unread). Use ``drilling_stab`` or
+        ``drilling_nl``.
     local_cs
-        If supplied, append ``-localCS <x1> <x2> <x3> <y1> <y2> <y3>``.
-        Must be a 6-tuple.
+        The local x axis ``(x1, x2, x3)``, emitted as ``-local x1 x2 x3``.
+        The element projects it onto the shell plane and takes y = z cross
+        x. This is also the section frame the layers of a layered section
+        see, so a ``PlateRebar`` angle is measured from it.
     """
 
     pg: str
     section: Section
     corotational: bool = False
+    drilling_stab: float | None = None
+    drilling_nl: bool = False
     drilling_nt_alpha: float | None = None
     local_cs: tuple[float, ...] | None = None
     damp: Damping | None = None
@@ -231,6 +266,25 @@ class ASDShellQ4(Element):
     def __post_init__(self) -> None:
         if self.local_cs is not None:
             _check_local_cs("ASDShellQ4", self.local_cs)
+        if self.drilling_nt_alpha is not None:
+            raise ValueError(
+                "ASDShellQ4: drilling_nt_alpha emitted '-drillingNT', which "
+                "the element does not parse; it was silently ignored. Use "
+                "drilling_stab=<v in [0, 1]> ('-drillingStab') or "
+                "drilling_nl=True ('-drillingNL')."
+            )
+        if self.drilling_stab is not None:
+            if not (0.0 <= float(self.drilling_stab) <= 1.0):
+                raise ValueError(
+                    f"ASDShellQ4: drilling_stab must be in [0, 1], got "
+                    f"{self.drilling_stab!r} (the parser would clamp it)."
+                )
+            if self.drilling_nl:
+                raise ValueError(
+                    "ASDShellQ4: drilling_stab and drilling_nl are mutually "
+                    "exclusive (the parser refuses -drillingStab with "
+                    "-drillingNL)."
+                )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -242,12 +296,14 @@ class ASDShellQ4(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
-        if self.drilling_nt_alpha is not None:
-            args.append("-drillingNT")
-            args.append(self.drilling_nt_alpha)
+        if self.drilling_stab is not None:
+            args.append("-drillingStab")
+            args.append(float(self.drilling_stab))
+        if self.drilling_nl:
+            args.append("-drillingNL")
         if self.local_cs is not None:
-            args.append("-localCS")
-            args.extend(self.local_cs)
+            args.append("-local")
+            args.extend(float(c) for c in self.local_cs)
         args.extend(damp_args(emitter, self.damp))
         emitter.element("ASDShellQ4", tag, *args)
 
@@ -267,8 +323,8 @@ class ASDShellT3(Element):
 
     Phase 2γ scope ships the canonical positional arguments plus the
     three most-used optional flags: ``-corotational``, ``-drillingDOF
-    dof_id``, and ``-localCS x1 x2 x3 y1 y2 y3``. Other ASDShell*
-    flags are deferred — see the Phase 2γ report.
+    dof_id``, and ``-local x1 x2 x3``. Other ASDShell* flags are
+    deferred — see the Phase 2γ report.
 
     Parameters
     ----------
@@ -282,8 +338,8 @@ class ASDShellT3(Element):
     drilling_dof
         If supplied, append ``-drillingDOF <dof_id>``.
     local_cs
-        If supplied, append ``-localCS <x1> <x2> <x3> <y1> <y2> <y3>``.
-        Must be a 6-tuple.
+        The local x axis ``(x1, x2, x3)``, emitted as ``-local x1 x2 x3``
+        (the parser has no ``-localCS``; see ``ASDShellQ4``).
     """
 
     pg: str
@@ -311,8 +367,8 @@ class ASDShellT3(Element):
             args.append("-drillingDOF")
             args.append(self.drilling_dof)
         if self.local_cs is not None:
-            args.append("-localCS")
-            args.extend(self.local_cs)
+            args.append("-local")
+            args.extend(float(c) for c in self.local_cs)
         args.extend(damp_args(emitter, self.damp))
         emitter.element("ASDShellT3", tag, *args)
 

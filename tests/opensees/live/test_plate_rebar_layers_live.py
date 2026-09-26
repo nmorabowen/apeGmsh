@@ -151,3 +151,83 @@ def test_layered_shell_fiber_section_keyword_parses_live() -> None:
     assert got == pytest.approx(_pull(0.0, 90.0, section_ns="LayeredShell"), rel=1e-12)
     # A real layered answer, on either build's section frame.
     assert min(abs(got / _expected(t) - 1.0) for t in (T_A, T_B)) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# ASDShellQ4(local_cs=) and (drilling_stab=) reach the parser
+# ---------------------------------------------------------------------------
+#
+# ASDShellQ4 accepts an unknown trailing token without a word (its option
+# loop has no else branch), which is how ``-localCS`` and ``-drillingNT``
+# went unnoticed. So these assert the EFFECT of the emitted tokens.
+
+
+def _one_bar_model(local_cs: "tuple[float, float, float] | None", **shell_kw):
+    ops = apeSees(cast("object", _one_quad()))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    steel = ops.uniaxialMaterial.ElasticMaterial(E=E_S)
+    conc = ops.nDMaterial.ElasticIsotropic(E=E_C, nu=0.0)
+    conc_layer = ops.nDMaterial.PlateFromPlaneStress(material=conc, G_out=E_C / 2)
+    bar = ops.nDMaterial.PlateRebar(material=steel, angle=0.0)
+    sec = ops.section.LayeredShell(layers=(
+        ShellLayer(material=conc_layer, thickness=H_C / 2),
+        ShellLayer(material=bar, thickness=T_A),
+        ShellLayer(material=conc_layer, thickness=H_C / 2),
+    ))
+    ops.element.ASDShellQ4(pg="Wall", section=sec, local_cs=local_cs, **shell_kw)
+    return ops
+
+
+def _solve(ops, node: int, dof: int) -> float:
+    ops.constraints.Plain()
+    ops.numberer.Plain()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    assert emitter.analyze(steps=1) == 0
+    return float(emitter.ops.nodeDisp(node, dof))
+
+
+def _pull_x(local_cs: "tuple[float, float, float] | None") -> float:
+    ops = _one_bar_model(local_cs)
+    ops.fix(pg="All", dofs=(0, 0, 1, 1, 1, 1))
+    ops.fix(nodes=[1], dofs=(1, 1, 0, 0, 0, 0))
+    ops.fix(nodes=[4], dofs=(1, 0, 0, 0, 0, 0))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for n in (2, 3):
+            p.load(node=n, forces=(P / 2, 0.0, 0.0, 0.0, 0.0, 0.0))
+    return _solve(ops, 2, 1)
+
+
+@pytest.mark.live
+def test_asdshellq4_local_cs_rotates_the_rebar_direction() -> None:
+    """A 0 deg bar lies along the given local x axis — on either build, since
+    ``-local`` takes the element's explicit-axis branch."""
+    along_x = _pull_x((1.0, 0.0, 0.0))
+    along_y = _pull_x((0.0, 1.0, 0.0))
+    assert along_x == pytest.approx(P / (E_C * H_C + E_S * T_A), rel=1e-6)
+    assert along_y == pytest.approx(P / (E_C * H_C), rel=1e-6)
+
+
+def _drill(**shell_kw) -> float:
+    """Drilling rotation of corner 3 under a drilling moment, rest clamped."""
+    ops = _one_bar_model(None, **shell_kw)
+    ops.fix(nodes=[1, 2, 4], dofs=(1, 1, 1, 1, 1, 1))
+    ops.fix(nodes=[3], dofs=(1, 1, 1, 1, 1, 0))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=3, forces=(0.0, 0.0, 0.0, 0.0, 0.0, 1.0e3))
+    return _solve(ops, 3, 6)
+
+
+@pytest.mark.live
+def test_asdshellq4_drilling_stab_reaches_the_element() -> None:
+    default = _drill()
+    # 0.01 is the parser's own default: the same element.
+    assert _drill(drilling_stab=0.01) == pytest.approx(default, rel=1e-9)
+    # A stiffer drilling stabilization gives a smaller drilling rotation.
+    stiff = _drill(drilling_stab=1.0)
+    assert abs(stiff) < 0.9 * abs(default)

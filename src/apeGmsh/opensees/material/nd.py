@@ -2426,10 +2426,12 @@ class PlateRebar(NDMaterial):
       local **y** axis, and every ``PlateRebar`` angle lands 90 deg away
       from the fork.
 
-    The explicit ``-local`` branch is correct on both builds. apeGmsh's
-    ``ASDShellQ4(local_cs=)`` does not reach it, because it emits a
-    ``-localCS`` flag that ASDShellQ4 does not parse. So on an old upstream
-    build, swap the angles (``0`` <-> ``90``) to get the fork's layout.
+    The explicit ``-local`` branch is correct on both builds, and
+    ``ASDShellQ4(local_cs=(x1, x2, x3))`` reaches it (it emits ``-local``;
+    it used to emit a ``-localCS`` the element does not parse). Pass
+    ``local_cs`` to pin the section x axis on any build; without it, on an
+    old upstream build swap the angles (``0`` <-> ``90``) to get the fork's
+    layout.
     ``tests/opensees/live/test_plate_rebar_layers_live.py`` records the
     measured swap.
     """
