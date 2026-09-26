@@ -27,6 +27,7 @@ its own `kernel32` with `use_last_error=True` and reads the error through
 `ctypes.get_last_error()`. It no longer sets `argtypes` on the process-wide
 `ctypes.windll.kernel32` or calls `GetLastError` raw. Tests:
 `tests/studio/test_pid_alive.py`.
+
 ### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
 
 The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a
