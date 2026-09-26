@@ -1057,6 +1057,131 @@ class FixRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class EquationConstraintRecord:
+    """One user ``equationConstraint`` row from ``apeSees.equation_constraint``.
+
+    The OpenSees ``EQ_Constraint`` relation, in its sum-to-zero form::
+
+        ccoef * u[cdof](cnode) + sum_i rcoef_i * u[rdof_i](rnode_i) = 0
+
+    ``retained`` holds the ``(rnode, rdof, rcoef)`` triples in call order.
+    Node tags are FEM node ids (the bridge emits nodes under their FEM
+    ids). Validated at declaration (:func:`make_equation_constraint_record`)
+    and again against the snapshot's nodes and per-node ndf at emit
+    (:func:`emit_equation_constraints`).
+    """
+
+    cnode: int
+    cdof: int
+    ccoef: float
+    retained: tuple[tuple[int, int, float], ...]
+
+
+def make_equation_constraint_record(
+    cnode: int, cdof: int, ccoef: float,
+    retained: "Iterable[tuple[int, int, float]]",
+) -> EquationConstraintRecord:
+    """Validate and freeze one ``equationConstraint`` row.
+
+    Refuses what OpenSees refuses late or silently: a zero or non-finite
+    coefficient (``EQ_Constraint`` rejects a zero ``rcoef`` and aborts the
+    whole line), a DOF below 1, an empty retained set, and a row whose
+    constrained ``(node, dof)`` also appears among the retained ones (``u_c``
+    on both sides — a singular or trivial row).
+    """
+    import math
+
+    def _dof(value: object, what: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise TypeError(f"equation_constraint: {what} must be an int, got {value!r}.")
+        if int(value) < 1:
+            raise ValueError(f"equation_constraint: {what} must be >= 1, got {value!r}.")
+        return int(value)
+
+    def _coef(value: object, what: str) -> float:
+        c = float(value)  # type: ignore[arg-type]
+        if not math.isfinite(c) or c == 0.0:
+            raise ValueError(
+                f"equation_constraint: {what} must be finite and non-zero, "
+                f"got {value!r} (OpenSees rejects a zero coefficient and "
+                f"drops the whole row)."
+            )
+        return c
+
+    c_node = _dof(cnode, "constrained node")
+    c_dof = _dof(cdof, "constrained dof")
+    c_coef = _coef(ccoef, "constrained coefficient")
+    rows: list[tuple[int, int, float]] = []
+    for i, triple in enumerate(retained):
+        try:
+            rn, rd, rc = triple
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"equation_constraint: retained[{i}] must be a (node, dof, "
+                f"coef) triple, got {triple!r}."
+            ) from None
+        rows.append((
+            _dof(rn, f"retained[{i}] node"),
+            _dof(rd, f"retained[{i}] dof"),
+            _coef(rc, f"retained[{i}] coef"),
+        ))
+    if not rows:
+        raise ValueError(
+            "equation_constraint: retained must hold at least one "
+            "(node, dof, coef) triple."
+        )
+    if any((rn, rd) == (c_node, c_dof) for rn, rd, _ in rows):
+        raise ValueError(
+            f"equation_constraint: the constrained (node, dof) = "
+            f"({c_node}, {c_dof}) also appears among the retained ones — "
+            f"u_c would sit on both sides of the equation."
+        )
+    return EquationConstraintRecord(
+        cnode=c_node, cdof=c_dof, ccoef=c_coef, retained=tuple(rows),
+    )
+
+
+def emit_equation_constraints(
+    emitter: "Emitter",
+    fem: "FEMData",
+    records: "Iterable[EquationConstraintRecord]",
+    *,
+    node_ndf: "dict[int, int]",
+    default_ndf: int,
+) -> None:
+    """Emit the user ``equationConstraint`` rows, in declaration order.
+
+    Every node must exist in the snapshot and every DOF must fit that
+    node's ndf; OpenSees would otherwise fail late in
+    ``EQ_Constraint::setDomain`` or not at all. Runs in the MP-constraint
+    pass, after the broker's constraints.
+    """
+    records = tuple(records)
+    if not records:
+        return
+    known = {int(n) for n in np.asarray(fem.nodes.ids).tolist()}
+    for rec in records:
+        for node, dof, what in (
+            (rec.cnode, rec.cdof, "constrained"),
+            *((rn, rd, "retained") for rn, rd, _ in rec.retained),
+        ):
+            if node not in known:
+                raise BridgeError(
+                    f"equation_constraint: {what} node {node} is not a node "
+                    f"of the FEM snapshot."
+                )
+            ndf = int(node_ndf.get(node, default_ndf))
+            if dof > ndf:
+                raise BridgeError(
+                    f"equation_constraint: {what} dof {dof} on node {node} "
+                    f"exceeds that node's ndf ({ndf})."
+                )
+        emitter.equationConstraint(
+            rec.cnode, rec.cdof, rec.ccoef, list(rec.retained),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SupportRecord:
     """One ``s.support`` directive — a stage-bound HOLD constraint (ADR 0052).
 

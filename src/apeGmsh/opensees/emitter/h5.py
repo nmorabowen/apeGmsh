@@ -141,7 +141,9 @@ class H5FeatureDeferredWarning(UserWarning):
     so the feature is lost on round-trip. Emit to Tcl / openseespy (or run live)
     for the complete model.
 
-    No emitter currently raises this: g.reinforce ties, g.constraints.contact,
+    ``apeSees.h5`` raises it for ``apeSees.equation_constraint`` rows, which
+    are bridge-level and have no neutral-zone record. No emitter raises it
+    otherwise: g.reinforce ties, g.constraints.contact,
     g.embed ties, and the ``enforce="equation"`` tie all persist via the
     neutral zone (schema 2.15.0 / 2.21.0 / 2.22.0 / 2.14.0). The class (and its
     back-compat alias) is retained for any future deferred feature. The

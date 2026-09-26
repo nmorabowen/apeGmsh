@@ -468,6 +468,12 @@ explicit one — and fails loud under `Transformation`/`Auto`). An
 `enforce="equation"` tie **round-trips `model.h5` cleanly** — the neutral zone
 persists its enforce route + projection weights, and the H5 deck emitter no
 longer raises `H5EquationConstraintDeviationWarning` (ADR 0068 item 4, #753).
+A hand-written row is `ops.equation_constraint(constrained=(node, dof),
+retained=[(node, dof, coef), ...], coef=1.0)` — OpenSees' sum-to-zero form
+`coef·u_c + Σ rcoef·u_r = 0`, FEM node ids. It follows the same handler rules
+(auto `Lagrange`/`LadrunoProjection`, `Transformation` refused), needs the fork
+to run in-process, refuses a partitioned emit, and is **not** archived by
+`ops.h5` (`H5FeatureDeferredWarning`).
 The fork contact generator `g.constraints.contact(...)` (NTS/mortar,
 plus `contact_plane(...)` rigid planes) **auto-emits**
 `constraints LadrunoContact` whenever contacts are present — keep that

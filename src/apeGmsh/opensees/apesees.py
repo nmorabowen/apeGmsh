@@ -52,8 +52,11 @@ from ._internal.build import (
     emit_element_spec_partitioned,
     emit_initial_stress_addtoparameter,
     emit_initial_stress_global,
+    EquationConstraintRecord,
+    emit_equation_constraints,
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
+    make_equation_constraint_record,
     emit_reinforce_ties,
     emit_update_parameters,
     emit_embed_ties,
@@ -916,6 +919,9 @@ class BuiltModel:
     rayleigh_records:        tuple[RayleighRecord, ...] = ()
     damping_attach_records:  tuple[DampingAttachRecord, ...] = ()
     modal_damping_records:   tuple[ModalDampingRecord, ...] = ()
+    # User ``equationConstraint`` rows (``apeSees.equation_constraint``),
+    # emitted in the MP-constraint pass after the broker's constraints.
+    equation_constraint_records: tuple[EquationConstraintRecord, ...] = ()
     # name → bridge-allocated tag, for resolving g.reinforce bond-material
     # references (Option B: the def holds the bond name, the bridge owns
     # the tag). Populated from the name-alias table at build() time.
@@ -935,6 +941,19 @@ class BuiltModel:
     # rebind the field), so ``id(rec)`` reuse across builds is not a hazard.
     _mt_pairs_cache:         "dict[int, list[tuple[int, Any]]]" = field(
         default_factory=dict, compare=False)
+
+    def _has_equation_constraints(self) -> bool:
+        """True iff the deck carries any ``equationConstraint`` row.
+
+        Either an ``enforce="equation"`` tie on the snapshot (ADR 0068) or a
+        user row from ``apeSees.equation_constraint``. Both are
+        ``EQ_Constraint``, which ``Transformation`` / ``Auto`` / ``Plain``
+        silently drop (INV-4), so every handler guard keys on this.
+        """
+        return (
+            bool(self.equation_constraint_records)
+            or _fem_has_equation_ties(self.fem)
+        )
 
     def _claimed_recorder_ids(self) -> "set[int]":
         """``id(...)``-set of recorders claimed by stage builders
@@ -1907,6 +1926,10 @@ class BuiltModel:
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
         )
+        emit_equation_constraints(
+            emitter, self.fem, self.equation_constraint_records,
+            node_ndf=inferred_ndf, default_ndf=self.ndf,
+        )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
         # One LadrunoEmbeddedRebar per rebar node; bond names resolve to
@@ -2396,6 +2419,10 @@ class BuiltModel:
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
+        )
+        emit_equation_constraints(
+            emitter, self.fem, self.equation_constraint_records,
+            node_ndf=inferred_ndf, default_ndf=self.ndf,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -3039,6 +3066,15 @@ class BuiltModel:
            ``stage_records`` is non-empty: dispatch to
            :meth:`_emit_stages_partitioned`.
         """
+        if self.equation_constraint_records:
+            # An EQ row spans arbitrary nodes; routing it to the ranks that
+            # own all of them (and ghosting the rest) is not implemented.
+            # Fail loud rather than drop or duplicate it.
+            raise BridgeError(
+                "apeSees.equation_constraint rows are not supported on a "
+                "partitioned (OpenSeesMP) emit. Emit an unpartitioned deck, "
+                "or run in-process."
+            )
         staged = bool(self.stage_records)
 
         # g.reinforce (ADR 20 / R2b): partitioned emission of
@@ -7515,7 +7551,7 @@ class BuiltModel:
             # contact branch would emit LadrunoContact and return, silently
             # dropping the equation tie (LadrunoContact cannot enforce
             # EQ_Constraint). Fail loud rather than emit a broken deck.
-            if _fem_has_equation_ties(self.fem):
+            if self._has_equation_constraints():
                 raise BridgeError(
                     "Contact interactions and an enforce='equation' tie "
                     "(EQ_Constraint) are both present, but they require "
@@ -7582,7 +7618,10 @@ class BuiltModel:
             emitter.constraints("LadrunoContact")
             return
 
-        if not _fem_has_mp_constraints(self.fem):
+        if not (
+            _fem_has_mp_constraints(self.fem)
+            or self.equation_constraint_records
+        ):
             return
 
         # Find any user-declared ConstraintHandler in pre_element.
@@ -7602,7 +7641,7 @@ class BuiltModel:
         # handler CANNOT enforce — it would silently drop the tie. When
         # any equation tie is present the handler must be Lagrange
         # (implicit, exact) or the fork LadrunoProjection (explicit).
-        has_eq = _fem_has_equation_ties(self.fem)
+        has_eq = self._has_equation_constraints()
 
         declared_handler: "ConstraintHandler | None" = None
         for p in pre_element:
@@ -7771,7 +7810,7 @@ class BuiltModel:
         from .analysis.constraint_handler import (
             Lagrange as _Lag, LadrunoProjection as _Proj, Penalty as _Pen,
         )
-        global_eq = _fem_has_equation_ties(self.fem)
+        global_eq = self._has_equation_constraints()
         eq_ok = (_Lag, _Pen, _Proj)
         for stage in self.stage_records:
             needs_eq = global_eq or _records_have_equation_tie(
@@ -8106,6 +8145,7 @@ class apeSees:
         self._ndm: int | None = None
         self._ndf: int | None = None
         self._fix_records: list[FixRecord] = []
+        self._equation_constraint_records: list[EquationConstraintRecord] = []
         self._mass_records: list[MassRecord] = []
         # ADR 0065 Tier 2 — opt-in: stream per-node masses from the snapshot
         # at emit instead of one bridge MassRecord per node. Set by
@@ -8453,6 +8493,64 @@ class apeSees:
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._fix_records.append(
             FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
+        )
+
+    def equation_constraint(
+        self,
+        *,
+        constrained: "tuple[int | Node, int]",
+        retained: "Iterable[tuple[int | Node, int, float]]",
+        coef: float = 1.0,
+    ) -> None:
+        """Declare one ``equationConstraint`` row (OpenSees ``EQ_Constraint``).
+
+        The row is the linear relation, in OpenSees' sum-to-zero form::
+
+            coef * u[cdof](cnode) + sum_i rcoef_i * u[rdof_i](rnode_i) = 0
+
+        with ``constrained=(cnode, cdof)`` and ``retained=[(rnode, rdof,
+        rcoef), ...]``. So ``u_c = 0.5 u_a + 0.5 u_b`` is
+        ``constrained=(c, 1), retained=[(a, 1, -0.5), (b, 1, -0.5)]``.
+        Nodes are FEM node ids (or :class:`Node` handles); DOFs are
+        1-based.
+
+        Emitted in the MP-constraint pass, after the snapshot's
+        constraints. ``EQ_Constraint`` is enforced by ``Lagrange``,
+        ``Penalty`` and the fork's ``LadrunoProjection`` only:
+        ``Transformation``, ``Auto`` and ``Plain`` drop it without a word.
+        So with no declared handler the bridge auto-emits ``Lagrange``
+        (implicit) or ``LadrunoProjection`` (explicit integrator), and a
+        declared ``Transformation`` / ``Auto`` raises — the same rules as
+        an ``enforce="equation"`` tie (ADR 0068 INV-4).
+
+        Validated here (non-zero finite coefficients, DOFs >= 1, a
+        non-empty retained set, the constrained DOF not among the retained
+        ones) and at emit (nodes exist, DOFs fit each node's ndf). The
+        in-process run needs the Ladruno fork, like every
+        ``equationConstraint``; a partitioned emit refuses the rows, and
+        ``ops.h5(...)`` does not archive them (``H5FeatureDeferredWarning``).
+        """
+        try:
+            cnode, cdof = constrained
+        except (TypeError, ValueError):
+            raise ValueError(
+                "apeSees.equation_constraint: constrained must be a "
+                f"(node, dof) pair, got {constrained!r}."
+            ) from None
+        rows: list[tuple[int, int, float]] = []
+        for triple in retained:
+            try:
+                rn, rd, rc = triple
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "apeSees.equation_constraint: each retained entry must "
+                    f"be a (node, dof, coef) triple, got {triple!r}."
+                ) from None
+            rows.append((_iter_tags([rn])[0], rd, rc))
+        self._equation_constraint_records.append(
+            make_equation_constraint_record(
+                _iter_tags([cnode])[0], cdof, coef, rows,
+            ),
         )
 
     def mass(
@@ -11173,7 +11271,9 @@ class apeSees:
         satisfies both requirements: fail loud, exactly as the
         contact-plus-equation-tie combination already does.
         """
-        if _fem_has_equation_ties(self._fem):
+        if self._equation_constraint_records or _fem_has_equation_ties(
+            self._fem,
+        ):
             raise BridgeError(
                 "apeSees.modal_deck: the model carries an enforce='equation' "
                 "tie, which needs the 'Lagrange' (implicit) or "
@@ -11655,6 +11755,22 @@ class apeSees:
         bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
+        if bm.equation_constraint_records:
+            # The deck zone has no equationConstraint record and, unlike an
+            # enforce="equation" tie, a bridge-level row has no neutral-zone
+            # twin either — so it does not survive a from_h5 round-trip.
+            import warnings as _warnings
+
+            from .emitter.h5 import H5FeatureDeferredWarning
+            _warnings.warn(
+                f"ops.h5: {len(bm.equation_constraint_records)} "
+                "apeSees.equation_constraint row(s) are NOT archived — the "
+                "model.h5 has no record for them, so a model rebuilt from it "
+                "runs without the constraint. Emit Tcl / openseespy (or run "
+                "in-process) for the complete model.",
+                H5FeatureDeferredWarning,
+                stacklevel=2,
+            )
 
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
@@ -11841,6 +11957,9 @@ class apeSees:
             rayleigh_records=tuple(self._rayleigh_records),
             damping_attach_records=tuple(self._damping_attach_records),
             modal_damping_records=tuple(self._modal_damping_records),
+            equation_constraint_records=tuple(
+                self._equation_constraint_records,
+            ),
             name_to_tag={
                 nm: tag for nm, _kind, tag in self._name_records()
             },

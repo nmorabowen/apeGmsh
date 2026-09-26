@@ -14,6 +14,27 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ops.equation_constraint(...)`: hand-written `equationConstraint` rows
+
+`ops.equation_constraint(constrained=(node, dof), retained=[(node, dof, coef),
+...], coef=1.0)` declares one OpenSees `EQ_Constraint` row,
+`coef·u_c + Σ rcoef·u_r = 0`, on FEM node ids. It emits in the MP-constraint
+pass after the snapshot's constraints and follows the rules of an
+`enforce="equation"` tie (ADR 0068 INV-4) rather than those of `equalDOF`:
+`Transformation`, `Auto` and `Plain` drop `EQ_Constraint` without a word (the
+fork's `TransformationConstraintHandler` has no EQ path; `Lagrange`, `Penalty`
+and `LadrunoProjection` do), so with no declared handler the bridge
+auto-emits `Lagrange` (implicit) or `LadrunoProjection` (explicit), and a
+declared `Transformation` / `Auto` raises. Every handler guard (contact
+conflict, staged, modal deck) now keys on "any equation row" instead of "any
+equation tie". Declaration refuses a zero or non-finite coefficient, a DOF
+below 1, an empty retained set, and a constrained DOF that is also retained;
+emit refuses an unknown node or a DOF above the node's ndf. The in-process run
+needs the fork (the live emitter's existing `equationConstraint` gate), a
+partitioned emit refuses the rows, and `ops.h5(...)` warns
+(`H5FeatureDeferredWarning`) that they are not archived. Fork-only live test:
+two parallel bars tied by one row share the load exactly.
+
 ### ADDED — dual concrete damage capture: `damage_tension` / `damage_compression` on Brick, LadrunoBrick, FourNodeQuad, LadrunoQuad
 
 `ASDConcrete3D` (`damage` -> `[d+, d-]`) and `LadrunoConcrete3D` (`damage` /

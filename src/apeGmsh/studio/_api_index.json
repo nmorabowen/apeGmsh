@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T04:51:47Z",
+  "generated": "2026-09-26T14:23:21Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3043,6 +3043,12 @@
       "signature": "stdBrick(*, pg: 'str', material: 'NDMaterial | str', body_force: 'tuple[float, float, float] | None' = None, damp: 'Damping | None' = None) -> 'stdBrick'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
+    },
+    "ops.equation_constraint": {
+      "symbol": "ops.equation_constraint",
+      "signature": "equation_constraint(*, constrained: \"'tuple[int | Node, int]'\", retained: \"'Iterable[tuple[int | Node, int, float]]'\", coef: 'float' = 1.0) -> 'None'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Declare one ``equationConstraint`` row (OpenSees ``EQ_Constraint``)."
     },
     "ops.fault.from_shakermaker": {
       "symbol": "ops.fault.from_shakermaker",
