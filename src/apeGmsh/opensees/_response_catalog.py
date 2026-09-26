@@ -1396,6 +1396,36 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
 }
 
 
+# ── damage — dual tension/compression damage of the concrete nD laws ──
+# ``ASDConcrete3D`` (``damage`` -> ``[d+, d-]``, ASDConcrete3DMaterial.cpp
+# setResponse id 2001) and ``LadrunoConcrete3D`` (``damage`` / ``omega`` ->
+# ``[omega_t, omega_c]``, LadrunoConcrete3D.cpp id 5) both answer the
+# MATERIAL-level ``damage`` token with two values, tension first. None of
+# the four host elements has an element-level ``damage`` branch, so the
+# live route reads it per Gauss point through the element's ``material
+# <gp>`` forwarding (see :data:`PER_MATERIAL_TOKENS`). GP count and
+# natural coords are each class's ``stress`` entry; a single-point
+# formulation (LadrunoBrick ``uri``/``ssp``, LadrunoQuad ``ssp``) resolves
+# every GP query to slot 0, the same mirroring its ``stresses`` does. A
+# host material with a different ``damage`` width fails the capture's size
+# check loudly rather than being mis-decoded.
+DAMAGE_TC: tuple[str, ...] = ("damage_tension", "damage_compression")
+
+for _cls, _rule, _coords, _tag in (
+    ("Brick", IntRule.Hex_GL_2, _HEX_GL_2_COORDS, ELE_TAG_Brick),
+    ("LadrunoBrick", IntRule.Hex_GL_2, _HEX_GL_2_COORDS, ELE_TAG_LadrunoBrick),
+    ("FourNodeQuad", IntRule.Quad_GL_2, _QUAD_GL_2_COORDS, ELE_TAG_FourNodeQuad),
+    ("LadrunoQuad", IntRule.Quad_GL_2, _QUAD_GL_2_COORDS, ELE_TAG_LadrunoQuad),
+):
+    RESPONSE_CATALOG[(_cls, _rule, "damage")] = _continuum_layout(
+        n_gp=_coords.shape[0], natural_coords=_coords,
+        coord_system="isoparametric",
+        component_names=DAMAGE_TC,
+        class_tag=_tag,
+    )
+del _cls, _rule, _coords, _tag
+
+
 # =====================================================================
 # CUSTOM_RULE_CATALOG — beam-columns with per-instance integration
 # =====================================================================
@@ -2219,6 +2249,11 @@ _GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
     # aliases on modern builds (handled in
     # :data:`_MPCO_GAUSS_GROUP_ALIASES` below).
     "damage": "damage",
+    # The dual-damage pair (``[d+, d-]`` / ``[omega_t, omega_c]``) is one
+    # two-column ``damage`` response — see the damage block after
+    # RESPONSE_CATALOG.
+    "damage_tension": "damage",
+    "damage_compression": "damage",
     "equivalent_plastic_strain": "equivalentPlasticStrain",
     # Plastic-strain tensor — per-GP material response (prefix routes
     # ``plastic_strain_xx`` etc. after the axis suffix is stripped).
@@ -2489,6 +2524,29 @@ def has_dead_gauss_probe(class_name: str) -> bool:
     routes are unaffected and should NOT consult this.
     """
     return class_name in ZERO_GAUSS_PROBE_CLASSES
+
+
+#: Catalog tokens that are MATERIAL responses with no element-level
+#: branch on any catalogued host: ``ops.eleResponse(eid, "damage")`` answers
+#: nothing on Brick / LadrunoBrick / FourNodeQuad / LadrunoQuad, while
+#: ``ops.eleResponse(eid, "material", "<gp>", "damage")`` reaches the
+#: nDMaterial's own ``setResponse`` (Brick.cpp / FourNodeQuad.cpp
+#: ``"material"`` / ``"integrPoint"``, LadrunoBrick.cpp / LadrunoQuad.cpp
+#: ``LadrunoResp::is(argv[0], "material")``).
+PER_MATERIAL_TOKENS: frozenset[str] = frozenset({"damage"})
+
+
+def needs_per_material_query(class_name: str, catalog_token: str) -> bool:
+    """Whether live capture must read ``catalog_token`` per Gauss point.
+
+    True for a material-only token (:data:`PER_MATERIAL_TOKENS`) on any
+    class, and for the Tri31 strain case :func:`needs_per_material_strain`
+    covers.
+    """
+    return (
+        catalog_token in PER_MATERIAL_TOKENS
+        or needs_per_material_strain(class_name, catalog_token)
+    )
 
 
 def needs_per_material_strain(class_name: str, catalog_token: str) -> bool:

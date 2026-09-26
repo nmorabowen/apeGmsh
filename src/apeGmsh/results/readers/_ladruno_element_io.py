@@ -358,6 +358,15 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
         "dp_i1",                # 6  I1 of the RETURNED stress
         "dp_det_a_min",         # 7  min_n det(n.D_ep.n) / (2G)^3
     ),
+    # The concrete nD laws' dual damage, tension first: ASDConcrete3D's
+    # ``damage`` (labels ``d+``, ``d-``; ASDConcrete3DMaterial.cpp
+    # setResponse id 2001) and LadrunoConcrete3D's ``damage`` / ``omega``
+    # (a bare ``MaterialResponse(this, 5, Vector(2))`` -> ``C1, C2``;
+    # LadrunoConcrete3D.cpp getResponse case 5 fills omegaT, omegaC).
+    # The canonicals are MATERIAL_STATE's conjugate pair, the names the
+    # live capture and the MPCO ``d+``/``d-`` META symbols also land on.
+    "damage": ("damage_tension", "damage_compression"),
+    "omega": ("damage_tension", "damage_compression"),
 }
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
@@ -396,6 +405,7 @@ _MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
     "stateparameter": ("psi",),
     "yielddistance": ("yieldDistance",),
     "yieldfunction": ("yieldDistance",),
+    "damage": ("d+", "d-"),
     "implexerror": ("implexError",),
     "avgimplexerror": ("avgImplexError",),
     "substeps": ("substeps_me", "substeps_capHit"),

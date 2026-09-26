@@ -126,7 +126,7 @@ from ...opensees._response_catalog import (
     lookup_fiber,
     lookup_layer,
     lookup_nodal_force,
-    needs_per_material_strain,
+    needs_per_material_query,
     normalise_integration_points,
     resolve_layout_from_gp_x,
     synthesize_line_station_layout_for_elastic_beam,
@@ -1184,7 +1184,7 @@ class _GaussClassGroup:
     # delegation (``ops.eleResponse(eid, "material", "<gp>", "strain")``)
     # because this element class lacks a working element-level branch
     # for the requested token. See
-    # :func:`apeGmsh.opensees._response_catalog.needs_per_material_strain`.
+    # :func:`apeGmsh.opensees._response_catalog.needs_per_material_query`.
     via_per_material: bool = False
 
 
@@ -1255,7 +1255,7 @@ class _GaussCapturer:
             grp = groups.setdefault(
                 (class_name, int_rule), _GaussClassGroup(
                     layout=layout,
-                    via_per_material=needs_per_material_strain(
+                    via_per_material=needs_per_material_query(
                         class_name, self._catalog_token,
                     ),
                 ),

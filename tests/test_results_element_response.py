@@ -563,6 +563,56 @@ class TestShellLayouts:
 
 
 # =====================================================================
+# Dual concrete damage — material-level, read per Gauss point
+# =====================================================================
+
+class TestDamageLookup:
+    @pytest.mark.parametrize("cls,rule,n_gp", [
+        ("Brick", IntRule.Hex_GL_2, 8),
+        ("LadrunoBrick", IntRule.Hex_GL_2, 8),
+        ("FourNodeQuad", IntRule.Quad_GL_2, 4),
+        ("LadrunoQuad", IntRule.Quad_GL_2, 4),
+    ])
+    def test_layout_is_tension_then_compression_per_gp(
+        self, cls: str, rule: int, n_gp: int,
+    ) -> None:
+        lay = lookup(cls, rule, "damage")
+        assert lay.component_layout == (
+            "damage_tension", "damage_compression",
+        )
+        assert lay.n_gauss_points == n_gp
+        # Same GPs as the class's stress layout.
+        np.testing.assert_array_equal(
+            lay.natural_coords, lookup(cls, rule, "stress").natural_coords,
+        )
+
+    def test_pair_routes_to_the_damage_token(self) -> None:
+        for comp in ("damage_tension", "damage_compression"):
+            assert gauss_keyword_for_canonical(comp) == "damage"
+            assert catalog_token_for_keyword("damage") == "damage"
+
+    def test_damage_is_read_per_material_on_every_host(self) -> None:
+        from apeGmsh.opensees._response_catalog import (
+            needs_per_material_query,
+        )
+        for cls in ("Brick", "LadrunoBrick", "FourNodeQuad", "LadrunoQuad"):
+            assert needs_per_material_query(cls, "damage")
+            # The element-level tokens stay element-level.
+            assert not needs_per_material_query(cls, "stress")
+        # The Tri31 strain case is still covered.
+        assert needs_per_material_query("Tri31", "strain")
+
+    def test_ladruno_material_damage_bucket_maps_by_position(self) -> None:
+        from apeGmsh.results.readers._ladruno_element_io import (
+            material_bucket_canonicals,
+        )
+        for tok in ("material.damage", "material.Damage", "material.omega"):
+            assert material_bucket_canonicals(tok) == (
+                "damage_tension", "damage_compression",
+            )
+
+
+# =====================================================================
 # Truss family — single GP, scalar axial force
 # =====================================================================
 
@@ -703,6 +753,12 @@ def test_catalog_coverage_v1() -> None:
         ("Truss2", IntRule.Line_GL_1, "axial_force"),
         ("CorotTruss2", IntRule.Line_GL_1, "axial_force"),
         ("InertiaTruss", IntRule.Line_GL_1, "axial_force"),
+        # Dual concrete damage [tension, compression] — ASDConcrete3D /
+        # LadrunoConcrete3D hosted by the four continuum classes.
+        ("Brick", IntRule.Hex_GL_2, "damage"),
+        ("LadrunoBrick", IntRule.Hex_GL_2, "damage"),
+        ("FourNodeQuad", IntRule.Quad_GL_2, "damage"),
+        ("LadrunoQuad", IntRule.Quad_GL_2, "damage"),
     }
     assert set(RESPONSE_CATALOG.keys()) == expected
 

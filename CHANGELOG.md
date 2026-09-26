@@ -14,6 +14,26 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — dual concrete damage capture: `damage_tension` / `damage_compression` on Brick, LadrunoBrick, FourNodeQuad, LadrunoQuad
+
+`ASDConcrete3D` (`damage` -> `[d+, d-]`) and `LadrunoConcrete3D` (`damage` /
+`omega` -> `[omega_t, omega_c]`) both answer a two-value material response,
+tension first, but none of the four host elements has an element-level
+`damage` branch (`eleResponse(eid, "damage")` returns nothing, measured on
+`stdBrick` + `ASDConcrete3D`). `RESPONSE_CATALOG` gains a `damage` layout for
+`Brick` / `LadrunoBrick` (Hex_GL_2) and `FourNodeQuad` / `LadrunoQuad`
+(Quad_GL_2) with the existing `MATERIAL_STATE` pair as its components;
+`damage_tension` / `damage_compression` route to it; and the live gauss
+capturer reads a material-only token (`PER_MATERIAL_TOKENS`, new
+`needs_per_material_query`) per Gauss point through `eleResponse(eid,
+"material", gp, "damage")`. The `.ladruno` reader maps a two-column
+`material.damage` / `material.omega` bucket by position onto the same pair
+(ASDConcrete3D labels them `d+`, `d-`; LadrunoConcrete3D writes `C1, C2`). A
+host material with another `damage` width fails the capture's size check
+instead of being mis-decoded. Fork-only live test: one `LadrunoBrick` of
+`LadrunoConcrete3D` pulled past its tensile peak, both routes checked against
+`eleResponse` (installed 2026-06-25 fork build and the 2026-09-26 build).
+
 ### FIXED — live capture: `DomainCaptureSpec.layers` works on a bridge-attached spec
 
 A `layers` record resolved against `DomainCaptureSpec(opensees=ops)` read the
