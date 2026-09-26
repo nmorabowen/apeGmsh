@@ -4020,9 +4020,15 @@ all emit elements from this list.</p>
 <p><code>CentralDifferenceLadruno</code>, <code>CentralDifferenceSMS</code>, <code>ExplicitBathe</code>,
 <code>ExplicitBatheLNVD</code>, <code>ExplicitBatheLNVDSMS</code>, <code>ExplicitBatheSMS</code>,
 <code>LadrunoArcLength</code>, <code>LadrunoDynamicRelaxation</code>,
-<code>LadrunoGeneralizedAlpha</code>, <code>LadrunoHHT</code>, <code>LadrunoIndirectControl</code></p>
+<code>LadrunoGeneralizedAlpha</code>, <code>LadrunoHHT</code>, <code>LadrunoIndirectControl</code>,
+<code>LadrunoLoadControl</code></p>
 <!-- /capability-map:integrators -->
 
+<p><code>LadrunoLoadControl</code> also needs a <em>recent</em> fork build (2026-08-04; its
+default <code>-tangentPredictor</code> 2026-09-04). An older fork build accepts the
+unknown integrator and keeps the previous one, so the in-process run checks
+for the fork's <code>ladrunoLoadControl</code> command and then confirms the predictor
+was armed — an older build is refused, not run as stock <code>LoadControl</code>.</p>
 <p>Stock schemes — <code>Newmark</code>, <code>HHT</code>, <code>CentralDifference</code>,
 <code>ExplicitDifference</code>, <code>LoadControl</code>, <code>DisplacementControl</code>, <code>ArcLength</code> —
 are unaffected and run on any build.</p>

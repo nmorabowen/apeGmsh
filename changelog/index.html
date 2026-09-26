@@ -3572,10 +3572,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" class="md-nav__link">
+  <a href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ADDED — 2-D finite strain reaches the bridge: ops.nDMaterial.LogStrain2D + geom= on the plane elements
+        ADDED — ops.integrator.LadrunoLoadControl — the fork's sp load-control integrator, -tangentPredictor on by default
       
     </span>
   </a>
@@ -3583,10 +3583,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
+  <a href="#fixed-layeredshellfibersection-now-emits-section-layeredshell-the-old-line-parsed-nowhere-and-layered-sections-need-at-least-3-layers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FIXED — partitioned reactions are summed across part files, not taken from rank 0 (PARTITION_REDUCTION)
+        FIXED — LayeredShellFiberSection now emits section LayeredShell (the old line parsed nowhere), and layered sections need at least 3 layers
       
     </span>
   </a>
@@ -3594,10 +3594,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there" class="md-nav__link">
+  <a href="#added-shell-layer-nd-materials-opsndmaterialplaterebar-platefromplanestress-planestressrebar" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there
+        ADDED — shell-layer nD materials: ops.nDMaterial.PlateRebar, PlateFromPlaneStress, PlaneStressRebar
       
     </span>
   </a>
@@ -3656,10 +3656,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" class="md-nav__link">
+  <a href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ADDED — 2-D finite strain reaches the bridge: ops.nDMaterial.LogStrain2D + geom= on the plane elements
+        ADDED — ops.integrator.LadrunoLoadControl — the fork's sp load-control integrator, -tangentPredictor on by default
       
     </span>
   </a>
@@ -3667,10 +3667,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
+  <a href="#fixed-layeredshellfibersection-now-emits-section-layeredshell-the-old-line-parsed-nowhere-and-layered-sections-need-at-least-3-layers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FIXED — partitioned reactions are summed across part files, not taken from rank 0 (PARTITION_REDUCTION)
+        FIXED — LayeredShellFiberSection now emits section LayeredShell (the old line parsed nowhere), and layered sections need at least 3 layers
       
     </span>
   </a>
@@ -3678,10 +3678,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed-the-changelog-entry-anchor-is-back-at-the-top-of-unreleased-and-a-test-keeps-it-there" class="md-nav__link">
+  <a href="#added-shell-layer-nd-materials-opsndmaterialplaterebar-platefromplanestress-planestressrebar" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there
+        ADDED — shell-layer nD materials: ops.nDMaterial.PlateRebar, PlateFromPlaneStress, PlaneStressRebar
       
     </span>
   </a>
@@ -3727,6 +3727,86 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default">ADDED — <code>ops.integrator.LadrunoLoadControl</code> — the fork's <code>sp</code> load-control integrator, <code>-tangentPredictor</code> on by default<a class="headerlink" href="#added-opsintegratorladrunoloadcontrol-the-forks-sp-load-control-integrator-tangentpredictor-on-by-default" title="Permanent link">&para;</a></h3>
+<p>The fork's ADR-80 superset of stock <code>LoadControl</code> (<code>INTEGRATOR_TAG</code> 33015, a
+<code>StaticIntegrator</code>): <code>dlam [num_iter min_lam max_lam]</code> exactly as
+<code>LoadControl</code>, plus <code>tangent_predictor: bool = True</code> (<code>-tangentPredictor</code>) and
+<code>extrapolate: float | None = None</code> (<code>-extrapolate frac</code>). The tangent predictor
+is the fix for non-homogeneous <code>sp</code> under <code>constraints Transformation</code>: it forms
+the prescribed-motion forcing as <code>-K·Δu_D</code> on the committed state, and passed
+the fork's gate (cutbacks 23 → 0, iterations 224 → 12). <code>-extrapolate</code> FAILED
+its gate (cutbacks 23 → 23) and stays off; the two refuse to compose, so both
+set raises <code>ValueError</code>. The default is on because <code>sp</code> displacement
+protocols are meant to run under it; <code>tangent_predictor=False</code> with no
+<code>extrapolate</code> is stock <code>LoadControl</code>. <code>num_iter</code> without a bracket is emitted
+with <code>(dlam, dlam)</code> — the fork reads the three only together.</p>
+<p>The in-process run is gated twice. Like every fork integrator it refuses a
+stock build. It also refuses a fork build that predates it (2026-08-04):
+such a build prints <code>unknown integrator type</code> and keeps the previous
+integrator (probed on a 2026-06-25 fork build). The check is the
+<code>ladrunoLoadControl</code> runtime command, which shipped in the same fork commit.
+After the integrator is set, <code>ladrunoLoadControl tangentPredictor</code> confirms
+the predictor is armed, because builds from before 2026-09-04 ignore the flag
+and run stock <code>LoadControl</code>. Re-issuing the integrator builds a new object,
+which is harmless for the stateless tangent route but resets <code>-extrapolate</code>.
+The docstring shows how to resize an in-process march with
+<code>live.ladrunoLoadControl('setDeltaLambda', v)</code> instead. No new bridge verb was
+added: the substep driver covers only <code>DisplacementControl</code>.</p>
+<h3 id="fixed-layeredshellfibersection-now-emits-section-layeredshell-the-old-line-parsed-nowhere-and-layered-sections-need-at-least-3-layers">FIXED — <code>LayeredShellFiberSection</code> now emits <code>section LayeredShell</code> (the old line parsed nowhere), and layered sections need at least 3 layers<a class="headerlink" href="#fixed-layeredshellfibersection-now-emits-section-layeredshell-the-old-line-parsed-nowhere-and-layered-sections-need-at-least-3-layers" title="Permanent link">&para;</a></h3>
+<p>OpenSees has one layered-shell class, the C++ <code>LayeredShellFiberSection</code>, and
+registers it only under the keyword <code>LayeredShell</code>. This holds in the classic
+Tcl interpreter, the Python interpreter and the newer runtime. The
+<code>LayeredShellFiberSection</code> primitive emitted <code>section LayeredShellFiberSection
+...</code>, which every build rejected with <code>section type LayeredShellFiberSection is
+unknown</code>. So a deck using it never ran; only the <code>LayeredShell</code> primitive
+worked. Both primitives now emit the same <code>section LayeredShell</code> line. The
+class name is kept, so scripts don't change, and no deprecation is needed,
+because the old output never worked. The results side already accepted both
+tokens. A model archived to H5 before this fix still carries the old token,
+and a deck rebuilt from that archive with <code>OpenSeesModel.build</code> still won't
+parse. Re-emit it from the script instead. A live regression test builds the
+section on the local fork build.</p>
+<p><code>LayeredShell</code> and <code>LayeredShellFiberSection</code> now refuse fewer than 3 layers
+with <code>ValueError</code> (<code>MIN_SHELL_LAYERS</code>). Before, one layer was enough to pass
+validation, and the C++ parser then failed with "number of layers must be
+larger than 2". <strong>Breaking</strong> only for code that built a 1- or 2-layer section,
+and such a section never ran. Split a layer (e.g. top and bottom cover) to
+reach the minimum.</p>
+<h3 id="added-shell-layer-nd-materials-opsndmaterialplaterebar-platefromplanestress-planestressrebar">ADDED — shell-layer nD materials: <code>ops.nDMaterial.PlateRebar</code>, <code>PlateFromPlaneStress</code>, <code>PlaneStressRebar</code><a class="headerlink" href="#added-shell-layer-nd-materials-opsndmaterialplaterebar-platefromplanestress-planestressrebar" title="Permanent link">&para;</a></h3>
+<p>Three stock OpenSees helpers, so a layered RC shell can carry smeared steel
+in a chosen direction and a plane-stress concrete law. Keywords and argument
+order were checked against the fork source.</p>
+<ul>
+<li><code>PlateRebar(material=&lt;uniaxial&gt;, angle=&lt;deg&gt;)</code> emits
+  <code>nDMaterial PlateRebar $tag $uniTag $angle</code>. The angle is in degrees from
+  the shell local x axis.</li>
+<li><code>PlateFromPlaneStress(material=&lt;nD&gt;, G_out=&lt;float&gt;)</code> emits
+  <code>nDMaterial PlateFromPlaneStress $tag $psTag $G_out</code>. <code>G_out</code> is the
+  transverse shear modulus and must be <code>&gt; 0</code>.</li>
+<li><code>PlaneStressRebar(material=&lt;uniaxial&gt;, angle=&lt;deg&gt;)</code> emits
+  <code>nDMaterial PlaneStressRebarMaterial $tag $uniTag $angle</code>. It works in
+  classic Tcl only: openseespy (stock and the fork) does not register the
+  keyword.</li>
+</ul>
+<p><code>PlateRebar</code> and <code>PlateFromPlaneStress</code> are PlateFiber materials (order 5),
+so they are valid <code>ShellLayer</code>s. <code>PlaneStressRebar</code> is a plane-stress
+material (order 3) and is not. <code>LayeredShellFiberSection</code> calls <code>exit(-1)</code>
+on a layer that has no PlateFiber copy, so <code>ShellLayer</code> now refuses a
+<code>PlaneStressRebar</code> with <code>TypeError</code>. <code>PlateFromPlaneStress</code> refuses to wrap
+the two PlateFiber-only materials, whose null plane-stress copy OpenSees
+would dereference. Each wrapper returns its inner material from
+<code>dependencies()</code>, so the inner is always emitted first. A live test runs
+one <code>ASDShellQ4</code> with a four-layer section (concrete, two <code>PlateRebar</code>s,
+concrete) against the closed-form axial stiffness.</p>
+<p>The <code>PlateRebar</code> angle is measured in the section frame that <code>ASDShellQ4</code>
+hands its layers, and that frame depends on the build. Before upstream PR</p>
+<h1 id="1606-merged-2025-05-16-which-includes-pypi-openseespy-371x-the">1606 (merged 2025-05-16), which includes PyPI openseespy 3.7.1.x, the<a class="headerlink" href="#1606-merged-2025-05-16-which-includes-pypi-openseespy-371x-the" title="Permanent link">&para;</a></h1>
+<p>default-orientation branch hid its <code>e1</code> behind a second declaration. That
+turned the section frame +90 deg from the element's local x axis. So 0 and
+90 deg swap between those builds and the fork, and the live test asserts the
+unordered pair of stiffnesses. <code>ASDShellQ4(local_cs=)</code> cannot pin the frame
+to work around this, because it emits <code>-localCS</code>, a flag ASDShellQ4 ignores
+without an error.</p>
 <h3 id="added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements">ADDED — 2-D finite strain reaches the bridge: <code>ops.nDMaterial.LogStrain2D</code> + <code>geom=</code> on the plane elements<a class="headerlink" href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>LogStrain2D</code> (ND_TAG 33016) is the fork's <strong>only</strong>
