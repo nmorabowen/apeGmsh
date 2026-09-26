@@ -401,7 +401,7 @@ class H5Model:
         return self._group_attrs_map("elements")
 
     def analysis(self) -> dict[str, Any] | None:
-        a = self._f.get("opensees/analysis")
+        a = (self._f["opensees/analysis"] if "opensees/analysis" in self._f else None)
         if a is None:
             return None
         return _attrs_as_dict(a)
@@ -490,8 +490,8 @@ class H5Model:
         """
         import numpy as np
 
-        transforms_grp = self._f.get("opensees/transforms")
-        meta_grp = self._f.get("opensees/element_meta")
+        transforms_grp = (self._f["opensees/transforms"] if "opensees/transforms" in self._f else None)
+        meta_grp = (self._f["opensees/element_meta"] if "opensees/element_meta" in self._f else None)
         if transforms_grp is None or meta_grp is None:
             return {}
 
@@ -1448,7 +1448,7 @@ class H5Model:
 
         ``ids`` is a 1-D int64 array; ``coords`` is ``(N, 3)`` float64.
         """
-        g = self._neutral.get("nodes")
+        g = (self._neutral["nodes"] if "nodes" in self._neutral else None)
         if g is None:
             return {}
         return {
@@ -1499,7 +1499,7 @@ class H5Model:
         ``payload`` rows from :mod:`apeGmsh.mesh._record_h5`).  Empty
         dict if no ``/constraints`` group is present.
         """
-        g = self._neutral.get("constraints")
+        g = (self._neutral["constraints"] if "constraints" in self._neutral else None)
         if g is None:
             return {}
         return {kind: g[kind][:] for kind in g}
@@ -1511,7 +1511,7 @@ class H5Model:
         a per-pattern dict of compound arrays.  Empty dict if no
         ``/loads`` group is present.
         """
-        g = self._neutral.get("loads")
+        g = (self._neutral["loads"] if "loads" in self._neutral else None)
         if g is None:
             return {}
         out: dict[str, dict[str, Any]] = {}
@@ -1522,7 +1522,7 @@ class H5Model:
 
     def masses(self) -> Any:
         """Return the ``/masses`` compound array, or ``None`` if absent."""
-        ds = self._neutral.get("masses")
+        ds = (self._neutral["masses"] if "masses" in self._neutral else None)
         if ds is None:
             return None
         return ds[:]
@@ -1900,7 +1900,7 @@ class H5Model:
 
     def _validate_materials_naming(self) -> list[str]:
         out: list[str] = []
-        materials = self._f.get("opensees/materials")
+        materials = (self._f["opensees/materials"] if "opensees/materials" in self._f else None)
         if materials is None:
             return out
         for family in materials:
@@ -1918,12 +1918,12 @@ class H5Model:
 
     def _validate_section_refs(self) -> list[str]:
         out: list[str] = []
-        sections = self._f.get("opensees/sections")
+        sections = (self._f["opensees/sections"] if "opensees/sections" in self._f else None)
         if sections is None:
             return out
         for name in sections:
             sec = sections[name]
-            patches = sec.get("patches")
+            patches = (sec["patches"] if "patches" in sec else None)
             if patches is not None:
                 for row in patches[:]:
                     ref = _decode_bytes(row["material_ref"])
@@ -1932,7 +1932,7 @@ class H5Model:
                             f"/opensees/sections/{name}/patches: material_ref "
                             f"{ref!r} not found in file"
                         )
-            fibers = sec.get("fibers")
+            fibers = (sec["fibers"] if "fibers" in sec else None)
             if fibers is not None:
                 for row in fibers[:]:
                     ref = _decode_bytes(row["material_ref"])
@@ -1945,7 +1945,7 @@ class H5Model:
 
     def _validate_pattern_refs(self) -> list[str]:
         out: list[str] = []
-        patterns = self._f.get("opensees/patterns")
+        patterns = (self._f["opensees/patterns"] if "opensees/patterns" in self._f else None)
         if patterns is None:
             return out
         for name in patterns:

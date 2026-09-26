@@ -22,47 +22,85 @@ HOST_SCHEMA = 1
 # cannot query; INVALID_PARAMETER for a non-existent PID.
 _ERROR_ACCESS_DENIED = 5
 _ERROR_INVALID_PARAMETER = 87
+# GetExitCodeProcess reports STILL_ACTIVE until the process exits.
+_STILL_ACTIVE = 259
+# Largest value either platform treats as a PID (a Windows DWORD; POSIX
+# pid_t is narrower still). A bigger number came from a corrupt file, and
+# ctypes would silently wrap it onto an unrelated PID.
+_PID_MAX = 0xFFFFFFFF
+
+_kernel32: Any = None
+
+
+def _win_kernel32() -> Any:
+    """A private ``kernel32`` loaded with ``use_last_error=True``.
+
+    Not ``ctypes.windll.kernel32``: that object is shared by the whole
+    process, so its ``argtypes`` are not ours to set, and a raw
+    ``GetLastError`` call can read an error left by ctypes' own
+    intervening calls instead of the one ``OpenProcess`` set.
+    """
+    global _kernel32
+    if _kernel32 is None:
+        import ctypes
+        from ctypes import wintypes
+
+        lib = ctypes.WinDLL(  # type: ignore[attr-defined]
+            "kernel32", use_last_error=True
+        )
+        lib.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        lib.OpenProcess.restype = wintypes.HANDLE
+        lib.GetExitCodeProcess.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        lib.GetExitCodeProcess.restype = wintypes.BOOL
+        lib.CloseHandle.argtypes = [wintypes.HANDLE]
+        lib.CloseHandle.restype = wintypes.BOOL
+        _kernel32 = lib
+    return _kernel32
 
 
 def pid_alive(pid: int) -> bool:
     """True if *pid* appears to be a live process."""
-    if pid <= 0:
+    if pid <= 0 or pid > _PID_MAX:
         return False
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        kernel32.OpenProcess.argtypes = [
-            wintypes.DWORD,
-            wintypes.BOOL,
-            wintypes.DWORD,
-        ]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.GetLastError.restype = wintypes.DWORD
-
+        kernel32 = _win_kernel32()
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        kernel32.SetLastError(0)
         handle = kernel32.OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
         )
-        if handle:
+        if not handle:
+            err = ctypes.get_last_error()  # type: ignore[attr-defined]
+            if err == _ERROR_ACCESS_DENIED:
+                return True
+            # INVALID_PARAMETER (87) and friends → treat as dead.
+            return False
+        # An exited process whose handle someone still holds (a parent's
+        # ``Popen``) can still be opened, so the exit code decides. One
+        # that exited with code 259 (STILL_ACTIVE) still reads as alive.
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == _STILL_ACTIVE
+        finally:
             kernel32.CloseHandle(handle)
-            return True
-        err = int(kernel32.GetLastError())
-        if err == _ERROR_ACCESS_DENIED:
-            return True
-        # INVALID_PARAMETER (87) and friends → treat as dead.
-        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, OverflowError):
         return False
     return True
 

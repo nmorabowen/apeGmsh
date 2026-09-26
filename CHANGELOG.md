@@ -112,6 +112,47 @@
   `eps_fc` / `gc_legacy` build and run. `-flowPotential` is emit-tested only
   (newer than the tested build).
 
+### FIXED — HDF5 readers probe optional children with `name in group`, not `Group.get("...")`
+
+On the manylinux HDF5 build, `Group.get(name)` on a missing name can raise a
+random `UnicodeDecodeError` instead of returning `None` — green on Windows,
+intermittently red on Linux (PR #261). The MPCO readers were swept and
+guarded long ago; 26 probes in nine other readers were not: the `model.h5`
+reader (`opensees/emitter/h5_reader.py`, 12), the `.ladruno` and MPCO FEMData
+and results readers, the cuts I/O and session, compose, and the viewers'
+open-file paths. Each is now `group[name] if name in group else None` — the
+same value, checked without opening a missing object.
+`tests/test_results_mpco_get_hazard.py` extends its AST guard to the seven
+of those files where every literal `.get` was a child probe; the two larger
+readers also make dict `attrs.get(...)` reads, so they are fixed but not
+guarded by that heuristic.
+
+### FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan
+
+`scripts/check_quirks.py` read every file with `read_text("utf-8")`. A file
+starting with a UTF-8 byte-order mark then failed to parse and was skipped
+silently, so no rule saw it; a file in another encoding raised
+`UnicodeDecodeError` and aborted the whole scan. Files are now decoded with
+`tokenize.detect_encoding` (BOM and `# -*- coding: -*-` cookies honoured);
+one that still cannot be decoded is skipped like a `SyntaxError`, and the
+scan continues. Found by the adversarial review of the agent-surface port
+(`internal_docs/plan_agent_surface.md`, "Follow-up"); three new cases in
+`tests/test_check_quirks.py`.
+
+### FIXED — Studio `pid_alive` on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one
+
+`apeGmsh.studio._host_state.pid_alive` (used by `read_host`, `clear_host` and
+the busy lock) returned True whenever `OpenProcess` succeeded. A process that
+has exited can still be opened while anyone holds its handle, a parent's
+`Popen` included, so a crashed host or busy-lock owner could still read as
+alive. It now reads `GetExitCodeProcess` and requires `STILL_ACTIVE`. PIDs
+above `0xFFFFFFFF` read as dead: ctypes wrapped them modulo `2**32`, so
+`2**32 + os.getpid()` probed this process and read alive. The probe now loads
+its own `kernel32` with `use_last_error=True` and reads the error through
+`ctypes.get_last_error()`. It no longer sets `argtypes` on the process-wide
+`ctypes.windll.kernel32` or calls `GetLastError` raw. Tests:
+`tests/studio/test_pid_alive.py`.
+
 ### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
 
 The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a

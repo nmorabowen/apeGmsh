@@ -73,7 +73,7 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
 
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
-    elements_grp = group.get("ELEMENTS")
+    elements_grp = (group["ELEMENTS"] if "ELEMENTS" in group else None)
     if elements_grp is not None:
         for grp_name in elements_grp:
             parsed = _parse_element_name(grp_name)
@@ -108,7 +108,7 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
 
     # Physical groups from ladruno SETS (MODEL/SETS/SET_<tag>).
     pg_dict: dict[tuple[int, int], dict] = {}
-    sets_grp = group.get("SETS")
+    sets_grp = (group["SETS"] if "SETS" in group else None)
     if sets_grp is not None:
         node_id_to_idx = {int(n): i for i, n in enumerate(node_ids)}
         for tag_idx, set_name in enumerate(sets_grp.keys()):

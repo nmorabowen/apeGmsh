@@ -168,11 +168,11 @@ def _model_element_tags(results: "Results") -> Optional[frozenset[int]]:
         import h5py
         tags = set()
         with h5py.File(str(path), "r") as f:
-            meta = f.get("opensees/element_meta")
+            meta = (f["opensees/element_meta"] if "opensees/element_meta" in f else None)
             if meta is None:
                 return None
             for token in meta:
-                ids = meta[token].get("ids")
+                ids = (meta[token]["ids"] if "ids" in meta[token] else None)
                 if ids is None:
                     continue
                 tags.update(int(t) for t in ids[...].ravel())

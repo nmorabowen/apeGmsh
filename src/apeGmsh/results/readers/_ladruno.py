@@ -149,7 +149,7 @@ class LadrunoReader:
     # -- identity / lifecycle ------------------------------------------
 
     def _validate_identity(self) -> None:
-        info = self._h5.get("INFO")
+        info = (self._h5["INFO"] if "INFO" in self._h5 else None)
         if info is None or "GENERATOR" not in info.attrs:
             raise ValueError(
                 f"{self._path} is not a Ladruno file: missing INFO/GENERATOR. "
@@ -297,7 +297,7 @@ class LadrunoReader:
         # Use the last stage's MODEL (most up-to-date geometry).
         last_id = f"stage_{len(self._stage_to_grp) - 1}"
         grp = self._h5[self._stage_to_grp[last_id]]
-        model_grp = grp.get("MODEL")
+        model_grp = (grp["MODEL"] if "MODEL" in grp else None)
         if model_grp is None:
             self._fem_cache = None
             return None
@@ -354,7 +354,7 @@ class LadrunoReader:
         )
 
     def _spatial_dim(self) -> int:
-        info = self._h5.get("INFO")
+        info = (self._h5["INFO"] if "INFO" in self._h5 else None)
         if info is not None and "SPATIAL_DIM" in info.attrs:
             return _attr_int(info.attrs, "SPATIAL_DIM", default=3)
         return 3

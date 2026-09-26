@@ -152,6 +152,38 @@ def test_no_literal_group_get_in_mpco_readers() -> None:
     )
 
 
+_SRC = Path(__file__).resolve().parents[1] / "src" / "apeGmsh"
+
+#: Other h5py readers whose only string-literal ``.get`` calls were child
+#: probes (all converted to ``name in group``), so the same heuristic is
+#: noise-free on them. ``opensees/emitter/h5_reader.py`` and
+#: ``mesh/_compose.py`` were converted too but also make many dict
+#: ``attrs.get("...")`` reads, so this heuristic cannot guard them.
+_OTHER_H5_READERS = (
+    "cuts/_h5_io.py",
+    "mesh/_femdata_ladruno_io.py",
+    "mesh/_femdata_mpco_io.py",
+    "results/readers/_ladruno.py",
+    "results/session/_cuts.py",
+    "viewers/__main__.py",
+    "viewers/ui/_open_results.py",
+)
+
+
+def test_no_literal_group_get_in_other_h5_readers() -> None:
+    all_offences: list[str] = []
+    for rel in _OTHER_H5_READERS:
+        path = _SRC / rel
+        assert path.is_file(), f"{rel} moved: update _OTHER_H5_READERS"
+        for ln, why in _literal_group_get_offences(path.read_text(encoding="utf-8"), str(path)):
+            all_offences.append(f"  {rel}:{ln}  {why}")
+    assert not all_offences, (
+        "Probe optional HDF5 children with `name in group`, then index; "
+        "`Group.get(\"...\")` on a missing name raised a random UnicodeDecodeError "
+        "on manylinux HDF5 (PR #261). Offences:\n" + "\n".join(all_offences)
+    )
+
+
 def test_positive_control_catches_literal_group_get() -> None:
     src = 'x = grp.get("RESULTS/ON_NODES")\n'
     assert _literal_group_get_offences(src, "<test>")
