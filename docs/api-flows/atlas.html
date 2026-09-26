@@ -9893,8 +9893,8 @@
    "id": "apeSees.element.ASDShellT3",
    "label": "ASDShellT3",
    "composite": "os.elements",
-   "signature": "ASDShellT3(*, pg, section, corotational=False, drilling_dof=None, local_cs=None) -> ASDShellT3",
-   "summary": "3-node ASD shell over a PG with optional corotational/drillingDOF/local flags (element ASDShellT3); auto-registered.",
+   "signature": "ASDShellT3(*, pg, section, corotational=False, drilling_nl=False, drilling_dof=None, local_cs=None) -> ASDShellT3",
+   "summary": "3-node ASD shell over a PG with optional corotational/drillingNL/local flags (element ASDShellT3); auto-registered.",
    "file": "src/apeGmsh/opensees/element/shell.py:248",
    "flow": [
     {
@@ -9916,7 +9916,7 @@
      "to": "external"
     }
    ],
-   "inputs": "pg:str, section:Section, corotational, drilling_dof, local_cs:3-tuple|None",
+   "inputs": "pg:str, section:Section, corotational, drilling_nl, local_cs:3-tuple|None",
    "outputs": "ASDShellT3 (Element)",
    "reads": [
     "fem.elements",

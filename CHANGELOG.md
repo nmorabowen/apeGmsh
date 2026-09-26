@@ -14,131 +14,103 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### ADDED — `LadrunoConcrete3D(tension_law=, eps_fc=, gc_legacy=, flow_potential=)` — the fork's new CDPM2 flags
+### ADDED — live capture of layers / dual damage / truss force; `ops.equation_constraint`; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)
 
-`tension_law="bilinear"|"exp"` (`-tensionLaw`), `eps_fc=` (`-epsFc`, a raw
-CDPM2 compressive softening strain that bypasses `Gc`), `gc_legacy=True`
-(`-gcLegacy`, the old `eps_fc = Gc/(fc·lch)` reading) and
-`flow_potential="cdpm2"|"legacy"` (`-flowPotential`) on the primitive and
-`ops.nDMaterial.LadrunoConcrete3D`. Each defaults to `None` / `False` and then
-emits nothing, so the build's default applies. `eps_fc` and `gc_legacy` are
-exclusive; unknown law / potential names raise. The build floors follow the
-repo's documented-not-enforced convention: `LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD
-= "1334d1e24"` (first three flags; the same commit made the bilinear law and
-`Gc`-as-energy the defaults) and `LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD =
-"916576661"`. An older parser refuses the tokens (`unknown option`), so the
-deck fails loud there. Fork-only live test, which skips on a build without
-`-tensionLaw`: one `LadrunoBrick` past its tensile peak carries a different
-residual stress under the two laws, and `eps_fc` / `gc_legacy` build and run
-(passed on the 2026-09-26 build; `-flowPotential` is newer than that build,
-so it is emit-tested only).
+**Capture and read-back**
 
-### FIXED — `ASDShellQ4(local_cs=)` emits `-local x y z`; `drilling_nt_alpha` replaced by `drilling_stab` / `drilling_nl` — BREAKING
+- **D1a — `DomainCaptureSpec.layers` works on a bridge-attached spec.** The
+  layer metadata lookup read the legacy `g.opensees` registries
+  (`_sections` / `_elem_assignments`), which `apeSees` does not have, so a
+  bridge-attached `layers` record always resolved to "no metadata" and was
+  refused. It now walks the bridge's `Element` primitives whose `section` is a
+  `LayeredShell` / `LayeredShellFiberSection`, fans each `pg` out with the
+  emitter's `expand_pg_to_elements`, and takes section and layer-material tags
+  from `apeSees.tag_for`. The dead legacy walk and its helpers are removed. The
+  layer capturer also takes the fem↔ops element-tag translator now: a shell's
+  `fem_eid` sits after gmsh's point and line elements, so querying it as an ops
+  tag skipped the element even with metadata present. Live test: one
+  `ASDShellQ4` with concrete (`PlateFromPlaneStress`) and two `PlateRebar`
+  layers under in-plane shear, read back with `Results.from_native`.
+- **D1b — dual concrete damage (`damage_tension` / `damage_compression`).**
+  `ASDConcrete3D` (`damage` → `[d+, d-]`) and `LadrunoConcrete3D` (`damage` /
+  `omega` → `[omega_t, omega_c]`) answer a two-value material response, tension
+  first, and none of `Brick` / `LadrunoBrick` / `FourNodeQuad` / `LadrunoQuad`
+  has an element-level `damage` branch (`eleResponse(eid, "damage")` is empty,
+  measured). `RESPONSE_CATALOG` gains a `damage` layout for those four classes;
+  the pair routes to it; the live gauss capturer reads material-only tokens
+  (`PER_MATERIAL_TOKENS`, `needs_per_material_query`) per Gauss point through
+  `material <gp> damage`; the `.ladruno` reader maps a two-column
+  `material.damage` / `material.omega` bucket by position. Another `damage`
+  width fails the size check rather than being mis-decoded. Fork-only live
+  test: one `LadrunoBrick` of `LadrunoConcrete3D` past its tensile peak, live
+  capture and `.ladruno` both checked against `eleResponse`.
+- **D1c — truss `axial_force` through `DomainCaptureSpec.gauss`.** It was
+  accepted only by `line_stations`, whose capturer knows beam sections alone and
+  drops a truss. The Truss family's `axialForce` is a one-point Gauss read
+  (already catalogued), so `gauss` accepts it and `where_does("axial_force")`
+  answers `("gauss", "line_stations")`. Live test on a one-element `Truss` /
+  `CorotTruss` whose `fem_eid` differs from its ops tag.
 
-`ASDShellQ4` and `ASDShellT3` emitted `-localCS x1 x2 x3 y1 y2 y3`, and
-`ASDShellQ4(drilling_nt_alpha=)` emitted `-drillingNT a`. Neither parser knows
-either token (`OPS_ASDShellQ4` / `OPS_ASDShellT3` take `-local` with three
-components, `-drillingStab v`, `-drillingNL`), and their option loops have no
-else branch, so both were read and discarded: every model ran on the default
-local frame and drilling stabilization. `local_cs` is now the local x axis
-`(x1, x2, x3)`, emitted as `-local`; the element projects it onto the shell
-plane and derives y from the normal. It is also the section frame of a layered
-section's layers, so it pins `PlateRebar` angles on any build (the explicit
-branch is correct on the fork and on old upstream alike). A 6-tuple, and
-`drilling_nt_alpha`, now raise with the replacement named rather than being
-converted: those scripts ran on the default frame, and switching them to the
-requested one without a word would change their answers. `ASDShellQ4` gains
-`drilling_stab` (`-drillingStab`, `[0, 1]`) and `drilling_nl` (`-drillingNL`),
-mutually exclusive like the parser. Live tests assert the effect, since an
-unknown flag is accepted silently: a 0 deg `PlateRebar` layer stiffens an X
-pull only when `local_cs=(1, 0, 0)` (exact to 1e-6 either way), and
-`drilling_stab=0.01` reproduces the default while `1.0` stiffens the drilling
-rotation.
+**Bridge primitives**
 
-### ADDED — `ASDConcrete3D(tangent="secant"|"numerical")` exposes the parser's `-tangent`
-
-`ASDConcrete3D` (raw constructor, `from_fc`, and `ops.nDMaterial.ASDConcrete3D`)
-takes `tangent=`. `"secant"` (default) is what the parser builds with no flag:
-the damaged secant stiffness. `"numerical"` emits the bare `-tangent` flag, a
-forward-difference tangent (`ASDConcrete3DMaterial::setTrialStrain`, one extra
-return map per strain component) — there is no analytical consistent tangent,
-so `"consistent"` is refused by name. The C++ ignores `-tangent` under IMPL-EX
-(`if (tangent && !implex)`: the IMPL-EX tangent is the secant), so
-`tangent="numerical"` with `implex=True` raises instead of doing nothing. The
-flag is in stock OpenSees too. Live test: one `stdBrick` pulled past its peak
-gives the same stress path under both, while the reported material tangent
-`C33` is positive (secant) and negative (numerical) on the softening branch.
-
-### ADDED — `ops.equation_constraint(...)`: hand-written `equationConstraint` rows
-
-`ops.equation_constraint(constrained=(node, dof), retained=[(node, dof, coef),
-...], coef=1.0)` declares one OpenSees `EQ_Constraint` row,
-`coef·u_c + Σ rcoef·u_r = 0`, on FEM node ids. It emits in the MP-constraint
-pass after the snapshot's constraints and follows the rules of an
-`enforce="equation"` tie (ADR 0068 INV-4) rather than those of `equalDOF`:
-`Transformation`, `Auto` and `Plain` drop `EQ_Constraint` without a word (the
-fork's `TransformationConstraintHandler` has no EQ path; `Lagrange`, `Penalty`
-and `LadrunoProjection` do), so with no declared handler the bridge
-auto-emits `Lagrange` (implicit) or `LadrunoProjection` (explicit), and a
-declared `Transformation` / `Auto` raises. Every handler guard (contact
-conflict, staged, modal deck) now keys on "any equation row" instead of "any
-equation tie". Declaration refuses a zero or non-finite coefficient, a DOF
-below 1, an empty retained set, and a constrained DOF that is also retained;
-emit refuses an unknown node or a DOF above the node's ndf. The in-process run
-needs the fork (the live emitter's existing `equationConstraint` gate), a
-partitioned emit refuses the rows, and `ops.h5(...)` warns
-(`H5FeatureDeferredWarning`) that they are not archived. Fork-only live test:
-two parallel bars tied by one row share the load exactly.
-
-### ADDED — dual concrete damage capture: `damage_tension` / `damage_compression` on Brick, LadrunoBrick, FourNodeQuad, LadrunoQuad
-
-`ASDConcrete3D` (`damage` -> `[d+, d-]`) and `LadrunoConcrete3D` (`damage` /
-`omega` -> `[omega_t, omega_c]`) both answer a two-value material response,
-tension first, but none of the four host elements has an element-level
-`damage` branch (`eleResponse(eid, "damage")` returns nothing, measured on
-`stdBrick` + `ASDConcrete3D`). `RESPONSE_CATALOG` gains a `damage` layout for
-`Brick` / `LadrunoBrick` (Hex_GL_2) and `FourNodeQuad` / `LadrunoQuad`
-(Quad_GL_2) with the existing `MATERIAL_STATE` pair as its components;
-`damage_tension` / `damage_compression` route to it; and the live gauss
-capturer reads a material-only token (`PER_MATERIAL_TOKENS`, new
-`needs_per_material_query`) per Gauss point through `eleResponse(eid,
-"material", gp, "damage")`. The `.ladruno` reader maps a two-column
-`material.damage` / `material.omega` bucket by position onto the same pair
-(ASDConcrete3D labels them `d+`, `d-`; LadrunoConcrete3D writes `C1, C2`). A
-host material with another `damage` width fails the capture's size check
-instead of being mis-decoded. Fork-only live test: one `LadrunoBrick` of
-`LadrunoConcrete3D` pulled past its tensile peak, both routes checked against
-`eleResponse` (installed 2026-06-25 fork build and the 2026-09-26 build).
-
-### FIXED — live capture: `DomainCaptureSpec.layers` works on a bridge-attached spec
-
-A `layers` record resolved against `DomainCaptureSpec(opensees=ops)` read the
-legacy `g.opensees` registries (`_sections` / `_elem_assignments`), which the
-`apeSees` bridge does not have, so it always resolved to "no layered-section
-metadata" and `_LayerCapturer` refused it. The lookup now walks the bridge's
-`Element` primitives whose `section` is a `LayeredShell` /
-`LayeredShellFiberSection`, fans each `pg` out with the emitter's own
-`expand_pg_to_elements`, and takes the section and layer-material tags from
-`apeSees.tag_for` (the tags the emitted `section LayeredShell` line carries).
-The dead legacy walk and its helpers are removed. The layer capturer also
-now takes the fem↔ops element-tag translator like the other capturers: a
-shell's `fem_eid` sits after gmsh's point and line elements, so querying
-`ops.eleType(fem_eid)` found no element (it was skipped even with the
-metadata present). Live test: one `ASDShellQ4` with concrete
-(`PlateFromPlaneStress`) and two `PlateRebar` layers under in-plane shear,
-read back with `Results.from_native`.
-
-### FIXED — live capture: truss `axial_force` through `DomainCaptureSpec.gauss`
-
-`DomainCaptureSpec.gauss(components="axial_force")` raised "not valid for
-category 'gauss'", and `line_stations` (the only category that accepted the
-name) drops a truss with "no line-stations capture path", so a truss force
-could not be captured live at all. `axial_force` is the truss scalar at the
-Gauss level (`ops.eleResponse(eid, "axialForce")`, one value at the Truss
-family's `Line_GL_1` point, already in `RESPONSE_CATALOG`), so `gauss` now
-accepts it and `where_does("axial_force")` answers `("gauss",
-"line_stations")`. Live test on a one-element `Truss` / `CorotTruss`, whose
-`fem_eid` (3) differs from its ops tag (1).
+- **D2a — `ops.equation_constraint(constrained=(node, dof), retained=[(node,
+  dof, coef), ...], coef=1.0)`.** One OpenSees `EQ_Constraint` row,
+  `coef·u_c + Σ rcoef·u_r = 0`, on FEM node ids, emitted in the MP-constraint
+  pass. It follows the `enforce="equation"` tie rules (ADR 0068 INV-4), not
+  `equalDOF`'s: `Transformation` / `Auto` / `Plain` drop `EQ_Constraint`
+  silently (the fork's Transformation handler has no EQ path), so with no
+  declared handler the bridge auto-emits `Lagrange` (implicit) or
+  `LadrunoProjection` (explicit), and a declared `Transformation` / `Auto`
+  raises. Every handler guard (contact conflict, staged, modal deck) now keys
+  on "any equation row". Declaration refuses zero / non-finite coefficients,
+  DOFs below 1, an empty retained set and a constrained DOF that is also
+  retained; emit refuses an unknown node or a DOF above the node's ndf. The
+  in-process run needs the fork (the live emitter's `equationConstraint`
+  gate), a partitioned emit refuses the rows, and `ops.h5(...)` warns
+  (`H5FeatureDeferredWarning`) that they are not archived. Fork-only live test:
+  two parallel bars tied by one row share the load exactly.
+- **D2b — `ASDConcrete3D(tangent="secant"|"numerical")`.** `"secant"`
+  (default) is the parser's no-flag damaged secant; `"numerical"` emits the
+  bare `-tangent` flag, a forward-difference tangent. There is no analytical
+  consistent tangent, so `"consistent"` is refused; `"numerical"` with
+  `implex=True` raises because the C++ ignores `-tangent` under IMPL-EX. Stock
+  OpenSees has the flag too. Live test: same stress path, but the reported
+  material tangent `C33` is positive (secant) vs negative (numerical) past the
+  peak.
+- **D2c — ASD shells: `local_cs` emits `-local x y z`; drilling options fixed
+  — BREAKING.** `ASDShellQ4` / `ASDShellT3` emitted `-localCS` (six values),
+  `ASDShellQ4(drilling_nt_alpha=)` emitted `-drillingNT`, and
+  `ASDShellT3(drilling_dof=)` emitted `-drillingDOF`. None of these is an option
+  of `OPS_ASDShellQ4` / `OPS_ASDShellT3` (which take `-local` with three
+  components, `-drillingStab v` / `-drillingNL` on Q4, `-drillingNL` on T3),
+  and the option loops have no else branch, so all were read and discarded.
+  `local_cs` is now the local x axis `(x1, x2, x3)`; the element projects it
+  onto the shell plane and derives y. It is also the frame of a layered
+  section's layers, so it pins `PlateRebar` angles on any build. A 6-tuple,
+  `drilling_nt_alpha` and `drilling_dof` now raise naming the replacement
+  rather than being converted, since those scripts ran on the defaults.
+  `ASDShellQ4` gains `drilling_stab` (`-drillingStab`, `[0, 1]`) and
+  `drilling_nl` (`-drillingNL`), mutually exclusive; `ASDShellT3` gains
+  `drilling_nl`. Live tests assert the effect, because an unknown flag is
+  accepted silently: a 0 deg `PlateRebar` layer stiffens an X pull only when
+  `local_cs=(1, 0, 0)` (exact to 1e-6), and `drilling_stab=0.01` reproduces
+  the default while `1.0` stiffens the drilling rotation. (`ASDShellT3`'s
+  `-drillingNL` shows no effect on a linear-elastic section, so it is
+  emit-tested only.)
+- **D2d — `LadrunoConcrete3D(tension_law=, eps_fc=, gc_legacy=,
+  flow_potential=)`.** `-tensionLaw bilinear|exp`, `-epsFc` (raw CDPM2
+  compressive softening strain, bypassing `Gc`), `-gcLegacy` (the old
+  `eps_fc = Gc/(fc·lch)` reading) and `-flowPotential cdpm2|legacy`, on the
+  primitive and `ops.nDMaterial.LadrunoConcrete3D`. `None` / `False` emits
+  nothing (build default); `eps_fc` and `gc_legacy` are exclusive. Build floors
+  follow the documented-not-enforced convention:
+  `LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD = "1334d1e24"` (the first three;
+  the same commit made bilinear and `Gc`-as-energy the defaults) and
+  `LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD = "916576661"`; older parsers
+  refuse the tokens (`unknown option`). Fork-only live test, skipped on builds
+  without `-tensionLaw`: the two laws give different post-peak stress, and
+  `eps_fc` / `gc_legacy` build and run. `-flowPotential` is emit-tested only
+  (newer than the tested build).
 
 ### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
 

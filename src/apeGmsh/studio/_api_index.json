@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T15:20:55Z",
+  "generated": "2026-09-26T22:01:16Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -2854,7 +2854,7 @@
     },
     "ops.element.ASDShellT3": {
       "symbol": "ops.element.ASDShellT3",
-      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
+      "signature": "ASDShellT3(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_nl: 'bool' = False, drilling_dof: 'int | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellT3'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },

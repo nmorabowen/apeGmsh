@@ -438,6 +438,7 @@ class TestASDShellT3Construction:
         assert ele.pg == "Tri"
         assert ele.section is s
         assert ele.corotational is False
+        assert ele.drilling_nl is False
         assert ele.drilling_dof is None
         assert ele.local_cs is None
 
@@ -447,11 +448,11 @@ class TestASDShellT3Construction:
             pg="Tri",
             section=s,
             corotational=True,
-            drilling_dof=6,
+            drilling_nl=True,
             local_cs=(1.0, 0.0, 0.0),
         )
         assert ele.corotational is True
-        assert ele.drilling_dof == 6
+        assert ele.drilling_nl is True
         assert ele.local_cs == (1.0, 0.0, 0.0)
 
 
@@ -500,16 +501,20 @@ class TestASDShellT3Emit:
             )
         ]
 
-    def test_emit_with_drilling_dof(self) -> None:
+    def test_drilling_dof_is_refused(self) -> None:
+        # '-drillingDOF' is not an ASDShellT3 option; it was ignored.
+        with pytest.raises(ValueError, match="drilling_nl"):
+            ASDShellT3(pg="Tri", section=_section(), drilling_dof=6)
+
+    def test_emit_with_drilling_nl(self) -> None:
         s = _section()
-        ele = ASDShellT3(pg="Tri", section=s, drilling_dof=6)
+        ele = ASDShellT3(pg="Tri", section=s, drilling_nl=True)
         e = _prepare_emitter(s, sec_tag=5, nodes=(51, 52, 53))
         ele._emit(e, tag=22)
         assert e.calls == [
             (
                 "element",
-                ("ASDShellT3", 22, 51, 52, 53, 5,
-                 "-drillingDOF", 6),
+                ("ASDShellT3", 22, 51, 52, 53, 5, "-drillingNL"),
                 {},
             )
         ]
@@ -534,7 +539,7 @@ class TestASDShellT3Emit:
             pg="Tri",
             section=s,
             corotational=True,
-            drilling_dof=6,
+            drilling_nl=True,
             local_cs=(1.0, 0.0, 0.0),
         )
         e = _prepare_emitter(s, sec_tag=5, nodes=(51, 52, 53))
@@ -544,7 +549,7 @@ class TestASDShellT3Emit:
                 "element",
                 ("ASDShellT3", 22, 51, 52, 53, 5,
                  "-corotational",
-                 "-drillingDOF", 6,
+                 "-drillingNL",
                  "-local", 1.0, 0.0, 0.0),
                 {},
             )

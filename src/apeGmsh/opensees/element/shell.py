@@ -322,9 +322,9 @@ class ASDShellT3(Element):
     """``element ASDShellT3`` — 3-node ASD shell.
 
     Phase 2γ scope ships the canonical positional arguments plus the
-    three most-used optional flags: ``-corotational``, ``-drillingDOF
-    dof_id``, and ``-local x1 x2 x3``. Other ASDShell* flags are
-    deferred — see the Phase 2γ report.
+    Optional flags, as ``OPS_ASDShellT3`` parses them: ``-corotational``,
+    ``-drillingNL`` and ``-local $x1 $x2 $x3``. ``-reducedIntegration`` is
+    not exposed.
 
     Parameters
     ----------
@@ -335,8 +335,13 @@ class ASDShellT3(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    drilling_nl
+        Append ``-drillingNL`` (nonlinear drilling DOF treatment).
     drilling_dof
-        If supplied, append ``-drillingDOF <dof_id>``.
+        **Refused.** It emitted ``-drillingDOF <dof_id>``, which ASDShellT3
+        does not parse (the token and its value fell through unread). The
+        drilling DOF is always the element's sixth; use ``drilling_nl`` for
+        the only drilling option the parser has.
     local_cs
         The local x axis ``(x1, x2, x3)``, emitted as ``-local x1 x2 x3``
         (the parser has no ``-localCS``; see ``ASDShellQ4``).
@@ -345,6 +350,7 @@ class ASDShellT3(Element):
     pg: str
     section: Section
     corotational: bool = False
+    drilling_nl: bool = False
     drilling_dof: int | None = None
     local_cs: tuple[float, ...] | None = None
     damp: Damping | None = None
@@ -352,6 +358,13 @@ class ASDShellT3(Element):
     def __post_init__(self) -> None:
         if self.local_cs is not None:
             _check_local_cs("ASDShellT3", self.local_cs)
+        if self.drilling_dof is not None:
+            raise ValueError(
+                "ASDShellT3: drilling_dof emitted '-drillingDOF', which the "
+                "element does not parse; it was silently ignored. The only "
+                "drilling option ASDShellT3 has is drilling_nl=True "
+                "('-drillingNL')."
+            )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -363,9 +376,8 @@ class ASDShellT3(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
-        if self.drilling_dof is not None:
-            args.append("-drillingDOF")
-            args.append(self.drilling_dof)
+        if self.drilling_nl:
+            args.append("-drillingNL")
         if self.local_cs is not None:
             args.append("-local")
             args.extend(float(c) for c in self.local_cs)
