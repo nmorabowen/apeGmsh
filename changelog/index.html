@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — 2-D finite strain reaches the bridge: ops.nDMaterial.LogStrain2D + geom= on the plane elements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3645,6 +3656,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — 2-D finite strain reaches the bridge: ops.nDMaterial.LogStrain2D + geom= on the plane elements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3705,6 +3727,42 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements">ADDED — 2-D finite strain reaches the bridge: <code>ops.nDMaterial.LogStrain2D</code> + <code>geom=</code> on the plane elements<a class="headerlink" href="#added-2-d-finite-strain-reaches-the-bridge-opsndmateriallogstrain2d-geom-on-the-plane-elements" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>LogStrain2D</code> (ND_TAG 33016) is the fork's <strong>only</strong>
+  <code>FiniteStrainND2DMaterial</code>, so it is the single gate on the entire
+  <code>Ladruno*(geom="finite")</code> plane lane — those elements drive the material by
+  <code>setTrialF</code> and reject anything else, including the 3-D <code>LogStrain</code> lift
+  apeGmsh already modelled. It now has a typed class and a namespace method,
+  shaped like <code>LogStrain</code> plus the <code>-planeStrain|-planeStress</code> flag (the
+  inner is still a 3-D order-6 material; the default plane view is elided).</li>
+<li>The material alone was not enough: all four fork plane elements parse
+  <code>-geom</code>, and apeGmsh exposed it on none of them until now. <code>LadrunoQuad</code>
+  and <code>LadrunoCST</code> gain <code>geom="linear"|"finite"</code> (<code>LadrunoLST</code> got it with
+  the second-order work). <code>LadrunoCSTPair</code> is still not modelled at all —
+  out of scope here.</li>
+<li>The three plane elements share one guard, <code>_check_plane_geom</code>, mirroring
+  the two parse-time rejects every fork factory applies: <code>geom="finite"</code> is
+  <strong>PlaneStrain only</strong> (the finite volume weight <code>dv = J·detJ₀·t·w</code> holds the
+  thickness fixed and so omits the out-of-plane stretch <code>λ = F₃₃</code>; under
+  plane strain <code>λ ≡ 1</code> and the weight is exact — ADR 70), and a
+  finite-strain material under a linear kernel is refused rather than left
+  to integrate zero stress. <code>LadrunoQuad</code> adds the fork's third rule:
+  <code>geom="finite"</code> runs on <code>std</code>/<code>bbar</code> only, the single-point <code>ssp</code>/<code>eas</code>
+  finite lanes being reserved.</li>
+<li><code>LogStrain2D(plane_type="PlaneStress")</code> is exposed but unreachable from any
+  fork plane element today — the restriction lives on the elements, not the
+  material, so the wrapper does not pretend otherwise.</li>
+<li>Closes the gap left open by the second-order work:
+  <code>LadrunoLST(geom="finite")</code> is no longer emit-only, and the live test's
+  self-clearing skip is gone. <code>tests/opensees/integration_ladruno/test_plane_finite_strain_live.py</code>
+  solves <code>LadrunoQuad</code> / <code>LadrunoCST</code> / <code>LadrunoLST</code> in <strong>both</strong> kinematic
+  regimes on the fork, and pins that the 3-D and 2-D lifts are not
+  interchangeable — which is the whole reason <code>LogStrain2D</code> exists.</li>
+<li>Recovered from #858, which merged on 2026-07-25 into a stacked base branch
+  (<code>claude/apegmsh-facet-extractor-bug-e37f5c</code>) instead of <code>main</code>, so none of
+  this reached <code>main</code> until now.</li>
+</ul>
 <h3 id="fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction">FIXED — partitioned reactions are summed across part files, not taken from rank 0 (<code>PARTITION_REDUCTION</code>)<a class="headerlink" href="#fixed-partitioned-reactions-are-summed-across-part-files-not-taken-from-rank-0-partition_reduction" title="Permanent link">&para;</a></h3>
 <p>Under OpenSeesMP, each rank writes its own <code>.part-N.ladruno</code> or
 <code>.part-N.mpco</code>. A node on a partition interface appears in several of
