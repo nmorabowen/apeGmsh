@@ -1547,6 +1547,100 @@ class TestLadrunoCST:
 
 
 # ===========================================================================
+# geom="finite" — the axis shared by LadrunoQuad / LadrunoCST / LadrunoLST
+# ===========================================================================
+#
+# All three fork factories apply the same two parse-time rejects, so
+# apeGmsh raises at construction: finite is PlaneStrain only (the finite
+# volume weight omits the thickness stretch, ADR 70), and a finite-strain
+# material under a linear kernel would integrate zero stress.
+
+_PLANE_ELEMS = [
+    ("LadrunoQuad", LadrunoQuad),
+    ("LadrunoCST", LadrunoCST),
+    ("LadrunoLST", LadrunoLST),
+]
+
+
+class TestPlaneGeomAxis:
+    @pytest.mark.parametrize("name, cls", _PLANE_ELEMS, ids=[n for n, _ in _PLANE_ELEMS])
+    def test_defaults_to_linear(self, name, cls) -> None:
+        e = cls(pg="Plate", material=_make_material(), thickness=1.0)
+        assert e.geom == "linear"
+
+    @pytest.mark.parametrize("name, cls", _PLANE_ELEMS, ids=[n for n, _ in _PLANE_ELEMS])
+    def test_rejects_corot(self, name, cls) -> None:
+        """The 2-D family has no corot kernel (unlike the solids)."""
+        with pytest.raises(ValueError, match="geom must be one of"):
+            cls(
+                pg="Plate", material=_make_material(), thickness=1.0,
+                geom="corot",
+            )
+
+    @pytest.mark.parametrize("name, cls", _PLANE_ELEMS, ids=[n for n, _ in _PLANE_ELEMS])
+    def test_finite_is_plane_strain_only(self, name, cls) -> None:
+        with pytest.raises(ValueError, match="PlaneStrain only"):
+            cls(
+                pg="Plate", material=_make_material(), thickness=1.0,
+                geom="finite", plane_type="PlaneStress",
+            )
+
+    @pytest.mark.parametrize("name, cls", _PLANE_ELEMS, ids=[n for n, _ in _PLANE_ELEMS])
+    def test_linear_kernel_refuses_a_finite_material(self, name, cls) -> None:
+        fake = MagicMock(name="LogStrain2D", is_finite_strain=True)
+        with pytest.raises(ValueError, match="finite-strain material"):
+            cls(pg="Plate", material=fake, thickness=1.0)
+
+    @pytest.mark.parametrize("name, cls", _PLANE_ELEMS, ids=[n for n, _ in _PLANE_ELEMS])
+    def test_finite_kernel_accepts_a_finite_material(self, name, cls) -> None:
+        fake = MagicMock(name="LogStrain2D", is_finite_strain=True)
+        e = cls(pg="Plate", material=fake, thickness=1.0, geom="finite")
+        assert e.geom == "finite"
+
+    def test_quad_finite_needs_std_or_bbar(self) -> None:
+        """ssp / eas single-point finite lanes are reserved (ADR 70)."""
+        with pytest.raises(ValueError, match="only formulation='std' or 'bbar'"):
+            LadrunoQuad(
+                pg="Plate", material=_make_material(), thickness=1.0,
+                geom="finite", formulation="ssp",
+            )
+
+    @pytest.mark.parametrize("formulation", ["std", "bbar"])
+    def test_quad_finite_accepts_std_and_bbar(self, formulation: str) -> None:
+        e = LadrunoQuad(
+            pg="Plate", material=_make_material(), thickness=1.0,
+            geom="finite", formulation=formulation,
+        )
+        assert e.geom == "finite"
+
+    def test_quad_emit_places_geom_after_type(self) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(
+            pg="Plate", material=m, thickness=0.3, geom="finite",
+        )
+        nodes = tuple(range(1, 5))
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoQuad", 1, *nodes, 2, "-geom", "finite", "-thick", 0.3),
+            {},
+        )]
+
+    def test_cst_emit_places_geom_after_type(self) -> None:
+        m = _make_material()
+        elem = LadrunoCST(
+            pg="Plate", material=m, thickness=0.3, geom="finite",
+        )
+        nodes = (1, 2, 3)
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoCST", 1, *nodes, 2, "-geom", "finite", "-thick", 0.3),
+            {},
+        )]
+
+
+# ===========================================================================
 # LadrunoLST
 # ===========================================================================
 
