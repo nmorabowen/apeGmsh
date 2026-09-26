@@ -117,6 +117,38 @@ def test_entry_anchor_comment_present() -> None:
     )
 
 
+def test_entry_anchor_is_top_of_unreleased() -> None:
+    """The anchor is the first thing under the ``## Unreleased`` header,
+    and there is exactly one.
+
+    "Directly below the anchor" and "the top of Unreleased" are the same
+    place only while nothing sits between the header and the anchor. One
+    section inserted above it (#974, 2026-08-15) split them; 32 more
+    followed, the anchor sank to line 868, and PRs landed on both sides.
+    Two anchors is the union-merge signature of a stale branch that
+    inserted at an old anchor position.
+    """
+    lines = _changelog_lines()
+    anchors = [
+        i for i, ln in enumerate(lines)
+        if "NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT" in ln
+    ]
+    assert len(anchors) == 1, (
+        f"CHANGELOG.md has {len(anchors)} entry-anchor comments at lines "
+        f"{[i + 1 for i in anchors]} (expected exactly 1, directly under "
+        f"the '## Unreleased' header). Keep that one, delete the others."
+    )
+    header = next(
+        i for i, ln in enumerate(lines) if ln.startswith("## Unreleased")
+    )
+    first = next(i for i in range(header + 1, len(lines)) if lines[i].strip())
+    assert first == anchors[0], (
+        f"CHANGELOG.md line {first + 1} sits between the '## Unreleased' "
+        f"header and the entry anchor (line {anchors[0] + 1}). New "
+        f"sections go directly BELOW the anchor; move this one there."
+    )
+
+
 def test_no_merge_conflict_markers() -> None:
     """Belt-and-braces: no conflict markers committed.
 
