@@ -122,10 +122,15 @@ _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
     # "stresses"/"strains")`` per element, decoded by the class's
     # catalog layout — so they belong to ``gauss``, not a category of
     # their own. ``von_mises_shell`` rides in via ``DERIVED_SCALARS``.
+    # ``axial_force`` is the truss scalar: the Truss family answers
+    # ``ops.eleResponse(eid, "axialForce")`` with one value at its single
+    # Line_GL_1 point (``RESPONSE_CATALOG``), so it is a gauss read too —
+    # the ``line_stations`` route only knows beam-column sections and
+    # drops a truss with a "no line-stations capture path" warning.
     "gauss": frozenset(
         STRESS + STRAIN + PLASTIC_STRAIN
         + SHELL_STRESS_RESULTANTS + SHELL_GENERALIZED_STRAINS
-        + DERIVED_SCALARS + MATERIAL_STATE
+        + DERIVED_SCALARS + MATERIAL_STATE + ("axial_force",)
     ),
     "fibers": frozenset(FIBER + MATERIAL_STATE),
     "layers": frozenset(FIBER + MATERIAL_STATE),

@@ -14,6 +14,18 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — live capture: truss `axial_force` through `DomainCaptureSpec.gauss`
+
+`DomainCaptureSpec.gauss(components="axial_force")` raised "not valid for
+category 'gauss'", and `line_stations` (the only category that accepted the
+name) drops a truss with "no line-stations capture path", so a truss force
+could not be captured live at all. `axial_force` is the truss scalar at the
+Gauss level (`ops.eleResponse(eid, "axialForce")`, one value at the Truss
+family's `Line_GL_1` point, already in `RESPONSE_CATALOG`), so `gauss` now
+accepts it and `where_does("axial_force")` answers `("gauss",
+"line_stations")`. Live test on a one-element `Truss` / `CorotTruss`, whose
+`fem_eid` (3) differs from its ops tag (1).
+
 ### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
 
 The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a

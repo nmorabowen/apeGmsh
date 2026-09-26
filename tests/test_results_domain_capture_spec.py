@@ -137,8 +137,10 @@ class TestIntrospection:
         assert DomainCaptureSpec.shorthands_for("modal") == {}
 
     def test_where_does_routes_line_diagram(self) -> None:
+        # ``axial_force`` is also the truss scalar, read at the gauss
+        # level (``ops.eleResponse(eid, "axialForce")``).
         assert DomainCaptureSpec.where_does("axial_force") == (
-            "line_stations",
+            "gauss", "line_stations",
         )
         assert DomainCaptureSpec.where_does("bending_moment_y") == (
             "line_stations",
