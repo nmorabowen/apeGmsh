@@ -62,12 +62,12 @@ def _make_minimal(cls: type[Section]) -> Section:
     if cls is LayeredShell:
         m = _fake_nd()
         return LayeredShell(
-            layers=(ShellLayer(material=m, thickness=0.1),)
+            layers=(ShellLayer(material=m, thickness=0.1),) * 3
         )
     if cls is LayeredShellFiberSection:
         m = _fake_nd()
         return LayeredShellFiberSection(
-            layers=(ShellLayer(material=m, thickness=0.1),)
+            layers=(ShellLayer(material=m, thickness=0.1),) * 3
         )
     if cls is Fiber:
         m = _fake_uniaxial()
