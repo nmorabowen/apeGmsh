@@ -20,7 +20,7 @@ layout under ``SRC/analysis/``:
   DisplacementControl, ArcLength, Newmark, HHT, CentralDifference,
   ExplicitDifference; fork-only ExplicitBathe, ExplicitBatheLNVD,
   CentralDifferenceLadruno, LadrunoArcLength, LadrunoDynamicRelaxation,
-  LadrunoIndirectControl)
+  LadrunoIndirectControl, LadrunoLoadControl)
 * :mod:`.analysis`            — ``analysis <Type>`` (Static, Transient,
   VariableTransient)
 
@@ -85,6 +85,7 @@ from .integrator import (
     LadrunoGeneralizedAlpha,
     LadrunoHHT,
     LadrunoIndirectControl,
+    LadrunoLoadControl,
     LoadControl,
     Newmark,
 )
@@ -170,6 +171,7 @@ __all__ = [
     "LadrunoArcLength",
     "LadrunoDynamicRelaxation",
     "LadrunoIndirectControl",
+    "LadrunoLoadControl",
     "LadrunoHHT",
     "LadrunoGeneralizedAlpha",
     "CentralDifferenceSMS",

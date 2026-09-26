@@ -66,6 +66,7 @@ from ...analysis.integrator import (
     LadrunoGeneralizedAlpha,
     LadrunoHHT,
     LadrunoIndirectControl,
+    LadrunoLoadControl,
     LoadControl,
     Lump,
     MassMode,
@@ -931,6 +932,67 @@ class _IntegratorNS(_BridgeNamespace):
                 num_iter=num_iter,
                 dmin=dmin,
                 dmax=dmax,
+            )
+        )
+
+    def LadrunoLoadControl(
+        self,
+        *,
+        dlam: float,
+        num_iter: int | None = None,
+        min_lam: float | None = None,
+        max_lam: float | None = None,
+        tangent_predictor: bool = True,
+        extrapolate: float | None = None,
+    ) -> LadrunoLoadControl:
+        """``integrator LadrunoLoadControl dlam ...`` — **fork-only**; ``sp`` protocols.
+
+        ``dlam [numIter minLam maxLam] [-extrapolate frac]
+        [-tangentPredictor]``: stock ``LoadControl`` plus the fork's
+        ADR-80 predictors for non-homogeneous ``sp`` (prescribed
+        displacement) under ``constraints Transformation``. ``tangent_predictor=True`` (the
+        default) emits ``-tangentPredictor``: iteration 1 takes the
+        prescribed-motion forcing as ``-K·Δu_D`` on the committed state,
+        which removes the driven layer's spurious overstrain (gate:
+        cutbacks 23 → 0). ``extrapolate`` (``-extrapolate frac``) FAILED
+        its gate and is off by default; it does not compose with
+        ``tangent_predictor`` (``ValueError`` if both are set).
+        ``tangent_predictor=False`` with no ``extrapolate`` is stock
+        ``LoadControl``.
+
+        The ``sp`` displacement-protocol idiom — the load factor is the
+        protocol's pseudo-time, the ``sp`` value is a unit amplitude::
+
+            ops.constraints.Transformation()
+            series = ops.timeSeries.Path(time=t, values=u)   # protocol
+            with ops.pattern.Plain(series=series) as p:
+                p.sp(node=ctrl, dof=1, value=1.0)
+            ops.integrator.LadrunoLoadControl(dlam=dt)
+
+        **Re-issuing the integrator constructs a new object.** The
+        tangent predictor is stateless and survives that, but
+        ``-extrapolate`` loses its history and goes inert. To resize the
+        increment of an adaptive in-process march without re-issuing,
+        drive the fork's runtime command on the live module
+        (``live = LiveOpsEmitter(...).ops``):
+        ``live.ladrunoLoadControl('setDeltaLambda', v)`` (also
+        ``'deltaLambda'``, ``'extrapolate'``, ``'armed'``,
+        ``'tangentPredictor'``, ``'tangentPredicts'``). It is registered
+        for openseespy, not for ``OpenSees.exe``.
+
+        The in-process run needs a fork build carrying the integrator
+        (``-tangentPredictor`` landed 2026-09-04); an older build is
+        refused rather than silently keeping the previous integrator.
+        See :class:`apeGmsh.opensees.analysis.integrator.LadrunoLoadControl`.
+        """
+        return self._bridge._register(
+            LadrunoLoadControl(
+                dlam=dlam,
+                num_iter=num_iter,
+                min_lam=min_lam,
+                max_lam=max_lam,
+                tangent_predictor=tangent_predictor,
+                extrapolate=extrapolate,
             )
         )
 

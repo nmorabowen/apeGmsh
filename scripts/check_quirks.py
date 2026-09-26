@@ -321,8 +321,20 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
 }
 
 
+def _read_source(path: Path) -> str | None:
+    """Decode a source file the way Python does (BOM, coding cookie); None if it can't be."""
+    data = path.read_bytes()
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+        return data.decode(encoding)
+    except (SyntaxError, UnicodeDecodeError, LookupError):
+        return None
+
+
 def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
-    text = path.read_text(encoding="utf-8")
+    text = _read_source(path)
+    if text is None:
+        return []  # not valid Python source; like a SyntaxError, ruff and pytest will say so
     lowered = text.lower()
     if rel.startswith("tests/") and "schema_version" not in lowered and "apegmsh-lint" not in lowered:
         return []  # nothing a rule reads here; skipping the parse keeps the scan fast

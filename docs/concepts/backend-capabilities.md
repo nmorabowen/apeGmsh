@@ -95,8 +95,15 @@ all emit elements from this list.
 `CentralDifferenceLadruno`, `CentralDifferenceSMS`, `ExplicitBathe`,
 `ExplicitBatheLNVD`, `ExplicitBatheLNVDSMS`, `ExplicitBatheSMS`,
 `LadrunoArcLength`, `LadrunoDynamicRelaxation`,
-`LadrunoGeneralizedAlpha`, `LadrunoHHT`, `LadrunoIndirectControl`
+`LadrunoGeneralizedAlpha`, `LadrunoHHT`, `LadrunoIndirectControl`,
+`LadrunoLoadControl`
 <!-- /capability-map:integrators -->
+
+`LadrunoLoadControl` also needs a *recent* fork build (2026-08-04; its
+default `-tangentPredictor` 2026-09-04). An older fork build accepts the
+unknown integrator and keeps the previous one, so the in-process run checks
+for the fork's `ladrunoLoadControl` command and then confirms the predictor
+was armed — an older build is refused, not run as stock `LoadControl`.
 
 Stock schemes — `Newmark`, `HHT`, `CentralDifference`,
 `ExplicitDifference`, `LoadControl`, `DisplacementControl`, `ArcLength` —

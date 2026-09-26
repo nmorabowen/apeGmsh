@@ -17,6 +17,7 @@ import pytest
 from apeGmsh.opensees._internal.types import NDMaterial, Primitive
 from apeGmsh.opensees.emitter.base import Emitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.section._tag_resolver import set_tag_resolver
 from apeGmsh.opensees.section.plate import (
     SHELL_MODIFIER_FLAGS,
@@ -24,6 +25,7 @@ from apeGmsh.opensees.section.plate import (
     LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
+    MIN_SHELL_LAYERS,
     ShellLayer,
     ShellModifierNonlinearInnerWarning,
 )
@@ -183,11 +185,6 @@ class TestShellLayer:
 # ===========================================================================
 
 class TestLayeredShellConstruction:
-    def test_construct_with_one_layer(self) -> None:
-        m = _FakeND(name="A")
-        s = LayeredShell(layers=(ShellLayer(material=m, thickness=0.1),))
-        assert len(s.layers) == 1
-
     def test_construct_with_multiple_layers(self) -> None:
         a, b = _FakeND(name="A"), _FakeND(name="B")
         s = LayeredShell(
@@ -199,11 +196,16 @@ class TestLayeredShellConstruction:
         )
         assert len(s.layers) == 3
 
-    def test_no_layers_rejected(self) -> None:
+    @pytest.mark.parametrize("cls", [LayeredShell, LayeredShellFiberSection])
+    @pytest.mark.parametrize("n", [0, 1, 2])
+    def test_fewer_than_three_layers_rejected(self, cls, n: int) -> None:
+        # OPS_LayeredShellFiberSection: "number of layers must be larger
+        # than 2". Refuse at construction instead of at the solver.
+        layers = (ShellLayer(material=_FakeND(name="A"), thickness=0.1),) * n
         with pytest.raises(
-            ValueError, match="at least one ShellLayer is required"
+            ValueError, match=rf"at least {MIN_SHELL_LAYERS} ShellLayers, got {n}",
         ):
-            LayeredShell(layers=())
+            cls(layers=layers)
 
 
 class TestLayeredShellDependencies:
@@ -226,6 +228,7 @@ class TestLayeredShellEmit:
             layers=(
                 ShellLayer(material=a, thickness=0.05),
                 ShellLayer(material=b, thickness=0.10),
+                ShellLayer(material=a, thickness=0.05),
             )
         )
         e = RecordingEmitter()
@@ -236,9 +239,10 @@ class TestLayeredShellEmit:
             (
                 "section",
                 ("LayeredShell", 7,
-                 2,                 # nLayers
+                 3,                 # nLayers
                  11, 0.05,          # layer 1: matTag, thickness
-                 22, 0.10),         # layer 2
+                 22, 0.10,          # layer 2
+                 11, 0.05),         # layer 3
                 {},
             )
         ]
@@ -246,7 +250,7 @@ class TestLayeredShellEmit:
     def test_emit_without_resolver_raises(self) -> None:
         m = _FakeND(name="A")
         s = LayeredShell(
-            layers=(ShellLayer(material=m, thickness=0.1),)
+            layers=(ShellLayer(material=m, thickness=0.1),) * 3
         )
         e = RecordingEmitter()
         with pytest.raises(RuntimeError, match="tag resolver"):
@@ -258,10 +262,13 @@ class TestLayeredShellEmit:
 # ===========================================================================
 
 class TestLayeredShellFiberSectionEmit:
-    def test_emit_uses_correct_type_token(self) -> None:
+    def test_emits_the_LayeredShell_keyword(self) -> None:
+        # OpenSees registers the C++ LayeredShellFiberSection only under
+        # "LayeredShell"; the old "LayeredShellFiberSection" token parsed
+        # nowhere.
         a = _FakeND(name="A")
         s = LayeredShellFiberSection(
-            layers=(ShellLayer(material=a, thickness=0.1),)
+            layers=(ShellLayer(material=a, thickness=0.1),) * 3
         )
         e = RecordingEmitter()
         set_tag_resolver(e, _resolver_from({id(a): 99}))
@@ -269,10 +276,26 @@ class TestLayeredShellFiberSectionEmit:
         assert e.calls == [
             (
                 "section",
-                ("LayeredShellFiberSection", 4, 1, 99, 0.1),
+                ("LayeredShell", 4, 3, 99, 0.1, 99, 0.1, 99, 0.1),
                 {},
             )
         ]
+
+    def test_emits_the_same_line_as_LayeredShell(self) -> None:
+        a, b = _FakeND(name="A"), _FakeND(name="B")
+        layers = (
+            ShellLayer(material=a, thickness=0.05),
+            ShellLayer(material=b, thickness=0.10),
+            ShellLayer(material=a, thickness=0.05),
+        )
+        lines = []
+        for cls in (LayeredShell, LayeredShellFiberSection):
+            e = TclEmitter()
+            set_tag_resolver(e, _resolver_from({id(a): 1, id(b): 2}))
+            cls(layers=layers)._emit(e, tag=5)
+            lines.append(e.lines())
+        assert lines[0] == lines[1]
+        assert "section LayeredShell 5 3 1 0.05 2 0.1 1 0.05" in lines[0]
 
     def test_dependencies_returns_materials(self) -> None:
         a, b = _FakeND(name="A"), _FakeND(name="B")
@@ -280,6 +303,7 @@ class TestLayeredShellFiberSectionEmit:
             layers=(
                 ShellLayer(material=a, thickness=0.1),
                 ShellLayer(material=b, thickness=0.2),
+                ShellLayer(material=a, thickness=0.1),
             )
         )
         assert s.dependencies() == (a, b)
@@ -287,7 +311,7 @@ class TestLayeredShellFiberSectionEmit:
     def test_empty_layers_rejected(self) -> None:
         with pytest.raises(
             ValueError,
-            match="at least one ShellLayer is required",
+            match=rf"at least {MIN_SHELL_LAYERS} ShellLayers, got 0",
         ):
             LayeredShellFiberSection(layers=())
 
@@ -410,7 +434,7 @@ class TestLadrunoShellModifierEmit:
         # — but a path-dependent inner is not the supported case.
         a = _FakeND(name="A")
         inner = LayeredShell(
-            layers=(ShellLayer(material=a, thickness=0.1),)
+            layers=(ShellLayer(material=a, thickness=0.1),) * 3
         )
         with pytest.warns(ShellModifierNonlinearInnerWarning):
             s = LadrunoShellModifier(inner=inner, f11=0.35)
@@ -434,7 +458,7 @@ class TestLadrunoShellModifierInnerIsElastic:
     @pytest.mark.parametrize("cls", [LayeredShell, LayeredShellFiberSection])
     def test_layered_inner_warns_and_names_the_type(self, cls) -> None:
         inner = cls(
-            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),)
+            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),) * 3
         )
         with pytest.warns(
             ShellModifierNonlinearInnerWarning, match=cls.__name__,
@@ -443,7 +467,7 @@ class TestLadrunoShellModifierInnerIsElastic:
 
     def test_warning_explains_the_scaled_strain(self) -> None:
         inner = LayeredShell(
-            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),)
+            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),) * 3
         )
         with pytest.warns(
             ShellModifierNonlinearInnerWarning, match=r"S\*e",
@@ -454,7 +478,7 @@ class TestLadrunoShellModifierInnerIsElastic:
         # The wrapper is a no-op numerically, but the modelling mistake
         # is the wrapping itself, so silence here would be misleading.
         inner = LayeredShell(
-            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),)
+            layers=(ShellLayer(material=_FakeND(name="A"), thickness=0.1),) * 3
         )
         with pytest.warns(ShellModifierNonlinearInnerWarning):
             LadrunoShellModifier(inner=inner)

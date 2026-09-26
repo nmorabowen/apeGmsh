@@ -315,7 +315,26 @@ vanishing silently.
 **Analysis cluster** (`analysis/integrator.py`, `ops.integrator.<Type>`):
 `LadrunoArcLength` (:612, adaptive Ramm arc-length + viscous stabilisation),
 `LadrunoDynamicRelaxation` (:773, matrix-free path-follower),
-`LadrunoIndirectControl` (:906, weighted multi-DOF displacement control).
+`LadrunoIndirectControl` (:906, weighted multi-DOF displacement control),
+`LadrunoLoadControl` (:1010, stock `LoadControl` + the ADR-80 `sp` predictors).
+
+**`sp` displacement protocols run under `LadrunoLoadControl`**
+(`tangent_predictor=True` is the default → `-tangentPredictor`): under
+`constraints Transformation` it forms the prescribed-motion forcing as
+`-K·Δu_D` on the committed state, removing the driven layer's spurious
+overstrain (fork gate: cutbacks 23 → 0). `extrapolate=` (`-extrapolate`)
+FAILED its gate — off by default, and it refuses to compose with the tangent
+predictor (`ValueError`). Re-issuing the integrator builds a new object;
+resize an in-process march with `live.ladrunoLoadControl('setDeltaLambda', v)`
+instead. The live run refuses a fork build that predates it (checks the
+`ladrunoLoadControl` command, then confirms `-tangentPredictor` took).
+
+```python
+ops.constraints.Transformation()
+with ops.pattern.Plain(series=ops.timeSeries.Path(time=t, values=u)) as p:
+    p.sp(node=ctrl, dof=1, value=1.0)   # unit amplitude; the series is the protocol
+ops.integrator.LadrunoLoadControl(dlam=dt)
+```
 
 **Selective Mass Scaling (SMS) explicit integrators** (`ops.integrator.<Type>`):
 `CentralDifferenceSMS` (:1166), `ExplicitBatheSMS` (:1235),
