@@ -463,6 +463,28 @@ class MPCOReader:
     # Slab reads — nodes
     # ------------------------------------------------------------------
 
+    def node_partition_reduction(
+        self, stage_id: str, component: str,
+    ) -> Optional[str]:
+        """How the partition copies of ``component`` combine.
+
+        ``.mpco`` carries no ``PARTITION_REDUCTION`` attribute, so the
+        kind comes from the result group name (reactions and unbalanced
+        loads sum; the rest is the same in every copy). ``None`` when the
+        file does not record the component.
+        """
+        self._ensure_stages()
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return None
+        on_nodes = _child(self._h5[mpco_name], "RESULTS/ON_NODES")
+        if on_nodes is None:
+            return None
+        loc = _locate_canonical_in_mpco(on_nodes, component)
+        if loc is None:
+            return None
+        return _mtr.partition_reduction_from_name(loc[0])
+
     def read_nodes(
         self,
         stage_id: str,

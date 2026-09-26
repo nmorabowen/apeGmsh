@@ -110,6 +110,34 @@ def canonical_node_component(
     return f"{mapping.canonical_prefix}_{axis}"
 
 
+# How the copies of a node on a partition interface combine when the
+# per-rank files of an OpenSeesMP run are stitched (Ladruno schema §7.1,
+# attribute ``PARTITION_REDUCTION`` on each result group; WP-126).
+PARTITION_REDUCTION_NONE = "NONE"                # every copy is the same
+PARTITION_REDUCTION_SUM = "SUM"                  # each copy is a partial
+PARTITION_REDUCTION_UNSUPPORTED = "UNSUPPORTED"  # partial, no sum recovers it
+PARTITION_REDUCTIONS = (
+    PARTITION_REDUCTION_NONE,
+    PARTITION_REDUCTION_SUM,
+    PARTITION_REDUCTION_UNSUPPORTED,
+)
+
+
+def partition_reduction_from_name(result_name: str) -> str:
+    """Reduction kind for a result group that carries no attribute.
+
+    The fallback for ``.ladruno`` files written before WP-126 and for
+    every ``.mpco``. Each rank computes nodal reactions and unbalanced
+    loads from its own elements only, so those are summed; everything
+    else (kinematics, pressure, tie force) is the same in every copy.
+    ``RAYLEIGH_*`` is the damping part of the reaction, a partial too.
+    """
+    name = result_name.upper()
+    if name.startswith(("REACTION", "UNBALANCED", "RAYLEIGH")):
+        return PARTITION_REDUCTION_SUM
+    return PARTITION_REDUCTION_NONE
+
+
 def component_axis(label: str) -> str | None:
     """Return the canonical axis suffix (``"x"``, ``"y"``, ``"z"``)
     inferred from a component label.

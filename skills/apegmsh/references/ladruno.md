@@ -591,7 +591,11 @@ names come from the file):
   this only for raw fork tokens the neutral views don't expose.
 
 Multi-partition runs (`<stem>.part-N.ladruno`) auto-discover siblings and merge
-(node-union + element-concat), like `from_mpco`. Higher-order / Bézier elements are
+(node-union + element-concat), like `from_mpco`. The node merge honours each result
+group's `PARTITION_REDUCTION` attribute (fork schema §7.1): `NONE` keeps one copy
+(kinematics), `SUM` adds the per-rank partials (reactions, unbalanced forces), and
+`UNSUPPORTED` is refused (partitioned `energy()` raises). Files without the attribute
+fall back to the result name: `REACTION*`/`UNBALANCED*` sum. Higher-order / Bézier elements are
 self-describing: GP world coords are reconstructed from the file's `BASIS` +
 `GP_PARAM` via the neutral `apeGmsh._basis` evaluator (shared with the Bézier read
 path), since a `.ladruno` from a Bézier element carries no `GLOBAL_GP_COORDS`.
