@@ -52,6 +52,33 @@ would dereference. Each wrapper returns its inner material from
 `dependencies()`, so the inner is always emitted first. A live test runs
 one `ASDShellQ4` with a four-layer section (concrete, two `PlateRebar`s,
 concrete) against the closed-form axial stiffness.
+### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
+
+The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a
+`StaticIntegrator`): `dlam [num_iter min_lam max_lam]` exactly as
+`LoadControl`, plus `tangent_predictor: bool = True` (`-tangentPredictor`) and
+`extrapolate: float | None = None` (`-extrapolate frac`). The tangent predictor
+is the fix for non-homogeneous `sp` under `constraints Transformation`: it forms
+the prescribed-motion forcing as `-K·Δu_D` on the committed state, and passed
+the fork's gate (cutbacks 23 → 0, iterations 224 → 12). `-extrapolate` FAILED
+its gate (cutbacks 23 → 23) and stays off; the two refuse to compose, so both
+set raises `ValueError`. The default is on because `sp` displacement
+protocols are meant to run under it; `tangent_predictor=False` with no
+`extrapolate` is stock `LoadControl`. `num_iter` without a bracket is emitted
+with `(dlam, dlam)` — the fork reads the three only together.
+
+The in-process run is gated twice. Like every fork integrator it refuses a
+stock build. It also refuses a fork build that predates it (2026-08-04):
+such a build prints `unknown integrator type` and keeps the previous
+integrator (probed on a 2026-06-25 fork build). The check is the
+`ladrunoLoadControl` runtime command, which shipped in the same fork commit.
+After the integrator is set, `ladrunoLoadControl tangentPredictor` confirms
+the predictor is armed, because builds from before 2026-09-04 ignore the flag
+and run stock `LoadControl`. Re-issuing the integrator builds a new object,
+which is harmless for the stateless tangent route but resets `-extrapolate`.
+The docstring shows how to resize an in-process march with
+`live.ladrunoLoadControl('setDeltaLambda', v)` instead. No new bridge verb was
+added: the substep driver covers only `DisplacementControl`.
 
 ### CHANGED — engine default can alter answers: `-flipAlphaIn init` (fork #849), the corrected SANISAND tangent (fork #847), and `LadrunoSANISAND.flip_alpha_in`
 

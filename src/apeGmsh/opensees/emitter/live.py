@@ -173,7 +173,7 @@ _FORK_ONLY_ELEMENTS = frozenset(
 _FORK_ONLY_INTEGRATORS = frozenset(
     {"ExplicitBathe", "ExplicitBatheLNVD", "CentralDifferenceLadruno",
      "LadrunoArcLength", "LadrunoDynamicRelaxation", "LadrunoIndirectControl",
-     "LadrunoHHT", "LadrunoGeneralizedAlpha",
+     "LadrunoLoadControl", "LadrunoHHT", "LadrunoGeneralizedAlpha",
      "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS"})
 
 
@@ -198,6 +198,24 @@ def _fork_integrator_required(i_type: str) -> str:
         f"deck in-process needs the fork. On a stock build use Newmark / "
         f"HHT / CentralDifference / ExplicitDifference instead."
     )
+
+
+#: ``LadrunoLoadControl`` postdates most fork builds (2026-08-04; its
+#: ``-tangentPredictor`` 2026-09-04), and a fork build that predates it
+#: behaves like stock: ``integrator`` warns and keeps the previous
+#: integrator (probed on a 2026-06-25 fork build). The runtime command
+#: ``ladrunoLoadControl`` shipped in the same commit as the integrator, so
+#: its presence is the build test; ``-tangentPredictor`` is then confirmed
+#: by the same command after the integrator is set (an S1-only build
+#: prints "unknown option ignored" and runs stock LoadControl).
+_LADRUNO_LOAD_CONTROL_REQUIRED = (
+    "integrator LadrunoLoadControl requires a Ladruno fork build that "
+    "carries it (fork ADR-80, 2026-08-04; -tangentPredictor since "
+    "2026-09-04). The live build is a fork without it, whose 'integrator' "
+    "command accepts the unknown type and keeps the previous integrator. "
+    "Deck emission via ops.tcl(...) / ops.py(...) works on any build; "
+    "rebuild the fork to run in-process."
+)
 
 
 #: Raised by :meth:`LiveOpsEmitter.equationConstraint` on a stock build.
@@ -785,6 +803,27 @@ class LiveOpsEmitter:
         if not hasattr(self._ops, "criticalTimeStep"):
             raise RuntimeError(message)
 
+    def _confirm_tangent_predictor(self) -> None:
+        """Raise unless the just-set LadrunoLoadControl armed the predictor.
+
+        A fork build from between the integrator (2026-08-04) and its
+        ``-tangentPredictor`` (2026-09-04) ignores the flag with a warning
+        and runs stock LoadControl; its ``ladrunoLoadControl`` command also
+        does not know the ``tangentPredictor`` query, so it errors.
+        """
+        try:
+            armed = float(self._ops.ladrunoLoadControl("tangentPredictor"))
+        except Exception:  # an older command rejects the query
+            armed = 0.0
+        if armed != 1.0:
+            raise RuntimeError(
+                "integrator LadrunoLoadControl -tangentPredictor was not "
+                "honoured by the live build: it predates the fork's ADR-80 "
+                "P3 (2026-09-04) and would run stock LoadControl. Rebuild "
+                "the fork, or pass tangent_predictor=False to run it as "
+                "stock LoadControl deliberately."
+            )
+
     # -- Time series --------------------------------------------------------
 
     def timeSeries(
@@ -867,7 +906,12 @@ class LiveOpsEmitter:
     def integrator(self, i_type: str, *args: int | float | str) -> None:
         if i_type in _FORK_ONLY_INTEGRATORS:
             self._stock_build_gate(_fork_integrator_required(i_type))
+        check_llc = i_type == "LadrunoLoadControl" and not self._in_partition
+        if check_llc and not hasattr(self._ops, "ladrunoLoadControl"):
+            raise RuntimeError(_LADRUNO_LOAD_CONTROL_REQUIRED)
         self._ops.integrator(i_type, *args)
+        if check_llc and "-tangentPredictor" in args:
+            self._confirm_tangent_predictor()
         # Remember the caller's integrator so :meth:`augment` can restore
         # it after the held-load sweep swaps in ``LoadControl 0.0``.
         # openseespy exposes no "what integrator is active?" query, so the

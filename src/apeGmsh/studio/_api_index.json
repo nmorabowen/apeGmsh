@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-19T01:16:32Z",
+  "generated": "2026-09-26T03:00:37Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -3199,6 +3199,12 @@
       "signature": "LadrunoIndirectControl(*, incr: 'float', controls: 'Sequence[tuple[int, int, float]]', num_iter: 'int | None' = None, dmin: 'float | None' = None, dmax: 'float | None' = None) -> 'LadrunoIndirectControl'",
       "skill": "references/opensees-bridge.md",
       "doc": "``integrator LadrunoIndirectControl incr -dof ...`` — **fork-only**."
+    },
+    "ops.integrator.LadrunoLoadControl": {
+      "symbol": "ops.integrator.LadrunoLoadControl",
+      "signature": "LadrunoLoadControl(*, dlam: 'float', num_iter: 'int | None' = None, min_lam: 'float | None' = None, max_lam: 'float | None' = None, tangent_predictor: 'bool' = True, extrapolate: 'float | None' = None) -> 'LadrunoLoadControl'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "``integrator LadrunoLoadControl dlam ...`` — **fork-only**; ``sp`` protocols."
     },
     "ops.integrator.LoadControl": {
       "symbol": "ops.integrator.LoadControl",

@@ -71,6 +71,7 @@ from apeGmsh.opensees.analysis.integrator import (
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
     LadrunoIndirectControl,
+    LadrunoLoadControl,
     LoadControl,
     Newmark,
 )
@@ -176,6 +177,7 @@ ALL_INTEGRATORS: list[type[Integrator]] = [
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
     LadrunoIndirectControl,
+    LadrunoLoadControl,
 ]
 
 ALL_ANALYSES: list[type[Analysis]] = [
@@ -257,6 +259,7 @@ _MINIMAL_PARAMS: dict[type[Primitive], dict[str, Any]] = {
     LadrunoArcLength: {"s": 1.0, "alpha": 0.5},
     LadrunoDynamicRelaxation: {},
     LadrunoIndirectControl: {"incr": 0.01, "controls": ((10, 1, 1.0),)},
+    LadrunoLoadControl: {"dlam": 0.1},
     # analysis
     Static: {},
     Transient: {},
