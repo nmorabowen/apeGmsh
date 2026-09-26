@@ -174,6 +174,47 @@ class TestEmit:
         assert "-autoRegularization" not in args
 
 
+class TestTangent:
+    def test_default_is_the_secant_no_flag(self) -> None:
+        m = ASDConcrete3D.from_fc(E=E, v=V, fc=FC, lch_ref=50.0)
+        assert m.tangent == "secant"
+        em = RecordingEmitter()
+        m._emit(em, tag=1)
+        (_, args, _), = em.calls
+        assert "-tangent" not in args
+
+    def test_numerical_emits_the_bare_flag(self) -> None:
+        m = ASDConcrete3D.from_fc(
+            E=E, v=V, fc=FC, lch_ref=50.0, tangent="numerical",
+        )
+        em = RecordingEmitter()
+        m._emit(em, tag=1)
+        (_, args, _), = em.calls
+        assert args.count("-tangent") == 1
+        # A bare flag: the next token is the next option, not a value.
+        nxt = args[args.index("-tangent") + 1]
+        assert nxt == "-autoRegularization"
+
+    @pytest.mark.parametrize("bad", ["consistent", "Secant", "", "tangent"])
+    def test_unknown_mode_is_refused(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="tangent must be one of"):
+            ASDConcrete3D.from_fc(E=E, v=V, fc=FC, lch_ref=50.0, tangent=bad)
+
+    def test_numerical_with_implex_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="no effect with implex"):
+            ASDConcrete3D.from_fc(
+                E=E, v=V, fc=FC, lch_ref=50.0, tangent="numerical",
+                implex=True,
+            )
+
+    def test_bridge_namespace_forwards_it(self) -> None:
+        ops = apeSees(cast("object", MagicMock()))  # type: ignore[arg-type]
+        m = ops.nDMaterial.ASDConcrete3D(
+            E=E, v=V, fc=FC, lch_ref=50.0, tangent="numerical",
+        )
+        assert m.tangent == "numerical"
+
+
 # ---------------------------------------------------------------------------
 # l_max element-size guard (warn, never raise)
 # ---------------------------------------------------------------------------

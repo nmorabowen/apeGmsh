@@ -14,6 +14,20 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ASDConcrete3D(tangent="secant"|"numerical")` exposes the parser's `-tangent`
+
+`ASDConcrete3D` (raw constructor, `from_fc`, and `ops.nDMaterial.ASDConcrete3D`)
+takes `tangent=`. `"secant"` (default) is what the parser builds with no flag:
+the damaged secant stiffness. `"numerical"` emits the bare `-tangent` flag, a
+forward-difference tangent (`ASDConcrete3DMaterial::setTrialStrain`, one extra
+return map per strain component) — there is no analytical consistent tangent,
+so `"consistent"` is refused by name. The C++ ignores `-tangent` under IMPL-EX
+(`if (tangent && !implex)`: the IMPL-EX tangent is the secant), so
+`tangent="numerical"` with `implex=True` raises instead of doing nothing. The
+flag is in stock OpenSees too. Live test: one `stdBrick` pulled past its peak
+gives the same stress path under both, while the reported material tangent
+`C33` is positive (secant) and negative (numerical) on the softening branch.
+
 ### ADDED — `ops.equation_constraint(...)`: hand-written `equationConstraint` rows
 
 `ops.equation_constraint(constrained=(node, dof), retained=[(node, dof, coef),

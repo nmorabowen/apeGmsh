@@ -2649,6 +2649,15 @@ class ASDConcrete3D(NDMaterial):
     eta, cdf, implex
         Rate-dependent viscosity, tension/compression cross-damage factor,
         IMPL-EX integration flag.
+    tangent
+        Tangent operator handed to the solver: ``"secant"`` (default — the
+        damaged secant stiffness, what the parser builds without a flag) or
+        ``"numerical"`` (``-tangent``: a forward-difference tangent, one
+        extra return map per strain component per call). The C++ ignores
+        ``-tangent`` under IMPL-EX, whose tangent IS the secant
+        (``ASDConcrete3DMaterial::setTrialStrain``: ``if (tangent &&
+        !implex)``), so ``"numerical"`` with ``implex=True`` is refused.
+        A stock OpenSees parser has the same flag.
     auto_regularize
         Emit ``-autoRegularization $lch_ref`` (default ``True``). Disable
         only to deliberately opt out of mesh regularization.
@@ -2682,6 +2691,9 @@ class ASDConcrete3D(NDMaterial):
     auto_regularize: bool = True
     ft: float | None = None
     Gf: float | None = None
+    tangent: str = "secant"
+
+    _TANGENTS: ClassVar[frozenset[str]] = frozenset({"secant", "numerical"})
 
     @classmethod
     def from_fc(
@@ -2698,6 +2710,7 @@ class ASDConcrete3D(NDMaterial):
         eta: float = 0.0,
         cdf: float = 0.0,
         implex: bool = False,
+        tangent: str = "secant",
     ) -> "ASDConcrete3D":
         """Build from physical inputs, generating the backbone in Python.
 
@@ -2731,7 +2744,7 @@ class ASDConcrete3D(NDMaterial):
             Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
             Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
             lch_ref=lch, rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
-            ft=ft_, Gf=Gf_,
+            ft=ft_, Gf=Gf_, tangent=tangent,
         )
 
     def __post_init__(self) -> None:
@@ -2772,6 +2785,19 @@ class ASDConcrete3D(NDMaterial):
                 raise ValueError(
                     f"ASDConcrete3D: damage must be in [0, 1), got {dmg!r}"
                 )
+        if self.tangent not in self._TANGENTS:
+            raise ValueError(
+                f"ASDConcrete3D: tangent must be one of "
+                f"{sorted(self._TANGENTS)}, got {self.tangent!r} (the parser "
+                f"offers the secant default and a numerical -tangent; there "
+                f"is no analytical consistent tangent)."
+            )
+        if self.tangent == "numerical" and self.implex:
+            raise ValueError(
+                "ASDConcrete3D: tangent='numerical' has no effect with "
+                "implex=True — the C++ uses the IMPL-EX secant and ignores "
+                "-tangent. Drop one of them."
+            )
 
     def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:
         """The exact backbone that will be emitted (read-only, for plotting)."""
@@ -2822,6 +2848,8 @@ class ASDConcrete3D(NDMaterial):
             args += ["-cdf", self.cdf]
         if self.implex:
             args.append("-implex")
+        if self.tangent == "numerical":
+            args.append("-tangent")
         if self.auto_regularize:
             args += ["-autoRegularization", self.lch_ref]
         emitter.nDMaterial("ASDConcrete3D", tag, *args)
