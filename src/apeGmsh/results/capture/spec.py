@@ -52,6 +52,7 @@ diverge in supported categories: DomainCapture handles all seven
 """
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, Optional
 
@@ -1171,9 +1172,13 @@ def _resolve_material_tag(
 
 
 def _stable_section_tag(name: str) -> int:
-    """Deterministic positive int tag derived from a section name."""
-    h = abs(hash(name))
-    return (h % (2 ** 31 - 1)) or 1
+    """Deterministic positive int tag derived from a section name.
+
+    A CRC-32 of the UTF-8 name, so the same name gets the same tag in every
+    process. The builtin ``hash()`` of a str is salted per process
+    (``PYTHONHASHSEED``), which is what this used to call.
+    """
+    return (zlib.crc32(name.encode("utf-8")) % (2 ** 31 - 1)) or 1
 
 
 __all__ = [

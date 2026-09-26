@@ -1025,6 +1025,42 @@ as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
 
+<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
+     Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
+     Do NOT edit any existing line — in particular the single-line
+     "## Unreleased — ..." ledger above is FROZEN (your section title is
+     the highlight itself). CHANGELOG.md merges with the union driver
+     (.gitattributes), which silently keeps BOTH sides of any edit to an
+     existing line instead of conflicting — duplicated-header mangling is
+     guarded by tests/test_changelog_structure.py.
+     Workflow + rationale: internal_docs/changelog_workflow.md -->
+
+### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
+
+`results/capture/spec.py`'s fallback tag for a layered-shell section or
+material name promised to be deterministic, but it took the builtin
+`hash()` of the name, which Python salts per process: `"LayeredShell_A"`
+was `1509370562` under `PYTHONHASHSEED=1` and `1288700299` under `=2`. It
+is now `zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1`, pinned by
+`tests/results/test_stable_section_tag.py` (two subprocesses with
+different seeds, and a fixed value). No file changes: the fallback only
+runs when the OpenSees back-reference carries the legacy `_sections` /
+`_elem_assignments` attributes, which the `apeSees` bridge does not, and
+the layer writer never writes these tags to disk.
+
+### FIXED — CHANGELOG: every `###` heading has a blank line above it, and a test holds it
+
+The `merge=union` driver never conflicts: when two PRs insert sections at
+the anchor it keeps both, but it can drop the blank line between them, so
+one section's last paragraph runs straight into the next `###` header. It
+happened three times on 2026-09-25 alone, and 56 older sections carried
+it. This inserts those 56 blank lines, and nothing else changes.
+`tests/test_changelog_structure.py` gains
+`test_every_section_heading_has_a_blank_line_before_it`, which fails on
+the shape. It flags the real mangled merge of #1172's first refresh
+(`403a3e06`, line 890) and passes its repair; headings inside fenced code
+samples are skipped.
+
 ### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
 
 `scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
