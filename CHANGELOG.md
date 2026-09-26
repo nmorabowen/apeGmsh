@@ -14,6 +14,35 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — partitioned reactions are summed across part files, not taken from rank 0 (`PARTITION_REDUCTION`)
+
+Under OpenSeesMP, each rank writes its own `.part-N.ladruno` or
+`.part-N.mpco`. A node on a partition interface appears in several of
+these files. Its displacements are the same in every copy. Its
+reaction, however, is only the share from that rank's own elements, and
+the true value is the sum of the copies. The node stitch
+(`_merge_node_slabs`) kept the first partition's copy for every result.
+In the fork's reproduction (nmorabowen/OpenSees#861), a support shared
+by two ranks read `(0, 10)` where the serial run gives `(20, 30)`, so
+base shear from partitioned reactions was under-reported.
+
+The stitch now follows each result group's `PARTITION_REDUCTION`
+attribute (Ladruno schema §7.1):
+
+- `NONE` keeps the first copy, as before.
+- `SUM` adds the copies.
+- `UNSUPPORTED` raises.
+
+For files without the attribute (older `.ladruno` files and every
+`.mpco`), the kind is taken from the result name: `REACTION*`,
+`UNBALANCED*` and `RAYLEIGH*` sum, and everything else keeps one copy.
+Partitions that disagree on the kind are refused. `energy()` on a
+partitioned `.ladruno` now raises a clear `ValueError`, because each
+rank's balance is a partial that no sum recovers. Element, Gauss and
+fiber concatenation is unchanged. The per-file readers expose
+`node_partition_reduction(stage_id, component)`, and the merge sums
+with `np.add.reduceat` rather than a Python loop.
+
 ### CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there
 
 `internal_docs/changelog_workflow.md` said to insert each section
@@ -1037,112 +1066,6 @@ Same trap on typed ``Mumps``. Both now always emit ``-matrixType N``
 as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
-
-<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
-     Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
-     Do NOT edit any existing line — in particular the single-line
-     "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight itself). CHANGELOG.md merges with the union driver
-     (.gitattributes), which silently keeps BOTH sides of any edit to an
-     existing line instead of conflicting — duplicated-header mangling is
-     guarded by tests/test_changelog_structure.py.
-     Workflow + rationale: internal_docs/changelog_workflow.md -->
-
-### FIXED — partitioned reactions are summed across part files, not taken from rank 0 (`PARTITION_REDUCTION`)
-
-Under OpenSeesMP, each rank writes its own `.part-N.ladruno` or
-`.part-N.mpco`. A node on a partition interface appears in several of
-these files. Its displacements are the same in every copy. Its
-reaction, however, is only the share from that rank's own elements, and
-the true value is the sum of the copies. The node stitch
-(`_merge_node_slabs`) kept the first partition's copy for every result.
-In the fork's reproduction (nmorabowen/OpenSees#861), a support shared
-by two ranks read `(0, 10)` where the serial run gives `(20, 30)`, so
-base shear from partitioned reactions was under-reported.
-
-The stitch now follows each result group's `PARTITION_REDUCTION`
-attribute (Ladruno schema §7.1):
-
-- `NONE` keeps the first copy, as before.
-- `SUM` adds the copies.
-- `UNSUPPORTED` raises.
-
-For files without the attribute (older `.ladruno` files and every
-`.mpco`), the kind is taken from the result name: `REACTION*`,
-`UNBALANCED*` and `RAYLEIGH*` sum, and everything else keeps one copy.
-Partitions that disagree on the kind are refused. `energy()` on a
-partitioned `.ladruno` now raises a clear `ValueError`, because each
-rank's balance is a partial that no sum recovers. Element, Gauss and
-fiber concatenation is unchanged. The per-file readers expose
-`node_partition_reduction(stage_id, component)`, and the merge sums
-with `np.add.reduceat` rather than a Python loop.
-
-### FIXED — `_stable_section_tag` is the same in every process (CRC-32, not `hash()`)
-
-`results/capture/spec.py`'s fallback tag for a layered-shell section or
-material name promised to be deterministic, but it took the builtin
-`hash()` of the name, which Python salts per process: `"LayeredShell_A"`
-was `1509370562` under `PYTHONHASHSEED=1` and `1288700299` under `=2`. It
-is now `zlib.crc32(name.encode("utf-8")) % (2**31 - 1) or 1`, pinned by
-`tests/results/test_stable_section_tag.py` (two subprocesses with
-different seeds, and a fixed value). No file changes: the fallback only
-runs when the OpenSees back-reference carries the legacy `_sections` /
-`_elem_assignments` attributes, which the `apeSees` bridge does not, and
-the layer writer never writes these tags to disk.
-
-### FIXED — CHANGELOG: every `###` heading has a blank line above it, and a test holds it
-
-The `merge=union` driver never conflicts: when two PRs insert sections at
-the anchor it keeps both, but it can drop the blank line between them, so
-one section's last paragraph runs straight into the next `###` header. It
-happened three times on 2026-09-25 alone, and 56 older sections carried
-it. This inserts those 56 blank lines, and nothing else changes.
-`tests/test_changelog_structure.py` gains
-`test_every_section_heading_has_a_blank_line_before_it`, which fails on
-the shape. It flags the real mangled merge of #1172's first refresh
-(`403a3e06`, line 890) and passes its repair; headings inside fenced code
-samples are skipped.
-
-### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
-
-`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
-(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
-`except` handler that only passes, continues, returns or assigns an empty
-value, or logs — whatever it catches — and any `contextlib.suppress`, is a
-finding. The lesson recurred: `_fem_factory` once downgraded every resolve
-error to a warning (fixed 3aecb417), and nine days later the chain-phase
-router re-added `except (KeyError, TypeError): return False`, which silently
-dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
-flags both on their pre-fix trees and passes the fixes; the four legitimate
-silent handlers in scope carry waivers that state why. `lock-tests` now fails
-a PR whose base is not `main` (#858 merged into a stacked base and was missing
-from `main` for two months). `AGENTS.md` corrects "`main` has no required
-status checks" (it requires five, and takes squash merges only), says how to
-confirm a merge reached `main`, and adds two test conventions; the bridge and
-ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
-items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
-
-### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
-
-`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
-the one line `@AGENTS.md`, and its old behavioural guidelines moved in
-verbatim. It adds the map this repo never had: each CI lane's local
-command and trap, and the merge lessons that until now lived only in the
-maintainer's agent memory (`--base main`, no required checks, push-after-
-merge orphans, shared-literal merges, the editable install that points at
-main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
-`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
-at the lesson instead of copying it.
-
-`scripts/check_quirks.py` turns three lessons that bit again after being
-written down into rules, run as the last step of `static-gates`:
-`adr-number` (two ADRs with one number, or one missing from the index —
-#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
-a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
-omitting a FEMData stream — #707, #912/#913). Each was proven against the
-commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
-at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
-Plan and evidence: `internal_docs/plan_agent_surface.md`.
 
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
