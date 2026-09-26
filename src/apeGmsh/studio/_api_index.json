@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-26T03:00:37Z",
+  "generated": "2026-09-26T04:51:47Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -2920,7 +2920,7 @@
     },
     "ops.element.LadrunoCST": {
       "symbol": "ops.element.LadrunoCST",
-      "signature": "LadrunoCST(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', plane_type: 'str' = 'PlaneStrain', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'LadrunoCST'",
+      "signature": "LadrunoCST(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', plane_type: 'str' = 'PlaneStrain', geom: 'str' = 'linear', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'LadrunoCST'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },
@@ -2944,7 +2944,7 @@
     },
     "ops.element.LadrunoQuad": {
       "symbol": "ops.element.LadrunoQuad",
-      "signature": "LadrunoQuad(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', formulation: 'str' = 'std', plane_type: 'str' = 'PlaneStrain', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'LadrunoQuad'",
+      "signature": "LadrunoQuad(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', formulation: 'str' = 'std', plane_type: 'str' = 'PlaneStrain', geom: 'str' = 'linear', pressure: 'float | None' = None, rho: 'float | None' = None, body_force: 'tuple[float, float] | None' = None) -> 'LadrunoQuad'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },
@@ -3374,6 +3374,12 @@
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`LogStrain` Hencky finite-strain lift wrapper."
     },
+    "ops.nDMaterial.LogStrain2D": {
+      "symbol": "ops.nDMaterial.LogStrain2D",
+      "signature": "LogStrain2D(*, inner: 'NDMaterial | str', plane_type: 'str' = 'PlaneStrain', name: 'str | None' = None) -> 'LogStrain2D'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`LogStrain2D` plane Hencky finite-strain lift."
+    },
     "ops.nDMaterial.ManzariDafalias": {
       "symbol": "ops.nDMaterial.ManzariDafalias",
       "signature": "ManzariDafalias(*, G0: 'float', nu: 'float', e_init: 'float', Mc: 'float', c: 'float', lambda_c: 'float', e0: 'float', ksi: 'float', P_atm: 'float', m: 'float', h0: 'float', Ch: 'float', nb: 'float', A0: 'float', nd: 'float', z_max: 'float', cz: 'float', rho: 'float', int_scheme: 'int' = 1, tan_type: 'int' = 0, jaco_type: 'int' = 1, tol_f: 'float' = 1e-07, tol_r: 'float' = 1e-07, name: 'str | None' = None) -> 'ManzariDafalias'",
@@ -3397,6 +3403,24 @@
       "signature": "PlaneStrain(*, base: 'NDMaterial | str', name: 'str | None' = None) -> 'PlaneStrain'",
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`PlaneStrain` 2-D wrapper around a 3-D nDMaterial."
+    },
+    "ops.nDMaterial.PlaneStressRebar": {
+      "symbol": "ops.nDMaterial.PlaneStressRebar",
+      "signature": "PlaneStressRebar(*, material: 'UniaxialMaterial | str', angle: 'float', name: 'str | None' = None) -> 'PlaneStressRebar'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlaneStressRebar` plane-stress smeared rebar."
+    },
+    "ops.nDMaterial.PlateFromPlaneStress": {
+      "symbol": "ops.nDMaterial.PlateFromPlaneStress",
+      "signature": "PlateFromPlaneStress(*, material: 'NDMaterial | str', G_out: 'float', name: 'str | None' = None) -> 'PlateFromPlaneStress'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlateFromPlaneStress` shell-layer wrapper."
+    },
+    "ops.nDMaterial.PlateRebar": {
+      "symbol": "ops.nDMaterial.PlateRebar",
+      "signature": "PlateRebar(*, material: 'UniaxialMaterial | str', angle: 'float', name: 'str | None' = None) -> 'PlateRebar'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlateRebar` smeared-rebar shell layer."
     },
     "ops.nDMaterial.SAniSandMS": {
       "symbol": "ops.nDMaterial.SAniSandMS",
@@ -3636,7 +3660,7 @@
       "symbol": "ops.section.LayeredShellFiberSection",
       "signature": "LayeredShellFiberSection(*, layers: 'tuple[ShellLayer, ...]', name: 'str | None' = None) -> 'LayeredShellFiberSection'",
       "skill": "references/opensees-bridge.md",
-      "doc": "``section LayeredShellFiberSection`` — fiber-based stacked"
+      "doc": "Layered plate section under its C++ name (``LayeredShellFiberSection``)."
     },
     "ops.section.W_fiber": {
       "symbol": "ops.section.W_fiber",

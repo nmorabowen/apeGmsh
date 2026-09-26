@@ -113,7 +113,9 @@ behind it, one more than the design started with.
   transcoder.
 - **`MPCOReader`** plus a multi-partition merger — parallel STKO runs
   write one `.mpco` per rank; the merger deduplicates boundary nodes by
-  ID, concatenates elements, and presents one virtual reader. For
+  ID (one copy of kinematics, the sum of the per-rank reaction and
+  unbalanced-load partials), concatenates elements, and presents one
+  virtual reader. For
   composed models, where the OpenSees element tag diverges from the FEM
   element ID, an ops-tag ↔ fem-eid translator is attached at read time
   so the query API keeps speaking FEM IDs.

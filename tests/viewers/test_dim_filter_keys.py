@@ -1,8 +1,11 @@
 """Digit dim-filter keys must not be VTK ``add_key_event``.
 
-VTK's QtInteractor swallows those keypresses (the same law as
-ResultsViewer Esc and the section-builder F7/F8/F9 shortcuts). The
-0/1/2/3/4 contract is ``QShortcut`` / ``add_shortcut(..., application=True)``.
+An ``add_key_event`` binding fires only while the VTK viewport has
+keyboard focus, so with focus in a dock those keypresses never reach it
+(measured 2026-09-25; internal_docs/viewer_lessons.md, "Key bindings in
+a VTK-hosted window"). The same law applies to ResultsViewer Esc and the
+section-builder F7/F8/F9 shortcuts. The 0/1/2/3/4 contract is
+``QShortcut`` / ``add_shortcut(..., application=True)``.
 """
 from __future__ import annotations
 

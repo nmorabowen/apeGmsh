@@ -175,7 +175,7 @@ class FEMDataSource:
         try:
             self.nodes_for(target)
             return True
-        except KeyError:
+        except KeyError:  # apegmsh-lint: resolve-swallow-ok has_target contract: True iff nodes_for would not raise
             return False
 
     # -- Element-side queries (Compose v1.1-A.2 / ADR 0041) --------
@@ -550,7 +550,7 @@ class GmshSource:
         try:
             self.nodes_for(target)
             return True
-        except Exception:
+        except Exception:  # apegmsh-lint: resolve-swallow-ok has_target contract: True iff nodes_for would not raise
             return False
 
 
