@@ -56,6 +56,15 @@ def test_pid_alive_refuses_a_pid_past_a_dword() -> None:
     assert not pid_alive(2**40)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="os.kill overflows only past POSIX pid_t"
+)
+def test_pid_alive_reads_a_pid_past_pid_t_as_dead() -> None:
+    # Under the DWORD cap but past a signed 32-bit pid_t: os.kill raises
+    # OverflowError, which must read dead rather than escape the readers.
+    assert not pid_alive(2**31 + 7)
+
+
 def test_pid_alive_counts_a_process_it_may_not_open_as_alive() -> None:
     # System (Windows) and init (POSIX) exist; being refused access
     # means alive.
