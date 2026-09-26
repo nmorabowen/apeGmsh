@@ -14,6 +14,20 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — Studio `pid_alive` on Windows: an exited child read as alive, and a PID past 32 bits wrapped onto a live one
+
+`apeGmsh.studio._host_state.pid_alive` (used by `read_host`, `clear_host` and
+the busy lock) returned True whenever `OpenProcess` succeeded. A process that
+has exited can still be opened while anyone holds its handle, a parent's
+`Popen` included, so a crashed host or busy-lock owner could still read as
+alive. It now reads `GetExitCodeProcess` and requires `STILL_ACTIVE`. PIDs
+above `0xFFFFFFFF` read as dead: ctypes wrapped them modulo `2**32`, so
+`2**32 + os.getpid()` probed this process and read alive. The probe now loads
+its own `kernel32` with `use_last_error=True` and reads the error through
+`ctypes.get_last_error()`. It no longer sets `argtypes` on the process-wide
+`ctypes.windll.kernel32` or calls `GetLastError` raw. Tests:
+`tests/studio/test_pid_alive.py`.
+
 ### ADDED — `ops.integrator.LadrunoLoadControl` — the fork's `sp` load-control integrator, `-tangentPredictor` on by default
 
 The fork's ADR-80 superset of stock `LoadControl` (`INTEGRATOR_TAG` 33015, a
