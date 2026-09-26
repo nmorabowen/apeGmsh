@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — HDF5 readers probe optional children with name in group, not Group.get("...")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3678,6 +3689,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — HDF5 readers probe optional children with name in group, not Group.get("...")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3771,6 +3793,19 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget">FIXED — HDF5 readers probe optional children with <code>name in group</code>, not <code>Group.get("...")</code><a class="headerlink" href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" title="Permanent link">&para;</a></h3>
+<p>On the manylinux HDF5 build, <code>Group.get(name)</code> on a missing name can raise a
+random <code>UnicodeDecodeError</code> instead of returning <code>None</code> — green on Windows,
+intermittently red on Linux (PR #261). The MPCO readers were swept and
+guarded long ago; 26 probes in nine other readers were not: the <code>model.h5</code>
+reader (<code>opensees/emitter/h5_reader.py</code>, 12), the <code>.ladruno</code> and MPCO FEMData
+and results readers, the cuts I/O and session, compose, and the viewers'
+open-file paths. Each is now <code>group[name] if name in group else None</code> — the
+same value, checked without opening a missing object.
+<code>tests/test_results_mpco_get_hazard.py</code> extends its AST guard to the seven
+of those files where every literal <code>.get</code> was a child probe; the two larger
+readers also make dict <code>attrs.get(...)</code> reads, so they are fixed but not
+guarded by that heuristic.</p>
 <h3 id="fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan">FIXED — the quirk lint reads files the way Python does: a BOM no longer hides a file, a bad encoding no longer aborts the scan<a class="headerlink" href="#fixed-the-quirk-lint-reads-files-the-way-python-does-a-bom-no-longer-hides-a-file-a-bad-encoding-no-longer-aborts-the-scan" title="Permanent link">&para;</a></h3>
 <p><code>scripts/check_quirks.py</code> read every file with <code>read_text("utf-8")</code>. A file
 starting with a UTF-8 byte-order mark then failed to parse and was skipped
