@@ -14,6 +14,42 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — 2-D finite strain reaches the bridge: `ops.nDMaterial.LogStrain2D` + `geom=` on the plane elements
+
+- `LogStrain2D` (ND_TAG 33016) is the fork's **only**
+  `FiniteStrainND2DMaterial`, so it is the single gate on the entire
+  `Ladruno*(geom="finite")` plane lane — those elements drive the material by
+  `setTrialF` and reject anything else, including the 3-D `LogStrain` lift
+  apeGmsh already modelled. It now has a typed class and a namespace method,
+  shaped like `LogStrain` plus the `-planeStrain|-planeStress` flag (the
+  inner is still a 3-D order-6 material; the default plane view is elided).
+- The material alone was not enough: all four fork plane elements parse
+  `-geom`, and apeGmsh exposed it on none of them until now. `LadrunoQuad`
+  and `LadrunoCST` gain `geom="linear"|"finite"` (`LadrunoLST` got it with
+  the second-order work). `LadrunoCSTPair` is still not modelled at all —
+  out of scope here.
+- The three plane elements share one guard, `_check_plane_geom`, mirroring
+  the two parse-time rejects every fork factory applies: `geom="finite"` is
+  **PlaneStrain only** (the finite volume weight `dv = J·detJ₀·t·w` holds the
+  thickness fixed and so omits the out-of-plane stretch `λ = F₃₃`; under
+  plane strain `λ ≡ 1` and the weight is exact — ADR 70), and a
+  finite-strain material under a linear kernel is refused rather than left
+  to integrate zero stress. `LadrunoQuad` adds the fork's third rule:
+  `geom="finite"` runs on `std`/`bbar` only, the single-point `ssp`/`eas`
+  finite lanes being reserved.
+- `LogStrain2D(plane_type="PlaneStress")` is exposed but unreachable from any
+  fork plane element today — the restriction lives on the elements, not the
+  material, so the wrapper does not pretend otherwise.
+- Closes the gap left open by the second-order work:
+  `LadrunoLST(geom="finite")` is no longer emit-only, and the live test's
+  self-clearing skip is gone. `tests/opensees/integration_ladruno/test_plane_finite_strain_live.py`
+  solves `LadrunoQuad` / `LadrunoCST` / `LadrunoLST` in **both** kinematic
+  regimes on the fork, and pins that the 3-D and 2-D lifts are not
+  interchangeable — which is the whole reason `LogStrain2D` exists.
+- Recovered from #858, which merged on 2026-07-25 into a stacked base branch
+  (`claude/apegmsh-facet-extractor-bug-e37f5c`) instead of `main`, so none of
+  this reached `main` until now.
+
 ### CHANGED — the CHANGELOG entry anchor is back at the top of Unreleased, and a test keeps it there
 
 `internal_docs/changelog_workflow.md` said to insert each section
@@ -1037,92 +1073,6 @@ Same trap on typed ``Mumps``. Both now always emit ``-matrixType N``
 as an int (fork ``OPS_GetIntInput``). Unit expectations updated. Skill
 refs (`opensees-bridge` / `ladruno` / `gotchas`) document the explicit
 flag and the flat-deck ``LadrunoContact`` auto-emit (do not double-declare).
-
-<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
-     Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
-     Do NOT edit any existing line — in particular the single-line
-     "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight itself). CHANGELOG.md merges with the union driver
-     (.gitattributes), which silently keeps BOTH sides of any edit to an
-     existing line instead of conflicting — duplicated-header mangling is
-     guarded by tests/test_changelog_structure.py.
-     Workflow + rationale: internal_docs/changelog_workflow.md -->
-
-### ADDED — 2-D finite strain reaches the bridge: `ops.nDMaterial.LogStrain2D` + `geom=` on the plane elements
-
-- `LogStrain2D` (ND_TAG 33016) is the fork's **only**
-  `FiniteStrainND2DMaterial`, so it is the single gate on the entire
-  `Ladruno*(geom="finite")` plane lane — those elements drive the material by
-  `setTrialF` and reject anything else, including the 3-D `LogStrain` lift
-  apeGmsh already modelled. It now has a typed class and a namespace method,
-  shaped like `LogStrain` plus the `-planeStrain|-planeStress` flag (the
-  inner is still a 3-D order-6 material; the default plane view is elided).
-- The material alone was not enough: all four fork plane elements parse
-  `-geom`, and apeGmsh exposed it on none of them until now. `LadrunoQuad`
-  and `LadrunoCST` gain `geom="linear"|"finite"` (`LadrunoLST` got it with
-  the second-order work). `LadrunoCSTPair` is still not modelled at all —
-  out of scope here.
-- The three plane elements share one guard, `_check_plane_geom`, mirroring
-  the two parse-time rejects every fork factory applies: `geom="finite"` is
-  **PlaneStrain only** (the finite volume weight `dv = J·detJ₀·t·w` holds the
-  thickness fixed and so omits the out-of-plane stretch `λ = F₃₃`; under
-  plane strain `λ ≡ 1` and the weight is exact — ADR 70), and a
-  finite-strain material under a linear kernel is refused rather than left
-  to integrate zero stress. `LadrunoQuad` adds the fork's third rule:
-  `geom="finite"` runs on `std`/`bbar` only, the single-point `ssp`/`eas`
-  finite lanes being reserved.
-- `LogStrain2D(plane_type="PlaneStress")` is exposed but unreachable from any
-  fork plane element today — the restriction lives on the elements, not the
-  material, so the wrapper does not pretend otherwise.
-- Closes the gap left open by the second-order work:
-  `LadrunoLST(geom="finite")` is no longer emit-only, and the live test's
-  self-clearing skip is gone. `tests/opensees/integration_ladruno/test_plane_finite_strain_live.py`
-  solves `LadrunoQuad` / `LadrunoCST` / `LadrunoLST` in **both** kinematic
-  regimes on the fork, and pins that the 3-D and 2-D lifts are not
-  interchangeable — which is the whole reason `LogStrain2D` exists.
-- Recovered from #858, which merged on 2026-07-25 into a stacked base branch
-  (`claude/apegmsh-facet-extractor-bug-e37f5c`) instead of `main`, so none of
-  this reached `main` until now.
-### ADDED — quirk lint `resolve-swallow` (name resolution fails loud) and a "PR base is main" CI step
-
-`scripts/check_quirks.py` gains `resolve-swallow`: in the name-resolution code
-(`src/apeGmsh/_kernel/resolvers/**`, `src/apeGmsh/mesh/_fem_factory.py`) an
-`except` handler that only passes, continues, returns or assigns an empty
-value, or logs — whatever it catches — and any `contextlib.suppress`, is a
-finding. The lesson recurred: `_fem_factory` once downgraded every resolve
-error to a warning (fixed 3aecb417), and nine days later the chain-phase
-router re-added `except (KeyError, TypeError): return False`, which silently
-dropped a tie against a destroyed physical group (fixed 45340ac3). The rule
-flags both on their pre-fix trees and passes the fixes; the four legitimate
-silent handlers in scope carry waivers that state why. `lock-tests` now fails
-a PR whose base is not `main` (#858 merged into a stacked base and was missing
-from `main` for two months). `AGENTS.md` corrects "`main` has no required
-status checks" (it requires five, and takes squash merges only), says how to
-confirm a merge reached `main`, and adds two test conventions; the bridge and
-ADR guides gain the contact `kn kt mu`, partitioned-drop and ADR re-check
-items. Evidence: `internal_docs/plan_agent_surface.md`, "Follow-up".
-
-### ADDED — agent surface: AGENTS.md, three task guides, and a quirk lint in CI
-
-`AGENTS.md` is now the single source every agent reads; `CLAUDE.md` is
-the one line `@AGENTS.md`, and its old behavioural guidelines moved in
-verbatim. It adds the map this repo never had: each CI lane's local
-command and trap, and the merge lessons that until now lived only in the
-maintainer's agent memory (`--base main`, no required checks, push-after-
-merge orphans, shared-literal merges, the editable install that points at
-main). Three task guides in `.claude/skills/` — `apegmsh-bridge-feature`,
-`apegmsh-viewer-results`, `apegmsh-adr-docs` — are checklists that point
-at the lesson instead of copying it.
-
-`scripts/check_quirks.py` turns three lessons that bit again after being
-written down into rules, run as the last step of `static-gates`:
-`adr-number` (two ADRs with one number, or one missing from the index —
-#676/#677, #741, #817), `schema-literal` (a test pinning a schema version to
-a literal — #642, #738), `compose-streams` (the compose or model.h5 rebuild
-omitting a FEMData stream — #707, #912/#913). Each was proven against the
-commit that had the bug. `test_h5_partitions`' back-compat test, hand-edited
-at eleven schema bumps, now reads `OPENSEES_PRIOR_MINOR` from the fixture.
-Plan and evidence: `internal_docs/plan_agent_surface.md`.
 
 ### ADDED — worked example: footfall vibration of a two-bay flat slab on columns (ADR 0109)
 
