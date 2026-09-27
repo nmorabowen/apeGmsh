@@ -809,8 +809,10 @@ class _NDMaterialNS(_BridgeNamespace):
         shear_retention: str = "mcft",
         shear_ret_factor: float = 0.4,
         tens_stiff: str = "off",
-        tens_stiff_c: float = 500.0,
+        tens_stiff_c: float | None = None,
         tens_stiff_alpha: float = 1.0,
+        beta_c: float | None = None,
+        cracked_nu: float | None = None,
         name: str | None = None,
     ) -> LadrunoRCConcrete:
         """Register a :class:`LadrunoRCConcrete` RC plastic-damage + MCFT material.
@@ -821,6 +823,9 @@ class _NDMaterialNS(_BridgeNamespace):
         MCFT aggregate-interlock / tension-stiffening / IMPL-EX flag surface
         is exposed here; construct :class:`LadrunoRCConcrete` directly only to
         supply raw (non-``from_fc``) backbone points.
+
+        ``tens_stiff_c``/``beta_c``/``cracked_nu`` default to ``None``
+        (emit nothing, build default applies) — see :class:`_LadrunoRC`.
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -838,6 +843,7 @@ class _NDMaterialNS(_BridgeNamespace):
             shear_retention=shear_retention, shear_ret_factor=shear_ret_factor,
             tens_stiff=tens_stiff, tens_stiff_c=tens_stiff_c,
             tens_stiff_alpha=tens_stiff_alpha,
+            beta_c=beta_c, cracked_nu=cracked_nu,
         )
 
     def LadrunoRCFiniteStrain(
@@ -874,8 +880,10 @@ class _NDMaterialNS(_BridgeNamespace):
         shear_retention: str = "mcft",
         shear_ret_factor: float = 0.4,
         tens_stiff: str = "off",
-        tens_stiff_c: float = 500.0,
+        tens_stiff_c: float | None = None,
         tens_stiff_alpha: float = 1.0,
+        beta_c: float | None = None,
+        cracked_nu: float | None = None,
         name: str | None = None,
     ) -> LadrunoRCFiniteStrain:
         """Register a :class:`LadrunoRCFiniteStrain` finite-strain RC material.
@@ -884,7 +892,9 @@ class _NDMaterialNS(_BridgeNamespace):
         :class:`LadrunoRCConcrete` — same plastic-damage + MCFT law at large
         rotation / strain. A ``FiniteStrainNDMaterial`` consumed by
         ``LadrunoBrick ... -geom finite``. Same full flag surface as
-        :meth:`LadrunoRCConcrete`.
+        :meth:`LadrunoRCConcrete`, including ``tens_stiff_c``/``beta_c``/
+        ``cracked_nu`` (``None`` default = emit nothing, build default
+        applies).
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -902,6 +912,7 @@ class _NDMaterialNS(_BridgeNamespace):
             shear_retention=shear_retention, shear_ret_factor=shear_ret_factor,
             tens_stiff=tens_stiff, tens_stiff_c=tens_stiff_c,
             tens_stiff_alpha=tens_stiff_alpha,
+            beta_c=beta_c, cracked_nu=cracked_nu,
         )
 
     def LadrunoCohesiveHingeBiaxial(

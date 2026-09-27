@@ -14,6 +14,50 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
+
+Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
+`LadrunoRCFiniteStrain`) parameters that shipped together in fork commit
+`8cd8f43f5` (`nmorabowen/OpenSees#873`, branch `wp/phase-c-elements`):
+
+- **`cracked_nu: float | None = None` → `-crackedNu $nu`.** The elastic
+  operator's Poisson ratio switches to `cracked_nu` once the in-plane
+  principal tensile strain reaches the cracking strain (irreversible
+  latch). Validated to `[0, 0.5)`. PV20 finding: keeping the elastic `nu`
+  after cracking overstates shear strength by 8-10 %; `cracked_nu=0`
+  reproduces the MCFT hand solution.
+- **`beta_c: float | None = None` → `-betaC $C`.** The MCFT
+  compression-softening coefficient `beta = 1/(0.8 + C eps1)` (fork
+  default 170, bit-identical to the pre-C2 hard-wired value; Vecchio &
+  Collins 1986 use `0.34/|eps'c|`, i.e. `C=189` for PV20). Validated
+  `> 0`.
+- **`tens_stiff_c` default changes from `500.0` to `None`.** `None` now
+  emits nothing, so the build's own `vc` tension-stiffening default
+  applies — the fork changed that default from 500 (Collins-Mitchell
+  1991) to 200 (Vecchio-Collins 1986) in the same commit, without an
+  apeGmsh version bump. Pass `tens_stiff_c=500.0` explicitly to keep the
+  pre-change curve.
+
+Both namespace constructors (`ops.nDMaterial.LadrunoRCConcrete` /
+`.LadrunoRCFiniteStrain`, which funnel through `from_fc` and previously
+hard-coded their own typed keyword surface) gained the same three
+parameters — they were missing them entirely, so passing `beta_c=`/
+`cracked_nu=` through the namespace raised `TypeError` until this PR.
+
+Unit tests cover emission ordering, `None`-emits-nothing, and validation
+for both RC subclasses (`tests/opensees/unit/primitives/test_materials_nd.py`).
+A fork-only live test
+(`tests/opensees/integration_ladruno/test_ladruno_rc_cracked_nu_live.py`)
+gates on the material's `nuCracked` response (added in the same fork
+commit) rather than on construction succeeding: this parser's option loop
+has no catch-all `else` on an unrecognized flag, so an old build silently
+skips an unknown `-crackedNu` instead of erroring — a bare
+"did the constructor throw" probe does not detect a pre-C2 build
+(confirmed live against the installed 2026-06 build). Confirmed passing
+against the newer fork build at `OpenSees/dist/bin`
+(`benchmarks/00_material_point/_bootstrap.py`, `ladruno-concrete-validation`
+repo).
+
 ### ADDED — live capture of layers / dual damage / truss force; `ops.equation_constraint`; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)
 
 **Capture and read-back**

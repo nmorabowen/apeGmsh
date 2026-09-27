@@ -866,6 +866,56 @@ class TestLadrunoRCConcrete:
             LadrunoRCConcrete(
                 **_RC_RAW, auto_regularization=0.0)  # type: ignore[arg-type]
 
+    # -- Ladruno fork C2: -crackedNu / -betaC / vc tens_stiff_c 500->200 --
+
+    def test_tens_stiff_c_none_emits_nothing(self) -> None:
+        # tens_stiff_c=None (the apeGmsh default) must NOT emit -tensStiffC,
+        # so the build's own "vc" default applies (200 on the C2 fork,
+        # was 500 pre-C2 — see class docstring).
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(
+            **_RC_RAW, tens_stiff="vc")._emit(rec, tag=1)  # type: ignore[arg-type]
+        args = rec.calls[0][1]
+        assert "-tensStiffC" not in args
+        assert "-tensStiff" in args and "vc" in args
+
+    def test_tens_stiff_c_explicit_value_emits(self) -> None:
+        # Passing the old default explicitly reproduces the pre-C2 curve.
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(
+            **_RC_RAW, tens_stiff="vc",
+            tens_stiff_c=500.0)._emit(rec, tag=1)  # type: ignore[arg-type]
+        args = rec.calls[0][1]
+        idx = args.index("-tensStiffC")
+        assert args[idx + 1] == 500.0
+
+    def test_emit_beta_c_and_cracked_nu(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(
+            **_RC_RAW, beta_c=189.0,  # type: ignore[arg-type]
+            cracked_nu=0.0)._emit(rec, tag=4)
+        args = rec.calls[0][1]
+        assert args[-4:] == ("-betaC", 189.0, "-crackedNu", 0.0)
+
+    def test_beta_c_and_cracked_nu_default_to_none_and_emit_nothing(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(**_RC_RAW)._emit(rec, tag=1)  # type: ignore[arg-type]
+        args = rec.calls[0][1]
+        assert "-betaC" not in args and "-crackedNu" not in args
+
+    def test_rejects_non_positive_beta_c(self) -> None:
+        with pytest.raises(ValueError, match="beta_c must be > 0"):
+            LadrunoRCConcrete(**_RC_RAW, beta_c=0.0)  # type: ignore[arg-type]
+
+    def test_rejects_cracked_nu_out_of_range(self) -> None:
+        with pytest.raises(ValueError, match=r"cracked_nu must be in \[0, 0.5\)"):
+            LadrunoRCConcrete(**_RC_RAW, cracked_nu=0.5)  # type: ignore[arg-type]
+
+    def test_cracked_nu_zero_is_accepted(self) -> None:
+        # 0.0 is the MCFT hand-solution value (PV20 finding) and the lower
+        # bound of the valid range — must not raise.
+        LadrunoRCConcrete(**_RC_RAW, cracked_nu=0.0)  # type: ignore[arg-type]
+
 
 class TestLadrunoRCFiniteStrain:
     def test_emits_finite_token(self) -> None:
@@ -886,6 +936,18 @@ class TestLadrunoRCFiniteStrain:
             LadrunoRCFiniteStrain(
                 E=30e9, nu=0.2, Ce=(0.0,), Cs=(0.0,),
                 Te=(0.0, 1e-4), Ts=(0.0, 3e6))
+
+    def test_shares_cracked_nu_and_beta_c_with_rc(self) -> None:
+        # Same Ladruno C2 flags, same base class -> same emit + validation.
+        rec = RecordingEmitter()
+        LadrunoRCFiniteStrain(
+            **_RC_RAW, beta_c=170.0,  # type: ignore[arg-type]
+            cracked_nu=0.1)._emit(rec, tag=5)
+        args = rec.calls[0][1]
+        assert args[0] == "LadrunoRCFiniteStrain"
+        assert args[-4:] == ("-betaC", 170.0, "-crackedNu", 0.1)
+        with pytest.raises(ValueError, match="beta_c must be > 0"):
+            LadrunoRCFiniteStrain(**_RC_RAW, beta_c=-1.0)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

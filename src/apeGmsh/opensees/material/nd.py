@@ -3738,8 +3738,25 @@ class _LadrunoRC(NDMaterial):
     tens_stiff, tens_stiff_c, tens_stiff_alpha
         Tension stiffening ``{"off" (default), "vc" (Bentz),
         "cm" (Collins-Mitchell)}`` (``-tensStiff``) with its coefficient
-        (``-tensStiffC``; ``> 0`` in ``vc`` mode, default 500) and exponent
-        (``-tensStiffAlpha``; default 1.0).
+        (``-tensStiffC``; ``> 0`` in ``vc`` mode) and exponent
+        (``-tensStiffAlpha``; default 1.0). ``tens_stiff_c=None`` (default)
+        emits nothing, so the build's own ``vc`` default applies — the
+        fork changed that default from 500 (Collins-Mitchell 1991) to 200
+        (Vecchio-Collins 1986) without an apeGmsh version bump; pass
+        ``tens_stiff_c=500.0`` explicitly to keep the pre-change curve.
+    beta_c
+        MCFT compression-softening coefficient ``beta = 1/(0.8 + C eps1)``
+        (``-betaC``; ``> 0``). ``None`` (default) emits nothing, so the
+        build's own default applies (170 on the fork, bit-identical to the
+        pre-C2 hard-wired value; Vecchio & Collins 1986 use ``0.34/|eps'c|``,
+        i.e. ``C=189`` for the PV20 panel).
+    cracked_nu
+        Poisson's ratio used once the in-plane principal tensile strain
+        reaches the cracking strain (``-crackedNu``; ``[0, 0.5)``). ``None``
+        (default) emits nothing, so the elastic ``nu`` is kept after
+        cracking (pre-C2 behaviour). PV20 finding: keeping the elastic
+        ``nu`` after cracking overstates shear strength by 8-10 %;
+        ``cracked_nu=0`` reproduces the MCFT hand solution.
     auto_regularization
         Crack-band (Bazant-Oh) reference length (``-autoRegularization
         $lch_ref``; ``> 0``). ``None`` (default) = off / baseline-identical.
@@ -3778,8 +3795,10 @@ class _LadrunoRC(NDMaterial):
     implex_alpha: float = 1.0
     implex_control: tuple[float, float] | None = None
     tens_stiff: str = "off"
-    tens_stiff_c: float = 500.0
+    tens_stiff_c: float | None = None
     tens_stiff_alpha: float = 1.0
+    beta_c: float | None = None
+    cracked_nu: float | None = None
     auto_regularization: float | None = None
 
     @classmethod
@@ -3885,10 +3904,23 @@ class _LadrunoRC(NDMaterial):
                 f"{self._type}: tens_stiff must be one of "
                 f"{sorted(_TENS_STIFF)}, got {self.tens_stiff!r}"
             )
-        if self.tens_stiff == "vc" and self.tens_stiff_c <= 0:
+        if (
+            self.tens_stiff == "vc"
+            and self.tens_stiff_c is not None
+            and self.tens_stiff_c <= 0
+        ):
             raise ValueError(
                 f"{self._type}: tens_stiff_c must be > 0 in 'vc' mode, got "
                 f"{self.tens_stiff_c!r}"
+            )
+        if self.beta_c is not None and self.beta_c <= 0:
+            raise ValueError(
+                f"{self._type}: beta_c must be > 0, got {self.beta_c!r}"
+            )
+        if self.cracked_nu is not None and not (0.0 <= self.cracked_nu < 0.5):
+            raise ValueError(
+                f"{self._type}: cracked_nu must be in [0, 0.5), got "
+                f"{self.cracked_nu!r}"
             )
         if self.implex_control is not None and len(self.implex_control) != 2:
             raise ValueError(
@@ -3956,10 +3988,14 @@ class _LadrunoRC(NDMaterial):
             args += ["-shearRetFactor", self.shear_ret_factor]
         if self.tens_stiff != "off":
             args += ["-tensStiff", self.tens_stiff]
-        if self.tens_stiff_c != 500.0:
+        if self.tens_stiff_c is not None:
             args += ["-tensStiffC", self.tens_stiff_c]
         if self.tens_stiff_alpha != 1.0:
             args += ["-tensStiffAlpha", self.tens_stiff_alpha]
+        if self.beta_c is not None:
+            args += ["-betaC", self.beta_c]
+        if self.cracked_nu is not None:
+            args += ["-crackedNu", self.cracked_nu]
         if self.auto_regularization is not None:
             args += ["-autoRegularization", self.auto_regularization]
         emitter.nDMaterial(self._type, tag, *args)
@@ -3978,7 +4014,8 @@ class LadrunoRCConcrete(_LadrunoRC):
             -Ce {..} -Cs {..} [-Cd {..}] -Te {..} -Ts {..} [-Td {..}] \
             [-Kc Kc] [-beta] [-betaFloor f] [-lublinerReduced] [-rho rho] \
             [-secant | -numericalTangent] [interlock/MCFT flags...] \
-            [-tensStiff vc|cm ...] [-autoRegularization lch_ref]
+            [-tensStiff vc|cm ...] [-betaC C] [-crackedNu nu] \
+            [-autoRegularization lch_ref]
 
     A small-strain solid-concrete plastic-damage material with MCFT-style
     compression softening and (optionally) aggregate-interlock crack-shear
