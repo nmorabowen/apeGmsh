@@ -131,7 +131,7 @@ plastic moments against hand calculations, work through
 [Fiber sections & moment–curvature](../examples/fiber-moment-curvature.md).
 
 The layers of a layered shell are nD materials that OpenSees can copy as
-*PlateFiber* materials (five strain components). Three stock helpers build
+*PlateFiber* materials (five strain components). Four stock helpers build
 them. `ops.nDMaterial.PlateFromPlaneStress` turns a plane-stress law into a
 layer and adds a transverse shear modulus `G_out`. `ops.nDMaterial.PlateRebar`
 turns a uniaxial steel law into a smeared bar layer at `angle` degrees from
@@ -159,6 +159,45 @@ A layered section needs at least three layers. `LayeredShell` and
 for plane-stress quads. It is **not** a valid shell layer, so `ShellLayer`
 refuses it. It is also classic-Tcl only, because openseespy does not register
 the `PlaneStressRebarMaterial` keyword.
+
+The fourth, `ops.nDMaterial.PlateFiber`, wraps a 3-D law and condenses it to
+a layer: it iterates the through-thickness strain until `sigma33 = 0`. You
+rarely need it. A layered section already asks each 3-D layer for its
+PlateFiber view, and OpenSees builds this same wrapper when a law has no
+native one. `ShellLayer` refuses a uniaxial material outright and points you
+to `PlateRebar`.
+
+Placing the layers by hand is error-prone for a real wall, so
+`ops.section.RCLayeredShell` builds the stack. Give it the thickness, the
+concrete law, and one `RebarMesh` per bar direction and curtain. Each mesh
+becomes its own thin `PlateRebar` layer at the bar centroid, and the concrete
+fills the gaps around it, reduced by the steel it gives way to:
+
+```python
+from apeGmsh.opensees.section import RebarMesh
+
+d12 = 113.1e-6                                   # one 12 mm bar, m^2
+wall = ops.section.RCLayeredShell(h=0.20, concrete=conc, n_concrete=10, meshes=[
+    RebarMesh.from_bars(material=steel, angle=0.0, bar_area=d12, spacing=0.15,
+                        cover=0.031, face="bottom"),
+    RebarMesh.from_bars(material=steel, angle=90.0, bar_area=d12, spacing=0.15,
+                        cover=0.043, face="bottom"),
+    RebarMesh.from_bars(material=steel, angle=0.0, bar_area=d12, spacing=0.15,
+                        cover=0.031, face="top"),
+    RebarMesh.from_bars(material=steel, angle=90.0, bar_area=d12, spacing=0.15,
+                        cover=0.043, face="top"),
+])
+ops.element.ASDShellQ4(pg="Wall", section=wall, local_cs=(1.0, 0.0, 0.0))
+```
+
+The result is a plain `LayeredShell`. Meshes that share a steel and an angle
+share one `PlateRebar`. The builder refuses a bar outside the section,
+overlapping bars, and a stack with no concrete left. It warns
+(`CoarseShellLayeringWarning`) below six concrete layers. Each layer is
+integrated at its mid-plane, which drops about `1/n**2` of the bending
+stiffness of `n` equal layers, so use 8 to 12 for nonlinear bending. Pass
+`local_cs` to `ASDShellQ4`. The bar angle is measured in the section frame,
+and without `-local` older openseespy builds turn that frame by 90 degrees.
 
 ## Sections you compute: the analyzer
 

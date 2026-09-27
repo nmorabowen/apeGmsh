@@ -1,8 +1,9 @@
 """Unit tests for the shell-layer helper nD materials.
 
-``PlateRebar`` / ``PlateFromPlaneStress`` (PlateFiber, order 5 — valid
-``LayeredShell*`` layers) and ``PlaneStressRebar`` (PlaneStress, order 3 —
-not a layer). Covers validation, ``_emit`` through the recording, Tcl and
+``PlateRebar`` / ``PlateFromPlaneStress`` / ``PlateFiber`` (PlateFiber,
+order 5 — valid ``LayeredShell*`` layers) and ``PlaneStressRebar``
+(PlaneStress, order 3 — not a layer). Also the ``ShellLayer`` refusals of
+materials OpenSees cannot use as a layer. Covers validation, ``_emit`` through the recording, Tcl and
 Python emitters, ``dependencies``, the namespace methods, and the emit order
 of a layered section built from concrete + two ``PlateRebar`` layers.
 """
@@ -19,8 +20,12 @@ from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.nd import (
+    ASDConcrete3D,
     ElasticIsotropic,
+    LogStrain2D,
+    PlaneStrain,
     PlaneStressRebar,
+    PlateFiber,
     PlateFromPlaneStress,
     PlateRebar,
 )
@@ -143,6 +148,114 @@ class TestPlateFromPlaneStress:
         with pytest.raises(TypeError, match="plane-stress view"):
             PlateFromPlaneStress(material=wrapped, G_out=1.0)
 
+    def test_rejects_plate_fiber_inner(self) -> None:
+        # PlateFiberMaterial::getCopy(type) answers ANY type with an order-5
+        # copy of itself, so the "plane-stress" law would have order 5.
+        pf = PlateFiber(material=ElasticIsotropic(E=30e9, nu=0.2))
+        with pytest.raises(TypeError, match="strain order 5, not 3"):
+            PlateFromPlaneStress(material=pf, G_out=1.0)
+
+
+# ---------------------------------------------------------------------------
+# PlateFiber
+# ---------------------------------------------------------------------------
+
+def _conc3d() -> ASDConcrete3D:
+    return ASDConcrete3D.from_fc(E=30e9, v=0.2, fc=30e6, lch_ref=0.1)
+
+
+class TestPlateFiber:
+    def test_dependencies_is_the_wrapped_material(self) -> None:
+        c = _conc3d()
+        assert PlateFiber(material=c).dependencies() == (c,)
+
+    def test_emit_records_call(self) -> None:
+        c = _conc3d()
+        rec = RecordingEmitter()
+        _emit_one(PlateFiber(material=c), rec, c, 5, 6)
+        assert rec.calls == [("nDMaterial", ("PlateFiber", 6, 5), {})]
+
+    def test_tcl_line(self) -> None:
+        c = _conc3d()
+        e = TclEmitter()
+        _emit_one(PlateFiber(material=c), e, c, 5, 6)
+        assert "nDMaterial PlateFiber 6 5" in e.lines()
+
+    def test_py_line(self) -> None:
+        c = _conc3d()
+        e = PyEmitter()
+        _emit_one(PlateFiber(material=c), e, c, 5, 6)
+        assert "ops.nDMaterial('PlateFiber', 6, 5)" in e.lines()
+
+    def test_rejects_non_nd_material(self) -> None:
+        with pytest.raises(TypeError, match="material must be an NDMaterial"):
+            PlateFiber(material=_steel())  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("make_inner", [
+        lambda: PlateRebar(material=_steel(), angle=0.0),
+        lambda: PlateFromPlaneStress(
+            material=ElasticIsotropic(E=30e9, nu=0.2), G_out=1.0),
+        lambda: PlaneStressRebar(material=_steel(), angle=0.0),
+        lambda: LogStrain2D(inner=ElasticIsotropic(E=30e9, nu=0.2)),
+    ], ids=["PlateRebar", "PlateFromPlaneStress", "PlaneStressRebar", "LogStrain2D"])
+    def test_rejects_inner_with_null_3d_copy(self, make_inner: object) -> None:
+        with pytest.raises(TypeError, match="with null"):
+            PlateFiber(material=make_inner())  # type: ignore[operator]
+
+    @pytest.mark.parametrize("make_inner, order", [
+        (lambda: PlaneStrain(base=ElasticIsotropic(E=30e9, nu=0.2)), 3),
+        (lambda: PlateFiber(material=ElasticIsotropic(E=30e9, nu=0.2)), 5),
+    ], ids=["PlaneStrain", "PlateFiber"])
+    def test_rejects_inner_with_wrong_order_copy(
+        self, make_inner: object, order: int,
+    ) -> None:
+        with pytest.raises(TypeError, match=f"strain order {order}, not 6"):
+            PlateFiber(material=make_inner())  # type: ignore[operator]
+
+    def test_is_a_valid_shell_layer(self) -> None:
+        layer = ShellLayer(material=PlateFiber(material=_conc3d()), thickness=0.05)
+        assert isinstance(layer.material, PlateFiber)
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "PlateFiber" in repr(PlateFiber(material=_conc3d()))
+
+
+# ---------------------------------------------------------------------------
+# ShellLayer refusals — materials LayeredShellFiberSection cannot use
+# ---------------------------------------------------------------------------
+
+class TestShellLayerRefusals:
+    def test_uniaxial_points_to_plate_rebar(self) -> None:
+        # The parser looks each layer tag up among the nDMaterials; a
+        # uniaxial tag names a missing or an unrelated nD material.
+        with pytest.raises(TypeError, match=r"UniaxialMaterial.*PlateRebar"):
+            ShellLayer(material=_steel(), thickness=0.001)  # type: ignore[arg-type]
+
+    def test_non_material_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="must be an NDMaterial"):
+            ShellLayer(material=object(), thickness=0.001)  # type: ignore[arg-type]
+
+    def test_plane_strain_wrapper_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="order-3 plane-strain copy"):
+            ShellLayer(
+                material=PlaneStrain(base=ElasticIsotropic(E=30e9, nu=0.2)),
+                thickness=0.01,
+            )
+
+    def test_log_strain_2d_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="no PlateFiber view"):
+            ShellLayer(
+                material=LogStrain2D(inner=ElasticIsotropic(E=30e9, nu=0.2)),
+                thickness=0.01,
+            )
+
+    @pytest.mark.parametrize("cls", [LayeredShell, LayeredShellFiberSection])
+    def test_section_refuses_a_non_shell_layer(self, cls: type) -> None:
+        conc = ElasticIsotropic(E=30e9, nu=0.2)
+        good = ShellLayer(material=conc, thickness=0.05)
+        with pytest.raises(TypeError, match=r"layers\[1\] must be a ShellLayer"):
+            cls(layers=(good, (conc, 0.05), good))
+
 
 # ---------------------------------------------------------------------------
 # PlaneStressRebar
@@ -219,6 +332,15 @@ class TestNamespace:
         conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, name="conc")
         layer = ops.nDMaterial.PlateFromPlaneStress(material="conc", G_out=12.5e9)
         assert isinstance(layer, PlateFromPlaneStress)
+        assert layer.material is conc
+        assert ops.tag_for(conc) == 1
+        assert ops.tag_for(layer) == 2
+
+    def test_PlateFiber_wraps_nd_by_name(self) -> None:
+        ops = _stub_bridge()
+        conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, name="conc")
+        layer = ops.nDMaterial.PlateFiber(material="conc")
+        assert isinstance(layer, PlateFiber)
         assert layer.material is conc
         assert ops.tag_for(conc) == 1
         assert ops.tag_for(layer) == 2

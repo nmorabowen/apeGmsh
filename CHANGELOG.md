@@ -14,6 +14,62 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
+
+- **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
+  (`section/plate.py`; namespace `ops.section.RCLayeredShell`) builds a
+  reinforced-concrete `LayeredShell` from bar meshes. It adds no emit
+  surface; the result is a plain `section LayeredShell`. Each `RebarMesh`
+  (steel uniaxial, `angle` in degrees, `area_per_width = A_s / s`, centroid
+  as `z` or `cover` + `face`; `RebarMesh.from_bars(bar_area=, spacing=)`)
+  becomes its own thin `PlateRebar` layer centred on the bar. The concrete
+  fills the gaps around the bars, so its total is `h - sum(A_s / s)`: the
+  steel is never a `rho`-weighted overlay inside a concrete layer.
+  `n_concrete` layers are split over the concrete regions in proportion to
+  their thickness, with at least one per region. The topmost concrete layer
+  takes the rounding, so the stack sums to `h`. Meshes with the same steel
+  instance and angle share one `PlateRebar`. The builder refuses a bar
+  outside `[-h/2, h/2]`, overlapping bars (touching is fine) and a stack
+  with no concrete left. Below six concrete layers it warns
+  (`CoarseShellLayeringWarning`): the section integrates each layer at its
+  mid-plane, which drops `1/n**2` of the bending stiffness of `n` equal
+  layers. The namespace method registers the new `PlateRebar` layers and
+  the section; the concrete and steel must already be registered.
+- **`PlateFiber(material=<3-D nD>)`** emits `nDMaterial PlateFiber $tag
+  $threeDTag` (stock). It condenses a 3-D law to a shell layer by iterating
+  `eps33` to `sigma33 = 0`. Usually not needed, since a layered section
+  asks each 3-D layer for its PlateFiber view itself. OpenSees takes
+  `getCopy("ThreeDimensional")` of the inner without a null check, so
+  `PlateFiber` refuses `PlateRebar`, `PlateFromPlaneStress`,
+  `PlaneStressRebar` and `LogStrain2D` (null copy), and `PlaneStrain` and
+  `PlateFiber` (wrong-order copy). `PlateFromPlaneStress` now also refuses
+  a `PlateFiber` inner, whose "plane-stress" copy would be order 5.
+- **`ShellLayer` refuses** a `UniaxialMaterial` (the section parser looks
+  layer tags up among the nDMaterials, a separate tag space, so the tag
+  named a missing or an unrelated nD material), pointing to `PlateRebar` /
+  `RCLayeredShell`. It also refuses anything that is not an `NDMaterial`,
+  plus `PlaneStrain` (order-3 copy for every type) and `LogStrain2D` (null
+  PlateFiber copy, so the C++ side would call `exit(-1)`). `LayeredShell` /
+  `LayeredShellFiberSection` refuse a layer that is not a `ShellLayer`.
+- **`ASDShellQ4(no_eas=True)`** emits `-noeas`, which turns off the
+  enhanced (AGQI/EAS) membrane. It was the last `OPS_ASDShellQ4` option
+  without a keyword. `-local`, `-drillingStab` and `-drillingNL` were fixed
+  or added in #1183.
+
+Tests: `tests/opensees/unit/primitives/test_sections_rc_layered_shell.py`
+(layer arithmetic, bar depths, concrete reduction, apportioning, dedup,
+validation, the warning, and namespace registration and emit order in Tcl
+and Python), new `PlateFiber` and `ShellLayer` cases in
+`test_materials_plate_layers.py`, `-noeas` emission in
+`test_elements_shell.py`, and an H5 round-trip
+(`tests/opensees/h5/test_h5_rc_layered_shell_roundtrip.py`). Two live
+tests, run on both the fork and stock openseespy 3.7.1.2: one
+`ASDShellQ4` with a helper-built two-curtain section gives membrane
+stiffness `E_c (h - sum t_s) + E_s sum t_s,along` along x and along y to
+1e-6 (`tests/opensees/live/test_rc_layered_shell_live.py`), and `-noeas`
+stiffens one element in in-plane bending (0.74x the enhanced tip
+displacement).
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
