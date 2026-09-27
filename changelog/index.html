@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — LadrunoRCConcrete/LadrunoRCFiniteStrain C2 fork flags: cracked_nu, beta_c, vc tension-stiffening default 500→200
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3700,6 +3711,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — LadrunoRCConcrete/LadrunoRCFiniteStrain C2 fork flags: cracked_nu, beta_c, vc tension-stiffening default 500→200
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3815,6 +3837,47 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200">ADDED — <code>LadrunoRCConcrete</code>/<code>LadrunoRCFiniteStrain</code> C2 fork flags: <code>cracked_nu</code>, <code>beta_c</code>, <code>vc</code> tension-stiffening default 500→200<a class="headerlink" href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" title="Permanent link">&para;</a></h3>
+<p>Exposes the three <code>_LadrunoRC</code> (base of <code>LadrunoRCConcrete</code> /
+<code>LadrunoRCFiniteStrain</code>) parameters that shipped together in fork commit
+<code>8cd8f43f5</code> (<code>nmorabowen/OpenSees#873</code>, branch <code>wp/phase-c-elements</code>):</p>
+<ul>
+<li><strong><code>cracked_nu: float | None = None</code> → <code>-crackedNu $nu</code>.</strong> The elastic
+  operator's Poisson ratio switches to <code>cracked_nu</code> once the in-plane
+  principal tensile strain reaches the cracking strain (irreversible
+  latch). Validated to <code>[0, 0.5)</code>. PV20 finding: keeping the elastic <code>nu</code>
+  after cracking overstates shear strength by 8-10 %; <code>cracked_nu=0</code>
+  reproduces the MCFT hand solution.</li>
+<li><strong><code>beta_c: float | None = None</code> → <code>-betaC $C</code>.</strong> The MCFT
+  compression-softening coefficient <code>beta = 1/(0.8 + C eps1)</code> (fork
+  default 170, bit-identical to the pre-C2 hard-wired value; Vecchio &amp;
+  Collins 1986 use <code>0.34/|eps'c|</code>, i.e. <code>C=189</code> for PV20). Validated
+  <code>&gt; 0</code>.</li>
+<li><strong><code>tens_stiff_c</code> default changes from <code>500.0</code> to <code>None</code>.</strong> <code>None</code> now
+  emits nothing, so the build's own <code>vc</code> tension-stiffening default
+  applies — the fork changed that default from 500 (Collins-Mitchell
+  1991) to 200 (Vecchio-Collins 1986) in the same commit, without an
+  apeGmsh version bump. Pass <code>tens_stiff_c=500.0</code> explicitly to keep the
+  pre-change curve.</li>
+</ul>
+<p>Both namespace constructors (<code>ops.nDMaterial.LadrunoRCConcrete</code> /
+<code>.LadrunoRCFiniteStrain</code>, which funnel through <code>from_fc</code> and previously
+hard-coded their own typed keyword surface) gained the same three
+parameters — they were missing them entirely, so passing <code>beta_c=</code>/
+<code>cracked_nu=</code> through the namespace raised <code>TypeError</code> until this PR.</p>
+<p>Unit tests cover emission ordering, <code>None</code>-emits-nothing, and validation
+for both RC subclasses (<code>tests/opensees/unit/primitives/test_materials_nd.py</code>).
+A fork-only live test
+(<code>tests/opensees/integration_ladruno/test_ladruno_rc_cracked_nu_live.py</code>)
+gates on the material's <code>nuCracked</code> response (added in the same fork
+commit) rather than on construction succeeding: this parser's option loop
+has no catch-all <code>else</code> on an unrecognized flag, so an old build silently
+skips an unknown <code>-crackedNu</code> instead of erroring — a bare
+"did the constructor throw" probe does not detect a pre-C2 build
+(confirmed live against the installed 2026-06 build). Confirmed passing
+against the newer fork build at <code>OpenSees/dist/bin</code>
+(<code>benchmarks/00_material_point/_bootstrap.py</code>, <code>ladruno-concrete-validation</code>
+repo).</p>
 <h3 id="added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells">ADDED — live capture of layers / dual damage / truss force; <code>ops.equation_constraint</code>; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)<a class="headerlink" href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" title="Permanent link">&para;</a></h3>
 <p><strong>Capture and read-back</strong></p>
 <ul>
