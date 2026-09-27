@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — live capture of layers / dual damage / truss force; ops.equation_constraint; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3689,6 +3700,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — live capture of layers / dual damage / truss force; ops.equation_constraint; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3793,6 +3815,103 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells">ADDED — live capture of layers / dual damage / truss force; <code>ops.equation_constraint</code>; ASD concrete + shell and LadrunoConcrete3D option fixes — BREAKING (ASD shells)<a class="headerlink" href="#added-live-capture-of-layers-dual-damage-truss-force-opsequation_constraint-asd-concrete-shell-and-ladrunoconcrete3d-option-fixes-breaking-asd-shells" title="Permanent link">&para;</a></h3>
+<p><strong>Capture and read-back</strong></p>
+<ul>
+<li><strong>D1a — <code>DomainCaptureSpec.layers</code> works on a bridge-attached spec.</strong> The
+  layer metadata lookup read the legacy <code>g.opensees</code> registries
+  (<code>_sections</code> / <code>_elem_assignments</code>), which <code>apeSees</code> does not have, so a
+  bridge-attached <code>layers</code> record always resolved to "no metadata" and was
+  refused. It now walks the bridge's <code>Element</code> primitives whose <code>section</code> is a
+  <code>LayeredShell</code> / <code>LayeredShellFiberSection</code>, fans each <code>pg</code> out with the
+  emitter's <code>expand_pg_to_elements</code>, and takes section and layer-material tags
+  from <code>apeSees.tag_for</code>. The dead legacy walk and its helpers are removed. The
+  layer capturer also takes the fem↔ops element-tag translator now: a shell's
+  <code>fem_eid</code> sits after gmsh's point and line elements, so querying it as an ops
+  tag skipped the element even with metadata present. Live test: one
+  <code>ASDShellQ4</code> with concrete (<code>PlateFromPlaneStress</code>) and two <code>PlateRebar</code>
+  layers under in-plane shear, read back with <code>Results.from_native</code>.</li>
+<li><strong>D1b — dual concrete damage (<code>damage_tension</code> / <code>damage_compression</code>).</strong>
+  <code>ASDConcrete3D</code> (<code>damage</code> → <code>[d+, d-]</code>) and <code>LadrunoConcrete3D</code> (<code>damage</code> /
+  <code>omega</code> → <code>[omega_t, omega_c]</code>) answer a two-value material response, tension
+  first, and none of <code>Brick</code> / <code>LadrunoBrick</code> / <code>FourNodeQuad</code> / <code>LadrunoQuad</code>
+  has an element-level <code>damage</code> branch (<code>eleResponse(eid, "damage")</code> is empty,
+  measured). <code>RESPONSE_CATALOG</code> gains a <code>damage</code> layout for those four classes;
+  the pair routes to it; the live gauss capturer reads material-only tokens
+  (<code>PER_MATERIAL_TOKENS</code>, <code>needs_per_material_query</code>) per Gauss point through
+  <code>material &lt;gp&gt; damage</code>; the <code>.ladruno</code> reader maps a two-column
+  <code>material.damage</code> / <code>material.omega</code> bucket by position. Another <code>damage</code>
+  width fails the size check rather than being mis-decoded. Fork-only live
+  test: one <code>LadrunoBrick</code> of <code>LadrunoConcrete3D</code> past its tensile peak, live
+  capture and <code>.ladruno</code> both checked against <code>eleResponse</code>.</li>
+<li><strong>D1c — truss <code>axial_force</code> through <code>DomainCaptureSpec.gauss</code>.</strong> It was
+  accepted only by <code>line_stations</code>, whose capturer knows beam sections alone and
+  drops a truss. The Truss family's <code>axialForce</code> is a one-point Gauss read
+  (already catalogued), so <code>gauss</code> accepts it and <code>where_does("axial_force")</code>
+  answers <code>("gauss", "line_stations")</code>. Live test on a one-element <code>Truss</code> /
+  <code>CorotTruss</code> whose <code>fem_eid</code> differs from its ops tag.</li>
+</ul>
+<p><strong>Bridge primitives</strong></p>
+<ul>
+<li><strong>D2a — <code>ops.equation_constraint(constrained=(node, dof), retained=[(node,
+  dof, coef), ...], coef=1.0)</code>.</strong> One OpenSees <code>EQ_Constraint</code> row,
+  <code>coef·u_c + Σ rcoef·u_r = 0</code>, on FEM node ids, emitted in the MP-constraint
+  pass. It follows the <code>enforce="equation"</code> tie rules (ADR 0068 INV-4), not
+  <code>equalDOF</code>'s: <code>Transformation</code> / <code>Auto</code> / <code>Plain</code> drop <code>EQ_Constraint</code>
+  silently (the fork's Transformation handler has no EQ path), so with no
+  declared handler the bridge auto-emits <code>Lagrange</code> (implicit) or
+  <code>LadrunoProjection</code> (explicit), and a declared <code>Transformation</code> / <code>Auto</code>
+  raises. Every handler guard (contact conflict, staged, modal deck) now keys
+  on "any equation row". Declaration refuses zero / non-finite coefficients,
+  DOFs below 1, an empty retained set and a constrained DOF that is also
+  retained; emit refuses an unknown node or a DOF above the node's ndf. The
+  in-process run needs the fork (the live emitter's <code>equationConstraint</code>
+  gate), a partitioned emit refuses the rows, and <code>ops.h5(...)</code> warns
+  (<code>H5FeatureDeferredWarning</code>) that they are not archived. Fork-only live test:
+  two parallel bars tied by one row share the load exactly.</li>
+<li><strong>D2b — <code>ASDConcrete3D(tangent="secant"|"numerical")</code>.</strong> <code>"secant"</code>
+  (default) is the parser's no-flag damaged secant; <code>"numerical"</code> emits the
+  bare <code>-tangent</code> flag, a forward-difference tangent. There is no analytical
+  consistent tangent, so <code>"consistent"</code> is refused; <code>"numerical"</code> with
+  <code>implex=True</code> raises because the C++ ignores <code>-tangent</code> under IMPL-EX. Stock
+  OpenSees has the flag too. Live test: same stress path, but the reported
+  material tangent <code>C33</code> is positive (secant) vs negative (numerical) past the
+  peak.</li>
+<li><strong>D2c — ASD shells: <code>local_cs</code> emits <code>-local x y z</code>; drilling options fixed
+  — BREAKING.</strong> <code>ASDShellQ4</code> / <code>ASDShellT3</code> emitted <code>-localCS</code> (six values),
+  <code>ASDShellQ4(drilling_nt_alpha=)</code> emitted <code>-drillingNT</code>, and
+  <code>ASDShellT3(drilling_dof=)</code> emitted <code>-drillingDOF</code>. None of these is an option
+  of <code>OPS_ASDShellQ4</code> / <code>OPS_ASDShellT3</code> (which take <code>-local</code> with three
+  components, <code>-drillingStab v</code> / <code>-drillingNL</code> on Q4, <code>-drillingNL</code> on T3),
+  and the option loops have no else branch, so all were read and discarded.
+  <code>local_cs</code> is now the local x axis <code>(x1, x2, x3)</code>; the element projects it
+  onto the shell plane and derives y. It is also the frame of a layered
+  section's layers, so it pins <code>PlateRebar</code> angles on any build. A 6-tuple,
+  <code>drilling_nt_alpha</code> and <code>drilling_dof</code> now raise naming the replacement
+  rather than being converted, since those scripts ran on the defaults.
+  <code>ASDShellQ4</code> gains <code>drilling_stab</code> (<code>-drillingStab</code>, <code>[0, 1]</code>) and
+  <code>drilling_nl</code> (<code>-drillingNL</code>), mutually exclusive; <code>ASDShellT3</code> gains
+  <code>drilling_nl</code>. Live tests assert the effect, because an unknown flag is
+  accepted silently: a 0 deg <code>PlateRebar</code> layer stiffens an X pull only when
+  <code>local_cs=(1, 0, 0)</code> (exact to 1e-6), and <code>drilling_stab=0.01</code> reproduces
+  the default while <code>1.0</code> stiffens the drilling rotation. (<code>ASDShellT3</code>'s
+  <code>-drillingNL</code> shows no effect on a linear-elastic section, so it is
+  emit-tested only.)</li>
+<li><strong>D2d — <code>LadrunoConcrete3D(tension_law=, eps_fc=, gc_legacy=,
+  flow_potential=)</code>.</strong> <code>-tensionLaw bilinear|exp</code>, <code>-epsFc</code> (raw CDPM2
+  compressive softening strain, bypassing <code>Gc</code>), <code>-gcLegacy</code> (the old
+  <code>eps_fc = Gc/(fc·lch)</code> reading) and <code>-flowPotential cdpm2|legacy</code>, on the
+  primitive and <code>ops.nDMaterial.LadrunoConcrete3D</code>. <code>None</code> / <code>False</code> emits
+  nothing (build default); <code>eps_fc</code> and <code>gc_legacy</code> are exclusive. Build floors
+  follow the documented-not-enforced convention:
+  <code>LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD = "1334d1e24"</code> (the first three;
+  the same commit made bilinear and <code>Gc</code>-as-energy the defaults) and
+  <code>LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD = "916576661"</code>; older parsers
+  refuse the tokens (<code>unknown option</code>). Fork-only live test, skipped on builds
+  without <code>-tensionLaw</code>: the two laws give different post-peak stress, and
+  <code>eps_fc</code> / <code>gc_legacy</code> build and run. <code>-flowPotential</code> is emit-tested only
+  (newer than the tested build).</li>
+</ul>
 <h3 id="fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget">FIXED — HDF5 readers probe optional children with <code>name in group</code>, not <code>Group.get("...")</code><a class="headerlink" href="#fixed-hdf5-readers-probe-optional-children-with-name-in-group-not-groupget" title="Permanent link">&para;</a></h3>
 <p>On the manylinux HDF5 build, <code>Group.get(name)</code> on a missing name can raise a
 random <code>UnicodeDecodeError</code> instead of returning <code>None</code> — green on Windows,

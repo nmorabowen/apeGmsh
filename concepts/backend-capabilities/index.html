@@ -4039,6 +4039,11 @@ are unaffected and run on any build.</p>
   <code>equationConstraint</code> (EQ_Constraint, ADR 0068). Fork-only <strong>for the live
   run</strong>. On stock, use <code>enforce="penalty"</code> with a tuned <code>stiffness</code> — see
   <a href="../../how-to/tie-meshes/">Tie non-matching meshes</a>.</li>
+<li><strong><code>ops.equation_constraint(...)</code></strong> — a hand-written <code>equationConstraint</code> row
+  (<code>constrained=(node, dof)</code>, <code>retained=[(node, dof, coef), ...]</code>). Same
+  rules as an equation tie: fork-only for the live run, <code>Lagrange</code> /
+  <code>LadrunoProjection</code> auto-emitted, <code>Transformation</code> refused, serial only, and
+  not archived by <code>ops.h5(...)</code>.</li>
 <li><strong>Contact.</strong> <code>g.constraints.contact(...)</code> → <code>contactSurface</code> / <code>contact</code>, and
   <code>g.constraints.contact_plane(...)</code> → <code>contactPlane</code> (rigid analytical plane).
   Both lanes work in 2D as well as 3D, and both are <strong>serial only</strong> — parallel
@@ -4063,6 +4068,12 @@ are unaffected and run on any build.</p>
 <p><code>LadrunoBondSlip</code>, <code>LadrunoCohesiveHinge</code>, <code>LadrunoCohesiveHingeBiaxial</code>,
 <code>LadrunoConcrete3D</code>, <code>LadrunoJ2</code>, <code>LadrunoJ2Finite</code>, <code>LadrunoRCConcrete</code>,
 <code>LadrunoRCFiniteStrain</code>, <code>LadrunoRebarBuckling</code>, <code>LadrunoUniaxialJ2</code></p>
+<p><code>LadrunoConcrete3D</code>'s <code>tension_law=</code> / <code>eps_fc=</code> / <code>gc_legacy=</code> need fork
+build <code>1334d1e24</code> or later, and <code>flow_potential=</code> needs <code>916576661</code>. An older
+build refuses the material (<code>unknown option</code>) rather than ignoring them. The
+same <code>1334d1e24</code> commit changed the defaults (bilinear tension law, <code>Gc</code> read
+as a compressive fracture energy), so a deck that sets none of them means
+different things on either side of it; pin <code>tension_law</code> when that matters.</p>
 <p>The vanilla <code>DruckerPrager</code> runs on any build, but its tension-cutoff
 return map is only correct from fork build <code>61b3efa04</code> on (fork ADR-95).
 An older engine parses the same deck and answers differently — quadratic

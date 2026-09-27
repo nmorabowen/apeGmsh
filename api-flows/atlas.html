@@ -9855,13 +9855,13 @@
    "id": "apeSees.element.ASDShellQ4",
    "label": "ASDShellQ4",
    "composite": "os.elements",
-   "signature": "ASDShellQ4(*, pg, section, corotational=False, drilling_nt_alpha=None, local_cs=None) -> ASDShellQ4",
-   "summary": "4-node ASD shell over a PG with optional corotational/drillingNT/localCS flags (element ASDShellQ4); auto-registered.",
+   "signature": "ASDShellQ4(*, pg, section, corotational=False, drilling_stab=None, drilling_nl=False, drilling_nt_alpha=None, local_cs=None) -> ASDShellQ4",
+   "summary": "4-node ASD shell over a PG with optional corotational/drillingStab/drillingNL/local flags (element ASDShellQ4); auto-registered.",
    "file": "src/apeGmsh/opensees/element/shell.py:186",
    "flow": [
     {
      "node": "apesees",
-     "action": "_ElementNS builds+validates (local_cs 6-tuple if set)",
+     "action": "_ElementNS builds+validates (local_cs 3-tuple local x axis if set)",
      "passes": "ASDShellQ4 dataclass",
      "to": "os.registry"
     },
@@ -9878,7 +9878,7 @@
      "to": "external"
     }
    ],
-   "inputs": "pg:str, section:Section, corotational, drilling_nt_alpha, local_cs:6-tuple|None",
+   "inputs": "pg:str, section:Section, corotational, drilling_stab, drilling_nl, local_cs:3-tuple|None",
    "outputs": "ASDShellQ4 (Element)",
    "reads": [
     "fem.elements",
@@ -9893,13 +9893,13 @@
    "id": "apeSees.element.ASDShellT3",
    "label": "ASDShellT3",
    "composite": "os.elements",
-   "signature": "ASDShellT3(*, pg, section, corotational=False, drilling_dof=None, local_cs=None) -> ASDShellT3",
-   "summary": "3-node ASD shell over a PG with optional corotational/drillingDOF/localCS flags (element ASDShellT3); auto-registered.",
+   "signature": "ASDShellT3(*, pg, section, corotational=False, drilling_nl=False, drilling_dof=None, local_cs=None) -> ASDShellT3",
+   "summary": "3-node ASD shell over a PG with optional corotational/drillingNL/local flags (element ASDShellT3); auto-registered.",
    "file": "src/apeGmsh/opensees/element/shell.py:248",
    "flow": [
     {
      "node": "apesees",
-     "action": "_ElementNS builds+validates (local_cs 6-tuple if set)",
+     "action": "_ElementNS builds+validates (local_cs 3-tuple local x axis if set)",
      "passes": "ASDShellT3 dataclass",
      "to": "os.registry"
     },
@@ -9916,7 +9916,7 @@
      "to": "external"
     }
    ],
-   "inputs": "pg:str, section:Section, corotational, drilling_dof, local_cs:6-tuple|None",
+   "inputs": "pg:str, section:Section, corotational, drilling_nl, local_cs:3-tuple|None",
    "outputs": "ASDShellT3 (Element)",
    "reads": [
     "fem.elements",
