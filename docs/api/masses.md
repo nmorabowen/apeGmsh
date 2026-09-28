@@ -25,9 +25,9 @@ land on `fem.nodes.masses` as a `MassSet` (an iterable of
 [FEM Broker](fem.md)).
 
 Each record carries a length-6 vector
-`(mx, my, mz, Ixx, Iyy, Izz)`; the OpenSees bridge slices it to the
-model's `ndf` when emitting `ops.mass(...)` commands (rotational
-components are dropped for `ndf < 4`).
+`(mx, my, mz, Ixx, Iyy, Izz)`; the OpenSees bridge maps it onto each
+node's DOFs by `(ndm, ndf)` when emitting `mass` commands: positionally
+in 3-D, and as `(mx, my)` or `(mx, my, Izz)` on a 2-D node.
 
 ## No patterns
 

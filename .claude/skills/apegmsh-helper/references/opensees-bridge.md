@@ -225,7 +225,8 @@ ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
 # explicit ops.mass only on DISJOINT node sets (overlap raises at emit):
 ops.mass_from_model()   # verified: tests/opensees/integration/test_mass_from_model.py::test_mass_from_model_byte_identical_to_explicit_loop
 # In 2-D the broker (mx, my, mz, Ixx, Iyy, Izz) maps by (ndm, ndf): ndf=2 -> (mx, my),
-# ndf=3 frame -> (mx, my, Izz); mz is dropped, a non-zero Ixx/Iyy raises.
+# ndf=3 frame -> (mx, my, Izz); a default-filled mz is dropped, but a z-only
+# mass (dofs=[3]) or a non-zero Ixx/Iyy raises (so derive_rotational on a 2-D solid raises).
 # verified: tests/opensees/integration/test_mass_from_model_2d.py::test_2d_frame_mass_lands_on_translations_not_rz
 
 # Nodal loads + prescribed (non-zero) SP — pattern-scoped.

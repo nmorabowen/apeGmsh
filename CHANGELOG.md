@@ -33,11 +33,21 @@ failures followed:
 
 The new `broker_mass_components` (`opensees/_internal/build.py`) is the
 mass counterpart of `broker_load_components` and uses the same
-`_load_dof_layout`. On `ndm=2`, `mz` is dropped because the resolver
-fills it by default and a 2-D node has no z-translation. A non-zero
-`Ixx`/`Iyy`, or an `Izz` on an `ndf=2` node, comes from an explicit
-`rotational=` or `derive_rotational=True` and raises a `BridgeError`,
-because the inertia would otherwise be lost. For `ndm=3` the mapping
+`_load_dof_layout`. On `ndm=2`, an `mz` that rides with in-plane mass is
+dropped, because the resolver fills it by default and a 2-D node has no
+z-translation. A z-only mass (`dofs=[3]`, so `mx = my = 0`) is explicit
+out-of-plane intent and raises a `BridgeError`, like `Fz` on the loads
+path. A non-zero `Ixx`/`Iyy`, or an `Izz` on an `ndf=2` node, comes from
+an explicit `rotational=` or `derive_rotational=True` and also raises,
+because the inertia would otherwise be lost. So **every
+`derive_rotational=True` mass on a 2-D solid now raises**: surface and
+volume consistent masses derive non-zero `Ixx`/`Iyy`, which a 2-D node
+cannot carry. Line masses never derive rotational inertia. **2-D u-p
+nodes** (`quadUP` and friends, `ndm=2, ndf=3`) share the frame layout, so
+their third DOF (pore pressure) now receives `Izz` (normally 0) instead
+of `mz`. **Known gap:** the record does not carry the resolver's `dofs`
+mask, so a mixed mask such as `dofs=[1, 3]` still loses its `mz` without
+an error; closing it needs the mask on `MassRecord`. For `ndm=3` the mapping
 delegates to the positional `fit_dof_vector`, so 3-D decks are
 byte-identical (`test_mass_from_model.py`). The flat, partitioned
 (`model_mass_by_rank`) and per-rank paths all use the new mapping.
