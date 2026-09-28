@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — RC layered shells: ops.section.RCLayeredShell + RebarMesh, ops.nDMaterial.PlateFiber, ASDShellQ4(no_eas=); ShellLayer refuses layers OpenSees cannot use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3711,6 +3722,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — RC layered shells: ops.section.RCLayeredShell + RebarMesh, ops.nDMaterial.PlateFiber, ASDShellQ4(no_eas=); ShellLayer refuses layers OpenSees cannot use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3837,6 +3859,61 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use">ADDED — RC layered shells: <code>ops.section.RCLayeredShell</code> + <code>RebarMesh</code>, <code>ops.nDMaterial.PlateFiber</code>, <code>ASDShellQ4(no_eas=)</code>; <code>ShellLayer</code> refuses layers OpenSees cannot use<a class="headerlink" href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)</code></strong>
+  (<code>section/plate.py</code>; namespace <code>ops.section.RCLayeredShell</code>) builds a
+  reinforced-concrete <code>LayeredShell</code> from bar meshes. It adds no emit
+  surface; the result is a plain <code>section LayeredShell</code>. Each <code>RebarMesh</code>
+  (steel uniaxial, <code>angle</code> in degrees, <code>area_per_width = A_s / s</code>, centroid
+  as <code>z</code> or <code>cover</code> + <code>face</code>; <code>RebarMesh.from_bars(bar_area=, spacing=)</code>)
+  becomes its own thin <code>PlateRebar</code> layer centred on the bar. The concrete
+  fills the gaps around the bars, so its total is <code>h - sum(A_s / s)</code>: the
+  steel is never a <code>rho</code>-weighted overlay inside a concrete layer.
+  <code>n_concrete</code> layers are split over the concrete regions in proportion to
+  their thickness, with at least one per region. The topmost concrete layer
+  takes the rounding, so the stack sums to <code>h</code>. Meshes with the same steel
+  instance and angle share one <code>PlateRebar</code>. The builder refuses a bar
+  outside <code>[-h/2, h/2]</code>, overlapping bars (touching is fine) and a stack
+  with no concrete left. Below six concrete layers it warns
+  (<code>CoarseShellLayeringWarning</code>): the section integrates each layer at its
+  mid-plane, which drops <code>1/n**2</code> of the bending stiffness of <code>n</code> equal
+  layers. The namespace method registers the new <code>PlateRebar</code> layers and
+  the section; the concrete and steel must already be registered.</li>
+<li><strong><code>PlateFiber(material=&lt;3-D nD&gt;)</code></strong> emits <code>nDMaterial PlateFiber $tag
+  $threeDTag</code> (stock). It condenses a 3-D law to a shell layer by iterating
+  <code>eps33</code> to <code>sigma33 = 0</code>. Usually not needed, since a layered section
+  asks each 3-D layer for its PlateFiber view itself. OpenSees takes
+  <code>getCopy("ThreeDimensional")</code> of the inner without a null check, so
+  <code>PlateFiber</code> refuses <code>PlateRebar</code>, <code>PlateFromPlaneStress</code>,
+  <code>PlaneStressRebar</code> and <code>LogStrain2D</code> (null copy), and <code>PlaneStrain</code> and
+  <code>PlateFiber</code> (wrong-order copy). <code>PlateFromPlaneStress</code> now also refuses
+  a <code>PlateFiber</code> inner, whose "plane-stress" copy would be order 5.</li>
+<li><strong><code>ShellLayer</code> refuses</strong> a <code>UniaxialMaterial</code> (the section parser looks
+  layer tags up among the nDMaterials, a separate tag space, so the tag
+  named a missing or an unrelated nD material), pointing to <code>PlateRebar</code> /
+  <code>RCLayeredShell</code>. It also refuses anything that is not an <code>NDMaterial</code>,
+  plus <code>PlaneStrain</code> (order-3 copy for every type) and <code>LogStrain2D</code> (null
+  PlateFiber copy, so the C++ side would call <code>exit(-1)</code>). <code>LayeredShell</code> /
+  <code>LayeredShellFiberSection</code> refuse a layer that is not a <code>ShellLayer</code>.</li>
+<li><strong><code>ASDShellQ4(no_eas=True)</code></strong> emits <code>-noeas</code>, which turns off the
+  enhanced (AGQI/EAS) membrane. It was the last <code>OPS_ASDShellQ4</code> option
+  without a keyword. <code>-local</code>, <code>-drillingStab</code> and <code>-drillingNL</code> were fixed
+  or added in #1183.</li>
+</ul>
+<p>Tests: <code>tests/opensees/unit/primitives/test_sections_rc_layered_shell.py</code>
+(layer arithmetic, bar depths, concrete reduction, apportioning, dedup,
+validation, the warning, and namespace registration and emit order in Tcl
+and Python), new <code>PlateFiber</code> and <code>ShellLayer</code> cases in
+<code>test_materials_plate_layers.py</code>, <code>-noeas</code> emission in
+<code>test_elements_shell.py</code>, and an H5 round-trip
+(<code>tests/opensees/h5/test_h5_rc_layered_shell_roundtrip.py</code>). Two live
+tests, run on both the fork and stock openseespy 3.7.1.2: one
+<code>ASDShellQ4</code> with a helper-built two-curtain section gives membrane
+stiffness <code>E_c (h - sum t_s) + E_s sum t_s,along</code> along x and along y to
+1e-6 (<code>tests/opensees/live/test_rc_layered_shell_live.py</code>), and <code>-noeas</code>
+stiffens one element in in-plane bending (0.74x the enhanced tip
+displacement).</p>
 <h3 id="added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200">ADDED — <code>LadrunoRCConcrete</code>/<code>LadrunoRCFiniteStrain</code> C2 fork flags: <code>cracked_nu</code>, <code>beta_c</code>, <code>vc</code> tension-stiffening default 500→200<a class="headerlink" href="#added-ladrunorcconcreteladrunorcfinitestrain-c2-fork-flags-cracked_nu-beta_c-vc-tension-stiffening-default-500200" title="Permanent link">&para;</a></h3>
 <p>Exposes the three <code>_LadrunoRC</code> (base of <code>LadrunoRCConcrete</code> /
 <code>LadrunoRCFiniteStrain</code>) parameters that shipped together in fork commit
