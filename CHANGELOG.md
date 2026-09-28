@@ -14,6 +14,26 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports
+
+This PR adds the program that runs the architectural remediation, but no library code.
+
+**Reports**
+- `internal_docs/plan_architectural_strains_2026-09.md` covers the eight root strains, the verified silent defects D1–D11, and errata E1–E7.
+- `internal_docs/plan_expert_panel_2026-09.md` records the decisions of a nine-seat Fable/Opus panel:
+  - Fork policy is "B with amendments": the default target is auto-detected, fork tokens in the neutral layers are held to a ratchet, and going fork-only is a review trigger.
+  - The resolved `model.h5` archive becomes the program, test-first.
+  - About 37k LOC are cut.
+  - `nav.py` and a family-completeness gate are added.
+  - `land_pr.py` stays at about 80 lines.
+
+**The program**
+- `internal_docs/program/PROGRAM.md` is the static charter. Live state lives on GitHub: board #1203, ten chain issues (#1193–#1202), and the panel papers in #1192.
+- `internal_docs/program/slice_card.md` is the slice template. `internal_docs/program/prototypes/` holds the panel's scripts and expires on 2026-11-30.
+- Eight `.claude/agents/prog-*.md` workers pin model and effort: mechanic Sonnet/medium, builders Opus or Fable/high, architects Opus/max and Fable/xhigh, read-only cross-family reviewers, and an auditor on Haiku/low.
+- The `/apegmsh-program <link>` orchestrator skill boots from the ledger, dispatches workers, reviews, and lands only `mechanical` PRs. It queues the next link as a task chip.
+- AGENTS.md gains a routing row for each.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
