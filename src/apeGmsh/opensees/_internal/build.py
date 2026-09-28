@@ -6169,6 +6169,7 @@ def emit_mp_constraints(
 def emit_reinforce_ties(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, name_to_tag: "dict[str, int]",
+    records: "Iterable[Any] | None" = None,
 ) -> None:
     """Emit one ``element LadrunoEmbeddedRebar`` per resolved reinforcement
     tie (``g.reinforce``, ADR 20 / R2b).
@@ -6193,14 +6194,20 @@ def emit_reinforce_ties(
 
     No-op when the FEM snapshot exposes no ``elements.reinforce_ties`` —
     reinforcement is purely additive on top of any other bridge state.
+
+    ``records`` restricts the pass to a subset (the partitioned emit hands
+    each rank the ties it owns).
     """
     from ..element.embedded_rebar import embedded_rebar_args
 
-    elements = getattr(fem, "elements", None)
-    ties = (
-        getattr(elements, "reinforce_ties", None)
-        if elements is not None else None
-    )
+    if records is not None:
+        ties = list(records)
+    else:
+        elements = getattr(fem, "elements", None)
+        ties = (
+            getattr(elements, "reinforce_ties", None)
+            if elements is not None else None
+        )
     if not ties:
         return
 
@@ -7224,6 +7231,7 @@ def emit_interfaces(
 def emit_rebar_elements(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, name_to_tag: "dict[str, int]",
+    records: "Iterable[Any] | None" = None,
 ) -> None:
     """Emit the cage's auto-emitted structural rebar elements (ADR 0067
     P5.2 / B1) — one ``CorotTruss`` per line cell of each bar PG.
@@ -7250,12 +7258,18 @@ def emit_rebar_elements(
     ``geomTransf`` + ``ndf=6`` + twist) is B1b, not yet wired.
 
     No-op when the FEM snapshot exposes no ``elements.rebar_elements``.
+
+    ``records`` restricts the pass to a subset (the partitioned emit hands
+    each rank records holding only the bar cells it owns).
     """
-    elements = getattr(fem, "elements", None)
-    recs = (
-        getattr(elements, "rebar_elements", None)
-        if elements is not None else None
-    )
+    if records is not None:
+        recs = list(records)
+    else:
+        elements = getattr(fem, "elements", None)
+        recs = (
+            getattr(elements, "rebar_elements", None)
+            if elements is not None else None
+        )
     if not recs:
         return
 

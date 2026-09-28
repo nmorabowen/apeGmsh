@@ -3124,35 +3124,9 @@ class BuiltModel:
             )
         staged = bool(self.stage_records)
 
-        # g.reinforce (ADR 20 / R2b): partitioned emission of
-        # LadrunoEmbeddedRebar ties needs per-rank node-ownership routing
-        # (a tie spans the rebar node + its host element's nodes, which
-        # may straddle ranks). That routing is deferred; fail loud rather
-        # than silently dropping the reinforcement under MPI emit.
+        # g.reinforce ties and g.rebar auto-emitted bars are routed per rank
+        # (see _plan_partitioned_reinforcement / step 7c-ter).
         elements_comp = getattr(self.fem, "elements", None)
-        if getattr(elements_comp, "reinforce_ties", None):
-            raise BridgeError(
-                "apeSees: g.reinforce embedded-reinforcement ties are not "
-                "yet supported under partitioned (MPI) emit — per-rank "
-                "node-ownership routing of LadrunoEmbeddedRebar is deferred "
-                "(ADR 20 / R2). Emit the reinforced model single-process "
-                "(non-partitioned), or remove the reinforcement for the "
-                "partitioned run."
-            )
-
-        # ADR 0067 P5.2 / B1: auto-emitted structural rebar elements
-        # (g.rebar.place(emit_elements=True)) need per-rank ownership
-        # routing of each bar's line cells under MPI. Deferred — fail loud
-        # rather than emit a partitioned deck with mis-routed CorotTrusses.
-        if getattr(elements_comp, "rebar_elements", None):
-            raise BridgeError(
-                "apeSees: g.rebar auto-emitted structural rebar elements "
-                "(place(emit_elements=True)) are not yet supported under "
-                "partitioned (MPI) emit — per-rank routing of the bar line "
-                "cells is deferred (ADR 0067 P5.2). Emit single-process "
-                "(non-partitioned), or place with emit_elements=False and "
-                "hand-emit the bar elements."
-            )
 
         # g.embed (LadrunoEmbeddedNode ties): like reinforce ties, an embed
         # tie spans the constrained node + its host element's nodes, which may
@@ -3339,6 +3313,12 @@ class BuiltModel:
             inferred_ndf=inferred_ndf,
             post_element=post_element,
         )
+        # g.reinforce ties + g.rebar bars: owner rank + ghost bar nodes,
+        # resolved once before any emission.
+        reinforcement_plan_by_rank = self._plan_partitioned_reinforcement(
+            node_owners,
+        )
+
         # ADR 0093 S9 (INV-6 under INV-5): per-stage owner/ghost plans
         # for the CLAIMED records — the same _plan_rank_interfaces
         # assertions (a claimed pair's owner is still the rank holding
@@ -3912,6 +3892,18 @@ class BuiltModel:
                     emitter,
                     interface_plan_by_rank.get(rank, []),
                     interface_tag_plan=interface_tag_plan,
+                    declared_ghosts=ghost_tags_by_rank[rank],
+                    ghost_sp_ops=ghost_sp_ops,
+                    inferred_ndf=inferred_ndf,
+                    node_idx_lookup=node_idx_lookup,
+                )
+
+                # 7c-ter. Embedded reinforcement owned by THIS rank: ghost
+                # bar nodes first, then the LadrunoEmbeddedRebar ties and the
+                # bar CorotTrusses (g.reinforce / g.rebar).
+                self._emit_reinforcement_partitioned(
+                    emitter, tags,
+                    reinforcement_plan_by_rank.get(rank),
                     declared_ghosts=ghost_tags_by_rank[rank],
                     ghost_sp_ops=ghost_sp_ops,
                     inferred_ndf=inferred_ndf,
@@ -6301,6 +6293,126 @@ class BuiltModel:
                     emitter, self.fem, tags, ndm=self.ndm, records=(rec,))
             else:
                 emit_contact_planes(emitter, self.fem, tags, records=(rec,))
+
+    def _plan_partitioned_reinforcement(
+        self, node_owners: "Any",
+    ) -> "dict[int, tuple[list[Any], list[Any], tuple[int, ...]]]":
+        """Owner rank of every embedded-reinforcement item under a
+        partitioned emit: ``{rank: (ties, bar_records, ghost_node_ids)}``.
+
+        * A ``LadrunoEmbeddedRebar`` tie goes to the lowest rank that owns
+          all its host nodes (the host element's rank). If that rank does
+          not own the rebar node, the node is ghost-declared there, the
+          same shared-node mechanism as ``ASDEmbeddedNodeElement``.
+        * A bar ``CorotTruss`` cell goes to the lowest rank owning both of
+          its nodes (a Gmsh-partitioned line cell always has one); a cell
+          straddling ranks goes to its first node's rank and the second
+          node is ghost-declared.
+
+        Every item lands on exactly one rank, so nothing is duplicated.
+        Empty when the model has no embedded reinforcement.
+        """
+        from dataclasses import replace
+
+        elements = getattr(self.fem, "elements", None)
+        ties = list(getattr(elements, "reinforce_ties", None) or ())
+        bars = list(getattr(elements, "rebar_elements", None) or ())
+        if not ties and not bars:
+            return {}
+
+        def ranks(nid: int) -> "set[int]":
+            owners = node_owners.get(int(nid))
+            if not owners:
+                raise BridgeError(
+                    f"apeSees: embedded-reinforcement node {nid} is not "
+                    "owned by any partition; partition the mesh after the "
+                    "bars are meshed."
+                )
+            return set(int(r) for r in owners)
+
+        tie_plan: "dict[int, list[Any]]" = {}
+        bar_plan: "dict[int, dict[int, list[tuple[int, int]]]]" = {}
+        ghosts: "dict[int, set[int]]" = {}
+
+        for rec in ties:
+            common = set.intersection(*(ranks(h) for h in rec.host_nodes))
+            if not common:
+                raise BridgeError(
+                    f"apeSees: the host nodes of the tie at rebar node "
+                    f"{rec.rebar_node} share no partition; cannot place "
+                    "the LadrunoEmbeddedRebar element."
+                )
+            owner = min(common)
+            tie_plan.setdefault(owner, []).append(rec)
+            if owner not in ranks(rec.rebar_node):
+                ghosts.setdefault(owner, set()).add(int(rec.rebar_node))
+
+        for k, rec in enumerate(bars):
+            for i_node, j_node in rec.connectivity:
+                ri, rj = ranks(i_node), ranks(j_node)
+                common = ri & rj
+                owner = min(common) if common else min(ri)
+                bar_plan.setdefault(owner, {}).setdefault(k, []).append(
+                    (int(i_node), int(j_node)))
+                if owner not in rj:
+                    ghosts.setdefault(owner, set()).add(int(j_node))
+
+        plan: "dict[int, tuple[list[Any], list[Any], tuple[int, ...]]]" = {}
+        for rank in set(tie_plan) | set(bar_plan):
+            rank_bars = [
+                replace(bars[k], connectivity=tuple(cells))
+                for k, cells in sorted(bar_plan.get(rank, {}).items())
+            ]
+            plan[rank] = (
+                tie_plan.get(rank, []),
+                rank_bars,
+                tuple(sorted(ghosts.get(rank, ()))),
+            )
+        return plan
+
+    def _emit_reinforcement_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        entry: "tuple[list[Any], list[Any], tuple[int, ...]] | None",
+        *,
+        declared_ghosts: "set[int]",
+        ghost_sp_ops: "dict[int, list[Any]]",
+        inferred_ndf: "dict[int, int]",
+        node_idx_lookup: "SortedIntToInt",
+    ) -> None:
+        """Emit this rank's embedded reinforcement: ghost bar nodes (with
+        the owner's replayed SPs), then its ``LadrunoEmbeddedRebar`` ties
+        and bar ``CorotTruss`` cells, planned by
+        :meth:`_plan_partitioned_reinforcement`."""
+        if not entry:
+            return
+        rank_ties, rank_bars, ghost_ids = entry
+        for nid in ghost_ids:
+            if nid in declared_ghosts:
+                continue
+            node_idx = node_idx_lookup.get(nid)
+            if node_idx is None:
+                raise BridgeError(
+                    f"apeSees: rebar node {nid} is not in the FEM snapshot; "
+                    "cannot ghost-declare it."
+                )
+            xyz = self.fem.nodes.coords[node_idx]
+            _emit_node_with_inferred_ndf(
+                emitter, inferred_ndf, nid,
+                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                self.ndf,
+            )
+            emit_ghost_sp_ops(emitter, nid, ghost_sp_ops.get(nid, ()))
+            declared_ghosts.add(nid)
+        emit_reinforce_ties(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            records=rank_ties,
+        )
+        emit_rebar_elements(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            records=rank_bars,
+        )
 
     def _plan_partitioned_interfaces(
         self,
