@@ -4,10 +4,11 @@ Three behaviours that together close the "2-D shell wall on a 3-D solid
 footing" use case (the E7 docs example):
 
 1.  **Fail-loud guard** — the broken idiom (a shell surface *fragmented
-    onto* a solid volume so they share interface nodes, then
-    ``g.node_ndf.set(shell, ndf=6)``) raises :class:`BridgeError` at
-    build.  Sharing a node between an ``ndf=6`` shell element and an
-    ``ndf=3`` solid element is unassemblable in OpenSees
+    onto* a solid volume so they share interface nodes, shell elements
+    on the wall and solid elements on the footing) raises
+    :class:`BridgeError` at build.  Sharing a node between an ``ndf=6``
+    shell element and an ``ndf=3`` solid element is unassemblable in
+    OpenSees
     (``FE_Element::setID`` truncates the element's equation map →
     silent equilibrium loss).  Before the guard this produced a
     plausible deflection while ~half the applied load vanished.
@@ -19,13 +20,13 @@ footing" use case (the E7 docs example):
     load: ``Σ reactions == Σ applied`` to numerical precision.
 
 3.  **node_ndf round-trips through Results.from_native** — a real
-    ``g.node_ndf`` model captured with ``ops.domain_capture`` writes the
+    mixed-ndf model captured with ``ops.domain_capture`` writes the
     ndf envelope into the Composed file's ``/model/meta`` so
     ``OpenSeesModel.from_h5(path, fem_root="/model")`` recovers
     ``ndf=6`` (it read ``ndf=0`` and raised before the
     ``DomainCapture`` bridge-forwarding fix).
 
-See ADR 0032 / 0033 (explicit-only per-node ndf) and the partitioned
+See ADR 0048 (inferred per-node ndf; supersedes 0032 / 0033) and the partitioned
 companion ``test_emit_partitioned_mixed_ndf_shell_on_solid.py``.
 """
 from __future__ import annotations
@@ -395,7 +396,7 @@ def test_shell_on_solid_correct_idiom_satisfies_equilibrium():
 
 @pytest.mark.live
 def test_node_ndf_roundtrips_through_domain_capture(g, tmp_path):
-    """A real ``g.node_ndf`` model captured with ``ops.domain_capture``
+    """A real mixed-ndf model captured with ``ops.domain_capture``
     persists its ndf envelope into the Composed file's ``/model/meta`` so
     ``OpenSeesModel.from_h5(path, fem_root="/model")`` recovers ``ndf=6``.
 
