@@ -101,7 +101,7 @@ with apeGmsh(model_name="modal-cantilever") as g:
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)                       # 2-D frame: ux, uy, thetaz
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(
     pg="Beam", transf=transf, A=A, E=E, Iz=Iz,
     mass=mbar, c_mass=True,                    # <-- distributed (consistent) mass
@@ -186,7 +186,7 @@ take the `get_fem_data(dim=1)` snapshot, exactly as before.
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(
     pg="Beam", transf=transf, A=A, E=E, Iz=Iz,
     mass=mbar, c_mass=True,

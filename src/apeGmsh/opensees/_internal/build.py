@@ -3012,13 +3012,22 @@ def emit_transform_specs(
             # (``geomTransf <Type> $tag`` with no vecxz vector, which
             # is required in 2D and invalid in 3D). The primitive's
             # _emit can't take this branch because it doesn't know ndm.
-            bare_2d = (
-                ndm == 2
-                and type(transf) in _TRANSF_TYPE_TOKEN
-                and getattr(transf, "vecxz", None) is None
-                and getattr(transf, "orientation", None) is None
-            )
+            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
             if bare_2d:
+                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
+                # ``geomTransf`` rejects any trailing args (and exits
+                # 0), while openseespy silently ignores them.  Only a
+                # vector along global Z matches what a 2-D model can
+                # mean (local z = global Z); anything else is a 3-D
+                # intent the 2-D transform cannot honor.
+                vecxz = getattr(transf, "vecxz", None)
+                if vecxz is not None and not _is_global_z(vecxz):
+                    raise BridgeError(
+                        f"geomTransf {type(transf).__name__}: "
+                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
+                        "2-D transforms take no vecxz (local z is always "
+                        "global Z); drop the vecxz= kwarg."
+                    )
                 emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
                 if replay_log is not None:
                     replay_log.append(
@@ -3115,6 +3124,12 @@ def emit_transform_specs(
                 overrides[(id(transf), eid)] = assigned
 
     return overrides
+
+
+def _is_global_z(v: "tuple[float, float, float]") -> bool:
+    """True when ``v`` is a non-zero vector along global ±Z."""
+    x, y, z = (float(c) for c in v)
+    return abs(z) > 0.0 and float(np.hypot(x, y)) <= VECXZ_TOL * abs(z)
 
 
 def _node_coord(fem: "FEMData", node_id: int) -> np.ndarray:

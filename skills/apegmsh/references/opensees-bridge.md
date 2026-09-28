@@ -99,6 +99,8 @@ sec    = ops.section.Fiber(
 )
 slab   = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2, rho=2400)
 transf = ops.geomTransf.Linear(vecxz=(1, 0, 0))    # or .PDelta / .Corotational
+# 2-D model (ndm=2): ops.geomTransf.Linear() with NO vecxz — a vecxz along
+# global Z is dropped at emit, any other vector raises BridgeError
 integ  = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
 ```
 

@@ -111,7 +111,7 @@ print(f"hash match           = {fem2.snapshot_id == snap_built}")
 ops = apeSees(fem2)
 ops.model(ndm=2, ndf=3)
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
 
 ops.fix(pg="Pin",    dofs=(1, 1, 0))    # pin:    ux, uy held
@@ -282,7 +282,7 @@ what we use.
 ```python
 ops = apeSees(fem2)            # <- the RELOADED snapshot, not the original
 ops.model(ndm=2, ndf=3)
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
 ops.fix(pg="Pin",    dofs=(1, 1, 0))
 ops.fix(pg="Roller", dofs=(0, 1, 0))
