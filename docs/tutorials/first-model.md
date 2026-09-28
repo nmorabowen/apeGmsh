@@ -100,7 +100,7 @@ with apeGmsh(model_name="cantilever") as g:
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)                       # 2-D frame: ux, uy, thetaz
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
 
 ops.fix(pg="Fixed", dofs=(1, 1, 1))           # clamp ux, uy, thetaz
@@ -231,14 +231,15 @@ in-plane rotation ($u_x, u_y, \theta_z$). That rotation DOF is what makes this
 a *beam* and not a truss.
 
 ```python
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
 ```
 
 Every beam-column element needs a **geometric transformation** — the rule that
 maps the element's local axes to global ones. `Linear` is the small-deflection
-choice (exactly right for this elastic problem); the `vecxz` vector orients the
-local axes. The transform comes back as a *handle* — you pass the object
+choice (exactly right for this elastic problem). In 2-D it takes no `vecxz`:
+the local axes follow the element's node order, and a 3-D model is where you
+pass `vecxz=` (or `orientation=`) to orient the section. The transform comes back as a *handle* — you pass the object
 itself, not a string name — and apeGmsh wires up the tags for you.
 
 Then `ops.element.elasticBeamColumn(pg="Beam", ...)` writes **every element in

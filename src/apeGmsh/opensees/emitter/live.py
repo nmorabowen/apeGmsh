@@ -27,6 +27,7 @@ from typing import (
 )
 
 from .._internal.analyze_rc import check_analyze_rc
+from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .base import StrategySpec, trim_coords_to_ndm
 
 if TYPE_CHECKING:
@@ -715,6 +716,14 @@ class LiveOpsEmitter:
     def nDMaterial(
         self, mat_type: str, tag: int, *params: float | str,
     ) -> None:
+        # LadrunoRC -betaC / -crackedNu: a build without them silently
+        # discards them (no error), so refuse before the call.
+        if rc_c2_flags(mat_type, params):
+            fn = getattr(self._ops, "ladrunoBuild", None)
+            build = fn() if callable(fn) else None
+            refusal = rc_c2_live_refusal(mat_type, params, build)
+            if refusal is not None:
+                raise RuntimeError(refusal)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(

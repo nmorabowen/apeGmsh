@@ -23,10 +23,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Optional
 
+import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    pass
+    from ..live._mpco import LiveMPCO
+    from ..live._recorders import LiveRecorders
 
 
 # Allowed categories — these match the user-facing methods on
@@ -172,6 +174,14 @@ class ResolvedRecorderRecord:
     # The original declarative record (back-reference for inspection)
     source: Optional[RecorderRecord] = None
 
+    def __post_init__(self) -> None:
+        # Accept any sequence of IDs (e.g. ``fem.nodes.select(...).ids``,
+        # a list); every consumer reads ``.size`` / ndarray semantics.
+        for attr in ("node_ids", "element_ids"):
+            ids = getattr(self, attr)
+            if ids is not None and not isinstance(ids, ndarray):
+                object.__setattr__(self, attr, np.asarray(ids))
+
 
 # =====================================================================
 # Resolved spec — collection
@@ -245,7 +255,7 @@ class ResolvedRecorderSpec:
         *,
         file_format: str = "out",
         ops=None,
-    ):
+    ) -> "LiveRecorders":
         """Emit classic OpenSees recorders into the running ops domain.
 
         Returns a :class:`LiveRecorders` context manager that opens
@@ -276,7 +286,8 @@ class ResolvedRecorderSpec:
 
         Categories: nodes / elements / gauss / line_stations are
         emitted; fibers / layers warn-and-skip (use
-        :meth:`spec.capture` or :meth:`spec.emit_mpco` instead);
+        ``ops.domain_capture(DomainCaptureSpec(opensees=ops),
+        path=...)`` or :meth:`emit_mpco` instead);
         modal records raise on ``__enter__``.
         """
         from ..live._recorders import LiveRecorders
@@ -284,7 +295,7 @@ class ResolvedRecorderSpec:
             self, output_dir, file_format=file_format, ops=ops,
         )
 
-    def emit_mpco(self, path, *, ops=None):
+    def emit_mpco(self, path, *, ops=None) -> "LiveMPCO":
         """Emit a single in-process MPCO recorder.
 
         Returns a :class:`LiveMPCO` context manager that issues

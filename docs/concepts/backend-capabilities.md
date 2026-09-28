@@ -167,6 +167,17 @@ same `1334d1e24` commit changed the defaults (bilinear tension law, `Gc` read
 as a compressive fracture energy), so a deck that sets none of them means
 different things on either side of it; pin `tension_law` when that matters.
 
+`LadrunoRCConcrete` / `LadrunoRCFiniteStrain`'s `beta_c=` and `cracked_nu=`
+(`-betaC` / `-crackedNu`) are **not on any build of the fork's `ladruno`
+branch yet**. Fork PR #873 was closed unmerged, and fork PR #877 re-lands
+them. Unlike `LadrunoConcrete3D`, this parser ignores an unknown option, so a
+build without them runs the deck with the flags discarded. The in-process run
+therefore refuses them. `ops.tcl(...)` / `ops.py(...)` emit them with a
+`LadrunoRCBuildWarning`. The floor is `LADRUNO_RC_C2_MIN_BUILD`, which stays
+`None` until #877 merges. The `vc` tension-stiffening coefficient that
+`tens_stiff_c=None` leaves to the build is **500** on the `ladruno` branch.
+#877 changes it to 200, so pass `tens_stiff_c` explicitly to pin the curve.
+
 The vanilla `DruckerPrager` runs on any build, but its tension-cutoff
 return map is only correct from fork build `61b3efa04` on (fork ADR-95).
 An older engine parses the same deck and answers differently — quadratic

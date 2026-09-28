@@ -258,8 +258,7 @@ class _NodesStub:
         :meth:`ndf_for` raises ``LookupError`` for them — matching the
         real broker's "uncovered nodes raise" contract.  Callers that
         want a default-for-everything declaration must populate every
-        node-id explicitly (mirrors ``g.node_ndf.set_default`` +
-        resolver, which produces a positive value for every id).
+        node-id explicitly.
         """
         arr = np.zeros(len(self._ids), dtype=np.int8)
         for nid, ndf in mapping.items():
