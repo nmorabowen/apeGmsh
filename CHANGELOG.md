@@ -14,6 +14,40 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
+
+`g.masses` and `g.loads` read a target's elements from gmsh through
+element-type tables copied into each composite. Two copies omitted quad9
+and three omitted hex27, the types `set_order(2)` produces by default
+(`bubble=True`) on a recombined surface and on a structured hex block. On
+quad9, `g.masses.surface` (both reductions) and a tributary surface load
+(`pressure`, `traction`, `shear`) produced zero records without a warning,
+and `force_resultant_center_mass` / `g.displacements.surface` with
+`normal=True` raised a misleading "got empty `faces`". On hex27,
+`g.masses.volume`, `g.loads.gravity` and `g.loads.body` produced zero
+records. The edge walks took a line3's mid node for its far end (gmsh lists
+the two end nodes first), so `g.masses.line` and a tributary `g.loads.line`
+on an order-2 curve came out at half. The consistent pressure and
+consistent line-load walks already handled quad9 and line3.
+
+Every `getElements` walk in `core/` now reads the connectivity width and
+corner count from one table, `TOPOLOGY_BY_CODE` in
+`apeGmsh.mesh._element_types`, derived from the curated alias table,
+through `element_topology()`. A walk no longer skips an element type it
+cannot handle; it raises. That covers a type outside the table (the
+order-3 serendipity quad12) and, on the walks that pass whole connectivity
+rows to a resolver (consistent pressure, gravity and body loads, volume
+masses), a type without shape functions: tri9, which the resolvers'
+node-count dispatch would integrate as a quad9, or tet20. The
+outward-normal walk for pressure now recognises hex27 volumes; it used to
+warn and fall back to the connectivity normal. The reinforce, embed and
+rebar walks read their widths and corner counts from the same table, with
+unchanged behaviour. Tests: `tests/test_higher_order_mass_load_targets.py`
+(13 of its cases fail with the fix reverted) and the guard
+`tests/test_element_topology.py`, which checks the table against gmsh's own
+element properties and checks that every type `set_order` produces at
+orders 1 and 2 resolves.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

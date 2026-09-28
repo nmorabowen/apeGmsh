@@ -149,12 +149,14 @@ def element_topology(
         The dimension the caller walks (``getElements(dim, tag)``
         returns only elements of that dimension).
     integrable : bool
-        Set when the caller hands the **full** connectivity row to a
-        resolver.  The resolvers identify an element by its node count
-        and integrate it with the :mod:`apeGmsh.fem` shape functions,
-        so only a type with a shape-function catalog entry is accepted
-        (a 9-node tri9 would otherwise be integrated as a quad9).
-        Corner-only walks leave it unset: any known type has corners.
+        Set when the caller hands the **full** connectivity row of a
+        face or cell to a resolver.  The resolvers identify an element
+        by its node count and integrate it with the :mod:`apeGmsh.fem`
+        shape functions, so only a type with a shape-function catalog
+        entry is accepted (a 9-node tri9 would otherwise be integrated
+        as a quad9).  Corner-only walks leave it unset (any known type
+        has corners), and so do edge walks: the edge integrator carries
+        its own line2 / line3 shapes and refuses other widths itself.
     context : str
         Prefix for the error message, e.g. ``"load target 'slab'"``.
 
