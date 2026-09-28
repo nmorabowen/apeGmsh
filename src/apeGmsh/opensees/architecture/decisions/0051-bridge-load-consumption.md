@@ -254,10 +254,13 @@ BRIDGE-1 follow-up named in §7 and open question 3 now ship.
    materializes the broker's homogeneous SPs at `build()` as ordinary
    `FixRecord`s, one per distinct mask with each node's restrained DOFs
    unioned, so every emit path (flat, partitioned buckets and ghosts,
-   the staged validators, G3, H5) treats them like `ops.fix`. A DOF the
-   node lacks, by the same effective ndf the warning counts with, is
-   left out, so `bc`'s 3-DOF default mask fixes x and y on a 2-D node
-   rather than failing G3 on the warning's own advice. An explicit
+   the staged validators, G3, H5) treats them like `ops.fix`. Broker SP
+   records index the *spatial* vector `(ux, uy, uz, rx, ry, rz)` while a
+   deck `fix` mask is positional over the node's DOFs, so each component
+   is mapped by `(ndm, ndf)` through the load path's `_load_dof_layout`,
+   and one the node lacks is left out: `bc`'s default `[1, 1, 1]` pins x
+   and y on a 2-D solid or frame and leaves a frame's `rz` (its DOF 3)
+   free. The warning counts through the same mapping. An explicit
    `ops.fix` / `s.fix` / `s.support` on a DOF the snapshot also fixes
    raises at build, because OpenSees refuses a second SP on a
    constrained DOF (`Domain::addSP_Constraint`).

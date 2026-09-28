@@ -218,7 +218,9 @@ directly with `p.load(...)`:
 ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))     # verified: tests/opensees/unit/test_emitter_protocol.py::test_fix_records_tag_and_dofs
 # ops.fix(nodes=[...], dofs=(...))              # explicit-node form
 # Or fix every homogeneous SP in fem.nodes.sp (g.constraints.bc), one fix
-# per node with its own mask — combinable with explicit ops.fix / s.fix /
+# per node; bc's SPATIAL mask (ux uy uz rx ry rz) is mapped to the node's
+# DOFs by ndm (2-D frame: default [1,1,1] -> fix n 1 1 0, rz free) —
+# combinable with explicit ops.fix / s.fix /
 # s.support only on DISJOINT (node, DOF) pairs (overlap raises at build):
 ops.fix_from_model()    # verified: tests/opensees/integration/test_unconsumed_model_definition_e2e.py::test_fix_from_model_matches_the_explicit_fix
 

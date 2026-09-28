@@ -28,13 +28,17 @@ still ran.
   a homogeneous SP `(node, DOF)` has no `ops.fix` / `s.fix` /
   `s.support` flagging it, or a broker mass node has no `ops.mass` /
   `s.mass` and `mass_from_model()` is off. It names the counts and the
-  verbs that restate them. A DOF beyond the node's ndf is not counted,
-  and `ops.h5` (archival, never solved) skips the check. Decks that
+  verbs that restate them, pointing at the caller's line. Broker SP
+  records are spatial (`ux uy uz rx ry rz`) and are matched to deck DOFs
+  by `(ndm, ndf)`, so a 2-D frame's `uz` record is not read as its `rz`;
+  a component the node lacks is not counted, and `ops.h5` (archival,
+  never solved) skips the check. Decks that
   restate everything stay silent and emit exactly what they did before.
 - **`ops.fix_from_model()`**, the support twin of `ops.mass_from_model()`:
   one `fix` per node carrying homogeneous records, its DOFs unioned into
-  one mask, so two `bc` targets sharing a corner emit one line; a DOF
-  the node lacks (`bc`'s 3-DOF default on a 2-D node) is left out. It is
+  one mask, so two `bc` targets sharing a corner emit one line; the
+  same `(ndm, ndf)` mapping pins a 2-D frame's base with `fix n 1 1 0`
+  (`bc`'s default `[1, 1, 1]` leaves `rz` free). It is
   materialized at `build()` as ordinary fix records, so the flat,
   partitioned, staged and H5 paths treat it like `ops.fix`; an explicit
   fix on an overlapping DOF raises, since OpenSees refuses a second SP on

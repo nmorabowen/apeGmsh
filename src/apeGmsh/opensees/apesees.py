@@ -1499,7 +1499,7 @@ class BuiltModel:
         # deck/live-only, so its advice would fail there.
         if not _emitter_is_archival:
             validate_model_definition_consumed(
-                self.fem, effective_ndf, self.ndf,
+                self.fem, effective_ndf, self.ndf, self.ndm,
                 fix_records=(
                     *self.fix_records,
                     *(r for st in self.stage_records for r in st.fix_records),
@@ -8643,8 +8643,10 @@ class apeSees:
         ``fem.nodes.sp`` (``g.constraints.bc(...)``, or a zero-valued
         ``g.displacements``), with the node's restrained DOFs folded
         into one mask, so two targets sharing a node emit one ``fix``.
-        A restrained DOF the node does not have (``bc``'s 3-DOF default
-        on a 2-D node) is left out, as OpenSees would. Prescribed
+        The records' spatial components (``ux uy uz rx ry rz``) land on
+        the node's deck DOFs by ``ndm`` and ndf, and one the node lacks
+        is left out: ``bc``'s default ``[1, 1, 1]`` pins x and y on a
+        2-D solid or frame and leaves a frame's ``rz`` free. Prescribed
         (non-zero) SPs are untouched: ``p.from_model(case)`` imports
         those.
 

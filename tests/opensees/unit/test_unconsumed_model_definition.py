@@ -256,6 +256,111 @@ def test_empty_broker_is_silent() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2-D: bc masks are SPATIAL (ux uy uz rx ry rz), deck masks positional
+# ---------------------------------------------------------------------------
+
+
+def _frame2d(sp: list) -> apeSees:
+    """ndm=2, ndf=3 frame (DOFs ux, uy, rz): one planar column."""
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2], coords=[(0.0, 0.0, 0.0), (0.0, 3.0, 0.0)],
+            node_pgs={"Base": [1]},
+        ),
+        elements=_ElementsStub(elem_pgs={
+            "Col": _ElementGroupView(ids=(1,), connectivity=((1, 2),)),
+        }),
+    )
+    fem.nodes.sp = SPSet(sp)  # type: ignore[attr-defined]
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    t = ops.geomTransf.Linear()
+    ops.element.elasticBeamColumn(pg="Col", transf=t, A=0.01, E=2e11, Iz=1e-5)
+    return ops
+
+
+def _solid2d(sp: list) -> apeSees:
+    """ndm=2, ndf=2 plane quad (DOFs ux, uy)."""
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3, 4],
+            coords=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                    (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)],
+            node_pgs={"Base": [1, 2]},
+        ),
+        elements=_ElementsStub(elem_pgs={
+            "Plate": _ElementGroupView(ids=(1,), connectivity=((1, 2, 3, 4),)),
+        }),
+    )
+    fem.nodes.sp = SPSet(sp)  # type: ignore[attr-defined]
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Plate", thickness=1.0, material=mat)
+    return ops
+
+
+def test_2d_frame_pinned_base_is_consumed_by_a_pin() -> None:
+    """bc default [1,1,1] = ux, uy, uz. On a 2-D frame DOF 3 is rz, so a
+    pin ``fix 1 1 1 0`` restates it fully (uz has no DOF); it must not
+    read the uz record as an unfixed rz."""
+    ops = _frame2d(_bc([1], (1, 1, 1)))
+    ops.fix(nodes=[1], dofs=(1, 1, 0))
+    rec = _emit_silent(ops)
+    assert _calls(rec, "fix") == [(1, 1, 1, 0)]
+
+
+def test_2d_frame_fix_from_model_pins_and_leaves_rz_free() -> None:
+    ops = _frame2d(_bc([1], (1, 1, 1)))
+    ops.fix_from_model()
+    rec = _emit_silent(ops)
+    assert _calls(rec, "fix") == [(1, 1, 1, 0)]
+
+
+def test_2d_frame_rz_restraint_lands_on_dof_3() -> None:
+    """bc(dofs=[1,1,0,0,0,1]) (spatial rz) -> fix 1 1 1 1; a pin alone
+    leaves the rz record unconsumed."""
+    ops = _frame2d(_bc([1], (1, 1, 0, 0, 0, 1)))
+    ops.fix_from_model()
+    rec = _emit_silent(ops)
+    assert _calls(rec, "fix") == [(1, 1, 1, 1)]
+
+    ops = _frame2d(_bc([1], (1, 1, 0, 0, 0, 1)))
+    ops.fix(nodes=[1], dofs=(1, 1, 0))
+    assert "1 homogeneous SP record(s) on 1 node(s)" in _emit_warns(ops)
+
+
+def test_2d_solid_default_bc_maps_to_x_and_y() -> None:
+    ops = _solid2d(_bc([1, 2], (1, 1, 1)))
+    ops.fix_from_model()
+    rec = _emit_silent(ops)
+    assert sorted(_calls(rec, "fix")) == [(1, 1, 1), (2, 1, 1)]
+
+    ops = _solid2d(_bc([1, 2], (1, 1, 1)))
+    ops.fix(pg="Base", dofs=(1, 1))
+    _emit_silent(ops)
+
+
+def test_message_names_displacement_hold_cases() -> None:
+    ops = _ops(_model(sp=[
+        SPRecord(node_id=7, dof=2, value=0.0, is_homogeneous=True,
+                 pattern="push"),
+    ]))
+    ops.mass_from_model()
+    msg = _emit_warns(ops)
+    assert "zero-valued g.displacements holds in case(s) 'push'" in msg
+    assert "g.constraints.bc" not in msg.split("have no fix")[0]
+
+
+def test_warning_points_at_the_callers_line() -> None:
+    """stacklevel walks out of apeGmsh: the reported file is this test."""
+    rec = RecordingEmitter()
+    with pytest.warns(UnconsumedModelDefinitionWarning) as caught:
+        _ops(_model()).build().emit(rec)
+    assert caught[0].filename == __file__
+
+
+# ---------------------------------------------------------------------------
 # ops.fix_from_model()
 # ---------------------------------------------------------------------------
 

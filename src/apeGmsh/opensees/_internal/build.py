@@ -4670,10 +4670,53 @@ def _record_node_ids(
     return expand_pg_to_nodes(fem, rec.pg) if rec.pg is not None else ()
 
 
+def _sp_deck_dof(spatial_dof: int, node_ndf: int, ndm: int) -> "int | None":
+    """Deck DOF (1-based) carrying a broker SP's spatial component.
+
+    Broker SP records index the spatial vector ``(ux, uy, uz, rx, ry,
+    rz)`` (``g.constraints.bc``'s mask, ``g.displacements``' ``dofs``);
+    a deck ``fix`` mask is positional over the node's DOFs.  The two
+    agree only in 3-D; a 2-D frame (``ndm=2, ndf=3``) carries ``rz`` at
+    DOF 3, so this maps through :func:`_load_dof_layout`, the layout the
+    load path uses.  ``None`` when the node has no DOF for the component
+    (``uz`` on any 2-D node, rotations on a solid).
+    """
+    layout = _load_dof_layout(int(node_ndf), int(ndm))
+    idx = int(spatial_dof) - 1
+    return layout.index(idx) + 1 if idx in layout else None
+
+
+def _stacklevel_outside_package() -> int:
+    """``stacklevel`` naming the first caller outside ``apeGmsh``.
+
+    Emit is reached at varying depths (``ops.tcl`` -> ``emit``, a direct
+    ``ops.build().emit(...)``, the live runners), so a fixed stacklevel
+    lands inside the bridge.  Counted from the ``warnings.warn`` call
+    in this module's caller.
+    """
+    import inspect
+    import os
+
+    pkg = os.path.normcase(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))) + os.sep
+    frame = inspect.currentframe()
+    level = 1
+    try:
+        f = frame.f_back if frame is not None else None  # the warn site
+        while f is not None and os.path.normcase(os.path.abspath(
+                f.f_code.co_filename)).startswith(pkg):
+            f = f.f_back
+            level += 1
+        return level
+    finally:
+        del frame
+
+
 def validate_model_definition_consumed(
     fem: "FEMData",
     effective_ndf: "Mapping[int, int]",
     envelope_ndf: int,
+    ndm: int,
     *,
     fix_records: "Iterable[FixRecord | SupportRecord]",
     mass_records: "Iterable[MassRecord]",
@@ -4681,15 +4724,16 @@ def validate_model_definition_consumed(
 ) -> None:
     """ADR 0051 §4 — warn when broker supports / masses miss the deck.
 
-    A homogeneous SP record ``(node, dof)`` is consumed when a bridge
-    fix-like record (``ops.fix`` / ``s.fix`` / ``s.support``, which is
-    where ``ops.fix_from_model()`` lands too) flags that DOF on that
-    node.  A record whose DOF exceeds the node's effective ndf is
-    skipped: no deck can carry it, so nothing is dropped.  A mass record
-    is consumed when a bridge ``mass`` record targets its node, or
-    wholesale by ``mass_from_model``.  Prescribed (non-zero) SPs are
-    load-case records that ``p.from_model(case)`` imports, not model
-    definition, and are out of scope.
+    A homogeneous SP record is consumed when a bridge fix-like record
+    (``ops.fix`` / ``s.fix`` / ``s.support``, which is where
+    ``ops.fix_from_model()`` lands too) flags the deck DOF that carries
+    its spatial component on that node (:func:`_sp_deck_dof`, so ``uz``
+    of a 2-D frame is not mistaken for its ``rz``).  A component the
+    node has no DOF for is skipped: no deck can carry it, so nothing is
+    dropped.  A mass record is consumed when a bridge ``mass`` record
+    targets its node, or wholesale by ``mass_from_model``.  Prescribed
+    (non-zero) SPs are load-case records that ``p.from_model(case)``
+    imports, not model definition, and are out of scope.
 
     One aggregated :class:`UnconsumedModelDefinitionWarning` names the
     unconsumed counts and the verbs that restate them; a deck that
@@ -4700,12 +4744,16 @@ def validate_model_definition_consumed(
     mass_set = getattr(nodes, "masses", None) if nodes is not None else None
     issues: list[str] = []
 
-    homogeneous = [
-        (int(r.node_id), int(r.dof))
-        for r in (sp_set if sp_set is not None else ())
-        if r.is_homogeneous
-        and int(r.dof) <= int(effective_ndf.get(int(r.node_id), envelope_ndf))
-    ]
+    # (node, deck DOF, case) per homogeneous record the node can carry.
+    homogeneous: list[tuple[int, int, str]] = []
+    for r in sp_set if sp_set is not None else ():
+        if not r.is_homogeneous:
+            continue
+        n = int(r.node_id)
+        d = _sp_deck_dof(
+            int(r.dof), int(effective_ndf.get(n, envelope_ndf)), ndm)
+        if d is not None:
+            homogeneous.append((n, d, str(r.pattern)))
     if homogeneous:
         fixed = {
             (int(n), d)
@@ -4714,13 +4762,19 @@ def validate_model_definition_consumed(
             for d, flag in enumerate(rec.dofs, start=1)
             if flag
         }
-        missed = [key for key in homogeneous if key not in fixed]
+        missed = [h for h in homogeneous if (h[0], h[1]) not in fixed]
         if missed:
+            cases = sorted({c for _, _, c in missed if c != "default"})
+            source = ", ".join(
+                (["g.constraints.bc"]
+                 if any(c == "default" for _, _, c in missed) else [])
+                + ([f"zero-valued g.displacements holds in case(s) "
+                    f"{', '.join(repr(c) for c in cases)}"] if cases else [])
+            )
             issues.append(
                 f"{len(missed)} homogeneous SP record(s) on "
-                f"{len({n for n, _ in missed})} node(s) (g.constraints.bc, "
-                f"or a zero-valued g.displacements) have no fix — restate "
-                f"them with ops.fix(pg=..., dofs=...) or "
+                f"{len({n for n, _, _ in missed})} node(s) ({source}) have "
+                f"no fix — restate them with ops.fix(pg=..., dofs=...) or "
                 f"ops.fix_from_model()"
             )
 
@@ -4747,7 +4801,7 @@ def validate_model_definition_consumed(
             "error.  If this deck leaves them out on purpose, filter "
             "UnconsumedModelDefinitionWarning.",
             UnconsumedModelDefinitionWarning,
-            stacklevel=2,
+            stacklevel=_stacklevel_outside_package(),
         )
 
 
@@ -4765,13 +4819,15 @@ def fix_records_from_model(
     Folds every homogeneous SP record on ``fem.nodes.sp`` into one DOF
     mask per node, so two ``g.constraints.bc`` targets sharing a node
     give one ``fix`` line, not two (OpenSees refuses a second SP on a
-    constrained DOF).  Nodes sharing a mask share one record.  Only the
-    DOFs the node has count, sized by the same effective ndf emit uses
-    (inferred from *elements*, plus the ``ops.ndf`` overlay, else the
-    envelope): ``bc``'s 3-DOF default mask on a 2-D node fixes x and y,
-    matching what :func:`validate_model_definition_consumed` counts,
-    instead of failing G3.  Prescribed records are not touched:
-    ``p.from_model(case)`` imports those.
+    constrained DOF).  Nodes sharing a mask share one record.  Each
+    record's spatial component lands on the deck DOF that carries it
+    (:func:`_sp_deck_dof`, by ``ndm`` and the node's effective ndf:
+    inferred from *elements*, plus the ``ops.ndf`` overlay, else the
+    envelope), and a component the node lacks is left out.  So ``bc``'s
+    default ``[1, 1, 1]`` (ux, uy, uz) pins x and y on a 2-D frame and
+    leaves ``rz`` free, exactly what
+    :func:`validate_model_definition_consumed` counts.  Prescribed
+    records are not touched: ``p.from_model(case)`` imports those.
 
     Raises
     ------
@@ -4781,24 +4837,26 @@ def fix_records_from_model(
         deck runs.  Use exactly one channel per DOF.
     """
     sp_set = getattr(getattr(fem, "nodes", None), "sp", None)
-    dofs_by_node: dict[int, set[int]] = {}
+    spatial_by_node: dict[int, set[int]] = {}
     for r in sp_set if sp_set is not None else ():
         if r.is_homogeneous:
-            dofs_by_node.setdefault(int(r.node_id), set()).add(int(r.dof))
-    if not dofs_by_node:
+            spatial_by_node.setdefault(int(r.node_id), set()).add(int(r.dof))
+    if not spatial_by_node:
         return ()
 
     inferred = infer_node_ndf(fem, elements, ndm)
     node_ndf = {
         **inferred, **resolve_ndf_overlay(fem, ndf_records, inferred, ndm),
     }
-    for n in list(dofs_by_node):
-        dofs_by_node[n] = {
-            d for d in dofs_by_node[n]
-            if d <= int(node_ndf.get(n, envelope_ndf))
+    dofs_by_node: dict[int, set[int]] = {}
+    for n, spatial in spatial_by_node.items():
+        ndf_n = int(node_ndf.get(n, envelope_ndf))
+        deck = {
+            d for d in (_sp_deck_dof(s, ndf_n, ndm) for s in spatial)
+            if d is not None
         }
-        if not dofs_by_node[n]:
-            del dofs_by_node[n]
+        if deck:
+            dofs_by_node[n] = deck
 
     clash = sorted({
         (int(n), d)
