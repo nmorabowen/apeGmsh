@@ -32,6 +32,7 @@ session was closed, the model was re-meshed, or the snapshot was loaded from
 verbatim. `pg=`, `label=` and part selection still resolve from the snapshot
 alone; the record is not part of `snapshot_id`, and the snapshot still
 pickles. `tests/test_femdata_raw_dimtag_source.py`.
+
 ### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
 
 `g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
