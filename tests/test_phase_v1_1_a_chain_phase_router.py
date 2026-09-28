@@ -443,11 +443,8 @@ class TestDeferredDefsFallBackCleanly:
         :meth:`FEMDataSource.boundary_faces_for` raises with the
         documented remedy.  :func:`try_chain_phase_route` only swallows
         ``KeyError`` / ``TypeError``, so this ValueError propagates out
-        of ``_add_def``.  The def is **not** stored (the raise happens
-        between the ``constraint_defs.append`` and... wait — no, the
-        append runs first, then ``try_chain_phase_route`` runs, so the
-        def IS on the list but the broker is unchanged.  Either way
-        ``_fem`` is not corrupted."""
+        of ``_declare``.  ``_declare`` routes before it appends, so the
+        rejected def is **not** stored and the broker is unchanged."""
         path = _save(_colocated_fem(), tmp_path)
         g = apeGmsh.from_h5(path)
         with pytest.raises(ValueError, match="no dim=2 ElementGroups"):
@@ -458,6 +455,58 @@ class TestDeferredDefsFallBackCleanly:
         # Broker untouched.
         assert len(list(g._fem.nodes.constraints)) == 0
         assert len(list(g._fem.elements.constraints)) == 0
+
+    @pytest.mark.parametrize("declare, exc", [
+        (lambda g: g.constraints.tied_contact(
+            master_label="master_set", slave_label="slave_set",
+            tolerance=1.0), ValueError),
+        (lambda g: g.constraints.embedded(
+            host_label="master_set", embedded_label="slave_set",
+            tolerance=1.0), KeyError),
+    ], ids=["tied_contact", "embedded"])
+    def test_failed_strict_route_leaves_store_unchanged(
+        self, tmp_path: Path, declare, exc,
+    ) -> None:
+        """A def the chain-phase router rejects in a from_h5 session is
+        not left behind in the declaration store: the call raised, so
+        nothing it declared may persist (``list_defs()``, a later
+        ``to_h5`` of the defs, …)."""
+        path = _save(_colocated_fem(), tmp_path)
+        g = apeGmsh.from_h5(path)
+        before = list(g.constraints.constraint_defs)
+        with pytest.raises(exc):
+            declare(g)
+        assert g.constraints.constraint_defs == before
+        assert g.constraints.list_defs() == []
+
+
+class TestClearInChainPhase:
+    """``clear()`` cannot retract records the router already applied to
+    the from_h5 broker, so it fails loud instead of emptying the def
+    lists while ``get_fem_data()`` keeps returning the records."""
+
+    @pytest.mark.parametrize("owner", ["constraints", "reinforce", "embed"])
+    def test_clear_in_from_h5_session_fails_loud(
+        self, tmp_path: Path, owner: str,
+    ) -> None:
+        from apeGmsh.core._compose_errors import ChainPhaseError
+
+        path = _save(_colocated_fem(), tmp_path)
+        g = apeGmsh.from_h5(path)
+        g.constraints.equal_dof(
+            "master_set", "slave_set", dofs=[1, 2, 3], tolerance=1e-6,
+        )
+        n_defs = len(g.constraints.constraint_defs)
+        n_recs = len(list(g.mesh.queries.get_fem_data().nodes.constraints))
+        assert n_recs == 2
+
+        with pytest.raises(ChainPhaseError, match="apeGmsh.from_h5"):
+            getattr(g, owner).clear()
+
+        # Nothing was emptied: the stores still match the broker.
+        assert len(g.constraints.constraint_defs) == n_defs
+        assert len(list(
+            g.mesh.queries.get_fem_data().nodes.constraints)) == n_recs
 
 
 # ---------------------------------------------------------------------------

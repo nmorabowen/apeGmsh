@@ -52,8 +52,11 @@ because the mesh didn't land on it.
 ### The snapshot is cached & identity-stable
 
 Repeat `get_fem_data()` calls return the **same object identity** until a
-broker mutation invalidates the cache (every `g.constraints.X` /
-`g.loads.X` / `g.masses.X` call bumps an internal counter). The session
+declaration invalidates the cache (every `g.constraints.X` / `g.loads.X` /
+`g.masses.X` / `g.displacements.X` call, `g.reinforce` / `g.embed` /
+`g.rebar.place` / `g.decouple_node`, and each composite's `clear()` bumps
+an internal counter), so a def declared after the first extraction is in
+the next snapshot. The session
 has one canonical "chain head" snapshot that
 `FEMData.with_*` / `FEMData.compose(...)` transform (see compose.md).
 

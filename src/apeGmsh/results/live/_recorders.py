@@ -9,9 +9,10 @@ user keeps driving the analysis loop themselves.
 Categories
 ----------
 - ``nodes``, ``elements``, ``gauss``, ``line_stations`` — emitted.
-- ``fibers``, ``layers`` — warn-and-skip (use MPCO or capture).
+- ``fibers``, ``layers`` — warn-and-skip (use MPCO or domain capture).
 - ``modal`` — raises at ``__enter__`` (needs ``ops.eigen()``
-  driving, which lives on :meth:`ResolvedRecorderSpec.capture`).
+  driving, which lives on :meth:`DomainCapture.capture_modes`,
+  opened with ``ops.domain_capture(spec, path=...)``).
 
 Multi-stage support
 -------------------
@@ -100,8 +101,11 @@ class LiveRecorders:
     file_format
         ``"out"`` (text) or ``"xml"``. Defaults to ``"out"``.
     ops
-        The openseespy module (or a stand-in for testing). Defaults
-        to ``openseespy.opensees`` resolved lazily on ``__enter__``.
+        The OpenSees module (or a stand-in for testing). Defaults to
+        the module the bridge drives
+        (:func:`~apeGmsh.opensees.emitter.live.get_ops`), resolved
+        lazily on ``__enter__``. Pass it when you drive another
+        module by hand.
 
     Raises
     ------
@@ -141,21 +145,23 @@ class LiveRecorders:
 
         # Modal records can't be emitted on the classic recorder path —
         # they need ops.eigen() driving. Fail fast so the user knows
-        # to use spec.capture(...) for that portion.
+        # to use domain capture for that portion.
         for record in self._spec.records:
             if record.category in _MODAL_CATEGORIES:
                 raise RuntimeError(
                     f"LiveRecorders cannot emit modal record "
                     f"{record.name!r}: modal capture requires "
-                    f"ops.eigen() driving, which lives on "
-                    f"spec.capture(...). Remove the modal records "
+                    f"ops.eigen() driving. Remove the modal records "
                     f"from the spec before calling emit_recorders, "
-                    f"or use spec.capture(...) instead."
+                    f"and capture modes in-process instead: "
+                    f"cap = ops.domain_capture(DomainCaptureSpec("
+                    f"opensees=ops), path=...) then "
+                    f"cap.capture_modes(n)."
                 )
 
         if self._ops is None:
-            import openseespy.opensees as ops_module
-            self._ops = ops_module
+            from ...opensees.emitter.live import get_ops
+            self._ops = get_ops()
 
         if self._output_dir:
             Path(self._output_dir).mkdir(parents=True, exist_ok=True)
@@ -206,7 +212,8 @@ class LiveRecorders:
                     f"LiveRecorders: skipping record {record.name!r} "
                     f"(category={record.category!r}); fiber/layer "
                     f"data can't be emitted via classic recorders. "
-                    f"Use spec.capture(...) for in-process capture "
+                    f"Use ops.domain_capture(DomainCaptureSpec("
+                    f"opensees=ops), path=...) for in-process capture "
                     f"or spec.emit_mpco(...) for the STKO MPCO "
                     f"recorder.",
                     stacklevel=2,

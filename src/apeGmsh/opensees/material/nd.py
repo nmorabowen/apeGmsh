@@ -49,6 +49,9 @@ from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
 from .._internal.tag_resolution import resolve_tag
 from .._internal.types import NDMaterial, Primitive, UniaxialMaterial
+# Defined in a leaf module so the emitters can share them; re-exported here
+# beside the other build floors. Set the floor in ``_rc_c2_flags``.
+from .._rc_c2_flags import LADRUNO_RC_C2_MIN_BUILD, LadrunoRCBuildWarning
 from ..emitter.base import Emitter
 
 
@@ -67,6 +70,7 @@ __all__ = [
     "PlaneStrain",
     "PlateRebar",
     "PlateFromPlaneStress",
+    "PlateFiber",
     "PlaneStressRebar",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
@@ -77,6 +81,8 @@ __all__ = [
     "SANISAND_PRE_FLOOR_MIN_BUILD",
     "LADRUNO_CONCRETE3D_TENSION_LAW_MIN_BUILD",
     "LADRUNO_CONCRETE3D_FLOW_POTENTIAL_MIN_BUILD",
+    "LADRUNO_RC_C2_MIN_BUILD",
+    "LadrunoRCBuildWarning",
     "asdp_parameter_schema",
     "LadrunoJ2",
     "LadrunoJ2Finite",
@@ -2378,16 +2384,18 @@ class PlaneStrain(NDMaterial):
 
 
 # ---------------------------------------------------------------------------
-# Shell-layer helpers — PlateRebar / PlateFromPlaneStress / PlaneStressRebar
+# Shell-layer helpers — PlateRebar / PlateFromPlaneStress / PlateFiber /
+# PlaneStressRebar
 # ---------------------------------------------------------------------------
 #
 # Stock OpenSees (Yuli Huang & Xinzheng Lu; PlaneStressRebar by fmk), verified
 # against the fork source ``SRC/material/nD/{PlateRebar,PlateFromPlaneStress,
-# PlaneStressRebar}Material.cpp``. ``LayeredShellFiberSection`` (and the
-# ``LayeredShell`` alias, which the parser routes to the same class) asks each
-# layer for ``getCopy("PlateFiber")`` and calls ``exit(-1)`` — killing the
+# PlateFiber,PlaneStressRebar}Material.cpp``. ``LayeredShellFiberSection`` (and
+# the ``LayeredShell`` alias, which the parser routes to the same class) asks
+# each layer for ``getCopy("PlateFiber")`` and calls ``exit(-1)`` — killing the
 # process — when a layer answers null (``LayeredShellFiberSection.cpp:175``).
 # ``PlateRebar`` and ``PlateFromPlaneStress`` answer ``"PlateFiber"`` only;
+# ``PlateFiber`` answers every type with a PlateFiber copy of itself;
 # ``PlaneStressRebar`` answers ``"PlaneStress"`` / ``"PlaneStress2D"`` only.
 
 
@@ -2498,8 +2506,10 @@ class PlateFromPlaneStress(NDMaterial):
         of it without checking the result, so it must have a plane-stress
         view: a 2-D/plane-stress material, or any 3-D material (the base
         class condenses a 3-D law to plane stress). :class:`PlateRebar` and
-        :class:`PlateFromPlaneStress` itself have no such view and are
-        refused. Emitted before this material (via :meth:`dependencies`).
+        :class:`PlateFromPlaneStress` itself have no such view, and
+        :class:`PlateFiber` answers with an order-5 copy of itself; all
+        three are refused. Emitted before this material (via
+        :meth:`dependencies`).
     G_out
         Out-of-plane (transverse) shear modulus. Must be finite and ``> 0``.
     """
@@ -2520,6 +2530,13 @@ class PlateFromPlaneStress(NDMaterial):
                 "getCopy('PlateFiber') only, and OpenSees would dereference "
                 "the null copy. Wrap the plane-stress law instead."
             )
+        if isinstance(self.material, PlateFiber):
+            raise TypeError(
+                "PlateFromPlaneStress: material must have a plane-stress "
+                "view; PlateFiber answers getCopy('PlaneStress') with a copy "
+                "of itself (strain order 5, not 3). Wrap the 3-D or "
+                "plane-stress law instead."
+            )
         _require_finite("PlateFromPlaneStress", "G_out", self.G_out)
         if self.G_out <= 0:
             raise ValueError(
@@ -2529,6 +2546,82 @@ class PlateFromPlaneStress(NDMaterial):
     def _emit(self, emitter: Emitter, tag: int) -> None:
         mat_tag = resolve_tag(emitter, self.material)
         emitter.nDMaterial("PlateFromPlaneStress", tag, mat_tag, self.G_out)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlateFiber(NDMaterial):
+    """``nDMaterial PlateFiber`` — a 3-D law condensed to a shell layer.
+
+    Tcl signature (stock OpenSees; ``PlateFiberMaterial`` is an alias)::
+
+        nDMaterial PlateFiber $tag $threeDTag
+
+    Wraps a 3-D material as a **PlateFiber** material (strain order 5:
+    ``eps11, eps22, gamma12, gamma23, gamma31``). On each trial strain it
+    solves for the out-of-plane strain ``eps33`` with a local Newton loop
+    until ``sigma33 = 0`` (tolerance 1e-8, at most 20 iterations), so the
+    wrapped law sees a full 3-D strain.
+
+    **Usually not needed.** ``LayeredShellFiberSection`` asks every layer
+    for ``getCopy("PlateFiber")``, and the ``NDMaterial`` base class answers
+    that for any 3-D law by building this same wrapper. A 3-D law with a
+    native plate-fiber view (``ElasticIsotropic``, :class:`LadrunoJ2`,
+    :class:`LadrunoConcrete3D`, :class:`LadrunoRCConcrete`) uses that view
+    instead. Pass the 3-D law to
+    :class:`~apeGmsh.opensees.section.plate.ShellLayer` directly unless you
+    specifically want the generic ``sigma33 = 0`` condensation in place of
+    a native view (for the Ladruno concrete laws that condensation is
+    redundant with the kernel's own).
+
+    **Valid layer.** Its ``getCopy`` answers every type with a PlateFiber
+    copy of itself.
+
+    Parameters
+    ----------
+    material
+        The wrapped 3-D nD material. OpenSees takes
+        ``getCopy("ThreeDimensional")`` of it without checking the result,
+        so it must have a 3-D view. apeGmsh refuses the primitives known to
+        lack one: :class:`PlateRebar`, :class:`PlateFromPlaneStress` and
+        :class:`PlaneStressRebar` (null copy), :class:`LogStrain2D` (null
+        copy), and :class:`PlaneStrain` and ``PlateFiber`` itself, which
+        answer with a copy of the wrong strain order. Emitted before this
+        material (via :meth:`dependencies`).
+    """
+
+    material: NDMaterial
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, NDMaterial):
+            raise TypeError(
+                "PlateFiber: material must be an NDMaterial primitive, "
+                f"got {type(self.material).__name__!r}."
+            )
+        if isinstance(
+            self.material,
+            (PlateRebar, PlateFromPlaneStress, PlaneStressRebar, LogStrain2D),
+        ):
+            raise TypeError(
+                "PlateFiber: material must have a 3-D view; "
+                f"{type(self.material).__name__} answers "
+                "getCopy('ThreeDimensional') with null, and OpenSees would "
+                "dereference it. Wrap the 3-D law instead."
+            )
+        if isinstance(self.material, (PlaneStrain, PlateFiber)):
+            raise TypeError(
+                "PlateFiber: material must have a 3-D view; "
+                f"{type(self.material).__name__} answers "
+                "getCopy('ThreeDimensional') with a copy of itself (strain "
+                f"order {3 if isinstance(self.material, PlaneStrain) else 5}"
+                ", not 6). Wrap the 3-D law instead."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        emitter.nDMaterial("PlateFiber", tag, mat_tag)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
@@ -3740,23 +3833,29 @@ class _LadrunoRC(NDMaterial):
         "cm" (Collins-Mitchell)}`` (``-tensStiff``) with its coefficient
         (``-tensStiffC``; ``> 0`` in ``vc`` mode) and exponent
         (``-tensStiffAlpha``; default 1.0). ``tens_stiff_c=None`` (default)
-        emits nothing, so the build's own ``vc`` default applies — the
-        fork changed that default from 500 (Collins-Mitchell 1991) to 200
-        (Vecchio-Collins 1986) without an apeGmsh version bump; pass
-        ``tens_stiff_c=500.0`` explicitly to keep the pre-change curve.
+        emits nothing, so the build's own ``vc`` default applies. That is
+        500 (Collins-Mitchell 1991) on every build of the fork's
+        ``ladruno`` branch. Fork PR #877 (unmerged; it re-lands the closed
+        #873) changes it to 200 (Vecchio-Collins 1986), so a flag-free deck
+        will mean different things either side of that merge. Pass
+        ``tens_stiff_c`` explicitly to pin the curve.
     beta_c
         MCFT compression-softening coefficient ``beta = 1/(0.8 + C eps1)``
         (``-betaC``; ``> 0``). ``None`` (default) emits nothing, so the
-        build's own default applies (170 on the fork, bit-identical to the
-        pre-C2 hard-wired value; Vecchio & Collins 1986 use ``0.34/|eps'c|``,
-        i.e. ``C=189`` for the PV20 panel).
+        hard-wired ``C = 170`` applies (Vecchio & Collins 1986 use
+        ``0.34/|eps'c|``, i.e. ``C=189`` for the PV20 panel). **Not on
+        the fork's ``ladruno`` branch yet** (see
+        :data:`LADRUNO_RC_C2_MIN_BUILD`): a build without it silently
+        discards the flag, so the live route refuses it and the Tcl /
+        openseespy emitters warn (:class:`LadrunoRCBuildWarning`).
     cracked_nu
         Poisson's ratio used once the in-plane principal tensile strain
         reaches the cracking strain (``-crackedNu``; ``[0, 0.5)``). ``None``
         (default) emits nothing, so the elastic ``nu`` is kept after
-        cracking (pre-C2 behaviour). PV20 finding: keeping the elastic
-        ``nu`` after cracking overstates shear strength by 8-10 %;
-        ``cracked_nu=0`` reproduces the MCFT hand solution.
+        cracking (pre-C2 behaviour). PV20 finding (measured on a fork
+        PR #873 build): keeping the elastic ``nu`` after cracking
+        overstates shear strength by 8-10 %; ``cracked_nu=0`` reproduces
+        the MCFT hand solution. Same build gate as ``beta_c``.
     auto_regularization
         Crack-band (Bazant-Oh) reference length (``-autoRegularization
         $lch_ref``; ``> 0``). ``None`` (default) = off / baseline-identical.

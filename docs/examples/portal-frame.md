@@ -117,7 +117,7 @@ with apeGmsh(model_name="portal") as g:
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)                    # 2-D frame: ux, uy, thetaz
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Columns", transf=transf, A=Ac, E=E, Iz=Ic)
 ops.element.elasticBeamColumn(pg="Beam",    transf=transf, A=Ab, E=E, Iz=Ib)
 
@@ -210,7 +210,7 @@ you'll need to address later*, and address it by that name from here on.
 ## Step 2 — Two element groups, one transform
 
 ```python
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Columns", transf=transf, A=Ac, E=E, Iz=Ic)
 ops.element.elasticBeamColumn(pg="Beam",    transf=transf, A=Ab, E=E, Iz=Ib)
 ```

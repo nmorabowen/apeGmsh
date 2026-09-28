@@ -132,10 +132,10 @@ class MomentCurvature:
 
 def _ops_module() -> Any:
     """The resolved OpenSees backend, or a guided ``ImportError``."""
-    from apeGmsh.opensees.emitter.live import _get_ops
+    from apeGmsh.opensees.emitter.live import get_ops
 
     try:
-        return _get_ops()
+        return get_ops()
     except ImportError as exc:
         raise ImportError(
             "moment_curvature() needs an OpenSees backend (openseespy or "

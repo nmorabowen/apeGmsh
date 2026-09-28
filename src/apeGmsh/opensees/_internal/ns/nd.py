@@ -33,6 +33,7 @@ from ...material.nd import (
     HoekBrownRock as _build_hoek_brown_rock,
     PlaneStrain,
     PlaneStressRebar,
+    PlateFiber,
     PlateFromPlaneStress,
     PlateRebar,
     SAniSandMS,
@@ -615,6 +616,22 @@ class _NDMaterialNS(_BridgeNamespace):
             PlateFromPlaneStress(material=material, G_out=G_out), name=name
         )
 
+    def PlateFiber(
+        self, *,
+        material: NDMaterial | str,
+        name: str | None = None,
+    ) -> PlateFiber:
+        """Register a :class:`PlateFiber` 3-D-to-shell-layer wrapper.
+
+        ``nDMaterial PlateFiber tag threeDTag`` — condenses a 3-D law to a
+        PlateFiber material (valid ``LayeredShellFiberSection`` layer) by
+        iterating ``eps33`` to ``sigma33 = 0``. Usually unnecessary: a
+        layered section already asks each 3-D layer for its PlateFiber view.
+        ``material`` accepts the registered nD handle or its name.
+        """
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(PlateFiber(material=material), name=name)
+
     def PlaneStressRebar(
         self, *,
         material: UniaxialMaterial | str,
@@ -826,6 +843,9 @@ class _NDMaterialNS(_BridgeNamespace):
 
         ``tens_stiff_c``/``beta_c``/``cracked_nu`` default to ``None``
         (emit nothing, build default applies) — see :class:`_LadrunoRC`.
+        ``beta_c``/``cracked_nu`` are not on the fork's ``ladruno`` branch
+        yet (fork PR #877): the live route refuses them and Tcl / py
+        emission warns (``LADRUNO_RC_C2_MIN_BUILD``).
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
@@ -894,7 +914,8 @@ class _NDMaterialNS(_BridgeNamespace):
         ``LadrunoBrick ... -geom finite``. Same full flag surface as
         :meth:`LadrunoRCConcrete`, including ``tens_stiff_c``/``beta_c``/
         ``cracked_nu`` (``None`` default = emit nothing, build default
-        applies).
+        applies; ``beta_c``/``cracked_nu`` are refused on the live route
+        until a fork build carries them, ``LADRUNO_RC_C2_MIN_BUILD``).
 
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.

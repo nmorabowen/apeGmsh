@@ -49,6 +49,19 @@ variable at the folder holding `opensees.pyd` **before** the first emit:
 set APEGMSH_OPENSEES_BIN=C:\path\to\Ladruno\dist\bin
 ```
 
+When your own code talks to the model the bridge built, such as a custom
+analysis loop after `ops.run()` or a query after `ops.analyze()`, take the
+module from the same resolver rather than importing one by name:
+
+```python
+from apeGmsh.opensees.emitter.live import get_ops
+
+opspy = get_ops()     # the module, and so the domain, the bridge drives
+```
+
+Beside a fork build, `import openseespy.opensees` binds a second module
+with its own, empty domain, and every query answers from that one.
+
 !!! warning "The fork is a source build"
 
     The Ladruno fork lives at
@@ -153,6 +166,17 @@ build refuses the material (`unknown option`) rather than ignoring them. The
 same `1334d1e24` commit changed the defaults (bilinear tension law, `Gc` read
 as a compressive fracture energy), so a deck that sets none of them means
 different things on either side of it; pin `tension_law` when that matters.
+
+`LadrunoRCConcrete` / `LadrunoRCFiniteStrain`'s `beta_c=` and `cracked_nu=`
+(`-betaC` / `-crackedNu`) are **not on any build of the fork's `ladruno`
+branch yet**. Fork PR #873 was closed unmerged, and fork PR #877 re-lands
+them. Unlike `LadrunoConcrete3D`, this parser ignores an unknown option, so a
+build without them runs the deck with the flags discarded. The in-process run
+therefore refuses them. `ops.tcl(...)` / `ops.py(...)` emit them with a
+`LadrunoRCBuildWarning`. The floor is `LADRUNO_RC_C2_MIN_BUILD`, which stays
+`None` until #877 merges. The `vc` tension-stiffening coefficient that
+`tens_stiff_c=None` leaves to the build is **500** on the `ladruno` branch.
+#877 changes it to 200, so pass `tens_stiff_c` explicitly to pin the curve.
 
 The vanilla `DruckerPrager` runs on any build, but its tension-cutoff
 return map is only correct from fork build `61b3efa04` on (fork ADR-95).

@@ -79,7 +79,7 @@ with apeGmsh(model_name="portal") as g:
 def configure():
     """Build the portal on a fresh bridge through the analysis chain."""
     ops = apeSees(fem); ops.model(ndm=2, ndf=3)
-    transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+    transf = ops.geomTransf.Linear()
     ops.element.elasticBeamColumn(pg="Columns", transf=transf, A=Ac, E=E, Iz=Ic)
     ops.element.elasticBeamColumn(pg="Beam",    transf=transf, A=Ab, E=E, Iz=Ib)
     ops.fix(pg="Base", dofs=(1, 1, 1))

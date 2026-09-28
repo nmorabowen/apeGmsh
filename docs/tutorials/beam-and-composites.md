@@ -121,7 +121,7 @@ mid_nid = int(ids[int(np.argmin(np.abs(coords[:, 0] - L / 2.0)))])
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)                        # 2-D frame: ux, uy, thetaz
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Span", transf=transf, A=A, E=E, Iz=Iz)
 
 ops.fix(pg="Pin",    dofs=(1, 1, 0))           # pin:    ux, uy fixed; rotation free
@@ -294,7 +294,7 @@ arithmetic. The composite did.
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Span", transf=transf, A=A, E=E, Iz=Iz)
 ```
 

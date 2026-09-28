@@ -28,11 +28,13 @@ from typing import TYPE_CHECKING
 
 from apeGmsh._kernel.defs.decoupled import DecoupledNodeDef
 
+from ._declarations import _DeclarationsMixin
+
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 
-class DecoupledNodesComposite:
+class DecoupledNodesComposite(_DeclarationsMixin):
     """Solver-agnostic decoupled-node collector — declare on the
     session, inject into the broker at mesh-extraction time.
 
@@ -40,6 +42,8 @@ class DecoupledNodesComposite:
     rows land on ``fem.nodes`` with ``provenance == "decoupled"`` and
     tags above every mesh node.
     """
+
+    _DECLARATION_STORES = {"node_defs": (DecoupledNodeDef,)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -75,11 +79,7 @@ class DecoupledNodesComposite:
         raise_if_from_h5_session(self._parent, "g.decouple_node()")
         coords_norm = _validate_location(coords=coords, point=point)
         defn = DecoupledNodeDef(coords=coords_norm, point=point, label=label)
-        self.node_defs.append(defn)
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
-        return defn
+        return self._declare(defn)
 
     # ------------------------------------------------------------------
     # Queries

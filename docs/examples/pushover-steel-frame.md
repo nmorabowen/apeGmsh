@@ -178,7 +178,7 @@ roof_id = int(fem.nodes.select(pg="Roof").ids[0])      # controlled node tag
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)                                # 2-D frame: ux, uy, thetaz
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 
 # Columns: a W14x90 fiber section -> force-based (distributed plasticity)
 steel = ops.uniaxialMaterial.Steel02(fy=Fy, E=E, b=b_hard)
