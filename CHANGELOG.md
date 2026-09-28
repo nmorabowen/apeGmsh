@@ -50,6 +50,68 @@ is `None`. No quirk-lint rule was added: this is the first time a flag from
 an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
 only after it recurs. The lesson is a checklist line in the bridge-feature
 guide instead.
+### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
+
+The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
+then a bare `import opensees`, then stock `openseespy.opensees`), but five
+sites imported `openseespy.opensees` by name: `DomainCapture`'s fallback
+before `analyze()` has built a live emitter, `LiveMPCO` and `LiveRecorders`
+(`spec.emit_mpco` / `spec.emit_recorders` without `ops=`), and both steps of
+`interop.solve_and_extract`. Beside a fork build those are two modules with
+two domains: the recorders attached to a domain the analysis never touched,
+and the capture sampled an empty one (the 9ffe6aa2 symptom; that fix kept the
+import as its fallback). All five now resolve through the new public
+`apeGmsh.opensees.emitter.live.get_ops()`, and an explicit `ops=` still wins.
+`solve_and_extract` builds the model with `apeSees.run()` instead of
+`runpy`-ing an emitted py deck, which binds `openseespy.opensees` itself, so
+the build, the static solve and the queries share one module, and
+`APEGMSH_OPENSEES_BIN` now reaches it (a model with ETABS property modifiers
+emits the fork-only `LadrunoShellModifier`). The arch-pushover example
+(`examples/shoebuckle_arch.py` and its studio copy) drove its analysis loop
+through the same import after `ops.run()` and now calls `get_ops()`.
+
+`OpenSeesCapabilities.has_fork`, and `has_ladruno_up`, which mirrors it, now
+read `get_backend_name() == "ladruno-fork"`: the `criticalTimeStep` test that
+tags the backend and gates the live emitter's fork-only verbs, instead of
+`hasattr(ops, "profiler")`. A fork build that registers both commands reads
+the same as before; `has_profiler` still reports the `profiler` command.
+
+New quirk rule `openseespy-import` (`scripts/check_quirks.py`): no `import
+openseespy`, `from openseespy… import` or literal
+`import_module("openseespy…")` in `src/apeGmsh/` or `examples/` outside the
+resolver, `emitter/live.py`. Run against the pre-fix tree it flags exactly the
+seven sites above; `tests/test_check_quirks.py` holds the shapes.
+
+### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
+
+`g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
+`g.reinforce(...)` and `g.embed(...)` declared **after** the first
+`g.mesh.queries.get_fem_data()` did not invalidate the session's FEMData
+cache (ADR 0038). The next `get_fem_data()` returned the **same**
+snapshot without them: 0 `fem.elements.contact_planes` while
+`g.constraints.contact_plane_defs` held 1, so the model solved without
+the contact, interface or tie. Only a variant call such as
+`get_fem_data(dim=3)`, which bypasses the cache, included them.
+
+Each declaration had to bump the cache counter by hand, and only 7 sites
+did. The new `_DeclarationsMixin` (`src/apeGmsh/core/_declarations.py`)
+makes storing, chain-phase routing and the bump one step (`_declare`).
+All eight composites that record defs inherit it and list their stores
+in `_DECLARATION_STORES`: `g.constraints`, `g.reinforce`, `g.embed`,
+`g.rebar`, `g.loads`, `g.displacements`, `g.masses` and
+`g.decoupled_nodes`. The `g.rebar` workaround, a local bump after
+forwarding to `g.reinforce`, is gone.
+
+`clear()` had the same bug and a second one. None of the three `clear()`
+methods bumped the counter, and `g.constraints.clear()` emptied only the
+MP `constraint_defs`, leaving the `bc`, `contact`, `contact_plane` and
+`interface` defs in place. It now empties all five lists and their
+records, and invalidates the cache.
+
+Guards: `tests/test_declaration_coverage.py` is an AST gate: no composite
+writes a declaration store except through the mixin, and every public
+verb that builds a def reaches `_declare`. `tests/test_fem_cache_invalidation.py`
+covers every declaration kind and every `clear()` end to end.
 
 ### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
 

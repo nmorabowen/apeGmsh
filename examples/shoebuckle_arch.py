@@ -355,7 +355,8 @@ def w_fiber_patches(steel):
 
 def run_to_limit(ops, fem) -> None:
     ops.run(wipe=True)                       # full deck -> in-process domain
-    import openseespy.opensees as osi
+    from apeGmsh.opensees.emitter.live import get_ops
+    osi = get_ops()                          # the module that domain lives in
 
     node_ids = [int(n) for n in fem.nodes.ids]
     crown_id = max(
