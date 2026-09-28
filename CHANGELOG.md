@@ -42,6 +42,7 @@ hazard), and every edit queued behind that socket would stall.
 for beams along X, Y and Z and skew, with and without `vecxz`. It also
 drives the real `show()` over HTTP, with `webbrowser.open` replaced, so
 no browser or window opens.
+
 ### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
 
 - **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
