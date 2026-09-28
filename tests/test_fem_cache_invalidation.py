@@ -7,7 +7,7 @@ cache behaviour that the upcoming chain-phase semantics
 * ``g.mesh.queries.get_fem_data()`` returns the SAME FEMData object
   identity on repeated calls with no intervening broker mutation.
 * Broker mutations — ``g.constraints.X`` / ``g.loads.X`` /
-  ``g.masses.X`` (and ``g.node_ndf.X``) — bump the session counter
+  ``g.masses.X`` — bump the session counter
   so the next ``get_fem_data()`` re-extracts.
 * The cache is keyed on the *canonical* signature only
   (``dim=None``, ``remove_orphans=False``); variant calls

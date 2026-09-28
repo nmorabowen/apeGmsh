@@ -14,6 +14,19 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### REMOVED — dead `g.node_ndf` populator in the FEM factory
+
+`mesh/_fem_factory.py` still carried `_populate_node_ndf` /
+`_resolve_ndf_target_to_node_ids`, which read `session.node_ndf` and
+called `_defs` / `_targeted_defs()` / `_default_def()` on it. The
+`g.node_ndf` composite was deleted by ADR 0048 (per-node `ndf` is
+inferred from the declared elements; `ops.ndf` covers element-less
+nodes), nothing sets `session.node_ndf`, and `_targeted_defs` is
+defined nowhere, so the `getattr` always returned `None` and the broker
+always got `ndf=None`. The helpers and their call site are removed (no
+behaviour change), and stale `g.node_ndf` mentions in the hash-fold
+comment and test docstrings now describe inference.
+
 ### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
 
 - **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
