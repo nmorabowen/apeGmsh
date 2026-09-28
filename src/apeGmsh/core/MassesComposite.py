@@ -149,8 +149,8 @@ class MassesComposite:
     Resolved records land on ``fem.nodes.masses`` as a
     :class:`~apeGmsh.mesh._record_set.MassSet`. Each record carries
     a length-6 mass vector ``(mx, my, mz, Ixx, Iyy, Izz)``;
-    downstream solver bridges slice it to the model's ``ndf`` (the
-    rotational components are dropped for ``ndf < 4``).
+    the OpenSees bridge maps it onto each node's DOFs by ``(ndm, ndf)``
+    (``(mx, my[, Izz])`` in 2-D; positional in 3-D).
 
     No patterns
     -----------

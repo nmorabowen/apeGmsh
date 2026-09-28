@@ -143,6 +143,7 @@ __all__ = [
     "validate_constraint_master_ndf",
     "validate_record_ndf_consistency",
     "fit_dof_vector",
+    "broker_mass_components",
     "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
@@ -4817,6 +4818,54 @@ def broker_load_components(
             f"includes the missing DOF."
         )
     return tuple(spatial[i] for i in layout)
+
+
+_MASS_COMPONENT_LABELS = ("mx", "my", "mz", "Ixx", "Iyy", "Izz")
+
+
+def broker_mass_components(
+    mass: "Iterable[float]", ndf: int, ndm: int, *, node: int,
+) -> tuple[float, ...]:
+    """Map a broker ``(mx, my, mz, Ixx, Iyy, Izz)`` mass onto a node's DOFs.
+
+    The mass counterpart of :func:`broker_load_components`. Broker masses
+    (``fem.nodes.masses``) are spatially ordered, not DOF-ordered, so a
+    positional trim is wrong in 2-D: an ``ndm=2, ndf=3`` frame node is
+    ``(ux, uy, rz)`` and must receive ``(mx, my, Izz)``, not ``(mx, my, mz)``.
+
+    * ``ndm != 2`` delegates to :func:`fit_dof_vector` (positional), which
+      is already the right layout for 3-D (``ndf`` 3 or 6); 3-D decks are
+      unchanged.
+    * ``ndm == 2`` places components by :func:`_load_dof_layout`
+      (``ndf=2`` → ``(mx, my)``, ``ndf=3`` → ``(mx, my, Izz)``). ``mz`` is
+      dropped: the resolver fills it unconditionally (``dofs=None`` means
+      ``mx = my = mz = m``), and a 2-D model has no z-translation. Any
+      other non-zero component with no DOF to land on (``Ixx``/``Iyy``,
+      or ``Izz`` on an ``ndf=2`` node) came from an explicit
+      ``rotational=`` / ``derive_rotational=True`` and fails loud.
+    """
+    if int(ndm) != 2:
+        return fit_dof_vector(mass, ndf, kind="mass", node=node)
+    vals = [float(v) for v in mass]
+    vals += [0.0] * (6 - len(vals))
+    layout = _load_dof_layout(int(ndf), 2)
+    carried = set(layout) | {2}
+    dropped = [
+        f"{_MASS_COMPONENT_LABELS[i]}={vals[i]:g}"
+        for i in range(6)
+        if i not in carried and vals[i] != 0.0
+    ]
+    if dropped:
+        raise BridgeError(
+            f"mass on node {node} has component(s) {', '.join(dropped)} "
+            f"that the 2-D model (ndm=2, ndf={int(ndf)}) cannot carry — it "
+            f"would be silently dropped. A 2-D node has only in-plane "
+            f"translations (+ Izz on an ndf=3 frame node); drop the "
+            f"out-of-plane rotational inertia (rotational=(0, 0, Izz)) or "
+            f"do not use derive_rotational on a node without that DOF."
+        )
+    out = tuple(vals[i] for i in layout)
+    return out + (0.0,) * (int(ndf) - len(out))
 
 
 def _emit_from_model_case(

@@ -14,6 +14,38 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `ops.mass_from_model()` maps broker masses onto 2-D node DOFs by `(ndm, ndf)`, not by position
+
+Broker masses (`fem.nodes.masses`, from `g.masses.*`) are spatial
+`(mx, my, mz, Ixx, Iyy, Izz)` 6-vectors. `mass_from_model()` used to trim
+them positionally to the node's ndf, which is only right in 3-D. Two 2-D
+failures followed:
+
+- **2-D frame (`ndm=2, ndf=3`, DOFs `ux uy rz`): silent wrong physics.**
+  The node received `(mx, my, mz)`, so the translational mass landed on
+  `rz` as a rotational inertia (`g.masses.line(..., linear_density=100)`
+  emitted `mass 1 40 40 40`). It now emits `(mx, my, Izz)`, i.e.
+  `mass 1 40 40 0`. **This changes emitted decks and modal results for
+  2-D frames.**
+- **2-D solid (`ndm=2, ndf=2`): raised.** The resolver fills `mz`
+  unconditionally, so `mass_from_model()` raised a `BridgeError` ("6
+  components but the node's ndf is 2"). It now emits `(mx, my)`.
+
+The new `broker_mass_components` (`opensees/_internal/build.py`) is the
+mass counterpart of `broker_load_components` and uses the same
+`_load_dof_layout`. On `ndm=2`, `mz` is dropped because the resolver
+fills it by default and a 2-D node has no z-translation. A non-zero
+`Ixx`/`Iyy`, or an `Izz` on an `ndf=2` node, comes from an explicit
+`rotational=` or `derive_rotational=True` and raises a `BridgeError`,
+because the inertia would otherwise be lost. For `ndm=3` the mapping
+delegates to the positional `fit_dof_vector`, so 3-D decks are
+byte-identical (`test_mass_from_model.py`). The flat, partitioned
+(`model_mass_by_rank`) and per-rank paths all use the new mapping.
+Explicit `ops.mass(values=...)` vectors are DOF-ordered and stay
+positional. The H5 archival emitter still rejects `mass_from_model()`:
+`model.h5` keeps the neutral 6-vector. Tests:
+`tests/opensees/integration/test_mass_from_model_2d.py`.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
