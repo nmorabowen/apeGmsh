@@ -47,6 +47,7 @@ unchanged behaviour. Tests: `tests/test_higher_order_mass_load_targets.py`
 `tests/test_element_topology.py`, which checks the table against gmsh's own
 element properties and checks that every type `set_order` produces at
 orders 1 and 2 resolves.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
