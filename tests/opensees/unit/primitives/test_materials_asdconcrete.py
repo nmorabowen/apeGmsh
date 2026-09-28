@@ -303,3 +303,87 @@ class TestASDConcrete1D:
                                                lch_ref=50.0)
         assert isinstance(m, ASDConcrete1D)
         assert ops.tag_for(m) == 1
+
+
+# ---------------------------------------------------------------------------
+# from_stko — the STKO ASDConcrete3D presets
+# ---------------------------------------------------------------------------
+
+# RW2 wall concrete as exported by STKO with the "Concrete (9P)" preset
+# (E 29279, v 0.2, ft 0.4, fc0 10, fcp 42.8, fcr 10, ecp 0.005, Gt 0.1,
+# Gc 36, PScale 0.3 / 0.3), N and mm.
+_RW2 = dict(E=29279.0, v=0.2, ft=0.4, fc0=10.0, fcp=42.8, fcr=10.0,
+            ecp=0.005, Gt=0.1, Gc=36.0, pscale_t=0.3, pscale_c=0.3)
+_RW2_DECK = {
+    "Te": (0.0, 1.2295501895556543e-05, 2.0492503159260906e-05,
+           0.031558526019786655, 0.15775165875428349, 1.577516587542835),
+    "Ts": (0.0, 0.36000000000000004, 0.4, 0.08000000000000002, 0.0004, 0.0004),
+    "Td": (0.0, 0.0, 0.2592592592592593, 0.9998813974090831,
+           0.9999998860495027, 0.9999999911268055),
+    "Ce": (0.0, 0.0003415417193210151, 0.0008591481949520134,
+           0.0013767546705830119, 0.0018943611462140099,
+           0.0024119676218450083, 0.0029295740974760068,
+           0.0034471805731070048, 0.003964787048738003,
+           0.004482393524369002, 0.005, 0.1753643993988866,
+           0.17570594111820761),
+    "Cs": (0.0, 10.0, 21.357483868322845, 28.44445414658916,
+           33.31889963679186, 36.778877494354205, 39.233894767836276,
+           40.92729290113603, 42.017655130936284, 42.615150121088945, 42.8,
+           10.0, 10.0),
+    "Cd": (0.0, 0.0, 0.0, 0.06000240426590453, 0.18340814769684,
+           0.2843325636656676, 0.36712945924669027, 0.43626525287460804,
+           0.49503005712782355, 0.5457609398812677, 0.5901365428088157,
+           0.9975269925448105, 0.9975330932236597),
+    "lch_ref": 7.924190762643707,
+}
+
+
+class TestFromStko:
+    def test_9p_reproduces_the_stko_deck(self) -> None:
+        curve = ASDConcrete3D.from_stko(**_RW2).preview_backbone()
+        for key, ref in _RW2_DECK.items():
+            assert curve[key] == pytest.approx(ref, rel=1e-12, abs=1e-15), key
+
+    def test_1p_defaults(self) -> None:
+        m = ASDConcrete3D.from_stko(E=E, v=V, fcp=FC)
+        assert m.Ts[2] == pytest.approx(0.1 * FC)          # ft = fcp/10
+        assert m.Cs[1] == pytest.approx(0.5 * FC)          # fc0 = fcp/2
+        assert m.Cs[-1] == pytest.approx(0.1 * FC)         # fcr = fcp/10
+        assert m.Ce[10] == pytest.approx(2.0 * FC / E)     # ecp = 2 fcp/E
+        assert max(m.Cs) == pytest.approx(FC)
+
+    def test_default_pscale_keeps_the_native_law(self) -> None:
+        a = ASDConcrete3D.from_stko(E=E, v=V, fcp=FC, ft=FT, Gt=GF, Gc=5.0)
+        Te, Ts, Td = laws.make_tension(E, FT, GF, a.lch_ref)
+        Ce, Cs, Cd = laws.make_compression(E, FC, 5.0, a.lch_ref)
+        assert (a.Te, a.Td, a.Ce, a.Cd) == (tuple(Te), tuple(Td),
+                                            tuple(Ce), tuple(Cd))
+
+    @pytest.mark.parametrize("kwargs,msg", [
+        ({"pscale_t": 1.5}, "pscale_t must be in"),
+        ({"pscale_c": -0.1}, "pscale_c must be in"),
+        ({"fc0": 50.0}, "must be below fcp"),
+        ({"ecp": 1e-4}, "must exceed the elastic strain"),
+        ({"Gt": 0.0}, "Gt must be > 0"),
+    ])
+    def test_validation(self, kwargs: dict, msg: str) -> None:
+        with pytest.raises(ValueError, match=msg):
+            ASDConcrete3D.from_stko(**{**_RW2, **kwargs})
+
+    def test_implex_alpha_emitted_only_when_not_one(self) -> None:
+        for alpha, present in ((1.0, False), (0.5, True)):
+            m = ASDConcrete3D.from_stko(**_RW2, implex=True, implex_alpha=alpha)
+            em = RecordingEmitter()
+            m._emit(em, tag=1)
+            (_, args, _), = em.calls
+            assert "-implex" in args
+            assert ("-implexAlpha" in args) is present
+            if present:
+                assert args[args.index("-implexAlpha") + 1] == 0.5
+
+    def test_bridge_registers(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))
+        m = ops.nDMaterial.ASDConcrete3D_stko(**_RW2, implex=True)
+        assert isinstance(m, ASDConcrete3D)
+        assert m.lch_ref == pytest.approx(_RW2_DECK["lch_ref"])
+        assert ops.tag_for(m) == 1

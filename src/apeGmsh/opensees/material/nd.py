@@ -2761,6 +2761,9 @@ class ASDConcrete3D(NDMaterial):
     eta, cdf, implex
         Rate-dependent viscosity, tension/compression cross-damage factor,
         IMPL-EX integration flag.
+    implex_alpha
+        IMPL-EX extrapolation factor (``-implexAlpha``, default ``1.0``,
+        emitted only when ``implex`` and different from 1).
     tangent
         Tangent operator handed to the solver: ``"secant"`` (default — the
         damaged secant stiffness, what the parser builds without a flag) or
@@ -2800,12 +2803,94 @@ class ASDConcrete3D(NDMaterial):
     eta: float = 0.0
     cdf: float = 0.0
     implex: bool = False
+    implex_alpha: float = 1.0
     auto_regularize: bool = True
     ft: float | None = None
     Gf: float | None = None
     tangent: str = "secant"
 
     _TANGENTS: ClassVar[frozenset[str]] = frozenset({"secant", "numerical"})
+
+    @classmethod
+    def from_stko(
+        cls, *,
+        E: float,
+        v: float,
+        fcp: float,
+        ft: float | None = None,
+        fc0: float | None = None,
+        fcr: float | None = None,
+        ecp: float | None = None,
+        Gt: float | None = None,
+        Gc: float | None = None,
+        pscale_t: float = 1.0,
+        pscale_c: float = 1.0,
+        rho: float = 0.0,
+        Kc: float = 2.0 / 3.0,
+        eta: float = 0.0,
+        cdf: float = 0.0,
+        implex: bool = False,
+        implex_alpha: float = 1.0,
+        tangent: str = "secant",
+    ) -> "ASDConcrete3D":
+        """Build from the STKO ``ASDConcrete3D`` preset parameters.
+
+        Same inputs as the STKO dialog (``Concrete (9P)``): elastic ``E, v``;
+        tensile strength ``ft``; compressive stress at the end of the linear
+        branch ``fc0``, peak ``fcp``, residual ``fcr``; strain at peak
+        ``ecp``; tensile / compressive fracture energies per area ``Gt`` /
+        ``Gc``; plasticity scale factors ``pscale_t`` / ``pscale_c`` in
+        ``[0, 1]``. Omitted values take the ``Concrete (1P)`` defaults:
+        ``ft = fcp/10``, ``fc0 = fcp/2``, ``fcr = fcp/10``, ``ecp = 2 fcp/E``,
+        ``Gt = 0.073 fcp^0.18``, ``Gc = 250 Gt`` (``Gt`` rule in N and mm), so
+        the 4P and 6P presets are the matching subsets of arguments.
+        ``lch_ref`` is derived the way STKO does (``min(hmin_t, hmin_c)``).
+        """
+        if E <= 0:
+            raise ValueError(f"ASDConcrete3D.from_stko: E must be > 0, got {E!r}")
+        if fcp <= 0:
+            raise ValueError(
+                f"ASDConcrete3D.from_stko: fcp must be > 0, got {fcp!r}")
+        for label, val in (("ft", ft), ("fc0", fc0), ("fcr", fcr),
+                           ("ecp", ecp), ("Gt", Gt), ("Gc", Gc)):
+            if val is not None and val <= 0:
+                raise ValueError(
+                    f"ASDConcrete3D.from_stko: {label} must be > 0 if "
+                    f"supplied, got {val!r}"
+                )
+        for label, val in (("pscale_t", pscale_t), ("pscale_c", pscale_c)):
+            if not (0.0 <= val <= 1.0):
+                raise ValueError(
+                    f"ASDConcrete3D.from_stko: {label} must be in [0, 1], "
+                    f"got {val!r}"
+                )
+        ft_ = ft if ft is not None else 0.1 * fcp
+        fc0_ = fc0 if fc0 is not None else 0.5 * fcp
+        fcr_ = fcr if fcr is not None else 0.1 * fcp
+        ecp_ = ecp if ecp is not None else 2.0 * fcp / E
+        Gt_ = Gt if Gt is not None else _laws.ceb_fip_Gf(fcp)
+        Gc_ = Gc if Gc is not None else 250.0 * Gt_
+        if not (fc0_ < fcp and fcr_ < fcp):
+            raise ValueError(
+                f"ASDConcrete3D.from_stko: fc0 ({fc0_!r}) and fcr ({fcr_!r}) "
+                f"must be below fcp ({fcp!r})."
+            )
+        if ecp_ <= fcp / E:
+            raise ValueError(
+                f"ASDConcrete3D.from_stko: ecp ({ecp_!r}) must exceed the "
+                f"elastic strain at peak fcp/E ({fcp / E!r})."
+            )
+        lch = _laws.auto_lch_ref(E, fcp, ft_, Gt_, Gc_, ec=ecp_)
+        Te, Ts, Td = _laws.make_tension(E, ft_, Gt_, lch, pscale=pscale_t)
+        Ce, Cs, Cd = _laws.make_compression(
+            E, fcp, Gc_, lch, fc0=fc0_, fcr=fcr_, ec=ecp_, pscale=pscale_c)
+        return cls(
+            E=E, v=v,
+            Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
+            Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
+            lch_ref=lch, rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
+            implex_alpha=implex_alpha, ft=ft_, Gf=Gt_, tangent=tangent,
+        )
 
     @classmethod
     def from_fc(
@@ -2910,6 +2995,11 @@ class ASDConcrete3D(NDMaterial):
                 "implex=True — the C++ uses the IMPL-EX secant and ignores "
                 "-tangent. Drop one of them."
             )
+        if self.implex_alpha <= 0:
+            raise ValueError(
+                f"ASDConcrete3D: implex_alpha must be > 0, got "
+                f"{self.implex_alpha!r}"
+            )
 
     def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:
         """The exact backbone that will be emitted (read-only, for plotting)."""
@@ -2960,6 +3050,8 @@ class ASDConcrete3D(NDMaterial):
             args += ["-cdf", self.cdf]
         if self.implex:
             args.append("-implex")
+            if self.implex_alpha != 1.0:
+                args += ["-implexAlpha", self.implex_alpha]
         if self.tangent == "numerical":
             args.append("-tangent")
         if self.auto_regularize:

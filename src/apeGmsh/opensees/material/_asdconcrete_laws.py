@@ -16,6 +16,11 @@ invariance / ``l_max`` unit tests.
 Fracture energies here are **per unit area** (``Gf``, ``Gc``); the builder
 converts to specific (per-volume) energy internally as ``G / lch_ref``,
 which is the crack-band reference the regularizer rescales against.
+
+The optional ``fc0`` / ``fcr`` / ``ec`` / ``pscale`` arguments open the same
+law to the STKO ``ASDConcrete3D`` presets (``Concrete (1P/4P/6P/9P)``), which
+use this algorithm with those four values exposed; their defaults keep the
+native ``-fc`` curve unchanged.
 """
 from __future__ import annotations
 
@@ -46,18 +51,22 @@ def ceb_fip_Gc(fc: float, ft: float, Gf: float) -> float:
     return 2.0 * Gf * (fc * fc) / (ft * ft)
 
 
-def auto_lch_ref(E: float, fc: float, ft: float, Gf: float, Gc: float) -> float:
+def auto_lch_ref(
+    E: float, fc: float, ft: float, Gf: float, Gc: float,
+    ec: float | None = None,
+) -> float:
     """Native ``-fc`` self-derived reference length ``min(hmin_t, hmin_c)``.
 
     The smallest band width below which the regularized softening would
     snap back; used by the binary when ``lch_ref`` is unspecified
-    (``cpp:613-630``).
+    (``cpp:613-630``). ``ec`` is the strain at peak compression
+    (default ``2 fc / E``).
     """
     et_el = ft / E
     Gt_min = 0.5 * ft * et_el
     hmin_t = 0.01 * Gf / Gt_min
 
-    ec = 2.0 * fc / E
+    ec = 2.0 * fc / E if ec is None else ec
     ec1 = fc / E
     ec_pl = (ec - ec1) * 0.4 + ec1
     Gc_min = 0.5 * fc * (ec - ec_pl)
@@ -86,11 +95,13 @@ def _bezier3(
 
 def make_tension(
     E: float, ft: float, Gf: float, lch_ref: float,
+    pscale: float = 1.0,
 ) -> tuple[list[float], list[float], list[float]]:
     """Tension backbone ``(Te, Ts, Td)`` — 6 points (``cpp:632-667``).
 
     ``Gf`` is the tensile fracture energy per area; specific energy is
-    ``Gf/lch_ref``.
+    ``Gf/lch_ref``. ``pscale`` in ``[0, 1)`` scales the plastic part of the
+    inelastic strain (the rest becomes damage); ``1`` keeps the native split.
     """
     Gt = Gf / lch_ref  # per-area -> specific (per-volume)
     f0 = 0.9 * ft
@@ -114,6 +125,8 @@ def make_tension(
     Ts = [0.0, f0, f1, f2, f3, f3]
     Td = [0.0] * 6
     Tpl = [0.0, 0.0, ep, 0.9 * e2, 0.8 * e3, 0.8 * e3]
+    if 0.0 <= pscale < 1.0:
+        Tpl = [pscale * x for x in Tpl]
     for i in range(2, 6):
         xi, si, xipl = Te[i], Ts[i], Tpl[i]
         xipl = min(xipl, xi - si / E)
@@ -124,18 +137,22 @@ def make_tension(
 
 def make_compression(
     E: float, fc: float, Gc: float, lch_ref: float,
+    fc0: float | None = None, fcr: float | None = None,
+    ec: float | None = None, pscale: float = 1.0,
 ) -> tuple[list[float], list[float], list[float]]:
     """Compression backbone ``(Ce, Cs, Cd)`` — 13 points (``cpp:672-711``).
 
     ``Gc`` is the compressive fracture energy per area; specific energy is
-    ``Gc/lch_ref``.
+    ``Gc/lch_ref``. ``fc0`` (end of the linear branch, default ``fc/2``),
+    ``fcr`` (residual, default ``fc/10``) and ``ec`` (strain at peak, default
+    ``2 fc / E``) shape the curve; ``pscale`` as in :func:`make_tension`.
     """
     Gc_s = Gc / lch_ref  # per-area -> specific
-    ec = 2.0 * fc / E
-    fc0 = 0.5 * fc
+    ec = 2.0 * fc / E if ec is None else ec
+    fc0 = 0.5 * fc if fc0 is None else fc0
     ec0 = fc0 / E
     ec1 = fc / E
-    fcr = 0.1 * fc
+    fcr = 0.1 * fc if fcr is None else fcr
     ec_pl = (ec - ec1) * 0.4 + ec1
     Gc1 = 0.5 * fc * (ec - ec_pl)
     Gc2 = max(0.01 * Gc1, Gc_s - Gc1)
@@ -157,6 +174,8 @@ def make_compression(
     Cpl[nc + 1] = Cpl[nc] + 0.7 * (ecr - Cpl[nc])
     Ce[nc + 2], Cs[nc + 2] = ecr + ec0, fcr
     Cpl[nc + 2] = Cpl[nc + 1]
+    if 0.0 <= pscale < 1.0:
+        Cpl = [pscale * x for x in Cpl]
 
     Cd = [0.0] * n
     for i in range(2, n):

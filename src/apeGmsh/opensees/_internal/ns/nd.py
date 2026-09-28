@@ -467,6 +467,45 @@ class _NDMaterialNS(_BridgeNamespace):
             name=name,
         )
 
+    def ASDConcrete3D_stko(
+        self,
+        *,
+        E: float,
+        v: float,
+        fcp: float,
+        ft: float | None = None,
+        fc0: float | None = None,
+        fcr: float | None = None,
+        ecp: float | None = None,
+        Gt: float | None = None,
+        Gc: float | None = None,
+        pscale_t: float = 1.0,
+        pscale_c: float = 1.0,
+        rho: float = 0.0,
+        Kc: float = 2.0 / 3.0,
+        eta: float = 0.0,
+        cdf: float = 0.0,
+        implex: bool = False,
+        implex_alpha: float = 1.0,
+        tangent: str = "secant",
+        name: str | None = None,
+    ) -> ASDConcrete3D:
+        """Register an :class:`ASDConcrete3D` from the STKO preset parameters.
+
+        Same inputs as the STKO ``Concrete (9P)`` dialog; see
+        :meth:`ASDConcrete3D.from_stko` for the defaults (``Concrete (1P)``).
+        For shell layers wrap the result in :meth:`PlateFromPlaneStress`.
+        """
+        return self._bridge._register(
+            ASDConcrete3D.from_stko(
+                E=E, v=v, fcp=fcp, ft=ft, fc0=fc0, fcr=fcr, ecp=ecp,
+                Gt=Gt, Gc=Gc, pscale_t=pscale_t, pscale_c=pscale_c,
+                rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
+                implex_alpha=implex_alpha, tangent=tangent,
+            ),
+            name=name,
+        )
+
     def MohrCoulombTensionCutoffSoil(
         self,
         *,
