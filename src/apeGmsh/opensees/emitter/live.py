@@ -13,7 +13,8 @@ no-ops here (the next non-fiber/patch/layer or non-load/sp/eleLoad
 call ends the implicit scope).
 
 This is the only place ``import openseespy.opensees`` may appear in
-``apeGmsh.opensees`` (per Phase-4 architecture rules).
+apeGmsh (charter P2; the ``openseespy-import`` quirk rule holds it).
+Code elsewhere that talks to the same domain calls :func:`get_ops`.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 
-__all__ = ["LiveOpsEmitter", "get_backend_name", "get_backend_build"]
+__all__ = ["LiveOpsEmitter", "get_backend_name", "get_backend_build", "get_ops"]
 
 
 #: Raised by :meth:`LiveOpsEmitter.augment` on a stock (non-fork) build.
@@ -428,6 +429,23 @@ def _get_ops() -> "ModuleType":
     if _OPS_CACHE is None:
         _OPS_CACHE, _BACKEND_NAME = _resolve_ops()
     return _OPS_CACHE
+
+
+def get_ops() -> "ModuleType":
+    """Return the OpenSees module the bridge drives, resolving it on first use.
+
+    The public face of the resolver (:func:`_resolve_ops`, cached by
+    :func:`_get_ops`): the Ladruno fork when importable, else stock
+    openseespy. Code that must reach the SAME module, and so the same
+    domain, as :class:`LiveOpsEmitter` calls this: result capture,
+    in-process recorders, a custom analysis loop after ``apeSees.run()``.
+    Never ``import openseespy.opensees`` for that: beside a fork build (on
+    ``PYTHONPATH``, or loaded from ``APEGMSH_OPENSEES_BIN``) the name binds
+    a second module with its own, empty domain (9ffe6aa2).
+
+    Raises :class:`ImportError` if no backend imports.
+    """
+    return _get_ops()
 
 
 def get_backend_name() -> str:

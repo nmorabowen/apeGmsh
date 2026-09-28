@@ -6,9 +6,7 @@ applied load) on self-contained models, so it needs no live ETABS.
 """
 from __future__ import annotations
 
-import sys
 import types
-from pathlib import Path
 
 import pytest
 
@@ -19,6 +17,7 @@ from apeGmsh.opensees._internal.analyze_rc import (
     MATERIAL_REFUSED_RC,
     AnalysisAbortedError,
 )
+from tests.fixtures.split_backend import split_backend
 
 # A 4x4 m slab on four pinned corners under a uniform downward pressure.
 _SLAB = {
@@ -83,10 +82,10 @@ def test_solve_and_extract_defaults_first_case_and_validates_case():
 
 
 class _FixedRcOps(types.ModuleType):
-    """Fake ``openseespy.opensees``: every ``analyze`` returns ``rc``."""
+    """Fake OpenSees backend: every ``analyze`` returns ``rc``."""
 
     def __init__(self, rc):
-        super().__init__("openseespy.opensees")
+        super().__init__("opensees")
         self.rc = rc
 
     def __getattr__(self, name):        # system/numberer/test/... are no-ops
@@ -98,20 +97,20 @@ class _FixedRcOps(types.ModuleType):
         return self.rc
 
 
-class _DeckWriter:
-    """Stands in for the bridge: ``py(path)`` writes an empty deck."""
+class _Bridge:
+    """Stands in for the bridge: ``run()`` builds the model in-process."""
 
-    def py(self, path):
-        Path(path).write_text("", encoding="utf-8")
+    def __init__(self):
+        self.ran = False
+
+    def run(self):
+        self.ran = True
 
 
 def _run_with_rc(rc, monkeypatch):
-    fake = _FixedRcOps(rc)
-    parent = types.ModuleType("openseespy")
-    parent.opensees = fake
-    monkeypatch.setitem(sys.modules, "openseespy", parent)
-    monkeypatch.setitem(sys.modules, "openseespy.opensees", fake)
-    return _run_static(_DeckWriter(), tol=1e-8, max_iter=10)
+    # The stray module answers 0, so reading it instead would hide every rc.
+    split_backend(monkeypatch, _FixedRcOps(rc), _FixedRcOps(0))
+    return _run_static(_Bridge(), tol=1e-8, max_iter=10)
 
 
 def test_run_static_aborts_on_the_commit_refusal(monkeypatch):
@@ -125,3 +124,13 @@ def test_run_static_still_reports_other_codes_as_not_converged(monkeypatch):
     assert _run_with_rc(MATERIAL_REFUSED_RC, monkeypatch) is False
     assert _run_with_rc(-3, monkeypatch) is False
     assert _run_with_rc(0, monkeypatch) is True
+
+
+def test_run_static_builds_and_solves_in_the_module_the_bridge_drives(monkeypatch):
+    # The model used to be built by runpy-ing an emitted py deck, which binds
+    # `openseespy.opensees`: beside a fork build, a second module and domain.
+    bound, stray = _FixedRcOps(0), _FixedRcOps(-3)
+    split_backend(monkeypatch, bound, stray)
+    bridge = _Bridge()
+    assert _run_static(bridge, tol=1e-8, max_iter=10) is True
+    assert bridge.ran

@@ -211,8 +211,8 @@ def test_cantilever_static_displacement():
     bm = ops.build()
     bm.run_live(wipe=True)
 
-    import openseespy.opensees as ops_live
-    disp = ops_live.nodeDisp(2, 1)
+    from apeGmsh.opensees.emitter.live import get_ops
+    disp = get_ops().nodeDisp(2, 1)   # the module the bridge built in
     assert disp == pytest.approx(expected_disp, rel=1e-3)
 ```
 

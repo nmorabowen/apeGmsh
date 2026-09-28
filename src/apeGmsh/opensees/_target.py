@@ -67,9 +67,11 @@ class OpenSeesCapabilities:
     """What the **live** in-process openseespy build can do.
 
     Probed by :meth:`apeGmsh.opensees.apeSees.capabilities`.  ``has_fork``
-    is a heuristic: the Ladruno fork registers the fork-only ``profiler``
-    command, which stock openseespy lacks, so its presence is the fork
-    signal (the same gate the live emitter uses for ``ops.profiler``).
+    is the backend resolver's verdict (``get_backend_name() ==
+    "ladruno-fork"``, i.e. the fork-only ``criticalTimeStep`` command), the
+    same test that tags the backend and gates the live emitter's fork-only
+    verbs, so the two cannot disagree.  ``has_profiler`` reports the
+    ``profiler`` command itself.
     """
 
     source: str
@@ -200,9 +202,10 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
     do.  Raises whatever :func:`_get_ops` raises if openseespy is not
     installed.
     """
-    from .emitter.live import _get_ops
+    from .emitter.live import _get_ops, get_backend_name
 
     ops = _get_ops()
+    has_fork = get_backend_name() == "ladruno-fork"
     has_profiler = hasattr(ops, "profiler")
     version: str | None
     try:
@@ -218,9 +221,9 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
         build = None
     return OpenSeesCapabilities(
         source="live",
-        has_fork=has_profiler,
+        has_fork=has_fork,
         has_profiler=has_profiler,
         version=version,
-        has_ladruno_up=has_profiler,
+        has_ladruno_up=has_fork,
         build=build,
     )

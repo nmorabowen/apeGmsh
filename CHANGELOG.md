@@ -14,6 +14,38 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
+
+The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
+then a bare `import opensees`, then stock `openseespy.opensees`), but five
+sites imported `openseespy.opensees` by name: `DomainCapture`'s fallback
+before `analyze()` has built a live emitter, `LiveMPCO` and `LiveRecorders`
+(`spec.emit_mpco` / `spec.emit_recorders` without `ops=`), and both steps of
+`interop.solve_and_extract`. Beside a fork build those are two modules with
+two domains: the recorders attached to a domain the analysis never touched,
+and the capture sampled an empty one (the 9ffe6aa2 symptom; that fix kept the
+import as its fallback). All five now resolve through the new public
+`apeGmsh.opensees.emitter.live.get_ops()`, and an explicit `ops=` still wins.
+`solve_and_extract` builds the model with `apeSees.run()` instead of
+`runpy`-ing an emitted py deck, which binds `openseespy.opensees` itself, so
+the build, the static solve and the queries share one module, and
+`APEGMSH_OPENSEES_BIN` now reaches it (a model with ETABS property modifiers
+emits the fork-only `LadrunoShellModifier`). The arch-pushover example
+(`examples/shoebuckle_arch.py` and its studio copy) drove its analysis loop
+through the same import after `ops.run()` and now calls `get_ops()`.
+
+`OpenSeesCapabilities.has_fork`, and `has_ladruno_up`, which mirrors it, now
+read `get_backend_name() == "ladruno-fork"`: the `criticalTimeStep` test that
+tags the backend and gates the live emitter's fork-only verbs, instead of
+`hasattr(ops, "profiler")`. A fork build that registers both commands reads
+the same as before; `has_profiler` still reports the `profiler` command.
+
+New quirk rule `openseespy-import` (`scripts/check_quirks.py`): no `import
+openseespy`, `from openseespy… import` or literal
+`import_module("openseespy…")` in `src/apeGmsh/` or `examples/` outside the
+resolver, `emitter/live.py`. Run against the pre-fix tree it flags exactly the
+seven sites above; `tests/test_check_quirks.py` holds the shapes.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

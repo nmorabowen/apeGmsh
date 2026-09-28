@@ -23,6 +23,7 @@ from apeGmsh.results.spec._resolved import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.split_backend import split_backend
 
 
 # =====================================================================
@@ -590,3 +591,41 @@ def test_emit_filename_matches_from_recorders_lookup(tmp_path: Path) -> None:
     assert len(expected) == 1
     # Path equivalence (forward-slash from emit, OS-native from list_source_files)
     assert Path(emit_path) == expected[0]
+
+
+# =====================================================================
+# Without ops=: the module the bridge drives, never openseespy by name
+# =====================================================================
+
+def _nodal_spec() -> ResolvedRecorderSpec:
+    return _make_spec(ResolvedRecorderRecord(
+        category="nodes", name="r",
+        components=("displacement_x",),
+        dt=None, n_steps=None,
+        node_ids=np.array([1, 2]),
+    ))
+
+
+def test_defaults_to_the_module_the_bridge_drives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound, stray = FakeOps(), FakeOps()
+    split_backend(monkeypatch, bound, stray)
+    with _nodal_spec().emit_recorders(str(tmp_path)) as live:
+        live.begin_stage("gravity")
+        live.end_stage()
+    assert len(bound.recorder_calls) == 1
+    assert bound.remove_calls == [("recorder", 1)]
+    assert stray.recorder_calls == []
+
+
+def test_an_explicit_ops_beats_the_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound, stray, mine = FakeOps(), FakeOps(), FakeOps()
+    split_backend(monkeypatch, bound, stray)
+    with _nodal_spec().emit_recorders(str(tmp_path), ops=mine) as live:
+        live.begin_stage("gravity")
+        live.end_stage()
+    assert len(mine.recorder_calls) == 1
+    assert bound.recorder_calls == [] and stray.recorder_calls == []
