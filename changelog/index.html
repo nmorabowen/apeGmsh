@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — LadrunoRCConcrete beta_c / cracked_nu are refused on the live route until a fork build carries them
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3766,6 +3777,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — LadrunoRCConcrete beta_c / cracked_nu are refused on the live route until a fork build carries them
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3947,6 +3969,41 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them">FIXED — <code>LadrunoRCConcrete</code> <code>beta_c</code> / <code>cracked_nu</code> are refused on the live route until a fork build carries them<a class="headerlink" href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" title="Permanent link">&para;</a></h3>
+<p>This corrects the #1184 section "C2 fork flags: <code>cracked_nu</code>, <code>beta_c</code>, <code>vc</code>
+tension-stiffening default 500→200". Fork PR #873, which carried
+<code>-betaC</code> / <code>-crackedNu</code>, was <strong>closed unmerged</strong> on 2026-09-27 and is being
+re-landed as fork PR #877. No build of the fork's <code>ladruno</code> branch parses the
+flags (checked at <code>891978c9e</code>). That parser's option loop ignores unknown
+tokens, so <code>beta_c=</code> / <code>cracked_nu=</code> were silently discarded on every
+<code>ladruno</code> build: the model ran with the elastic <code>nu</code> after cracking and
+<code>C = 170</code>, with no error.</p>
+<ul>
+<li><strong>Live route refuses them.</strong> <code>LiveOpsEmitter.nDMaterial</code> raises
+  <code>RuntimeError</code> for a <code>LadrunoRCConcrete</code> / <code>LadrunoRCFiniteStrain</code> line
+  that carries <code>-betaC</code> or <code>-crackedNu</code> while the new floor
+  <code>LADRUNO_RC_C2_MIN_BUILD</code> (<code>apeGmsh.opensees.material.nd</code>) is <code>None</code>.
+  Once it is set to #877's merge SHA, only a build with no
+  <code>ladrunoBuild()</code> stamp is refused. A bare hash cannot prove ancestry
+  (ADR 0107 D4).</li>
+<li><strong>Tcl / openseespy decks warn.</strong> <code>ops.tcl(...)</code> / <code>ops.py(...)</code> still
+  emit the flags but raise a <code>LadrunoRCBuildWarning</code>: the deck is correct
+  only on a build that carries them.</li>
+<li><strong><code>tens_stiff_c</code> default, corrected.</strong> #1184 said the fork moved the <code>vc</code>
+  default from 500 to 200. That happened only on the unmerged branch. Every
+  <code>ladruno</code> build still defaults to <strong>500</strong>, so <code>tens_stiff_c=None</code> keeps
+  the old curve there and gets 200 once #877 merges. Pass <code>tens_stiff_c</code>
+  explicitly to pin the curve. The <code>_LadrunoRC</code> docstring, both
+  <code>ops.nDMaterial</code> wrappers and <code>docs/concepts/backend-capabilities.md</code> now
+  say so.</li>
+</ul>
+<p>Tests: <code>tests/opensees/unit/test_ladruno_rc_c2_gate.py</code> covers the live
+refusal, the stamped-build pass, and the deck warning, using fake <code>ops</code>.
+<code>test_ladruno_rc_cracked_nu_live.py</code> now asserts the refusal while the floor
+is <code>None</code>. No quirk-lint rule was added: this is the first time a flag from
+an unmerged fork PR shipped, and <code>scripts/check_quirks.py</code> takes a lesson
+only after it recurs. The lesson is a checklist line in the bridge-feature
+guide instead.</p>
 <h3 id="fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids">FIXED — recorder-spec messages point at the real in-process capture route; <code>ResolvedRecorderRecord</code> accepts list IDs<a class="headerlink" href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The <code>emit_recorders</code> refusals and warnings (modal records raise,

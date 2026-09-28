@@ -2251,60 +2251,10 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Materials">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-minimum-useful-build-and-how-to-check-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The minimum useful build, and how to check it
-      
-    </span>
-  </a>
-  
 </li>
         
       </ul>
     </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#recorders" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recorders
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-extras" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install extras
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#related" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Related
-      
-    </span>
-  </a>
   
 </li>
       
@@ -3830,60 +3780,10 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Materials">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-minimum-useful-build-and-how-to-check-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The minimum useful build, and how to check it
-      
-    </span>
-  </a>
-  
 </li>
         
       </ul>
     </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#recorders" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recorders
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-extras" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install extras
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#related" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Related
-      
-    </span>
-  </a>
   
 </li>
       
@@ -4083,6 +3983,16 @@ build refuses the material (<code>unknown option</code>) rather than ignoring th
 same <code>1334d1e24</code> commit changed the defaults (bilinear tension law, <code>Gc</code> read
 as a compressive fracture energy), so a deck that sets none of them means
 different things on either side of it; pin <code>tension_law</code> when that matters.</p>
+<p><code>LadrunoRCConcrete</code> / <code>LadrunoRCFiniteStrain</code>'s <code>beta_c=</code> and <code>cracked_nu=</code>
+(<code>-betaC</code> / <code>-crackedNu</code>) are <strong>not on any build of the fork's <code>ladruno</code>
+branch yet</strong>. Fork PR #873 was closed unmerged, and fork PR #877 re-lands
+them. Unlike <code>LadrunoConcrete3D</code>, this parser ignores an unknown option, so a
+build without them runs the deck with the flags discarded. The in-process run
+therefore refuses them. <code>ops.tcl(...)</code> / <code>ops.py(...)</code> emit them with a
+<code>LadrunoRCBuildWarning</code>. The floor is <code>LADRUNO_RC_C2_MIN_BUILD</code>, which stays
+<code>None</code> until #877 merges. The <code>vc</code> tension-stiffening coefficient that
+<code>tens_stiff_c=None</code> leaves to the build is <strong>500</strong> on the <code>ladruno</code> branch.</p>
+<h1 id="877-changes-it-to-200-so-pass-tens_stiff_c-explicitly-to-pin-the-curve">877 changes it to 200, so pass <code>tens_stiff_c</code> explicitly to pin the curve.<a class="headerlink" href="#877-changes-it-to-200-so-pass-tens_stiff_c-explicitly-to-pin-the-curve" title="Permanent link">&para;</a></h1>
 <p>The vanilla <code>DruckerPrager</code> runs on any build, but its tension-cutoff
 return map is only correct from fork build <code>61b3efa04</code> on (fork ADR-95).
 An older engine parses the same deck and answers differently — quadratic
