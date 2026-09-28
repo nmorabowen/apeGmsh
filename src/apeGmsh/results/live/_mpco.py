@@ -61,8 +61,11 @@ class LiveMPCO:
         Output ``.mpco`` HDF5 file path. Parent directory created on
         ``__enter__`` if missing.
     ops
-        The openseespy module (or a stand-in for testing). Defaults
-        to ``openseespy.opensees`` resolved lazily on ``__enter__``.
+        The OpenSees module (or a stand-in for testing). Defaults to
+        the module the bridge drives
+        (:func:`~apeGmsh.opensees.emitter.live.get_ops`), resolved
+        lazily on ``__enter__``. Pass it when you drive another
+        module by hand.
 
     Raises
     ------
@@ -99,8 +102,8 @@ class LiveMPCO:
         self._opened = True
 
         if self._ops is None:
-            import openseespy.opensees as ops_module
-            self._ops = ops_module
+            from ...opensees.emitter.live import get_ops
+            self._ops = get_ops()
 
         if self._path.parent and not self._path.parent.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)

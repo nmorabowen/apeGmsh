@@ -58,6 +58,21 @@ LOG_FUNCS = {"warn", "print"}
 EMPTY_CTORS = {"set", "frozenset", "dict", "list", "tuple"}
 EMPTY_ARRAYS = {"array", "asarray", "empty", "zeros"}
 
+#: Code that runs in the bridge's process: the package, and the examples users
+#: copy. Tests stay out: they check emitted py decks, which bind openseespy by design.
+IMPORT_SCOPE = (Path("src/apeGmsh"), Path("examples"))
+#: The backend resolver, the one module that may import openseespy by name.
+RESOLVER = Path("src/apeGmsh/opensees/emitter/live.py")
+DYNAMIC_IMPORTS = {"import_module", "__import__"}
+#: Text that could hold such an import: a superset of what the AST check flags,
+#: so a file without it is skipped unparsed. Prose that quotes the import in
+#: backticks does not match; backslash-continued lines are joined first.
+IMPORT_TEXT = re.compile(
+    r"(?<![`\w.])import\s+[\w., ]*?\bopenseespy\b"
+    r"|(?<![`\w.])from\s+openseespy\b[\w.]*\s+import\b"
+    r"|\b(?:import_module|__import__)\(\s*[rbu]?['\"]openseespy\b"
+)
+
 WAIVER = re.compile(r"#\s*apegmsh-lint:\s*(?P<rule>[a-z-]+?)-ok\b(?P<reason>.*)$")
 
 RULES: dict[str, str] = {
@@ -86,6 +101,14 @@ RULES: dict[str, str] = {
         "downgraded every resolve error to a warning (fixed 3aecb417); re-added nine "
         "days later in the chain-phase router (06ccd266), where a tie against a "
         "destroyed physical group was silently dropped (fixed 45340ac3)"
+    ),
+    "openseespy-import": (
+        "imports openseespy by name. Beside a fork build (on PYTHONPATH, or loaded from "
+        "APEGMSH_OPENSEES_BIN) that binds a second module with its own, empty domain, not "
+        "the one the bridge built the model in. Take an explicit ops= first, else call "
+        "apeGmsh.opensees.emitter.live.get_ops(). Lesson: DomainCapture sampled an empty "
+        "domain (fixed 9ffe6aa2, which kept the import as its fallback); that fallback, "
+        "LiveMPCO, LiveRecorders, interop.solve and the arch-pushover example still bound it"
     ),
 }
 
@@ -314,10 +337,45 @@ def check_resolve_swallow(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple
                     yield node.lineno, RULES["resolve-swallow"]
 
 
+def _in_import_scope(rel: str) -> bool:
+    return any(rel.startswith(p.as_posix() + "/") for p in IMPORT_SCOPE)
+
+
+def _imported_modules(node: ast.AST) -> list[str]:
+    """The absolute modules an import statement, or a literal `import_module(...)`, binds."""
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom):
+        return [node.module] if node.level == 0 and node.module else []
+    if (
+        isinstance(node, ast.Call)
+        and (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) in DYNAMIC_IMPORTS
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return [node.args[0].value]
+    return []
+
+
+def check_openseespy_import(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """Any import of `openseespy` or a submodule in scope, outside the resolver.
+
+    A string that only spells the import (a docstring, a line of an emitted py
+    deck) binds nothing and passes, as does a `find_spec("openseespy")` probe.
+    """
+    if not _in_import_scope(rel) or rel == RESOLVER.as_posix():
+        return
+    for node in ast.walk(tree):
+        if any(m == "openseespy" or m.startswith("openseespy.") for m in _imported_modules(node)):
+            yield node.lineno, RULES["openseespy-import"]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
     "compose-streams": check_compose_streams,
     "resolve-swallow": check_resolve_swallow,
+    "openseespy-import": check_openseespy_import,
 }
 
 
@@ -331,12 +389,21 @@ def _read_source(path: Path) -> str | None:
         return None
 
 
+def _may_apply(rel: str, lowered: str) -> bool:
+    """Whether a rule could flag anything in this file, judged on its text alone."""
+    if rel.startswith("tests/"):
+        return "schema_version" in lowered
+    if rel in {path.as_posix() for path in CARRY_ALL} or _in_swallow_scope(rel):
+        return True
+    return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
+
+
 def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
     text = _read_source(path)
     if text is None:
         return []  # not valid Python source; like a SyntaxError, ruff and pytest will say so
     lowered = text.lower()
-    if rel.startswith("tests/") and "schema_version" not in lowered and "apegmsh-lint" not in lowered:
+    if "apegmsh-lint" not in lowered and not _may_apply(rel, lowered):
         return []  # nothing a rule reads here; skipping the parse keeps the scan fast
     try:
         tree = ast.parse(text, filename=rel)
@@ -387,7 +454,10 @@ def _python_files(root: Path) -> list[Path]:
     tests = root / "tests"
     if tests.is_dir():
         found += sorted(tests.rglob("*.py"))
-    return found
+    for path in IMPORT_SCOPE:
+        target = root / path
+        found += sorted(target.rglob("*.py")) if target.is_dir() else []
+    return list(dict.fromkeys(found))  # src/apeGmsh holds the narrow scopes too: scan each once
 
 
 def scan(root: Path) -> list[Finding]:

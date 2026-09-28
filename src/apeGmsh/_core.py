@@ -115,8 +115,9 @@ class apeGmsh(_SessionBase):
         # so repeat calls return the same broker object identity (and
         # downstream consumers — chain-phase shims, future
         # ``g.compose()`` — have a single canonical snapshot to update
-        # via ``FEMData.with_*`` transforms).  Every broker mutation
-        # (``g.constraints.X`` / ``g.loads.X`` / ``g.masses.X``) bumps
+        # via ``FEMData.with_*`` transforms).  Every declaration
+        # (``_DeclarationsMixin._declare`` — ``g.constraints.X``,
+        # ``g.loads.X``, ``g.reinforce`` and the rest) bumps
         # ``_fem_counter``; the cached snapshot is fresh iff
         # ``_fem_counter == _fem_counter_at_build``.  The first
         # extraction stamps ``_fem_counter_at_build``; any mutation
@@ -347,13 +348,13 @@ class apeGmsh(_SessionBase):
     def _bump_fem_counter(self) -> None:
         """Mark the FEMData cache dirty.
 
-        Called by every broker mutation on
-        :class:`~.core.ConstraintsComposite.ConstraintsComposite` /
-        :class:`~.core.LoadsComposite.LoadsComposite` /
-        :class:`~.core.MassesComposite.MassesComposite` after the
-        underlying def-list is appended.  Next ``get_fem_data()`` will
-        re-extract from gmsh + the updated def lists instead of
-        returning the stale cached snapshot.
+        Called by
+        :class:`~.core._declarations._DeclarationsMixin` after every
+        declaration (``_declare``) and every ``clear()``
+        (``_clear_declarations``) on the composites that record
+        intent.  Next ``get_fem_data()`` will re-extract from gmsh +
+        the updated def lists instead of returning the stale cached
+        snapshot.
         """
         self._fem_counter += 1
 
