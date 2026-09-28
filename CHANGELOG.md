@@ -40,6 +40,71 @@ Tests: `test_failed_strict_route_leaves_store_unchanged` and
 `tests/test_phase_v1_1_a_chain_phase_router.py`, and store assertions
 on the two unrouted-kind tests in `tests/test_chain_phase_fail_loud.py`.
 
+### FIXED — `LadrunoRCConcrete` `beta_c` / `cracked_nu` are refused on the live route until a fork build carries them
+
+This corrects the #1184 section "C2 fork flags: `cracked_nu`, `beta_c`, `vc`
+tension-stiffening default 500→200". Fork PR #873, which carried
+`-betaC` / `-crackedNu`, was **closed unmerged** on 2026-09-27 and is being
+re-landed as fork PR #877. No build of the fork's `ladruno` branch parses the
+flags (checked at `891978c9e`). That parser's option loop ignores unknown
+tokens, so `beta_c=` / `cracked_nu=` were silently discarded on every
+`ladruno` build: the model ran with the elastic `nu` after cracking and
+`C = 170`, with no error.
+
+- **Live route refuses them.** `LiveOpsEmitter.nDMaterial` raises
+  `RuntimeError` for a `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` line
+  that carries `-betaC` or `-crackedNu` while the new floor
+  `LADRUNO_RC_C2_MIN_BUILD` (`apeGmsh.opensees.material.nd`) is `None`.
+  Once it is set to #877's merge SHA, only a build with no
+  `ladrunoBuild()` stamp is refused. A bare hash cannot prove ancestry
+  (ADR 0107 D4).
+- **Tcl / openseespy decks warn.** `ops.tcl(...)` / `ops.py(...)` still
+  emit the flags but raise a `LadrunoRCBuildWarning`: the deck is correct
+  only on a build that carries them.
+- **`tens_stiff_c` default, corrected.** #1184 said the fork moved the `vc`
+  default from 500 to 200. That happened only on the unmerged branch. Every
+  `ladruno` build still defaults to **500**, so `tens_stiff_c=None` keeps
+  the old curve there and gets 200 once #877 merges. Pass `tens_stiff_c`
+  explicitly to pin the curve. The `_LadrunoRC` docstring, both
+  `ops.nDMaterial` wrappers and `docs/concepts/backend-capabilities.md` now
+  say so.
+
+Tests: `tests/opensees/unit/test_ladruno_rc_c2_gate.py` covers the live
+refusal, the stamped-build pass, and the deck warning, using fake `ops`.
+`test_ladruno_rc_cracked_nu_live.py` now asserts the refusal while the floor
+is `None`. No quirk-lint rule was added: this is the first time a flag from
+an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
+only after it recurs. The lesson is a checklist line in the bridge-feature
+guide instead.
+
+### FIXED — recorder-spec messages point at the real in-process capture route; `ResolvedRecorderRecord` accepts list IDs
+
+- The `emit_recorders` refusals and warnings (modal records raise,
+  fiber/layer records warn-and-skip), the `LiveRecorders` module
+  docstring, the gauss-strain `.out` warning in `results/spec/_emit.py`,
+  and the `emit_recorders` docstring named `spec.capture(...)` and
+  `apeGmsh.results.spec.Recorders`. Phase 9 deleted both. They now name
+  `ops.domain_capture(DomainCaptureSpec(opensees=ops), path=...)`, with
+  `DomainCapture.capture_modes(n)` for modes, and `spec.emit_mpco(...)`.
+- `ResolvedRecorderRecord` coerces `node_ids` / `element_ids` to an
+  ndarray. A list such as `fem.nodes.select(...).ids` used to crash
+  emit with `AttributeError: 'list' object has no attribute 'size'`.
+- `ResolvedRecorderSpec.emit_recorders` / `emit_mpco` carry return
+  annotations (`LiveRecorders` / `LiveMPCO`).
+
+### REMOVED — dead `g.node_ndf` populator in the FEM factory
+
+`mesh/_fem_factory.py` still carried `_populate_node_ndf` /
+`_resolve_ndf_target_to_node_ids`, which read `session.node_ndf` and
+called `_defs` / `_targeted_defs()` / `_default_def()` on it. The
+`g.node_ndf` composite was deleted by ADR 0048 (per-node `ndf` is
+inferred from the declared elements; `ops.ndf` covers element-less
+nodes), nothing sets `session.node_ndf`, and `_targeted_defs` is
+defined nowhere, so the `getattr` always returned `None` and the broker
+always got `ndf=None`. The helpers and their call site are removed (no
+behaviour change), and stale `g.node_ndf` mentions in the hash-fold
+comment and test docstrings now describe inference.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
