@@ -14,6 +14,49 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — stock equation ties run live; the "71 % soft" was stock `TenNodeTetrahedron`, now refused on stock
+
+The live refusal of `enforce="equation"` ties on stock openseespy rested on a
+two-block series column that read 71 % soft on stock. That number is 2/7,
+exactly what one 6×-soft block in series gives, and the plate was a
+`TenNodeTetrahedron`. Upstream's element applies the tetrahedral 1/6 volume
+factor twice (`xsj = Jdet`), in every release through openseespy 3.8.0 and
+on upstream master `93f7e8e58`; the fork fixed it in PR #520. With a plate
+that is right on every build, stock 3.8.0 and the fork agree to nine digits
+against the closed form, and every tie row holds to about 1e-17. The
+survey ran on CI in fresh processes (tet4 / hex8 plates, collocation and
+mortar ties). The locally deployed fork build (2026-06-25, before PR #520)
+reproduced the 71 % too.
+
+- **Equation ties run live on stock** builds that have `equationConstraint`
+  (openseespy >= 3.8.0). A build without it gets a curated refusal.
+- **One tied model per stock process.** Upstream `Domain::clearAll()` does
+  not clear EQ constraints (the fork does since PR #312), and no stock
+  command removes one. So `wipe()` keeps the rows, and the next model in the
+  process enforces them. Measured on stock: a second tied model converged to
+  2× the closed form; a model missing a stale row's node hits a FATAL that
+  exits the process. After a stock process has taken an `equationConstraint`
+  row, `LiveOpsEmitter(wipe=True)` refuses to start another model.
+- **`TenNodeTetrahedron` is refused on stock** in the live run. On a fork
+  build without the `ladrunoBuild` stamp (older than 2026-08-10), which may
+  predate PR #520, it runs with `Tet10UnverifiedBuildWarning`.
+- **`constraints LadrunoProjection`** (auto-picked for equation ties under an
+  explicit integrator) gets the curated fork message on stock instead of a
+  bare `OpenSeesError`.
+- **CI:** `live-stock` moves to Python 3.12. On 3.11, pip resolves
+  openseespy 3.7.1.2, which predates `equationConstraint`, so the lane never
+  exercised a tie. The import step now asserts the command exists.
+- The two `build.py` messages that recommend `TenNodeTetrahedron` say it
+  must be the fork's. Docs and docstrings that called the live equation route
+  fork-only are corrected (`backend-capabilities.md` gains "Stock engine
+  defects").
+
+Tests name the engine against the closed form: the series stack without
+tet10 (exact on any build, run in fresh interpreters); stock tet10 stack =
+2/7; stock second model = 2×; tet10 block = 1/6 on stock and exact on a fixed
+fork; and fake-module unit tests for every gate branch.
+
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
