@@ -28,6 +28,7 @@ raises `BridgeError` at emit, matching the existing 2-D `orientation=`
 refusal. The docs and tutorials that passed `vecxz=(0.0, 0.0, 1.0)` in
 2-D models now call `ops.geomTransf.Linear()`, and the skill states the
 2-D rule. Guarded by `tests/opensees/integration/test_geomtransf_2d_vecxz.py`.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
