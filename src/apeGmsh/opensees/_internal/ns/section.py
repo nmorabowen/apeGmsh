@@ -5,7 +5,7 @@ Phase 1C populates this with one typed method per OpenSees section.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Mapping, cast
+from typing import TYPE_CHECKING, Literal, Mapping, Sequence, cast
 
 from ...section.aggregator import Aggregator
 from ...section.beam import ElasticSection
@@ -21,14 +21,18 @@ from ...section.fiber import (
     StraightLayer,
     W_fiber as _build_W_fiber,
 )
+from ...material.nd import PlateRebar
 from ...section.plate import (
     ElasticMembranePlateSection,
     LadrunoShellModifier,
     LayeredShell,
+    LayeredShell as _LayeredShellCls,
     LayeredShellFiberSection,
+    RCLayeredShell as _build_rc_layered_shell,
+    RebarMesh,
     ShellLayer,
 )
-from ..types import Section, UniaxialMaterial
+from ..types import NDMaterial, Section, UniaxialMaterial
 from ._base import _BridgeNamespace
 
 if TYPE_CHECKING:
@@ -162,6 +166,41 @@ class _SectionNS(_BridgeNamespace):
         return self._bridge._register(
             LayeredShellFiberSection(layers=layers), name=name
         )
+
+    def RCLayeredShell(
+        self,
+        *,
+        h: float,
+        concrete: NDMaterial | str,
+        meshes: Sequence[RebarMesh] = (),
+        n_concrete: int = 10,
+        name: str | None = None,
+    ) -> _LayeredShellCls:
+        """Reinforced-concrete ``section LayeredShell`` from bar meshes.
+
+        Convenience wrapper around
+        :func:`apeGmsh.opensees.section.plate.RCLayeredShell`: builds the
+        layer stack (each :class:`RebarMesh` its own thin ``PlateRebar``
+        layer at the bar centroid, the concrete reduced around it), then
+        registers the new ``PlateRebar`` layers and the section. The
+        ``concrete`` law (handle or registered name) and each mesh's steel
+        must already be registered. See the builder for the full contract.
+        """
+        concrete = self._bridge._resolve(concrete, base=NDMaterial)
+        section = self._bridge._register(
+            _build_rc_layered_shell(
+                h=h, concrete=concrete, meshes=meshes, n_concrete=n_concrete,
+            ),
+            name=name,
+        )
+        # The builder's PlateRebar layers are new primitives; register each
+        # once (P11). Tag kinds are independent and emission is topological,
+        # so registering them after the section changes nothing in the deck.
+        for layer in section.layers:
+            bar = layer.material
+            if isinstance(bar, PlateRebar) and self._bridge.tag_for(bar) is None:
+                self._bridge._register(bar)
+        return section
 
     def LadrunoShellModifier(
         self,

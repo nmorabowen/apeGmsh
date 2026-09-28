@@ -11,7 +11,8 @@ under ``material/``). The module is split by section family:
   analyzer, ADR 0078)
 * :mod:`.plate` — :class:`ElasticMembranePlateSection`,
   :class:`LayeredShell`, :class:`LayeredShellFiberSection`,
-  :class:`LadrunoShellModifier`
+  :class:`LadrunoShellModifier`, and the :func:`RCLayeredShell`
+  builder (with its :class:`RebarMesh` value object)
 * :mod:`.fiber` — :class:`Fiber`, plus value objects
   :class:`RectPatch`, :class:`StraightLayer`, :class:`FiberPoint`
 
@@ -35,10 +36,13 @@ from .fiber import (
 )
 from .plate import (
     SHELL_MODIFIER_FLAGS,
+    CoarseShellLayeringWarning,
     ElasticMembranePlateSection,
     LadrunoShellModifier,
     LayeredShell,
     LayeredShellFiberSection,
+    RCLayeredShell,
+    RebarMesh,
     ShellLayer,
     ShellModifierNonlinearInnerWarning,
 )
@@ -55,6 +59,10 @@ __all__ = [
     "LayeredShell",
     "LayeredShellFiberSection",
     "ShellLayer",
+    # plate — RC layered-shell builder
+    "RCLayeredShell",
+    "RebarMesh",
+    "CoarseShellLayeringWarning",
     # plate — fork decorator (Ladruno ADR 91)
     "LadrunoShellModifier",
     "SHELL_MODIFIER_FLAGS",
