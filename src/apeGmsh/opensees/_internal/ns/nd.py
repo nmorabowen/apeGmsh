@@ -33,6 +33,7 @@ from ...material.nd import (
     HoekBrownRock as _build_hoek_brown_rock,
     PlaneStrain,
     PlaneStressRebar,
+    PlateFiber,
     PlateFromPlaneStress,
     PlateRebar,
     SAniSandMS,
@@ -614,6 +615,22 @@ class _NDMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             PlateFromPlaneStress(material=material, G_out=G_out), name=name
         )
+
+    def PlateFiber(
+        self, *,
+        material: NDMaterial | str,
+        name: str | None = None,
+    ) -> PlateFiber:
+        """Register a :class:`PlateFiber` 3-D-to-shell-layer wrapper.
+
+        ``nDMaterial PlateFiber tag threeDTag`` — condenses a 3-D law to a
+        PlateFiber material (valid ``LayeredShellFiberSection`` layer) by
+        iterating ``eps33`` to ``sigma33 = 0``. Usually unnecessary: a
+        layered section already asks each 3-D layer for its PlateFiber view.
+        ``material`` accepts the registered nD handle or its name.
+        """
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(PlateFiber(material=material), name=name)
 
     def PlaneStressRebar(
         self, *,

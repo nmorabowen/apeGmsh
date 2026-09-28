@@ -246,6 +246,7 @@ class TestASDShellQ4Construction:
         assert ele.pg == "Plate"
         assert ele.section is s
         assert ele.corotational is False
+        assert ele.no_eas is False
         assert ele.drilling_stab is None
         assert ele.drilling_nl is False
         assert ele.local_cs is None
@@ -348,6 +349,19 @@ class TestASDShellQ4Emit:
             )
         ]
 
+    def test_emit_with_no_eas(self) -> None:
+        s = _section()
+        ele = ASDShellQ4(pg="Plate", section=s, no_eas=True)
+        e = _prepare_emitter(s, sec_tag=8, nodes=(41, 42, 43, 44))
+        ele._emit(e, tag=20)
+        assert e.calls == [
+            (
+                "element",
+                ("ASDShellQ4", 20, 41, 42, 43, 44, 8, "-noeas"),
+                {},
+            )
+        ]
+
     def test_emit_with_drilling_nl(self) -> None:
         s = _section()
         ele = ASDShellQ4(pg="Plate", section=s, drilling_nl=True)
@@ -381,6 +395,7 @@ class TestASDShellQ4Emit:
             pg="Plate",
             section=s,
             corotational=True,
+            no_eas=True,
             drilling_stab=0.1,
             local_cs=(1.0, 0.0, 0.0),
         )
@@ -391,6 +406,7 @@ class TestASDShellQ4Emit:
                 "element",
                 ("ASDShellQ4", 20, 41, 42, 43, 44, 8,
                  "-corotational",
+                 "-noeas",
                  "-drillingStab", 0.1,
                  "-local", 1.0, 0.0, 0.0),
                 {},
