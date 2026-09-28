@@ -14,6 +14,42 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `LadrunoRCConcrete` `beta_c` / `cracked_nu` are refused on the live route until a fork build carries them
+
+This corrects the section below (#1184). Fork PR #873, which carried
+`-betaC` / `-crackedNu`, was **closed unmerged** on 2026-09-27 and is being
+re-landed as fork PR #877. No build of the fork's `ladruno` branch parses the
+flags (checked at `891978c9e`). That parser's option loop ignores unknown
+tokens, so `beta_c=` / `cracked_nu=` were silently discarded on every
+`ladruno` build: the model ran with the elastic `nu` after cracking and
+`C = 170`, with no error.
+
+- **Live route refuses them.** `LiveOpsEmitter.nDMaterial` raises
+  `RuntimeError` for a `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` line
+  that carries `-betaC` or `-crackedNu` while the new floor
+  `LADRUNO_RC_C2_MIN_BUILD` (`apeGmsh.opensees.material.nd`) is `None`.
+  Once it is set to #877's merge SHA, only a build with no
+  `ladrunoBuild()` stamp is refused. A bare hash cannot prove ancestry
+  (ADR 0107 D4).
+- **Tcl / openseespy decks warn.** `ops.tcl(...)` / `ops.py(...)` still
+  emit the flags but raise a `LadrunoRCBuildWarning`: the deck is correct
+  only on a build that carries them.
+- **`tens_stiff_c` default, corrected.** #1184 said the fork moved the `vc`
+  default from 500 to 200. That happened only on the unmerged branch. Every
+  `ladruno` build still defaults to **500**, so `tens_stiff_c=None` keeps
+  the old curve there and gets 200 once #877 merges. Pass `tens_stiff_c`
+  explicitly to pin the curve. The `_LadrunoRC` docstring, both
+  `ops.nDMaterial` wrappers and `docs/concepts/backend-capabilities.md` now
+  say so.
+
+Tests: `tests/opensees/unit/test_ladruno_rc_c2_gate.py` covers the live
+refusal, the stamped-build pass, and the deck warning, using fake `ops`.
+`test_ladruno_rc_cracked_nu_live.py` now asserts the refusal while the floor
+is `None`. No quirk-lint rule was added: this is the first time a flag from
+an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
+only after it recurs. The lesson is a checklist line in the bridge-feature
+guide instead.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

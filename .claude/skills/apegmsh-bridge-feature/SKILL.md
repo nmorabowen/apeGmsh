@@ -41,6 +41,13 @@ the quoted heading. Paths are from the repo root; `arch/` means
       skipped `live` test is not a pass.
 - [ ] A capability probe that can be inconclusive returns `None`, not
       `False`. See the ADR 0110 D5 row in the decisions README.
+- [ ] Consume a fork flag only after the fork PR that adds it has merged
+      into `ladruno` (`gh pr view <N> -R nmorabowen/OpenSees --json
+      mergedAt`). A build from its branch passing is not enough. Where the
+      fork parser ignores unknown options, a flag that no `ladruno` build
+      carries is silently discarded, so refuse it on the live route and
+      warn on decks until then. #1184 shipped `-betaC`/`-crackedNu` from the
+      closed fork #873; the gate is `opensees/_rc_c2_flags.py`.
 
 ## Shared literals and streams
 
