@@ -12,7 +12,7 @@ importing it privately and are expected to:
 * ``viewers/results_viewer.py`` — still constructed offscreen by
   ``Results.export_animation`` (also INV-11).
 
-**Be honest about what this guard proves.** The allowlist is 27 modules
+**Be honest about what this guard proves.** The allowlist is 28 modules
 and eleven of them are alive *only* because the headless export reuses
 the full Qt window (``_realize_headless`` hides the docks rather than
 skipping their construction). So this is **not** "the surface is small".
@@ -51,6 +51,9 @@ _ALLOWED: frozenset[str] = frozenset({
     # -- model / mesh viewers: not retired at all, Dispatcher only ----
     "apeGmsh.viewers.mesh_viewer",
     "apeGmsh.viewers.model_viewer",
+    # -- geomTransf viewer: only the pure frame math in _beam_geometry,
+    #    so its page and the diagrams draw one vecxz rule -------------
+    "apeGmsh.viewers.geom_transf_viewer",
     # -- shared core -------------------------------------------------
     "apeGmsh.viewers.core._legend",           # live via the SESSION window
     "apeGmsh.viewers.core.visibility",        # live via mesh/model viewers

@@ -14,6 +14,35 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` like the results diagrams
+
+`GeomTransfViewer` computed the local frame in its page's JavaScript as
+`y = x × vecxz`, `z = x × y`. OpenSees (`LinearCrdTransf3d::getLocalAxes`)
+computes `y = vecxz × x`, `z = x × y`, so the viewer drew both `y` and `z`
+negated. A beam along +X with `vecxz = +Z` showed `y = −Y`, `z = −Z`
+instead of `+Y`, `+Z`. An omitted `vecxz` defaulted to `[1, 0, 0]`, which
+is parallel to a beam along X, so that beam drew no frame at all.
+
+The page no longer computes frames. Python computes every frame with
+`compute_local_axes`, and an omitted `vecxz` with `default_vecxz` (global
+Z, or global X for a vertical beam). These are the rules the results
+diagrams and the local-axes overlay use. An edit in the single-beam
+controls goes to the viewer's local server (`POST /frame`), which returns
+the recomputed frame. A `vecxz` that is zero or parallel to the beam axis
+is reported as degenerate, because OpenSees rejects it.
+`compute_local_axes` would instead substitute the default, and the viewer
+would draw a frame that OpenSees never builds.
+
+The local server is now a `ThreadingHTTPServer`, because edits now travel
+over it. The single-threaded `HTTPServer` waits indefinitely on a socket
+that a browser pre-opens and never uses (the Python docs name this
+hazard), and every edit queued behind that socket would stall.
+`tests/viewers/test_geom_transf_viewer.py` checks the frames against
+`compute_local_axes` and against a transcription of the OpenSees formula,
+for beams along X, Y and Z and skew, with and without `vecxz`. It also
+drives the real `show()` over HTTP, with `webbrowser.open` replaced, so
+no browser or window opens.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
