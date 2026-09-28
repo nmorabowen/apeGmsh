@@ -29,6 +29,19 @@
 - `ResolvedRecorderSpec.emit_recorders` / `emit_mpco` carry return
   annotations (`LiveRecorders` / `LiveMPCO`).
 
+### REMOVED — dead `g.node_ndf` populator in the FEM factory
+
+`mesh/_fem_factory.py` still carried `_populate_node_ndf` /
+`_resolve_ndf_target_to_node_ids`, which read `session.node_ndf` and
+called `_defs` / `_targeted_defs()` / `_default_def()` on it. The
+`g.node_ndf` composite was deleted by ADR 0048 (per-node `ndf` is
+inferred from the declared elements; `ops.ndf` covers element-less
+nodes), nothing sets `session.node_ndf`, and `_targeted_defs` is
+defined nowhere, so the `getattr` always returned `None` and the broker
+always got `ndf=None`. The helpers and their call site are removed (no
+behaviour change), and stale `g.node_ndf` mentions in the hash-fold
+comment and test docstrings now describe inference.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
