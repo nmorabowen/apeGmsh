@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-masses-and-loads-on-quad9-hex27-and-line3-elements-were-silently-dropped-or-halved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-2-d-geomtransf-tcl-decks-no-longer-carry-a-vecxz-every-beam-was-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3799,6 +3810,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-masses-and-loads-on-quad9-hex27-and-line3-elements-were-silently-dropped-or-halved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-2-d-geomtransf-tcl-decks-no-longer-carry-a-vecxz-every-beam-was-silently-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4013,6 +4035,37 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-masses-and-loads-on-quad9-hex27-and-line3-elements-were-silently-dropped-or-halved">FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved<a class="headerlink" href="#fixed-masses-and-loads-on-quad9-hex27-and-line3-elements-were-silently-dropped-or-halved" title="Permanent link">&para;</a></h3>
+<p><code>g.masses</code> and <code>g.loads</code> read a target's elements from gmsh through
+element-type tables copied into each composite. Two copies omitted quad9
+and three omitted hex27, the types <code>set_order(2)</code> produces by default
+(<code>bubble=True</code>) on a recombined surface and on a structured hex block. On
+quad9, <code>g.masses.surface</code> (both reductions) and a tributary surface load
+(<code>pressure</code>, <code>traction</code>, <code>shear</code>) produced zero records without a warning,
+and <code>force_resultant_center_mass</code> / <code>g.displacements.surface</code> with
+<code>normal=True</code> raised a misleading "got empty <code>faces</code>". On hex27,
+<code>g.masses.volume</code>, <code>g.loads.gravity</code> and <code>g.loads.body</code> produced zero
+records. The edge walks took a line3's mid node for its far end (gmsh lists
+the two end nodes first), so <code>g.masses.line</code> and a tributary <code>g.loads.line</code>
+on an order-2 curve came out at half. The consistent pressure and
+consistent line-load walks already handled quad9 and line3.</p>
+<p>Every <code>getElements</code> walk in <code>core/</code> now reads the connectivity width and
+corner count from one table, <code>TOPOLOGY_BY_CODE</code> in
+<code>apeGmsh.mesh._element_types</code>, derived from the curated alias table,
+through <code>element_topology()</code>. A walk no longer skips an element type it
+cannot handle; it raises. That covers a type outside the table (the
+order-3 serendipity quad12) and, on the walks that pass whole connectivity
+rows to a resolver (consistent pressure, gravity and body loads, volume
+masses), a type without shape functions: tri9, which the resolvers'
+node-count dispatch would integrate as a quad9, or tet20. The
+outward-normal walk for pressure now recognises hex27 volumes; it used to
+warn and fall back to the connectivity normal. The reinforce, embed and
+rebar walks read their widths and corner counts from the same table, with
+unchanged behaviour. Tests: <code>tests/test_higher_order_mass_load_targets.py</code>
+(13 of its cases fail with the fix reverted) and the guard
+<code>tests/test_element_topology.py</code>, which checks the table against gmsh's own
+element properties and checks that every type <code>set_order</code> produces at
+orders 1 and 2 resolves.</p>
 <h3 id="fixed-2-d-geomtransf-tcl-decks-no-longer-carry-a-vecxz-every-beam-was-silently-dropped">FIXED — 2-D <code>geomTransf</code> Tcl decks no longer carry a <code>vecxz</code> (every beam was silently dropped)<a class="headerlink" href="#fixed-2-d-geomtransf-tcl-decks-no-longer-carry-a-vecxz-every-beam-was-silently-dropped" title="Permanent link">&para;</a></h3>
 <p><code>ops.geomTransf.Linear/PDelta/Corotational(vecxz=...)</code> on an <code>ndm=2</code>
 bridge wrote <code>geomTransf Linear 1 0.0 0.0 1.0</code>. OpenSees' Tcl 2-D
