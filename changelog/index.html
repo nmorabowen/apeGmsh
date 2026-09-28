@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-chain-phase-declaration-the-router-rejects-is-no-longer-stored-clear-fails-loud-in-a-from_h5-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a chain-phase declaration the router rejects is no longer stored; clear() fails loud in a from_h5 session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3777,6 +3788,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-chain-phase-declaration-the-router-rejects-is-no-longer-stored-clear-fails-loud-in-a-from_h5-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a chain-phase declaration the router rejects is no longer stored; clear() fails loud in a from_h5 session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3969,6 +3991,28 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-a-chain-phase-declaration-the-router-rejects-is-no-longer-stored-clear-fails-loud-in-a-from_h5-session">FIXED — a chain-phase declaration the router rejects is no longer stored; <code>clear()</code> fails loud in a <code>from_h5</code> session<a class="headerlink" href="#fixed-a-chain-phase-declaration-the-router-rejects-is-no-longer-stored-clear-fails-loud-in-a-from_h5-session" title="Permanent link">&para;</a></h3>
+<p>In a <code>from_h5</code> / compose session, <code>_declare</code> appended the def to its
+store and then routed it into the broker. When the router raised
+(<code>KeyError</code> for an unresolvable name, <code>ValueError</code> from
+<code>boundary_faces_for</code>, <code>ChainPhaseError</code> for an unrouted kind), the call
+failed but the def stayed in <code>constraint_defs</code> / <code>load_defs</code> /
+<code>disp_defs</code>, and <code>list_defs()</code> reported it. <code>_declare</code> now routes
+first, then appends, then bumps, so a rejected def never reaches the
+store. The router reads only the broker and the def, so the order does
+not change what it applies.</p>
+<p><code>g.constraints.clear()</code>, <code>g.reinforce.clear()</code> and <code>g.embed.clear()</code>
+emptied their def lists in a <code>from_h5</code> session, but <code>get_fem_data()</code>
+there returns the broker itself, which still held the records the
+router had applied and those loaded from <code>model.h5</code>. <code>clear()</code> was a
+silent no-op on the model. It now raises <code>ChainPhaseError</code> before
+emptying anything and names the remedy: reload with
+<code>apeGmsh.from_h5(path)</code>, or remove the declaration in the source
+session and save again. Live sessions are unchanged.</p>
+<p>Tests: <code>test_failed_strict_route_leaves_store_unchanged</code> and
+<code>TestClearInChainPhase</code> in
+<code>tests/test_phase_v1_1_a_chain_phase_router.py</code>, and store assertions
+on the two unrouted-kind tests in <code>tests/test_chain_phase_fail_loud.py</code>.</p>
 <h3 id="fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them">FIXED — <code>LadrunoRCConcrete</code> <code>beta_c</code> / <code>cracked_nu</code> are refused on the live route until a fork build carries them<a class="headerlink" href="#fixed-ladrunorcconcrete-beta_c-cracked_nu-are-refused-on-the-live-route-until-a-fork-build-carries-them" title="Permanent link">&para;</a></h3>
 <p>This corrects the #1184 section "C2 fork flags: <code>cracked_nu</code>, <code>beta_c</code>, <code>vc</code>
 tension-stiffening default 500→200". Fork PR #873, which carried
