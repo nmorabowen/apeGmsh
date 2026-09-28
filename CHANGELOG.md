@@ -45,6 +45,7 @@ still ran.
   notably the how-to's "`g.loads.*` and `g.constraints.*` *do*
   auto-emit". ADR 0051 gains a dated amendment on why this is not the
   case audit §7 rejected.
+
 ### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
 
 - **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
