@@ -183,8 +183,8 @@ def _per_material_strain_skip_reason(
         f"only the time column, no strain data. Use MPCO instead "
         f"(``recorder mpco ... -E material.strain``, read with "
         f"``Results.from_mpco(...)``), or capture in-process via "
-        f"apeGmsh.results.spec.Recorders + DomainCapture "
-        f"(``Results.from_native(...)``)."
+        f"``ops.domain_capture(DomainCaptureSpec(opensees=ops), "
+        f"path=...)`` (read with ``Results.from_native(...)``)."
     )
 
 

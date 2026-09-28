@@ -594,6 +594,35 @@ def test_emit_filename_matches_from_recorders_lookup(tmp_path: Path) -> None:
 
 
 # =====================================================================
+# List-typed IDs (e.g. ``fem.nodes.select(...).ids``) are coerced
+# =====================================================================
+
+def test_resolved_record_coerces_list_ids_to_ndarray(tmp_path: Path) -> None:
+    rec = ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x",),
+        dt=None, n_steps=None,
+        node_ids=[1, 2, 3],
+    )
+    assert isinstance(rec.node_ids, np.ndarray)
+    assert rec.node_ids.tolist() == [1, 2, 3]
+
+    erec = ResolvedRecorderRecord(
+        category="elements", name="beams",
+        components=("force_x",),
+        dt=None, n_steps=None,
+        element_ids=(10, 11),
+    )
+    assert isinstance(erec.element_ids, np.ndarray)
+
+    fake = FakeOps()
+    with _make_spec(rec).emit_recorders(str(tmp_path), ops=fake) as live:
+        live.begin_stage("gravity", kind="static")
+        live.end_stage()
+    assert len(fake.recorder_calls) == 1
+
+
+# =====================================================================
 # Without ops=: the module the bridge drives, never openseespy by name
 # =====================================================================
 
