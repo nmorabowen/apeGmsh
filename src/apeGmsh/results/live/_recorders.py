@@ -100,8 +100,11 @@ class LiveRecorders:
     file_format
         ``"out"`` (text) or ``"xml"``. Defaults to ``"out"``.
     ops
-        The openseespy module (or a stand-in for testing). Defaults
-        to ``openseespy.opensees`` resolved lazily on ``__enter__``.
+        The OpenSees module (or a stand-in for testing). Defaults to
+        the module the bridge drives
+        (:func:`~apeGmsh.opensees.emitter.live.get_ops`), resolved
+        lazily on ``__enter__``. Pass it when you drive another
+        module by hand.
 
     Raises
     ------
@@ -154,8 +157,8 @@ class LiveRecorders:
                 )
 
         if self._ops is None:
-            import openseespy.opensees as ops_module
-            self._ops = ops_module
+            from ...opensees.emitter.live import get_ops
+            self._ops = get_ops()
 
         if self._output_dir:
             Path(self._output_dir).mkdir(parents=True, exist_ok=True)

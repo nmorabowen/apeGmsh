@@ -140,6 +140,33 @@ def test_require_fork_passes_on_fork_verdict() -> None:
 
 
 # --------------------------------------------------------------------------
+# has_fork is the resolver's verdict, not the profiler command
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("backend, profiler", [
+    ("stock-openseespy", True),     # a profiler command does not make a fork
+    ("ladruno-fork", False),        # nor does its absence make stock
+])
+def test_has_fork_is_the_resolvers_verdict(
+    monkeypatch: pytest.MonkeyPatch, backend: str, profiler: bool,
+) -> None:
+    from types import ModuleType
+
+    from apeGmsh.opensees._target import probe_live_capabilities
+    from apeGmsh.opensees.emitter import live
+
+    fake = ModuleType("opensees")   # stubbed: never the real (maybe stale) build
+    if profiler:
+        fake.profiler = lambda *args: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(live, "_get_ops", lambda: fake)
+    monkeypatch.setattr(live, "_BACKEND_NAME", backend)
+
+    caps = probe_live_capabilities()
+    assert caps.has_fork is (backend == "ladruno-fork")
+    assert caps.has_ladruno_up is caps.has_fork
+    assert caps.has_profiler is profiler
+
+
+# --------------------------------------------------------------------------
 # Live capability probe (needs openseespy installed)
 # --------------------------------------------------------------------------
 @pytest.mark.skipif(not _has_openseespy(), reason="openseespy not installed")
@@ -150,8 +177,10 @@ def test_capabilities_probe_shape() -> None:
     assert caps.source == "live"
     assert isinstance(caps.has_fork, bool)
     assert isinstance(caps.has_profiler, bool)
-    # has_fork tracks the fork-only profiler command
-    assert caps.has_fork == caps.has_profiler
+    # has_fork is the resolver's verdict, the one the live emitter gates on
+    from apeGmsh.opensees.emitter.live import get_backend_name
+
+    assert caps.has_fork == (get_backend_name() == "ladruno-fork")
     # build: the exact git hash of the engine binary on fork builds shipping
     # ladrunoBuild (fork PR #718); None on stock openseespy or an older fork.
     assert caps.build is None or (

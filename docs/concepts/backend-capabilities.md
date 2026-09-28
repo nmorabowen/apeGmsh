@@ -49,6 +49,19 @@ variable at the folder holding `opensees.pyd` **before** the first emit:
 set APEGMSH_OPENSEES_BIN=C:\path\to\Ladruno\dist\bin
 ```
 
+When your own code talks to the model the bridge built, such as a custom
+analysis loop after `ops.run()` or a query after `ops.analyze()`, take the
+module from the same resolver rather than importing one by name:
+
+```python
+from apeGmsh.opensees.emitter.live import get_ops
+
+opspy = get_ops()     # the module, and so the domain, the bridge drives
+```
+
+Beside a fork build, `import openseespy.opensees` binds a second module
+with its own, empty domain, and every query answers from that one.
+
 !!! warning "The fork is a source build"
 
     The Ladruno fork lives at
