@@ -16,7 +16,8 @@
 
 ### FIXED — `LadrunoRCConcrete` `beta_c` / `cracked_nu` are refused on the live route until a fork build carries them
 
-This corrects the section below (#1184). Fork PR #873, which carried
+This corrects the #1184 section "C2 fork flags: `cracked_nu`, `beta_c`, `vc`
+tension-stiffening default 500→200". Fork PR #873, which carried
 `-betaC` / `-crackedNu`, was **closed unmerged** on 2026-09-27 and is being
 re-landed as fork PR #877. No build of the fork's `ladruno` branch parses the
 flags (checked at `891978c9e`). That parser's option loop ignores unknown
