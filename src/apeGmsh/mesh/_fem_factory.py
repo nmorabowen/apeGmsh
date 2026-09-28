@@ -17,7 +17,7 @@ import numpy as np
 from ._element_types import ElementGroup, make_type_info
 from ._fem_extract import (
     extract_raw, extract_physical_groups, extract_labels,
-    extract_partitions,
+    extract_partitions, gmsh_model_identity,
 )
 from ._group_set import PhysicalGroupSet, LabelSet
 
@@ -436,6 +436,9 @@ def _from_gmsh(
     # ── 1. Extract ────────────────────────────────────────────
     (node_tags, node_coords, elem_tags, groups,
      used_tags, physical, labels, partitions) = _extract_mesh_core(dim)
+    # The model just read: a raw (dim, tag) selection on the snapshot
+    # asks Gmsh only while this model is still the current one.
+    gmsh_source = gmsh_model_identity()
 
     node_ids = np.asarray(node_tags, dtype=int)
     node_coords_all = np.asarray(node_coords, dtype=float)
@@ -707,6 +710,7 @@ def _from_gmsh(
         part_node_map=part_node_map or None,
         ndf=node_ndf,
         provenance=node_provenance,
+        gmsh_source=gmsh_source,
     )
     elements = ElementComposite(
         groups=groups,
@@ -722,6 +726,7 @@ def _from_gmsh(
         contact_planes=contact_planes or None,
         rebar_elements=rebar_elements or None,
         interfaces=interfaces or None,
+        gmsh_source=gmsh_source,
     )
 
     # ── 6. Snapshot mesh selections ───────────────────────────
@@ -884,6 +889,7 @@ def _from_msh(
 
         (node_tags, node_coords, elem_tags, groups,
          used_tags, physical, labels, partitions) = _extract_mesh_core(dim)
+        gmsh_source = gmsh_model_identity()
 
         if remove_orphans:
             node_ids, node_coords = _filter_orphans(
@@ -912,11 +918,13 @@ def _from_msh(
             node_ids=node_ids, node_coords=node_coords,
             physical=physical, labels=labels,
             partitions=partitions or None,
+            gmsh_source=gmsh_source,
         )
         elements = ElementComposite(
             groups=groups,
             physical=physical, labels=labels,
             partitions=partitions or None,
+            gmsh_source=gmsh_source,
         )
     finally:
         _gmsh_release()

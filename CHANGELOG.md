@@ -14,6 +14,25 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a FEMData snapshot answers a raw `(dim, tag)` selection only from the Gmsh model it was extracted from
+
+`fem.nodes.select(target=[(dim, tag)])` and `fem.elements.select(...)` look a
+raw DimTag up in live Gmsh, and they asked whatever model was current. A
+snapshot of model A queried while model B was live returned B's entities with
+no error: an audit probe at 07f757e0 got 48 nodes back, only 10 of them among
+A's 58 top-face nodes. The model name cannot tell the two apart, because every
+session defaults to `"ModelName"` and Gmsh accepts duplicate names.
+`from_gmsh` and `from_msh` now record the producing model on the snapshot: its
+name plus a fingerprint of the entity list, the max node and element tags and
+the nodes on geometry points, read in O(entities) and independent of mesh
+size. A raw DimTag lookup raises `RuntimeError` unless the current model
+matches both, so it refuses when another session is current, the producing
+session was closed, the model was re-meshed, or the snapshot was loaded from
+`model.h5`. `compose` carries the host's record, since it keeps host ids
+verbatim. `pg=`, `label=` and part selection still resolve from the snapshot
+alone; the record is not part of `snapshot_id`, and the snapshot still
+pickles. `tests/test_femdata_raw_dimtag_source.py`.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

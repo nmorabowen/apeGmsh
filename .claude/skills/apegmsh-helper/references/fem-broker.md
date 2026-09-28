@@ -124,9 +124,12 @@ Signature:
 (`FEMData.py:365`). `target=` resolution order is **label → physical
 group → part label** (matches `LoadsComposite` auto-resolve, so the same
 name works everywhere); a name in none raises with the candidates
-printed. Prefer labels/PGs; raw Gmsh tags work but tie you to
-live-session state. `.select()` is the **only** accessor — see
-`gotchas.md`.
+printed. Prefer labels/PGs. A raw `(dim, tag)` target (nodes or
+elements) asks live Gmsh, so it resolves only while the model the
+snapshot was extracted from is the current Gmsh model, and raises
+`RuntimeError` otherwise (another session, a closed session, a
+re-mesh, or a snapshot loaded from `model.h5`). `.select()` is the
+**only** accessor — see `gotchas.md`.
 
 ### Sub-composites on `fem.nodes`
 
