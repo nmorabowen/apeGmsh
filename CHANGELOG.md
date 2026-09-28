@@ -38,6 +38,7 @@ All are fixed and verified end to end. The new
 attribute chains and keyword arguments in the python fences and inline
 code of five results-API pages against the live code. It flags all ten
 phantoms in both pages as they shipped at 07f757e0.
+
 ### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
 
 `g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
