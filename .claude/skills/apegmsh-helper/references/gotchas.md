@@ -95,7 +95,11 @@ Both are **gone**. The entry point is `from apeGmsh.opensees import apeSees`.
 loads and prescribed displacements are **opt-in** via `p.from_model(case)`
 inside a bridge pattern (ADR 0051); masses go through explicit `ops.mass(...)`
 or `ops.mass_from_model()` (see `opensees-bridge.md`). MP constraints **DO**
-emit automatically from `g.constraints.*`.
+emit automatically from `g.constraints.*` — **except `g.constraints.bc`**,
+which is a homogeneous SP on `fem.nodes.sp`, not an MP constraint: restate it
+with `ops.fix(pg=..., dofs=...)` or `ops.fix_from_model()`. Emit warns
+(`UnconsumedModelDefinitionWarning`, importable from `apeGmsh.opensees`) when
+`bc` / `g.masses` records never reached the deck.
 
 ### ❌ Expecting `BindError` (it's gone) → ✅ read `lineage.warnings`
 `BindError` was DELETED in the three-broker refactor. Use

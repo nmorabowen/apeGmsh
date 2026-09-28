@@ -27,7 +27,7 @@ ends up in the runnable deck (ADR 0051):
 |---|---|
 | **MP constraints** (`fem.nodes.constraints` / `fem.elements.constraints`) | **AUTO-EMIT** (ADR 0022, shipped v2.0.0) |
 | **Loads** (`fem.nodes.loads`, via `g.loads.case(...)`) + **prescribed displacements** (`fem.nodes.sp`, via `g.displacements.case(...)`) | **OPT-IN** — `p.from_model(case)` inside a bridge pattern (or author with `p.load` / `p.sp`). **No auto-emit.** |
-| Masses, homogeneous SPs (fixities) | **RE-DECLARE explicitly** on `ops` (`ops.mass` / `ops.fix`; `ops.mass_from_model()` streams the snapshot's `fem.nodes.masses` at emit, ADR 0065 Tier 2) |
+| Masses, homogeneous SPs (fixities, incl. `g.constraints.bc`) | **RE-DECLARE explicitly** on `ops` (`ops.mass` / `ops.fix`; `ops.mass_from_model()` streams the snapshot's `fem.nodes.masses` at emit, ADR 0065 Tier 2; `ops.fix_from_model()` fixes every homogeneous SP on `fem.nodes.sp`). Emit warns `UnconsumedModelDefinitionWarning` for broker records no declaration restated |
 
 So loads are **opt-in** (ADR 0051 reversed the old auto-emit): a
 geometry **case** reaches the deck only when a bridge **pattern**
@@ -217,6 +217,10 @@ directly with `p.load(...)`:
 # Homogeneous SP (fixities). dofs length = ndf.
 ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))     # verified: tests/opensees/unit/test_emitter_protocol.py::test_fix_records_tag_and_dofs
 # ops.fix(nodes=[...], dofs=(...))              # explicit-node form
+# Or fix every homogeneous SP in fem.nodes.sp (g.constraints.bc), one fix
+# per node with its own mask — combinable with explicit ops.fix / s.fix /
+# s.support only on DISJOINT (node, DOF) pairs (overlap raises at build):
+ops.fix_from_model()    # verified: tests/opensees/integration/test_unconsumed_model_definition_e2e.py::test_fix_from_model_matches_the_explicit_fix
 
 # Lumped mass.
 ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))

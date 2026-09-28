@@ -9,8 +9,10 @@ settlement / motion instead of a force.
 Supports are **single-point constraints (SPs)**. They are *not*
 auto-ingested from the session — you **re-declare** them on the bridge:
 homogeneous fixities with `ops.fix(...)`, non-zero prescribed values with
-`p.sp(...)` inside a pattern. (Contrast: `g.loads.*` and `g.constraints.*`
-*do* auto-emit.) Target a physical-group **name**, never a raw tag.
+`p.sp(...)` inside a pattern. That holds for `g.constraints.bc(...)` too:
+it resolves into `fem.nodes.sp`, not into the MP constraints the rest of
+`g.constraints` auto-emits. Target a physical-group **name**, never a raw
+tag.
 
 ## Recipe
 
@@ -78,10 +80,14 @@ carry rotations (`ndf=6`).
   fixities are model-level → `ops.fix`. Any non-zero imposed value goes
   in a pattern → `p.sp`. Don't try to fake a prescribed displacement with
   `ops.fix`.
-- **Supports are NOT auto-ingested.** If you declared a face SP on the
-  session via `g.displacements.surface(...)`, it resolves into `fem.nodes.sp` and
-  feeds the viewer / `Results`, but it does **not** reach the runnable
-  deck — re-declare it: homogeneous → `ops.fix`, prescribed → `p.sp`.
+- **Supports are NOT auto-ingested.** A `g.constraints.bc(...)`, or a
+  face SP declared via `g.displacements.surface(...)`, resolves into
+  `fem.nodes.sp` and feeds the viewer / `Results`, but it does **not**
+  reach the runnable deck by itself. Homogeneous records need `ops.fix`,
+  or `ops.fix_from_model()`, which fixes every one of them with its own
+  mask; prescribed ones need `p.sp` or `p.from_model(case)`. Emit warns
+  with `UnconsumedModelDefinitionWarning` when homogeneous records (or
+  `g.masses`) never made it into the deck.
 - **`g.constraints.bc` vs. `g.displacements` ownership.**
   `g.constraints.bc` owns permanent homogeneous fixes; `g.displacements`
   owns prescribed motion (any non-zero value, or a pattern-bound /

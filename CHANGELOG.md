@@ -14,6 +14,38 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — `g.constraints.bc` / `g.masses` records a deck never restates now warn at emit (`UnconsumedModelDefinitionWarning`) + `ops.fix_from_model()` (ADR 0051 §4)
+
+`g.constraints.bc(...)` resolves into homogeneous SP records on
+`fem.nodes.sp` and `g.masses.*` into `fem.nodes.masses`, but `apeSees`
+emits neither unless the deck restates them. An audit at 07f757e0 found
+a broker holding 174 SP + 339 mass records whose deck carried 0 `fix` /
+0 `mass` lines, with no warning: an unsupported, massless model that
+still ran.
+
+- **`UnconsumedModelDefinitionWarning`** (exported from
+  `apeGmsh.opensees`, a `UserWarning` subclass) fires once per emit when
+  a homogeneous SP `(node, DOF)` has no `ops.fix` / `s.fix` /
+  `s.support` flagging it, or a broker mass node has no `ops.mass` /
+  `s.mass` and `mass_from_model()` is off. It names the counts and the
+  verbs that restate them. A DOF beyond the node's ndf is not counted,
+  and `ops.h5` (archival, never solved) skips the check. Decks that
+  restate everything stay silent and emit exactly what they did before.
+- **`ops.fix_from_model()`**, the support twin of `ops.mass_from_model()`:
+  one `fix` per node carrying homogeneous records, its DOFs unioned into
+  one mask, so two `bc` targets sharing a corner emit one line; a DOF
+  the node lacks (`bc`'s 3-DOF default on a 2-D node) is left out. It is
+  materialized at `build()` as ordinary fix records, so the flat,
+  partitioned, staged and H5 paths treat it like `ops.fix`; an explicit
+  fix on an overlapping DOF raises, since OpenSees refuses a second SP on
+  a constrained DOF.
+- The `bc()` and `g.masses` docstrings, the docs (supports how-to;
+  bridge, constraints and loads-and-masses concepts; masses API page) and
+  the skill no longer imply either channel reaches the deck by itself,
+  notably the how-to's "`g.loads.*` and `g.constraints.*` *do*
+  auto-emit". ADR 0051 gains a dated amendment on why this is not the
+  case audit §7 rejected.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

@@ -101,6 +101,7 @@ from ._internal.build import (
     validate_body_force_double_count,
     validate_from_model_cases,
     validate_load_basis_vs_elements,
+    validate_model_definition_consumed,
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
@@ -118,6 +119,7 @@ from ._internal.build import (
     validate_record_ndf_consistency,
     fit_dof_vector,
     fit_fix_mask,
+    fix_records_from_model,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -1489,6 +1491,27 @@ class BuiltModel:
                 for c in getattr(p, "from_model_allow_empty", ())
             ),
         )
+        # ADR 0051 §4 — broker homogeneous SPs (g.constraints.bc) and
+        # masses (g.masses) reach the deck only when restated on the
+        # bridge; warn when some were not, instead of dropping them in
+        # silence.  Archival emits skip it: they never solve, the
+        # neutral zone keeps both record sets, and mass_from_model() is
+        # deck/live-only, so its advice would fail there.
+        if not _emitter_is_archival:
+            validate_model_definition_consumed(
+                self.fem, effective_ndf, self.ndf,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records for r in st.fix_records),
+                    *(r for st in self.stage_records
+                      for r in st.support_records),
+                ),
+                mass_records=(
+                    *self.mass_records,
+                    *(r for st in self.stage_records for r in st.mass_records),
+                ),
+                mass_from_model=self.mass_from_model,
+            )
         validate_record_ndf_consistency(
             self.fem, effective_ndf, self.ndm, self.ndf,
             fix_records=(
@@ -8156,6 +8179,9 @@ class apeSees:
         # at emit instead of one bridge MassRecord per node. Set by
         # ``mass_from_model()``; threaded into the BuiltModel.
         self._mass_from_model: bool = False
+        # ADR 0051 §4 — opt-in: fix every homogeneous SP on the snapshot.
+        # Set by ``fix_from_model()``; materialized into FixRecords at build.
+        self._fix_from_model: bool = False
         # ADR 0049 — ``ops.ndf`` directives (element-less decoupled nodes only).
         self._ndf_records: list[NdfRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
@@ -8608,6 +8634,28 @@ class apeSees:
         ``model.h5`` via ``fem.nodes.masses``).
         """
         self._mass_from_model = True
+
+    def fix_from_model(self) -> None:
+        """Fix every homogeneous SP on the model snapshot (ADR 0051 §4).
+
+        The support twin of :meth:`mass_from_model`: equivalent to a
+        :meth:`fix` for each node carrying homogeneous records on
+        ``fem.nodes.sp`` (``g.constraints.bc(...)``, or a zero-valued
+        ``g.displacements``), with the node's restrained DOFs folded
+        into one mask, so two targets sharing a node emit one ``fix``.
+        A restrained DOF the node does not have (``bc``'s 3-DOF default
+        on a 2-D node) is left out, as OpenSees would. Prescribed
+        (non-zero) SPs are untouched: ``p.from_model(case)`` imports
+        those.
+
+        Model-wide declaration (no arguments), materialized into
+        ordinary fix records at :meth:`build`, so every emit path treats
+        them like :meth:`fix`. May be combined with explicit
+        :meth:`fix` / ``s.fix`` / ``s.support`` only on *disjoint*
+        (node, DOF) pairs: an overlap raises at build, since OpenSees
+        refuses a second SP on a constrained DOF.
+        """
+        self._fix_from_model = True
 
     def ndf(self, target: object = None, *, ndf: int) -> None:
         """State the per-node ``ndf`` of an element-LESS decoupled node
@@ -11947,13 +11995,27 @@ class apeSees:
         tag_for: dict[int, int] = {
             id(p): self._tags.tag_for(p) or 0 for p in self._primitives
         }
+        fix_records = tuple(self._fix_records)
+        if self._fix_from_model:
+            fix_records += fix_records_from_model(
+                self._fem,
+                [p for p in self._primitives if isinstance(p, Element)],
+                self._ndm, self._ndf,
+                ndf_records=self._ndf_records,
+                explicit=(
+                    *fix_records,
+                    *(r for st in self._stage_records for r in st.fix_records),
+                    *(r for st in self._stage_records
+                      for r in st.support_records),
+                ),
+            )
         return BuiltModel(
             primitives=tuple(self._primitives),
             tag_for=tag_for,
             ndm=self._ndm,
             ndf=self._ndf,
             fem=self._fem,
-            fix_records=tuple(self._fix_records),
+            fix_records=fix_records,
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
             ndf_records=tuple(self._ndf_records),

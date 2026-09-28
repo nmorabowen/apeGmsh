@@ -846,6 +846,8 @@ ops.element.<Type>(*, pg, material=m | section=s | transf=t, integration=bi, ...
 # supports / mass — RE-DECLARED on the bridge. MP constraints auto-emit;
 # loads are OPT-IN via p.from_model(case) (ADR 0051 — NO g.loads auto-emit):
 ops.fix(*, pg=None, nodes=None, dofs)               ops.mass(*, pg=None, nodes=None, values)
+ops.fix_from_model()                                ops.mass_from_model()   # all of fem.nodes.sp (homogeneous) / fem.nodes.masses
+# un-restated g.constraints.bc / g.masses records → UnconsumedModelDefinitionWarning at emit
 ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse|Ricker(...)
 ts = ops.timeSeries.MomentStep|Yoffe(...)           # ADR 0062 normalized moment function S(t)
 with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation

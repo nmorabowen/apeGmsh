@@ -1327,7 +1327,10 @@ def test_from_model_imports_prescribed_sp_not_homogeneous() -> None:
         p.from_model("settle")
 
     rec = RecordingEmitter()
-    ops.build().emit(rec)
+    # The un-restated hold is dropped from the deck, and emit says so.
+    from apeGmsh.opensees import UnconsumedModelDefinitionWarning
+    with pytest.warns(UnconsumedModelDefinitionWarning):
+        ops.build().emit(rec)
 
     sp_calls = [c[1] for c in rec.calls if c[0] == "sp"]
     assert (1, 1, 0.01) in sp_calls          # prescribed -> imported

@@ -1766,19 +1766,24 @@ class ConstraintsComposite:
         """Homogeneous single-point constraint — fix a pattern to ground.
 
         The natural (essential / Dirichlet) boundary condition: every
-        mesh node in the resolved pattern gets ``ops.fix(node, *mask)``
-        downstream. There is **no master and no slave** — unlike every
-        other method on this composite, this is a constraint *to
-        ground*, not between two parts. It resolves into
-        ``fem.nodes.sp`` (homogeneous :class:`SPRecord`\\ s) — the same
-        broker channel as ``g.displacements.surface`` — **not**
-        ``fem.nodes.constraints``.
+        mesh node in the resolved pattern gets one homogeneous
+        :class:`SPRecord` per restrained DOF. There is **no master and
+        no slave** — unlike every other method on this composite, this
+        is a constraint *to ground*, not between two parts. It resolves
+        into ``fem.nodes.sp`` — the same broker channel as
+        ``g.displacements.surface`` — **not** ``fem.nodes.constraints``,
+        so unlike the MP constraints here it does **not** reach an
+        ``apeSees`` deck on its own (ADR 0051 §4). Restate it on the
+        bridge: ``ops.fix(pg=..., dofs=...)`` with the same mask, or
+        ``ops.fix_from_model()`` to fix every homogeneous record at
+        once. A deck that does neither warns at emit
+        (``UnconsumedModelDefinitionWarning``).
 
         Because it is a *permanent* constraint (not a pattern-scoped
         quantity), it lives here on ``g.constraints`` rather than on
-        ``g.displacements``: there is no load-pattern context to accidentally
-        scope it into, and the downstream emitter places it in the
-        ``model → bcs → patterns`` deck order via ``ops.fix``.
+        ``g.displacements``: there is no load-pattern context to
+        accidentally scope it into, and once restated it emits as a
+        model-level ``fix``, never inside a pattern.
 
         Parameters
         ----------

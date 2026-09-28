@@ -194,7 +194,8 @@ The `point` verb skips the mapping and writes the values directly.
 Prescribed displacements group into cases exactly like loads and ride the
 same opt-in import — `from_model(case)` emits them as `sp` lines inside
 the pattern, scaled by its series. Homogeneous fixes are never imported
-that way; they are model-level and emit through `ops.fix(...)`.
+that way; they are model-level and emit through `ops.fix(...)`, or all at
+once through `ops.fix_from_model()`.
 
 ## Masses
 
@@ -226,7 +227,9 @@ density unit mistake shows up there instantly.
 On the bridge, masses follow the model-definition side of the split, not
 the load-case side: they emit through an explicit `ops.mass(...)`, or in
 one stroke with `ops.mass_from_model()`, which streams every resolved
-nodal mass from the snapshot into the deck. And keep mass and weight
+nodal mass from the snapshot into the deck. Unlike an unimported load
+case, masses the deck never restates are flagged at emit, so a massless
+eigen run cannot pass unnoticed. And keep mass and weight
 distinct in your head, because the library does: `g.masses` populates the
 mass matrix (dynamics, eigenvalues), `g.loads.gravity` applies a force
 (statics). A dynamic model under gravity legitimately declares both from
