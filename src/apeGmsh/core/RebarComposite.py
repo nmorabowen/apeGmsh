@@ -32,6 +32,7 @@ from .._kernel.defs.rebar import (
 from .._kernel.records._rebar import RebarElementRecord
 from ..rebar._geometry import hook_primitives, outward_tangent
 from ._compose_errors import chain_phase_guard
+from ._declarations import _DeclarationsMixin
 from ._helpers import resolve_to_tags
 
 _AXIS_TOKENS = {
@@ -81,8 +82,13 @@ class RebarPlacement:
 
 # ── the composite ────────────────────────────────────────────────────
 
-class RebarComposite:
+class RebarComposite(_DeclarationsMixin):
     """``g.rebar`` — reinforcement-cage authoring (ADR 0066)."""
+
+    _DECLARATION_STORES = {
+        "placements": (RebarPlacement,),
+        "_emit_members": (RebarMember,),
+    }
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -1129,7 +1135,7 @@ class RebarComposite:
                     f"auto-emit for this bar.", stacklevel=3,
                 )
                 continue
-            self._emit_members.append(m)
+            self._declare(m)
 
     def resolve(self) -> list[RebarElementRecord]:
         """Resolve every emit-marked bar to a :class:`RebarElementRecord`
@@ -1442,24 +1448,20 @@ class RebarComposite:
             coupling=next(iter(couplings)) if len(couplings) == 1 else "mixed",
             members=tuple(members),
         )
-        self.placements.append(placement)
-        return placement
+        return self._declare(placement)
 
     def _register_embedded(self, into: str, pg: str, diameter: float,
                            area: float, *, bond, perfect, kt, kt_alpha,
                            enforce, bipenalty, dtcr, tolerance, snap) -> None:
         """Forward one embedded member to the shipped ``g.reinforce`` binding
-        composite (→ ``LadrunoEmbeddedRebar``), then invalidate the FEMData
-        cache (ADR §9: a def-append is a broker mutation)."""
+        composite (→ ``LadrunoEmbeddedRebar``), whose declaration invalidates
+        the FEMData cache (ADR §9: a def-append is a broker mutation)."""
         self._parent.reinforce.reinforce(
             host=into, bars=pg, bond=bond, perfect=perfect,
             bar_diameter=diameter, bar_area=area,
             kt=kt, kt_alpha=kt_alpha, enforce=enforce, bipenalty=bipenalty,
             dtcr=dtcr, tolerance=tolerance, snap=snap, name=pg,
         )
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
 
     # ---- small resolvers / host checks ------------------------------
     @staticmethod

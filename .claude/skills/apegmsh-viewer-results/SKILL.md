@@ -39,6 +39,10 @@ the quoted heading. `decisions/` is
       import the Protocol class into `viewers/`.
 - [ ] FEMData ↔ Results binding is a lineage chain that warns and does
       not raise (ADR 0021). Do not add `snapshot_id`-equality guards.
+- [ ] In-process capture and live recorders query the module the bridge
+      drives (`ops=`, else `get_ops()`), never `openseespy.opensees` by
+      name: the `openseespy-import` quirk rule, and the bridge guide's
+      fork-vs-stock item, say why.
 
 ## Reading HDF5
 

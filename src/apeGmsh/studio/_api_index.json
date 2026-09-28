@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-27T22:56:35Z",
+  "generated": "2026-09-28T18:55:01Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -312,7 +312,7 @@
       "symbol": "g.constraints.clear",
       "signature": "clear() -> 'None'",
       "skill": "references/api-cheatsheet.md",
-      "doc": ""
+      "doc": "Forget every declared constraint and invalidate the FEMData"
     },
     "g.constraints.contact": {
       "symbol": "g.constraints.contact",

@@ -41,6 +41,11 @@ the quoted heading. Paths are from the repo root; `arch/` means
       skipped `live` test is not a pass.
 - [ ] A capability probe that can be inconclusive returns `None`, not
       `False`. See the ADR 0110 D5 row in the decisions README.
+- [ ] Code that talks to the live domain takes its module from the
+      resolver: an explicit `ops=` first, else `get_ops()` in
+      `opensees/emitter/live.py`. Beside a fork build, importing openseespy
+      by name binds a second module, and a capture once sampled that empty
+      domain (9ffe6aa2). The `openseespy-import` quirk rule holds this.
 
 ## Shared literals and streams
 
