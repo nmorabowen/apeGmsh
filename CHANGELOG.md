@@ -14,6 +14,31 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — results-strategy docs prescribed calls that do not exist; drift lane added
+
+`docs/how-to/choose-results-strategy.md` told readers to record with
+`spec.capture(...)`, `ops.tcl(..., recorders=spec)` and
+`ops.tcl(..., recorders=spec, mpco=True)`. None of them exist: `capture`
+left the recorder spec with the Phase 9 `Recorders` helper, and
+`apeSees.tcl` / `apeSees.py` take neither `recorders=` nor `mpco=`. The
+page is rewritten around the real calls (`ops.domain_capture`,
+`ResolvedRecorderSpec.emit_recorders` / `emit_mpco` / `to_tcl_commands`,
+`ops.recorder.MPCO` before `ops.run()` or `ops.tcl()`), with one runnable
+recipe per cell on a cantilever whose tip deflection (6.75 mm) every
+recipe reads back. Every block was executed as published, including both
+exported decks under OpenSees.exe. It also records two traps found on the
+way: the bridge's `ops.analyze(steps=1)` rebuilds the domain on each call,
+so it cannot drive a capture loop; and bridge-declared recorders write
+files `from_recorders` does not look for.
+`docs/how-to/results-mpco.md` had the same phantoms, and its recipe could
+not run: node/element ids came in as lists (`MeshSelection.ids`), the live
+domain was never built, and `from_mpco` lacked `fem=` for its `pg=` reads.
+All are fixed and verified end to end. The new
+`tests/test_docs_results_api_drift.py` statically resolves the imports,
+attribute chains and keyword arguments in the python fences and inline
+code of five results-API pages against the live code. It flags all ten
+phantoms in both pages as they shipped at 07f757e0.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
