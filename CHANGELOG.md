@@ -45,6 +45,7 @@ openseespy`, `from openseespy… import` or literal
 `import_module("openseespy…")` in `src/apeGmsh/` or `examples/` outside the
 resolver, `emitter/live.py`. Run against the pre-fix tree it flags exactly the
 seven sites above; `tests/test_check_quirks.py` holds the shapes.
+
 ### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
 
 `g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
