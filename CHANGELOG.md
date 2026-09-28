@@ -50,6 +50,7 @@ is `None`. No quirk-lint rule was added: this is the first time a flag from
 an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
 only after it recurs. The lesson is a checklist line in the bridge-feature
 guide instead.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
