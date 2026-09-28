@@ -132,20 +132,32 @@ def run(fn, *args) -> None:
             print(f"FAIL {fn.__name__}{args}: {type(e).__name__}: {str(e)[:400]}")
 
 
-for case in [("tet", 1, 6.0, "FourNodeTetrahedron"),
-             ("tet", 2, 6.0, "TenNodeTetrahedron"),
-             ("hex", 1, 3.4, "stdBrick"),
-             ("hex", 1, 5.0, "stdBrick")]:
-    run(single_block, *case)
+PATCHES = [("tet", 1, 6.0, "FourNodeTetrahedron"),
+           ("tet", 2, 6.0, "TenNodeTetrahedron"),
+           ("hex", 1, 3.4, "stdBrick"),
+           ("hex", 1, 5.0, "stdBrick")]
+STACKS = [("tet", 1, 6.0, "FourNodeTetrahedron", "collocation"),
+          ("hex", 1, 3.4, "stdBrick", "collocation"),
+          ("hex", 1, 2.5, "stdBrick", "collocation"),
+          ("tet", 2, 6.0, "TenNodeTetrahedron", "collocation"),
+          ("tet", 1, 6.0, "FourNodeTetrahedron", "mortar"),
+          ("hex", 1, 3.4, "stdBrick", "mortar")]
 
-if not hasattr(ops_mod, "equationConstraint"):
-    print("this build has no equationConstraint: tied stacks not run")
-    sys.exit(0)
-
-for case in [("tet", 1, 6.0, "FourNodeTetrahedron", "collocation"),
-             ("hex", 1, 3.4, "stdBrick", "collocation"),
-             ("hex", 1, 2.5, "stdBrick", "collocation"),
-             ("tet", 2, 6.0, "TenNodeTetrahedron", "collocation"),
-             ("tet", 1, 6.0, "FourNodeTetrahedron", "mortar"),
-             ("hex", 1, 3.4, "stdBrick", "mortar")]:
-    run(stack, *case)
+# argv: "patch <i>" | "stack <i>" | "leak" — one case per interpreter, so a
+# build whose wipe() keeps equationConstraint rows cannot contaminate the
+# next case. "leak" deliberately runs two tied models in ONE process.
+mode = sys.argv[1] if len(sys.argv) > 1 else "facts"
+if mode == "patch":
+    run(single_block, *PATCHES[int(sys.argv[2])])
+elif mode == "stack":
+    if hasattr(ops_mod, "equationConstraint"):
+        run(stack, *STACKS[int(sys.argv[2])])
+    else:
+        print("this build has no equationConstraint: tied stack not run")
+elif mode == "leak":
+    if hasattr(ops_mod, "equationConstraint"):
+        print("LEAK model A (tet4 mortar) then, same process, model B (hex8 nested):")
+        run(stack, *STACKS[4])
+        run(stack, *STACKS[2])
+    else:
+        print("this build has no equationConstraint: leak case not run")

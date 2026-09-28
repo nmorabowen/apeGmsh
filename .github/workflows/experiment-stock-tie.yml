@@ -50,7 +50,21 @@ jobs:
             echo "LD_LIBRARY_PATH=$pkg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           fi
 
+      # One case per interpreter (-u: a FATAL exit() must not eat the
+      # buffered prints): a build whose wipe() keeps equationConstraint rows
+      # cannot contaminate the next case. "leak" runs two tied models in one
+      # process on purpose.
       - name: Survey (element patch tests + tied stacks, gate bypassed)
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
-        run: python .github/experiment_stock_tie.py
+        run: |
+          run_case() {
+            python -u .github/experiment_stock_tie.py "$@" 2>&1 \
+              | grep -E "^(=|backend|version|equation|critical|gmsh|python|PATCH|STACK|FAIL|LEAK|this build)|FATAL|singular|failed" \
+              | grep -v -E "^=+$" || true
+            echo "  -> case '$*' exit=${PIPESTATUS[0]}"
+          }
+          run_case facts
+          for i in 0 1 2 3; do run_case patch $i; done
+          for i in 0 1 2 3 4 5; do run_case stack $i; done
+          run_case leak
