@@ -1023,8 +1023,10 @@ else:
     ops.element.FourNodeTetrahedron(pg="Body", material=m)
 ```
 
-`has_fork` tracks the fork-only `profiler` command (the same gate the
-live emitter uses). `capabilities()` introspects the **live** runtime
+`has_fork` is the backend resolver's verdict (`get_backend_name() ==
+"ladruno-fork"`, the fork-only `criticalTimeStep` command), the same test
+the live emitter gates fork-only verbs on; `has_profiler` reports the
+`profiler` command itself. `capabilities()` introspects the **live** runtime
 only — the subprocess paths bind their own interpreter / binary.
 
 ## Remote SLURM runs — `ops.run_remote` + `apeGmsh.hpc` (ADR 0060)

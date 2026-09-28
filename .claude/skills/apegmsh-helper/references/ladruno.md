@@ -23,14 +23,16 @@ else:
     ops.element.FourNodeTetrahedron(pg="Body", material=m)
 ```
 
-`has_fork` (via `ops.capabilities()`) tracks the fork-only `profiler`
-command. The **live backend resolver** (`opensees/emitter/live.py`) detects
-the fork separately, by the fork-only `criticalTimeStep` symbol, and now
-**prefers the Ladruno fork**: with `$APEGMSH_OPENSEES_BIN` set it adds that
-dir to the DLL path and imports the fork; else a bare `import opensees` that
-exposes `criticalTimeStep` is taken as the fork; else it falls back to stock
-`openseespy.opensees`. `get_backend_name()` → `"ladruno-fork"` /
-`"stock-openseespy"`. Running a fork-only element (`_FORK_ONLY_ELEMENTS`:
+`has_fork` (via `ops.capabilities()`) is the verdict of the **live backend
+resolver** (`opensees/emitter/live.py`), which detects the fork by the
+fork-only `criticalTimeStep` symbol and **prefers the Ladruno fork**: with
+`$APEGMSH_OPENSEES_BIN` set it adds that dir to the DLL path and imports the
+fork; else a bare `import opensees` that exposes `criticalTimeStep` is taken
+as the fork; else it falls back to stock `openseespy.opensees`.
+`get_backend_name()` → `"ladruno-fork"` / `"stock-openseespy"`. To talk to
+the domain the bridge built (a custom loop after `ops.run()`), take the
+module from `get_ops()` in the same file, never `import openseespy.opensees`:
+beside a fork build that name is a second module with its own, empty domain. Running a fork-only element (`_FORK_ONLY_ELEMENTS`:
 `LadrunoBrick`, `LadrunoDispBeamColumn`, `LadrunoIMKBeam`, `LadrunoRigidBody`,
 Bézier, …) on a stock build fails loud at the live boundary; deck emission
 (`.tcl`/`.py`) works on any build.

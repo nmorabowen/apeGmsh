@@ -12,12 +12,18 @@ It is invisible in a normally-wired venv, where ``openseespy.opensees is
 opensees``. In a mixed one it reads exactly like a solver regression — which
 is how it was found: it produced a convincing false "the fork upgrade broke
 this" call before the two-module split was spotted.
+
+That fix (9ffe6aa2) kept the import as the fallback for a capture entered
+before ``analyze()``; the fallback now asks the bridge's resolver. Each
+fallback case fakes the split (``split_backend``), so an import by name binds
+the stray module and fails the test without importing a real backend.
 """
 from __future__ import annotations
 
 import pytest
 
 from apeGmsh.results.capture._domain import DomainCapture
+from tests.fixtures.split_backend import split_backend
 
 
 class _Sentinel:
@@ -59,34 +65,28 @@ def test_an_explicitly_injected_ops_still_wins():
     assert cap._lazy_ops() is injected
 
 
-def test_falls_back_when_no_analysis_has_run_yet():
+def test_falls_back_when_no_analysis_has_run_yet(monkeypatch):
     """``domain_capture()`` is entered BEFORE ``analyze()`` builds the live
     emitter, so a bridge with no emitter must not blow up — it falls through
-    to the import."""
-    pytest.importorskip("openseespy.opensees")
-    import openseespy.opensees as stock
+    to the resolver, the module ``analyze()`` will drive."""
+    bound, stray = _Sentinel("resolver"), _Sentinel("openseespy.opensees")
+    split_backend(monkeypatch, bound, stray)
+    assert _capture(bridge=_Bridge(None))._lazy_ops() is bound
 
-    assert _capture(bridge=_Bridge(None))._lazy_ops() is stock
 
-
-def test_falls_back_with_no_bridge_at_all():
+def test_falls_back_with_no_bridge_at_all(monkeypatch):
     """``DomainCapture.from_h5`` builds one with ``bridge=None``."""
-    pytest.importorskip("openseespy.opensees")
-    import openseespy.opensees as stock
+    bound, stray = _Sentinel("resolver"), _Sentinel("openseespy.opensees")
+    split_backend(monkeypatch, bound, stray)
+    assert _capture()._lazy_ops() is bound
 
-    assert _capture()._lazy_ops() is stock
 
+def test_no_bridge_and_no_backend_still_names_the_cause(monkeypatch):
+    from apeGmsh.opensees.emitter import live
 
-def test_no_bridge_and_no_openseespy_still_names_the_cause(monkeypatch):
-    import builtins
+    def _no_backend():
+        raise ImportError("no backend")
 
-    real_import = builtins.__import__
-
-    def _blocked(name, *a, **kw):
-        if name.startswith("openseespy"):
-            raise ImportError("blocked for test")
-        return real_import(name, *a, **kw)
-
-    monkeypatch.setattr(builtins, "__import__", _blocked)
-    with pytest.raises(RuntimeError, match="openseespy is not installed"):
+    monkeypatch.setattr(live, "_get_ops", _no_backend)
+    with pytest.raises(RuntimeError, match="No OpenSees backend is importable"):
         _capture()._lazy_ops()
