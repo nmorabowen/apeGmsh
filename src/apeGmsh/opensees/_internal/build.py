@@ -4851,7 +4851,11 @@ def broker_mass_components(
     Known gap: the record does not carry the resolver's ``dofs`` mask, so
     a mixed explicit mask such as ``dofs=[1, 3]`` (``mx = mz = m``, ``my =
     0``) is indistinguishable from a default fill and its ``mz`` is
-    dropped silently. Closing it needs the mask on ``MassRecord``.
+    dropped silently. Likewise, the guard sees the per-node *accumulated*
+    record, so a z-only def (``dofs=[3]``) whose nodes all also carry
+    in-plane mass from another def is absorbed into the default-fill case
+    and its ``mz`` is dropped without error. Closing both needs the mask
+    on ``MassRecord``.
     """
     if int(ndm) != 2:
         return fit_dof_vector(mass, ndf, kind="mass", node=node)

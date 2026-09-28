@@ -47,7 +47,10 @@ nodes** (`quadUP` and friends, `ndm=2, ndf=3`) share the frame layout, so
 their third DOF (pore pressure) now receives `Izz` (normally 0) instead
 of `mz`. **Known gap:** the record does not carry the resolver's `dofs`
 mask, so a mixed mask such as `dofs=[1, 3]` still loses its `mz` without
-an error; closing it needs the mask on `MassRecord`. For `ndm=3` the mapping
+an error. For the same reason, the z-only guard sees each node's
+accumulated record: a `dofs=[3]` mass whose nodes all also carry in-plane
+mass from another `g.masses` def is dropped without an error. Closing
+both needs the mask on `MassRecord`. For `ndm=3` the mapping
 delegates to the positional `fit_dof_vector`, so 3-D decks are
 byte-identical (`test_mass_from_model.py`). The flat, partitioned
 (`model_mass_by_rank`) and per-rank paths all use the new mapping.
