@@ -67,6 +67,7 @@ __all__ = [
     "PlaneStrain",
     "PlateRebar",
     "PlateFromPlaneStress",
+    "PlateFiber",
     "PlaneStressRebar",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
@@ -2378,16 +2379,18 @@ class PlaneStrain(NDMaterial):
 
 
 # ---------------------------------------------------------------------------
-# Shell-layer helpers — PlateRebar / PlateFromPlaneStress / PlaneStressRebar
+# Shell-layer helpers — PlateRebar / PlateFromPlaneStress / PlateFiber /
+# PlaneStressRebar
 # ---------------------------------------------------------------------------
 #
 # Stock OpenSees (Yuli Huang & Xinzheng Lu; PlaneStressRebar by fmk), verified
 # against the fork source ``SRC/material/nD/{PlateRebar,PlateFromPlaneStress,
-# PlaneStressRebar}Material.cpp``. ``LayeredShellFiberSection`` (and the
-# ``LayeredShell`` alias, which the parser routes to the same class) asks each
-# layer for ``getCopy("PlateFiber")`` and calls ``exit(-1)`` — killing the
+# PlateFiber,PlaneStressRebar}Material.cpp``. ``LayeredShellFiberSection`` (and
+# the ``LayeredShell`` alias, which the parser routes to the same class) asks
+# each layer for ``getCopy("PlateFiber")`` and calls ``exit(-1)`` — killing the
 # process — when a layer answers null (``LayeredShellFiberSection.cpp:175``).
 # ``PlateRebar`` and ``PlateFromPlaneStress`` answer ``"PlateFiber"`` only;
+# ``PlateFiber`` answers every type with a PlateFiber copy of itself;
 # ``PlaneStressRebar`` answers ``"PlaneStress"`` / ``"PlaneStress2D"`` only.
 
 
@@ -2498,8 +2501,10 @@ class PlateFromPlaneStress(NDMaterial):
         of it without checking the result, so it must have a plane-stress
         view: a 2-D/plane-stress material, or any 3-D material (the base
         class condenses a 3-D law to plane stress). :class:`PlateRebar` and
-        :class:`PlateFromPlaneStress` itself have no such view and are
-        refused. Emitted before this material (via :meth:`dependencies`).
+        :class:`PlateFromPlaneStress` itself have no such view, and
+        :class:`PlateFiber` answers with an order-5 copy of itself; all
+        three are refused. Emitted before this material (via
+        :meth:`dependencies`).
     G_out
         Out-of-plane (transverse) shear modulus. Must be finite and ``> 0``.
     """
@@ -2520,6 +2525,13 @@ class PlateFromPlaneStress(NDMaterial):
                 "getCopy('PlateFiber') only, and OpenSees would dereference "
                 "the null copy. Wrap the plane-stress law instead."
             )
+        if isinstance(self.material, PlateFiber):
+            raise TypeError(
+                "PlateFromPlaneStress: material must have a plane-stress "
+                "view; PlateFiber answers getCopy('PlaneStress') with a copy "
+                "of itself (strain order 5, not 3). Wrap the 3-D or "
+                "plane-stress law instead."
+            )
         _require_finite("PlateFromPlaneStress", "G_out", self.G_out)
         if self.G_out <= 0:
             raise ValueError(
@@ -2529,6 +2541,82 @@ class PlateFromPlaneStress(NDMaterial):
     def _emit(self, emitter: Emitter, tag: int) -> None:
         mat_tag = resolve_tag(emitter, self.material)
         emitter.nDMaterial("PlateFromPlaneStress", tag, mat_tag, self.G_out)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PlateFiber(NDMaterial):
+    """``nDMaterial PlateFiber`` — a 3-D law condensed to a shell layer.
+
+    Tcl signature (stock OpenSees; ``PlateFiberMaterial`` is an alias)::
+
+        nDMaterial PlateFiber $tag $threeDTag
+
+    Wraps a 3-D material as a **PlateFiber** material (strain order 5:
+    ``eps11, eps22, gamma12, gamma23, gamma31``). On each trial strain it
+    solves for the out-of-plane strain ``eps33`` with a local Newton loop
+    until ``sigma33 = 0`` (tolerance 1e-8, at most 20 iterations), so the
+    wrapped law sees a full 3-D strain.
+
+    **Usually not needed.** ``LayeredShellFiberSection`` asks every layer
+    for ``getCopy("PlateFiber")``, and the ``NDMaterial`` base class answers
+    that for any 3-D law by building this same wrapper. A 3-D law with a
+    native plate-fiber view (``ElasticIsotropic``, :class:`LadrunoJ2`,
+    :class:`LadrunoConcrete3D`, :class:`LadrunoRCConcrete`) uses that view
+    instead. Pass the 3-D law to
+    :class:`~apeGmsh.opensees.section.plate.ShellLayer` directly unless you
+    specifically want the generic ``sigma33 = 0`` condensation in place of
+    a native view (for the Ladruno concrete laws that condensation is
+    redundant with the kernel's own).
+
+    **Valid layer.** Its ``getCopy`` answers every type with a PlateFiber
+    copy of itself.
+
+    Parameters
+    ----------
+    material
+        The wrapped 3-D nD material. OpenSees takes
+        ``getCopy("ThreeDimensional")`` of it without checking the result,
+        so it must have a 3-D view. apeGmsh refuses the primitives known to
+        lack one: :class:`PlateRebar`, :class:`PlateFromPlaneStress` and
+        :class:`PlaneStressRebar` (null copy), :class:`LogStrain2D` (null
+        copy), and :class:`PlaneStrain` and ``PlateFiber`` itself, which
+        answer with a copy of the wrong strain order. Emitted before this
+        material (via :meth:`dependencies`).
+    """
+
+    material: NDMaterial
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, NDMaterial):
+            raise TypeError(
+                "PlateFiber: material must be an NDMaterial primitive, "
+                f"got {type(self.material).__name__!r}."
+            )
+        if isinstance(
+            self.material,
+            (PlateRebar, PlateFromPlaneStress, PlaneStressRebar, LogStrain2D),
+        ):
+            raise TypeError(
+                "PlateFiber: material must have a 3-D view; "
+                f"{type(self.material).__name__} answers "
+                "getCopy('ThreeDimensional') with null, and OpenSees would "
+                "dereference it. Wrap the 3-D law instead."
+            )
+        if isinstance(self.material, (PlaneStrain, PlateFiber)):
+            raise TypeError(
+                "PlateFiber: material must have a 3-D view; "
+                f"{type(self.material).__name__} answers "
+                "getCopy('ThreeDimensional') with a copy of itself (strain "
+                f"order {3 if isinstance(self.material, PlaneStrain) else 5}"
+                ", not 6). Wrap the 3-D law instead."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        emitter.nDMaterial("PlateFiber", tag, mat_tag)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
