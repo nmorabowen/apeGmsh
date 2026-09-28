@@ -14,6 +14,37 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
+
+`g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
+`g.reinforce(...)` and `g.embed(...)` declared **after** the first
+`g.mesh.queries.get_fem_data()` did not invalidate the session's FEMData
+cache (ADR 0038). The next `get_fem_data()` returned the **same**
+snapshot without them: 0 `fem.elements.contact_planes` while
+`g.constraints.contact_plane_defs` held 1, so the model solved without
+the contact, interface or tie. Only a variant call such as
+`get_fem_data(dim=3)`, which bypasses the cache, included them.
+
+Each declaration had to bump the cache counter by hand, and only 7 sites
+did. The new `_DeclarationsMixin` (`src/apeGmsh/core/_declarations.py`)
+makes storing, chain-phase routing and the bump one step (`_declare`).
+All eight composites that record defs inherit it and list their stores
+in `_DECLARATION_STORES`: `g.constraints`, `g.reinforce`, `g.embed`,
+`g.rebar`, `g.loads`, `g.displacements`, `g.masses` and
+`g.decoupled_nodes`. The `g.rebar` workaround, a local bump after
+forwarding to `g.reinforce`, is gone.
+
+`clear()` had the same bug and a second one. None of the three `clear()`
+methods bumped the counter, and `g.constraints.clear()` emptied only the
+MP `constraint_defs`, leaving the `bc`, `contact`, `contact_plane` and
+`interface` defs in place. It now empties all five lists and their
+records, and invalidates the cache.
+
+Guards: `tests/test_declaration_coverage.py` is an AST gate: no composite
+writes a declaration store except through the mixin, and every public
+verb that builds a def reaches `_declare`. `tests/test_fem_cache_invalidation.py`
+covers every declaration kind and every `clear()` end to end.
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /
