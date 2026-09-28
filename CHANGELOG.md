@@ -14,6 +14,32 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a chain-phase declaration the router rejects is no longer stored; `clear()` fails loud in a `from_h5` session
+
+In a `from_h5` / compose session, `_declare` appended the def to its
+store and then routed it into the broker. When the router raised
+(`KeyError` for an unresolvable name, `ValueError` from
+`boundary_faces_for`, `ChainPhaseError` for an unrouted kind), the call
+failed but the def stayed in `constraint_defs` / `load_defs` /
+`disp_defs`, and `list_defs()` reported it. `_declare` now routes
+first, then appends, then bumps, so a rejected def never reaches the
+store. The router reads only the broker and the def, so the order does
+not change what it applies.
+
+`g.constraints.clear()`, `g.reinforce.clear()` and `g.embed.clear()`
+emptied their def lists in a `from_h5` session, but `get_fem_data()`
+there returns the broker itself, which still held the records the
+router had applied and those loaded from `model.h5`. `clear()` was a
+silent no-op on the model. It now raises `ChainPhaseError` before
+emptying anything and names the remedy: reload with
+`apeGmsh.from_h5(path)`, or remove the declaration in the source
+session and save again. Live sessions are unchanged.
+
+Tests: `test_failed_strict_route_leaves_store_unchanged` and
+`TestClearInChainPhase` in
+`tests/test_phase_v1_1_a_chain_phase_router.py`, and store assertions
+on the two unrouted-kind tests in `tests/test_chain_phase_fail_loud.py`.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
