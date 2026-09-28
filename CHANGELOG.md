@@ -26,6 +26,7 @@ defined nowhere, so the `getattr` always returned `None` and the broker
 always got `ndf=None`. The helpers and their call site are removed (no
 behaviour change), and stale `g.node_ndf` mentions in the hash-fold
 comment and test docstrings now describe inference.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
