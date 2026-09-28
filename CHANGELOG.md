@@ -50,6 +50,7 @@ is `None`. No quirk-lint rule was added: this is the first time a flag from
 an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
 only after it recurs. The lesson is a checklist line in the bridge-feature
 guide instead.
+
 ### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
 
 - **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
