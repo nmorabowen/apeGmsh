@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-27T16:41:23Z",
+  "generated": "2026-09-27T22:56:35Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -2848,7 +2848,7 @@
     },
     "ops.element.ASDShellQ4": {
       "symbol": "ops.element.ASDShellQ4",
-      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
+      "signature": "ASDShellQ4(*, pg: 'str', section: '_ShellSection | str', corotational: 'bool' = False, no_eas: 'bool' = False, drilling_stab: 'float | None' = None, drilling_nl: 'bool' = False, drilling_nt_alpha: 'float | None' = None, local_cs: 'tuple[float, ...] | None' = None, damp: 'Damping | None' = None) -> 'ASDShellQ4'",
       "skill": "references/opensees-bridge.md",
       "doc": ""
     },
@@ -3416,6 +3416,12 @@
       "skill": "references/opensees-bridge.md",
       "doc": "Register a :class:`PlaneStressRebar` plane-stress smeared rebar."
     },
+    "ops.nDMaterial.PlateFiber": {
+      "symbol": "ops.nDMaterial.PlateFiber",
+      "signature": "PlateFiber(*, material: 'NDMaterial | str', name: 'str | None' = None) -> 'PlateFiber'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Register a :class:`PlateFiber` 3-D-to-shell-layer wrapper."
+    },
     "ops.nDMaterial.PlateFromPlaneStress": {
       "symbol": "ops.nDMaterial.PlateFromPlaneStress",
       "signature": "PlateFromPlaneStress(*, material: 'NDMaterial | str', G_out: 'float', name: 'str | None' = None) -> 'PlateFromPlaneStress'",
@@ -3667,6 +3673,12 @@
       "signature": "LayeredShellFiberSection(*, layers: 'tuple[ShellLayer, ...]', name: 'str | None' = None) -> 'LayeredShellFiberSection'",
       "skill": "references/opensees-bridge.md",
       "doc": "Layered plate section under its C++ name (``LayeredShellFiberSection``)."
+    },
+    "ops.section.RCLayeredShell": {
+      "symbol": "ops.section.RCLayeredShell",
+      "signature": "RCLayeredShell(*, h: 'float', concrete: 'NDMaterial | str', meshes: 'Sequence[RebarMesh]' = (), n_concrete: 'int' = 10, name: 'str | None' = None) -> '_LayeredShellCls'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Reinforced-concrete ``section LayeredShell`` from bar meshes."
     },
     "ops.section.W_fiber": {
       "symbol": "ops.section.W_fiber",
