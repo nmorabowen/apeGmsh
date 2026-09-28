@@ -1,0 +1,90 @@
+"""Declaration stores — the one path by which a composite records intent.
+
+Eight session composites record intent that the next
+``g.mesh.queries.get_fem_data()`` resolves into the FEMData broker:
+``g.constraints``, ``g.reinforce``, ``g.embed``, ``g.rebar``,
+``g.loads``, ``g.displacements``, ``g.masses`` and
+``g.decoupled_nodes``.  The session caches that extraction (ADR 0038)
+and hands back the same snapshot until ``_bump_fem_counter()`` marks it
+stale, so every declaration has to bump.  Otherwise a def declared after
+the first extraction is stored but left out of every later snapshot.
+
+The bump used to be a line written beside each ``append``.  Five verbs
+added after the cache (``g.constraints.contact`` / ``contact_plane`` /
+``interface``, ``g.reinforce`` and ``g.embed``) never got one, and no
+``clear()`` had one.  :meth:`_DeclarationsMixin._declare` makes storing
+and invalidating one step, and ``tests/test_declaration_coverage.py``
+holds every public verb to it.
+"""
+from __future__ import annotations
+
+from typing import Any, ClassVar, TypeVar
+
+_D = TypeVar("_D")
+
+
+class _DeclarationsMixin:
+    """Base for the composites that record declared intent.
+
+    A subclass lists its stores in :attr:`_DECLARATION_STORES` and
+    creates each one as an empty list in ``__init__``.  After that,
+    :meth:`_declare` is the only way a def enters a store and
+    :meth:`_clear_declarations` the only way the stores are emptied.
+    Both invalidate the session's FEMData cache.
+    """
+
+    #: Store attribute name -> the def types that store holds.  Matched
+    #: on the exact type, so a def type added without a store here is
+    #: refused by :meth:`_declare` instead of landing in a sibling's list.
+    _DECLARATION_STORES: ClassVar[dict[str, tuple[type, ...]]] = {}
+    _parent: Any
+
+    def _declare(self, defn: _D) -> _D:
+        """Record ``defn`` and invalidate the FEMData cache.
+
+        1. Append ``defn`` to the store :attr:`_DECLARATION_STORES`
+           names for its type.
+        2. Route it into the chain-phase broker with
+           :func:`try_chain_phase_route`.  That is a no-op before the
+           first extraction and for def kinds the router does not
+           cover; in a ``from_h5`` session it applies the def or raises.
+        3. Bump the session's FEMData counter, so the next
+           ``get_fem_data()`` re-extracts instead of returning the
+           snapshot taken before ``defn`` existed.
+
+        Returns ``defn``, so a verb can end with
+        ``return self._declare(defn)``.
+        """
+        # Function-local: an eager core -> _kernel edge would change the
+        # frozen import graph (tests/test_import_dag_polarity.py).
+        from apeGmsh._kernel.resolvers._chain_phase_router import (
+            try_chain_phase_route,
+        )
+
+        self._store_for(defn).append(defn)
+        try_chain_phase_route(self._parent, defn)
+        self._invalidate_fem()
+        return defn
+
+    def _clear_declarations(self) -> None:
+        """Empty every store in :attr:`_DECLARATION_STORES` and
+        invalidate the FEMData cache."""
+        for attr in self._DECLARATION_STORES:
+            getattr(self, attr).clear()
+        self._invalidate_fem()
+
+    def _store_for(self, defn: object) -> list:
+        for attr, kinds in self._DECLARATION_STORES.items():
+            if type(defn) in kinds:
+                return getattr(self, attr)
+        raise TypeError(
+            f"{type(self).__name__} has no declaration store for "
+            f"{type(defn).__name__} — add it to "
+            f"{type(self).__name__}._DECLARATION_STORES."
+        )
+
+    def _invalidate_fem(self) -> None:
+        # Stub parents (test fixtures, ``parent=None``) carry no cache.
+        bump = getattr(self._parent, "_bump_fem_counter", None)
+        if bump is not None:
+            bump()
