@@ -43,6 +43,8 @@ from apeGmsh._kernel.resolvers._embed import resolve_embed
 # truth for the straight-sided host taxonomy).
 from apeGmsh.core.ReinforcementsComposite import _GMSH_HOST_KIND
 
+from ._declarations import _DeclarationsMixin
+
 
 def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
     """True iff a higher-order host element of gmsh type ``code`` has a curved
@@ -95,7 +97,7 @@ def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
     return False
 
 
-class EmbedmentsComposite:
+class EmbedmentsComposite(_DeclarationsMixin):
     """General node-to-host embedment generator — declare on geometry,
     resolve to ``LadrunoEmbeddedNode`` ties after meshing.
 
@@ -110,6 +112,8 @@ class EmbedmentsComposite:
 
         g.embed(host="block", nodes="probe_pt")
     """
+
+    _DECLARATION_STORES = {"embed_defs": (EmbedDef,)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -190,8 +194,7 @@ class EmbedmentsComposite:
             tolerance=tolerance, snap=snap,
             name=name,
         )
-        self.embed_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def validate_pre_mesh(self) -> None:
         """No-op — embedment resolves at ``get_fem_data`` time."""
@@ -419,7 +422,7 @@ class EmbedmentsComposite:
             for d in self.embed_defs]
 
     def clear(self) -> None:
-        self.embed_defs.clear()
+        self._clear_declarations()
         self.embed_records.clear()
 
     def __repr__(self) -> str:

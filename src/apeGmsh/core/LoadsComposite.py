@@ -40,6 +40,8 @@ from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
 from apeGmsh._kernel.record_sets import NodalLoadSet as LoadSet
 from apeGmsh._kernel.records._loads import LoadRecord
 
+from ._declarations import _DeclarationsMixin
+
 
 # (LoadDefType, reduction, target_form) -> method name on LoadsComposite
 _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
@@ -83,7 +85,7 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
 _LoadT = TypeVar("_LoadT", bound=LoadDef)
 
 
-class LoadsComposite:
+class LoadsComposite(_DeclarationsMixin):
     """Loads composite — define + resolve loads.
 
     Surface (dimension-indexed, ADR 0050)
@@ -138,6 +140,8 @@ class LoadsComposite:
     ``timeSeries`` / ``pattern`` is chosen later, on the apeSees bridge
     (ADR 0051: case on the geometry, pattern on the bridge).
     """
+
+    _DECLARATION_STORES = {"load_defs": tuple(_DISPATCH)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -695,17 +699,7 @@ class LoadsComposite:
                 "IS the Bernstein-consistent vector for a constant "
                 "body force."
             )
-        self.load_defs.append(defn)
-        # Phase 3B.2d / ADR 0038 — chain-phase routing.  See
-        # ``MassesComposite._add_def`` for the contract.
-        from apeGmsh._kernel.resolvers._chain_phase_router import (
-            try_chain_phase_route,
-        )
-        try_chain_phase_route(self._parent, defn)
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
-        return defn
+        return self._declare(defn)
 
     def validate_pre_mesh(self) -> None:
         """Validate every registered load's target can be resolved.

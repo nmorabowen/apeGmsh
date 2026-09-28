@@ -8300,7 +8300,8 @@ class apeSees:
             raise RuntimeError(
                 "OpenSeesTarget(require_fork=True) but the in-process "
                 "openseespy build does not look like the Ladruno fork "
-                "(the fork-only 'profiler' command is absent). Launch "
+                "(the resolved backend lacks the fork-only "
+                "'criticalTimeStep' command). Launch "
                 "this script under a python whose openseespy is the fork "
                 "build, or drop require_fork to run on stock OpenSees."
             )

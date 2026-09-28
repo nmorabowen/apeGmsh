@@ -224,8 +224,8 @@ class ASDShellQ4(Element):
     """``element ASDShellQ4`` — 4-node ASD shell.
 
     Optional flags, as ``OPS_ASDShellQ4`` parses them: ``-corotational``,
-    ``-drillingStab $v`` / ``-drillingNL`` (mutually exclusive) and
-    ``-local $x1 $x2 $x3``. ``-noeas`` is not exposed.
+    ``-noeas``, ``-drillingStab $v`` / ``-drillingNL`` (mutually
+    exclusive) and ``-local $x1 $x2 $x3``.
 
     Parameters
     ----------
@@ -236,6 +236,10 @@ class ASDShellQ4(Element):
         The plate / shell :class:`Section`.
     corotational
         Append the ``-corotational`` flag.
+    no_eas
+        Append ``-noeas``: turn off the enhanced membrane (the AGQI
+        incompatible modes and their EAS parameters), leaving the plain
+        bilinear membrane. The default keeps the enhancement.
     drilling_stab
         If supplied, append ``-drillingStab <v>``: the drilling
         stabilization factor, in ``[0, 1]`` (the parser clamps to that
@@ -257,6 +261,7 @@ class ASDShellQ4(Element):
     pg: str
     section: Section
     corotational: bool = False
+    no_eas: bool = False
     drilling_stab: float | None = None
     drilling_nl: bool = False
     drilling_nt_alpha: float | None = None
@@ -296,6 +301,8 @@ class ASDShellQ4(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.corotational:
             args.append("-corotational")
+        if self.no_eas:
+            args.append("-noeas")
         if self.drilling_stab is not None:
             args.append("-drillingStab")
             args.append(float(self.drilling_stab))

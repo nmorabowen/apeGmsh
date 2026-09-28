@@ -154,7 +154,7 @@ def test_layered_shell_fiber_section_keyword_parses_live() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASDShellQ4(local_cs=) and (drilling_stab=) reach the parser
+# ASDShellQ4(local_cs=), (drilling_stab=) and (no_eas=) reach the parser
 # ---------------------------------------------------------------------------
 #
 # ASDShellQ4 accepts an unknown trailing token without a word (its option
@@ -231,3 +231,24 @@ def test_asdshellq4_drilling_stab_reaches_the_element() -> None:
     # A stiffer drilling stabilization gives a smaller drilling rotation.
     stiff = _drill(drilling_stab=1.0)
     assert abs(stiff) < 0.9 * abs(default)
+
+
+def _bend(**shell_kw) -> float:
+    """Tip x-displacement of a one-element cantilever under an in-plane couple."""
+    ops = _one_bar_model(None, **shell_kw)
+    ops.fix(nodes=[1, 4], dofs=(1, 1, 1, 1, 1, 1))
+    ops.fix(nodes=[2, 3], dofs=(0, 0, 1, 1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=2, forces=(-P, 0.0, 0.0, 0.0, 0.0, 0.0))
+        p.load(node=3, forces=(P, 0.0, 0.0, 0.0, 0.0, 0.0))
+    return _solve(ops, 3, 1)
+
+
+@pytest.mark.live
+def test_asdshellq4_no_eas_reaches_the_element() -> None:
+    """``-noeas`` drops the enhanced (AGQI/EAS) membrane. A single element
+    in in-plane bending then shear-locks: measured 0.74x the enhanced tip
+    displacement on the fork build."""
+    enhanced = _bend()
+    plain = _bend(no_eas=True)
+    assert abs(plain) < 0.9 * abs(enhanced)

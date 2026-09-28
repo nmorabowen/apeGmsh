@@ -41,6 +41,8 @@ from apeGmsh._kernel.defs.constraints import ReinforceDef
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 from apeGmsh._kernel.resolvers._reinforce import resolve_reinforce
 
+from ._declarations import _DeclarationsMixin
+
 
 # gmsh element-type code → inverse-map host kind.
 #
@@ -66,7 +68,7 @@ _GMSH_HOST_KIND: dict[int, str] = {
 _GMSH_BAR_LINE_CODES: frozenset[int] = frozenset({1, 8})
 
 
-class ReinforcementsComposite:
+class ReinforcementsComposite(_DeclarationsMixin):
     """Embedded-reinforcement generator — declare on geometry, resolve to
     ``LadrunoEmbeddedRebar`` ties after meshing.
 
@@ -85,6 +87,8 @@ class ReinforcementsComposite:
         g.reinforce(host="concrete", bars="rebar",
                     bond="bond1", bar_diameter=0.025)
     """
+
+    _DECLARATION_STORES = {"reinforce_defs": (ReinforceDef,)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -180,8 +184,7 @@ class ReinforcementsComposite:
             tolerance=tolerance, snap=snap,
             name=name,
         )
-        self.reinforce_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def validate_pre_mesh(self) -> None:
         """No-op — reinforcement resolves at ``get_fem_data`` time."""
@@ -402,7 +405,7 @@ class ReinforcementsComposite:
             for d in self.reinforce_defs]
 
     def clear(self) -> None:
-        self.reinforce_defs.clear()
+        self._clear_declarations()
         self.reinforce_records.clear()
 
     def __repr__(self) -> str:
