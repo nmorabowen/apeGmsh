@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — recorder-spec messages point at the real in-process capture route; ResolvedRecorderRecord accepts list IDs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-dead-gnode_ndf-populator-in-the-fem-factory" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3755,6 +3766,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — recorder-spec messages point at the real in-process capture route; ResolvedRecorderRecord accepts list IDs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-dead-gnode_ndf-populator-in-the-fem-factory" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3925,6 +3947,21 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids">FIXED — recorder-spec messages point at the real in-process capture route; <code>ResolvedRecorderRecord</code> accepts list IDs<a class="headerlink" href="#fixed-recorder-spec-messages-point-at-the-real-in-process-capture-route-resolvedrecorderrecord-accepts-list-ids" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The <code>emit_recorders</code> refusals and warnings (modal records raise,
+  fiber/layer records warn-and-skip), the <code>LiveRecorders</code> module
+  docstring, the gauss-strain <code>.out</code> warning in <code>results/spec/_emit.py</code>,
+  and the <code>emit_recorders</code> docstring named <code>spec.capture(...)</code> and
+  <code>apeGmsh.results.spec.Recorders</code>. Phase 9 deleted both. They now name
+  <code>ops.domain_capture(DomainCaptureSpec(opensees=ops), path=...)</code>, with
+  <code>DomainCapture.capture_modes(n)</code> for modes, and <code>spec.emit_mpco(...)</code>.</li>
+<li><code>ResolvedRecorderRecord</code> coerces <code>node_ids</code> / <code>element_ids</code> to an
+  ndarray. A list such as <code>fem.nodes.select(...).ids</code> used to crash
+  emit with <code>AttributeError: 'list' object has no attribute 'size'</code>.</li>
+<li><code>ResolvedRecorderSpec.emit_recorders</code> / <code>emit_mpco</code> carry return
+  annotations (<code>LiveRecorders</code> / <code>LiveMPCO</code>).</li>
+</ul>
 <h3 id="removed-dead-gnode_ndf-populator-in-the-fem-factory">REMOVED — dead <code>g.node_ndf</code> populator in the FEM factory<a class="headerlink" href="#removed-dead-gnode_ndf-populator-in-the-fem-factory" title="Permanent link">&para;</a></h3>
 <p><code>mesh/_fem_factory.py</code> still carried <code>_populate_node_ndf</code> /
 <code>_resolve_ndf_target_to_node_ids</code>, which read <code>session.node_ndf</code> and
