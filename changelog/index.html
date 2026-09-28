@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-capture-live-recorders-and-solve_and_extract-talk-to-the-module-the-bridge-drives-has_fork-is-the-resolvers-verdict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — capture, live recorders and solve_and_extract talk to the module the bridge drives; has_fork is the resolver's verdict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3733,6 +3744,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-capture-live-recorders-and-solve_and_extract-talk-to-the-module-the-bridge-drives-has_fork-is-the-resolvers-verdict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — capture, live recorders and solve_and_extract talk to the module the bridge drives; has_fork is the resolver's verdict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3881,6 +3903,34 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-capture-live-recorders-and-solve_and_extract-talk-to-the-module-the-bridge-drives-has_fork-is-the-resolvers-verdict">FIXED — capture, live recorders and <code>solve_and_extract</code> talk to the module the bridge drives; <code>has_fork</code> is the resolver's verdict<a class="headerlink" href="#fixed-capture-live-recorders-and-solve_and_extract-talk-to-the-module-the-bridge-drives-has_fork-is-the-resolvers-verdict" title="Permanent link">&para;</a></h3>
+<p>The bridge resolves its OpenSees module fork-first (<code>APEGMSH_OPENSEES_BIN</code>,
+then a bare <code>import opensees</code>, then stock <code>openseespy.opensees</code>), but five
+sites imported <code>openseespy.opensees</code> by name: <code>DomainCapture</code>'s fallback
+before <code>analyze()</code> has built a live emitter, <code>LiveMPCO</code> and <code>LiveRecorders</code>
+(<code>spec.emit_mpco</code> / <code>spec.emit_recorders</code> without <code>ops=</code>), and both steps of
+<code>interop.solve_and_extract</code>. Beside a fork build those are two modules with
+two domains: the recorders attached to a domain the analysis never touched,
+and the capture sampled an empty one (the 9ffe6aa2 symptom; that fix kept the
+import as its fallback). All five now resolve through the new public
+<code>apeGmsh.opensees.emitter.live.get_ops()</code>, and an explicit <code>ops=</code> still wins.
+<code>solve_and_extract</code> builds the model with <code>apeSees.run()</code> instead of
+<code>runpy</code>-ing an emitted py deck, which binds <code>openseespy.opensees</code> itself, so
+the build, the static solve and the queries share one module, and
+<code>APEGMSH_OPENSEES_BIN</code> now reaches it (a model with ETABS property modifiers
+emits the fork-only <code>LadrunoShellModifier</code>). The arch-pushover example
+(<code>examples/shoebuckle_arch.py</code> and its studio copy) drove its analysis loop
+through the same import after <code>ops.run()</code> and now calls <code>get_ops()</code>.</p>
+<p><code>OpenSeesCapabilities.has_fork</code>, and <code>has_ladruno_up</code>, which mirrors it, now
+read <code>get_backend_name() == "ladruno-fork"</code>: the <code>criticalTimeStep</code> test that
+tags the backend and gates the live emitter's fork-only verbs, instead of
+<code>hasattr(ops, "profiler")</code>. A fork build that registers both commands reads
+the same as before; <code>has_profiler</code> still reports the <code>profiler</code> command.</p>
+<p>New quirk rule <code>openseespy-import</code> (<code>scripts/check_quirks.py</code>): no <code>import
+openseespy</code>, <code>from openseespy… import</code> or literal
+<code>import_module("openseespy…")</code> in <code>src/apeGmsh/</code> or <code>examples/</code> outside the
+resolver, <code>emitter/live.py</code>. Run against the pre-fix tree it flags exactly the
+seven sites above; <code>tests/test_check_quirks.py</code> holds the shapes.</p>
 <h3 id="fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists">FIXED — declarations made after the first <code>get_fem_data()</code> no longer return a stale snapshot; <code>g.constraints.clear()</code> empties all five def lists<a class="headerlink" href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.contact(...)</code>, <code>contact_plane(...)</code>, <code>interface(...)</code>,
 <code>g.reinforce(...)</code> and <code>g.embed(...)</code> declared <strong>after</strong> the first

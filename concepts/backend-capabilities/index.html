@@ -3965,6 +3965,15 @@ is unavailable, nothing more.</p>
 variable at the folder holding <code>opensees.pyd</code> <strong>before</strong> the first emit:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">set</span><span class="w"> </span><span class="nv">APEGMSH_OPENSEES_BIN</span><span class="o">=</span>C:<span class="se">\p</span>ath<span class="se">\t</span>o<span class="se">\L</span>adruno<span class="se">\d</span>ist<span class="se">\b</span>in
 </span></code></pre></div>
+<p>When your own code talks to the model the bridge built, such as a custom
+analysis loop after <code>ops.run()</code> or a query after <code>ops.analyze()</code>, take the
+module from the same resolver rather than importing one by name:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees.emitter.live</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_ops</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">opspy</span> <span class="o">=</span> <span class="n">get_ops</span><span class="p">()</span>     <span class="c1"># the module, and so the domain, the bridge drives</span>
+</span></code></pre></div>
+<p>Beside a fork build, <code>import openseespy.opensees</code> binds a second module
+with its own, empty domain, and every query answers from that one.</p>
 <div class="admonition warning">
 <p class="admonition-title">The fork is a source build</p>
 <p>The Ladruno fork lives at
@@ -4111,11 +4120,11 @@ the build stamp instead.</p>
 engine parses the identical deck. What it gets wrong is the answer, so
 there is nothing to refuse at construction. Two ways to find out where
 you stand:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees._element_capabilities</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_ladruno_branch</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees.emitter.live</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_backend_build</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">get_backend_build</span><span class="p">()</span>                      <span class="c1"># the exact commit, or None off-fork</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">probe_ladruno_branch</span><span class="p">(</span><span class="n">ops_module</span><span class="p">,</span> <span class="n">e_tag</span><span class="p">)</span>  <span class="c1"># False on a pre-61b3efa04 engine</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees._element_capabilities</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_ladruno_branch</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees.emitter.live</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_backend_build</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">get_backend_build</span><span class="p">()</span>                      <span class="c1"># the exact commit, or None off-fork</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">probe_ladruno_branch</span><span class="p">(</span><span class="n">ops_module</span><span class="p">,</span> <span class="n">e_tag</span><span class="p">)</span>  <span class="c1"># False on a pre-61b3efa04 engine</span>
 </span></code></pre></div>
 <p>The probe must be aimed at an element of a class that forwards
 <code>material &lt;gp&gt; &lt;token&gt;</code> to its NDMaterial — <code>LadrunoBrick</code>,
@@ -4185,7 +4194,7 @@ pulls only <code>gmsh</code>, <code>h5py</code>, <code>numpy</code> and <code>pa
 </table>
 <p><code>all</code> covers everything that installs cleanly everywhere, Studio
 included:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[all]"</span>
 </span></code></pre></div>
 <p><code>scripts/make-venv.bat</code> builds a venv this way under <code>C:\venv\&lt;name&gt;</code>.</p>
 <div class="admonition note">
@@ -4200,7 +4209,7 @@ by name when you need them.</p>
 through <code>mcp</code> a small server stack (<code>uvicorn</code>, <code>starlette</code>,
 <code>pydantic</code>, <code>opentelemetry-api</code>). Narrow it when you do not need all
 of that:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[viewer,opensees]"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apeGmsh[viewer,opensees]"</span>
 </span></code></pre></div>
 <p>Before 2026-08 <code>all</code> also omitted <code>mcp</code>, installing the Studio package
 without the SDK to start it. On an older release, add <code>"mcp&gt;=1.2"</code>
