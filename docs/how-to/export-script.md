@@ -38,7 +38,7 @@ with apeGmsh(model_name="cantilever") as g:
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)
 
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
 ops.fix(pg="Fixed", dofs=(1, 1, 1))
 

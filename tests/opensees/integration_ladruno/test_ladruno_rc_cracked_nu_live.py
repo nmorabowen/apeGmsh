@@ -1,8 +1,12 @@
-"""Fork-only — ``LadrunoRCConcrete`` / ``LadrunoRCFiniteStrain`` C2 flags reach the parser.
+"""Fork-only — ``LadrunoRCConcrete`` / ``LadrunoRCFiniteStrain`` C2 flags vs the build.
 
 ``-crackedNu``, ``-betaC`` and the ``vc`` tension-stiffening default change
-(500 -> 200) shipped together in fork commit ``8cd8f43f5``
-(``nmorabowen/OpenSees#873``, branch ``wp/phase-c-elements``). Unlike the
+(500 -> 200) were written in fork commit ``8cd8f43f5``
+(``nmorabowen/OpenSees#873``, branch ``wp/phase-c-elements``). #873 was
+closed UNMERGED and is being re-landed as fork #877, so no ``ladruno``
+build carries them: while ``LADRUNO_RC_C2_MIN_BUILD`` is ``None`` the live
+route refuses them, and this module asserts the refusal. Once the floor is
+set, the ``nuCracked`` probe below gates the parse check. Unlike the
 LadrunoConcrete3D fork flags (``test_ladruno_concrete3d_flags_live.py``),
 this parser's option loop has no catch-all ``else`` on an unrecognized
 flag token — an unknown ``-crackedNu`` is silently skipped (and its value
@@ -35,6 +39,7 @@ import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+from apeGmsh.opensees.material.nd import LADRUNO_RC_C2_MIN_BUILD
 
 from tests.opensees.fixtures.fem_stub import (
     FEMStub,
@@ -123,15 +128,28 @@ def _pull(**flags: object) -> float:
     return float(live.nodeDisp(2, 1))
 
 
-@pytest.mark.parametrize(
-    "flags",
-    [
-        {"cracked_nu": 0.0},
-        {"beta_c": 189.0},
-        {"tens_stiff": "vc", "tens_stiff_c": 500.0},
-    ],
-)
+@pytest.mark.parametrize("flags", [{"cracked_nu": 0.0}, {"beta_c": 189.0}])
+def test_live_route_refuses_c2_flags_while_no_build_carries_them(
+    flags: dict,
+) -> None:
+    if LADRUNO_RC_C2_MIN_BUILD is not None:
+        pytest.skip("floor set: test_c2_flags_are_accepted_and_run covers it")
+    with pytest.raises(RuntimeError, match="silently discards"):
+        _pull(**flags)
+
+
+def test_tens_stiff_c_runs_on_any_fork_build() -> None:
+    # -tensStiffC predates C2 (ADR 19 Phase 3a), so no build gate applies.
+    assert _pull(tens_stiff="vc", tens_stiff_c=500.0) < 0.0
+
+
+@pytest.mark.parametrize("flags", [{"cracked_nu": 0.0}, {"beta_c": 189.0}])
 def test_c2_flags_are_accepted_and_run(flags: dict) -> None:
+    if LADRUNO_RC_C2_MIN_BUILD is None:
+        pytest.skip(
+            "no ladruno build carries -crackedNu/-betaC yet (fork #877 "
+            "unmerged); the live route refuses them"
+        )
     # The parser silently skips an unrecognized flag rather than erroring
     # (see module docstring), so "does it run at all" is not by itself
     # proof of acceptance for any ONE of these three -- the ``nuCracked``

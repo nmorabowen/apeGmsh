@@ -799,6 +799,7 @@ class LoadsComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []  # mesh selections don't expose edge connectivity
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         edges: list[tuple[int, int]] = []
         for d, t in dts:
             if d != 1:
@@ -808,12 +809,13 @@ class LoadsComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                # gmsh element type 1 = 2-node line
-                # type 8 = 3-node line (treat as 2-node end-to-end for now)
-                npe = 2 if int(etype) == 1 else 3
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(etype, dim=1,
+                                        context=f"load target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
-                    edges.append((int(row[0]), int(row[-1])))
+                    # gmsh lists a line's two end nodes first; a
+                    # higher-order line is treated end-to-end
+                    edges.append((int(row[0]), int(row[1])))
         return edges
 
     def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
@@ -822,6 +824,7 @@ class LoadsComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         faces: list[list[int]] = []
         for d, t in dts:
             if d != 2:
@@ -831,16 +834,12 @@ class LoadsComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                etype = int(etype)
-                # 2 = tri3, 3 = quad4, 9 = tri6, 16 = quad8
-                npe = {2: 3, 3: 4, 9: 6, 16: 8}.get(etype, None)
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(etype, dim=2,
+                                        context=f"load target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 # Use only corner nodes for face area / normal
-                corners_per = {3: 3, 4: 4, 6: 3, 8: 4}[npe]
                 for row in arr:
-                    faces.append([int(n) for n in row[:corners_per]])
+                    faces.append([int(n) for n in row[:topo.n_corner]])
         return faces
 
     def _target_edges_full(self, target, source: str = "auto") -> list[list[int]]:
@@ -854,6 +853,7 @@ class LoadsComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         edges: list[list[int]] = []
         for d, t in dts:
             if d != 1:
@@ -863,11 +863,11 @@ class LoadsComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                # gmsh elem types: 1 = line2, 8 = line3
-                npe = {1: 2, 8: 3}.get(int(etype))
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                # A line's width is unambiguous, so the edge integrator
+                # itself refuses the widths it lacks (line4 and up).
+                topo = element_topology(etype, dim=1,
+                                        context=f"load target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
                     edges.append([int(n) for n in row])
         return edges
@@ -883,6 +883,7 @@ class LoadsComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         faces: list[list[int]] = []
         for d, t in dts:
             if d != 2:
@@ -892,11 +893,9 @@ class LoadsComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                # 2 = tri3, 3 = quad4, 9 = tri6, 16 = quad8, 10 = quad9
-                npe = {2: 3, 3: 4, 9: 6, 16: 8, 10: 9}.get(int(etype))
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(etype, dim=2, integrable=True,
+                                        context=f"load target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
                     faces.append([int(n) for n in row])
         return faces
@@ -936,24 +935,11 @@ class LoadsComposite(_DeclarationsMixin):
             connectivity normal is returned in that slot.
         """
         import gmsh
+        from apeGmsh.mesh._element_types import TOPOLOGY_BY_CODE
 
         vol_ents = list(gmsh.model.getEntities(3))
         if not vol_ents:
             return None
-
-        # gmsh element-type → nodes per element for the 3-D types we
-        # know how to walk.  Higher-order (tet10/hex20) carry their
-        # corner nodes first; using the full list still produces the
-        # right centroid for adjacency, but we only need the first
-        # ``corners`` nodes for the "≥ 3 shared" test.
-        _NPE: dict[int, tuple[int, int]] = {
-            # gmsh_type: (npe, corner_count)
-            4:  (4, 4),    # tet4
-            5:  (8, 8),    # hex8
-            6:  (6, 6),    # prism6
-            11: (10, 4),   # tet10
-            17: (20, 8),   # hex20
-        }
 
         node_coord_cache: dict[int, np.ndarray] = {}
 
@@ -977,8 +963,10 @@ class LoadsComposite(_DeclarationsMixin):
                 continue
             for etype, enodes in zip(etypes, enodes_list):
                 etype_i = int(etype)
-                spec = _NPE.get(etype_i)
-                if spec is None:
+                # Only the corner nodes matter for the "≥ 3 shared" test
+                # and the centroid; gmsh lists them first.
+                topo = TOPOLOGY_BY_CODE.get(etype_i)
+                if topo is None or topo.dim != 3:
                     if etype_i not in warned_types:
                         import warnings
                         warnings.warn(
@@ -989,10 +977,9 @@ class LoadsComposite(_DeclarationsMixin):
                         )
                         warned_types.add(etype_i)
                     continue
-                npe, corners = spec
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
-                    corner_ids = [int(n) for n in row[:corners]]
+                    corner_ids = [int(n) for n in row[:topo.n_corner]]
                     pts = np.array([_coord(nid) for nid in corner_ids])
                     centroid = pts.mean(axis=0)
                     cset = frozenset(corner_ids)
@@ -1061,14 +1048,8 @@ class LoadsComposite(_DeclarationsMixin):
                 f"(a surface dim=2 or volume dim=3 region)."
             )
         dim = cont[-1]
-        # gmsh element types — 2D: 2=tri3, 3=quad4, 9=tri6, 16=quad8,
-        # 10=quad9; 3D: 4=tet4, 5=hex8, 6=prism6, 11=tet10, 17=hex20
-        npe_map = (
-            {2: 3, 3: 4, 9: 6, 16: 8, 10: 9}
-            if dim == 2 else
-            {4: 4, 5: 8, 6: 6, 11: 10, 17: 20}
-        )
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         eids: list[int] = []
         conns: list[np.ndarray] = []
         for d, t in dts:
@@ -1079,11 +1060,11 @@ class LoadsComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, etags, enodes in zip(etypes, etags_list, enodes_list):
-                etype = int(etype)
-                npe = npe_map.get(etype, None)
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                # The rows go whole to the gravity / body resolvers,
+                # which integrate them by node count.
+                topo = element_topology(etype, dim=dim, integrable=True,
+                                        context=f"load target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for tag, row in zip(etags, arr):
                     eids.append(int(tag))
                     conns.append(row)
@@ -1401,6 +1382,7 @@ class LoadsComposite(_DeclarationsMixin):
         walk lives in one place.
         """
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         dts = self._resolve_target(defn.target, source=src, expected_dim=1)
         if dts and dts[0] and dts[0][0] == "__ms__":
             return
@@ -1414,13 +1396,13 @@ class LoadsComposite(_DeclarationsMixin):
                 continue
             for etype, etags, enodes in zip(
                     etypes, etags_list, enodes_list):
-                npe = {1: 2, 8: 3}.get(int(etype))
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(
+                    etype, dim=1, context=f"load target {defn.target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 tags = np.asarray(etags, dtype=np.int64)
                 for eid, row in zip(tags, arr):
-                    n_first, n_last = int(row[0]), int(row[-1])
+                    # gmsh lists a line's two end nodes first
+                    n_first, n_last = int(row[0]), int(row[1])
                     yield (int(eid), row, n_first, n_last,
                            resolver.coords_of(n_first),
                            resolver.coords_of(n_last), int(t))

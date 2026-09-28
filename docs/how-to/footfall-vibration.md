@@ -55,7 +55,7 @@ with apeGmsh(model_name="footfall-bay") as g:
 
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 ops.element.elasticBeamColumn(
     pg="Beam", transf=transf, A=A, E=E, Iz=Iz, mass=mass_per_len,
 )   # lumped element mass by default — do not pass c_mass=True (see below)

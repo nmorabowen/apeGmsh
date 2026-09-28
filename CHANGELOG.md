@@ -56,6 +56,146 @@ tet10 (exact on any build, run in fresh interpreters); stock tet10 stack =
 2/7; stock second model = 2×; tet10 block = 1/6 on stock and exact on a fixed
 fork; and fake-module unit tests for every gate branch.
 
+### FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
+
+`g.masses` and `g.loads` read a target's elements from gmsh through
+element-type tables copied into each composite. Two copies omitted quad9
+and three omitted hex27, the types `set_order(2)` produces by default
+(`bubble=True`) on a recombined surface and on a structured hex block. On
+quad9, `g.masses.surface` (both reductions) and a tributary surface load
+(`pressure`, `traction`, `shear`) produced zero records without a warning,
+and `force_resultant_center_mass` / `g.displacements.surface` with
+`normal=True` raised a misleading "got empty `faces`". On hex27,
+`g.masses.volume`, `g.loads.gravity` and `g.loads.body` produced zero
+records. The edge walks took a line3's mid node for its far end (gmsh lists
+the two end nodes first), so `g.masses.line` and a tributary `g.loads.line`
+on an order-2 curve came out at half. The consistent pressure and
+consistent line-load walks already handled quad9 and line3.
+
+Every `getElements` walk in `core/` now reads the connectivity width and
+corner count from one table, `TOPOLOGY_BY_CODE` in
+`apeGmsh.mesh._element_types`, derived from the curated alias table,
+through `element_topology()`. A walk no longer skips an element type it
+cannot handle; it raises. That covers a type outside the table (the
+order-3 serendipity quad12) and, on the walks that pass whole connectivity
+rows to a resolver (consistent pressure, gravity and body loads, volume
+masses), a type without shape functions: tri9, which the resolvers'
+node-count dispatch would integrate as a quad9, or tet20. The
+outward-normal walk for pressure now recognises hex27 volumes; it used to
+warn and fall back to the connectivity normal. The reinforce, embed and
+rebar walks read their widths and corner counts from the same table, with
+unchanged behaviour. Tests: `tests/test_higher_order_mass_load_targets.py`
+(13 of its cases fail with the fix reverted) and the guard
+`tests/test_element_topology.py`, which checks the table against gmsh's own
+element properties and checks that every type `set_order` produces at
+orders 1 and 2 resolves.
+
+### FIXED — 2-D `geomTransf` Tcl decks no longer carry a `vecxz` (every beam was silently dropped)
+
+`ops.geomTransf.Linear/PDelta/Corotational(vecxz=...)` on an `ndm=2`
+bridge wrote `geomTransf Linear 1 0.0 0.0 1.0`. OpenSees' Tcl 2-D
+`geomTransf` accepts only `tag <-jntOffset ...>`, so the line failed with
+"bad command" and every element referencing it was never built. The
+interpreter still exits 0, and in-process openseespy ignores the extra
+args, which is why no run caught it. The build pipeline now emits the bare
+`geomTransf <Type> <tag>` whenever `ndm == 2`: a `vecxz` along global Z (the
+only direction a 2-D model can mean) is dropped, and any other vector
+raises `BridgeError` at emit, matching the existing 2-D `orientation=`
+refusal. The docs and tutorials that passed `vecxz=(0.0, 0.0, 1.0)` in
+2-D models now call `ops.geomTransf.Linear()`, and the skill states the
+2-D rule. Guarded by `tests/opensees/integration/test_geomtransf_2d_vecxz.py`.
+
+### FIXED — a chain-phase declaration the router rejects is no longer stored; `clear()` fails loud in a `from_h5` session
+
+In a `from_h5` / compose session, `_declare` appended the def to its
+store and then routed it into the broker. When the router raised
+(`KeyError` for an unresolvable name, `ValueError` from
+`boundary_faces_for`, `ChainPhaseError` for an unrouted kind), the call
+failed but the def stayed in `constraint_defs` / `load_defs` /
+`disp_defs`, and `list_defs()` reported it. `_declare` now routes
+first, then appends, then bumps, so a rejected def never reaches the
+store. The router reads only the broker and the def, so the order does
+not change what it applies.
+
+`g.constraints.clear()`, `g.reinforce.clear()` and `g.embed.clear()`
+emptied their def lists in a `from_h5` session, but `get_fem_data()`
+there returns the broker itself, which still held the records the
+router had applied and those loaded from `model.h5`. `clear()` was a
+silent no-op on the model. It now raises `ChainPhaseError` before
+emptying anything and names the remedy: reload with
+`apeGmsh.from_h5(path)`, or remove the declaration in the source
+session and save again. Live sessions are unchanged.
+
+Tests: `test_failed_strict_route_leaves_store_unchanged` and
+`TestClearInChainPhase` in
+`tests/test_phase_v1_1_a_chain_phase_router.py`, and store assertions
+on the two unrouted-kind tests in `tests/test_chain_phase_fail_loud.py`.
+
+### FIXED — `LadrunoRCConcrete` `beta_c` / `cracked_nu` are refused on the live route until a fork build carries them
+
+This corrects the #1184 section "C2 fork flags: `cracked_nu`, `beta_c`, `vc`
+tension-stiffening default 500→200". Fork PR #873, which carried
+`-betaC` / `-crackedNu`, was **closed unmerged** on 2026-09-27 and is being
+re-landed as fork PR #877. No build of the fork's `ladruno` branch parses the
+flags (checked at `891978c9e`). That parser's option loop ignores unknown
+tokens, so `beta_c=` / `cracked_nu=` were silently discarded on every
+`ladruno` build: the model ran with the elastic `nu` after cracking and
+`C = 170`, with no error.
+
+- **Live route refuses them.** `LiveOpsEmitter.nDMaterial` raises
+  `RuntimeError` for a `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` line
+  that carries `-betaC` or `-crackedNu` while the new floor
+  `LADRUNO_RC_C2_MIN_BUILD` (`apeGmsh.opensees.material.nd`) is `None`.
+  Once it is set to #877's merge SHA, only a build with no
+  `ladrunoBuild()` stamp is refused. A bare hash cannot prove ancestry
+  (ADR 0107 D4).
+- **Tcl / openseespy decks warn.** `ops.tcl(...)` / `ops.py(...)` still
+  emit the flags but raise a `LadrunoRCBuildWarning`: the deck is correct
+  only on a build that carries them.
+- **`tens_stiff_c` default, corrected.** #1184 said the fork moved the `vc`
+  default from 500 to 200. That happened only on the unmerged branch. Every
+  `ladruno` build still defaults to **500**, so `tens_stiff_c=None` keeps
+  the old curve there and gets 200 once #877 merges. Pass `tens_stiff_c`
+  explicitly to pin the curve. The `_LadrunoRC` docstring, both
+  `ops.nDMaterial` wrappers and `docs/concepts/backend-capabilities.md` now
+  say so.
+
+Tests: `tests/opensees/unit/test_ladruno_rc_c2_gate.py` covers the live
+refusal, the stamped-build pass, and the deck warning, using fake `ops`.
+`test_ladruno_rc_cracked_nu_live.py` now asserts the refusal while the floor
+is `None`. No quirk-lint rule was added: this is the first time a flag from
+an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
+only after it recurs. The lesson is a checklist line in the bridge-feature
+guide instead.
+
+### FIXED — recorder-spec messages point at the real in-process capture route; `ResolvedRecorderRecord` accepts list IDs
+
+- The `emit_recorders` refusals and warnings (modal records raise,
+  fiber/layer records warn-and-skip), the `LiveRecorders` module
+  docstring, the gauss-strain `.out` warning in `results/spec/_emit.py`,
+  and the `emit_recorders` docstring named `spec.capture(...)` and
+  `apeGmsh.results.spec.Recorders`. Phase 9 deleted both. They now name
+  `ops.domain_capture(DomainCaptureSpec(opensees=ops), path=...)`, with
+  `DomainCapture.capture_modes(n)` for modes, and `spec.emit_mpco(...)`.
+- `ResolvedRecorderRecord` coerces `node_ids` / `element_ids` to an
+  ndarray. A list such as `fem.nodes.select(...).ids` used to crash
+  emit with `AttributeError: 'list' object has no attribute 'size'`.
+- `ResolvedRecorderSpec.emit_recorders` / `emit_mpco` carry return
+  annotations (`LiveRecorders` / `LiveMPCO`).
+
+### REMOVED — dead `g.node_ndf` populator in the FEM factory
+
+`mesh/_fem_factory.py` still carried `_populate_node_ndf` /
+`_resolve_ndf_target_to_node_ids`, which read `session.node_ndf` and
+called `_defs` / `_targeted_defs()` / `_default_def()` on it. The
+`g.node_ndf` composite was deleted by ADR 0048 (per-node `ndf` is
+inferred from the declared elements; `ops.ndf` covers element-less
+nodes), nothing sets `session.node_ndf`, and `_targeted_defs` is
+defined nowhere, so the `getattr` always returned `None` and the broker
+always got `ndf=None`. The helpers and their call site are removed (no
+behaviour change), and stale `g.node_ndf` mentions in the hash-fold
+comment and test docstrings now describe inference.
+
 ### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
 
 The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,

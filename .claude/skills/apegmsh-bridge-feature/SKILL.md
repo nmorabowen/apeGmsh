@@ -46,6 +46,13 @@ the quoted heading. Paths are from the repo root; `arch/` means
       `opensees/emitter/live.py`. Beside a fork build, importing openseespy
       by name binds a second module, and a capture once sampled that empty
       domain (9ffe6aa2). The `openseespy-import` quirk rule holds this.
+- [ ] Consume a fork flag only after the fork PR that adds it has merged
+      into `ladruno` (`gh pr view <N> -R nmorabowen/OpenSees --json
+      mergedAt`). A build from its branch passing is not enough. Where the
+      fork parser ignores unknown options, a flag that no `ladruno` build
+      carries is silently discarded, so refuse it on the live route and
+      warn on decks until then. #1184 shipped `-betaC`/`-crackedNu` from the
+      closed fork #873; the gate is `opensees/_rc_c2_flags.py`.
 
 ## Shared literals and streams
 
