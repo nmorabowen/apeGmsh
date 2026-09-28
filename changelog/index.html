@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — declarations made after the first get_fem_data() no longer return a stale snapshot; g.constraints.clear() empties all five def lists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3722,6 +3733,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — declarations made after the first get_fem_data() no longer return a stale snapshot; g.constraints.clear() empties all five def lists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3859,6 +3881,32 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists">FIXED — declarations made after the first <code>get_fem_data()</code> no longer return a stale snapshot; <code>g.constraints.clear()</code> empties all five def lists<a class="headerlink" href="#fixed-declarations-made-after-the-first-get_fem_data-no-longer-return-a-stale-snapshot-gconstraintsclear-empties-all-five-def-lists" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.contact(...)</code>, <code>contact_plane(...)</code>, <code>interface(...)</code>,
+<code>g.reinforce(...)</code> and <code>g.embed(...)</code> declared <strong>after</strong> the first
+<code>g.mesh.queries.get_fem_data()</code> did not invalidate the session's FEMData
+cache (ADR 0038). The next <code>get_fem_data()</code> returned the <strong>same</strong>
+snapshot without them: 0 <code>fem.elements.contact_planes</code> while
+<code>g.constraints.contact_plane_defs</code> held 1, so the model solved without
+the contact, interface or tie. Only a variant call such as
+<code>get_fem_data(dim=3)</code>, which bypasses the cache, included them.</p>
+<p>Each declaration had to bump the cache counter by hand, and only 7 sites
+did. The new <code>_DeclarationsMixin</code> (<code>src/apeGmsh/core/_declarations.py</code>)
+makes storing, chain-phase routing and the bump one step (<code>_declare</code>).
+All eight composites that record defs inherit it and list their stores
+in <code>_DECLARATION_STORES</code>: <code>g.constraints</code>, <code>g.reinforce</code>, <code>g.embed</code>,
+<code>g.rebar</code>, <code>g.loads</code>, <code>g.displacements</code>, <code>g.masses</code> and
+<code>g.decoupled_nodes</code>. The <code>g.rebar</code> workaround, a local bump after
+forwarding to <code>g.reinforce</code>, is gone.</p>
+<p><code>clear()</code> had the same bug and a second one. None of the three <code>clear()</code>
+methods bumped the counter, and <code>g.constraints.clear()</code> emptied only the
+MP <code>constraint_defs</code>, leaving the <code>bc</code>, <code>contact</code>, <code>contact_plane</code> and
+<code>interface</code> defs in place. It now empties all five lists and their
+records, and invalidates the cache.</p>
+<p>Guards: <code>tests/test_declaration_coverage.py</code> is an AST gate: no composite
+writes a declaration store except through the mixin, and every public
+verb that builds a def reaches <code>_declare</code>. <code>tests/test_fem_cache_invalidation.py</code>
+covers every declaration kind and every <code>clear()</code> end to end.</p>
 <h3 id="added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use">ADDED — RC layered shells: <code>ops.section.RCLayeredShell</code> + <code>RebarMesh</code>, <code>ops.nDMaterial.PlateFiber</code>, <code>ASDShellQ4(no_eas=)</code>; <code>ShellLayer</code> refuses layers OpenSees cannot use<a class="headerlink" href="#added-rc-layered-shells-opssectionrclayeredshell-rebarmesh-opsndmaterialplatefiber-asdshellq4no_eas-shelllayer-refuses-layers-opensees-cannot-use" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)</code></strong>
