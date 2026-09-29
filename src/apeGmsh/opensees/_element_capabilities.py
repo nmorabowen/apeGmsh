@@ -16,7 +16,7 @@ Relocated from ``apeGmsh.solvers._element_specs`` in Phase 8.3b.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final, NoReturn, final
 
 from apeGmsh._types import DimTag  # noqa: F401  — re-exported by OpenSees.py
 
@@ -713,6 +713,57 @@ _EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
 }
 
 
+@final
+class _Unknown:
+    """The type of :data:`Unknown`, the fail-closed answer of
+    :func:`element_capability`.
+
+    It is deliberately NOT ``None`` and NOT ``False``: the per-helper
+    lookups below answer ``None``/``False`` for a class the registry has
+    never heard of, and every caller reads that as "permissive, skip".
+    ``Unknown`` cannot be read that way by accident because it has no
+    truth value at all: ``bool(Unknown)`` raises, so ``if not spec:`` on
+    a lookup result fails loud instead of silently taking the permissive
+    branch.  Test for it with ``spec is Unknown``.
+    """
+
+    __slots__ = ()
+
+    def __bool__(self) -> NoReturn:
+        raise TypeError(
+            "Unknown element capability has no truth value; test for it "
+            "with `spec is Unknown` (apeGmsh.opensees._element_capabilities)."
+        )
+
+    def __repr__(self) -> str:
+        return "Unknown"
+
+
+#: Sentinel returned by :func:`element_capability` for any class name the
+#: registry cannot resolve.  See :class:`_Unknown` for why it is neither
+#: ``None`` nor falsy.
+Unknown: Final = _Unknown()
+
+
+def element_capability(class_name: str) -> "_ElemSpec | _Unknown":
+    """The single registry lookup: an ``Element`` subclass's :class:`_ElemSpec`,
+    or :data:`Unknown` when :data:`_ELEM_REGISTRY` has no entry for it after
+    :data:`_CLASS_TOKEN_ALIASES` resolution.
+
+    Every ``element_*`` helper below routes through this function.  A
+    class that ships an ``_emit`` but carries no ``_ElemSpec`` (the
+    :data:`_EXTRA_CLASS_NDF_OK` roster) is ``Unknown`` here too: the
+    lock test ``tests/opensees/unit/test_element_capability_unknown.py``
+    enumerates every concrete element primitive and fails on ``Unknown``
+    unless the class sits on its reasoned exception list, so a new
+    element cannot land without either a registry entry or a written
+    reason.
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    return Unknown if spec is None else spec
+
+
 def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     """Return the set of per-node ``ndf`` values an ``Element`` subclass
     accepts, or ``None`` when the class is unclassifiable (no
@@ -729,11 +780,11 @@ def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     ``None`` is the conservative "unknown — do not constrain" answer:
     the guard never fires on an element type it cannot classify, so a
     missing entry yields a false negative (silent), never a false
-    positive (spurious raise).
+    positive (spurious raise).  Callers that must fail closed use
+    :func:`element_capability` and test for :data:`Unknown` instead.
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    if spec is not None:
+    spec = element_capability(class_name)
+    if not isinstance(spec, _Unknown):
         return spec.ndf_ok
     return _EXTRA_CLASS_NDF_OK.get(class_name)
 
@@ -753,9 +804,8 @@ def element_required_floor(
     ``local_index`` is reserved for mixed ``u-p`` elements (see
     :meth:`_ElemSpec.required_floor`); ignored for every registered element.
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    if spec is not None:
+    spec = element_capability(class_name)
+    if not isinstance(spec, _Unknown):
         return spec.required_floor(ndm, local_index)
     floor_map = _EXTRA_CLASS_REQUIRED_FLOOR.get(class_name)
     if floor_map is not None:
@@ -784,12 +834,12 @@ def element_ndf_slot_floors(
     element STRICT: each node must carry exactly its slot value (the slot
     group's ``ndf_ok`` is ``{floor}``).
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    if spec is None or spec.ndf_floor_per_slot is None:
+    spec = element_capability(class_name)
+    if isinstance(spec, _Unknown) or spec.ndf_floor_per_slot is None:
         return None
     floors = spec.ndf_floor_per_slot.get(int(node_count))
     if floors is not None and len(floors) != int(node_count):
+        token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
         raise ValueError(
             f"ndf_floor_per_slot[{node_count}] on {token!r} has "
             f"{len(floors)} entries — must match the node count."
@@ -807,9 +857,8 @@ def element_ndf_strict(class_name: str) -> bool:
     such a class's nodes against ``{floor}`` instead of the class-level
     ``ndf_ok`` union.
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    return spec is not None and spec.ndf_floor_per_slot is not None
+    spec = element_capability(class_name)
+    return not isinstance(spec, _Unknown) and spec.ndf_floor_per_slot is not None
 
 
 def element_propagates_material_refusal(class_name: str) -> "bool | None":
@@ -820,9 +869,8 @@ def element_propagates_material_refusal(class_name: str) -> "bool | None":
     "unknown" — an unregistered class, or a registered one nobody has
     measured — and the ADR 0105 D4 gate never warns on ``None``.
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    return None if spec is None else spec.propagates_material_refusal
+    spec = element_capability(class_name)
+    return None if isinstance(spec, _Unknown) else spec.propagates_material_refusal
 
 
 def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
@@ -835,9 +883,8 @@ def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
     dimension mix OpenSees cannot host.  ``None`` is skipped by the guard
     (conservative — never a false positive on an unregistered class).
     """
-    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    spec = _ELEM_REGISTRY.get(token)
-    if spec is not None:
+    spec = element_capability(class_name)
+    if not isinstance(spec, _Unknown):
         return spec.ndm_ok
     return None
 
