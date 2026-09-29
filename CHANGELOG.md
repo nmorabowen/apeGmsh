@@ -18,6 +18,25 @@
 
 `_index_build.build_index` no longer stamps `generated`, and `write_index` serialises through the new `serialize_index` (sorted keys, indent 2, trailing newline). Regenerating the index is now byte-identical, so it stops producing merge-conflict diffs. `tests/studio/test_lookup.py::test_index_build_is_byte_deterministic` builds twice and compares against the committed file. No reader used `generated`.
 
+### CHANGED — the ADR index (`decisions/README.md`) is generated from each ADR's Status line (program slice A1.3)
+
+`scripts/adr_index.py` now writes the README as the hand-written preamble
+plus one short row per ADR (`| [NNNN](file) | title | status |`), reading the
+title from each ADR's H1 and the first clause of its `**Status:**` line;
+`--check` exits 1 when the README is stale. The `adr-number` rule of
+`scripts/check_quirks.py` runs that check, so a stale README fails
+`static-gates`. The README drops from 91 KB to 14 KB. It also fixes seven
+stale Status cells (0052, 0053, 0056, 0077, 0089, 0094, 0095: "Proposed" in
+the README, "Accepted" in the ADR). No ADR file changed.
+
+### FIXED — a second push to `main` no longer cancels the first push's `Tests` run
+
+`.github/workflows/tests.yml` set `cancel-in-progress: true` for every
+event, so back-to-back merges to `main` cancelled the earlier push's
+required checks. It is now `${{ github.event_name == 'pull_request' }}`:
+superseded PR pushes are still cancelled, pushes to `main` each run to
+completion. `docs.yml` and `publish.yml` already use
+`cancel-in-progress: false` and are unchanged.
 
 ### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 

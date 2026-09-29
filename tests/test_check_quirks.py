@@ -55,9 +55,15 @@ DECISIONS = "src/apeGmsh/opensees/architecture/decisions"
 
 def _adrs(root: Path, names: list[str], indexed: list[str]) -> None:
     for name in names:
-        _write(root, f"{DECISIONS}/{name}", "# ADR\n")
+        _write(root, f"{DECISIONS}/{name}", f"# ADR {name[:4]} — t\n\n**Status:** Accepted (2026-01-01)\n")
     rows = "\n".join(f"| [{n[:4]}]({n}) | t | Accepted |" for n in indexed)
-    _write(root, f"{DECISIONS}/README.md", f"# ADRs\n\n{rows}\n")
+    _write(root, f"{DECISIONS}/README.md", f"# ADRs\n\n| # | Title | Status |\n|---|---|---|\n{rows}\n")
+    if indexed == names and len(set(n[:4] for n in names)) == len(names):
+        (root / DECISIONS / "README.md").write_text(_adr_index().generate(root), encoding="utf-8")
+
+
+def _adr_index():
+    return quirks._adr_index()
 
 
 def test_adr_number_flags_two_adrs_with_one_number(tmp_path: Path) -> None:
@@ -75,6 +81,24 @@ def test_adr_number_passes_unique_indexed_adrs(tmp_path: Path) -> None:
     names = ["0064-a.md", "0065-b.md", "0066-c.md"]
     _adrs(tmp_path, names, indexed=names)
     assert _found(tmp_path) == []
+
+
+def test_adr_index_flags_a_readme_stale_against_a_status_line(tmp_path: Path) -> None:
+    names = ["0064-a.md", "0065-b.md"]
+    _adrs(tmp_path, names, indexed=names)
+    assert _found(tmp_path) == []
+    adr = tmp_path / DECISIONS / "0065-b.md"
+    adr.write_text(adr.read_text(encoding="utf-8").replace("Accepted", "Superseded by 0066"), encoding="utf-8")
+    assert _found(tmp_path) == ["adr-number:README.md:0"]
+    (tmp_path / DECISIONS / "README.md").write_text(_adr_index().generate(tmp_path), encoding="utf-8")
+    assert _found(tmp_path) == []
+
+
+def test_adr_index_flags_an_adr_whose_status_line_does_not_parse(tmp_path: Path) -> None:
+    names = ["0064-a.md"]
+    _adrs(tmp_path, names, indexed=names)
+    (tmp_path / DECISIONS / "0064-a.md").write_text("# ADR 0064 — t\n", encoding="utf-8")
+    assert _found(tmp_path) == ["adr-number:README.md:0"]
 
 
 def test_adr_number_is_silent_without_a_decisions_folder(tmp_path: Path) -> None:
