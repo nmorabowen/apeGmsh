@@ -98,7 +98,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 - it is labelled `mechanical`;
 - the required checks are green on the head SHA;
 - the card's done-when holds;
-- it passes `scripts/land_pr.py`. Until A2 ships that script, use the "How work lands" checklist in AGENTS.md;
+- it passes `python scripts/land_pr.py <n> --dry-run`, and the merge itself is `python scripts/land_pr.py <n>`, which runs the "How work lands" checks in AGENTS.md, squash-merges, and proves the merge reached `main`;
 - it carries no `human-gate` label.
 
 After merging, confirm the PR reached `main`:
