@@ -132,3 +132,27 @@ def test_strings_and_compound_rows_are_hashed_by_value(
     assert da != db
     # Re-dumping the same file is stable (no pointer bytes in the hash).
     assert dumper.dump(a) == da
+
+
+@pytest.mark.parametrize(
+    ("golden", "other", "same"),
+    [
+        # #1258: the CI runner's libm emitted these vecxz components.
+        (0.25881904510252085, 0.2588190451025208, True),
+        (0.9659258262890684, 0.9659258262890682, True),
+        (0.25881904510252085, float(np.nextafter(0.25881904510252085, 1.0)), True),
+        (0.0, -0.0, True),
+        (0.25881904510252085, 0.25881904510252085 * (1 + 1e-9), False),
+        (0.25881904510252085, 0.25881904510252085 * (1 + 1e-6), False),
+        (200e9, 200e9 + 1.0, False),
+    ],
+)
+def test_float_hash_absorbs_last_ulp_only(
+    dumper: ModuleType, tmp_path: Path, golden: float, other: float, same: bool,
+) -> None:
+    a, b = tmp_path / "a.h5", tmp_path / "b.h5"
+    for path, value in ((a, golden), (b, other)):
+        with h5py.File(path, "w") as f:
+            f.create_dataset("vecxz", data=np.array([[value, 0.0, 1.0]]))
+            f.attrs["scale"] = np.float64(value)
+    assert (dumper.dump(a) == dumper.dump(b)) is same

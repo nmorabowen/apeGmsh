@@ -3,7 +3,8 @@
 This corpus is the oracle for pure moves of the OpenSees bridge's emit path
 (panel plan `internal_docs/plan_expert_panel_2026-09.md`, "The proof
 regime"). A refactor that claims "no behaviour change" must leave every
-golden here byte-identical. It replaces the single deck
+golden here unchanged: every byte except float literals, which must agree
+within a last-ulp tolerance (see "Floats" below). It replaces the single deck
 `tests/opensees/parity/partitioned_mixed_npe.golden.tcl` as that oracle;
 that deck and its test stay where they are.
 
@@ -85,7 +86,8 @@ header line. A `per_rank` golden therefore holds the driver and each
 cell's model written through `ops.h5()`, produced by
 `scripts/h5_canonical_dump.py`. Each group, dataset and attribute gets one
 line with its path, dtype, shape and a sha1 of its value. The sha1 does not
-depend on byte order or chunking. `FEMStub` is not a real `FEMData`, so the
+depend on byte order or chunking, and floats are hashed at 12 significant
+digits (see "Floats" below). `FEMStub` is not a real `FEMData`, so the
 archive has only the bridge zone (`/meta` and `/opensees`) and no neutral
 zone. The `tcl` and `py` cells of one mode share a model, so their dumps are
 identical; the dump sits beside each cell so that each cell is
@@ -112,6 +114,27 @@ self-contained.
 - **Not masked.** `schema_version`, `opensees_schema_version`,
   `snapshot_id` (empty for a stub), and `/meta/lineage@model_hash`. These
   are emit outputs, so a change to any of them is a real change.
+- **Floats.** Values computed through libm differ in the last ulp between
+  platforms. #1258 hit this on the `Spherical` orientation vecxz
+  (sin/cos): the golden has `geomTransf Linear 3 0.25881904510252085 0.0
+  0.9659258262890684` and the CI runner emitted `0.2588190451025208 0.0
+  0.9659258262890682`. Two rules absorb it:
+  - **Decks** are compared token by token (`builder.first_deck_mismatch`).
+    Float literals, meaning digits with a `.` or an exponent that are not
+    glued to an identifier, must agree within a relative tolerance of 1e-12
+    (`FLOAT_REL_TOL`), with an absolute floor of 1e-15 (`FLOAT_ABS_TOL`).
+    Integers, signs, keywords, whitespace and line counts stay exact. The
+    committed text is not rewritten: regen treats a deck within tolerance
+    as unchanged.
+  - **H5 dumps** hash every float dataset and attribute through its text at
+    12 significant digits, and any `|x| < 1e-15` hashes as 0
+    (`FLOAT_SIG_DIGITS` and `FLOAT_ZERO_FLOOR` in the dump script). This
+    matters for `/opensees/transforms/Linear_<n>/per_element_vecxz`, which
+    stores the same orientation vecxz as the deck. A relative change of
+    about 1e-11 or more still changes the sha1. A value that sits exactly
+    on a 12-digit rounding boundary can still flip on an ulp change. The
+    odds are about 1e-4 per libm-derived value; if that happens, the fix
+    belongs in this rounding, not in a regen.
 - **Integer width.** Integer dtypes are pinned as written, for example
   `<i8`. numpy 2 writes `int64` for Python ints on every platform. On
   numpy 1.x under Windows, the platform default is `int32`, and an emitter

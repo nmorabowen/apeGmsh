@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -326,6 +327,54 @@ def _load_dump_module() -> ModuleType:
         mod_spec.loader.exec_module(module)
         _DUMP_MODULE = module
     return _DUMP_MODULE
+
+
+# ---------------------------------------------------------------------------
+# Deck comparison: exact text, float literals within a last-ulp tolerance
+# ---------------------------------------------------------------------------
+
+#: A float literal: digits with a ``.`` and/or an exponent, not glued to an
+#: identifier (``rank0_0.tcl`` stays text).  Integers never match, so they
+#: stay in the exactly-compared text.
+FLOAT_TOKEN = re.compile(
+    r"(?<![\w.])([-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?"
+    r"|[-+]?\d+[eE][-+]?\d+)(?![\w.])"
+)
+#: Libm transcendentals (the orientation vecxz: sin/cos/sqrt) differ by the
+#: last ulp across platforms (#1258: Linux dev vs CI runner).  1e-12 is
+#: ~4500 ulp at 1.0 yet 1e6 below any modelling value a golden pins.
+FLOAT_REL_TOL = 1e-12
+FLOAT_ABS_TOL = 1e-15
+
+
+def _floats_close(a: str, b: str) -> bool:
+    x, y = float(a), float(b)
+    return abs(x - y) <= max(FLOAT_REL_TOL * max(abs(x), abs(y)), FLOAT_ABS_TOL)
+
+
+def lines_match(want: str, got: str) -> bool:
+    """One line: non-float text exact, float literals within tolerance."""
+    if want == got:
+        return True
+    w, g = FLOAT_TOKEN.split(want), FLOAT_TOKEN.split(got)
+    if len(w) != len(g):
+        return False
+    # re.split with one group alternates text (even) / float (odd).
+    return all(
+        (a == b) if i % 2 == 0 else _floats_close(a, b)
+        for i, (a, b) in enumerate(zip(w, g))
+    )
+
+
+def first_deck_mismatch(want: str, got: str) -> int | None:
+    """0-based index of the first line that differs beyond tolerance."""
+    wl, gl = want.split("\n"), got.split("\n")
+    for i, (a, b) in enumerate(zip(wl, gl)):
+        if not lines_match(a, b):
+            return i
+    if len(wl) != len(gl):
+        return min(len(wl), len(gl))
+    return None
 
 
 def _normalise(text: str, out_dir: Path) -> str:

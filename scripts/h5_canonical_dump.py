@@ -7,7 +7,8 @@ Usage::
 Each line names an object by path and pins its dtype, shape and the sha1
 of a canonical byte encoding of its value.  Two files dump to the same
 text iff they hold the same tree, the same dtypes and shapes and the same
-values, whatever HDF5 chunking, object order on disk, byte order or
+values (floats compared at ``FLOAT_SIG_DIGITS`` significant digits),
+whatever HDF5 chunking, object order on disk, byte order or
 creation time they have.  The golden emit corpus
 (``tests/opensees/golden/``) compares these dumps; see its README for why
 each mask exists.
@@ -25,6 +26,7 @@ Only stdlib, numpy and h5py; importable (``dump``) as well as runnable.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 import sys
 from pathlib import Path
@@ -43,6 +45,24 @@ MASKS: dict[str, str] = {
         "release identity of the installed distribution, not emit output"
     ),
 }
+
+
+# Floating-point values hash through their text at FLOAT_SIG_DIGITS
+# significant digits, with |x| < FLOAT_ZERO_FLOOR hashed as 0.  Values
+# computed through libm (the orientation vecxz: sin/cos/sqrt) differ in the
+# last ulp between platforms (#1258); 12 digits absorb that while a relative
+# change of 1e-11 or more still changes the sha1.  The dtype label still
+# pins the stored width (<f4 vs <f8).
+FLOAT_SIG_DIGITS = 12
+FLOAT_ZERO_FLOOR = 1e-15
+
+
+def _float_text(x: float) -> str:
+    if not math.isfinite(x):
+        return repr(x)
+    if abs(x) < FLOAT_ZERO_FLOOR:
+        x = 0.0  # also folds -0.0
+    return format(x, f".{FLOAT_SIG_DIGITS - 1}e")
 
 
 def dtype_label(dt: np.dtype) -> str:
@@ -96,6 +116,15 @@ def canonical_bytes(value: Any) -> bytes:
             b"s" + _frame(str(item).encode("utf-8"))
             for item in arr.ravel(order="C")
         )
+    if dt.kind == "f":
+        return head + b"f" + _frame(" ".join(
+            _float_text(float(x)) for x in arr.ravel(order="C")
+        ).encode("ascii"))
+    if dt.kind == "c":
+        return head + b"c" + _frame(" ".join(
+            f"{_float_text(float(z.real))},{_float_text(float(z.imag))}"
+            for z in arr.ravel(order="C")
+        ).encode("ascii"))
     if dt.kind in "SV" or dt.kind == "b":
         return head + _frame(np.ascontiguousarray(arr).tobytes())
     little = np.ascontiguousarray(arr, dtype=dt.newbyteorder("<"))

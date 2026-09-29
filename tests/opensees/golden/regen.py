@@ -22,10 +22,21 @@ if str(_SRC) not in sys.path:
 from tests.opensees.golden import builder  # noqa: E402
 
 
-def _write_if_changed(path: Path, text: str) -> str:
+def _write_if_changed(path: Path, text: str, *, deck: bool = False) -> str:
+    """Write ``text`` unless the committed file already holds it.
+
+    A deck that matches its golden within the float tolerance the test
+    uses (``builder.first_deck_mismatch``) is left as committed, so a
+    last-ulp libm difference on another platform never rewrites it.
+    """
     data = text.encode("utf-8")
     if path.exists():
-        if path.read_bytes() == data:
+        old = path.read_bytes()
+        if old == data:
+            return "unchanged"
+        if deck and builder.first_deck_mismatch(
+            old.decode("utf-8").replace("\r\n", "\n"), text,
+        ) is None:
             return "unchanged"
         status = "changed"
     else:
@@ -59,6 +70,7 @@ def regenerate() -> dict[str, str]:
                 "deck": _write_if_changed(
                     deck_path,
                     builder.render_deck(f, m, o, scratch / f"d{n}"),
+                    deck=True,
                 ),
                 "h5dump": _write_if_changed(
                     dump_path,

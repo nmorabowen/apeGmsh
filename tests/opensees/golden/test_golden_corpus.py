@@ -36,8 +36,25 @@ def _assert_same(cell: str, kind: str, golden: Path, got: str) -> None:
         f"run `{builder.REGEN_COMMAND}` and review the new cell"
     )
     want = _read_golden(golden)
-    if got == want:
+    if kind == "deck":
+        # Float literals within builder.FLOAT_REL_TOL (cross-platform libm
+        # ulps); every other byte exact.
+        bad = builder.first_deck_mismatch(want, got)
+    else:
+        # The dump already rounds floats before hashing: exact text.
+        bad = None if got == want else next(
+            (i for i, (a, b) in enumerate(
+                zip(want.split("\n"), got.split("\n"))) if a != b),
+            min(want.count("\n"), got.count("\n")),
+        )
+    if bad is None:
         return
+    wl, gl = want.split("\n"), got.split("\n")
+    first = (
+        f"first difference beyond tolerance at line {bad + 1}:\n"
+        f"  golden : {wl[bad] if bad < len(wl) else '<EOF>'!r}\n"
+        f"  emitted: {gl[bad] if bad < len(gl) else '<EOF>'!r}\n"
+    )
     diff = list(difflib.unified_diff(
         want.splitlines(), got.splitlines(),
         fromfile=f"golden/{cell}/{kind}", tofile=f"emitted/{cell}/{kind}",
@@ -47,11 +64,45 @@ def _assert_same(cell: str, kind: str, golden: Path, got: str) -> None:
     if len(diff) > _DIFF_LINES:
         shown.append(f"... ({len(diff) - _DIFF_LINES} more diff lines)")
     pytest.fail(
-        f"golden {kind} mismatch in cell {cell}\n" + "\n".join(shown)
+        f"golden {kind} mismatch in cell {cell}\n" + first + "\n".join(shown)
         + f"\nIf the change is deliberate, run `{builder.REGEN_COMMAND}` "
         "and list the changed cells in the PR body.",
         pytrace=False,
     )
+
+
+_CI_LINE = "geomTransf Linear 3 0.25881904510252085 0.0 0.9659258262890684"
+
+
+@pytest.mark.parametrize(
+    ("got", "matches"),
+    [
+        # #1258: the CI runner's libm, one ulp off in two components.
+        ("geomTransf Linear 3 0.2588190451025208 0.0 0.9659258262890682", True),
+        # A 1e-9 and a 1e-6 relative change are real changes.
+        ("geomTransf Linear 3 0.25881904536133989 0.0 0.9659258262890684",
+         False),
+        ("geomTransf Linear 3 0.2588193039215659 0.0 0.9659258262890684",
+         False),
+        # Integers and text stay exact: tag, token, whitespace, sign.
+        ("geomTransf Linear 4 0.25881904510252085 0.0 0.9659258262890684",
+         False),
+        ("geomTransf PDelta 3 0.25881904510252085 0.0 0.9659258262890684",
+         False),
+        (_CI_LINE + "  ", False),
+        ("geomTransf Linear 3 -0.25881904510252085 0.0 0.9659258262890684",
+         False),
+        ("geomTransf Linear 3 0.25881904510252085 0.0", False),
+    ],
+)
+def test_deck_comparison_tolerates_last_ulp_only(
+    got: str, matches: bool,
+) -> None:
+    want = f"=== model.tcl ===\n{_CI_LINE}\n"
+    bad = builder.first_deck_mismatch(want, f"=== model.tcl ===\n{got}\n")
+    assert (bad is None) is matches
+    if not matches:
+        assert bad == 1
 
 
 @pytest.mark.parametrize(
