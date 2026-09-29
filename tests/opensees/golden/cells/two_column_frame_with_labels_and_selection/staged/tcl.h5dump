@@ -1,0 +1,84 @@
+G /
+G /meta
+A /meta@apeGmsh_version dtype=str[utf-8,vlen] shape=() sha1=masked
+A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
+A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
+A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
+A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae4516167434425531423ce013620b4cba600d2
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae4516167434425531423ce013620b4cba600d2
+A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+G /meta/lineage
+A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=0f295e2020d50bed17662d5bff4df6c633e81dab
+G /opensees
+G /opensees/bcs
+D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(2,) sha1=673123ffdfaaef312df0c07ff87d0277fb59a26c
+G /opensees/element_meta
+G /opensees/element_meta/elasticBeamColumn
+A /opensees/element_meta/elasticBeamColumn@type dtype=str[utf-8,vlen] shape=() sha1=817d4ba69f61641a26875d001115a0c35568a9f8
+D /opensees/element_meta/elasticBeamColumn/args dtype=<f8 shape=(2, 7) sha1=28bfa551f7fafd0472840ae85a056285c1eb63c5
+D /opensees/element_meta/elasticBeamColumn/fem_eids dtype=<i8 shape=(2,) sha1=b326d60a1365c15bb9adb134c2f1185fd38d72de
+D /opensees/element_meta/elasticBeamColumn/ids dtype=<i8 shape=(2,) sha1=4f84e84b83247597b18038ed4a72c78bb72e612a
+D /opensees/element_meta/elasticBeamColumn/partition_ids dtype=<i8 shape=(2,) sha1=db7da9c6b3fb780ba79ec87843f00e9a8f364d90
+G /opensees/stages
+A /opensees/stages@n_stages dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
+G /opensees/stages/stage_000
+A /opensees/stages/stage_000@analyze_steps dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
+A /opensees/stages/stage_000@domain_change dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_000@name dtype=str[utf-8,vlen] shape=() sha1=b79e2138eab7fea5b1ffed1ad2efddd05107ba52
+G /opensees/stages/stage_000/analysis
+A /opensees/stages/stage_000/analysis@algorithm dtype=str[utf-8,vlen] shape=() sha1=e8e8bbbe9cd800a292cd81c62486bdce8b265ad5
+A /opensees/stages/stage_000/analysis@analysis dtype=str[utf-8,vlen] shape=() sha1=d2fb5fca3b3935658a6b9fc0736f133d956bf9e4
+A /opensees/stages/stage_000/analysis@handler dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+A /opensees/stages/stage_000/analysis@integrator dtype=str[utf-8,vlen] shape=() sha1=618f869a1d051b854f71d93761f7fcb3bdb70589
+A /opensees/stages/stage_000/analysis@integrator_args dtype=<f8 shape=(1,) sha1=d6c92d3391adb2d707290d59ecbaebabd31b7ae0
+A /opensees/stages/stage_000/analysis@numberer dtype=str[utf-8,vlen] shape=() sha1=8c49712cf61a5b30ecaff011afc7e07aef0ff2df
+A /opensees/stages/stage_000/analysis@system dtype=str[utf-8,vlen] shape=() sha1=fbcc8043cc22540e3a19964dd97400929bc70d93
+A /opensees/stages/stage_000/analysis@test dtype=str[utf-8,vlen] shape=() sha1=4aa0212742e62b902d46d98df42674fe2b34e451
+A /opensees/stages/stage_000/analysis@test_args dtype=<f8 shape=(4,) sha1=05457420b1d04e1a1430fcd7526a33574f213709
+G /opensees/stages/stage_000/patterns
+G /opensees/stages/stage_000/patterns/Plain_1
+A /opensees/stages/stage_000/patterns/Plain_1@emit_index dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_000/patterns/Plain_1@params dtype=<f8 shape=(1,) sha1=be63f7304c32ec91689f2020a4d0e29b82c74b11
+A /opensees/stages/stage_000/patterns/Plain_1@series_ref dtype=str[utf-8,vlen] shape=() sha1=c4d32d8e0f9b5cf26cf0947f5ba92aa955d753aa
+A /opensees/stages/stage_000/patterns/Plain_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_000/patterns/Plain_1@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+D /opensees/stages/stage_000/patterns/Plain_1/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[6]} shape=(2,) sha1=ca9cc46d5f7f70be62f0c5b8c936a2bdfa718565
+G /opensees/stages/stage_001
+A /opensees/stages/stage_001@analyze_steps dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_001@domain_change dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_001@name dtype=str[utf-8,vlen] shape=() sha1=3ad86ff08fb622fa88eaa1afe0964e42c691e35d
+G /opensees/stages/stage_001/analysis
+A /opensees/stages/stage_001/analysis@algorithm dtype=str[utf-8,vlen] shape=() sha1=e8e8bbbe9cd800a292cd81c62486bdce8b265ad5
+A /opensees/stages/stage_001/analysis@analysis dtype=str[utf-8,vlen] shape=() sha1=d2fb5fca3b3935658a6b9fc0736f133d956bf9e4
+A /opensees/stages/stage_001/analysis@handler dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+A /opensees/stages/stage_001/analysis@integrator dtype=str[utf-8,vlen] shape=() sha1=618f869a1d051b854f71d93761f7fcb3bdb70589
+A /opensees/stages/stage_001/analysis@integrator_args dtype=<f8 shape=(1,) sha1=d6c92d3391adb2d707290d59ecbaebabd31b7ae0
+A /opensees/stages/stage_001/analysis@numberer dtype=str[utf-8,vlen] shape=() sha1=8c49712cf61a5b30ecaff011afc7e07aef0ff2df
+A /opensees/stages/stage_001/analysis@system dtype=str[utf-8,vlen] shape=() sha1=fbcc8043cc22540e3a19964dd97400929bc70d93
+A /opensees/stages/stage_001/analysis@test dtype=str[utf-8,vlen] shape=() sha1=4aa0212742e62b902d46d98df42674fe2b34e451
+A /opensees/stages/stage_001/analysis@test_args dtype=<f8 shape=(4,) sha1=05457420b1d04e1a1430fcd7526a33574f213709
+G /opensees/stages/stage_001/patterns
+G /opensees/stages/stage_001/patterns/Plain_2
+A /opensees/stages/stage_001/patterns/Plain_2@emit_index dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/stages/stage_001/patterns/Plain_2@params dtype=<f8 shape=(1,) sha1=2f773d73d26c27bdda0ad177e2bec1ffba27f3d8
+A /opensees/stages/stage_001/patterns/Plain_2@series_ref dtype=str[utf-8,vlen] shape=() sha1=d9b161884544efabaaf62183f038d6921ebe2366
+A /opensees/stages/stage_001/patterns/Plain_2@tag dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
+A /opensees/stages/stage_001/patterns/Plain_2@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+D /opensees/stages/stage_001/patterns/Plain_2/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[6]} shape=(2,) sha1=ab0f08895efafc7aa6a97a0e0824e4745cee1a03
+G /opensees/time_series
+G /opensees/time_series/Linear_1
+A /opensees/time_series/Linear_1@params dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/time_series/Linear_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/time_series/Linear_1@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
+G /opensees/time_series/Linear_2
+A /opensees/time_series/Linear_2@params dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/time_series/Linear_2@tag dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
+A /opensees/time_series/Linear_2@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
+G /opensees/transforms
+G /opensees/transforms/Linear_1
+A /opensees/transforms/Linear_1@__deviation__ dtype=str[utf-8,vlen] shape=() sha1=2f8753b86e4f621a3d743489177919fded78aa6c
+A /opensees/transforms/Linear_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/transforms/Linear_1@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
+D /opensees/transforms/Linear_1/per_element_emitted_tag dtype=<i8 shape=(1,) sha1=03fe253f42ae9efd6305afc507b5d5fa178911e2
+D /opensees/transforms/Linear_1/per_element_vecxz dtype=<f8 shape=(1, 3) sha1=0e0fcbbb15113e9a7b7825d02da091cd207ad1f3

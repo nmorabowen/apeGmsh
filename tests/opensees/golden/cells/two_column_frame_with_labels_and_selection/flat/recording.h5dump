@@ -1,0 +1,108 @@
+G /
+G /meta
+A /meta@apeGmsh_version dtype=str[utf-8,vlen] shape=() sha1=masked
+A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
+A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
+A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
+A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae4516167434425531423ce013620b4cba600d2
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae4516167434425531423ce013620b4cba600d2
+A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+G /meta/lineage
+A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=0f052ea45daae333d0b9e1772cb357b95f0c0c60
+G /opensees
+G /opensees/analysis
+A /opensees/analysis@algorithm dtype=str[utf-8,vlen] shape=() sha1=e8e8bbbe9cd800a292cd81c62486bdce8b265ad5
+A /opensees/analysis@analysis dtype=str[utf-8,vlen] shape=() sha1=d2fb5fca3b3935658a6b9fc0736f133d956bf9e4
+A /opensees/analysis@handler dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+A /opensees/analysis@integrator dtype=str[utf-8,vlen] shape=() sha1=618f869a1d051b854f71d93761f7fcb3bdb70589
+A /opensees/analysis@integrator_args dtype=<f8 shape=(1,) sha1=d6c92d3391adb2d707290d59ecbaebabd31b7ae0
+A /opensees/analysis@numberer dtype=str[utf-8,vlen] shape=() sha1=8c49712cf61a5b30ecaff011afc7e07aef0ff2df
+A /opensees/analysis@system dtype=str[utf-8,vlen] shape=() sha1=fbcc8043cc22540e3a19964dd97400929bc70d93
+A /opensees/analysis@test dtype=str[utf-8,vlen] shape=() sha1=4aa0212742e62b902d46d98df42674fe2b34e451
+A /opensees/analysis@test_args dtype=<f8 shape=(4,) sha1=05457420b1d04e1a1430fcd7526a33574f213709
+G /opensees/bcs
+D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(2,) sha1=673123ffdfaaef312df0c07ff87d0277fb59a26c
+G /opensees/element_meta
+G /opensees/element_meta/elasticBeamColumn
+A /opensees/element_meta/elasticBeamColumn@type dtype=str[utf-8,vlen] shape=() sha1=817d4ba69f61641a26875d001115a0c35568a9f8
+D /opensees/element_meta/elasticBeamColumn/args dtype=<f8 shape=(2, 7) sha1=28bfa551f7fafd0472840ae85a056285c1eb63c5
+D /opensees/element_meta/elasticBeamColumn/fem_eids dtype=<i8 shape=(2,) sha1=b326d60a1365c15bb9adb134c2f1185fd38d72de
+D /opensees/element_meta/elasticBeamColumn/ids dtype=<i8 shape=(2,) sha1=4f84e84b83247597b18038ed4a72c78bb72e612a
+D /opensees/element_meta/elasticBeamColumn/partition_ids dtype=<i8 shape=(2,) sha1=db7da9c6b3fb780ba79ec87843f00e9a8f364d90
+G /opensees/patterns
+G /opensees/patterns/Plain_1
+A /opensees/patterns/Plain_1@params dtype=<f8 shape=(1,) sha1=be63f7304c32ec91689f2020a4d0e29b82c74b11
+A /opensees/patterns/Plain_1@series_ref dtype=str[utf-8,vlen] shape=() sha1=c4d32d8e0f9b5cf26cf0947f5ba92aa955d753aa
+A /opensees/patterns/Plain_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/patterns/Plain_1@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
+D /opensees/patterns/Plain_1/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[6]} shape=(2,) sha1=ca9cc46d5f7f70be62f0c5b8c936a2bdfa718565
+G /opensees/recorders
+G /opensees/recorders/Element_1
+A /opensees/recorders/Element_1@file dtype=str[utf-8,vlen] shape=() sha1=8d078127c02cf2e00b30f120279809115bdc00c9
+A /opensees/recorders/Element_1@kind dtype=str[utf-8,vlen] shape=() sha1=84b2aa00c18a924f7865c0bf2aa26b056cd1081d
+A /opensees/recorders/Element_1@params dtype=<f8 shape=(6,) sha1=b9b8d519706423313346905beae5b2b5f4df7a3d
+A /opensees/recorders/Element_1@params_str dtype=str[utf-8,vlen] shape=(6,) sha1=8e73199942d854c5ec95882ec5d22b12a787d14b
+A /opensees/recorders/Element_1@type dtype=str[utf-8,vlen] shape=() sha1=ca1cbcb7c363c9b5b4dc5f8fd69e4281288a0887
+G /opensees/recorders/Node_0
+A /opensees/recorders/Node_0@file dtype=str[utf-8,vlen] shape=() sha1=9024ac7454cdce4c1cf99483b0df4369e475541b
+A /opensees/recorders/Node_0@kind dtype=str[utf-8,vlen] shape=() sha1=84b2aa00c18a924f7865c0bf2aa26b056cd1081d
+A /opensees/recorders/Node_0@params dtype=<f8 shape=(9,) sha1=80a423415686e0838d31d677b2e811fcec50e6b5
+A /opensees/recorders/Node_0@params_str dtype=str[utf-8,vlen] shape=(9,) sha1=197402dd14ef16db96483d5d4b3636f7ff85a7bd
+A /opensees/recorders/Node_0@type dtype=str[utf-8,vlen] shape=() sha1=30f38bf39b2b4f0b1f12b773913ccf6682420923
+G /opensees/recorders/Node_3
+A /opensees/recorders/Node_3@category dtype=str[utf-8,vlen] shape=() sha1=2fdd4069d7f8f934cc1f40e95b3cfa83b7e3c723
+A /opensees/recorders/Node_3@components dtype=str[utf-8,vlen] shape=(1,) sha1=951df0047a3553d3337cf3b2bb16de0732d86aa3
+A /opensees/recorders/Node_3@declaration_name dtype=str[utf-8,vlen] shape=() sha1=104b140dbae1806e01b7a6242eae6223014ada84
+A /opensees/recorders/Node_3@dt dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_3@file dtype=str[utf-8,vlen] shape=() sha1=403c5c3baebd477952b9611a1b12e3012c4c30ae
+A /opensees/recorders/Node_3@file_root dtype=str[utf-8,vlen] shape=() sha1=1822d0e9fe69e5da3f9764e3582aafd2221c7c21
+A /opensees/recorders/Node_3@kind dtype=str[utf-8,vlen] shape=() sha1=7e38ba9f4cdf35e75e3765c25dbec82e71f9408c
+A /opensees/recorders/Node_3@label dtype=str[utf-8,vlen] shape=(1,) sha1=5cf21bd750326dfccfb2b80672da695cd69b7a59
+A /opensees/recorders/Node_3@n_steps dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_3@params dtype=<f8 shape=(9,) sha1=0644eec1ed3eed678ec0081eefb7a01150451c17
+A /opensees/recorders/Node_3@params_str dtype=str[utf-8,vlen] shape=(9,) sha1=3a98763fb8cd5697c04976b2bce61412df2f4fb4
+A /opensees/recorders/Node_3@pg dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_3@raw dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_3@record_name dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_3@selection dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_3@type dtype=str[utf-8,vlen] shape=() sha1=30f38bf39b2b4f0b1f12b773913ccf6682420923
+G /opensees/recorders/Node_4
+A /opensees/recorders/Node_4@category dtype=str[utf-8,vlen] shape=() sha1=2fdd4069d7f8f934cc1f40e95b3cfa83b7e3c723
+A /opensees/recorders/Node_4@components dtype=str[utf-8,vlen] shape=(1,) sha1=951df0047a3553d3337cf3b2bb16de0732d86aa3
+A /opensees/recorders/Node_4@declaration_name dtype=str[utf-8,vlen] shape=() sha1=3722fd963940b92d6fe8529d5771d630073056df
+A /opensees/recorders/Node_4@dt dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_4@file dtype=str[utf-8,vlen] shape=() sha1=5104ad403a93a86c67af93bbc6990331157ab7ed
+A /opensees/recorders/Node_4@file_root dtype=str[utf-8,vlen] shape=() sha1=1822d0e9fe69e5da3f9764e3582aafd2221c7c21
+A /opensees/recorders/Node_4@kind dtype=str[utf-8,vlen] shape=() sha1=7e38ba9f4cdf35e75e3765c25dbec82e71f9408c
+A /opensees/recorders/Node_4@label dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_4@n_steps dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_4@params dtype=<f8 shape=(9,) sha1=2c2f94e39a8d9abba3a1408a4d1ee548918ffae4
+A /opensees/recorders/Node_4@params_str dtype=str[utf-8,vlen] shape=(9,) sha1=8cc69a280640de8715e6a06242dfe95f7b46c53f
+A /opensees/recorders/Node_4@pg dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_4@raw dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/recorders/Node_4@record_name dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
+A /opensees/recorders/Node_4@selection dtype=str[utf-8,vlen] shape=(1,) sha1=456a3dc31e458292a3a6c95bfbce1babb2f21535
+A /opensees/recorders/Node_4@type dtype=str[utf-8,vlen] shape=() sha1=30f38bf39b2b4f0b1f12b773913ccf6682420923
+G /opensees/recorders/mpco_2
+A /opensees/recorders/mpco_2@kind dtype=str[utf-8,vlen] shape=() sha1=84b2aa00c18a924f7865c0bf2aa26b056cd1081d
+A /opensees/recorders/mpco_2@params dtype=<f8 shape=(7,) sha1=f7f345d7c73be494de03c3224991e94a48345a9c
+A /opensees/recorders/mpco_2@params_str dtype=str[utf-8,vlen] shape=(7,) sha1=1e71c1a027af678951e2c31cd81253fe79edeb24
+A /opensees/recorders/mpco_2@type dtype=str[utf-8,vlen] shape=() sha1=7db856a9e8e6cfe6aff482ccb155ca26c39a44bb
+G /opensees/regions
+G /opensees/regions/region_000
+A /opensees/regions/region_000@params dtype=<f8 shape=(6,) sha1=64576858aa19289c3f0b6f589261b91d7565eacb
+A /opensees/regions/region_000@params_str dtype=str[utf-8,vlen] shape=(6,) sha1=2bcbf0c55fc11c48f450d1d17b23b0689fc0003a
+A /opensees/regions/region_000@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+G /opensees/time_series
+G /opensees/time_series/Linear_1
+A /opensees/time_series/Linear_1@params dtype=<f8 shape=(0,) sha1=9e8b13698c130b8663e48c4b0fb8558edc93b88c
+A /opensees/time_series/Linear_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/time_series/Linear_1@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
+G /opensees/transforms
+G /opensees/transforms/Linear_1
+A /opensees/transforms/Linear_1@__deviation__ dtype=str[utf-8,vlen] shape=() sha1=2f8753b86e4f621a3d743489177919fded78aa6c
+A /opensees/transforms/Linear_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
+A /opensees/transforms/Linear_1@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
+D /opensees/transforms/Linear_1/per_element_emitted_tag dtype=<i8 shape=(1,) sha1=03fe253f42ae9efd6305afc507b5d5fa178911e2
+D /opensees/transforms/Linear_1/per_element_vecxz dtype=<f8 shape=(1, 3) sha1=0e0fcbbb15113e9a7b7825d02da091cd207ad1f3

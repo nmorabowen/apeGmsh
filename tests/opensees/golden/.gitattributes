@@ -1,0 +1,4 @@
+# Golden emit corpus: byte-exact oracles; no EOL translation on checkout.
+*.golden -text
+*.h5dump -text
+MANIFEST.json -text

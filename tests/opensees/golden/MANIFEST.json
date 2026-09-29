@@ -1,0 +1,513 @@
+{
+  "fixtures": [
+    "two_node_beam",
+    "two_column_frame",
+    "two_column_frame_with_labels_and_selection",
+    "two_module_frame",
+    "two_column_frame_partitioned",
+    "axial_chain_partitioned",
+    "arch_with_orientation_fan_out"
+  ],
+  "modes": [
+    "flat",
+    "partitioned",
+    "staged",
+    "staged_partitioned",
+    "per_rank"
+  ],
+  "outputs": [
+    "tcl",
+    "py",
+    "recording"
+  ],
+  "regen": "python -m tests.opensees.golden.regen",
+  "cells": {
+    "two_node_beam/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/flat/tcl.golden",
+      "h5dump": "cells/two_node_beam/flat/tcl.h5dump"
+    },
+    "two_node_beam/flat/py": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/flat/py.golden",
+      "h5dump": "cells/two_node_beam/flat/py.h5dump"
+    },
+    "two_node_beam/flat/recording": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/flat/recording.golden",
+      "h5dump": "cells/two_node_beam/flat/recording.h5dump"
+    },
+    "two_node_beam/partitioned/tcl": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/partitioned/py": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/partitioned/recording": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/staged/tcl.golden",
+      "h5dump": "cells/two_node_beam/staged/tcl.h5dump"
+    },
+    "two_node_beam/staged/py": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/staged/py.golden",
+      "h5dump": "cells/two_node_beam/staged/py.h5dump"
+    },
+    "two_node_beam/staged/recording": {
+      "status": "golden",
+      "deck": "cells/two_node_beam/staged/recording.golden",
+      "h5dump": "cells/two_node_beam/staged/recording.h5dump"
+    },
+    "two_node_beam/staged_partitioned/tcl": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/staged_partitioned/py": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/staged_partitioned/recording": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/per_rank/tcl": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/per_rank/py": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_node_beam/per_rank/recording": {
+      "status": "n/a: one element: any 2-rank split leaves a rank that owns no element, which no mesh partitioner produces"
+    },
+    "two_column_frame/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/flat/tcl.golden",
+      "h5dump": "cells/two_column_frame/flat/tcl.h5dump"
+    },
+    "two_column_frame/flat/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/flat/py.golden",
+      "h5dump": "cells/two_column_frame/flat/py.h5dump"
+    },
+    "two_column_frame/flat/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/flat/recording.golden",
+      "h5dump": "cells/two_column_frame/flat/recording.h5dump"
+    },
+    "two_column_frame/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame/partitioned/tcl.h5dump"
+    },
+    "two_column_frame/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/partitioned/py.golden",
+      "h5dump": "cells/two_column_frame/partitioned/py.h5dump"
+    },
+    "two_column_frame/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame/partitioned/recording.h5dump"
+    },
+    "two_column_frame/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged/tcl.golden",
+      "h5dump": "cells/two_column_frame/staged/tcl.h5dump"
+    },
+    "two_column_frame/staged/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged/py.golden",
+      "h5dump": "cells/two_column_frame/staged/py.h5dump"
+    },
+    "two_column_frame/staged/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged/recording.golden",
+      "h5dump": "cells/two_column_frame/staged/recording.h5dump"
+    },
+    "two_column_frame/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged_partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame/staged_partitioned/tcl.h5dump"
+    },
+    "two_column_frame/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged_partitioned/py.golden",
+      "h5dump": "cells/two_column_frame/staged_partitioned/py.h5dump"
+    },
+    "two_column_frame/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/staged_partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame/staged_partitioned/recording.h5dump"
+    },
+    "two_column_frame/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/per_rank/tcl.golden",
+      "h5dump": "cells/two_column_frame/per_rank/tcl.h5dump"
+    },
+    "two_column_frame/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "two_column_frame/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame/per_rank/recording.golden",
+      "h5dump": "cells/two_column_frame/per_rank/recording.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/flat/tcl.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/flat/tcl.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/flat/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/flat/py.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/flat/py.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/flat/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/flat/recording.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/flat/recording.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/partitioned/tcl.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/partitioned/py.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/partitioned/py.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/partitioned/recording.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged/tcl.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged/tcl.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged/py.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged/py.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged/recording.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged/recording.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/tcl.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/py.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/py.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/staged_partitioned/recording.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/per_rank/tcl.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/per_rank/tcl.h5dump"
+    },
+    "two_column_frame_with_labels_and_selection/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "two_column_frame_with_labels_and_selection/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_with_labels_and_selection/per_rank/recording.golden",
+      "h5dump": "cells/two_column_frame_with_labels_and_selection/per_rank/recording.h5dump"
+    },
+    "two_module_frame/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/flat/tcl.golden",
+      "h5dump": "cells/two_module_frame/flat/tcl.h5dump"
+    },
+    "two_module_frame/flat/py": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/flat/py.golden",
+      "h5dump": "cells/two_module_frame/flat/py.h5dump"
+    },
+    "two_module_frame/flat/recording": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/flat/recording.golden",
+      "h5dump": "cells/two_module_frame/flat/recording.h5dump"
+    },
+    "two_module_frame/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/partitioned/tcl.golden",
+      "h5dump": "cells/two_module_frame/partitioned/tcl.h5dump"
+    },
+    "two_module_frame/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/partitioned/py.golden",
+      "h5dump": "cells/two_module_frame/partitioned/py.h5dump"
+    },
+    "two_module_frame/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/partitioned/recording.golden",
+      "h5dump": "cells/two_module_frame/partitioned/recording.h5dump"
+    },
+    "two_module_frame/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged/tcl.golden",
+      "h5dump": "cells/two_module_frame/staged/tcl.h5dump"
+    },
+    "two_module_frame/staged/py": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged/py.golden",
+      "h5dump": "cells/two_module_frame/staged/py.h5dump"
+    },
+    "two_module_frame/staged/recording": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged/recording.golden",
+      "h5dump": "cells/two_module_frame/staged/recording.h5dump"
+    },
+    "two_module_frame/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged_partitioned/tcl.golden",
+      "h5dump": "cells/two_module_frame/staged_partitioned/tcl.h5dump"
+    },
+    "two_module_frame/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged_partitioned/py.golden",
+      "h5dump": "cells/two_module_frame/staged_partitioned/py.h5dump"
+    },
+    "two_module_frame/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/staged_partitioned/recording.golden",
+      "h5dump": "cells/two_module_frame/staged_partitioned/recording.h5dump"
+    },
+    "two_module_frame/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/per_rank/tcl.golden",
+      "h5dump": "cells/two_module_frame/per_rank/tcl.h5dump"
+    },
+    "two_module_frame/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "two_module_frame/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/two_module_frame/per_rank/recording.golden",
+      "h5dump": "cells/two_module_frame/per_rank/recording.h5dump"
+    },
+    "two_column_frame_partitioned/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/flat/tcl.golden",
+      "h5dump": "cells/two_column_frame_partitioned/flat/tcl.h5dump"
+    },
+    "two_column_frame_partitioned/flat/py": {
+      "status": "n/a: apeSees.py has no flat= switch, so a partition-carrying fixture always takes the per-rank fan-out on the py route; the py partitioned cells pin that deck"
+    },
+    "two_column_frame_partitioned/flat/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/flat/recording.golden",
+      "h5dump": "cells/two_column_frame_partitioned/flat/recording.h5dump"
+    },
+    "two_column_frame_partitioned/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame_partitioned/partitioned/tcl.h5dump"
+    },
+    "two_column_frame_partitioned/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/partitioned/py.golden",
+      "h5dump": "cells/two_column_frame_partitioned/partitioned/py.h5dump"
+    },
+    "two_column_frame_partitioned/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame_partitioned/partitioned/recording.h5dump"
+    },
+    "two_column_frame_partitioned/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/staged/tcl.golden",
+      "h5dump": "cells/two_column_frame_partitioned/staged/tcl.h5dump"
+    },
+    "two_column_frame_partitioned/staged/py": {
+      "status": "n/a: apeSees.py has no flat= switch, so a partition-carrying fixture always takes the per-rank fan-out on the py route; the py partitioned cells pin that deck"
+    },
+    "two_column_frame_partitioned/staged/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/staged/recording.golden",
+      "h5dump": "cells/two_column_frame_partitioned/staged/recording.h5dump"
+    },
+    "two_column_frame_partitioned/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/staged_partitioned/tcl.golden",
+      "h5dump": "cells/two_column_frame_partitioned/staged_partitioned/tcl.h5dump"
+    },
+    "two_column_frame_partitioned/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/staged_partitioned/py.golden",
+      "h5dump": "cells/two_column_frame_partitioned/staged_partitioned/py.h5dump"
+    },
+    "two_column_frame_partitioned/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/staged_partitioned/recording.golden",
+      "h5dump": "cells/two_column_frame_partitioned/staged_partitioned/recording.h5dump"
+    },
+    "two_column_frame_partitioned/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/per_rank/tcl.golden",
+      "h5dump": "cells/two_column_frame_partitioned/per_rank/tcl.h5dump"
+    },
+    "two_column_frame_partitioned/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "two_column_frame_partitioned/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/two_column_frame_partitioned/per_rank/recording.golden",
+      "h5dump": "cells/two_column_frame_partitioned/per_rank/recording.h5dump"
+    },
+    "axial_chain_partitioned/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/flat/tcl.golden",
+      "h5dump": "cells/axial_chain_partitioned/flat/tcl.h5dump"
+    },
+    "axial_chain_partitioned/flat/py": {
+      "status": "n/a: apeSees.py has no flat= switch, so a partition-carrying fixture always takes the per-rank fan-out on the py route; the py partitioned cells pin that deck"
+    },
+    "axial_chain_partitioned/flat/recording": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/flat/recording.golden",
+      "h5dump": "cells/axial_chain_partitioned/flat/recording.h5dump"
+    },
+    "axial_chain_partitioned/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/partitioned/tcl.golden",
+      "h5dump": "cells/axial_chain_partitioned/partitioned/tcl.h5dump"
+    },
+    "axial_chain_partitioned/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/partitioned/py.golden",
+      "h5dump": "cells/axial_chain_partitioned/partitioned/py.h5dump"
+    },
+    "axial_chain_partitioned/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/partitioned/recording.golden",
+      "h5dump": "cells/axial_chain_partitioned/partitioned/recording.h5dump"
+    },
+    "axial_chain_partitioned/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/staged/tcl.golden",
+      "h5dump": "cells/axial_chain_partitioned/staged/tcl.h5dump"
+    },
+    "axial_chain_partitioned/staged/py": {
+      "status": "n/a: apeSees.py has no flat= switch, so a partition-carrying fixture always takes the per-rank fan-out on the py route; the py partitioned cells pin that deck"
+    },
+    "axial_chain_partitioned/staged/recording": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/staged/recording.golden",
+      "h5dump": "cells/axial_chain_partitioned/staged/recording.h5dump"
+    },
+    "axial_chain_partitioned/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/staged_partitioned/tcl.golden",
+      "h5dump": "cells/axial_chain_partitioned/staged_partitioned/tcl.h5dump"
+    },
+    "axial_chain_partitioned/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/staged_partitioned/py.golden",
+      "h5dump": "cells/axial_chain_partitioned/staged_partitioned/py.h5dump"
+    },
+    "axial_chain_partitioned/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/staged_partitioned/recording.golden",
+      "h5dump": "cells/axial_chain_partitioned/staged_partitioned/recording.h5dump"
+    },
+    "axial_chain_partitioned/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/per_rank/tcl.golden",
+      "h5dump": "cells/axial_chain_partitioned/per_rank/tcl.h5dump"
+    },
+    "axial_chain_partitioned/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "axial_chain_partitioned/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/axial_chain_partitioned/per_rank/recording.golden",
+      "h5dump": "cells/axial_chain_partitioned/per_rank/recording.h5dump"
+    },
+    "arch_with_orientation_fan_out/flat/tcl": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/flat/tcl.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/flat/tcl.h5dump"
+    },
+    "arch_with_orientation_fan_out/flat/py": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/flat/py.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/flat/py.h5dump"
+    },
+    "arch_with_orientation_fan_out/flat/recording": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/flat/recording.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/flat/recording.h5dump"
+    },
+    "arch_with_orientation_fan_out/partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/partitioned/tcl.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/partitioned/tcl.h5dump"
+    },
+    "arch_with_orientation_fan_out/partitioned/py": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/partitioned/py.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/partitioned/py.h5dump"
+    },
+    "arch_with_orientation_fan_out/partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/partitioned/recording.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/partitioned/recording.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged/tcl": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged/tcl.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged/tcl.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged/py": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged/py.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged/py.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged/recording": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged/recording.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged/recording.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged_partitioned/tcl": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged_partitioned/tcl.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged_partitioned/tcl.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged_partitioned/py": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged_partitioned/py.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged_partitioned/py.h5dump"
+    },
+    "arch_with_orientation_fan_out/staged_partitioned/recording": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/staged_partitioned/recording.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/staged_partitioned/recording.h5dump"
+    },
+    "arch_with_orientation_fan_out/per_rank/tcl": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/per_rank/tcl.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/per_rank/tcl.h5dump"
+    },
+    "arch_with_orientation_fan_out/per_rank/py": {
+      "status": "n/a: apeSees.py has no per_rank layout; the per-rank fragment split (ADR 0061) is Tcl-only"
+    },
+    "arch_with_orientation_fan_out/per_rank/recording": {
+      "status": "golden",
+      "deck": "cells/arch_with_orientation_fan_out/per_rank/recording.golden",
+      "h5dump": "cells/arch_with_orientation_fan_out/per_rank/recording.h5dump"
+    }
+  }
+}
