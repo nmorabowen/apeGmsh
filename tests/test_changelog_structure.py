@@ -21,7 +21,12 @@ red loudly instead of shipping a corrupted changelog. See
 """
 from __future__ import annotations
 
+import importlib.util
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -175,3 +180,125 @@ def test_union_driver_registered() -> None:
         "Without it every concurrent CHANGELOG edit conflicts again "
         "(the pre-2026-06-12 treadmill)."
     )
+
+
+# --- changelog fragments (scripts/changelog.py) -----------------------------
+
+_spec = importlib.util.spec_from_file_location(
+    "changelog_tool", _REPO_ROOT / "scripts" / "changelog.py",
+)
+changelog_tool = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(changelog_tool)  # type: ignore[union-attr]
+
+_ANCHOR_REGION = """\
+# Changelog
+
+## Unreleased — frozen ledger line
+
+<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT (newest first).
+     Insert ONE section per PR. -->
+
+### CHANGED — an older section
+
+Its body.
+"""
+
+
+def _frag(title: str) -> str:
+    return f"### ADDED — {title}\n\nBody of {title}.\n"
+
+
+def _make_root(tmp_path: Path, changelog: str = _ANCHOR_REGION) -> Path:
+    (tmp_path / "changelog.d").mkdir()
+    (tmp_path / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
+    return tmp_path
+
+
+def test_repo_changelog_check_passes() -> None:
+    """The real repo: every fragment and CHANGELOG.md are well formed."""
+    assert changelog_tool.check(_REPO_ROOT) == []
+
+
+def test_check_flags_bad_fragment_names_and_content(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    d = root / "changelog.d"
+    (d / "README.md").write_text("not a fragment\n", encoding="utf-8")
+    (d / "Bad_Name.md").write_text(_frag("x"), encoding="utf-8")
+    (d / "no-header.md").write_text("just text\n", encoding="utf-8")
+    (d / "two-headers.md").write_text(
+        _frag("a") + "\n### ADDED — b\n\nmore\n", encoding="utf-8")
+    (d / "h2.md").write_text(
+        "### ADDED — a\n\nx\n\n## Unreleased\n", encoding="utf-8")
+    (d / "no-newline.md").write_text("### ADDED — a\n\nx", encoding="utf-8")
+    problems = "\n".join(changelog_tool.check(root))
+    for name in ("Bad_Name", "no-header", "two-headers", "h2", "no-newline"):
+        assert name in problems, problems
+    assert "README" not in problems
+    assert changelog_tool.main(["--check", "--root", str(root)]) == 1
+
+
+def test_check_flags_glued_header_in_changelog(tmp_path: Path) -> None:
+    """#1219: a '### ' header whose previous line is not blank."""
+    glued = _ANCHOR_REGION.replace(
+        "Its body.\n", "Its body.\n### ADDED — glued on\n\nx\n")
+    root = _make_root(tmp_path, glued)
+    problems = changelog_tool.check(root)
+    assert any("no blank" in p for p in problems), problems
+    assert changelog_tool.main(["--check", "--root", str(root)]) == 1
+
+
+def test_assemble_is_ordered_and_idempotent(tmp_path: Path) -> None:
+    root = _make_root(tmp_path)
+    (root / "changelog.d" / "b-second.md").write_text(_frag("B"), encoding="utf-8")
+    (root / "changelog.d" / "a-first.md").write_text(_frag("A"), encoding="utf-8")
+    assert changelog_tool.assemble(root) == ["a-first.md", "b-second.md"]
+    text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert (
+        "-->\n\n### ADDED — A\n\nBody of A.\n\n### ADDED — B\n\nBody of B."
+        "\n\n### CHANGED — an older"
+    ) in text
+    assert changelog_tool.check(root) == []
+    assert changelog_tool.assemble(root) == []
+    assert (root / "CHANGELOG.md").read_text(encoding="utf-8") == text
+
+
+def test_three_concurrent_fragment_branches_merge_clean(tmp_path: Path) -> None:
+    """The link's done-when: three PRs, three fragments, no conflict,
+    blank-separated sections after assemble, second assemble a no-op."""
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    root = _make_root(tmp_path)
+    (root / "changelog.d" / "README.md").write_text("readme\n", encoding="utf-8")
+    shutil.copy(_REPO_ROOT / ".gitattributes", root / ".gitattributes")
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=root, check=True, capture_output=True,
+        )
+
+    git("init", "-q", "-b", "main")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    for n in ("one", "two", "three"):
+        git("checkout", "-q", "-b", f"pr-{n}", "main")
+        (root / "changelog.d" / f"2026-09-29-{n}.md").write_text(
+            _frag(n), encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", n)
+    git("checkout", "-q", "main")
+    for n in ("one", "two", "three"):
+        git("merge", "-q", "--no-edit", f"pr-{n}")  # check=True: no conflict
+
+    assert changelog_tool.check(root) == []
+    assert len(changelog_tool.fragment_paths(root)) == 3
+    changelog_tool.assemble(root)
+    text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert text.count("\n### ") == 4  # 3 new + the older section
+    assert "\n\n\n" not in text
+    for a, b in (("one", "three"), ("three", "two")):  # sorted filenames
+        assert text.index(f"— {a}\n") < text.index(f"— {b}\n")
+    assert changelog_tool.check(root) == []
+    assert changelog_tool.assemble(root) == []
+    assert (root / "CHANGELOG.md").read_text(encoding="utf-8") == text
