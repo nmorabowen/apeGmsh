@@ -11,8 +11,8 @@ Read in this order on first pass:
 
 1. **[charter.md](charter.md)** — mission, principles, non-goals.
    The 14 principles are the rules we judge new code against.
-2. **[layout.md](layout.md)** — folder structure, naming conventions,
-   where each kind of class lives.
+2. **`python scripts/nav.py map|pkg`** — folder structure and where each
+   kind of class lives (live from the code).
 3. **[api-design.md](api-design.md)** — the user-facing surface:
    namespace API, static typing, typed instances with capabilities,
    Node aggregator pattern.
