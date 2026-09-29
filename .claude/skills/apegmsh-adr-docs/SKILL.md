@@ -35,6 +35,7 @@ the quoted heading. `decisions/` is
       paragraph).
 - [ ] Status and shipped notes are claims about code. Verify them against
       the source before writing "shipped" (AGENTS.md, "What this repo is").
+- [ ] An ADR over 40 KB gets a decision summary (60 lines or fewer) in `decisions/summaries/` under the same file name, and an amendment to such an ADR updates its summary in the same PR.
 
 ## CHANGELOG
 

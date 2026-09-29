@@ -1,0 +1,3 @@
+### ADDED — decision summaries for the ten ADRs over 40 KB (program slice N2.2)
+
+The ten ADRs over 40 KB (0038, 0041, 0077, 0078, 0092, 0093, 0094, 0095, 0098, 0100) each gain a decision summary of 60 lines or fewer in `src/apeGmsh/opensees/architecture/decisions/summaries/`, under the same file name. Each carries the ADR's Status line, the Decision condensed with its named invariants, APIs and schema names, the dated amendments, and a link back to the full text. The ADRs themselves are unchanged. The decisions README preamble points at the folder, and the `apegmsh-adr-docs` guide now asks that an amendment to such an ADR update its summary in the same PR.
