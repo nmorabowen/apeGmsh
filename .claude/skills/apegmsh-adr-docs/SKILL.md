@@ -21,8 +21,10 @@ the quoted heading. `decisions/` is
 
 - [ ] Take the next number from `decisions/` **on `origin/main`**
       (`git ls-tree --name-only origin/main <decisions>/`), not your
-      worktree's copy. Add the index row to `decisions/README.md` in the
-      same PR. An unindexed ADR makes its number look free: a second 0065
+      worktree's copy. The index is **generated** from each ADR's H1 and
+      Status line: never hand-edit `decisions/README.md`; run
+      `python scripts/adr_index.py` in the same PR (`--check` fails a stale
+      one). An unindexed ADR makes its number look free: a second 0065
       landed (#676 → #677), and 0072 and 0074 had to be renumbered (#741,
       #817). The `adr-number` quirk rule fails both mistakes. Re-check
       `origin/main` right before merging: `main` does not require an
@@ -36,16 +38,18 @@ the quoted heading. `decisions/` is
 
 ## CHANGELOG
 
-- [ ] Insert **one contiguous section** directly below the anchor
-      comment, which is the first thing under `## Unreleased`. Never put
-      it between the header and the anchor, and never edit existing lines
-      (`internal_docs/changelog_workflow.md` "How to add an entry").
-- [ ] Keep a blank line before and after the section. The union merge
-      driver never conflicts, it mangles: headers separated from their
-      bodies and blank lines dropped (repaired inside #773 and #783, and
-      three times on 2026-09-25). Read your section back after merging
-      `main`. `tests/test_changelog_structure.py` fails on a `###` heading
-      with no blank line above it, but not on a header split from its body.
+- [ ] Add **one fragment file** `changelog.d/<slug>.md` holding one
+      `### ` section (lowercase kebab-case slug, date-prefixed), and do not
+      edit `CHANGELOG.md`
+      (`internal_docs/changelog_workflow.md` "How to add an entry"). Run
+      `python scripts/changelog.py --check` before pushing.
+- [ ] Why: the union merge driver on `CHANGELOG.md` never conflicts, it
+      mangles: blank lines dropped between sections (repaired inside #773
+      and #783, three times on 2026-09-25, and in #1186, #1191 and #1217).
+      Fragments are separate files, so nothing merges. A maintainer folds
+      them in with `--assemble` at release time; never run it in a PR.
+      Old branches that still carry a direct section at the anchor stay
+      valid.
 
 ## The docs site
 
