@@ -203,9 +203,8 @@ def test_cli_add_box(capsys) -> None:
     assert out.count("\n") <= _MAX_LINES
 
 
-def test_index_drift_ignores_generated_stamp() -> None:
+def test_index_drift_detects_signature_change() -> None:
     committed = {
-        "generated": "old",
         "entries": {
             "g.model.geometry.add_box": {
                 "signature": "add_box(x)",
@@ -214,7 +213,6 @@ def test_index_drift_ignores_generated_stamp() -> None:
         },
     }
     live = {
-        "generated": "new",
         "entries": {
             "g.model.geometry.add_box": {
                 "signature": "add_box(x)",
@@ -233,4 +231,18 @@ def test_committed_index_matches_live_harvest() -> None:
     drift = committed_index_drift()
     assert not drift, "committed _api_index.json drifted from live harvest:\n" + "\n".join(
         drift
+    )
+
+
+def test_index_build_is_byte_deterministic() -> None:
+    from apeGmsh.studio._index_build import build_index, serialize_index
+
+    first = serialize_index(build_index())
+    second = serialize_index(build_index())
+    assert first == second
+    assert '"generated"' not in first
+    assert first.endswith("\n")
+    assert first == INDEX_PATH.read_bytes().decode("utf-8"), (
+        "committed _api_index.json is not what the builder emits; "
+        "run `python -m apeGmsh.studio.lookup --build`"
     )

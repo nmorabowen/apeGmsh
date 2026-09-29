@@ -14,7 +14,6 @@ import ast
 import inspect
 import json
 import textwrap
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,23 +61,23 @@ def build_index() -> dict[str, Any]:
     _walk_sidecars(entries)
     return {
         "schema": INDEX_SCHEMA,
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "entries": dict(sorted(entries.items())),
     }
 
 
+def serialize_index(payload: dict[str, Any]) -> str:
+    """Byte-stable JSON: sorted keys, indent 2, trailing newline."""
+    return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
 def write_index(path: Path | None = None) -> Path:
     dest = path if path is not None else INDEX_PATH
-    payload = build_index()
-    dest.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    dest.write_text(serialize_index(build_index()), encoding="utf-8", newline="\n")
     return dest
 
 
 def index_drift(committed: dict[str, Any], live: dict[str, Any]) -> list[str]:
-    """Signature/skill/key drift. Ignores the ``generated`` timestamp."""
+    """Signature/skill/key drift between the committed and live index."""
     c = committed.get("entries") or {}
     l = live.get("entries") or {}
     if not isinstance(c, dict) or not isinstance(l, dict):

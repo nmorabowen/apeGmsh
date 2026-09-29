@@ -14,6 +14,11 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — deterministic `studio/_api_index.json` (program slice A1.2, #1214)
+
+`_index_build.build_index` no longer stamps `generated`, and `write_index` serialises through the new `serialize_index` (sorted keys, indent 2, trailing newline). Regenerating the index is now byte-identical, so it stops producing merge-conflict diffs. `tests/studio/test_lookup.py::test_index_build_is_byte_deterministic` builds twice and compares against the committed file. No reader used `generated`.
+
+
 ### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 
 `GeomTransfViewer` computed the local frame in its page's JavaScript as
