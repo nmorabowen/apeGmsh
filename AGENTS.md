@@ -72,9 +72,9 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
 - **Land with `python scripts/land_pr.py <N>`** (`--dry-run` runs the checks and stops). It is
   this checklist as code: it refuses on the first failed check, squash-merges (never `--auto`,
   never `--delete-branch`), then proves the squash commit reached `main`. Its checks, in order:
-  - **The base is `main`**, `--base main` on every PR, sequenced ones included: hand-stacking
-    orphaned three PRs (#295–#297 → #298) and lost #858 for two months (→ #1169). `lock-tests`
-    flags a wrong base but cannot block it; after retargeting, push a commit (a re-run reuses the old merge ref).
+  - **The base is `main`**, `--base main` on every PR, sequenced ones included: hand-stacking with
+    `--base <prev-branch>` orphaned three PRs (#295–#297 → #298) and lost #858 for two months (→ #1169).
+    `lock-tests` flags a wrong base but cannot block it; after retargeting, push a commit (a re-run reuses the old merge ref).
   - **Open, not a draft, not already merged**: a push after the merge lands on an orphaned
     branch (#335 → #336), so check `gh pr view <N> --json state` before pushing to a PR branch.
   - **Local `HEAD` equals `headRefOid`, and the tree is clean**; wait until they match before
@@ -82,10 +82,11 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
   - **No changed file is inside an open `freeze:<file>` label** (a split window, announced on
     the board with its expiry).
   - **Not conflicting, and the five required checks** (`lock-tests`, `emit-cost-gate`,
-    `static-gates`, `suite`, `live-stock`) **are green on the head SHA.** "Zero checks visible"
-    means conflicting or a stalled Actions, not green, and pending is a refusal. Never `--auto`:
-    it ignores the non-required lanes, and #757 merged under it before any check was required.
-    Run the suite locally when CI has not visibly run (#630 merged during an Actions stall).
+    `static-gates`, `suite`, `live-stock`) **are green on the head SHA.** `main` takes squash
+    merges only and does not require an up-to-date branch. "Zero checks visible" means conflicting
+    or a stalled Actions, not green; pending is a refusal. Never `--auto`: it ignores the non-required
+    lanes, and #757 merged under it before any check was required. Run the suite locally when CI
+    has not visibly run (#630 merged during an Actions stall).
   - **After the merge, `compare/main...<merge-sha>` reads `behind` or `identical`**; `diverged`
     means it did not reach `main` (#858), and `git merge-base --is-ancestor` cannot tell once the
     head branch is deleted. A nightly Action (`orphans.yml`, `scripts/find_orphans.py`) repeats
