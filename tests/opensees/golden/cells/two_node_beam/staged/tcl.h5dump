@@ -9,7 +9,7 @@ A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae451616743
 A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=1ae4516167434425531423ce013620b4cba600d2
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
-A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=8c30ebc4674df3e7c1ff1ae264253285f1349f09
+A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
 G /opensees
 G /opensees/bcs
 D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(1,) sha1=0876f4ecd3cffaf655fb959a6e414dbdd5d6d97d

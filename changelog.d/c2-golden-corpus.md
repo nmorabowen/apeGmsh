@@ -11,7 +11,7 @@ with dtype, shape and a byte-order-independent sha1, which hashes floats
 at 12 significant digits. Deck floats are compared within a 1e-12 relative
 tolerance, which absorbs last-ulp libm differences between platforms.
 Integers and text stay exact. Only the wall-clock
-`/meta@created_iso` and the release-bound `/meta@apeGmsh_version` are
-masked. `test_golden_corpus.py` runs in `suite`. It never rewrites a golden,
+`/meta@created_iso`, the release-bound `/meta@apeGmsh_version` and the
+derived digest `/meta/lineage@model_hash` are masked. `test_golden_corpus.py` runs in `suite`. It never rewrites a golden,
 and it fails if any workflow calls the regen entry point,
 `python -m tests.opensees.golden.regen`.

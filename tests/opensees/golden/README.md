@@ -102,18 +102,24 @@ self-contained.
   of that directory in the emitted text would be replaced by `<OUT>`; no
   deck embeds it today. Recorder files are relative (`out/...`), and the
   archive's `model_name` is always `model`.
-- **Masked in the H5 dump.** Two attributes are masked, each only at this
-  exact path:
+- **Masked in the H5 dump.** Three attributes are masked, each only at
+  this exact path:
   - `/meta@created_iso` is the wall-clock write time.
   - `/meta@apeGmsh_version` is the release identity of the installed
     distribution, not an emit output; masking it keeps a version bump
     from rewriting every golden.
+  - `/meta/lineage@model_hash` is a derived digest: blake2b over the raw
+    float bytes under `/opensees` (`compute_model_hash` in
+    `opensees/_internal/lineage.py`). A last-ulp libm difference in the
+    vecxz therefore changes it on another platform (#1258 review). Every
+    dataset it summarises is already pinned line by line, so masking it
+    loses no coverage.
 
   An attribute with the same name anywhere else is hashed. A new
   wall-clock field is a determinism bug, and the dump must expose it.
-- **Not masked.** `schema_version`, `opensees_schema_version`,
-  `snapshot_id` (empty for a stub), and `/meta/lineage@model_hash`. These
-  are emit outputs, so a change to any of them is a real change.
+- **Not masked.** `schema_version`, `opensees_schema_version` and
+  `snapshot_id` (empty for a stub). These are emit outputs, so a change to
+  any of them is a real change.
 - **Floats.** Values computed through libm differ in the last ulp between
   platforms. #1258 hit this on the `Spherical` orientation vecxz
   (sin/cos): the golden has `geomTransf Linear 3 0.25881904510252085 0.0

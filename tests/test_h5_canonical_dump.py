@@ -117,6 +117,29 @@ def test_mask_is_exact_path_only(dumper: ModuleType, tmp_path: Path) -> None:
     assert not other.endswith("sha1=masked")
 
 
+def test_model_hash_mask_is_that_path_only(
+    dumper: ModuleType, tmp_path: Path,
+) -> None:
+    """``/meta/lineage@model_hash`` is masked; the same name elsewhere is not.
+
+    The digest summarises raw float bytes under ``/opensees`` (a last-ulp
+    vecxz changes it, #1258); the datasets it covers are pinned line by line.
+    """
+    a, b = tmp_path / "a.h5", tmp_path / "b.h5"
+    for path, digest in ((a, "aaaa"), (b, "bbbb")):
+        with h5py.File(path, "w") as f:
+            f.create_group("meta/lineage").attrs["model_hash"] = digest
+            f["meta"].attrs["model_hash"] = digest
+            f.create_group("opensees/lineage").attrs["model_hash"] = digest
+    la, lb = dumper.dump(a).splitlines(), dumper.dump(b).splitlines()
+    masked = [ln for ln in la if ln.endswith("sha1=masked")]
+    assert masked == [
+        "A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked",
+    ]
+    differing = sorted(x.split(" ", 2)[1] for x, y in zip(la, lb) if x != y)
+    assert differing == ["/meta@model_hash", "/opensees/lineage@model_hash"]
+
+
 def test_strings_and_compound_rows_are_hashed_by_value(
     dumper: ModuleType, tmp_path: Path,
 ) -> None:

@@ -44,6 +44,11 @@ MASKS: dict[str, str] = {
     "/meta@apeGmsh_version": (
         "release identity of the installed distribution, not emit output"
     ),
+    "/meta/lineage@model_hash": (
+        "derived digest: blake2b over the raw float bytes under /opensees "
+        "(lineage.compute_model_hash), so a last-ulp libm difference "
+        "changes it; every dataset it summarises is pinned line by line"
+    ),
 }
 
 
