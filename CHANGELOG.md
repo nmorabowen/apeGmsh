@@ -14,6 +14,10 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — family-completeness gate for OpenSees primitives (program slice C1.1, #1225)
+
+`tests/test_family_completeness.py` imports every module under `apeGmsh.opensees`, walks the `Primitive` subclass tree, and fails when a concrete public primitive is in no family, or is missing from its family's `ALL_*` contract list. `tests/families.py` declares the 19 families (base class, element kind by module, and the `ALL_*` list for each) and the ratcheted `EXCEPTIONS`: the 55 gaps measured today, each with a reason naming the commit or PR that shipped the class without its contract entry. A stale exception (the class is now listed, or no longer exists) also fails, so the list only shrinks. Self-tests on synthetic classes prove that a class dropped from its list turns the gate red. No `src/` or `ALL_*` list changed.
+
 ### CHANGED — deterministic `studio/_api_index.json` (program slice A1.2, #1214)
 
 `_index_build.build_index` no longer stamps `generated`, and `write_index` serialises through the new `serialize_index` (sorted keys, indent 2, trailing newline). Regenerating the index is now byte-identical, so it stops producing merge-conflict diffs. `tests/studio/test_lookup.py::test_index_build_is_byte_deterministic` builds twice and compares against the committed file. No reader used `generated`.
