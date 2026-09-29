@@ -23,8 +23,10 @@ Pure unit test: no gmsh, no openseespy.
 """
 from __future__ import annotations
 
+import copy
 import importlib
 import inspect
+import pickle
 import pkgutil
 
 import pytest
@@ -95,6 +97,31 @@ EXTRAS_ONLY: dict[str, str] = {
 }
 
 
+#: The ratchet's ceiling: the names EXTRAS_ONLY may hold.  Frozen at the
+#: ten classes of 2026-09-29 (#1228).  A row may leave EXTRAS_ONLY when its
+#: class gains an ``_ElemSpec``; a name may NOT join it.  Adding a name here
+#: is a maintainer-gated baseline raise, never part of an element PR: the
+#: point of the lock is that a new element cannot land as "extras-only"
+#: by adding one row to ``_EXTRA_CLASS_NDF_OK`` and one row here.
+EXTRAS_ONLY_BASELINE: frozenset[str] = frozenset({
+    "forceBeamColumn",
+    "dispBeamColumn",
+    "LadrunoDispBeamColumn",
+    "LadrunoIMKBeam",
+    "InertiaTruss",
+    "ASDShellT3",
+    "ZeroLength",
+    "ZeroLengthSection",
+    "CoupledZeroLength",
+    "TwoNodeLink",
+})
+
+
+def _ratchet_violations(exceptions: dict[str, str]) -> list[str]:
+    """Names in *exceptions* that the frozen baseline does not allow."""
+    return sorted(set(exceptions) - EXTRAS_ONLY_BASELINE)
+
+
 def _concrete_element_classes() -> dict[str, type[Element]]:
     """Every non-abstract ``Element`` subclass defined under
     ``apeGmsh.opensees.element`` (the bridge's emitting primitives), keyed
@@ -156,6 +183,26 @@ def test_exception_list_is_not_stale(class_name: str) -> None:
     assert EXTRAS_ONLY[class_name].strip(), f"{class_name!r} needs a reason."
 
 
+def test_exception_list_is_within_the_frozen_baseline() -> None:
+    """EXTRAS_ONLY is shrink-only: no name outside EXTRAS_ONLY_BASELINE."""
+    assert _ratchet_violations(EXTRAS_ONLY) == [], (
+        "EXTRAS_ONLY grew past its frozen baseline. Give the class an "
+        "_ELEM_REGISTRY entry instead; raising EXTRAS_ONLY_BASELINE is a "
+        "maintainer-gated baseline raise."
+    )
+    assert len(EXTRAS_ONLY_BASELINE) == 10
+
+
+def test_ratchet_self_test_rejects_a_new_exception() -> None:
+    """The check that guards the baseline must fail on a grown list, so a
+    new element + a new _EXTRA_CLASS_NDF_OK row + a new EXTRAS_ONLY row
+    cannot stay green."""
+    grown = dict(EXTRAS_ONLY, NewFancyElement="carried by extras (not allowed)")
+    assert _ratchet_violations(grown) == ["NewFancyElement"]
+    shrunk = {k: v for k, v in EXTRAS_ONLY.items() if k != "ZeroLength"}
+    assert _ratchet_violations(shrunk) == []
+
+
 def test_extras_tables_carry_only_exceptions() -> None:
     """The extras tables are the exception mechanism; a class registered in
     both places has two sources of truth."""
@@ -190,6 +237,13 @@ def test_unknown_has_no_truth_value() -> None:
     assert Unknown is not None
     assert Unknown is not False
     assert repr(Unknown) == "Unknown"
+
+
+def test_unknown_survives_copy_and_pickle_as_the_same_object() -> None:
+    """An Enum member: ``is`` keeps working across copy/pickle boundaries."""
+    assert copy.copy(Unknown) is Unknown
+    assert copy.deepcopy(Unknown) is Unknown
+    assert pickle.loads(pickle.dumps(Unknown)) is Unknown
 
 
 def test_legacy_helpers_keep_their_none_contract() -> None:
