@@ -23,7 +23,6 @@ superseded PR pushes are still cancelled, pushes to `main` each run to
 completion. `docs.yml` and `publish.yml` already use
 `cancel-in-progress: false` and are unchanged.
 
-
 ### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 
 `GeomTransfViewer` computed the local frame in its page's JavaScript as
