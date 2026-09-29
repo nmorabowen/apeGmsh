@@ -125,9 +125,12 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
     auto-deleted the orphaned merge commit is on no fetched ref. A nightly
     Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
     recent PRs and opens one `[Orphans]` issue when work is missing.
-  - **The branch tip did not move past the merged head.** #1097 was pushed
-    to after its merge and that commit stayed on the orphaned branch;
-    `headRefOid` freezes at the merge, so the script reads `git ls-remote`.
+  - **The branch tip is still the merged head.** The merge itself pins the
+    head the checks saw (`--match-head-commit`), and a push that raced the
+    merge is flagged: `headRefOid` freezes at the merge, so the script reads
+    `git ls-remote` (the replay exercises this path with #1097's SHAs). A
+    push after the landing is the nightly orphan detector's job
+    (`orphans.yml`, #1230).
 - **Never pass `--delete-branch` from a worktree**: it fails on the local
   step and hides whether the merge landed.
 - **Two green PRs can merge into a red `main`** when both edit the same

@@ -4,10 +4,13 @@
     python scripts/land_pr.py <number> --dry-run  # run the checks and stop before the merge
 
 The checks run in order and the first failure refuses, naming the check and
-the lesson. Then ``gh pr merge --squash`` (never ``--auto``, never
-``--delete-branch``), then ``compare/main...<squash sha>`` must read
-``behind`` or ``identical``, then the branch tip must still be the merged
-head: a commit pushed after the merge sits on an orphaned branch (#1097).
+the lesson. Then ``gh pr merge --squash --match-head-commit <checked head>``
+(never ``--auto``, never ``--delete-branch``), so a push between the checks
+and the merge is refused by GitHub; then ``compare/main...<squash sha>`` must
+read ``behind`` or ``identical``; then the branch tip must still be the
+merged head, so a push that raced the merge is flagged rather than left on
+an orphaned branch. A push after the landing is the nightly orphan
+detector's job (.github/workflows/orphans.yml, #1230).
 
 GitHub is reached only through ``run_gh`` and the checkout only through
 ``run_git``, so tests/test_land_pr.py replays recorded responses through
@@ -31,7 +34,7 @@ Runner = Callable[[list[str]], str]
 #: reported is a refusal: zero checks visible means a conflict or a stalled
 #: Actions, not green (#630).
 REQUIRED_CHECKS = ("lock-tests", "emit-cost-gate", "static-gates", "suite", "live-stock")
-PR_FIELDS = "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,files"
+PR_FIELDS = "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup"
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
 
@@ -83,29 +86,33 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
         raise LandError("check 4: the working tree is not clean (git status --porcelain).")
     labels = json.loads(gh(["label", "list", "--limit", "200", "--json", "name"]))
     frozen = [lab["name"][len("freeze:") :] for lab in labels if lab["name"].startswith("freeze:")]
-    for changed in pr["files"]:
+    # `pr view --json files` stops at 100 files; the diff listing does not.
+    for path in gh(["pr", "diff", str(number), "--name-only"]).splitlines():
         for pattern in frozen:
-            if fnmatch.fnmatchcase(changed["path"], pattern):
+            if fnmatch.fnmatchcase(path, pattern):
                 raise LandError(
-                    f"check 5: {changed['path']} is inside the open freeze:{pattern} window "
+                    f"check 5: {path} is inside the open freeze:{pattern} window "
                     f"(the board, #1203, names its expiry)."
                 )
-    if pr["mergeable"] == "CONFLICTING":
-        raise LandError(f"check 6: #{number} conflicts with main; merge main locally and push.")
-    rollup = {c.get("name") or c.get("context"): c for c in pr["statusCheckRollup"]}
+    if pr["mergeable"] != "MERGEABLE":
+        why = "merge main locally and push" if pr["mergeable"] == "CONFLICTING" else "retry once GitHub has computed it"
+        raise LandError(f"check 6: #{number} is {pr['mergeable']}, not MERGEABLE; {why}.")
+    runs: dict[str, list[dict[str, Any]]] = {}
+    for run in pr["statusCheckRollup"]:  # every run per name: a rerun does not hide a failure
+        runs.setdefault(run.get("name") or run.get("context"), []).append(run)
     for name in REQUIRED_CHECKS:
-        run = rollup.get(name)
-        if run is None:
+        if name not in runs:
             raise LandError(
                 f"check 6: required check {name!r} has not reported on {head[:12]}. Zero "
                 f"checks visible means a conflict or a stalled Actions, not green (#630)."
             )
-        if not _green(run):
-            seen = run.get("conclusion") or run.get("status") or run.get("state")
-            raise LandError(
-                f"check 6: required check {name!r} is {seen} on {head[:12]}, not SUCCESS. "
-                f"Pending is a refusal, not a wait."
-            )
+        for run in runs[name]:
+            if not _green(run):
+                seen = run.get("conclusion") or run.get("status") or run.get("state")
+                raise LandError(
+                    f"check 6: required check {name!r} is {seen} on {head[:12]}, not SUCCESS "
+                    f"(every run of a required check must be). Pending is a refusal, not a wait."
+                )
     return pr
 
 
@@ -122,7 +129,7 @@ def land(
     if dry_run:
         print(f"dry-run: #{number} passes checks 1-6 at {head[:12]}; not merging.")
         return 0
-    gh(["pr", "merge", str(number), "--squash"])
+    gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])
     merge = json.loads(gh(["pr", "view", str(number), "--json", "mergeCommit"]))["mergeCommit"]
     if not merge:
         raise LandError(f"merged #{number} but gh reports no mergeCommit; confirm by hand.")
@@ -146,10 +153,12 @@ def land(
     tip = git(["ls-remote", "origin", f"refs/heads/{pr['headRefName']}"]).split()
     if tip and tip[0] != head:
         raise LandError(
-            f"merged #{number} as {sha[:12]}, but {pr['headRefName']} moved to {tip[0][:12]} "
-            f"after the merged head {head[:12]}: that commit is on an orphaned branch and "
-            f"is not on main (#1097). Open a new PR for it."
+            f"merged #{number} as {sha[:12]}, but {pr['headRefName']} now reads {tip[0][:12]}, "
+            f"not the merged head {head[:12]}: a push raced the merge and that commit is on "
+            f"an orphaned branch, not on main. Open a new PR for it."
         )
+    if not tip:
+        print(f"{pr['headRefName']} is gone (auto-deleted); nothing raced the merge.")
     print(f"landed #{number} as {sha[:12]} on main (compare: {status}).")
     return 0
 
