@@ -457,3 +457,25 @@ def test_control_non_claims_are_not_matched() -> None:
     text = ("In notebooks use `results.viewer(blocking=False)`. "
             "Sessions restore by default.")
     assert _scan_default_claims(text, "blocking") == []
+
+
+# ── AGENTS.md line budget ───────────────────────────────────────────
+
+AGENTS_MD = REPO / "AGENTS.md"
+AGENTS_MD_LINE_BUDGET = 150
+
+
+def test_agents_md_line_budget() -> None:
+    """``AGENTS.md`` is loaded into every agent's context, so it stays small.
+
+    Program slice N2.1 (#1245, chain N #1197) cut it from 251 lines to
+    150 or fewer. A rule that no longer fits moves into the task guide
+    AGENTS.md routes that work to (its "Task guides" table), and AGENTS.md
+    keeps a one-line pointer; the budget is never raised to make room.
+    """
+    n_lines = len(AGENTS_MD.read_text(encoding="utf-8").splitlines())
+    assert n_lines <= AGENTS_MD_LINE_BUDGET, (
+        f"AGENTS.md is {n_lines} lines; the budget is {AGENTS_MD_LINE_BUDGET}. "
+        "Move the lesson into the task guide that owns it (AGENTS.md "
+        "\"Task guides\") instead of growing the always-loaded file."
+    )

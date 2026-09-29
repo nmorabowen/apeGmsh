@@ -1,26 +1,19 @@
 # AGENTS.md — working in apeGmsh
 
-Every agent reads this file: Claude Code imports it from `CLAUDE.md`, and
-Codex, Cursor and the rest read it directly. It holds the working rules
-and routes to where everything else lives; it does not restate the
-architecture docs or the ADRs.
+Every agent reads this file: Claude Code imports it from `CLAUDE.md`, and Codex, Cursor
+and the rest read it directly. It holds the working rules and routes to where everything
+else lives; it does not restate the architecture docs or the ADRs.
 
 ## What this repo is
 
-apeGmsh is a Gmsh wrapper for structural FEM with a typed OpenSees bridge
-(`apeSees`), an HDF5 model/results format, and Qt/web viewers
-([README.md](README.md)). It changes fast, so docs, ADR "shipped" notes and
-the skill routinely lag the source. When they disagree, trust these in
-order: a live probe of the code, the `src/` definition, the ADR's
-*Decision*, then guides and skill. The code wins, and the lagging doc gets
-fixed.
+apeGmsh is a Gmsh wrapper for structural FEM with a typed OpenSees bridge (`apeSees`), an
+HDF5 model/results format, and Qt/web viewers ([README.md](README.md)). It changes fast, so
+docs, ADR "shipped" notes and the skill routinely lag the source. When they disagree, trust
+these in order: a live probe of the code, the `src/` definition, the ADR's *Decision*, then
+guides and skill. The code wins, and the lagging doc gets fixed.
 
-**Two skills, two audiences.**
-- `skills/apegmsh/` (mirrored to `.claude/skills/apegmsh-helper/`) covers
-  how to *use* apeGmsh: writing models, meshes and bridge calls.
-- The task guides below cover how to *change* apeGmsh itself.
-
-Neither replaces the other.
+Two skills, two audiences: `skills/apegmsh/` (mirrored to `.claude/skills/apegmsh-helper/`)
+covers how to *use* apeGmsh; the task guides below cover how to *change* apeGmsh itself.
 
 ## Where things live
 
@@ -29,29 +22,23 @@ Neither replaces the other.
 | `src/apeGmsh/opensees/architecture/` | the bridge's charter (14 principles), layout, API design, emitter, H5 schema, [testing.md](src/apeGmsh/opensees/architecture/testing.md) (test layers), and [agent-onboarding.md](src/apeGmsh/opensees/architecture/agent-onboarding.md) (the slice prompt template) |
 | `src/apeGmsh/opensees/architecture/decisions/` | the ADRs, append-only; the index is its README. **Before numbering a new ADR, list the directory on `origin/main`**, not your worktree: numbers have collided with work that merged after the cut |
 | `internal_docs/` | plans (`plan_*.md`), handoffs (`handoff_*.md`), user-facing guide drafts, [changelog_workflow.md](internal_docs/changelog_workflow.md), [docs_style.md](internal_docs/docs_style.md) |
-| `internal_docs/program/` | the remediation program: its charter [PROGRAM.md](internal_docs/program/PROGRAM.md), the slice-card template, and the panel prototypes. Live program state is on GitHub under the `program` label (board #1203). The `prog-*` workers are defined in `.claude/agents/` |
+| `internal_docs/program/` | the remediation program: its charter [PROGRAM.md](internal_docs/program/PROGRAM.md), the slice-card template [slice_card.md](internal_docs/program/slice_card.md), and the panel prototypes. Live program state is on GitHub under the `program` label (board #1203). `/apegmsh-program <link>` runs a link as orchestrator; the `prog-*` workers are defined in `.claude/agents/` |
 | `docs/` + `mkdocs.yml` | the published site. It follows the docs_style contract, and `mkdocs build --strict` gates it |
 | `skills/apegmsh/` | the canonical user skill. `.claude/skills/apegmsh-helper/` is **derived**; never edit the mirror |
-| `CHANGELOG.md` | one section per PR, by [changelog_workflow.md](internal_docs/changelog_workflow.md) |
+| `CHANGELOG.md` | the release ledger, assembled from `changelog.d/` fragments by [changelog_workflow.md](internal_docs/changelog_workflow.md) |
 | `tests/` | the suite. Markers and lanes are in `pyproject.toml` and `.github/workflows/tests.yml` |
 
-Do not copy the ADR list, schema versions, element rosters or marker lists
-into this file or a guide. Consult the decisions README, `h5-schema.md`
-and `pyproject.toml` instead: they are gated or kept current, and a copy
-here would drift.
+Do not copy the ADR list, schema versions, element rosters or marker lists into this file or
+a guide: the decisions README, `h5-schema.md` and `pyproject.toml` are kept current; a copy drifts.
 
 ## Build and test
 
 Use a Python that has the extras installed (`pip install -e ".[plot,viewer,dxf]" pytest`;
-openseespy for `live`). On the maintainer's machine that is
-`C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`. System Python
-lacks pyvista, and a `ModuleNotFoundError` there means the wrong
-interpreter, not a missing dependency.
-
-**The editable install points at the main checkout, not your worktree.**
-`pytest` is safe, because `pythonpath = ["src"]` in `pyproject.toml`. Any
-other in-process probe (`python -c`, a viewer, a script) imports **main's**
-apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
+openseespy for `live`): on the maintainer's machine, `C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`.
+System Python lacks pyvista, so a `ModuleNotFoundError` there means the wrong interpreter.
+**The editable install points at the main checkout, not your worktree.** `pytest` is safe,
+because `pythonpath = ["src"]` in `pyproject.toml`. Any other in-process probe (`python -c`,
+a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
 
 | CI lane (`tests.yml`) | Run locally | Trap |
 |---|---|---|
@@ -64,111 +51,75 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
 | `docs-check` | `mkdocs build --strict` | runs on changes to `docs/`, `src/`, `README`, `CHANGELOG` and `mkdocs.yml` |
 | quirk lint (last step of `static-gates`) | `python scripts/check_quirks.py` (self-test: `tests/test_check_quirks.py`) | lessons that recurred after being written down, held as rules. Each finding names its lesson. Fix the code, or waive one site with `# apegmsh-lint: <rule>-ok <reason>`. Never waive a real bug to go green |
 
-- **Judge a local run against a baseline, not a raw count.** On the
-  maintainer's machine `import opensees` resolves to the installed Ladruno
-  fork (`C:\Program Files\Ladruno\OpenSees\bin\opensees.pyd`). That
-  un-skips the `ladruno_fork` tests, which then fail against a stale build
-  ("element type LadrunoLST is unknown"); CI never runs them. Use CI's
-  selection (`-m "not live and not subprocess and not bench and not qt"`,
-  since a bare `-m "not qt"` also runs the bench cases), exclude
-  `tests/opensees/integration_ladruno`, or diff against the same command on
-  `origin/main`.
-- **Warn-as-contract code** ("warns iff X") is verified with
-  `pytest <files> -W error::<Category>`. A bare `pytest` passes while the
-  warning fires where the contract says it must stay silent (#317 →
-  #321).
-- **A test restores the process state it touches.** Snapshot and restore
-  `sys.modules` (or use `monkeypatch`) when stubbing gmsh/pyvista or
-  purging `apeGmsh.*`, never call a raw `gmsh.finalize()` in a fixture, and
-  keep `tests/__init__.py` (without it `tests/opensees` shadowed the
-  `opensees` module: #1055; guarded by `tests/test_import_namespacing.py`).
+- **Judge a local run against a baseline, not a raw count.** Beside a Ladruno fork build,
+  `import opensees` un-skips the `ladruno_fork` tests, which CI never runs and a stale build
+  fails. Use CI's selection (a bare `-m "not qt"` also runs the bench cases) or diff against
+  the same command on `origin/main`; the bridge guide names the fork paths to exclude.
+- **Warn-as-contract code** ("warns iff X") is verified with `pytest <files> -W error::<Category>`.
+  A bare `pytest` passes while the warning fires where it must stay silent (#317 → #321).
+- **A test restores the process state it touches.** Snapshot and restore `sys.modules` (or use
+  `monkeypatch`) when stubbing gmsh/pyvista or purging `apeGmsh.*`, never call a raw
+  `gmsh.finalize()` in a fixture, and keep `tests/__init__.py` (without it `tests/opensees`
+  shadowed the `opensees` module: #1055; guarded by `tests/test_import_namespacing.py`).
   Earlier leaks: 624a9c2c (gmsh refcount), #742 (a live-ops cache).
-- **Never run a process-killing native call in the shared pytest
-  process**: a real `QtInteractor`/`ViewerWindow` under offscreen Qt on
-  Windows (`viewers/ui/viewer_window.py` now raises instead), a 3-D global
-  `recombine()`, or gmsh/openseespy from a worker thread. Use a subprocess
-  or skip (3165568c, 06f82f9a: Linux CI segfaults, 2026-08-17).
+- **Never run a process-killing native call in the shared pytest process**: a real Qt viewer
+  window (the viewer guide says where it now raises), a 3-D global `recombine()`, or
+  gmsh/openseespy from a worker thread. Use a subprocess or skip (3165568c, 06f82f9a: Linux
+  CI segfaults, 2026-08-17).
 
 ## How work lands
 
-- **Land with `python scripts/land_pr.py <N>`** (`--dry-run` runs the
-  checks and stops). It is this checklist as code: it refuses on the first
-  failed check, squash-merges (never `--auto`, never `--delete-branch`),
-  then proves the squash commit reached `main`. Its checks, in order, and
-  the lessons they hold:
-  - **The base is `main`**: `--base main` on every PR, including sequenced
-    ones. Hand-stacking with `--base <prev-branch>` merged three PRs into
-    orphaned branches (#295–#297, recovered by #298), and #858 merged into
-    a stacked base on 2026-07-25 and was missing from `main` for two months
-    (recovered by #1169). `lock-tests` fails a PR whose base is not `main`,
-    but only `main` is protected, so it flags rather than blocks. After
-    retargeting, push a commit: a re-run reuses the old merge ref.
-  - **Open, not a draft, not already merged.** A push after the merge lands
-    on an orphaned branch (#335 → #336), so check `gh pr view <N> --json
-    state` before pushing to a PR branch.
-  - **Local `HEAD` equals `headRefOid`, and the tree is clean.** Before
-    merging a branch you just pushed, wait until they match (#555 → #556).
-  - **No changed file is inside an open `freeze:<file>` label** (a split
-    window, announced on the board with its expiry).
-  - **Not conflicting, and the five checks `main` requires** (`lock-tests`,
-    `emit-cost-gate`, `static-gates`, `suite`, `live-stock`) **are green on
-    the head SHA.** `main` does not require an up-to-date branch, and takes
-    squash merges only. "Zero checks visible" means the PR is conflicting or
-    Actions is stalled, not "green", and pending is a refusal, not a wait.
-    Never use `--auto`: it ignores the lanes that are not required, and
-    #757 merged under it mid-run before any check was required. Run the
-    suite locally when CI has not visibly run (#630 merged during an
-    Actions stall).
-  - **After the merge, `compare/main...<merge-sha>` reads `behind` or
-    `identical`**; `diverged` means it did not reach `main` (#858).
-    `git merge-base --is-ancestor` cannot tell you: once the head branch is
-    auto-deleted the orphaned merge commit is on no fetched ref. A nightly
-    Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
-    recent PRs and opens one `[Orphans]` issue when work is missing.
-  - **The branch tip is still the merged head.** The merge itself pins the
-    head the checks saw (`--match-head-commit`), and a push that raced the
-    merge is flagged: `headRefOid` freezes at the merge, so the script reads
-    `git ls-remote` (the replay exercises this path with #1097's SHAs). A
-    push after the landing is the nightly orphan detector's job
-    (`orphans.yml`, #1230).
-- **Never pass `--delete-branch` from a worktree**: it fails on the local
-  step and hides whether the merge landed.
-- **Two green PRs can merge into a red `main`** when both edit the same
-  set/dict/list literal, because git sees no textual conflict (#605 + #606
-  → #608). After merging a PR that shares a literal with an open one,
-  re-run the other's tests on the merge.
-- **CHANGELOG: add one fragment file `changelog.d/<slug>.md` (one `### `
-  section), and never edit `CHANGELOG.md`**
-  ([changelog_workflow.md](internal_docs/changelog_workflow.md), guarded
-  by `python scripts/changelog.py --check` and
-  `tests/test_changelog_structure.py`). Two PRs then touch different
-  files, so the union merge cannot drop a blank line (#1219). A maintainer
-  runs `--assemble` at release time; never in CI.
-- **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -`
-  sets the body to a literal "-".
-- **Skill changes:** edit `skills/apegmsh/`, run
-  `python scripts/sync_skill.py` to regenerate the mirror, and after the
-  merge run `python scripts/refresh_user_skill.py` (the user-level copy is
-  outside CI's reach).
-- **A worktree does not follow `origin/main`.** Before concluding a
-  feature is unmerged, check `git log HEAD..origin/main` or
-  `git show origin/main:<path>`.
+- **Land with `python scripts/land_pr.py <N>`** (`--dry-run` runs the checks and stops). It is
+  this checklist as code: it refuses on the first failed check, squash-merges (never `--auto`,
+  never `--delete-branch`), then proves the squash commit reached `main`. Its checks, in order:
+  - **The base is `main`**, `--base main` on every PR, sequenced ones included: hand-stacking
+    orphaned three PRs (#295–#297 → #298) and lost #858 for two months (→ #1169). `lock-tests`
+    flags a wrong base but cannot block it; after retargeting, push a commit (a re-run reuses the old merge ref).
+  - **Open, not a draft, not already merged**: a push after the merge lands on an orphaned
+    branch (#335 → #336), so check `gh pr view <N> --json state` before pushing to a PR branch.
+  - **Local `HEAD` equals `headRefOid`, and the tree is clean**; wait until they match before
+    merging a branch you just pushed (#555 → #556).
+  - **No changed file is inside an open `freeze:<file>` label** (a split window, announced on
+    the board with its expiry).
+  - **Not conflicting, and the five required checks** (`lock-tests`, `emit-cost-gate`,
+    `static-gates`, `suite`, `live-stock`) **are green on the head SHA.** "Zero checks visible"
+    means conflicting or a stalled Actions, not green, and pending is a refusal. Never `--auto`:
+    it ignores the non-required lanes, and #757 merged under it before any check was required.
+    Run the suite locally when CI has not visibly run (#630 merged during an Actions stall).
+  - **After the merge, `compare/main...<merge-sha>` reads `behind` or `identical`**; `diverged`
+    means it did not reach `main` (#858), and `git merge-base --is-ancestor` cannot tell once the
+    head branch is deleted. A nightly Action (`orphans.yml`, `scripts/find_orphans.py`) repeats
+    this over recent PRs and opens one `[Orphans]` issue when work is missing.
+  - **The branch tip is still the merged head.** The merge pins the head the checks saw
+    (`--match-head-commit`); `headRefOid` freezes at the merge, so the script reads `git ls-remote`
+    (the replay uses #1097's SHAs). A push after the landing is the orphan detector's job (#1230).
+- **Never pass `--delete-branch` from a worktree**: it fails on the local step and hides
+  whether the merge landed.
+- **Two green PRs can merge into a red `main`** when both edit the same set/dict/list literal:
+  git sees no textual conflict (#605 + #606 → #608). After merging a PR that shares a literal
+  with an open one, re-run the other's tests on the merge.
+- **CHANGELOG: add one fragment `changelog.d/<slug>.md` (one `### ` section) and never edit
+  `CHANGELOG.md`** (guarded by `python scripts/changelog.py --check` and
+  `tests/test_changelog_structure.py`). Separate files give the union merge no blank line to
+  drop (#1219). A maintainer runs `--assemble` at release time; never in CI.
+- **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -` sets a literal "-".
+- **Skill changes** follow the adr-docs guide, "The skill": edit `skills/apegmsh/` only and
+  regenerate the mirror with `python scripts/sync_skill.py`.
+- **A worktree does not follow `origin/main`.** Before concluding a feature is unmerged, check
+  `git log HEAD..origin/main` or `git show origin/main:<path>`.
 
-**Navigating the code.** Before reading a file over 2,000 lines or
-grepping for a Python symbol, ask `python scripts/nav.py <cmd>`. It parses
-the AST and never imports apeGmsh, so it reads your worktree. `map FILE`
-outlines a file with line ranges, `at FILE:LINE` names the enclosing
-symbol, `where NAME` finds definitions, `refs NAME` lists code references
-without comments or docstrings, `h5 PATH` sorts HDF5 writes from reads,
-and `family BASE` lists every table and dispatch a new member must join.
-Every answer fits in 60 lines, and a cut one names the flag that narrows
-it. Keep Grep for prose, comments and non-Python files, and Read for the
-range nav points you to.
+**Navigating the code.** Before reading a file over 2,000 lines or grepping for a Python
+symbol, ask `python scripts/nav.py <cmd>`. It parses the AST and never imports apeGmsh, so
+it reads your worktree. `map FILE` outlines a file with line ranges, `at FILE:LINE` names the
+enclosing symbol, `where NAME` finds definitions, `refs NAME` lists code references without
+comments or docstrings, `h5 PATH` sorts HDF5 writes from reads, and `family BASE` lists every
+table and dispatch a new member must join. Every answer fits in 60 lines, and a cut one names
+the flag that narrows it. Keep Grep for prose, comments and non-Python files, and Read for
+the range nav points you to.
 
 ## Task guides
 
-Read the guide before starting that kind of work. Each is a checklist
-that points at the lesson; it never copies it.
+Read the guide before starting that kind of work. Each is a checklist that points at the lesson.
 
 | Doing this | Read first |
 |---|---|
@@ -177,75 +128,19 @@ that points at the lesson; it never copies it.
 | Writing an ADR, a plan, a CHANGELOG section, a docs page, an example or the skill | [`.claude/skills/apegmsh-adr-docs/SKILL.md`](.claude/skills/apegmsh-adr-docs/SKILL.md) |
 | Running a remediation-program link as orchestrator (`/apegmsh-program <link>`), or working a program slice issue | [`.claude/skills/apegmsh-program/SKILL.md`](.claude/skills/apegmsh-program/SKILL.md) (orchestrator); [PROGRAM.md](internal_docs/program/PROGRAM.md) §7 (worker protocol) |
 
-A lesson that bites again and names a pattern a machine can see becomes
-a rule in `scripts/check_quirks.py`, proven against the commit that had
-the bug. Every other lesson is a line in one of these guides, which
-points at the lesson rather than copying it.
+A lesson that bites again and names a pattern a machine can see becomes a rule in
+`scripts/check_quirks.py`, proven against the commit that had the bug; every other lesson is a
+line in one of these guides, which points at the lesson rather than copying it.
 
 ## Behavioural guidelines
 
-Moved verbatim from the previous `CLAUDE.md`.
+Condensed from the previous `CLAUDE.md`; they bias toward caution over speed, so use judgment on trivial tasks.
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+1. **Think before coding.** State your assumptions; present the interpretations instead of picking
+   one silently; say so when a simpler approach exists; if something is unclear, stop, name it, ask.
+2. **Simplicity first.** The minimum code that solves the problem: no unasked features, single-use
+   abstractions, configurability or impossible-case handling. If it reads overcomplicated, rewrite it.
+3. **Surgical changes.** Touch only what the request needs, match the existing style, leave adjacent
+   code and pre-existing dead code alone (mention it), and remove only the orphans your change made.
+4. **Goal-driven execution.** Turn the task into verifiable goals ("fix the bug" → a test that
+   reproduces it, then passes), state a step → check plan for multi-step work, and loop until green.

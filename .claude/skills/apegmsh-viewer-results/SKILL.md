@@ -68,3 +68,8 @@ the quoted heading. `decisions/` is
       "Build and test").
 - [ ] `python scripts/check_quirks.py`, plus a CHANGELOG section per
       `internal_docs/changelog_workflow.md`.
+- [ ] Never construct a real `QtInteractor`/`ViewerWindow` in the shared
+      pytest process: under offscreen Qt on Windows it killed the run, so
+      `viewers/ui/viewer_window.py` now raises there instead. Use a
+      subprocess or skip (3165568c, 06f82f9a: Linux CI segfaults,
+      2026-08-17; AGENTS.md "Build and test" holds the general rule).

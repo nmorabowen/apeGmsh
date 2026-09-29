@@ -110,3 +110,11 @@ the quoted heading. Paths are from the repo root; `architecture/` is
 - [ ] The curated `suite` lane locally, since boundary tests live outside
       the package you touched. Add a CHANGELOG section per
       `internal_docs/changelog_workflow.md`.
+- [ ] Judge a local run against a baseline, not a raw count (AGENTS.md "Build
+      and test"). On the maintainer's machine `import opensees` resolves to
+      the installed Ladruno fork
+      (`C:\Program Files\Ladruno\OpenSees\bin\opensees.pyd`). That un-skips
+      the `ladruno_fork` tests, which then fail against a stale build
+      ("element type LadrunoLST is unknown"); CI never runs them. Use CI's
+      `-m` selection, exclude `tests/opensees/integration_ladruno`, or diff
+      against the same command on `origin/main`.
