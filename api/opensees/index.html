@@ -6915,7 +6915,7 @@ pattern <strong>after</strong> the session closes:</p>
 <p>The legacy <code>g.opensees</code> session composite and its sub-composites
 (<code>materials</code> / <code>elements</code> / <code>ingest</code> / <code>inspect</code> /
 <code>export</code>) were removed in Phase 8 of the bridge teardown
-(<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md">ADR 0009</a>).
+(<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0009-no-backwards-compat-with-solvers.md">ADR 0009</a>).
 <code>apeSees</code> brings the session in three ways (ADR 0051): <strong>MP
 constraints</strong> (<code>g.constraints.*</code>) <strong>auto-emit</strong>; <strong>loads</strong> (<code>g.loads.*</code>)
 and <strong>prescribed displacements</strong> (<code>g.displacements.*</code>) are <strong>opt-in</strong> —
@@ -6943,7 +6943,7 @@ stage-scoped (<code>s.pattern(series=...)</code>) — a global pattern +
   authoritative (see the note above).</li>
 <li><strong>MP constraints emit automatically</strong> from <code>fem.nodes.constraints</code>
   / <code>fem.elements.constraints</code>
-  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md">ADR 0022</a>,
+  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0022-mp-constraint-emission-fanout.md">ADR 0022</a>,
   Phase 7b) — <code>equalDOF</code> / <code>rigidLink</code> / <code>rigidDiaphragm</code> /
   <code>ASDEmbeddedNodeElement</code> lines land in the runnable Tcl/Py
   deck without an <code>ingest</code> step. The <code>apeSees.h5(path)</code> write
@@ -6954,13 +6954,13 @@ stage-scoped (<code>s.pattern(series=...)</code>) — a global pattern +
 <li><strong>Staged analysis</strong> ships via <code>ops.stage(name)</code> —
   see <a href="#staged-analysis">Staged analysis</a> below for the user-
   surface walkthrough, and the in-repo internals doc at
-  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md">staged-analysis.md</a>
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/staged-analysis.md">staged-analysis.md</a>
   for the per-stage emit pipeline.</li>
 <li><strong>Read-side broker.</strong>
   <code>OpenSeesModel.from_h5(path, fem_root=)</code> provides a frozen
   read-only view of the persisted <code>/opensees/</code> zone with the
   embedded <code>FEMData</code> lazily attached
-  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0019-opensees-model-read-side-broker.md">ADR 0019</a>).
+  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0019-opensees-model-read-side-broker.md">ADR 0019</a>).
   Re-emit via <code>om.build("tcl", path)</code> / <code>om.build("py", path)</code>
   / <code>om.build("live")</code> without rehydrating the apeSees
   primitives.</li>
@@ -6968,7 +6968,7 @@ stage-scoped (<code>s.pattern(series=...)</code>) — a global pattern +
 <p>For the full user-facing surface (typed materials, sections,
 elements, recorders, patterns, analysis chain, staged analysis,
 SSI helpers, cuts and sweeps), see the in-repo
-<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md">api-design.md</a>.</p>
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/api-design.md">api-design.md</a>.</p>
 <h2 id="public-surface">Public surface<a class="headerlink" href="#public-surface" title="Permanent link">&para;</a></h2>
 
 
@@ -15314,13 +15314,13 @@ PR <a href="https://github.com/nmorabowen/apeGmsh/pull/313">#313</a>).</p>
 <p>The full lifecycle table, builder verbs, validator surface, MP
 partitioned + staged emit (Phase SSI-2.C), and the SSI-1
 initial-stress ramp live in
-<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md">architecture/api-design.md</a>
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/api-design.md">architecture/api-design.md</a>
 §"Staged analysis"; the internals (deck layout, ownership
 computation, hook dispatcher, per-emitter dialect divergence,
 cleanup contract) live in
-<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md">architecture/staged-analysis.md</a>
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/staged-analysis.md">architecture/staged-analysis.md</a>
 and
-<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/emitter.md">architecture/emitter.md</a>.</p>
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/emitter.md">architecture/emitter.md</a>.</p>
 <h2 id="orientation-helpers">Orientation helpers<a class="headerlink" href="#orientation-helpers" title="Permanent link">&para;</a></h2>
 <p>Used as the <code>orientation=</code> argument on the typed geom_transf
 primitives (<code>Linear</code> / <code>PDelta</code> / <code>Corotational</code>).</p>

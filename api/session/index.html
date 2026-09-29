@@ -12321,7 +12321,7 @@ can still <code>compose</code>, <code>save</code>, and feed the bridge.</p>
 <code>model.h5</code> into the current session under a namespaced <code>label</code>,
 applying an optional rigid placement (<code>translate</code>, <code>rotate</code>,
 <code>anchor</code>) and reserving a disjoint tag span so child tags never
-collide (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0038-compose-model-composition.md">ADR 0038</a>).
+collide (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0038-compose-model-composition.md">ADR 0038</a>).
 It returns a <code>ComposedModule</code> handle.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"frame.h5"</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="s2">"panel.h5"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Panel_A"</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">))</span>
@@ -12341,7 +12341,7 @@ string-keyed Module modes (<code>'Module'</code>, <code>'Module: Root'</code>,
 <h3 id="declarative-assembly-assembly-couple">Declarative assembly — <code>Assembly</code> + <code>couple</code><a class="headerlink" href="#declarative-assembly-assembly-couple" title="Permanent link">&para;</a></h3>
 <p>To spatially couple several saved <code>model.h5</code> modules without
 hand-wiring <code>compose</code> + constraints, use the declarative builder
-(shipped in v2.0.0, <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md">ADR 0043</a>
+(shipped in v2.0.0, <a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md">ADR 0043</a>
 slice 1.4). It is imported from a <strong>sub-path</strong> — <code>apeGmsh.Assembly</code>
 is intentionally not exported, so the top-level "the session <em>is</em> the
 assembly" model is unchanged.</p>
