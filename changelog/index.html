@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — GeomTransfViewer draws the OpenSees local frame (local y and z were both negated) and defaults vecxz to what the bridge emits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3876,6 +3887,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — GeomTransfViewer draws the OpenSees local frame (local y and z were both negated) and defaults vecxz to what the bridge emits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4167,6 +4189,36 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits">FIXED — <code>GeomTransfViewer</code> draws the OpenSees local frame (local y and z were both negated) and defaults <code>vecxz</code> to what the bridge emits<a class="headerlink" href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" title="Permanent link">&para;</a></h3>
+<p><code>GeomTransfViewer</code> computed the local frame in its page's JavaScript as
+<code>y = x × vecxz</code>, <code>z = x × y</code>. OpenSees (<code>LinearCrdTransf3d::getLocalAxes</code>)
+computes <code>y = vecxz × x</code>, <code>z = x × y</code>, so the viewer drew both <code>y</code> and <code>z</code>
+negated. A beam along +X with <code>vecxz = +Z</code> showed <code>y = −Y</code>, <code>z = −Z</code>
+instead of <code>+Y</code>, <code>+Z</code>. An omitted <code>vecxz</code> defaulted to <code>[1, 0, 0]</code>, which
+is parallel to a beam along X, so that beam drew no frame at all.</p>
+<p>The page no longer computes frames. Python computes every frame with
+<code>compute_local_axes</code>, the rule the results diagrams and the local-axes
+overlay use. An omitted <code>vecxz</code> is what the bridge emits for a member with
+no orientation (<code>apeSees(default_orientation=Cartesian())</code>): global Z
+projected off the member, or <code>x × Y</code> for a vertical member, so a +Z column
+gets <code>-X</code>. OpenSees itself has no default. The diagrams' <code>default_vecxz</code>
+gives <code>+X</code> there and would draw a defaulted column rolled 180°, so the
+viewer does not use it. Viewers may not import the bridge (ADR 0014), so
+the viewer mirrors the rule and a test pins it to <code>resolve_vecxz</code>. An edit in the single-beam
+controls goes to the viewer's local server (<code>POST /frame</code>), which returns
+the recomputed frame. A <code>vecxz</code> that is zero or parallel to the beam axis
+is reported as degenerate, because OpenSees rejects it.
+<code>compute_local_axes</code> would instead substitute the default, and the viewer
+would draw a frame that OpenSees never builds.</p>
+<p>The local server is now a <code>ThreadingHTTPServer</code>, because edits now travel
+over it. The single-threaded <code>HTTPServer</code> waits indefinitely on a socket
+that a browser pre-opens and never uses (the Python docs name this
+hazard), and every edit queued behind that socket would stall.
+<code>tests/viewers/test_geom_transf_viewer.py</code> checks the frames against
+<code>compute_local_axes</code> and against a transcription of the OpenSees formula,
+for beams along X, Y and Z and skew, with and without <code>vecxz</code>. It also
+drives the real <code>show()</code> over HTTP, with <code>webbrowser.open</code> replaced, so
+no browser or window opens.</p>
 <h3 id="fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4">FIXED — <code>g.constraints.bc</code> / <code>g.masses</code> records a deck never restates now warn at emit (<code>UnconsumedModelDefinitionWarning</code>) + <code>ops.fix_from_model()</code> (ADR 0051 §4)<a class="headerlink" href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" title="Permanent link">&para;</a></h3>
 <p><code>g.constraints.bc(...)</code> resolves into homogeneous SP records on
 <code>fem.nodes.sp</code> and <code>g.masses.*</code> into <code>fem.nodes.masses</code>, but <code>apeSees</code>
