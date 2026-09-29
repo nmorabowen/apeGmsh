@@ -1,0 +1,75 @@
+# Ratchet for the getattr-private / getattr-undefined rules (scripts/check_quirks.py).
+# One `path::name` per site that predates the rules. This file may only shrink:
+# a line that matches no site is itself a finding. Never add a line to go green;
+# fix the site or waive it in source with `# apegmsh-lint: <rule>-ok <reason>`.
+
+# getattr-private: cross-package reads of a private name (31)
+src/apeGmsh/_kernel/resolvers/_chain_phase_router.py::_fem_from_h5
+src/apeGmsh/_kernel/resolvers/_chain_phase_router.py::_mark_fem_fresh
+src/apeGmsh/_kernel/resolvers/_source.py::_compose_facade
+src/apeGmsh/core/ConstraintsComposite.py::_fem
+src/apeGmsh/core/_compose_errors.py::_check_chain_phase
+src/apeGmsh/core/_compose_errors.py::_fem_from_h5
+src/apeGmsh/core/_declarations.py::_bump_fem_counter
+src/apeGmsh/core/_resolution.py::_sets
+src/apeGmsh/mesh/_compose.py::_bump_fem_counter
+src/apeGmsh/mesh/_compose.py::_fem_from_h5
+src/apeGmsh/mesh/_compose.py::_mark_fem_fresh
+src/apeGmsh/mesh/_compose.py::_names
+src/apeGmsh/mesh/_fem_factory.py::_bc_defs
+src/apeGmsh/mesh/_fem_factory.py::_emit_members
+src/apeGmsh/mesh/_fem_factory.py::_instances
+src/apeGmsh/mesh/_femdata_h5_io.py::_names
+src/apeGmsh/mesh/_mesh_queries.py::_fem_from_h5
+src/apeGmsh/mesh/_mesh_queries.py::_fem_is_fresh
+src/apeGmsh/opensees/_internal/build.py::_groups
+src/apeGmsh/results/capture/_domain.py::_live_emitter
+src/apeGmsh/results/capture/spec.py::_names
+src/apeGmsh/results/capture/spec.py::_primitives
+src/apeGmsh/studio/_host.py::_rebuild_scene
+src/apeGmsh/studio/_host.py::_win
+src/apeGmsh/viewers/data/_elements.py::_module_label
+src/apeGmsh/viewers/data/_elements.py::_partitions
+src/apeGmsh/viewers/data/_h5_probe.py::_element_reads_fem_keyed
+src/apeGmsh/viewers/data/_h5_probe.py::_model_path
+src/apeGmsh/viewers/data/_nodes.py::_module_label
+src/apeGmsh/viewers/session/_realize.py::_reader
+src/apeGmsh/viz/Inspect.py::_directives
+
+# getattr-undefined: nothing in src/apeGmsh defines the name (34).
+# Most are foreign objects (openseespy, Qt, VTK, argparse, numpy); the likely
+# live bugs are listed as follow-ups in the PR that introduced this file.
+src/apeGmsh/doctor.py::GMSH_API_VERSION
+src/apeGmsh/ground_motions/_parsers/_obspy_bridge.py::network
+src/apeGmsh/ground_motions/_parsers/_obspy_bridge.py::starttime
+src/apeGmsh/interop/strut_tie.py::criticalTimeStep
+src/apeGmsh/mesh/_femdata_h5_io.py::tolist
+src/apeGmsh/opensees/emitter/live.py::add_dll_directory
+src/apeGmsh/opensees/emitter/live.py::complexEigen
+src/apeGmsh/opensees/emitter/live.py::contactPlane
+src/apeGmsh/opensees/emitter/live.py::contactSurface
+src/apeGmsh/opensees/emitter/live.py::criticalTimeStep
+src/apeGmsh/opensees/emitter/live.py::frequencyResponse
+src/apeGmsh/opensees/emitter/live.py::ladrunoBuild
+src/apeGmsh/opensees/emitter/live.py::ladrunoLoadControl
+src/apeGmsh/opensees/emitter/live.py::ladrunoProjectionTieForce
+src/apeGmsh/opensees/emitter/live.py::modalResponseHistory
+src/apeGmsh/opensees/emitter/live.py::randomResponse
+src/apeGmsh/opensees/emitter/live.py::steadyStateDynamics
+src/apeGmsh/results/session/__main__.py::as_json
+src/apeGmsh/results/transcoders/_recorder.py::element_end_coords
+src/apeGmsh/viewers/__main__.py::as_json
+src/apeGmsh/viewers/backends/_pyvista_pick.py::GetDataSet
+src/apeGmsh/viewers/core/entity_registry.py::cell_connectivity
+src/apeGmsh/viewers/core/entity_registry.py::regular_faces
+src/apeGmsh/viewers/model_viewer.py::mass_type
+src/apeGmsh/viewers/model_viewer.py::type
+src/apeGmsh/viewers/results_viewer.py::_cloud
+src/apeGmsh/viewers/results_viewer.py::mapToGlobal
+src/apeGmsh/viewers/ui/_log_router.py::exc_traceback
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::currentText
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::isChecked
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::setChecked
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::setCurrentText
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::setText
+src/apeGmsh/viewers/ui/theme_editor_dialog.py::setValue
