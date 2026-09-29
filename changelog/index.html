@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a second push to main no longer cancels the first push's Tests run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3887,6 +3898,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a second push to main no longer cancels the first push's Tests run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4189,6 +4211,13 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run">FIXED — a second push to <code>main</code> no longer cancels the first push's <code>Tests</code> run<a class="headerlink" href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" title="Permanent link">&para;</a></h3>
+<p><code>.github/workflows/tests.yml</code> set <code>cancel-in-progress: true</code> for every
+event, so back-to-back merges to <code>main</code> cancelled the earlier push's
+required checks. It is now <code>${{ github.event_name == 'pull_request' }}</code>:
+superseded PR pushes are still cancelled, pushes to <code>main</code> each run to
+completion. <code>docs.yml</code> and <code>publish.yml</code> already use
+<code>cancel-in-progress: false</code> and are unchanged.</p>
 <h3 id="fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits">FIXED — <code>GeomTransfViewer</code> draws the OpenSees local frame (local y and z were both negated) and defaults <code>vecxz</code> to what the bridge emits<a class="headerlink" href="#fixed-geomtransfviewer-draws-the-opensees-local-frame-local-y-and-z-were-both-negated-and-defaults-vecxz-to-what-the-bridge-emits" title="Permanent link">&para;</a></h3>
 <p><code>GeomTransfViewer</code> computed the local frame in its page's JavaScript as
 <code>y = x × vecxz</code>, <code>z = x × y</code>. OpenSees (<code>LinearCrdTransf3d::getLocalAxes</code>)
