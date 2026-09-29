@@ -2718,7 +2718,7 @@ def parse_mpco_element_key(key: str) -> MPCOElementKey:
     """Parse ``"<tag>-<Class>[<rule>:<cust>(:<hdr>)?]"``.
 
     Examples (verified against the mpco-recorder skill's
-    ``hdf5-layout.md`` §3 worked examples)::
+    HDF5 layout reference §3 worked examples)::
 
         parse_mpco_element_key("179-FourNodeTetrahedron[300:0]")
         # MPCOElementKey(class_tag=179, class_name='FourNodeTetrahedron',

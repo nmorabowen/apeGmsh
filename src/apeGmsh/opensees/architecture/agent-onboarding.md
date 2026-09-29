@@ -15,7 +15,7 @@ The agent needs to read these in order before doing anything else:
 
 1. [README.md](README.md) — TL;DR + reading order
 2. [charter.md](charter.md) — the 14 principles + non-goals
-3. [layout.md](layout.md) — folder structure + naming
+3. `python scripts/nav.py map|pkg` — folder structure + naming (live)
 4. [api-design.md](api-design.md) — the namespace API + capability shapes
 5. [emitter.md](emitter.md) — the Protocol the agent's `_emit`
    targets
@@ -58,7 +58,7 @@ You are implementing slice [PHASE] of the apeGmsh.opensees package.
 CONTEXT (read these in order before anything else):
   1. src/apeGmsh/opensees/architecture/README.md
   2. src/apeGmsh/opensees/architecture/charter.md
-  3. src/apeGmsh/opensees/architecture/layout.md
+  3. run `python scripts/nav.py map` (folder structure + naming)
   4. src/apeGmsh/opensees/architecture/api-design.md
   5. src/apeGmsh/opensees/architecture/emitter.md
   6. src/apeGmsh/opensees/architecture/testing.md
