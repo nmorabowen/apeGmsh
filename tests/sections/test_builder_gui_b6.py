@@ -14,6 +14,9 @@ import threading
 
 import pytest
 
+# Own process per file: a builder thread + Shiboken deferred deletion segfaults the shared suite (lesson #1242).
+pytestmark = pytest.mark.qt
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from apeGmsh.sections import SectionDocument  # noqa: E402
