@@ -1,0 +1,3 @@
+### ADDED — nightly orphan detector (program slice A2.3, #1224)
+
+`scripts/find_orphans.py` flags PRs merged in the last 90 days whose merge commit is not an ancestor of `main` (API `compare/main...<oid>` reads `diverged` or `ahead`) and PRs whose head branch was pushed to after the merge. `.github/workflows/orphans.yml` runs it nightly and on `workflow_dispatch`, and opens or updates one `[Orphans] merged work not on main` issue only when something is found. It never closes issues, pushes or deletes branches. `tests/test_find_orphans.py` replays the #858 and #1097 patterns through the `fetch` seam with no network.
