@@ -112,8 +112,13 @@ inside the pattern; `p.load` / `p.sp` author loads directly on the bridge.
 A case you don't import is simply not applied — there is exactly one channel
 into the deck, so the old double-counting trap (declared on the session *and*
 the bridge) cannot happen. Masses and support fixities are re-declared
-explicitly with `ops.mass` and `ops.fix` for the same reason: the deck is
-authoritative, and reading it tells you exactly what the analysis contains.
+explicitly with `ops.mass` and `ops.fix`, or wholesale with
+`ops.mass_from_model()` and `ops.fix_from_model()`, for the same reason: the
+deck is authoritative, and reading it tells you exactly what the analysis
+contains. They are not a per-deck choice the way a load case is, though, so
+when the session declared `g.constraints.bc` supports or `g.masses` and the
+deck restates none of them, emit warns (`UnconsumedModelDefinitionWarning`)
+rather than writing an unsupported, massless model in silence.
 Everything the session declared — imported or not — still persists into
 `model.h5` for the viewer and `Results`.
 

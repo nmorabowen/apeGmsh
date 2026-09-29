@@ -2675,6 +2675,10 @@ def _merge_bundle_into_fem(
         ndf=new_ndf,
         module_label=new_node_module_label,
         provenance=new_provenance,
+        # The host's producing Gmsh model. Host ids and coords are kept
+        # verbatim and bundle tags sit above the host's max, so a raw
+        # (dim, tag), which can only name a host entity, still resolves.
+        gmsh_source=getattr(fem.nodes, "_gmsh_source", None),
     )
     new_elements = ElementComposite(
         groups=new_element_groups,
@@ -2717,6 +2721,7 @@ def _merge_bundle_into_fem(
         # (PG + material-name prefixing, parallel to the reinforce-tie carry
         # above) is a deferred compose teach-in follow-on.
         rebar_elements=list(getattr(fem.elements, "rebar_elements", [])),
+        gmsh_source=getattr(fem.elements, "_gmsh_source", None),
     )
 
     # ── 9. Recompute MeshInfo so summary / bandwidth reflect the

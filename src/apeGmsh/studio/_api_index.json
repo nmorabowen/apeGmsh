@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated": "2026-09-27T22:56:35Z",
+  "generated": "2026-09-29T01:17:45Z",
   "entries": {
     "Assembly": {
       "symbol": "Assembly",
@@ -312,7 +312,7 @@
       "symbol": "g.constraints.clear",
       "signature": "clear() -> 'None'",
       "skill": "references/api-cheatsheet.md",
-      "doc": ""
+      "doc": "Forget every declared constraint and invalidate the FEMData"
     },
     "g.constraints.contact": {
       "symbol": "g.constraints.contact",
@@ -3061,6 +3061,12 @@
       "signature": "fix(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, dofs: 'tuple[int, ...]') -> 'None'",
       "skill": "references/opensees-bridge.md",
       "doc": "Apply homogeneous SP constraints (``fix``)."
+    },
+    "ops.fix_from_model": {
+      "symbol": "ops.fix_from_model",
+      "signature": "fix_from_model() -> 'None'",
+      "skill": "references/opensees-bridge.md",
+      "doc": "Fix every homogeneous SP on the model snapshot (ADR 0051 §4)."
     },
     "ops.footfall_walking": {
       "symbol": "ops.footfall_walking",

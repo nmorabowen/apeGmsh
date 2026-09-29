@@ -32,8 +32,9 @@ class MassRecord:
     """Resolved per-node mass entry.
 
     Always length 6: ``(mx, my, mz, Ixx, Iyy, Izz)``.  The OpenSees
-    bridge slices to ``ndf`` when emitting commands (the rotational
-    components are dropped for ``ndf<4`` models).
+    bridge maps it onto each node's DOFs by ``(ndm, ndf)`` when emitting
+    (``broker_mass_components``): positional in 3-D, ``(mx, my[, Izz])``
+    in 2-D.
 
     Multiple :class:`MassDef` may contribute to the same node — the
     composite accumulates them so each node gets at most one

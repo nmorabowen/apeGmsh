@@ -62,6 +62,8 @@ from apeGmsh._kernel.resolvers._interface_resolver import (
     _SLAVE_NDF_VALUES_3D,
 )
 
+from ._declarations import _DeclarationsMixin
+
 class _Unset:
     """``g.constraints.interface(thickness=...)`` sentinel.
 
@@ -468,7 +470,7 @@ from apeGmsh._kernel.geometry._host_decomposition import (
 _ConstraintT = TypeVar("_ConstraintT", bound=ConstraintDef)
 
 
-class ConstraintsComposite:
+class ConstraintsComposite(_DeclarationsMixin):
     """Solver-agnostic kinematic-constraint composite — declare on
     geometry, resolve to nodes after meshing.
 
@@ -610,6 +612,14 @@ class ConstraintsComposite:
                 for slave in slaves:
                     ops.rigidLink("beam", master, slave)
     """
+
+    _DECLARATION_STORES = {
+        "constraint_defs": tuple(_DISPATCH),
+        "_bc_defs": (BCDef,),
+        "contact_defs": (ContactDef,),
+        "contact_plane_defs": (ContactPlaneDef,),
+        "interface_defs": (InterfaceDef,),
+    }
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -787,8 +797,7 @@ class ConstraintsComposite:
             edge_soft=edge_soft, edge_alm=edge_alm, edge_aug_tol=edge_aug_tol,
             name=name,
         )
-        self.contact_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def resolve_contacts(self, node_tags, node_coords) -> list[ContactRecord]:
         """Resolve every :meth:`contact` def to a :class:`ContactRecord`.
@@ -1062,8 +1071,7 @@ class ConstraintsComposite:
             normal=tuple(normal), point=tuple(point),
             kn=kn, visc=visc, soft=soft, name=name,
         )
-        self.contact_plane_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def resolve_contact_planes(
         self, node_tags, node_coords,
@@ -1200,8 +1208,7 @@ class ConstraintsComposite:
             thickness=thickness, tolerance=tolerance,
             slave_ndf=slave_ndf, name=name,
         )
-        self.interface_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     @staticmethod
     def _live_model_dim() -> int | None:
@@ -1695,23 +1702,8 @@ class ConstraintsComposite:
                                 f"slave_entities=.  Available parts: "
                                 f"{sorted(part_names)}."
                             )
-        self.constraint_defs.append(defn)
-        # Phase 3B.2d / ADR 0038 — chain-phase routing.  Constraint
-        # defs (equalDOF / rigidLink / rigidDiaphragm / embedded /
-        # tied_contact) need element-side resolution that the
-        # minimum-viable router does not yet cover; the call falls
-        # through to the bump-counter pattern with a documented gap
-        # (the def is stored on ``self.constraint_defs`` but not
-        # applied to ``_fem`` until a build-phase
-        # ``get_fem_data()`` re-extraction).
-        from apeGmsh._kernel.resolvers._chain_phase_router import (
-            try_chain_phase_route,
-        )
-        try_chain_phase_route(self._parent, defn)
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
-        return defn
+        # Store + chain-phase route + cache bump (Phase 3B.2d / ADR 0038).
+        return self._declare(defn)
 
     def _label_resolvable(self, lbl, part_names) -> bool:
         """True if ``lbl`` names a part, physical group, or label.
@@ -1766,19 +1758,24 @@ class ConstraintsComposite:
         """Homogeneous single-point constraint — fix a pattern to ground.
 
         The natural (essential / Dirichlet) boundary condition: every
-        mesh node in the resolved pattern gets ``ops.fix(node, *mask)``
-        downstream. There is **no master and no slave** — unlike every
-        other method on this composite, this is a constraint *to
-        ground*, not between two parts. It resolves into
-        ``fem.nodes.sp`` (homogeneous :class:`SPRecord`\\ s) — the same
-        broker channel as ``g.displacements.surface`` — **not**
-        ``fem.nodes.constraints``.
+        mesh node in the resolved pattern gets one homogeneous
+        :class:`SPRecord` per restrained DOF. There is **no master and
+        no slave** — unlike every other method on this composite, this
+        is a constraint *to ground*, not between two parts. It resolves
+        into ``fem.nodes.sp`` — the same broker channel as
+        ``g.displacements.surface`` — **not** ``fem.nodes.constraints``,
+        so unlike the MP constraints here it does **not** reach an
+        ``apeSees`` deck on its own (ADR 0051 §4). Restate it on the
+        bridge: ``ops.fix(pg=..., dofs=...)`` with the same mask, or
+        ``ops.fix_from_model()`` to fix every homogeneous record at
+        once. A deck that does neither warns at emit
+        (``UnconsumedModelDefinitionWarning``).
 
         Because it is a *permanent* constraint (not a pattern-scoped
         quantity), it lives here on ``g.constraints`` rather than on
-        ``g.displacements``: there is no load-pattern context to accidentally
-        scope it into, and the downstream emitter places it in the
-        ``model → bcs → patterns`` deck order via ``ops.fix``.
+        ``g.displacements``: there is no load-pattern context to
+        accidentally scope it into, and once restated it emits as a
+        model-level ``fix``, never inside a pattern.
 
         Parameters
         ----------
@@ -1825,17 +1822,7 @@ class ConstraintsComposite:
         defn = BCDef(target=t, target_source=src,
                      dofs=list(dofs) if dofs is not None else [1, 1, 1],
                      name=name)
-        self._bc_defs.append(defn)
-        # Phase 3B.2d / ADR 0038 — chain-phase routing.  See
-        # ``MassesComposite._add_def`` for the contract.
-        from apeGmsh._kernel.resolvers._chain_phase_router import (
-            try_chain_phase_route,
-        )
-        try_chain_phase_route(self._parent, defn)
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
-        return defn
+        return self._declare(defn)
 
     def resolve_bcs(self, node_tags, *, node_map=None) -> list:
         """Resolve every :meth:`bc` def to homogeneous ``SPRecord``\\ s.
@@ -3737,8 +3724,19 @@ class ConstraintsComposite:
         return out
 
     def clear(self) -> None:
-        self.constraint_defs.clear()
+        """Forget every declared constraint and invalidate the FEMData
+        cache.
+
+        Empties all five def lists (MP constraints, ``bc``, ``contact``,
+        ``contact_plane`` and ``interface``), with their resolved
+        records and the MP lane's phantom-tag mark.
+        """
+        self._clear_declarations()
         self.constraint_records.clear()
+        self.contact_records.clear()
+        self.contact_plane_records.clear()
+        self.interface_records.clear()
+        self._phantom_tag_high_water = None
 
     def __repr__(self) -> str:
         return (

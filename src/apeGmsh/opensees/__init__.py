@@ -26,6 +26,7 @@ removed in the Phase-8 teardown (ADR 0009 — no back-compat shim).
 from __future__ import annotations
 
 from .apesees import apeSees
+from ._internal.build import UnconsumedModelDefinitionWarning
 from .model_data import ModelData
 from .node import Node, NodeSet
 from .opensees_model import OpenSeesModel
@@ -44,4 +45,5 @@ __all__ = [
     "Spherical",
     "OpenSeesTarget",
     "OpenSeesCapabilities",
+    "UnconsumedModelDefinitionWarning",
 ]

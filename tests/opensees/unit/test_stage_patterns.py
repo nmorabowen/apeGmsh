@@ -293,7 +293,10 @@ def test_stage_pattern_from_model_imports_prescribed_sp_only() -> None:
         s.run(n_increments=5, dt=0.1)
 
     rec = RecordingEmitter()
-    ops.build().emit(rec)
+    # The un-restated hold is dropped from the deck, and emit says so.
+    from apeGmsh.opensees import UnconsumedModelDefinitionWarning
+    with pytest.warns(UnconsumedModelDefinitionWarning):
+        ops.build().emit(rec)
     names = _names(rec)
     i_po = names.index("pattern_open")
     i_pc = names.index("pattern_close")

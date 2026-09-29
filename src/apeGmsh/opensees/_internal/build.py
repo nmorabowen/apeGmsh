@@ -132,8 +132,11 @@ __all__ = [
     "validate_body_force_double_count",
     "validate_from_model_cases",
     "validate_load_basis_vs_elements",
+    "validate_model_definition_consumed",
+    "fix_records_from_model",
     "make_auto_stiffness_resolver",
     "AUTO_STIFFNESS_ALPHA",
+    "UnconsumedModelDefinitionWarning",
     "WarnBodyForceDoubleCount",
     "WarnLoadBasisMismatch",
     "infer_node_ndf",
@@ -143,6 +146,7 @@ __all__ = [
     "validate_constraint_master_ndf",
     "validate_record_ndf_consistency",
     "fit_dof_vector",
+    "broker_mass_components",
     "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
@@ -3012,13 +3016,22 @@ def emit_transform_specs(
             # (``geomTransf <Type> $tag`` with no vecxz vector, which
             # is required in 2D and invalid in 3D). The primitive's
             # _emit can't take this branch because it doesn't know ndm.
-            bare_2d = (
-                ndm == 2
-                and type(transf) in _TRANSF_TYPE_TOKEN
-                and getattr(transf, "vecxz", None) is None
-                and getattr(transf, "orientation", None) is None
-            )
+            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
             if bare_2d:
+                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
+                # ``geomTransf`` rejects any trailing args (and exits
+                # 0), while openseespy silently ignores them.  Only a
+                # vector along global Z matches what a 2-D model can
+                # mean (local z = global Z); anything else is a 3-D
+                # intent the 2-D transform cannot honor.
+                vecxz = getattr(transf, "vecxz", None)
+                if vecxz is not None and not _is_global_z(vecxz):
+                    raise BridgeError(
+                        f"geomTransf {type(transf).__name__}: "
+                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
+                        "2-D transforms take no vecxz (local z is always "
+                        "global Z); drop the vecxz= kwarg."
+                    )
                 emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
                 if replay_log is not None:
                     replay_log.append(
@@ -3115,6 +3128,12 @@ def emit_transform_specs(
                 overrides[(id(transf), eid)] = assigned
 
     return overrides
+
+
+def _is_global_z(v: "tuple[float, float, float]") -> bool:
+    """True when ``v`` is a non-zero vector along global ±Z."""
+    x, y, z = (float(c) for c in v)
+    return abs(z) > 0.0 and float(np.hypot(x, y)) <= VECXZ_TOL * abs(z)
 
 
 def _node_coord(fem: "FEMData", node_id: int) -> np.ndarray:
@@ -4247,7 +4266,8 @@ def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
                 f"it converges on it — worse than the uncapped force-accept, "
                 f"which at least integrates the whole increment. Use an "
                 f"element MEASURED to propagate a material refusal (e.g. "
-                f"LadrunoBrick, LadrunoQuad, TenNodeTetrahedron), or leave "
+                f"LadrunoBrick, LadrunoQuad, or TenNodeTetrahedron as the "
+                f"fork builds it — stock's is 6x too soft), or leave "
                 f"max_substeps=0 (uncapped)."
             )
 
@@ -4305,7 +4325,9 @@ def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
         f"and every other fail-loud material contract never reach the "
         f"analysis, so a non-converged or inadmissible state is committed "
         f"as if it had converged. Use LadrunoBrick or TenNodeTetrahedron "
-        f"for a fail-loud deck.",
+        f"for a fail-loud deck, on a fork build: the refusal contract is "
+        f"fork-only, and stock's TenNodeTetrahedron is 6x too soft (the live "
+        f"run refuses it there).",
         ASDPlasticHostWarning,
         stacklevel=2,
     )
@@ -4643,6 +4665,247 @@ def validate_from_model_cases(
     )
 
 
+class UnconsumedModelDefinitionWarning(UserWarning):
+    """The model defines supports or masses that the deck never emits.
+
+    ``g.constraints.bc(...)`` (and a zero-valued ``g.displacements``)
+    resolve into homogeneous SP records on ``fem.nodes.sp``;
+    ``g.masses.*`` resolve into ``fem.nodes.masses``.  The bridge emits
+    neither on its own (ADR 0051 §4): a deck carries them only when it
+    restates them — ``ops.fix`` / ``s.fix`` / ``s.support`` /
+    ``ops.fix_from_model()`` for the supports, ``ops.mass`` /
+    ``s.mass`` / ``ops.mass_from_model()`` for the masses.  A deck that
+    restates none of them runs unsupported and massless with no error.
+    Filter this category for a deck that leaves them out on purpose.
+    """
+
+
+def _record_node_ids(
+    fem: "FEMData", rec: "FixRecord | SupportRecord | MassRecord",
+) -> "Iterable[int]":
+    """The node ids a ``pg`` XOR ``nodes`` bridge record targets."""
+    if rec.nodes is not None:
+        return rec.nodes
+    return expand_pg_to_nodes(fem, rec.pg) if rec.pg is not None else ()
+
+
+def _sp_deck_dof(spatial_dof: int, node_ndf: int, ndm: int) -> "int | None":
+    """Deck DOF (1-based) carrying a broker SP's spatial component.
+
+    Broker SP records index the spatial vector ``(ux, uy, uz, rx, ry,
+    rz)`` (``g.constraints.bc``'s mask, ``g.displacements``' ``dofs``);
+    a deck ``fix`` mask is positional over the node's DOFs.  The two
+    agree only in 3-D; a 2-D frame (``ndm=2, ndf=3``) carries ``rz`` at
+    DOF 3, so this maps through :func:`_load_dof_layout`, the layout the
+    load path uses.  ``None`` when the node has no DOF for the component
+    (``uz`` on any 2-D node, rotations on a solid).
+    """
+    layout = _load_dof_layout(int(node_ndf), int(ndm))
+    idx = int(spatial_dof) - 1
+    return layout.index(idx) + 1 if idx in layout else None
+
+
+def _stacklevel_outside_package() -> int:
+    """``stacklevel`` naming the first caller outside ``apeGmsh``.
+
+    Emit is reached at varying depths (``ops.tcl`` -> ``emit``, a direct
+    ``ops.build().emit(...)``, the live runners), so a fixed stacklevel
+    lands inside the bridge.  Counted from the ``warnings.warn`` call
+    in this module's caller.
+    """
+    import inspect
+    import os
+
+    pkg = os.path.normcase(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))) + os.sep
+    frame = inspect.currentframe()
+    level = 1
+    try:
+        f = frame.f_back if frame is not None else None  # the warn site
+        while f is not None and os.path.normcase(os.path.abspath(
+                f.f_code.co_filename)).startswith(pkg):
+            f = f.f_back
+            level += 1
+        return level
+    finally:
+        del frame
+
+
+def validate_model_definition_consumed(
+    fem: "FEMData",
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    ndm: int,
+    *,
+    fix_records: "Iterable[FixRecord | SupportRecord]",
+    mass_records: "Iterable[MassRecord]",
+    mass_from_model: bool,
+) -> None:
+    """ADR 0051 §4 — warn when broker supports / masses miss the deck.
+
+    A homogeneous SP record is consumed when a bridge fix-like record
+    (``ops.fix`` / ``s.fix`` / ``s.support``, which is where
+    ``ops.fix_from_model()`` lands too) flags the deck DOF that carries
+    its spatial component on that node (:func:`_sp_deck_dof`, so ``uz``
+    of a 2-D frame is not mistaken for its ``rz``).  A component the
+    node has no DOF for is skipped: no deck can carry it, so nothing is
+    dropped.  A mass record is consumed when a bridge ``mass`` record
+    targets its node, or wholesale by ``mass_from_model``.  Prescribed
+    (non-zero) SPs are load-case records that ``p.from_model(case)``
+    imports, not model definition, and are out of scope.
+
+    One aggregated :class:`UnconsumedModelDefinitionWarning` names the
+    unconsumed counts and the verbs that restate them; a deck that
+    restates every record stays silent.
+    """
+    nodes = getattr(fem, "nodes", None)
+    sp_set = getattr(nodes, "sp", None) if nodes is not None else None
+    mass_set = getattr(nodes, "masses", None) if nodes is not None else None
+    issues: list[str] = []
+
+    # (node, deck DOF, case) per homogeneous record the node can carry.
+    homogeneous: list[tuple[int, int, str]] = []
+    for r in sp_set if sp_set is not None else ():
+        if not r.is_homogeneous:
+            continue
+        n = int(r.node_id)
+        d = _sp_deck_dof(
+            int(r.dof), int(effective_ndf.get(n, envelope_ndf)), ndm)
+        if d is not None:
+            homogeneous.append((n, d, str(r.pattern)))
+    if homogeneous:
+        fixed = {
+            (int(n), d)
+            for rec in fix_records
+            for n in _record_node_ids(fem, rec)
+            for d, flag in enumerate(rec.dofs, start=1)
+            if flag
+        }
+        missed = [h for h in homogeneous if (h[0], h[1]) not in fixed]
+        if missed:
+            cases = sorted({c for _, _, c in missed if c != "default"})
+            source = ", ".join(
+                (["g.constraints.bc"]
+                 if any(c == "default" for _, _, c in missed) else [])
+                + ([f"zero-valued g.displacements holds in case(s) "
+                    f"{', '.join(repr(c) for c in cases)}"] if cases else [])
+            )
+            issues.append(
+                f"{len(missed)} homogeneous SP record(s) on "
+                f"{len({n for n, _, _ in missed})} node(s) ({source}) have "
+                f"no fix — restate them with ops.fix(pg=..., dofs=...) or "
+                f"ops.fix_from_model()"
+            )
+
+    if mass_set is not None and len(mass_set) and not mass_from_model:
+        ids = np.asarray(mass_set.node_ids(), dtype=np.int64)
+        covered = np.fromiter(
+            {int(n) for rec in mass_records for n in _record_node_ids(fem, rec)},
+            dtype=np.int64,
+        )
+        n_missed = int(np.count_nonzero(~np.isin(ids, covered)))
+        if n_missed:
+            issues.append(
+                f"{n_missed} nodal mass record(s) (g.masses) have no mass "
+                f"— restate them with ops.mass_from_model() or "
+                f"ops.mass(pg=..., values=...)"
+            )
+
+    if issues:
+        warnings.warn(
+            "the model defines supports / masses that this deck never "
+            f"emits: {'; '.join(issues)}.  apeSees does not emit "
+            "g.constraints.bc or g.masses on its own (ADR 0051 §4); "
+            "without them the deck runs unsupported / massless, with no "
+            "error.  If this deck leaves them out on purpose, filter "
+            "UnconsumedModelDefinitionWarning.",
+            UnconsumedModelDefinitionWarning,
+            stacklevel=_stacklevel_outside_package(),
+        )
+
+
+def fix_records_from_model(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    envelope_ndf: int,
+    *,
+    ndf_records: "Iterable[NdfRecord]" = (),
+    explicit: "Iterable[FixRecord | SupportRecord]" = (),
+) -> tuple[FixRecord, ...]:
+    """``ops.fix_from_model()`` — one ``fix`` per node from the snapshot.
+
+    Folds every homogeneous SP record on ``fem.nodes.sp`` into one DOF
+    mask per node, so two ``g.constraints.bc`` targets sharing a node
+    give one ``fix`` line, not two (OpenSees refuses a second SP on a
+    constrained DOF).  Nodes sharing a mask share one record.  Each
+    record's spatial component lands on the deck DOF that carries it
+    (:func:`_sp_deck_dof`, by ``ndm`` and the node's effective ndf:
+    inferred from *elements*, plus the ``ops.ndf`` overlay, else the
+    envelope), and a component the node lacks is left out.  So ``bc``'s
+    default ``[1, 1, 1]`` (ux, uy, uz) pins x and y on a 2-D frame and
+    leaves ``rz`` free, exactly what
+    :func:`validate_model_definition_consumed` counts.  Prescribed
+    records are not touched: ``p.from_model(case)`` imports those.
+
+    Raises
+    ------
+    BridgeError
+        If an *explicit* fix / support already constrains a DOF the
+        snapshot fixes: the second ``fix`` on it would fail when the
+        deck runs.  Use exactly one channel per DOF.
+    """
+    sp_set = getattr(getattr(fem, "nodes", None), "sp", None)
+    spatial_by_node: dict[int, set[int]] = {}
+    for r in sp_set if sp_set is not None else ():
+        if r.is_homogeneous:
+            spatial_by_node.setdefault(int(r.node_id), set()).add(int(r.dof))
+    if not spatial_by_node:
+        return ()
+
+    inferred = infer_node_ndf(fem, elements, ndm)
+    node_ndf = {
+        **inferred, **resolve_ndf_overlay(fem, ndf_records, inferred, ndm),
+    }
+    dofs_by_node: dict[int, set[int]] = {}
+    for n, spatial in spatial_by_node.items():
+        ndf_n = int(node_ndf.get(n, envelope_ndf))
+        deck = {
+            d for d in (_sp_deck_dof(s, ndf_n, ndm) for s in spatial)
+            if d is not None
+        }
+        if deck:
+            dofs_by_node[n] = deck
+
+    clash = sorted({
+        (int(n), d)
+        for rec in explicit
+        for n in _record_node_ids(fem, rec)
+        for d, flag in enumerate(rec.dofs, start=1)
+        if flag and d in dofs_by_node.get(int(n), ())
+    })
+    if clash:
+        shown = ", ".join(f"node {n} DOF {d}" for n, d in clash[:5])
+        more = f" (+{len(clash) - 5} more)" if len(clash) > 5 else ""
+        raise BridgeError(
+            f"fix_from_model() and an explicit ops.fix / s.fix / s.support "
+            f"both constrain {shown}{more} — OpenSees refuses a second SP "
+            f"on a constrained DOF, so the deck would fail when it runs. "
+            f"Use exactly one channel per DOF: drop the explicit fix, or "
+            f"drop fix_from_model() and restate every support explicitly."
+        )
+
+    by_mask: dict[tuple[int, ...], list[int]] = {}
+    for n in sorted(dofs_by_node):
+        ds = dofs_by_node[n]
+        mask = tuple(1 if d in ds else 0 for d in range(1, max(ds) + 1))
+        by_mask.setdefault(mask, []).append(n)
+    return tuple(
+        FixRecord(pg=None, nodes=tuple(ns), dofs=mask)
+        for mask, ns in by_mask.items()
+    )
+
+
 def sweep_asdconcrete_element_size(
     spec: "Element",
     elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
@@ -4817,6 +5080,84 @@ def broker_load_components(
             f"includes the missing DOF."
         )
     return tuple(spatial[i] for i in layout)
+
+
+_MASS_COMPONENT_LABELS = ("mx", "my", "mz", "Ixx", "Iyy", "Izz")
+
+
+def broker_mass_components(
+    mass: "Iterable[float]", ndf: int, ndm: int, *, node: int,
+) -> tuple[float, ...]:
+    """Map a broker ``(mx, my, mz, Ixx, Iyy, Izz)`` mass onto a node's DOFs.
+
+    The mass counterpart of :func:`broker_load_components`. Broker masses
+    (``fem.nodes.masses``) are spatially ordered, not DOF-ordered, so a
+    positional trim is wrong in 2-D: an ``ndm=2, ndf=3`` frame node is
+    ``(ux, uy, rz)`` and must receive ``(mx, my, Izz)``, not ``(mx, my, mz)``.
+
+    * ``ndm != 2`` delegates to :func:`fit_dof_vector` (positional), which
+      is already the right layout for 3-D (``ndf`` 3 or 6); 3-D decks are
+      unchanged.
+    * ``ndm == 2`` places components by :func:`_load_dof_layout`
+      (``ndf=2`` → ``(mx, my)``, ``ndf=3`` → ``(mx, my, Izz)``). ``mz`` is
+      dropped when it rides with in-plane mass: the resolver fills it by
+      default (``dofs=None`` means ``mx = my = mz = m``), and a 2-D model
+      has no z-translation. A z-ONLY mass (``mz != 0`` with ``mx = my =
+      0``, e.g. ``dofs=[3]``) is explicit out-of-plane intent and fails
+      loud, like ``Fz`` in :func:`broker_load_components`. Any other
+      non-zero component with no DOF to land on also fails loud: ``Ixx`` /
+      ``Iyy``, or ``Izz`` on an ``ndf=2`` node, come from an explicit
+      ``rotational=`` or ``derive_rotational=True``; ``my`` on an ``ndf=1``
+      node is an in-plane translation the node lacks.
+
+    Known gap: the record does not carry the resolver's ``dofs`` mask, so
+    a mixed explicit mask such as ``dofs=[1, 3]`` (``mx = mz = m``, ``my =
+    0``) is indistinguishable from a default fill and its ``mz`` is
+    dropped silently. Likewise, the guard sees the per-node *accumulated*
+    record, so a z-only def (``dofs=[3]``) whose nodes all also carry
+    in-plane mass from another def is absorbed into the default-fill case
+    and its ``mz`` is dropped without error. Closing both needs the mask
+    on ``MassRecord``.
+    """
+    if int(ndm) != 2:
+        return fit_dof_vector(mass, ndf, kind="mass", node=node)
+    vals = [float(v) for v in mass]
+    vals += [0.0] * (6 - len(vals))
+    ndf_i = int(ndf)
+    if vals[2] != 0.0 and vals[0] == 0.0 and vals[1] == 0.0:
+        raise BridgeError(
+            f"mass on node {node} is z-translation only (mz={vals[2]:g}, "
+            f"mx = my = 0), but a 2-D model (ndm=2, ndf={ndf_i}) has no "
+            f"z-translation — the mass would be silently dropped. Use "
+            f"in-plane DOFs (dofs=[1, 2]) for a 2-D model."
+        )
+    layout = _load_dof_layout(ndf_i, 2)
+    carried = set(layout) | {2}
+    dropped = [
+        i for i in range(6) if i not in carried and vals[i] != 0.0
+    ]
+    if dropped:
+        causes = []
+        if any(i < 3 for i in dropped):
+            causes.append(
+                f"the node has only {ndf_i} DOF(s), so an in-plane "
+                f"translational mass it lacks cannot land (check the node's "
+                f"ndf, or restrict the mass with dofs=)")
+        if any(i >= 3 for i in dropped):
+            causes.append(
+                "rotational inertia about an axis the node cannot rotate "
+                "about (a 2-D node rotates only about z, and only on an "
+                "ndf=3 frame node): use rotational=(0, 0, Izz), or drop "
+                "derive_rotational on a node without that DOF")
+        labels = ", ".join(
+            f"{_MASS_COMPONENT_LABELS[i]}={vals[i]:g}" for i in dropped)
+        raise BridgeError(
+            f"mass on node {node} has component(s) {labels} that the 2-D "
+            f"model (ndm=2, ndf={ndf_i}) cannot carry — it would be "
+            f"silently dropped: {'; '.join(causes)}."
+        )
+    out = tuple(vals[i] for i in layout)
+    return out + (0.0,) * (int(ndf) - len(out))
 
 
 def _emit_from_model_case(

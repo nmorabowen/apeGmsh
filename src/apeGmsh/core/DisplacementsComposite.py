@@ -27,8 +27,10 @@ from apeGmsh._kernel.defs.loads import FaceSPDef, PointSPDef
 from apeGmsh._kernel.records._loads import SPRecord
 from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
 
+from ._declarations import _DeclarationsMixin
 
-class DisplacementsComposite:
+
+class DisplacementsComposite(_DeclarationsMixin):
     """Prescribed-displacement composite — define + resolve ``sp`` motion.
 
     **Ownership rule (ADR 0050).** ``g.constraints.bc`` owns permanent
@@ -44,6 +46,8 @@ class DisplacementsComposite:
     * :meth:`point` — prescribed value applied verbatim at every node of
       the target.
     """
+
+    _DECLARATION_STORES = {"disp_defs": (FaceSPDef, PointSPDef)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -110,7 +114,7 @@ class DisplacementsComposite:
                 "displacements.surface(magnitude=...) requires normal=True or "
                 "direction=(dx, dy, dz).")
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
-        return self._add_def(FaceSPDef(
+        return self._declare(FaceSPDef(
             target=t, target_source=src,
             pattern=self._active_case, name=name,
             dofs=dofs or [1, 1, 1],
@@ -134,7 +138,7 @@ class DisplacementsComposite:
             ``None`` = homogeneous (all zero) — a pattern-bound hold.
         """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
-        return self._add_def(PointSPDef(
+        return self._declare(PointSPDef(
             target=t, target_source=src,
             pattern=self._active_case, name=name,
             dofs=dofs or [1, 1, 1],
@@ -142,26 +146,12 @@ class DisplacementsComposite:
         ))
 
     # ------------------------------------------------------------------
-    # Internal: store + validate (target resolution delegated to g.loads)
+    # Internal: target resolution (delegated to g.loads)
     # ------------------------------------------------------------------
 
     def _coalesce_target(self, target, *, pg=None, label=None, tag=None):
         return self._parent.loads._coalesce_target(
             target, pg=pg, label=label, tag=tag)
-
-    def _add_def(self, defn):
-        self.disp_defs.append(defn)
-        # Mirror LoadsComposite._add_def: chain-phase route (no-op for SP
-        # defs today — the router returns None for unrouted kinds) + bump
-        # the FEMData cache counter so a fresh get_fem_data() re-resolves.
-        from apeGmsh._kernel.resolvers._chain_phase_router import (
-            try_chain_phase_route,
-        )
-        try_chain_phase_route(self._parent, defn)
-        bump = getattr(self._parent, "_bump_fem_counter", None)
-        if bump is not None:
-            bump()
-        return defn
 
     def validate_pre_mesh(self) -> None:
         """Validate every registered displacement's target resolves.

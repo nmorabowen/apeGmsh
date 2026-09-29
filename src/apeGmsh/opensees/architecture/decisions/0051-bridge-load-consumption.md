@@ -214,6 +214,60 @@ unchanged and documented: `remove_bc` `dofs=` are **1-based indices**;
    wrapping one implicit stage, if one-mental-model ergonomics is wanted —
    sugar, not a forced universal. Not built now.
 
+## Amendment (2026-09-28) — the model-definition reconciliation ships
+
+An audit at `07f757e0` found the gap §4 leaves open. A model with
+`g.constraints.bc(...)` and `g.masses.*` resolved 174 homogeneous SP and
+339 mass records into the broker; a deck that did not restate them
+emitted 0 `fix` / 0 `mass` lines, with no warning — an unsupported,
+massless structure that still runs. Restated (`ops.fix` +
+`ops.mass_from_model()`), the same deck had 58 / 339. Two pieces of the
+BRIDGE-1 follow-up named in §7 and open question 3 now ship.
+
+1. **`UnconsumedModelDefinitionWarning`** (exported from
+   `apeGmsh.opensees`), raised at most once per emit by
+   `validate_model_definition_consumed` (`_internal/build.py`, called
+   from `BuiltModel.emit` before path dispatch, so flat, split and
+   partitioned emits share it). A homogeneous SP record `(node, dof)`
+   counts as restated when an `ops.fix`, `s.fix` or `s.support` flags
+   that DOF on that node; a DOF beyond the node's effective ndf is
+   skipped, since no deck could carry it. A mass record counts when an
+   `ops.mass` or `s.mass` targets its node, or wholesale under
+   `mass_from_model()`. Archival emits (`ops.h5`) skip the check: they
+   never solve, the neutral zone keeps both record sets, and
+   `mass_from_model()` is refused there, so the warning's advice would
+   fail.
+
+   This is not the audit §7 rejected. §7 declined to diff the geometry's
+   declared load *cases* against the deck because a case is a scenario:
+   one geometry legitimately feeds a gravity-only deck and a
+   gravity-plus-lateral one. Supports and masses are model definition
+   (the §4 table): a deck that drops them is a different structure, not
+   a different scenario. It warns rather than raises because a deck may
+   take its mass from element `rho` or its supports from another
+   mechanism on purpose; such a deck filters the category.
+
+2. **`ops.fix_from_model()`**, the support twin of
+   `ops.mass_from_model()`. It is spelled after the verb that shipped
+   (ADR 0065 Tier 2), not the `ops.fix.from_model` sketched above:
+   `ops.fix` stays a plain method and the pair reads alike. It
+   materializes the broker's homogeneous SPs at `build()` as ordinary
+   `FixRecord`s, one per distinct mask with each node's restrained DOFs
+   unioned, so every emit path (flat, partitioned buckets and ghosts,
+   the staged validators, G3, H5) treats them like `ops.fix`. Broker SP
+   records index the *spatial* vector `(ux, uy, uz, rx, ry, rz)` while a
+   deck `fix` mask is positional over the node's DOFs, so each component
+   is mapped by `(ndm, ndf)` through the load path's `_load_dof_layout`,
+   and one the node lacks is left out: `bc`'s default `[1, 1, 1]` pins x
+   and y on a 2-D solid or frame and leaves a frame's `rz` (its DOF 3)
+   free. The warning counts through the same mapping. An explicit
+   `ops.fix` / `s.fix` / `s.support` on a DOF the snapshot also fixes
+   raises at build, because OpenSees refuses a second SP on a
+   constrained DOF (`Domain::addSP_Constraint`).
+
+Open question 3 is thereby answered in its no-argument form only; a
+by-case or by-target `from_model` for fixes remains undesigned.
+
 ## Related
 
 - [ADR 0050](0050-dimension-indexed-loads-and-displacements.md) — the

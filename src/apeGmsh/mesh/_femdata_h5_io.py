@@ -2825,6 +2825,9 @@ def read_neutral_zone_from_group(
         ndf=node_ndf,
         module_label=node_module_label,
         provenance=node_provenance,
+        # A file has no live producing Gmsh model (not persisted), so a
+        # raw (dim, tag) selection on the loaded snapshot is refused.
+        gmsh_source=None,
     )
     elements = ElementComposite(
         groups=element_groups,
@@ -2841,6 +2844,7 @@ def read_neutral_zone_from_group(
         contacts=contacts or None,
         contact_planes=contact_planes or None,
         interfaces=interfaces or None,
+        gmsh_source=None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),

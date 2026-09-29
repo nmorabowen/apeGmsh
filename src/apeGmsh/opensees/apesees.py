@@ -101,6 +101,7 @@ from ._internal.build import (
     validate_body_force_double_count,
     validate_from_model_cases,
     validate_load_basis_vs_elements,
+    validate_model_definition_consumed,
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
@@ -118,6 +119,8 @@ from ._internal.build import (
     validate_record_ndf_consistency,
     fit_dof_vector,
     fit_fix_mask,
+    fix_records_from_model,
+    broker_mass_components,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -1489,6 +1492,27 @@ class BuiltModel:
                 for c in getattr(p, "from_model_allow_empty", ())
             ),
         )
+        # ADR 0051 §4 — broker homogeneous SPs (g.constraints.bc) and
+        # masses (g.masses) reach the deck only when restated on the
+        # bridge; warn when some were not, instead of dropping them in
+        # silence.  Archival emits skip it: they never solve, the
+        # neutral zone keeps both record sets, and mass_from_model() is
+        # deck/live-only, so its advice would fail there.
+        if not _emitter_is_archival:
+            validate_model_definition_consumed(
+                self.fem, effective_ndf, self.ndf, self.ndm,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records for r in st.fix_records),
+                    *(r for st in self.stage_records
+                      for r in st.support_records),
+                ),
+                mass_records=(
+                    *self.mass_records,
+                    *(r for st in self.stage_records for r in st.mass_records),
+                ),
+                mass_from_model=self.mass_from_model,
+            )
         validate_record_ndf_consistency(
             self.fem, effective_ndf, self.ndm, self.ndf,
             fix_records=(
@@ -3774,9 +3798,9 @@ class BuiltModel:
                             kind="mass", node=nid))
                 for _m in model_mass_by_rank.get(rank, ()):
                     _nid = int(_m.node_id)
-                    emitter.mass(_nid, *fit_dof_vector(
+                    emitter.mass(_nid, *broker_mass_components(
                         _m.mass, int(eff_ndf.get(_nid, self.ndf)),
-                        kind="mass", node=_nid))
+                        self.ndm, node=_nid))
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
@@ -5763,9 +5787,9 @@ class BuiltModel:
         if self.mass_from_model and self._guard_mass_from_model(emitter):
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
-                emitter.mass(nid, *fit_dof_vector(
+                emitter.mass(nid, *broker_mass_components(
                     m.mass, int(eff.get(nid, self.ndf)),
-                    kind="mass", node=nid))
+                    self.ndm, node=nid))
 
     def _emit_fixes_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
@@ -5812,9 +5836,9 @@ class BuiltModel:
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
                 if nid in owned_nodes:
-                    emitter.mass(nid, *fit_dof_vector(
+                    emitter.mass(nid, *broker_mass_components(
                         m.mass, int(eff.get(nid, self.ndf)),
-                        kind="mass", node=nid))
+                        self.ndm, node=nid))
 
     def _bucket_fix_targets_by_rank(
         self, node_owners: "NodePartitionOwners", *, by_node: bool = False,
@@ -8156,6 +8180,9 @@ class apeSees:
         # at emit instead of one bridge MassRecord per node. Set by
         # ``mass_from_model()``; threaded into the BuiltModel.
         self._mass_from_model: bool = False
+        # ADR 0051 §4 — opt-in: fix every homogeneous SP on the snapshot.
+        # Set by ``fix_from_model()``; materialized into FixRecords at build.
+        self._fix_from_model: bool = False
         # ADR 0049 — ``ops.ndf`` directives (element-less decoupled nodes only).
         self._ndf_records: list[NdfRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
@@ -8300,7 +8327,8 @@ class apeSees:
             raise RuntimeError(
                 "OpenSeesTarget(require_fork=True) but the in-process "
                 "openseespy build does not look like the Ladruno fork "
-                "(the fork-only 'profiler' command is absent). Launch "
+                "(the resolved backend lacks the fork-only "
+                "'criticalTimeStep' command). Launch "
                 "this script under a python whose openseespy is the fork "
                 "build, or drop require_fork to run on stock OpenSees."
             )
@@ -8531,8 +8559,10 @@ class apeSees:
         Validated here (non-zero finite coefficients, DOFs >= 1, a
         non-empty retained set, the constrained DOF not among the retained
         ones) and at emit (nodes exist, DOFs fit each node's ndf). The
-        in-process run needs the Ladruno fork, like every
-        ``equationConstraint``; a partitioned emit refuses the rows, and
+        in-process run needs a build with ``equationConstraint``
+        (openseespy >= 3.8.0 — one such model per process, since stock
+        ``wipe()`` keeps the rows — or the fork); a partitioned emit
+        refuses the rows, and
         ``ops.h5(...)`` does not archive them (``H5FeatureDeferredWarning``).
         """
         try:
@@ -8592,14 +8622,16 @@ class apeSees:
     def mass_from_model(self) -> None:
         """Stream per-node lumped masses straight from the model snapshot.
 
-        Equivalent to looping ``ops.mass(nodes=[m.node_id], values=m.mass)``
+        In 3-D, equivalent to looping ``ops.mass(nodes=[m.node_id], values=m.mass)``
         over every entry in ``fem.nodes.masses`` (e.g. the per-node tributary
         masses produced by ``g.masses.volume(...)``), but **without
         materializing one bridge ``MassRecord`` per node** — the snapshot
         masses are streamed at emit time. On a multi-million-node model this
         avoids a multi-GB resident list and millions of small objects (ADR
-        0065 Tier 2). Emits byte-identical deck lines and honours per-node
-        ``ndf`` via the same ``fit_dof_vector`` as :meth:`mass`.
+        0065 Tier 2). Honours per-node ``ndf``; each broker mass is spatially
+        ordered ``(mx, my, mz, Ixx, Iyy, Izz)`` and is mapped onto the node's
+        DOFs by ``broker_mass_components`` — byte-identical to the explicit
+        loop in 3-D, and ``(mx, my[, Izz])`` on a 2-D (``ndm=2``) node.
 
         Model-wide declaration (no arguments). May be combined with explicit
         :meth:`mass` calls only on *disjoint* node sets — overlap raises at
@@ -8608,6 +8640,30 @@ class apeSees:
         ``model.h5`` via ``fem.nodes.masses``).
         """
         self._mass_from_model = True
+
+    def fix_from_model(self) -> None:
+        """Fix every homogeneous SP on the model snapshot (ADR 0051 §4).
+
+        The support twin of :meth:`mass_from_model`: equivalent to a
+        :meth:`fix` for each node carrying homogeneous records on
+        ``fem.nodes.sp`` (``g.constraints.bc(...)``, or a zero-valued
+        ``g.displacements``), with the node's restrained DOFs folded
+        into one mask, so two targets sharing a node emit one ``fix``.
+        The records' spatial components (``ux uy uz rx ry rz``) land on
+        the node's deck DOFs by ``ndm`` and ndf, and one the node lacks
+        is left out: ``bc``'s default ``[1, 1, 1]`` pins x and y on a
+        2-D solid or frame and leaves a frame's ``rz`` free. Prescribed
+        (non-zero) SPs are untouched: ``p.from_model(case)`` imports
+        those.
+
+        Model-wide declaration (no arguments), materialized into
+        ordinary fix records at :meth:`build`, so every emit path treats
+        them like :meth:`fix`. May be combined with explicit
+        :meth:`fix` / ``s.fix`` / ``s.support`` only on *disjoint*
+        (node, DOF) pairs: an overlap raises at build, since OpenSees
+        refuses a second SP on a constrained DOF.
+        """
+        self._fix_from_model = True
 
     def ndf(self, target: object = None, *, ndf: int) -> None:
         """State the per-node ``ndf`` of an element-LESS decoupled node
@@ -11947,13 +12003,27 @@ class apeSees:
         tag_for: dict[int, int] = {
             id(p): self._tags.tag_for(p) or 0 for p in self._primitives
         }
+        fix_records = tuple(self._fix_records)
+        if self._fix_from_model:
+            fix_records += fix_records_from_model(
+                self._fem,
+                [p for p in self._primitives if isinstance(p, Element)],
+                self._ndm, self._ndf,
+                ndf_records=self._ndf_records,
+                explicit=(
+                    *fix_records,
+                    *(r for st in self._stage_records for r in st.fix_records),
+                    *(r for st in self._stage_records
+                      for r in st.support_records),
+                ),
+            )
         return BuiltModel(
             primitives=tuple(self._primitives),
             tag_for=tag_for,
             ndm=self._ndm,
             ndf=self._ndf,
             fem=self._fem,
-            fix_records=tuple(self._fix_records),
+            fix_records=fix_records,
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
             ndf_records=tuple(self._ndf_records),

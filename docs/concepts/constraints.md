@@ -67,9 +67,12 @@ model units — `1e-6` is right for a metre model and uselessly tight for a
 millimetre one. The single exception to the index convention is
 `g.constraints.bc(...)`, the fix-to-ground boundary condition, which takes an
 OpenSees-style restraint *mask* (`dofs=[1, 1, 0]` means "fix x and y") because
-it becomes `ops.fix` downstream. It lives on `g.constraints` because fixity is
-permanent, not load-pattern-scoped; the recipe is in
-[Supports & BCs](../how-to/supports-bcs.md).
+it mirrors `ops.fix`. It is also the one verb here that does not emit by
+itself: it resolves into `fem.nodes.sp`, not the constraint records above, and
+the deck carries it only once the bridge restates it with `ops.fix(...)` or
+`ops.fix_from_model()` (emit warns when it does not). It lives on
+`g.constraints` because fixity is permanent, not load-pattern-scoped; the
+recipe is in [Supports & BCs](../how-to/supports-bcs.md).
 
 ## Same mesh: co-located pairs and rigid clusters
 
@@ -148,9 +151,9 @@ from the host material at emit, so it lands a few orders above the element
 stiffness in whatever unit system you model in). `"equation"` emits exact
 multi-point equations (translations only) enforced by a constraint handler,
 and `"penalty_al"` uses the fork's augmented-Lagrange penalty element. Start
-with the default; switch to `"equation"` when you need the interface exact
-**and you are running on a Ladruno fork build** — the live equation route is
-fork-gated, though deck emission is not
+with the default; switch to `"equation"` when you need the interface exact.
+It runs in-process on openseespy ≥ 3.8.0 or the fork. On stock, that means
+one tied model per process, because stock `wipe()` keeps the rows
 ([Backend capabilities](backend-capabilities.md)).
 
 How the tie's *weights* are computed is a third, orthogonal choice —

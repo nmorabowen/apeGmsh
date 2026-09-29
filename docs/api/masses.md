@@ -25,9 +25,9 @@ land on `fem.nodes.masses` as a `MassSet` (an iterable of
 [FEM Broker](fem.md)).
 
 Each record carries a length-6 vector
-`(mx, my, mz, Ixx, Iyy, Izz)`; the OpenSees bridge slices it to the
-model's `ndf` when emitting `ops.mass(...)` commands (rotational
-components are dropped for `ndf < 4`).
+`(mx, my, mz, Ixx, Iyy, Izz)`; the OpenSees bridge maps it onto each
+node's DOFs by `(ndm, ndf)` when emitting `mass` commands: positionally
+in 3-D, and as `(mx, my)` or `(mx, my, Izz)` on a 2-D node.
 
 ## No patterns
 
@@ -55,9 +55,12 @@ Each factory accepts `reduction="lumped"` (default) or
 
 ## Avoiding double-counting
 
-apeGmsh emits explicit `ops.mass(...)` commands. If your OpenSees
-material or section also carries a non-zero `rho`, those
-contributions add to whatever this composite emits. Either:
+These records reach an `apeSees` deck only when the bridge restates
+them: `ops.mass_from_model()` streams each one as an explicit `mass`
+line (or write `ops.mass(...)` yourself), and a deck that does neither
+warns at emit (`UnconsumedModelDefinitionWarning`). Once emitted, a
+non-zero `rho` on your OpenSees material or section adds to them.
+Either:
 
 * keep `rho=0` on the material and let `g.masses` carry all
   inertia, **or**
