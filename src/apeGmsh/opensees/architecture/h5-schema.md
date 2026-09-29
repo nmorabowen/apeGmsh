@@ -529,7 +529,7 @@ one writer in `H5Emitter`):
   vecxz=).write(path)` — declarative side-channel for users who write
   their model in vanilla openseespy without the bridge.  Sees ADR
   [0018](decisions/0018-modeldata-vanilla-opensees-enrichment.md) and
-  [modeldata-enrichment-scope.md](modeldata-enrichment-scope.md).
+  [modeldata-enrichment-scope.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/modeldata-enrichment-scope.md).
   Calls `H5Emitter.add_oriented_elements(...)` which appends one
   `_TransformRecord` + per-element `_ElementRecord`s; the on-disk
   layout below is identical (single source of truth, INV-1 / INV-3).
@@ -976,7 +976,7 @@ History:
   `selection`, `ids`, `dt`, `n_steps`, `file_root`.  Additive —
   old v2.2.0 readers see `kind="declared"` records as well-formed
   recorder groups (they just ignore the extra attrs).  See
-  [phase-9-recorder-unification.md](phase-9-recorder-unification.md)
+  [phase-9-recorder-unification.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-9-recorder-unification.md)
   for the multi-commit phase that delivered this.
 - `2.4.0` — Phase 8.7 commit 2: `/mesh_selections/` neutral-zone
   group added, mirroring `/physical_groups` / `/labels` shape.
@@ -986,7 +986,7 @@ History:
   ignore the new group and lose only the `selection=` round-trip
   convenience (live mesh_viewer sessions still consult the live
   ``fem.mesh_selection`` directly).  See
-  [phase-8.7-scope.md](phase-8.7-scope.md) §1b for the rationale
+  [phase-8.7-scope.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md) §1b for the rationale
   and [ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md) for
   the architectural decision.
 - `2.5.0` — apeGmsh.cuts v4: `/opensees/cuts/` and

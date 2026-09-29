@@ -1,7 +1,7 @@
 """Symmetric compound-dtype helpers for the broker's record-set H5 writers.
 
 Master plan
-([architecture/phase-8-untangle.md §3](../opensees/architecture/phase-8-untangle.md))
+([phase-8-untangle.md §3 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md))
 specifies that every record-set group in ``model.h5`` shares the same
 outer 4-field compound:
 

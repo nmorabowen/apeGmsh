@@ -48,7 +48,7 @@ For things we agreed to defer, see
 
 For the Phase 8 plan (untangle `apeGmsh.solvers`, relocate records
 to the broker, make model.h5 the canonical model database), see
-[phase-8-untangle.md](phase-8-untangle.md).
+[phase-8-untangle.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md).
 
 ## Status
 
@@ -56,7 +56,7 @@ to the broker, make model.h5 the canonical model database), see
 primitives, four concrete emitters (Tcl, Py, Live, H5) plus
 `RecordingEmitter` for tests, the `apeSees` class, and the `model.h5`
 dual-zone schema (currently 2.2.0). See
-[phase-8-untangle.md](phase-8-untangle.md) for the active Phase 8 arc
+[phase-8-untangle.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md) for the active Phase 8 arc
 — 8.0 through 8.6 have shipped; 8.7 (viewer migration) and 8.8
 (`solvers/` deletion) still ahead. The legacy `apeGmsh.solvers`
 package coexists as a deprecation shim per

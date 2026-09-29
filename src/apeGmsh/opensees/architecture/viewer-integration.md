@@ -10,7 +10,7 @@ fixtures that will be provided.
 
 After Phase 8.7 (May 2026 — see
 [ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md) and
-[phase-8.7-scope.md](phase-8.7-scope.md)) the viewer reads its
+[phase-8.7-scope.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md)) the viewer reads its
 structural input through one adapter:
 
 ```python

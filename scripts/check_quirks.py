@@ -87,9 +87,6 @@ AGENTS = Path("AGENTS.md")
 SKILLS = Path(".claude/skills")
 DERIVED_SKILL = "apegmsh-helper"
 ARCHITECTURE = Path("src/apeGmsh/opensees/architecture")
-#: Historical plan docs (May 2026) whose citations were true when written; link N3 (#1197)
-#: deletes them and removes this exclusion.
-HISTORICAL_DOCS = ("phase-*.md", "*-scope.md", "plan_*.md")
 #: Where a backticked path may be rooted, after the doc's own folder: the
 #: repo, `src`, the package, the bridge and the architecture folder are the
 #: shorthands the docs use (`mesh/FEMData.py`, `emitter/h5.py`, `decisions/README.md`).
@@ -261,7 +258,6 @@ def _agent_docs(root: Path) -> list[Path]:
     )
     docs += sorted(  # not decisions/: ADRs are history
         p for p in (root / ARCHITECTURE).glob("*.md")
-        if not any(fnmatch.fnmatch(p.name, pattern) for pattern in HISTORICAL_DOCS)
     )
     return docs
 

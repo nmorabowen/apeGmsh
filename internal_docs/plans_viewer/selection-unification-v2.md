@@ -80,7 +80,7 @@ independent findings at once:
   **retained intact** (not deleted) — the OpenSees emitter and beam
   viewer need per-type `ElementGroup.element_type`
   (`opensees/_internal/build.py:333-336`,
-  `opensees/_orientation.py:368-380`, `phase-8.7-scope.md:98`); a flat
+  `opensees/_orientation.py:368-380`, [phase-8.7-scope.md:98 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md)); a flat
   list is `TypeError`-or-corrupt for mixed-type
   (`_element_types.py:295-313` raises by design).
 

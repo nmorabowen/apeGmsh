@@ -740,14 +740,6 @@ def test_doc_path_scope_exists_in_this_checkout() -> None:
     assert any((quirks.REPO / quirks.ARCHITECTURE).glob("*.md")), "architecture/ moved: update ARCHITECTURE"
 
 
-def test_doc_path_skips_the_historical_plan_docs(tmp_path: Path) -> None:
-    # May-2026 scope/plan docs cite the layout of their day; N3 deletes them.
-    for name in ("phase-8-untangle.md", "phase-8.3b-scope.md", "mp-tag-tracking-scope.md", "plan_x.md"):
-        _doc(tmp_path, f"{ARCH}/{name}", "`mesh/records/_kinds.py` moves.")
-    _doc(tmp_path, f"{ARCH}/_DEFERRED.md", "`mesh/records/_kinds.py` moves.")
-    assert _doc_paths(tmp_path) == ["_DEFERRED.md:1"]
-
-
 # --- doc-path: the review of #1236 (suffix forms escaped; `::symbol` was loose) ---
 
 SCOPED = '''\

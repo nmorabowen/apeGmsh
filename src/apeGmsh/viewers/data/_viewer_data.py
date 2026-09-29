@@ -13,7 +13,7 @@ from — that's the point of the adapter, and the reason Phase 8.7
 ships its acceptance test as an AST-walk forbidding ``from
 apeGmsh.mesh ...`` imports in ``viewers/``.
 
-See [phase-8.7-scope.md](../../opensees/architecture/phase-8.7-scope.md)
+See [phase-8.7-scope.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md)
 and [ADR 0014](../../opensees/architecture/decisions/0014-viewer-is-pure-h5-consumer.md).
 """
 from __future__ import annotations

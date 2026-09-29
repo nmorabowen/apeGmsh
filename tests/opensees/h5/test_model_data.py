@@ -1,7 +1,7 @@
 """ADR 0018 C3 — :class:`ModelData` end-to-end + parity + fail-loud.
 
 Acceptance gate from
-``opensees/architecture/modeldata-enrichment-scope.md`` §3 C3:
+https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/modeldata-enrichment-scope.md §3 C3 (pinned at a9f8b670):
 
 * Round-trip — declarative inject through the schema-owning emitter
   reaches the viewer's orientation join unchanged.

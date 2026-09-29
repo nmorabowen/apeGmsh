@@ -357,7 +357,7 @@ enforced going forward by the AST acceptance test at
 [`tests/test_viewers_pure_h5_consumer.py`](../../../../tests/test_viewers_pure_h5_consumer.py)
 (Phase 8.7 commit 7).
 
-See [phase-8-untangle.md](phase-8-untangle.md) for the full plan,
+See [phase-8-untangle.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md) for the full plan,
 sub-phase sequencing (8.0–8.8), and the relocation map.
 
 ## Phase 9 — Recorder declaration unification
@@ -375,7 +375,7 @@ helper was deleted entirely in commit 5. `model.h5` schema bumped
 with `kind=("typed"|"declared")` attr plus declaration metadata
 (category, components, cadence, selectors) for declared records.
 
-See [phase-9-recorder-unification.md](phase-9-recorder-unification.md)
+See [phase-9-recorder-unification.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-9-recorder-unification.md)
 for the full per-commit breakdown.
 
 ## Sync points
