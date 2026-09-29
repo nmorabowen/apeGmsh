@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3832,6 +3843,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4079,6 +4101,22 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports">ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports<a class="headerlink" href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" title="Permanent link">&para;</a></h3>
+<p>This PR adds the program that runs the architectural remediation, but no library code.</p>
+<p><strong>Reports</strong>
+- <code>internal_docs/plan_architectural_strains_2026-09.md</code> covers the eight root strains, the verified silent defects D1–D11, and errata E1–E7.
+- <code>internal_docs/plan_expert_panel_2026-09.md</code> records the decisions of a nine-seat Fable/Opus panel:
+  - Fork policy is "B with amendments": the default target is auto-detected, fork tokens in the neutral layers are held to a ratchet, and going fork-only is a review trigger.
+  - The resolved <code>model.h5</code> archive becomes the program, test-first.
+  - About 37k LOC are cut.
+  - <code>nav.py</code> and a family-completeness gate are added.
+  - <code>land_pr.py</code> stays at about 80 lines.</p>
+<p><strong>The program</strong>
+- <code>internal_docs/program/PROGRAM.md</code> is the static charter. Live state lives on GitHub: board #1203, ten chain issues (#1193–#1202), and the panel papers in #1192.
+- <code>internal_docs/program/slice_card.md</code> is the slice template. <code>internal_docs/program/prototypes/</code> holds the panel's scripts and expires on 2026-11-30.
+- Eight <code>.claude/agents/prog-*.md</code> workers pin model and effort: mechanic Sonnet/medium, builders Opus or Fable/high, architects Opus/max and Fable/xhigh, read-only cross-family reviewers, and an auditor on Haiku/low.
+- The <code>/apegmsh-program &lt;link&gt;</code> orchestrator skill boots from the ledger, dispatches workers, reviews, and lands only <code>mechanical</code> PRs. It queues the next link as a task chip.
+- AGENTS.md gains a routing row for each.</p>
 <h3 id="fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added">FIXED — results-strategy docs prescribed calls that do not exist; drift lane added<a class="headerlink" href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" title="Permanent link">&para;</a></h3>
 <p><code>docs/how-to/choose-results-strategy.md</code> told readers to record with
 <code>spec.capture(...)</code>, <code>ops.tcl(..., recorders=spec)</code> and
