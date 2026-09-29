@@ -29,6 +29,7 @@ ADRs are never scanned, nor are the historical May-2026 plan docs (`phase-*.md`,
 The first scan found 59 dead citations; the 20 in the living docs (three task guides,
 `_DEFERRED.md`, `h5-schema.md`, `testing.md`, `parallel-execution.md`) are corrected here.
 The P6 prototype `internal_docs/program/prototypes/docpaths.py` is deleted.
+
 ### REMOVED — API Flow Atlas (`docs/api-flows/`) and `architecture/layout.md` (program slice N1.3, #1229)
 
 Both were hand-maintained maps that lagged the code. `docs/api-flows/`
