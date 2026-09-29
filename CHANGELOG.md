@@ -24,6 +24,7 @@ title from each ADR's H1 and the first clause of its `**Status:**` line;
 `static-gates`. The README drops from 91 KB to 14 KB. It also fixes seven
 stale Status cells (0052, 0053, 0056, 0077, 0089, 0094, 0095: "Proposed" in
 the README, "Accepted" in the ADR). No ADR file changed.
+
 ### FIXED — a second push to `main` no longer cancels the first push's `Tests` run
 
 `.github/workflows/tests.yml` set `cancel-in-progress: true` for every
