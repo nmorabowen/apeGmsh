@@ -29,6 +29,9 @@ opensees_venv/
 tests_out/
 tests/viewers/_screenshots/
 
+# scripts/nav.py index cache (per worktree, rebuilt from the tree)
+.nav_cache/
+
 # Per-example generated artifacts (capture.h5, recorders/, exports/, …)
 **/outputs/
 

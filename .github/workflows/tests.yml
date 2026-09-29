@@ -69,7 +69,8 @@ jobs:
             tests/test_constraint_emission.py \
             tests/test_constraint_mpc_math.py \
             tests/test_skill_docs_drift.py \
-            tests/studio/test_lookup.py
+            tests/studio/test_lookup.py \
+            tests/test_nav.py
 
       # A PR merged into a stacked base lands on a branch that is orphaned
       # when the previous PR merges, so its work never reaches main

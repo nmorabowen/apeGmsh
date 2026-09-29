@@ -14,6 +14,10 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `scripts/nav.py` AST code navigation (program slice N1.1, #1223)
+
+The P6 panel prototype becomes `scripts/nav.py`: `map`, `pkg`, `where`, `at`, `refs`, `h5`, `impl`, `family`, `up` and `deps` answer "where is X / what encloses line N / who references Y / what is in this family" without reading a large file whole. It is stdlib only, parses the AST and never imports apeGmsh. Its index is cached per worktree in the gitignored `.nav_cache/`. Every answer is cut at 60 lines, and the last line of a cut answer names the flags that narrow it (`--kind`, `--file`, `--lines A-B`, `--depth`). An unknown `--kind` is an argument error, not an empty answer, and a root with no `src/`, `tests/` or `scripts/` exits with an error. `family` no longer counts an `isinstance` class tuple as a table as well as a dispatch. `tests/test_nav.py` runs in the `lock-tests` job, and AGENTS.md gains a "Navigating the code" paragraph. The prototype under `internal_docs/program/prototypes/` is deleted.
+
 ### CHANGED — deterministic `studio/_api_index.json` (program slice A1.2, #1214)
 
 `_index_build.build_index` no longer stamps `generated`, and `write_index` serialises through the new `serialize_index` (sorted keys, indent 2, trailing newline). Regenerating the index is now byte-identical, so it stops producing merge-conflict diffs. `tests/studio/test_lookup.py::test_index_build_is_byte_deterministic` builds twice and compares against the committed file. No reader used `generated`.

@@ -135,6 +135,17 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   feature is unmerged, check `git log HEAD..origin/main` or
   `git show origin/main:<path>`.
 
+**Navigating the code.** Before reading a file over 2,000 lines or
+grepping for a Python symbol, ask `python scripts/nav.py <cmd>`. It parses
+the AST and never imports apeGmsh, so it reads your worktree. `map FILE`
+outlines a file with line ranges, `at FILE:LINE` names the enclosing
+symbol, `where NAME` finds definitions, `refs NAME` lists code references
+without comments or docstrings, `h5 PATH` sorts HDF5 writes from reads,
+and `family BASE` lists every table and dispatch a new member must join.
+Every answer fits in 60 lines, and a cut one names the flag that narrows
+it. Keep Grep for prose, comments and non-Python files, and Read for the
+range nav points you to.
+
 ## Task guides
 
 Read the guide before starting that kind of work. Each is a checklist
