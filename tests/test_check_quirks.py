@@ -355,6 +355,8 @@ def test_resolve_swallow_scope_exists_in_this_checkout() -> None:
 def test_openseespy_import_flags_the_domain_capture_fallback(tmp_path: Path) -> None:
     # 9ffe6aa2 put the live emitter first and kept the import as the fallback.
     _write(tmp_path, "src/apeGmsh/results/capture/_domain.py", """\
+        _live_emitter = None
+
         def _lazy_ops(self):
             live_ops = getattr(self._bridge, "_live_emitter", None)
             if live_ops is not None:
@@ -362,7 +364,7 @@ def test_openseespy_import_flags_the_domain_capture_fallback(tmp_path: Path) -> 
             import openseespy.opensees as ops
             return ops
         """)
-    assert _found(tmp_path) == ["openseespy-import:_domain.py:5"]
+    assert _found(tmp_path) == ["openseespy-import:_domain.py:7"]
 
 
 def test_openseespy_import_flags_the_example_that_runs_then_imports(tmp_path: Path) -> None:
@@ -442,6 +444,148 @@ def test_openseespy_import_scope_exists_in_this_checkout() -> None:
     # A moved scope turns the rule off silently; a moved resolver flags itself.
     for path in (*quirks.IMPORT_SCOPE, quirks.RESOLVER):
         assert (quirks.REPO / path).exists(), f"{path} moved: update the openseespy-import scope"
+
+
+# --- getattr-private / getattr-undefined: the capture outages (14445604, 7c7c1541) ---
+
+BRIDGE = """\
+class Bridge:
+    def __init__(self):
+        self._primitives = []
+        self.tag = 1
+"""
+
+
+def test_getattr_private_flags_a_private_name_read_across_packages(tmp_path: Path) -> None:
+    # results/capture/spec.py read bridge._primitives from another package.
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/results/spec.py", """\
+        def prims(bridge):
+            return getattr(bridge, "_primitives", ())
+        """)
+    assert _found(tmp_path) == ["getattr-private:spec.py:2"]
+
+
+def test_getattr_private_flags_hasattr_too(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/results/spec.py", """\
+        def has(bridge):
+            return hasattr(bridge, "_primitives")
+        """)
+    assert _found(tmp_path) == ["getattr-private:spec.py:2"]
+
+
+def test_getattr_private_passes_self_and_cls(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/results/spec.py", """\
+        class Spec:
+            _primitives = ()
+            def a(self):
+                return getattr(self, "_primitives", ())
+            @classmethod
+            def b(cls):
+                return getattr(cls, "_primitives", ())
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_getattr_private_passes_a_name_defined_in_the_same_package(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/opensees/other.py", """\
+        def prims(bridge):
+            return getattr(bridge, "_primitives", ())
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_getattr_public_name_defined_elsewhere_passes(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/results/spec.py", """\
+        def tag(bridge):
+            return getattr(bridge, "tag", None)
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_getattr_undefined_flags_a_name_nothing_defines(tmp_path: Path) -> None:
+    # 14445604 deleted _sec_tags; the getattr default kept the capture "working".
+    _write(tmp_path, "src/apeGmsh/opensees/bridge.py", BRIDGE)
+    _write(tmp_path, "src/apeGmsh/opensees/rec.py", """\
+        def tags(self):
+            return getattr(self._opensees, "_sec_tags", {})
+        """)
+    assert _found(tmp_path) == ["getattr-undefined:rec.py:2"]
+
+
+def test_getattr_undefined_passes_every_way_to_define_a_name(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/defs.py", """\
+        from dataclasses import dataclass
+        from os import path as stat_path
+
+        def fn_name(): ...
+        class ClsName: ...
+        module_level = 1
+        setattr(object(), "via_setattr", 1)
+
+        @dataclass
+        class D:
+            field_name: int = 0
+
+        class S:
+            __slots__ = ("slot_name",)
+            def __init__(self):
+                self.attr_store = 1
+        """)
+    names = ["fn_name", "ClsName", "module_level", "via_setattr", "field_name", "slot_name",
+             "attr_store", "stat_path"]
+    body = "".join(f"    getattr(x, {n!r}, None)\n" for n in names)
+    _write(tmp_path, "src/apeGmsh/results/use.py", "def f(x):\n" + body)
+    assert _found(tmp_path) == []
+
+
+def test_getattr_ignores_dunders_dynamic_names_and_other_trees(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/use.py", """\
+        def f(x, name):
+            getattr(x, "__file__", None)
+            getattr(x, name, None)
+            getattr(x, "a" + "b")
+        """)
+    _write(tmp_path, "tests/test_use.py", """\
+        def test_it(x):
+            getattr(x, "nothing", 0)
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_getattr_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/use.py", """\
+        def f(x):
+            # apegmsh-lint: getattr-undefined-ok a Qt widget, not an apeGmsh object
+            return hasattr(x, "setText")
+        """)
+    assert _found(tmp_path) == []
+
+
+BASELINE = "scripts/quirks_getattr_baseline.txt"
+
+
+def test_getattr_baseline_holds_a_listed_site_and_rejects_a_new_one(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/use.py", """\
+        def f(x):
+            return hasattr(x, "setText"), hasattr(x, "setValue")
+        """)
+    _write(tmp_path, BASELINE, "# comment\nsrc/apeGmsh/results/use.py::setText  # a Qt widget\n")
+    assert _found(tmp_path) == ["getattr-undefined:use.py:2"]  # only setValue
+
+
+def test_getattr_baseline_line_matching_nothing_is_a_finding(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/use.py", "def f(x):\n    return 1\n")
+    _write(tmp_path, BASELINE, "# comment\nsrc/apeGmsh/results/use.py::setText\n")
+    assert _found(tmp_path) == ["getattr-baseline:quirks_getattr_baseline.txt:2"]
+
+
+def test_the_checkout_getattr_baseline_is_a_ratchet_within_bounds() -> None:
+    assert 0 < len(quirks._baseline_keys(quirks.REPO)) <= 250
 
 
 # --- waivers -------------------------------------------------------------------

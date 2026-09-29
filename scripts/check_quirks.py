@@ -17,6 +17,10 @@ is itself a finding. `adr-number` has no waiver: a collision is never right.
     python scripts/check_quirks.py              # this checkout
     python scripts/check_quirks.py --root DIR   # another tree, e.g. a `git archive`
 
+`getattr-private` and `getattr-undefined` also read a ratchet baseline
+(`scripts/quirks_getattr_baseline.txt`, `path::name` per line): it may only
+shrink, and a line matching no site is a finding.
+
 Stdlib only, a few seconds. `tests/test_check_quirks.py` holds one case per
 shape each rule must flag or pass; CI runs this scan as the last step of
 `static-gates`.
@@ -26,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import gc
 import io
 import re
 import sys
@@ -73,6 +78,11 @@ IMPORT_TEXT = re.compile(
     r"|\b(?:import_module|__import__)\(\s*[rbu]?['\"]openseespy\b"
 )
 
+#: The package the getattr rules read and index, and the ratchet of sites that
+#: predate them (one `path::name` per line, `#` comments; a stale line is a finding).
+GETATTR_SCOPE = "src/apeGmsh/"
+GETATTR_BASELINE = Path("scripts/quirks_getattr_baseline.txt")
+
 WAIVER = re.compile(r"#\s*apegmsh-lint:\s*(?P<rule>[a-z-]+?)-ok\b(?P<reason>.*)$")
 
 RULES: dict[str, str] = {
@@ -110,6 +120,23 @@ RULES: dict[str, str] = {
         "apeGmsh.opensees.emitter.live.get_ops(). Lesson: DomainCapture sampled an empty "
         "domain (fixed 9ffe6aa2, which kept the import as its fallback); that fallback, "
         "LiveMPCO, LiveRecorders, interop.solve and the arch-pushover example still bound it"
+    ),
+    "getattr-private": (
+        "getattr/hasattr with a literal _private name on an object that is not self or cls, "
+        "and no module of this top-level subpackage defines that name: it reaches across a "
+        "package boundary into another package's internals and quietly falls back to the "
+        "default when that package renames it. Use a public accessor with a contract test. "
+        "Lesson: assessment 'Fail closed at seams'; results/capture/spec.py read "
+        "bridge._primitives this way (98- and 138-day capture outages)"
+    ),
+    "getattr-undefined": (
+        "getattr/hasattr with a literal attribute name that nothing under src/apeGmsh defines "
+        "(no def, class, assignment, attribute store, import, setattr or __slots__ entry): the "
+        "probe can only ever take its default, or the name lives on a foreign object and "
+        "should be typed. Lesson: 14445604 deleted the legacy bridge's _sec_tags while "
+        "getattr(self._opensees, '_sec_tags', {}) stayed, and the recorder capture "
+        "silently lost its section tags for 138 days (fixed 7c7c1541); the node_ndf vestige "
+        "is the same shape. Ratchet: scripts/quirks_getattr_baseline.txt"
     ),
 }
 
@@ -398,11 +425,163 @@ def check_openseespy_import(tree: ast.AST, rel: str, root: Path) -> Iterator[tup
             yield node.lineno, RULES["openseespy-import"]
 
 
+# --- getattr-private / getattr-undefined --------------------------------------
+
+_GETATTR_CALLS = {"getattr": (2, 3), "hasattr": (2, 2)}
+_getattr_cache: dict[Path, dict[str, set[str]]] = {}
+_baseline_seen: dict[Path, set[str]] = {}
+_baseline_cache: dict[Path, dict[str, int]] = {}
+_probe_cache: dict[tuple[Path, str], list[ast.Call]] = {}
+_tree_cache: dict[tuple[Path, str], ast.AST] = {}
+_sites_cache: dict[tuple[Path, str], list[tuple[str, int, str]]] = {}
+
+
+def _subpackage(rel: str) -> str:
+    """Top-level apeGmsh subpackage of a path under src/apeGmsh/ ('.' for a top-level module)."""
+    parts = rel.removeprefix(GETATTR_SCOPE).split("/")
+    return parts[0] if len(parts) > 1 else "."
+
+
+def _literal_attr(node: ast.Call, arity: tuple[int, int]) -> str | None:
+    if not arity[0] <= len(node.args) <= arity[1] or node.keywords:
+        return None
+    name = node.args[1]
+    return name.value if isinstance(name, ast.Constant) and isinstance(name.value, str) else None
+
+
+def _defined_names(tree: ast.AST, probes: list[ast.Call]) -> Iterator[str]:
+    """Every attribute name this module can give an object: def, class, assignment,
+    attribute store, import alias, setattr literal, __slots__ entry. One walk also
+    gathers the module's getattr/hasattr calls into `probes`."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node.name
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            yield node.id
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+            yield node.attr
+        elif isinstance(node, ast.alias):
+            yield (node.asname or node.name).split(".")[0]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "setattr":
+                name = _literal_attr(node, (3, 3))
+                if name is not None:
+                    yield name
+            elif node.func.id in _GETATTR_CALLS:
+                probes.append(node)
+        elif isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__slots__" for t in node.targets
+        ):
+            for const in ast.walk(node.value):
+                if isinstance(const, ast.Constant) and isinstance(const.value, str):
+                    yield const.value
+
+
+def _getattr_index(root: Path) -> dict[str, set[str]]:
+    """name -> the top-level subpackages that define it, over all of src/apeGmsh."""
+    if root not in _getattr_cache:
+        index: dict[str, set[str]] = {}
+        base = root / GETATTR_SCOPE
+        for path in sorted(base.rglob("*.py")) if base.is_dir() else []:
+            text = _read_source(path)
+            if text is None:
+                continue
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                continue
+            rel = path.relative_to(root).as_posix()
+            probes: list[ast.Call] = []
+            for name in _defined_names(tree, probes):
+                index.setdefault(name, set()).add(_subpackage(rel))
+            _probe_cache[(root, rel)] = probes
+            _tree_cache[(root, rel)] = tree  # scan_file reuses it, the parse is the cost
+        _getattr_cache[root] = index
+    return _getattr_cache[root]
+
+
+def _baseline_keys(root: Path) -> dict[str, int]:
+    """`path::name` -> its line in the baseline file."""
+    if root in _baseline_cache:
+        return _baseline_cache[root]
+    path = root / GETATTR_BASELINE
+    if not path.is_file():
+        return _baseline_cache.setdefault(root, {})
+    keys: dict[str, int] = {}
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        key = raw.split("#", 1)[0].strip()
+        if key:
+            keys.setdefault(key, number)
+    return _baseline_cache.setdefault(root, keys)
+
+
+def _getattr_sites(tree: ast.AST, rel: str, root: Path, rule: str) -> Iterator[tuple[int, str]]:
+    if not rel.startswith(GETATTR_SCOPE):
+        return
+    cached = _sites_cache.get((root, rel))
+    if cached is None:  # both rules read the probes the index pass gathered
+        _getattr_index(root)
+        cached = _sites_cache[(root, rel)] = list(_all_getattr_sites(tree, rel, root))
+    for found, line, message in cached:
+        if found == rule:
+            yield line, message
+
+
+def _all_getattr_sites(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[str, int, str]]:
+    index, package, baseline = _getattr_index(root), _subpackage(rel), _baseline_keys(root)
+    for node in _probe_cache.get((root, rel), []):
+        assert isinstance(node.func, ast.Name)
+        name = _literal_attr(node, _GETATTR_CALLS[node.func.id])
+        if name is None or (name.startswith("__") and name.endswith("__")):
+            continue  # dunders belong to Python, not to apeGmsh
+        receiver = node.args[0]
+        if name not in index:
+            found = "getattr-undefined"
+            message = f"{node.func.id}(..., {name!r}): nothing in src/apeGmsh defines {name!r}"
+        elif (
+            name.startswith("_")
+            and not (isinstance(receiver, ast.Name) and receiver.id in {"self", "cls"})
+            and package not in index[name]
+        ):
+            found = "getattr-private"
+            message = (
+                f"{node.func.id}({ast.unparse(receiver)}, {name!r}): private name defined only in "
+                f"{', '.join(sorted(index[name]))}, read from {package}"
+            )
+        else:
+            continue
+        key = f"{rel}::{name}"
+        if key in baseline:
+            _baseline_seen.setdefault(root, set()).add(key)
+            continue
+        yield found, node.lineno, f"{message} [baseline key {key}]"
+
+
+def check_getattr_private(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    yield from _getattr_sites(tree, rel, root, "getattr-private")
+
+
+def check_getattr_undefined(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    yield from _getattr_sites(tree, rel, root, "getattr-undefined")
+
+
+def _stale_baseline(root: Path) -> list[Finding]:
+    """A baseline line no site matches any more: the ratchet only tightens, so delete it."""
+    seen = _baseline_seen.get(root, set())
+    return [
+        Finding(GETATTR_BASELINE.as_posix(), number, "getattr-baseline",
+                f"{key} matches no getattr/hasattr site any more; delete the line")
+        for key, number in _baseline_keys(root).items() if key not in seen
+    ]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
     "compose-streams": check_compose_streams,
     "resolve-swallow": check_resolve_swallow,
     "openseespy-import": check_openseespy_import,
+    "getattr-private": check_getattr_private,
+    "getattr-undefined": check_getattr_undefined,
 }
 
 
@@ -422,6 +601,8 @@ def _may_apply(rel: str, lowered: str) -> bool:
         return "schema_version" in lowered
     if rel in {path.as_posix() for path in CARRY_ALL} or _in_swallow_scope(rel):
         return True
+    if rel.startswith(GETATTR_SCOPE) and ("getattr(" in lowered or "hasattr(" in lowered):
+        return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 
 
@@ -432,16 +613,18 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
     lowered = text.lower()
     if "apegmsh-lint" not in lowered and not _may_apply(rel, lowered):
         return []  # nothing a rule reads here; skipping the parse keeps the scan fast
-    try:
-        tree = ast.parse(text, filename=rel)
-    except SyntaxError:
-        return []  # ruff and pytest will say so; this lint only reads code
+    tree = _tree_cache.pop((root, rel), None)
+    if tree is None:
+        try:
+            tree = ast.parse(text, filename=rel)
+        except SyntaxError:
+            return []  # ruff and pytest will say so; this lint only reads code
     lines = text.splitlines()
     spans = _statement_spans(tree)
 
     findings: list[Finding] = []
     waivers: dict[int, str] = {}
-    for line, comment in _comments(text).items():
+    for line, comment in (_comments(text) if "apegmsh-lint" in lowered else {}).items():
         match = WAIVER.search(comment)
         if match is None:
             continue
@@ -488,9 +671,28 @@ def _python_files(root: Path) -> list[Path]:
 
 
 def scan(root: Path) -> list[Finding]:
+    was_enabled = gc.isenabled()
+    gc.disable()  # the getattr index holds every parsed tree; collection passes over them cost more than they free
+    try:
+        return _scan(root)
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def _scan(root: Path) -> list[Finding]:
+    _getattr_cache.pop(root, None)
+    _baseline_seen.pop(root, None)
+    _baseline_cache.pop(root, None)
+    for cache in (_sites_cache, _probe_cache, _tree_cache):
+        for key in [k for k in cache if k[0] == root]:
+            del cache[key]
     findings = check_adr_numbers(root)
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
+    findings.extend(_stale_baseline(root))
+    _tree_cache.clear()
+    _probe_cache.clear()
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule))
 
 
