@@ -4,9 +4,9 @@ The page used to derive the frame in JavaScript as ``y = x × vecxz``,
 ``z = x × y``, which negates both axes against OpenSees
 (``LinearCrdTransf3d::getLocalAxes``: ``y = vecxz × x``, ``z = x × y``).
 It also defaulted ``vecxz`` to ``[1, 0, 0]``, which is parallel to a beam
-along X. The frame and the default now come from Python
-(``compute_local_axes`` / ``default_vecxz``) and reach the page as a
-payload, so these tests read that payload. The last three drive the real
+along X. The frame (``compute_local_axes``) and the default (the vecxz
+the bridge emits, pinned to ``resolve_vecxz``) now come from Python and
+reach the page as a payload, so these tests read that payload. The last three drive the real
 ``show()`` over HTTP with ``webbrowser.open`` replaced: no browser, no
 window.
 """
@@ -23,10 +23,8 @@ import webbrowser
 import numpy as np
 import pytest
 
-from apeGmsh.viewers.diagrams._beam_geometry import (
-    compute_local_axes,
-    default_vecxz,
-)
+from apeGmsh.opensees._orientation import Cartesian, resolve_vecxz
+from apeGmsh.viewers.diagrams._beam_geometry import compute_local_axes
 from apeGmsh.viewers.geom_transf_viewer import (
     GeomTransfViewer,
     _beam_payload,
@@ -66,9 +64,12 @@ def _opensees_axes(node_i, node_j, vecxz) -> tuple:
 @pytest.mark.parametrize("name", BEAMS)
 def test_frame_is_compute_local_axes(name):
     node_i, node_j, vecxz = BEAMS[name]
+    beam = _beam_payload(node_i, node_j, vecxz)
 
-    ex, ey, ez, length = _frame(_beam_payload(node_i, node_j, vecxz))
-    x, y, z, expected_length = compute_local_axes(node_i, node_j, vecxz)
+    ex, ey, ez, length = _frame(beam)
+    x, y, z, expected_length = compute_local_axes(
+        node_i, node_j, beam["vecxz"],
+    )
 
     np.testing.assert_allclose(ex, x, atol=1e-12)
     np.testing.assert_allclose(ey, y, atol=1e-12)
@@ -99,17 +100,50 @@ def test_beam_along_x_with_vecxz_z_has_local_y_on_y_and_z_on_z():
     np.testing.assert_allclose(ez, [0.0, 0.0, 1.0], atol=1e-12)
 
 
-@pytest.mark.parametrize("name", ["x", "y", "z", "skew"])
-def test_omitted_vecxz_follows_default_vecxz(name):
-    """The beam along X is the one the old ``[1, 0, 0]`` made degenerate."""
-    node_i, node_j, _ = BEAMS[name]
+_TILT = np.radians(5.7)
+DEFAULT_CASES = {
+    **{k: BEAMS[k][:2] for k in ("x", "y", "z", "skew")},
+    "-z": ([0, 0, 3], [0, 0, 0]),
+    "5.7deg-off-z": ([0, 0, 0], [np.sin(_TILT), 0, np.cos(_TILT)]),
+}
+
+
+@pytest.mark.parametrize("name", DEFAULT_CASES)
+def test_omitted_vecxz_is_what_the_bridge_emits(name):
+    """``apeSees(default_orientation=Cartesian())`` resolves an unoriented
+    member's vecxz with ``resolve_vecxz``. The viewer may not import the
+    bridge (ADR 0014), so this pins its mirror of the rule. A +Z column
+    gets -X there; the diagrams' ``default_vecxz`` (+X) would draw it
+    rolled 180 degrees. The beam along X is the one the old ``[1, 0, 0]``
+    made degenerate."""
+    node_i, node_j = DEFAULT_CASES[name]
     x = np.subtract(node_j, node_i, dtype=np.float64)
     x /= np.linalg.norm(x)
 
     beam = _beam_payload(node_i, node_j)
 
-    np.testing.assert_array_equal(beam["vecxz"], default_vecxz(x))
+    expected = resolve_vecxz(x, *Cartesian().triad_at(node_i))
+    np.testing.assert_allclose(beam["vecxz"], expected, atol=1e-12)
     assert beam["frame"] is not None
+
+
+def test_a_defaulted_z_column_gets_minus_x():
+    beam = _beam_payload([0, 0, 0], [0, 0, 3])
+
+    np.testing.assert_allclose(beam["vecxz"], [-1.0, 0.0, 0.0], atol=1e-12)
+
+
+def test_two_coordinate_nodes_are_refused_with_the_2d_hint():
+    with pytest.raises(ValueError, match="z=0"):
+        _beam_payload([0, 0], [3, 0])
+
+
+def test_the_page_computes_no_frames():
+    """The frame math left the JavaScript; the page draws ``b.frame``."""
+    html = _build_html([_beam_payload([0, 0, 0], [3, 0, 0])], "t")
+
+    assert "localFrame" not in html
+    assert "b.frame" in html
 
 
 @pytest.mark.parametrize("vecxz", [[2, 0, 0], [-1, 0, 0], [0, 0, 0]])

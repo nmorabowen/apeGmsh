@@ -33,7 +33,7 @@ Usage
     # Single beam — interactive controls in the browser
     viewer.show(node_i=[0, 0, 0], node_j=[0.3, 0.5, 3], vecxz=[1, 0, 0])
 
-    # vecxz defaults to global Z, or global X for a vertical beam
+    # vecxz defaults to what the bridge emits: -X for this +Z column
     viewer.show(node_i=[0, 0, 0], node_j=[0, 0, 3])
 
     # Multiple beams
@@ -99,8 +99,11 @@ class GeomTransfViewer:
         node_j : [x, y, z]
             End node (single-beam convenience).
         vecxz : [vx, vy, vz]
-            Vector in local x-z plane.  Defaults to global Z, or to
-            global X for a vertical beam (``default_vecxz``).
+            Vector in local x-z plane.  Defaults to what the bridge
+            emits for a member with no orientation
+            (``apeSees(default_orientation=Cartesian())``): global Z
+            projected off the member, or ``x × Y`` for a vertical one
+            (``-X`` for a +Z column).
         beams : list[dict]
             List of dicts with keys ``'node_i'``, ``'node_j'``,
             ``'vecxz'`` (optional).  Pass this for multi-beam mode.
@@ -150,6 +153,30 @@ class GeomTransfViewer:
         raise ValueError("Provide either (node_i, node_j) or beams=[...]")
 
 
+_GLOBAL_Y = np.array([0.0, 1.0, 0.0])
+_GLOBAL_Z = np.array([0.0, 0.0, 1.0])
+_VERTICAL_TOL = 1e-9    # opensees/_orientation.py ``_TOL``
+
+
+def _bridge_default_vecxz(x_local: np.ndarray) -> np.ndarray:
+    """The ``vecxz`` the bridge emits for a member with no orientation.
+
+    ``resolve_vecxz`` with the default ``Cartesian()`` triad
+    (``e2 = +Y``, ``e3 = +Z``): global Z projected off the member, or,
+    for a vertical member, ``x × Y`` (``-X`` for a +Z column).  Viewers
+    may not import ``apeGmsh.opensees`` (ADR 0014), so this mirrors the
+    rule and ``tests/viewers/test_geom_transf_viewer.py`` pins it to
+    ``resolve_vecxz``.
+    """
+    if abs(float(np.dot(x_local, _GLOBAL_Z))) < 1.0 - _VERTICAL_TOL:
+        local_y = np.cross(_GLOBAL_Z, x_local)
+        local_y /= float(np.linalg.norm(local_y))
+    else:
+        local_y = _GLOBAL_Y
+    vecxz = np.cross(x_local, local_y)
+    return vecxz / float(np.linalg.norm(vecxz))
+
+
 def _beam_payload(
     node_i: Sequence[float],
     node_j: Sequence[float],
@@ -157,41 +184,46 @@ def _beam_payload(
 ) -> dict:
     """One beam as the page draws it: nodes, ``vecxz`` and local frame.
 
-    The frame is :func:`compute_local_axes` and an omitted ``vecxz`` is
-    :func:`default_vecxz`, the rules the results diagrams use, so the
-    page cannot drift from them.  ``frame`` is ``None``, with a
-    ``degenerate`` reason, where OpenSees refuses the transformation:
-    the nodes coincide, or ``vecxz`` is zero or parallel to the beam
-    axis.  ``compute_local_axes`` would quietly substitute the default
-    ``vecxz`` there and draw a frame OpenSees never builds.
+    The frame is :func:`compute_local_axes`, the rule the results
+    diagrams use, so the page cannot drift from them.  An omitted
+    ``vecxz`` is what the bridge would emit for the member
+    (:func:`_bridge_default_vecxz`).  OpenSees itself has no default.
+    ``frame`` is ``None``, with a ``degenerate`` reason, where OpenSees
+    refuses the transformation: the nodes coincide, or ``vecxz`` is
+    zero or parallel to the beam axis.  ``compute_local_axes`` would
+    quietly substitute its own default there and draw a frame OpenSees
+    never builds.
     """
     # Deferred: the diagrams package costs ~0.2 s to import, which
     # ``import apeGmsh.viewers`` should not pay for this viewer.
     from .diagrams._beam_geometry import (
         _DEGENERATE_EPS,
         compute_local_axes,
-        default_vecxz,
     )
 
     ci = np.asarray(node_i, dtype=np.float64)
     cj = np.asarray(node_j, dtype=np.float64)
+    for name, node in (("node_i", ci), ("node_j", cj)):
+        if node.shape != (3,):
+            raise ValueError(
+                f"GeomTransfViewer is 3-D: {name} needs 3 coordinates, "
+                f"got {node.tolist()}. Give a 2-D model's nodes z=0."
+            )
     chord = cj - ci
     length = float(np.linalg.norm(chord))
-    # A zero chord has no axis; default_vecxz then answers global Z.
-    x_local = chord / length if length > 0.0 else chord
-    v = (
-        default_vecxz(x_local) if vecxz is None
-        else np.asarray(vecxz, dtype=np.float64)
-    )
-    beam: dict = {
-        "node_i": ci.tolist(),
-        "node_j": cj.tolist(),
-        "vecxz": v.tolist(),
-        "frame": None,
-    }
+    beam: dict = {"node_i": ci.tolist(), "node_j": cj.tolist(), "frame": None}
     if length <= _DEGENERATE_EPS:
+        # No axis, so no default either; show the Cartesian reference.
+        v = _GLOBAL_Z if vecxz is None else np.asarray(vecxz, dtype=np.float64)
+        beam["vecxz"] = v.tolist()
         beam["degenerate"] = "node I and node J coincide"
         return beam
+    x_local = chord / length
+    v = (
+        _bridge_default_vecxz(x_local) if vecxz is None
+        else np.asarray(vecxz, dtype=np.float64)
+    )
+    beam["vecxz"] = v.tolist()
     # The same test compute_local_axes applies before its fallback.
     if np.linalg.norm(v - np.dot(v, x_local) * x_local) < _DEGENERATE_EPS:
         beam["degenerate"] = "vecxz is zero or parallel to the beam axis"

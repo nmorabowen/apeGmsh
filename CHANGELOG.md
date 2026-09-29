@@ -14,7 +14,7 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` like the results diagrams
+### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 
 `GeomTransfViewer` computed the local frame in its page's JavaScript as
 `y = x × vecxz`, `z = x × y`. OpenSees (`LinearCrdTransf3d::getLocalAxes`)
@@ -24,9 +24,14 @@ instead of `+Y`, `+Z`. An omitted `vecxz` defaulted to `[1, 0, 0]`, which
 is parallel to a beam along X, so that beam drew no frame at all.
 
 The page no longer computes frames. Python computes every frame with
-`compute_local_axes`, and an omitted `vecxz` with `default_vecxz` (global
-Z, or global X for a vertical beam). These are the rules the results
-diagrams and the local-axes overlay use. An edit in the single-beam
+`compute_local_axes`, the rule the results diagrams and the local-axes
+overlay use. An omitted `vecxz` is what the bridge emits for a member with
+no orientation (`apeSees(default_orientation=Cartesian())`): global Z
+projected off the member, or `x × Y` for a vertical member, so a +Z column
+gets `-X`. OpenSees itself has no default. The diagrams' `default_vecxz`
+gives `+X` there and would draw a defaulted column rolled 180°, so the
+viewer does not use it. Viewers may not import the bridge (ADR 0014), so
+the viewer mirrors the rule and a test pins it to `resolve_vecxz`. An edit in the single-beam
 controls goes to the viewer's local server (`POST /frame`), which returns
 the recomputed frame. A `vecxz` that is zero or parallel to the beam axis
 is reported as degenerate, because OpenSees rejects it.
