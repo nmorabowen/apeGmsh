@@ -3780,7 +3780,8 @@ composed assemblies (<code>from_h5</code> + <code>compose</code>, or <code>Assem
 where order-mismatched models live, since <code>set_order</code> is global per
 gmsh session. Requirements and limits (ADR 0086): <code>enforce="equation"</code>
 (so it needs the Lagrange handler and an unsymmetric solver, like any
-equation tie — and, for the <em>live</em> run, a Ladruno fork build; see
+equation tie — and, for the <em>live</em> run, a build with <code>equationConstraint</code>:
+openseespy ≥ 3.8.0 or the fork; see
 <a href="../../concepts/backend-capabilities/">Backend capabilities</a>); a
 <strong>flat, coincident</strong> interface (<code>tolerance</code> is the
 out-of-plane gap allowance); convex facets with <strong>straight edges</strong>

@@ -3897,7 +3897,7 @@ so it is worth knowing which you are looking at.</p>
 <tr>
 <td><strong>Gated by apeGmsh</strong></td>
 <td><code>RuntimeError</code> naming the fork, what still works, and the stock alternative</td>
-<td>Elements, integrators, equation ties, contact, FEAST, profiler, the modal family</td>
+<td>Elements, integrators, the <code>LadrunoProjection</code> handler, contact, FEAST, profiler, the modal family</td>
 </tr>
 <tr>
 <td><strong>Rejected by the engine</strong></td>
@@ -3907,9 +3907,12 @@ so it is worth knowing which you are looking at.</p>
 </tbody>
 </table>
 <p>The first class exists because those commands are the ones stock OpenSees
-would otherwise <em>accept</em> — <code>equationConstraint</code> and the fork integrators
-are real symbols on a stock build, and an ungated call returns a converged
-wrong answer instead of an error. The gates convert that into a refusal.</p>
+would otherwise <em>accept</em>. The fork integrators, for example, are unknown to
+stock, yet <code>integrator ExplicitBathe</code> is accepted silently and the analysis
+steps on with the previous integrator — a converged wrong answer instead of
+an error. The gates convert that into a refusal.</p>
+<p>A few stock behaviours are refused for the same reason even though nothing
+in them is fork-only. See <a href="#stock-engine-defects">Stock engine defects</a>.</p>
 <h2 id="the-fork-only-surface">The fork-only surface<a class="headerlink" href="#the-fork-only-surface" title="Permanent link">&para;</a></h2>
 <h3 id="elements">Elements<a class="headerlink" href="#elements" title="Permanent link">&para;</a></h3>
 <!-- capability-map:elements -->
@@ -3943,16 +3946,18 @@ was armed — an older build is refused, not run as stock <code>LoadControl</cod
 are unaffected and run on any build.</p>
 <h3 id="constraints-and-coupling">Constraints and coupling<a class="headerlink" href="#constraints-and-coupling" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>enforce="equation"</code> ties.</strong> <code>g.constraints.tie(...)</code> and
-  <code>Assembly.couple(...)</code> with <code>enforce="equation"</code> emit
-  <code>equationConstraint</code> (EQ_Constraint, ADR 0068). Fork-only <strong>for the live
-  run</strong>. On stock, use <code>enforce="penalty"</code> with a tuned <code>stiffness</code> — see
-  <a href="../../how-to/tie-meshes/">Tie non-matching meshes</a>.</li>
-<li><strong><code>ops.equation_constraint(...)</code></strong> — a hand-written <code>equationConstraint</code> row
-  (<code>constrained=(node, dof)</code>, <code>retained=[(node, dof, coef), ...]</code>). Same
-  rules as an equation tie: fork-only for the live run, <code>Lagrange</code> /
-  <code>LadrunoProjection</code> auto-emitted, <code>Transformation</code> refused, serial only, and
-  not archived by <code>ops.h5(...)</code>.</li>
+<li><strong><code>enforce="equation"</code> ties are <em>not</em> fork-only.</strong> <code>g.constraints.tie(...)</code>
+  and <code>Assembly.couple(...)</code> with <code>enforce="equation"</code> emit
+  <code>equationConstraint</code> (EQ_Constraint, ADR 0068), which stock has had since
+  OpenSees 3.8.0 (openseespy ≥ 3.8.0; on Linux that needs Python ≥ 3.12). On
+  stock the rows are enforced exactly, and the in-process run works for
+  <strong>one tied model per process</strong> — see
+  <a href="#stock-engine-defects">Stock engine defects</a>. The same holds for
+  <strong><code>ops.equation_constraint(...)</code></strong>, a hand-written row
+  (<code>constrained=(node, dof)</code>, <code>retained=[(node, dof, coef), ...]</code>): <code>Lagrange</code>
+  / <code>LadrunoProjection</code> auto-emitted, <code>Transformation</code> refused, serial only,
+  and not archived by <code>ops.h5(...)</code>. What <em>is</em> fork-only is the explicit
+  path: under an explicit integrator the bridge picks <code>LadrunoProjection</code>.</li>
 <li><strong>Contact.</strong> <code>g.constraints.contact(...)</code> → <code>contactSurface</code> / <code>contact</code>, and
   <code>g.constraints.contact_plane(...)</code> → <code>contactPlane</code> (rigid analytical plane).
   Both lanes work in 2D as well as 3D, and both are <strong>serial only</strong> — parallel
@@ -4057,6 +4062,28 @@ build.</p>
 feature: the fork splits them into <code>material &lt;k&gt; &lt;token&gt;</code> per Gauss point.
 The bare spelling records nothing, so <code>ops.recorder.Ladruno</code> / <code>MPCO</code>
 refuse it and name the prefixed form.</p>
+<h2 id="stock-engine-defects">Stock engine defects<a class="headerlink" href="#stock-engine-defects" title="Permanent link">&para;</a></h2>
+<p>Two stock OpenSees behaviours give a converged wrong answer with no warning,
+so the in-process run refuses them on a stock build. Both are fixed on the
+fork; deck emission is unaffected.</p>
+<p><strong><code>TenNodeTetrahedron</code> is 6× too soft.</strong> Upstream's element applies the
+tetrahedral 1/6 volume factor twice, so its stiffness, mass, body force and
+reactions are all exactly 6× too small. That holds for every stock release
+through openseespy 3.8.0, and for upstream master as of 2026-09-25. The
+fork fixed it in PR #520. On stock, <code>ops.element.TenNodeTetrahedron</code> raises
+in the live run; mesh tet4 (<code>FourNodeTetrahedron</code>) or hexahedra instead. A
+fork build without the <code>ladrunoBuild</code> stamp (older than 2026-08-10) may
+predate the fix, so it runs with a <code>Tet10UnverifiedBuildWarning</code>.</p>
+<p><strong><code>wipe()</code> keeps equation-tie rows.</strong> Upstream <code>Domain::clearAll()</code> clears
+nodes, elements, SP/MP constraints and patterns, but not <code>equationConstraint</code>
+rows, and no stock command removes one. So the rows of one model survive
+<code>wipe()</code> into the next, and the next model enforces them. In one measured
+case the second model converged to twice the right stiffness; a model that
+lacks a stale row's node aborts the process. The first tied model in a
+process is exact. After it, the live emitter refuses to start another model
+in that process on a stock build. Restart the process (or the kernel), or
+run tied decks with <code>ops.tcl(run=True)</code> / <code>ops.py(run=True)</code>, which start
+a fresh one. The fork clears the rows (fork PR #312).</p>
 <h2 id="install-extras">Install extras<a class="headerlink" href="#install-extras" title="Permanent link">&para;</a></h2>
 <p>Everything above assumes the right extras are installed. <code>apeGmsh</code> itself
 pulls only <code>gmsh</code>, <code>h5py</code>, <code>numpy</code> and <code>pandas</code>.</p>

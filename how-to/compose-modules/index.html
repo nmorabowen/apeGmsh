@@ -3887,12 +3887,16 @@ see <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a>.)</p>
 <li><strong>Extract each part with <code>get_fem_data(dim=None)</code>, not <code>dim=3</code>.</strong> The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.</li>
-<li><strong><code>enforce="equation"</code> when you need it exact — on a fork build.</strong>
-  Measured on a two-block series column with an exact answer (N/mm units):
-  <code>"equation"</code> is exact to −0.01 % but needs the Lagrange handler, an
-  unsymmetric system, and — for the in-process run — the Ladruno fork
-  (<a href="../../concepts/backend-capabilities/">Backend capabilities</a>; the same
-  column reads 71 % soft on stock, which is why the live route is gated).
+<li><strong><code>enforce="equation"</code> when you need it exact.</strong> It enforces every tie row
+  to round-off, and needs the Lagrange handler and an unsymmetric system. It
+  runs in-process on any build with <code>equationConstraint</code>: stock openseespy
+  ≥ 3.8.0 (one tied model per process) or the fork
+  (<a href="../../concepts/backend-capabilities/">Backend capabilities</a>). Measured on
+  a two-block series column with an exact answer, stock and fork agree to
+  nine digits. What is left against the closed form is the collocation
+  tie's own error, a few tenths of a percent on an unstructured interface;
+  <code>method="mortar"</code> (below) removes it. Keep <code>TenNodeTetrahedron</code> off stock
+  builds: it is 6× too soft there, and the live run refuses it.
   The
   default penalty route now sizes its stiffness from the host material
   (<code>stiffness="auto"</code>) and converges to the same answer within the mesh's
