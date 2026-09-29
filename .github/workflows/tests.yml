@@ -6,11 +6,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Cancel superseded runs for the same ref (saves CI minutes on
-# force-push / rapid re-push to a PR).
+# Cancel superseded runs for the same ref only on pull_request events
+# (saves CI minutes on force-push / rapid re-push to a PR). Pushes to
+# main must each run to completion: back-to-back merges used to cancel
+# the earlier push's required checks.
 concurrency:
   group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Viewer / viewer-data tests render through offscreen Qt.

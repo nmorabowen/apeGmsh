@@ -14,6 +14,16 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — a second push to `main` no longer cancels the first push's `Tests` run
+
+`.github/workflows/tests.yml` set `cancel-in-progress: true` for every
+event, so back-to-back merges to `main` cancelled the earlier push's
+required checks. It is now `${{ github.event_name == 'pull_request' }}`:
+superseded PR pushes are still cancelled, pushes to `main` each run to
+completion. `docs.yml` and `publish.yml` already use
+`cancel-in-progress: false` and are unchanged.
+
+
 ### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 
 `GeomTransfViewer` computed the local frame in its page's JavaScript as
