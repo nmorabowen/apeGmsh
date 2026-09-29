@@ -119,12 +119,16 @@ Three rules keep this route out of trouble:
 - **Extract each part with `get_fem_data(dim=None)`, not `dim=3`.** The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.
-- **`enforce="equation"` when you need it exact — on a fork build.**
-  Measured on a two-block series column with an exact answer (N/mm units):
-  `"equation"` is exact to −0.01 % but needs the Lagrange handler, an
-  unsymmetric system, and — for the in-process run — the Ladruno fork
-  ([Backend capabilities](../concepts/backend-capabilities.md); the same
-  column reads 71 % soft on stock, which is why the live route is gated).
+- **`enforce="equation"` when you need it exact.** It enforces every tie row
+  to round-off, and needs the Lagrange handler and an unsymmetric system. It
+  runs in-process on any build with `equationConstraint`: stock openseespy
+  ≥ 3.8.0 (one tied model per process) or the fork
+  ([Backend capabilities](../concepts/backend-capabilities.md)). Measured on
+  a two-block series column with an exact answer, stock and fork agree to
+  nine digits. What is left against the closed form is the collocation
+  tie's own error, a few tenths of a percent on an unstructured interface;
+  `method="mortar"` (below) removes it. Keep `TenNodeTetrahedron` off stock
+  builds: it is 6× too soft there, and the live run refuses it.
   The
   default penalty route now sizes its stiffness from the host material
   (`stiffness="auto"`) and converges to the same answer within the mesh's

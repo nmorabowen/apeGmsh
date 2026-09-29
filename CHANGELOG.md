@@ -34,6 +34,73 @@ This PR adds the program that runs the architectural remediation, but no library
 - The `/apegmsh-program <link>` orchestrator skill boots from the ledger, dispatches workers, reviews, and lands only `mechanical` PRs. It queues the next link as a task chip.
 - AGENTS.md gains a routing row for each.
 
+### FIXED — results-strategy docs prescribed calls that do not exist; drift lane added
+
+`docs/how-to/choose-results-strategy.md` told readers to record with
+`spec.capture(...)`, `ops.tcl(..., recorders=spec)` and
+`ops.tcl(..., recorders=spec, mpco=True)`. None of them exist: `capture`
+left the recorder spec with the Phase 9 `Recorders` helper, and
+`apeSees.tcl` / `apeSees.py` take neither `recorders=` nor `mpco=`. The
+page is rewritten around the real calls (`ops.domain_capture`,
+`ResolvedRecorderSpec.emit_recorders` / `emit_mpco` / `to_tcl_commands`,
+`ops.recorder.MPCO` before `ops.run()` or `ops.tcl()`), with one runnable
+recipe per cell on a cantilever whose tip deflection (6.75 mm) every
+recipe reads back. Every block was executed as published, including both
+exported decks under OpenSees.exe. It also records two traps found on the
+way: the bridge's `ops.analyze(steps=1)` rebuilds the domain on each call,
+so it cannot drive a capture loop; and bridge-declared recorders write
+files `from_recorders` does not look for.
+`docs/how-to/results-mpco.md` had the same phantoms, and its recipe could
+not run: node/element ids came in as lists (`MeshSelection.ids`), the live
+domain was never built, and `from_mpco` lacked `fem=` for its `pg=` reads.
+All are fixed and verified end to end. The new
+`tests/test_docs_results_api_drift.py` statically resolves the imports,
+attribute chains and keyword arguments in the python fences and inline
+code of five results-API pages against the live code. It flags all ten
+phantoms in both pages as they shipped at 07f757e0.
+
+### FIXED — stock equation ties run live; the "71 % soft" was stock `TenNodeTetrahedron`, now refused on stock
+
+The live refusal of `enforce="equation"` ties on stock openseespy rested on a
+two-block series column that read 71 % soft on stock. That number is 2/7,
+exactly what one 6×-soft block in series gives, and the plate was a
+`TenNodeTetrahedron`. Upstream's element applies the tetrahedral 1/6 volume
+factor twice (`xsj = Jdet`), in every release through openseespy 3.8.0 and
+on upstream master `93f7e8e58`; the fork fixed it in PR #520. With a plate
+that is right on every build, stock 3.8.0 and the fork agree to nine digits
+against the closed form, and every tie row holds to about 1e-17. The
+survey ran on CI in fresh processes (tet4 / hex8 plates, collocation and
+mortar ties). The locally deployed fork build (2026-06-25, before PR #520)
+reproduced the 71 % too.
+
+- **Equation ties run live on stock** builds that have `equationConstraint`
+  (openseespy >= 3.8.0). A build without it gets a curated refusal.
+- **One tied model per stock process.** Upstream `Domain::clearAll()` does
+  not clear EQ constraints (the fork does since PR #312), and no stock
+  command removes one. So `wipe()` keeps the rows, and the next model in the
+  process enforces them. Measured on stock: a second tied model converged to
+  2× the closed form; a model missing a stale row's node hits a FATAL that
+  exits the process. After a stock process has taken an `equationConstraint`
+  row, `LiveOpsEmitter(wipe=True)` refuses to start another model.
+- **`TenNodeTetrahedron` is refused on stock** in the live run. On a fork
+  build without the `ladrunoBuild` stamp (older than 2026-08-10), which may
+  predate PR #520, it runs with `Tet10UnverifiedBuildWarning`.
+- **`constraints LadrunoProjection`** (auto-picked for equation ties under an
+  explicit integrator) gets the curated fork message on stock instead of a
+  bare `OpenSeesError`.
+- **CI:** `live-stock` moves to Python 3.12. On 3.11, pip resolves
+  openseespy 3.7.1.2, which predates `equationConstraint`, so the lane never
+  exercised a tie. The import step now asserts the command exists.
+- The two `build.py` messages that recommend `TenNodeTetrahedron` say it
+  must be the fork's. Docs and docstrings that called the live equation route
+  fork-only are corrected (`backend-capabilities.md` gains "Stock engine
+  defects").
+
+Tests name the engine against the closed form: the series stack without
+tet10 (exact on any build, run in fresh interpreters); stock tet10 stack =
+2/7; stock second model = 2×; tet10 block = 1/6 on stock and exact on a fixed
+fork; and fake-module unit tests for every gate branch.
+
 ### FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
 
 `g.masses` and `g.loads` read a target's elements from gmsh through

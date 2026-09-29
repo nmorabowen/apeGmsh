@@ -473,8 +473,10 @@ longer raises `H5EquationConstraintDeviationWarning` (ADR 0068 item 4, #753).
 A hand-written row is `ops.equation_constraint(constrained=(node, dof),
 retained=[(node, dof, coef), ...], coef=1.0)` — OpenSees' sum-to-zero form
 `coef·u_c + Σ rcoef·u_r = 0`, FEM node ids. It follows the same handler rules
-(auto `Lagrange`/`LadrunoProjection`, `Transformation` refused), needs the fork
-to run in-process, refuses a partitioned emit, and is **not** archived by
+(auto `Lagrange`/`LadrunoProjection`, `Transformation` refused), runs
+in-process on openseespy >= 3.8.0 or the fork (on stock: one tied model per
+process — stock `wipe()` keeps EQ rows, so the live emitter refuses the next
+model), refuses a partitioned emit, and is **not** archived by
 `ops.h5` (`H5FeatureDeferredWarning`).
 The fork contact generator `g.constraints.contact(...)` (NTS/mortar,
 plus `contact_plane(...)` rigid planes) **auto-emits**

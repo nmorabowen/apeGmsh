@@ -34,7 +34,10 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 
-__all__ = ["LiveOpsEmitter", "get_backend_name", "get_backend_build", "get_ops"]
+__all__ = [
+    "LiveOpsEmitter", "Tet10UnverifiedBuildWarning", "get_backend_build",
+    "get_backend_name", "get_ops",
+]
 
 
 #: Raised by :meth:`LiveOpsEmitter.augment` on a stock (non-fork) build.
@@ -220,30 +223,115 @@ _LADRUNO_LOAD_CONTROL_REQUIRED = (
 )
 
 
-#: Raised by :meth:`LiveOpsEmitter.equationConstraint` on a stock build.
-#: ``equationConstraint`` EXISTS on stock openseespy and nothing raises, so
-#: this cannot be probed by symbol presence. Stock *does* satisfy a single
-#: isolated interpolation row exactly
-#: (tests/test_equation_tie_emission.py::test_equation_tie_enforced_in_live_solve
-#: — 3 masters, one slave, agrees to 1e-9), but it does NOT reproduce the
-#: fork on a realistic non-matching tie: 37 slave nodes onto 9 shared
-#: masters, byte-identical emission on both backends, measures 71 % soft
-#: against the closed form on stock and exact on the fork
-#: (tests/test_meshable_part_route.py::test_tied_stack_matches_series_closed_form).
-#: Where the two builds diverge is not expressible as a precondition the
-#: caller could check, and the failure is a converged wrong number rather
-#: than an error — so the live route is gated on the build outright.
-_EQUATION_TIE_FORK_REQUIRED = (
-    "enforce='equation' ties (equationConstraint / EQ_Constraint, ADR 0068) "
-    "require the Ladruno fork build of OpenSees for the in-process run. The "
-    "bound openseespy build is stock: it accepts the command, and satisfies "
-    "an isolated tie row, but does not reproduce the fork on a real "
-    "non-matching interface (measured 71 % soft on a two-block series column "
-    "whose emitted deck is identical on both builds) — a converged WRONG "
-    "answer with no warning. Deck emission via ops.tcl(...) / ops.py(...) "
-    "works on any build; only the in-process run is gated. On a stock build "
-    "use enforce='penalty' (tune 'stiffness' — the 1e18 default does not "
-    "converge; ~1e10 reads about 1.3 % soft) or enforce='penalty_al'."
+#: Raised by :meth:`LiveOpsEmitter.equationConstraint` when the bound build
+#: has no ``equationConstraint`` command. Upstream added it on 2025-05-10
+#: (OpenSees 3.8.0); openseespy 3.7.1.2, the last wheel pip gives Linux on
+#: Python < 3.12, predates it. Where the command exists, stock enforces the
+#: rows exactly: on the two-block series column stock and fork agree to nine
+#: digits once the plate is not a TenNodeTetrahedron
+#: (tests/test_meshable_part_route.py). The "71 % soft on stock" once
+#: blamed on the stock tie was 2/7 — one 6x-soft tet10 block in series (see
+#: :data:`_TET10_STOCK_DEFECT`).
+_EQUATION_CONSTRAINT_MISSING = (
+    "enforce='equation' ties and ops.equation_constraint(...) need an "
+    "OpenSees build with the equationConstraint command (upstream since "
+    "2025-05-10, OpenSees 3.8.0; every Ladruno fork build). The bound build "
+    "lacks it — openseespy 3.7.1.2, the last wheel Linux gets on Python "
+    "< 3.12, predates it. Install openseespy >= 3.8.0 (Python >= 3.12 on "
+    "Linux), use the fork, or tie with enforce='penalty'. Deck emission via "
+    "ops.tcl(...) / ops.py(...) works on any build."
+)
+
+#: Raised by :class:`LiveOpsEmitter` when a stock process that already ran
+#: ``equationConstraint`` rows starts a new model. Upstream
+#: ``Domain::clearAll()`` clears nodes, elements, SP/MP constraints and
+#: patterns but not EQ constraints (still so on upstream master 93f7e8e58,
+#: 2026-09-25; the fork clears them since fork PR #312), and stock has no
+#: command that removes one. So ``wipe()`` leaves every row behind and the
+#: next model's Lagrange/Penalty handler enforces it: measured on stock
+#: 3.8.0, a second tied model in the same process converged to 2.0x the
+#: closed form with a zero top reaction, and a model missing a stale row's
+#: node hits a FATAL that exits the process.
+_STOCK_EQ_ROWS_SURVIVE_WIPE = (
+    "this process already ran equationConstraint rows on stock OpenSees, "
+    "and stock wipe() cannot clear them: upstream Domain::clearAll() omits "
+    "EQ constraints and no command removes one, so every later model in this "
+    "process would silently enforce the old rows (measured: a converged 2x "
+    "wrong stiffness) or abort. Run each equation-tie model in a fresh "
+    "process — restart the kernel, or run the deck with ops.tcl(run=True) / "
+    "ops.py(run=True) — or use the Ladruno fork, which clears them."
+)
+
+#: Process-wide: set once a stock build has taken an ``equationConstraint``
+#: row. openseespy's domain is a process singleton, so the rows outlive
+#: every emitter (see :data:`_STOCK_EQ_ROWS_SURVIVE_WIPE`).
+_STOCK_EQ_ROWS_LIVE = False
+
+#: Raised by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
+#: stock build. Upstream ``TenNodeTetrahedron::shp3d`` sets ``xsj = Jdet``
+#: where ``Jdet`` already carries the tetrahedral 1/6 (it is the element
+#: volume), and the Gauss weights sum to 1/6 again — so every volume
+#: integral, stiffness, mass, body force and hence every reaction, is exactly
+#: 6x too small. Every stock release through openseespy 3.8.0 has it, as does
+#: upstream master 93f7e8e58 (2026-09-25); the fork fixed it in PR #520
+#: (``ee942546c``, ``xsj = 6.0*Jdet``, 2026-07-07). Stock accepts the element
+#: and converges, so nothing else says so.
+_TET10_STOCK_DEFECT = (
+    "TenNodeTetrahedron is refused on stock OpenSees: upstream's element "
+    "applies the tetrahedral 1/6 volume factor twice, so its stiffness, "
+    "mass, body force and reactions are all exactly 6x too small (every "
+    "stock release through openseespy 3.8.0; upstream master as of "
+    "2026-09-25). It converges to that answer without a warning. The "
+    "Ladruno fork carries the fix (fork PR #520). On stock, mesh tet4 "
+    "(FourNodeTetrahedron) or hexahedra (stdBrick / SSPbrick / bbarBrick). "
+    "Deck emission via ops.tcl(...) / ops.py(...) works on any build."
+)
+
+#: Warned by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
+#: fork build that cannot be shown to carry fork PR #520.
+_TET10_FORK_UNVERIFIED = (
+    "TenNodeTetrahedron on a Ladruno fork build without the ladrunoBuild "
+    "stamp (fork PR #718, 2026-08-10): apeGmsh cannot tell whether it carries "
+    "the TenNodeTetrahedron fix (fork PR #520, 2026-07-07). A build from "
+    "before 2026-07-07 is 6x too soft in stiffness, mass, body force and "
+    "reactions, with no warning from the engine. Rebuild the fork."
+)
+
+
+class Tet10UnverifiedBuildWarning(UserWarning):
+    """``TenNodeTetrahedron`` on a fork build too old to prove its fix.
+
+    Fires iff the bound build is the fork (``criticalTimeStep``) but lacks
+    ``ladrunoBuild``: fork PR #718 (2026-08-10) postdates the element fix,
+    fork PR #520 (2026-07-07), and tet10 exposes no response a probe could
+    read without running an analysis.
+    """
+
+
+def _tet10_volume_fixed(ops: Any) -> "bool | None":
+    """Whether ``ops``'s ``TenNodeTetrahedron`` integrates its volume right.
+
+    ``False`` on stock (:data:`_TET10_STOCK_DEFECT`), ``True`` on a fork
+    build that answers ``ladrunoBuild``, ``None`` on an older fork build,
+    which may predate the fix.
+    """
+    if not hasattr(ops, "criticalTimeStep"):
+        return False
+    return True if hasattr(ops, "ladrunoBuild") else None
+
+
+#: Raised by :meth:`LiveOpsEmitter.constraints` for ``LadrunoProjection`` on
+#: a stock build, which answers the unknown handler with a bare
+#: ``OpenSeesError``. The bridge auto-picks it for equation ties under an
+#: explicit integrator.
+_LADRUNO_PROJECTION_FORK_REQUIRED = (
+    "constraints LadrunoProjection is fork-only. The bridge picks it for "
+    "enforce='equation' ties and ops.equation_constraint(...) rows under an "
+    "explicit integrator, where a Lagrange multiplier's massless DOF would "
+    "break the explicit mass solve. On a stock build, run the equation tie "
+    "under an implicit integrator (Lagrange is auto-picked) or tie with "
+    "enforce='penalty'. Deck emission via ops.tcl(...) / ops.py(...) works "
+    "on any build."
 )
 
 
@@ -501,6 +589,8 @@ class LiveOpsEmitter:
 
     def __init__(self, *, wipe: bool = True) -> None:
         self._ops = _get_ops()
+        if wipe and _STOCK_EQ_ROWS_LIVE:
+            raise RuntimeError(_STOCK_EQ_ROWS_SURVIVE_WIPE)
         if wipe:
             self._ops.wipe()
         # Partition-emission state (ADR 0027 / P4). LiveOps is
@@ -630,15 +720,23 @@ class LiveOpsEmitter:
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # EQ_Constraint via live openseespy (ADR 0068): one call per tied
-        # DOF, flat varargs. Gated on the BUILD, not on symbol presence —
-        # stock openseespy has the symbol but not the behaviour.
-        self._stock_build_gate(_EQUATION_TIE_FORK_REQUIRED)
+        # DOF, flat varargs. Runs on any build that has the command; a stock
+        # process is then marked, because its wipe() keeps the rows.
+        if not self._in_partition and not hasattr(
+            self._ops, "equationConstraint",
+        ):
+            raise RuntimeError(_EQUATION_CONSTRAINT_MISSING)
         flat: list[int | float] = []
         for rn, rd, rc in retained:
             flat += [int(rn), int(rd), float(rc)]
         self._ops.equationConstraint(
             int(cnode), int(cdof), float(ccoef), *flat,
         )
+        if not self._in_partition and not hasattr(
+            self._ops, "criticalTimeStep",
+        ):
+            global _STOCK_EQ_ROWS_LIVE
+            _STOCK_EQ_ROWS_LIVE = True
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
@@ -787,6 +885,15 @@ class LiveOpsEmitter:
         ):
             self._element_fork_gated(ele_type, tag, args)
             return
+        if ele_type == "TenNodeTetrahedron" and not self._in_partition:
+            fixed = _tet10_volume_fixed(self._ops)
+            if fixed is False:
+                raise RuntimeError(_TET10_STOCK_DEFECT)
+            if fixed is None:
+                warnings.warn(
+                    _TET10_FORK_UNVERIFIED, Tet10UnverifiedBuildWarning,
+                    stacklevel=2,
+                )
         self._ops.element(ele_type, tag, *args)
 
     def _element_fork_gated(
@@ -916,6 +1023,8 @@ class LiveOpsEmitter:
     # -- Analysis chain -----------------------------------------------------
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
+        if c_type == "LadrunoProjection":
+            self._stock_build_gate(_LADRUNO_PROJECTION_FORK_REQUIRED)
         self._ops.constraints(c_type, *args)
 
     def numberer(self, n_type: str) -> None:

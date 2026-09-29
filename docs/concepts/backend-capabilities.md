@@ -77,13 +77,17 @@ so it is worth knowing which you are looking at.
 
 | Class | What you see | Which primitives |
 |---|---|---|
-| **Gated by apeGmsh** | `RuntimeError` naming the fork, what still works, and the stock alternative | Elements, integrators, equation ties, contact, FEAST, profiler, the modal family |
+| **Gated by apeGmsh** | `RuntimeError` naming the fork, what still works, and the stock alternative | Elements, integrators, the `LadrunoProjection` handler, contact, FEAST, profiler, the modal family |
 | **Rejected by the engine** | `OpenSeesError: See stderr output`, with an `unknown …` warning on stderr | Materials, `system Pardiso`, the fork recorders |
 
 The first class exists because those commands are the ones stock OpenSees
-would otherwise *accept* — `equationConstraint` and the fork integrators
-are real symbols on a stock build, and an ungated call returns a converged
-wrong answer instead of an error. The gates convert that into a refusal.
+would otherwise *accept*. The fork integrators, for example, are unknown to
+stock, yet `integrator ExplicitBathe` is accepted silently and the analysis
+steps on with the previous integrator — a converged wrong answer instead of
+an error. The gates convert that into a refusal.
+
+A few stock behaviours are refused for the same reason even though nothing
+in them is fork-only. See [Stock engine defects](#stock-engine-defects).
 
 ## The fork-only surface
 
@@ -124,16 +128,18 @@ are unaffected and run on any build.
 
 ### Constraints and coupling
 
-- **`enforce="equation"` ties.** `g.constraints.tie(...)` and
-  `Assembly.couple(...)` with `enforce="equation"` emit
-  `equationConstraint` (EQ_Constraint, ADR 0068). Fork-only **for the live
-  run**. On stock, use `enforce="penalty"` with a tuned `stiffness` — see
-  [Tie non-matching meshes](../how-to/tie-meshes.md).
-- **`ops.equation_constraint(...)`** — a hand-written `equationConstraint` row
-  (`constrained=(node, dof)`, `retained=[(node, dof, coef), ...]`). Same
-  rules as an equation tie: fork-only for the live run, `Lagrange` /
-  `LadrunoProjection` auto-emitted, `Transformation` refused, serial only, and
-  not archived by `ops.h5(...)`.
+- **`enforce="equation"` ties are *not* fork-only.** `g.constraints.tie(...)`
+  and `Assembly.couple(...)` with `enforce="equation"` emit
+  `equationConstraint` (EQ_Constraint, ADR 0068), which stock has had since
+  OpenSees 3.8.0 (openseespy ≥ 3.8.0; on Linux that needs Python ≥ 3.12). On
+  stock the rows are enforced exactly, and the in-process run works for
+  **one tied model per process** — see
+  [Stock engine defects](#stock-engine-defects). The same holds for
+  **`ops.equation_constraint(...)`**, a hand-written row
+  (`constrained=(node, dof)`, `retained=[(node, dof, coef), ...]`): `Lagrange`
+  / `LadrunoProjection` auto-emitted, `Transformation` refused, serial only,
+  and not archived by `ops.h5(...)`. What *is* fork-only is the explicit
+  path: under an explicit integrator the bridge picks `LadrunoProjection`.
 - **Contact.** `g.constraints.contact(...)` → `contactSurface` / `contact`, and
   `g.constraints.contact_plane(...)` → `contactPlane` (rigid analytical plane).
   Both lanes work in 2D as well as 3D, and both are **serial only** — parallel
@@ -239,6 +245,32 @@ Material-level response tokens (`material.<token>`) are a fork-recorder
 feature: the fork splits them into `material <k> <token>` per Gauss point.
 The bare spelling records nothing, so `ops.recorder.Ladruno` / `MPCO`
 refuse it and name the prefixed form.
+
+## Stock engine defects
+
+Two stock OpenSees behaviours give a converged wrong answer with no warning,
+so the in-process run refuses them on a stock build. Both are fixed on the
+fork; deck emission is unaffected.
+
+**`TenNodeTetrahedron` is 6× too soft.** Upstream's element applies the
+tetrahedral 1/6 volume factor twice, so its stiffness, mass, body force and
+reactions are all exactly 6× too small. That holds for every stock release
+through openseespy 3.8.0, and for upstream master as of 2026-09-25. The
+fork fixed it in PR #520. On stock, `ops.element.TenNodeTetrahedron` raises
+in the live run; mesh tet4 (`FourNodeTetrahedron`) or hexahedra instead. A
+fork build without the `ladrunoBuild` stamp (older than 2026-08-10) may
+predate the fix, so it runs with a `Tet10UnverifiedBuildWarning`.
+
+**`wipe()` keeps equation-tie rows.** Upstream `Domain::clearAll()` clears
+nodes, elements, SP/MP constraints and patterns, but not `equationConstraint`
+rows, and no stock command removes one. So the rows of one model survive
+`wipe()` into the next, and the next model enforces them. In one measured
+case the second model converged to twice the right stiffness; a model that
+lacks a stale row's node aborts the process. The first tied model in a
+process is exact. After it, the live emitter refuses to start another model
+in that process on a stock build. Restart the process (or the kernel), or
+run tied decks with `ops.tcl(run=True)` / `ops.py(run=True)`, which start
+a fresh one. The fork clears the rows (fork PR #312).
 
 ## Install extras
 

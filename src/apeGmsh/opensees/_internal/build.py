@@ -4262,7 +4262,8 @@ def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
                 f"it converges on it — worse than the uncapped force-accept, "
                 f"which at least integrates the whole increment. Use an "
                 f"element MEASURED to propagate a material refusal (e.g. "
-                f"LadrunoBrick, LadrunoQuad, TenNodeTetrahedron), or leave "
+                f"LadrunoBrick, LadrunoQuad, or TenNodeTetrahedron as the "
+                f"fork builds it — stock's is 6x too soft), or leave "
                 f"max_substeps=0 (uncapped)."
             )
 
@@ -4320,7 +4321,9 @@ def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
         f"and every other fail-loud material contract never reach the "
         f"analysis, so a non-converged or inadmissible state is committed "
         f"as if it had converged. Use LadrunoBrick or TenNodeTetrahedron "
-        f"for a fail-loud deck.",
+        f"for a fail-loud deck, on a fork build: the refusal contract is "
+        f"fork-only, and stock's TenNodeTetrahedron is 6x too soft (the live "
+        f"run refuses it there).",
         ASDPlasticHostWarning,
         stacklevel=2,
     )

@@ -8532,8 +8532,10 @@ class apeSees:
         Validated here (non-zero finite coefficients, DOFs >= 1, a
         non-empty retained set, the constrained DOF not among the retained
         ones) and at emit (nodes exist, DOFs fit each node's ndf). The
-        in-process run needs the Ladruno fork, like every
-        ``equationConstraint``; a partitioned emit refuses the rows, and
+        in-process run needs a build with ``equationConstraint``
+        (openseespy >= 3.8.0 — one such model per process, since stock
+        ``wipe()`` keeps the rows — or the fork); a partitioned emit
+        refuses the rows, and
         ``ops.h5(...)`` does not archive them (``H5FeatureDeferredWarning``).
         """
         try:
