@@ -1,32 +1,47 @@
 #!/usr/bin/env python
-"""nav: AST-only code navigation for apeGmsh maintainers (P6 prototype).
+"""nav: AST-only code navigation for apeGmsh maintainers.
 
-Stdlib only. Never imports apeGmsh, so it reads the checkout it is pointed at
-(no editable-install trap) and costs no gmsh/Qt start-up. Line ranges are
-computed on demand from the working tree and cached per file (mtime+size);
-nothing is committed, so nothing can go stale or collide in a merge.
+Answers "where is X / what encloses line N / who references Y / what is in
+this family" without reading a file whole. Stdlib only, and it never
+imports apeGmsh: it reads the checkout it runs in (no editable-install
+trap) and costs no gmsh/Qt start-up. The index is rebuilt per file from the
+working tree (mtime + size) and cached in `<repo root>/.nav_cache/`, which
+is gitignored and per worktree, so nothing is committed or goes stale.
 
-Commands (every one prints a bounded, grep-shaped answer):
+Every answer is at most 60 lines. A longer one is cut, and its last line
+says how many lines were dropped and which flags narrow it.
+
+Commands:
   map  FILE            classes/functions with line ranges + first doc line
+                       [--depth 0] [--lines A-B]
   pkg  PACKAGE         modules: lines, fan-in (eager/lazy), first doc line, hub flag
-  where NAME           definitions of NAME (class/def/method) with ranges
-  at   FILE:LINE       the enclosing symbol chain of a line
-  refs NAME [--kind call,attr,name,str,import]
-                       code references (comments/docstrings excluded),
-                       grouped by file and enclosing function
-  h5   PATH-FRAGMENT   code users of an HDF5 path, classified
-                       write / read / probe / use (one hop through constants)
-  impl PROTO.METHOD    classes implementing METHOD of Protocol PROTO
+  where NAME           definitions of NAME with ranges [--kind class,def,...] [--file FRAG]
+  at   FILE:LINE ...   the innermost symbol enclosing a line, and its banner section
+  refs NAME            code references (comments/docstrings excluded), grouped
+                       by file and enclosing scope [--kind call,attr,...] [--file FRAG]
+  h5   PATH-FRAGMENT   code users of an HDF5 path, classified write / read /
+                       probe / use (one hop through constants) [--kind ...] [--file FRAG]
+  impl PROTO.METHOD    classes implementing METHOD of Protocol PROTO [--file FRAG]
   family BASE | --names a,b,c
                        touch-point recipe: every enumeration of the family
                        (literal tables, isinstance dispatch, per-member
                        methods, doc/data files) with coverage and gaps
+  up   NAME            caller chain, resolved by name (approximate)
+  deps MODULE          importers of a module: eager / lazy / TYPE_CHECKING
+
+FRAG is a path substring: `--file results/` keeps files under results/.
+An unknown --kind value is an error, never an empty answer.
+
+    python scripts/nav.py map src/apeGmsh/opensees/_response_catalog.py
+    python scripts/nav.py at src/apeGmsh/opensees/apesees.py:9000
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import builtins
+import contextlib
+import io
 import marshal
 import os
 import re
@@ -37,7 +52,9 @@ from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-CACHE_VERSION = 6
+CACHE_VERSION = 7
+CACHE_DIR = ".nav_cache"
+MAX_LINES = 60
 SCAN_DIRS = ("src/apeGmsh", "tests", "scripts")
 TEXT_GLOBS = ("docs/**/*.md", "skills/apegmsh/**/*.md",
               "src/apeGmsh/**/*.md", "src/apeGmsh/**/*.json")
@@ -55,6 +72,24 @@ _STOP = set(dir(builtins)) | {"self", "cls", "np", "Any", "Optional", "annotatio
 # imp  = (target, line, lazy, type_checking)
 S_QUAL, S_KIND, S_START, S_END, S_DOC, S_BASES, S_METHODS = range(7)
 R_TOK, R_LINE, R_KIND, R_SCOPE, R_RW = range(5)
+
+SYM_KINDS = ("class", "def", "method", "nested")
+REF_KINDS = ("call", "attr", "name", "str", "import", "param", "kw")
+H5_KINDS = ("write", "read", "probe", "via-const", "use", "const")
+
+#: What narrows each command's answer; the truncation tail names it.
+NARROW = {
+    "map": "--depth 0 or --lines A-B",
+    "pkg": "a subpackage, or drop --deep",
+    "where": "--kind/--file",
+    "at": "fewer locations",
+    "refs": "--kind/--file (--limit 1 lists every file)",
+    "h5": "--kind/--file or a longer fragment",
+    "impl": "--min-cover",
+    "family": "--limit/--nodocs",
+    "up": "--depth/--limit",
+    "deps": "--file/--limit",
+}
 
 
 def _first_line(doc):
@@ -239,10 +274,11 @@ def parse_file(root, rel):
             name = _term(f)
             if name:
                 refs.append((name, node.lineno, "call", scope, ""))
+            classes = None
             if isinstance(f, ast.Name) and f.id in ("isinstance", "issubclass") \
                     and len(node.args) == 2:
-                a = node.args[1]
-                for e in (a.elts if isinstance(a, ast.Tuple) else [a]):
+                classes = node.args[1]
+                for e in (classes.elts if isinstance(classes, ast.Tuple) else [classes]):
                     n = _term(e)
                     if n:
                         enums.append((node.lineno, scope, "isinstance", (n,)))
@@ -252,6 +288,11 @@ def parse_file(root, rel):
             elif not isinstance(f, ast.Name):
                 visit(f, [f, node] + chain, stack, fn_depth, tc)
             for a in node.args:
+                if a is classes and isinstance(a, ast.Tuple):
+                    # the class tuple is dispatch (recorded above), not a table
+                    for e in a.elts:
+                        visit(e, [e, a, node] + chain, stack, fn_depth, tc)
+                    continue
                 visit(a, [a, node] + chain, stack, fn_depth, tc)
             for k in node.keywords:
                 if k.arg:
@@ -292,9 +333,13 @@ def parse_file(root, rel):
             visit(ch, [ch] + chain, stack, fn_depth, tc)
 
     body = tree.body[1:] if tree.body and _is_doc(tree.body[0]) else tree.body
-    sys.setrecursionlimit(10000)
-    for s in body:
-        visit(s, [s, tree], [], 0, False)
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 10000))  # deep expression trees
+    try:
+        for s in body:
+            visit(s, [s, tree], [], 0, False)
+    finally:
+        sys.setrecursionlimit(limit)
     # module-level banners:  # ---- / # Title / # ----
     for i in range(1, len(lines) - 1):
         a, b = lines[i - 1], lines[i]
@@ -315,15 +360,18 @@ def repo_root(start):
         out = subprocess.run(["git", "-C", str(start), "rev-parse", "--show-toplevel"],
                              capture_output=True, text=True, check=True).stdout.strip()
         return Path(out)
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         return start
 
 
 def cache_path(root):
-    # PROTOTYPE: keep the cache next to this script (the panel's scratch dir),
-    # so a read-only review never writes into the repo. The production tool
-    # would use `git rev-parse --git-dir` (per worktree, never committed).
-    return Path(__file__).resolve().parent / "nav_cache.marshal"
+    """`<root>/.nav_cache/index.marshal`: per worktree, gitignored."""
+    return Path(root) / CACHE_DIR / "index.marshal"
+
+
+def _cache_stamp(root):
+    # marshal's format is tied to the interpreter, so the version is part of it
+    return (CACHE_VERSION, sys.version_info[:2], str(root))
 
 
 def load_index(root, cache=None, verbose=False, jobs=None):
@@ -331,11 +379,12 @@ def load_index(root, cache=None, verbose=False, jobs=None):
     t0 = time.perf_counter()
     old = {}
     if cache.is_file():
+        # a cache is only an accelerator: an unreadable one is rebuilt
         try:
             blob = marshal.loads(cache.read_bytes())
-            if blob.get("v") == CACHE_VERSION and blob.get("root") == str(root):
+            if isinstance(blob, dict) and blob.get("stamp") == _cache_stamp(root):
                 old = blob["mods"]
-        except Exception:
+        except (OSError, EOFError, ValueError, TypeError, KeyError):
             old = {}
     t_load = time.perf_counter() - t0
     mods, keys, todo = {}, {}, []
@@ -370,12 +419,17 @@ def load_index(root, cache=None, verbose=False, jobs=None):
         else:
             for r in todo:
                 mods[r] = parse_file(root, r)
-        blob = {"v": CACHE_VERSION, "root": str(root),
+    if todo or old.keys() != mods.keys():
+        blob = {"stamp": _cache_stamp(root),
                 "mods": {r: (keys[r], m) for r, m in mods.items()}}
-        try:
-            cache.write_bytes(marshal.dumps(blob))
-        except OSError:
-            pass
+        tmp = cache.with_name(f"{cache.name}.{os.getpid()}.tmp")
+        try:  # write-then-rename: a concurrent run never reads half a cache
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(marshal.dumps(blob))
+            os.replace(tmp, cache)
+        except OSError as exc:
+            print(f"nav: cache not written ({exc}); answers are unaffected",
+                  file=sys.stderr)
     if verbose:
         print(f"[index] {len(mods)} files; {len(todo)} parsed in "
               f"{time.perf_counter() - t1:.2f}s; cache load {t_load:.2f}s; "
@@ -391,8 +445,14 @@ def _short(rel):
     return rel.replace("src/apeGmsh/", "")
 
 
-def _find_file(mods, frag):
-    frag = frag.replace("\\", "/")
+def _find_file(mods, frag, root):
+    """Match FILE as a path relative to root (or a suffix of one), `./x`, or absolute."""
+    if Path(frag).is_absolute():
+        try:
+            frag = Path(frag).resolve().relative_to(root).as_posix()
+        except ValueError:
+            sys.exit(f"{frag!r} is outside {root}; pass a path inside the checkout")
+    frag = frag.replace("\\", "/").removeprefix("./")
     hits = [m for r, m in mods.items() if r == frag or r.endswith("/" + frag)]
     if not hits:
         sys.exit(f"no file matches {frag!r}")
@@ -406,7 +466,10 @@ def _find_file(mods, frag):
 
 # ----------------------------------------------------------------- commands
 def cmd_map(mods, args):
-    m = _find_file(mods, args.file)
+    m = _find_file(mods, args.file, args.root)
+    if args.lines and args.lines[0] > m["nlines"]:
+        sys.exit(f"map: {m['rel']} has {m['nlines']} lines; --lines "
+                 f"{args.lines[0]}-{args.lines[1]} starts past the end")
     hub = "  HUB" if m["nlines"] > HUB_LINES else ""
     print(f"{m['rel']}  ({m['nlines']} lines{hub})  {m['doc1'][:80]}")
     items = [(b[0], 0, b[1]) for b in m["banners"]]
@@ -416,6 +479,9 @@ def cmd_map(mods, args):
         if s[S_KIND] == "nested" and not args.nested:
             continue
         items.append((s[S_START], 1, s))
+    if args.lines:
+        lo, hi = args.lines
+        items = [it for it in items if lo <= it[0] <= hi]
     items.sort(key=lambda x: (x[0], x[1]))
     for ln, is_sym, s in items:
         if not is_sym:
@@ -468,12 +534,21 @@ def cmd_pkg(mods, args):
         print(f"  {rel:<38} {m['nlines']:>6} {hub:3} in={e}+{lz:<3} {doc}")
 
 
+def _in_scope(rel, tests, frag):
+    """The --tests / --file filter shared by the multi-file commands."""
+    if not tests and not rel.startswith("src/"):
+        return False
+    return not frag or frag in rel
+
+
 def cmd_where(mods, args):
     n = 0
     for r, m in sorted(mods.items()):
-        if not args.tests and not r.startswith("src/"):
+        if not _in_scope(r, args.tests, args.file):
             continue
         for s in m["syms"]:
+            if args.kind and s[S_KIND] not in args.kind:
+                continue
             if s[S_QUAL] == args.name or s[S_QUAL].endswith("." + args.name):
                 print(f"{_short(r)}:{s[S_START]}-{s[S_END]}  {s[S_KIND]} {s[S_QUAL]}"
                       f"  -- {s[S_DOC][:80]}")
@@ -490,8 +565,12 @@ def _enclosing(m, line):
 def cmd_at(mods, args):
     for loc in args.loc:
         f, _, ln = loc.rpartition(":")
-        m = _find_file(mods, f)
+        if not f or not ln.isdigit():
+            sys.exit(f"at: expected FILE:LINE, got {loc!r}")
+        m = _find_file(mods, f, args.root)
         line = int(ln)
+        if not 1 <= line <= m["nlines"]:
+            sys.exit(f"at: {m['rel']} has {m['nlines']} lines; line {line} is out of range")
         ban = [b for b in m["banners"] if b[0] <= line]
         chain = _enclosing(m, line)
         head = f"{_short(m['rel'])}:{line}"
@@ -504,17 +583,14 @@ def cmd_at(mods, args):
 
 
 def cmd_refs(mods, args):
-    kinds = set(args.kind.split(",")) if args.kind else None
     by_file = defaultdict(lambda: defaultdict(list))
     for r, m in mods.items():
-        if not args.tests and not r.startswith("src/"):
-            continue
-        if args.within and args.within not in r:
+        if not _in_scope(r, args.tests, args.file):
             continue
         for ref in m["refs"]:
             if ref[R_TOK] != args.name:
                 continue
-            if kinds and ref[R_KIND] not in kinds:
+            if args.kind and ref[R_KIND] not in args.kind:
                 continue
             by_file[r][ref[R_SCOPE]].append(ref[R_LINE])
     if not by_file:
@@ -544,7 +620,7 @@ def cmd_deps(mods, args):
         target = "apeGmsh." + target
     rows = defaultdict(list)
     for r, m in mods.items():
-        if not args.tests and not r.startswith("src/"):
+        if not _in_scope(r, args.tests, args.file):
             continue
         for tgt, ln, lazy, tc in m["imports"]:
             if tgt == target or tgt.startswith(target + "."):
@@ -591,6 +667,9 @@ def cmd_up(mods, args):
         if len(sites) > args.limit:
             print(f"{'  ' * ind}   ... +{len(sites) - args.limit} more call sites")
 
+    if args.name not in calls:
+        print(f"no call sites of {args.name!r}")
+        return
     print(args.name)
     walk(args.name, args.depth, 1)
 
@@ -605,14 +684,19 @@ def cmd_h5(mods, args):
                 const_names[k].add(r)
     rows = defaultdict(list)
     for r, m in _src(mods).items():
+        if args.file and args.file not in r:
+            continue
         for ref in m["refs"]:
             tok, kind = ref[R_TOK], ref[R_KIND]
+            rw = None
             if kind == "str":
                 s = tok.strip("/")
                 if frag in s or s == leaf or s.startswith(leaf + "/"):
-                    rows[(r, ref[R_SCOPE])].append((ref[R_LINE], ref[R_RW] or "use"))
+                    rw = ref[R_RW] or "use"
             elif kind in ("name", "attr") and tok in const_names:
-                rows[(r, ref[R_SCOPE])].append((ref[R_LINE], "via-const"))
+                rw = "via-const"
+            if rw and (not args.kind or rw in args.kind):
+                rows[(r, ref[R_SCOPE])].append((ref[R_LINE], rw))
     if not rows:
         print(f"no code uses of {frag!r}")
         return
@@ -652,9 +736,13 @@ def cmd_h5(mods, args):
 def cmd_impl(mods, args):
     proto, _, meth = args.target.partition(".")
     pdefs = [(r, s) for r, m in _src(mods).items() for s in m["syms"]
-             if s[S_KIND] == "class" and s[S_QUAL] == proto]
+             if s[S_KIND] == "class" and s[S_QUAL] == proto
+             and (not args.file or args.file in r)]
     if not pdefs:
         sys.exit(f"no class {proto}")
+    if len(pdefs) > 1:
+        sys.exit("ambiguous: " + ", ".join(f"{r}:{s[S_START]}" for r, s in pdefs[:8])
+                 + " (narrow with --file)")
     pr, ps = pdefs[0]
     pm = {n for n in ps[S_METHODS] if not n.startswith("_")}
     print(f"{proto} ({_short(pr)}:{ps[S_START]}) declares {len(pm)} public methods;"
@@ -792,44 +880,125 @@ def cmd_family(mods, args, root):
 
 
 def main(argv=None):
+    ap =argparse.ArgumentParser(prog="nav", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default=None, help="checkout to read (default: this git worktree)")
+    ap.add_argument("--cache", default=None, help=f"cache file (default: ROOT/{CACHE_DIR}/)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("-j", "--jobs", type=int, default=None)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("map")
+    p.add_argument("file")
+    p.add_argument("--depth", type=int, default=1)
+    p.add_argument("--nested", action="store_true")
+    p.add_argument("--width", type=int, default=60)
+    p.add_argument("--lines", type=_line_range, metavar="A-B")
+
+    p = sub.add_parser("pkg")
+    p.add_argument("package")
+    p.add_argument("--width", type=int, default=60)
+    p.add_argument("--deep", action="store_true")
+
+    p = sub.add_parser("where")
+    p.add_argument("name")
+    p.add_argument("--kind", type=_kinds(SYM_KINDS))
+    p.add_argument("--file")
+    p.add_argument("--tests", action="store_true")
+
+    p = sub.add_parser("at")
+    p.add_argument("loc", nargs="+", metavar="FILE:LINE")
+
+    p = sub.add_parser("refs")
+    p.add_argument("name")
+    p.add_argument("--kind", type=_kinds(REF_KINDS))
+    p.add_argument("--file")
+    p.add_argument("--tests", action="store_true")
+    p.add_argument("--limit", type=int, default=8, help="scopes per file")
+    p.add_argument("--files", type=int, default=15, help="files shown")
+
+    p = sub.add_parser("h5")
+    p.add_argument("fragment")
+    p.add_argument("--kind", type=_kinds(H5_KINDS))
+    p.add_argument("--file")
+
+    p = sub.add_parser("impl")
+    p.add_argument("target", metavar="PROTO.METHOD")
+    p.add_argument("--file", help="path substring picking PROTO's definition")
+    p.add_argument("--min-cover", type=float, default=0.5)
+
+    p = sub.add_parser("family")
+    p.add_argument("base", nargs="?")
+    p.add_argument("--names")
+    p.add_argument("--tests", action="store_true")
+    p.add_argument("--limit", type=int, default=25)
+    p.add_argument("--gap", type=float, default=0.3)
+    p.add_argument("--nodocs", action="store_true")
+
+    p = sub.add_parser("up")
+    p.add_argument("name")
+    p.add_argument("--depth", type=int, default=3)
+    p.add_argument("--limit", type=int, default=6)
+
+    p = sub.add_parser("deps")
+    p.add_argument("module")
+    p.add_argument("--file")
+    p.add_argument("--tests", action="store_true")
+    p.add_argument("--limit", type=int, default=20)
+
+    args = ap.parse_args(argv)
+    if args.cmd == "family" and bool(args.base) == bool(args.names):
+        ap.error("family takes BASE or --names, not both and not neither")
+    root = (Path(args.root) if args.root else repo_root(Path.cwd())).resolve()
+    args.root = root  # the resolved checkout, for commands that take FILE
+    if not any((root / d).is_dir() for d in SCAN_DIRS):
+        sys.exit(f"nav: {root} has none of {', '.join(SCAN_DIRS)}; not an apeGmsh checkout")
+    mods = load_index(root, Path(args.cache) if args.cache else None, args.verbose, args.jobs)
+    commands = {
+        "map": cmd_map, "pkg": cmd_pkg, "where": cmd_where, "at": cmd_at,
+        "refs": cmd_refs, "h5": cmd_h5, "impl": cmd_impl, "up": cmd_up,
+        "deps": cmd_deps, "family": lambda m, a: cmd_family(m, a, root),
+    }
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            commands[args.cmd](mods, args)
+    finally:  # an error exit still shows what was printed before it
+        print(bounded(buf.getvalue(), NARROW[args.cmd]), end="")
+    return 0
+
+
+def bounded(text, narrow, limit=MAX_LINES):
+    """Cut `text` to `limit` lines; the last line says what was dropped."""
+    lines = text.splitlines(keepends=True)
+    if len(lines) <= limit:
+        return text
+    kept = lines[: limit - 1]
+    return "".join(kept) + f"... {len(lines) - len(kept)} more lines, narrow with {narrow}\n"
+
+
+def _line_range(text):
+    lo, sep, hi = text.partition("-")
+    if not (sep and lo.isdigit() and hi.isdigit() and int(lo) <= int(hi)):
+        raise argparse.ArgumentTypeError(f"expected A-B with A <= B, got {text!r}")
+    return int(lo), int(hi)
+
+
+def _kinds(allowed):
+    """argparse type for a comma list drawn from `allowed`; anything else is an error."""
+    def parse(text):
+        kinds = set(text.split(","))
+        unknown = kinds - set(allowed)
+        if unknown:
+            raise argparse.ArgumentTypeError(
+                f"unknown kind {', '.join(sorted(unknown))}; choose from {', '.join(allowed)}")
+        return kinds
+    return parse
+
+
+if __name__ == "__main__":
     try:  # Windows consoles default to cp1252; source text is UTF-8
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
-    ap = argparse.ArgumentParser(prog="nav", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", default=None)
-    ap.add_argument("--cache", default=None)
-    ap.add_argument("-v", "--verbose", action="store_true")
-    ap.add_argument("-j", "--jobs", type=int, default=None)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("map"); p.add_argument("file"); p.add_argument("--depth", type=int, default=1)
-    p.add_argument("--nested", action="store_true"); p.add_argument("--width", type=int, default=60)
-    p = sub.add_parser("pkg"); p.add_argument("package"); p.add_argument("--width", type=int, default=60)
-    p.add_argument("--deep", action="store_true")
-    p = sub.add_parser("where"); p.add_argument("name"); p.add_argument("--tests", action="store_true")
-    p = sub.add_parser("at"); p.add_argument("loc", nargs="+")
-    p = sub.add_parser("refs"); p.add_argument("name"); p.add_argument("--kind")
-    p.add_argument("--tests", action="store_true"); p.add_argument("--within")
-    p.add_argument("--limit", type=int, default=8); p.add_argument("--files", type=int, default=15)
-    p = sub.add_parser("h5"); p.add_argument("fragment")
-    p = sub.add_parser("up"); p.add_argument("name"); p.add_argument("--depth", type=int, default=3)
-    p.add_argument("--limit", type=int, default=6)
-    p = sub.add_parser("deps"); p.add_argument("module"); p.add_argument("--tests", action="store_true")
-    p.add_argument("--limit", type=int, default=20)
-    p = sub.add_parser("impl"); p.add_argument("target")
-    p.add_argument("--min-cover", type=float, default=0.5)
-    p = sub.add_parser("family"); p.add_argument("base", nargs="?")
-    p.add_argument("--names"); p.add_argument("--tests", action="store_true")
-    p.add_argument("--limit", type=int, default=25); p.add_argument("--gap", type=float, default=0.3)
-    p.add_argument("--nodocs", action="store_true")
-    args = ap.parse_args(argv)
-    root = Path(args.root) if args.root else repo_root(Path.cwd())
-    mods = load_index(root, Path(args.cache) if args.cache else None, args.verbose, args.jobs)
-    {"map": cmd_map, "pkg": cmd_pkg, "where": cmd_where, "at": cmd_at, "refs": cmd_refs,
-     "h5": cmd_h5, "impl": cmd_impl, "up": cmd_up, "deps": cmd_deps}.get(args.cmd, lambda m, a: cmd_family(m, a, root))(mods, args)
-    return 0
-
-
-if __name__ == "__main__":
     raise SystemExit(main())

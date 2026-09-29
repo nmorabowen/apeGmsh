@@ -91,33 +91,48 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
 
 ## How work lands
 
-- **`--base main` on every PR**, including sequenced ones. Hand-stacking
-  with `--base <prev-branch>` merged three PRs into orphaned branches
-  (#295–#297, recovered by #298), and #858 merged into a stacked base on
-  2026-07-25 and was missing from `main` for two months (recovered by
-  #1169). `lock-tests` fails a PR whose base is not `main`, but only `main`
-  is protected, so it flags rather than blocks. After retargeting, push a
-  commit: a re-run reuses the old merge ref.
-- **`main` requires five checks** (`lock-tests`, `emit-cost-gate`,
-  `static-gates`, `suite`, `live-stock`), not an up-to-date branch, and
-  takes squash merges only (`gh pr merge --squash`). "Zero checks visible"
-  still means the PR is conflicting or Actions is stalled, not "green".
-  Never use `--auto`: it ignores the lanes that are not required, and
-  #757 merged under it mid-run before any check was required. Run the
-  suite locally when CI has not visibly run (#630 merged during an
-  Actions stall).
-- **After merging, confirm it reached `main`:**
-  `gh api repos/{owner}/{repo}/compare/main...<merge-sha> --jq .status`
-  reads `behind` or `identical`; `diverged` means it did not (#858).
-  `git merge-base --is-ancestor` cannot tell you: once the head branch is
-  auto-deleted the orphaned merge commit is on no fetched ref. A nightly
-  Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
-  recent PRs and opens one `[Orphans]` issue when work is missing.
-- **Before pushing to a PR branch, check `gh pr view <N> --json state`.**
-  A push after the merge lands on an orphaned branch (#335 → #336).
-  Before merging a branch you just pushed, wait until `headRefOid` equals
-  your local tip (#555 → #556). Never pass `--delete-branch` from a
-  worktree: it fails on the local step and hides whether the merge landed.
+- **Land with `python scripts/land_pr.py <N>`** (`--dry-run` runs the
+  checks and stops). It is this checklist as code: it refuses on the first
+  failed check, squash-merges (never `--auto`, never `--delete-branch`),
+  then proves the squash commit reached `main`. Its checks, in order, and
+  the lessons they hold:
+  - **The base is `main`**: `--base main` on every PR, including sequenced
+    ones. Hand-stacking with `--base <prev-branch>` merged three PRs into
+    orphaned branches (#295–#297, recovered by #298), and #858 merged into
+    a stacked base on 2026-07-25 and was missing from `main` for two months
+    (recovered by #1169). `lock-tests` fails a PR whose base is not `main`,
+    but only `main` is protected, so it flags rather than blocks. After
+    retargeting, push a commit: a re-run reuses the old merge ref.
+  - **Open, not a draft, not already merged.** A push after the merge lands
+    on an orphaned branch (#335 → #336), so check `gh pr view <N> --json
+    state` before pushing to a PR branch.
+  - **Local `HEAD` equals `headRefOid`, and the tree is clean.** Before
+    merging a branch you just pushed, wait until they match (#555 → #556).
+  - **No changed file is inside an open `freeze:<file>` label** (a split
+    window, announced on the board with its expiry).
+  - **Not conflicting, and the five checks `main` requires** (`lock-tests`,
+    `emit-cost-gate`, `static-gates`, `suite`, `live-stock`) **are green on
+    the head SHA.** `main` does not require an up-to-date branch, and takes
+    squash merges only. "Zero checks visible" means the PR is conflicting or
+    Actions is stalled, not "green", and pending is a refusal, not a wait.
+    Never use `--auto`: it ignores the lanes that are not required, and
+    #757 merged under it mid-run before any check was required. Run the
+    suite locally when CI has not visibly run (#630 merged during an
+    Actions stall).
+  - **After the merge, `compare/main...<merge-sha>` reads `behind` or
+    `identical`**; `diverged` means it did not reach `main` (#858).
+    `git merge-base --is-ancestor` cannot tell you: once the head branch is
+    auto-deleted the orphaned merge commit is on no fetched ref. A nightly
+    Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
+    recent PRs and opens one `[Orphans]` issue when work is missing.
+  - **The branch tip is still the merged head.** The merge itself pins the
+    head the checks saw (`--match-head-commit`), and a push that raced the
+    merge is flagged: `headRefOid` freezes at the merge, so the script reads
+    `git ls-remote` (the replay exercises this path with #1097's SHAs). A
+    push after the landing is the nightly orphan detector's job
+    (`orphans.yml`, #1230).
+- **Never pass `--delete-branch` from a worktree**: it fails on the local
+  step and hides whether the merge landed.
 - **Two green PRs can merge into a red `main`** when both edit the same
   set/dict/list literal, because git sees no textual conflict (#605 + #606
   → #608). After merging a PR that shares a literal with an open one,
@@ -138,6 +153,17 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
 - **A worktree does not follow `origin/main`.** Before concluding a
   feature is unmerged, check `git log HEAD..origin/main` or
   `git show origin/main:<path>`.
+
+**Navigating the code.** Before reading a file over 2,000 lines or
+grepping for a Python symbol, ask `python scripts/nav.py <cmd>`. It parses
+the AST and never imports apeGmsh, so it reads your worktree. `map FILE`
+outlines a file with line ranges, `at FILE:LINE` names the enclosing
+symbol, `where NAME` finds definitions, `refs NAME` lists code references
+without comments or docstrings, `h5 PATH` sorts HDF5 writes from reads,
+and `family BASE` lists every table and dispatch a new member must join.
+Every answer fits in 60 lines, and a cut one names the flag that narrows
+it. Keep Grep for prose, comments and non-Python files, and Read for the
+range nav points you to.
 
 ## Task guides
 
