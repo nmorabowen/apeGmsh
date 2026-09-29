@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ops.mass_from_model() maps broker masses onto 2-D node DOFs by (ndm, ndf), not by position
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3854,6 +3865,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ops.mass_from_model() maps broker masses onto 2-D node DOFs by (ndm, ndf), not by position
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4123,6 +4145,49 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position">FIXED — <code>ops.mass_from_model()</code> maps broker masses onto 2-D node DOFs by <code>(ndm, ndf)</code>, not by position<a class="headerlink" href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" title="Permanent link">&para;</a></h3>
+<p>Broker masses (<code>fem.nodes.masses</code>, from <code>g.masses.*</code>) are spatial
+<code>(mx, my, mz, Ixx, Iyy, Izz)</code> 6-vectors. <code>mass_from_model()</code> used to trim
+them positionally to the node's ndf, which is only right in 3-D. Two 2-D
+failures followed:</p>
+<ul>
+<li><strong>2-D frame (<code>ndm=2, ndf=3</code>, DOFs <code>ux uy rz</code>): silent wrong physics.</strong>
+  The node received <code>(mx, my, mz)</code>, so the translational mass landed on
+  <code>rz</code> as a rotational inertia (<code>g.masses.line(..., linear_density=100)</code>
+  emitted <code>mass 1 40 40 40</code>). It now emits <code>(mx, my, Izz)</code>, i.e.
+  <code>mass 1 40 40 0</code>. <strong>This changes emitted decks and modal results for
+  2-D frames.</strong></li>
+<li><strong>2-D solid (<code>ndm=2, ndf=2</code>): raised.</strong> The resolver fills <code>mz</code>
+  unconditionally, so <code>mass_from_model()</code> raised a <code>BridgeError</code> ("6
+  components but the node's ndf is 2"). It now emits <code>(mx, my)</code>.</li>
+</ul>
+<p>The new <code>broker_mass_components</code> (<code>opensees/_internal/build.py</code>) is the
+mass counterpart of <code>broker_load_components</code> and uses the same
+<code>_load_dof_layout</code>. On <code>ndm=2</code>, an <code>mz</code> that rides with in-plane mass is
+dropped, because the resolver fills it by default and a 2-D node has no
+z-translation. A z-only mass (<code>dofs=[3]</code>, so <code>mx = my = 0</code>) is explicit
+out-of-plane intent and raises a <code>BridgeError</code>, like <code>Fz</code> on the loads
+path. A non-zero <code>Ixx</code>/<code>Iyy</code>, or an <code>Izz</code> on an <code>ndf=2</code> node, comes from
+an explicit <code>rotational=</code> or <code>derive_rotational=True</code> and also raises,
+because the inertia would otherwise be lost. So <strong>every
+<code>derive_rotational=True</code> mass on a 2-D solid now raises</strong>: surface and
+volume consistent masses derive non-zero <code>Ixx</code>/<code>Iyy</code>, which a 2-D node
+cannot carry. Line masses never derive rotational inertia. <strong>2-D u-p
+nodes</strong> (<code>quadUP</code> and friends, <code>ndm=2, ndf=3</code>) share the frame layout, so
+their third DOF (pore pressure) now receives <code>Izz</code> (normally 0) instead
+of <code>mz</code>. <strong>Known gap:</strong> the record does not carry the resolver's <code>dofs</code>
+mask, so a mixed mask such as <code>dofs=[1, 3]</code> still loses its <code>mz</code> without
+an error. For the same reason, the z-only guard sees each node's
+accumulated record: a <code>dofs=[3]</code> mass whose nodes all also carry in-plane
+mass from another <code>g.masses</code> def is dropped without an error. Closing
+both needs the mask on <code>MassRecord</code>. For <code>ndm=3</code> the mapping
+delegates to the positional <code>fit_dof_vector</code>, so 3-D decks are
+byte-identical (<code>test_mass_from_model.py</code>). The flat, partitioned
+(<code>model_mass_by_rank</code>) and per-rank paths all use the new mapping.
+Explicit <code>ops.mass(values=...)</code> vectors are DOF-ordered and stay
+positional. The H5 archival emitter still rejects <code>mass_from_model()</code>:
+<code>model.h5</code> keeps the neutral 6-vector. Tests:
+<code>tests/opensees/integration/test_mass_from_model_2d.py</code>.</p>
 <h3 id="fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from">FIXED — a FEMData snapshot answers a raw <code>(dim, tag)</code> selection only from the Gmsh model it was extracted from<a class="headerlink" href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" title="Permanent link">&para;</a></h3>
 <p><code>fem.nodes.select(target=[(dim, tag)])</code> and <code>fem.elements.select(...)</code> look a
 raw DimTag up in live Gmsh, and they asked whatever model was current. A

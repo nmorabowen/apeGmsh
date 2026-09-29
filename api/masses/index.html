@@ -5035,9 +5035,9 @@ land on <code>fem.nodes.masses</code> as a <code>MassSet</code> (an iterable of
 <code>MassRecord</code> with <code>total_mass()</code> / <code>by_node()</code> helpers — see
 <a href="../fem/">FEM Broker</a>).</p>
 <p>Each record carries a length-6 vector
-<code>(mx, my, mz, Ixx, Iyy, Izz)</code>; the OpenSees bridge slices it to the
-model's <code>ndf</code> when emitting <code>ops.mass(...)</code> commands (rotational
-components are dropped for <code>ndf &lt; 4</code>).</p>
+<code>(mx, my, mz, Ixx, Iyy, Izz)</code>; the OpenSees bridge maps it onto each
+node's DOFs by <code>(ndm, ndf)</code> when emitting <code>mass</code> commands: positionally
+in 3-D, and as <code>(mx, my)</code> or <code>(mx, my, Izz)</code> on a 2-D node.</p>
 <h2 id="no-patterns">No patterns<a class="headerlink" href="#no-patterns" title="Permanent link">&para;</a></h2>
 <p>Unlike <a href="../loads/">loads</a>, masses are <strong>not</strong> grouped under named
 patterns. Mass is intrinsic to the model — there is one nodal mass
@@ -5142,8 +5142,8 @@ accumulate per-node mass after meshing.</p>
 <p>Resolved records land on <code>fem.nodes.masses</code> as a
 :class:<code>~apeGmsh.mesh._record_set.MassSet</code>. Each record carries
 a length-6 mass vector <code>(mx, my, mz, Ixx, Iyy, Izz)</code>;
-downstream solver bridges slice it to the model's <code>ndf</code> (the
-rotational components are dropped for <code>ndf &lt; 4</code>).</p>
+the OpenSees bridge maps it onto each node's DOFs by <code>(ndm, ndf)</code>
+(<code>(mx, my[, Izz])</code> in 2-D; positional in 3-D).</p>
 <h5 id="apeGmsh.core.MassesComposite.MassesComposite--no-patterns">No patterns<a class="headerlink" href="#apeGmsh.core.MassesComposite.MassesComposite--no-patterns" title="Permanent link">&para;</a></h5>
 <p>Unlike :class:<code>LoadsComposite</code>, masses are <strong>not</strong> grouped by
 pattern. Mass is intrinsic to the model — there is one nodal
@@ -6715,8 +6715,9 @@ via <code>ops.mass(...)</code> commands.</p>
 
         <p>Resolved per-node mass entry.</p>
 <p>Always length 6: <code>(mx, my, mz, Ixx, Iyy, Izz)</code>.  The OpenSees
-bridge slices to <code>ndf</code> when emitting commands (the rotational
-components are dropped for <code>ndf&lt;4</code> models).</p>
+bridge maps it onto each node's DOFs by <code>(ndm, ndf)</code> when emitting
+(<code>broker_mass_components</code>): positional in 3-D, <code>(mx, my[, Izz])</code>
+in 2-D.</p>
 <p>Multiple :class:<code>MassDef</code> may contribute to the same node — the
 composite accumulates them so each node gets at most one
 :class:<code>MassRecord</code> in the final :class:<code>MassSet</code>.</p>
