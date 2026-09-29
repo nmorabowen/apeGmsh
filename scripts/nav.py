@@ -21,7 +21,7 @@ Commands:
                        by file and enclosing scope [--kind call,attr,...] [--file FRAG]
   h5   PATH-FRAGMENT   code users of an HDF5 path, classified write / read /
                        probe / use (one hop through constants) [--kind ...] [--file FRAG]
-  impl PROTO.METHOD    classes implementing METHOD of Protocol PROTO
+  impl PROTO.METHOD    classes implementing METHOD of Protocol PROTO [--file FRAG]
   family BASE | --names a,b,c
                        touch-point recipe: every enumeration of the family
                        (literal tables, isinstance dispatch, per-member
@@ -83,7 +83,7 @@ NARROW = {
     "pkg": "a subpackage, or drop --deep",
     "where": "--kind/--file",
     "at": "fewer locations",
-    "refs": "--kind/--file",
+    "refs": "--kind/--file (--limit 1 lists every file)",
     "h5": "--kind/--file or a longer fragment",
     "impl": "--min-cover",
     "family": "--limit/--nodocs",
@@ -445,8 +445,14 @@ def _short(rel):
     return rel.replace("src/apeGmsh/", "")
 
 
-def _find_file(mods, frag):
-    frag = frag.replace("\\", "/")
+def _find_file(mods, frag, root):
+    """Match FILE as a path relative to root (or a suffix of one), `./x`, or absolute."""
+    if Path(frag).is_absolute():
+        try:
+            frag = Path(frag).resolve().relative_to(root).as_posix()
+        except ValueError:
+            sys.exit(f"{frag!r} is outside {root}; pass a path inside the checkout")
+    frag = frag.replace("\\", "/").removeprefix("./")
     hits = [m for r, m in mods.items() if r == frag or r.endswith("/" + frag)]
     if not hits:
         sys.exit(f"no file matches {frag!r}")
@@ -460,7 +466,10 @@ def _find_file(mods, frag):
 
 # ----------------------------------------------------------------- commands
 def cmd_map(mods, args):
-    m = _find_file(mods, args.file)
+    m = _find_file(mods, args.file, args.root)
+    if args.lines and args.lines[0] > m["nlines"]:
+        sys.exit(f"map: {m['rel']} has {m['nlines']} lines; --lines "
+                 f"{args.lines[0]}-{args.lines[1]} starts past the end")
     hub = "  HUB" if m["nlines"] > HUB_LINES else ""
     print(f"{m['rel']}  ({m['nlines']} lines{hub})  {m['doc1'][:80]}")
     items = [(b[0], 0, b[1]) for b in m["banners"]]
@@ -558,8 +567,10 @@ def cmd_at(mods, args):
         f, _, ln = loc.rpartition(":")
         if not f or not ln.isdigit():
             sys.exit(f"at: expected FILE:LINE, got {loc!r}")
-        m = _find_file(mods, f)
+        m = _find_file(mods, f, args.root)
         line = int(ln)
+        if not 1 <= line <= m["nlines"]:
+            sys.exit(f"at: {m['rel']} has {m['nlines']} lines; line {line} is out of range")
         ban = [b for b in m["banners"] if b[0] <= line]
         chain = _enclosing(m, line)
         head = f"{_short(m['rel'])}:{line}"
@@ -725,9 +736,13 @@ def cmd_h5(mods, args):
 def cmd_impl(mods, args):
     proto, _, meth = args.target.partition(".")
     pdefs = [(r, s) for r, m in _src(mods).items() for s in m["syms"]
-             if s[S_KIND] == "class" and s[S_QUAL] == proto]
+             if s[S_KIND] == "class" and s[S_QUAL] == proto
+             and (not args.file or args.file in r)]
     if not pdefs:
         sys.exit(f"no class {proto}")
+    if len(pdefs) > 1:
+        sys.exit("ambiguous: " + ", ".join(f"{r}:{s[S_START]}" for r, s in pdefs[:8])
+                 + " (narrow with --file)")
     pr, ps = pdefs[0]
     pm = {n for n in ps[S_METHODS] if not n.startswith("_")}
     print(f"{proto} ({_short(pr)}:{ps[S_START]}) declares {len(pm)} public methods;"
@@ -909,6 +924,7 @@ def main(argv=None):
 
     p = sub.add_parser("impl")
     p.add_argument("target", metavar="PROTO.METHOD")
+    p.add_argument("--file", help="path substring picking PROTO's definition")
     p.add_argument("--min-cover", type=float, default=0.5)
 
     p = sub.add_parser("family")
@@ -934,6 +950,7 @@ def main(argv=None):
     if args.cmd == "family" and bool(args.base) == bool(args.names):
         ap.error("family takes BASE or --names, not both and not neither")
     root = (Path(args.root) if args.root else repo_root(Path.cwd())).resolve()
+    args.root = root  # the resolved checkout, for commands that take FILE
     if not any((root / d).is_dir() for d in SCAN_DIRS):
         sys.exit(f"nav: {root} has none of {', '.join(SCAN_DIRS)}; not an apeGmsh checkout")
     mods = load_index(root, Path(args.cache) if args.cache else None, args.verbose, args.jobs)

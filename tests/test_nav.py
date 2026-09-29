@@ -272,3 +272,47 @@ def test_a_corrupt_cache_is_rebuilt(root, capsys):
 def test_a_root_without_sources_fails_loudly(tmp_path, capsys):
     with pytest.raises(SystemExit, match="not an apeGmsh checkout"):
         run(tmp_path, capsys, "where", "x")
+
+
+# ------------------------------------------------ review findings (#1234)
+def test_impl_refuses_an_ambiguous_protocol_and_file_picks_one(root, capsys):
+    (root / "src" / "apeGmsh" / "geo" / "other.py").write_text(
+        "class Drawable:\n    def draw(self): ...\n")
+    with pytest.raises(SystemExit, match=r"ambiguous: src/apeGmsh/geo/other.py:1, "
+                                         r"src/apeGmsh/geo/shapes.py:10 \(narrow with --file\)"):
+        run(root, capsys, "impl", "Drawable.draw")
+    out = run(root, capsys, "impl", "Drawable.draw", "--file", "shapes.py")
+    assert out[0].startswith("Drawable (geo/shapes.py:10) declares 2 public methods")
+
+
+@pytest.mark.parametrize("line", ["0", "57"])
+def test_at_refuses_a_line_outside_the_file(root, capsys, line):
+    with pytest.raises(SystemExit, match=f"shapes.py has 56 lines; line {line} is out of range"):
+        run(root, capsys, "at", f"geo/shapes.py:{line}")
+
+
+def test_map_refuses_a_range_past_the_end(root, capsys):
+    with pytest.raises(SystemExit, match="shapes.py has 56 lines; --lines 57-90 starts past"):
+        run(root, capsys, "map", "geo/shapes.py", "--lines", "57-90")
+
+
+def test_find_file_accepts_dot_and_absolute_paths(root, capsys, tmp_path_factory):
+    want = run(root, capsys, "at", "src/apeGmsh/geo/shapes.py:27")
+    assert run(root, capsys, "at", "./src/apeGmsh/geo/shapes.py:27") == want
+    assert run(root, capsys, "at", f"{root / 'src/apeGmsh/geo/shapes.py'}:27") == want
+    outside = tmp_path_factory.mktemp("elsewhere") / "shapes.py"
+    with pytest.raises(SystemExit, match="is outside"):
+        run(root, capsys, "at", f"{outside}:1")
+
+
+def test_a_cut_refs_answer_names_the_flag_that_lists_the_files(root, capsys):
+    geo = root / "src" / "apeGmsh" / "geo"
+    for i in range(10):
+        (geo / f"u{i}.py").write_text("".join(
+            f"def g{j}():\n    return Square\n" for j in range(8)))
+    out = run(root, capsys, "refs", "Square")
+    assert len(out) == nav.MAX_LINES
+    assert out[-1].endswith("narrow with --kind/--file (--limit 1 lists every file)")
+    listed = [ln.strip() for ln in run(root, capsys, "refs", "Square", "--limit", "1")
+              if ln.startswith("  geo/")]
+    assert sorted(listed) == sorted([f"geo/u{i}.py" for i in range(10)] + ["geo/shapes.py"])
