@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-deterministic-studio_api_indexjson-program-slice-a12-1214" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — deterministic studio/_api_index.json (program slice A1.2, #1214)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3909,6 +3920,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-deterministic-studio_api_indexjson-program-slice-a12-1214" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — deterministic studio/_api_index.json (program slice A1.2, #1214)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4233,6 +4255,8 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-deterministic-studio_api_indexjson-program-slice-a12-1214">CHANGED — deterministic <code>studio/_api_index.json</code> (program slice A1.2, #1214)<a class="headerlink" href="#changed-deterministic-studio_api_indexjson-program-slice-a12-1214" title="Permanent link">&para;</a></h3>
+<p><code>_index_build.build_index</code> no longer stamps <code>generated</code>, and <code>write_index</code> serialises through the new <code>serialize_index</code> (sorted keys, indent 2, trailing newline). Regenerating the index is now byte-identical, so it stops producing merge-conflict diffs. <code>tests/studio/test_lookup.py::test_index_build_is_byte_deterministic</code> builds twice and compares against the committed file. No reader used <code>generated</code>.</p>
 <h3 id="changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13">CHANGED — the ADR index (<code>decisions/README.md</code>) is generated from each ADR's Status line (program slice A1.3)<a class="headerlink" href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" title="Permanent link">&para;</a></h3>
 <p><code>scripts/adr_index.py</code> now writes the README as the hand-written preamble
 plus one short row per ADR (<code>| [NNNN](file) | title | status |</code>), reading the
