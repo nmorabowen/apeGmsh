@@ -14,9 +14,6 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### ADDED — family-completeness gate for OpenSees primitives (program slice C1.1, #1225)
-
-`tests/test_family_completeness.py` imports every module under `apeGmsh.opensees`, walks the `Primitive` subclass tree, and fails when a concrete public primitive is in no family, or is missing from its family's `ALL_*` contract list. `tests/families.py` declares the 19 families (base class, element kind by module, and the `ALL_*` list for each) and the ratcheted `EXCEPTIONS`: the 55 gaps measured today, each with a reason naming the commit or PR that shipped the class without its contract entry. A stale exception (the class is now listed, or no longer exists) also fails, so the list only shrinks. Self-tests on synthetic classes prove that a class dropped from its list turns the gate red. No `src/` or `ALL_*` list changed.
 ### REMOVED — API Flow Atlas (`docs/api-flows/`) and `architecture/layout.md` (program slice N1.3, #1229)
 
 Both were hand-maintained maps that lagged the code. `docs/api-flows/`

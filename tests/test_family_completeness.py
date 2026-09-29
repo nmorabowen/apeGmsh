@@ -26,7 +26,7 @@ import pytest
 
 import apeGmsh.opensees
 from apeGmsh.opensees._internal.types import Primitive
-from tests.families import EXCEPTIONS, FAMILIES, Family
+from tests.families import EXCEPTIONS, EXCEPTIONS_BASELINE, FAMILIES, Family
 
 _SCOPE = "apeGmsh.opensees."
 _ENGINE_MODULES = ("openseespy", "opensees")
@@ -157,6 +157,16 @@ def find_gaps(
     return Gaps(unclassified, ambiguous, unlisted, stale, misfiled)
 
 
+def ratchet(exceptions: Mapping[str, str], baseline: int) -> list[str]:
+    if len(exceptions) <= baseline:
+        return []
+    return [
+        f"EXCEPTIONS has {len(exceptions)} entries, above the baseline of "
+        f"{baseline}; the ratchet only shrinks. Add the class to its ALL_* "
+        "list instead (raising EXCEPTIONS_BASELINE needs the maintainer)"
+    ]
+
+
 # --- the gate ---------------------------------------------------------------
 
 
@@ -190,6 +200,10 @@ def test_every_primitive_is_in_its_family_contract_list(
 ) -> None:
     gaps = find_gaps(primitives, FAMILIES, contracts, EXCEPTIONS)
     assert not gaps.messages(), "\n".join(gaps.messages())
+
+
+def test_exceptions_never_grow_past_the_baseline() -> None:
+    assert not ratchet(EXCEPTIONS, EXCEPTIONS_BASELINE), ratchet(EXCEPTIONS, EXCEPTIONS_BASELINE)[0]
 
 
 def test_every_exception_has_a_reason() -> None:
@@ -261,3 +275,9 @@ def test_self_flags_ambiguous_membership() -> None:
     both = (*_FAKE, Family("also", _Base, "also:ALL"))  # type: ignore[arg-type]
     [msg] = find_gaps([_A], both, {"fake": [_A], "also": [_A]}, {}).messages()
     assert msg.startswith(f"{_key(_A)} matches more than one family")
+
+
+def test_self_flags_an_exception_list_above_the_baseline() -> None:
+    assert ratchet({"m:A": "a reason"}, 1) == []
+    [msg] = ratchet({"m:A": "a reason", "m:B": "a reason"}, 1)
+    assert msg.startswith("EXCEPTIONS has 2 entries, above the baseline of 1")

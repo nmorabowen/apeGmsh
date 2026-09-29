@@ -102,6 +102,11 @@ FAMILIES: tuple[Family, ...] = (
 )
 
 
+# The ratchet's ceiling: len(EXCEPTIONS) may never exceed it. Lower it
+# when you close a gap. Raising it is a ratchet-baseline raise, which
+# needs the maintainer (PROGRAM.md §4); never raise it to go green.
+EXCEPTIONS_BASELINE = 55
+
 # Gaps measured when the gate landed (2026-09-29). Keyed
 # "<module>:<qualname>". A reason names the commit or PR that shipped the
 # class without its contract entry, or why the class has no family yet.
