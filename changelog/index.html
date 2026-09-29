@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results-strategy docs prescribed calls that do not exist; drift lane added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-stock-equation-ties-run-live-the-71-soft-was-stock-tennodetetrahedron-now-refused-on-stock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3821,6 +3832,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results-strategy docs prescribed calls that do not exist; drift lane added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-stock-equation-ties-run-live-the-71-soft-was-stock-tennodetetrahedron-now-refused-on-stock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4057,6 +4079,29 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added">FIXED — results-strategy docs prescribed calls that do not exist; drift lane added<a class="headerlink" href="#fixed-results-strategy-docs-prescribed-calls-that-do-not-exist-drift-lane-added" title="Permanent link">&para;</a></h3>
+<p><code>docs/how-to/choose-results-strategy.md</code> told readers to record with
+<code>spec.capture(...)</code>, <code>ops.tcl(..., recorders=spec)</code> and
+<code>ops.tcl(..., recorders=spec, mpco=True)</code>. None of them exist: <code>capture</code>
+left the recorder spec with the Phase 9 <code>Recorders</code> helper, and
+<code>apeSees.tcl</code> / <code>apeSees.py</code> take neither <code>recorders=</code> nor <code>mpco=</code>. The
+page is rewritten around the real calls (<code>ops.domain_capture</code>,
+<code>ResolvedRecorderSpec.emit_recorders</code> / <code>emit_mpco</code> / <code>to_tcl_commands</code>,
+<code>ops.recorder.MPCO</code> before <code>ops.run()</code> or <code>ops.tcl()</code>), with one runnable
+recipe per cell on a cantilever whose tip deflection (6.75 mm) every
+recipe reads back. Every block was executed as published, including both
+exported decks under OpenSees.exe. It also records two traps found on the
+way: the bridge's <code>ops.analyze(steps=1)</code> rebuilds the domain on each call,
+so it cannot drive a capture loop; and bridge-declared recorders write
+files <code>from_recorders</code> does not look for.
+<code>docs/how-to/results-mpco.md</code> had the same phantoms, and its recipe could
+not run: node/element ids came in as lists (<code>MeshSelection.ids</code>), the live
+domain was never built, and <code>from_mpco</code> lacked <code>fem=</code> for its <code>pg=</code> reads.
+All are fixed and verified end to end. The new
+<code>tests/test_docs_results_api_drift.py</code> statically resolves the imports,
+attribute chains and keyword arguments in the python fences and inline
+code of five results-API pages against the live code. It flags all ten
+phantoms in both pages as they shipped at 07f757e0.</p>
 <h3 id="fixed-stock-equation-ties-run-live-the-71-soft-was-stock-tennodetetrahedron-now-refused-on-stock">FIXED — stock equation ties run live; the "71 % soft" was stock <code>TenNodeTetrahedron</code>, now refused on stock<a class="headerlink" href="#fixed-stock-equation-ties-run-live-the-71-soft-was-stock-tennodetetrahedron-now-refused-on-stock" title="Permanent link">&para;</a></h3>
 <p>The live refusal of <code>enforce="equation"</code> ties on stock openseespy rested on a
 two-block series column that read 71 % soft on stock. That number is 2/7,
