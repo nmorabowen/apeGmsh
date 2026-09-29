@@ -127,9 +127,22 @@ class LibraryContractTests(unittest.TestCase):
                 }[(dim, pg_tag)]
                 return node_tags, _flatten(node_tags)
 
+            # Producing-model fingerprint (_fem_extract.gmsh_model_identity).
+            def getMaxNodeTag(self):
+                return 4
+
+            def getMaxElementTag(self):
+                return 301
+
         class _FakeModel:
             def __init__(self):
                 self.mesh = _FakeMesh()
+
+            def getCurrent(self):
+                return "fake"
+
+            def getEntities(self, dim=-1):
+                return [(1, 30), (2, 20), (3, 10)]
 
             def getPhysicalGroups(self):
                 return [(1, 3), (2, 2), (3, 1)]

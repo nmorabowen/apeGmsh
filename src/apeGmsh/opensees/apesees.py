@@ -120,6 +120,7 @@ from ._internal.build import (
     fit_dof_vector,
     fit_fix_mask,
     fix_records_from_model,
+    broker_mass_components,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -3797,9 +3798,9 @@ class BuiltModel:
                             kind="mass", node=nid))
                 for _m in model_mass_by_rank.get(rank, ()):
                     _nid = int(_m.node_id)
-                    emitter.mass(_nid, *fit_dof_vector(
+                    emitter.mass(_nid, *broker_mass_components(
                         _m.mass, int(eff_ndf.get(_nid, self.ndf)),
-                        kind="mass", node=_nid))
+                        self.ndm, node=_nid))
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
@@ -5786,9 +5787,9 @@ class BuiltModel:
         if self.mass_from_model and self._guard_mass_from_model(emitter):
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
-                emitter.mass(nid, *fit_dof_vector(
+                emitter.mass(nid, *broker_mass_components(
                     m.mass, int(eff.get(nid, self.ndf)),
-                    kind="mass", node=nid))
+                    self.ndm, node=nid))
 
     def _emit_fixes_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
@@ -5835,9 +5836,9 @@ class BuiltModel:
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
                 if nid in owned_nodes:
-                    emitter.mass(nid, *fit_dof_vector(
+                    emitter.mass(nid, *broker_mass_components(
                         m.mass, int(eff.get(nid, self.ndf)),
-                        kind="mass", node=nid))
+                        self.ndm, node=nid))
 
     def _bucket_fix_targets_by_rank(
         self, node_owners: "NodePartitionOwners", *, by_node: bool = False,
@@ -8326,7 +8327,8 @@ class apeSees:
             raise RuntimeError(
                 "OpenSeesTarget(require_fork=True) but the in-process "
                 "openseespy build does not look like the Ladruno fork "
-                "(the fork-only 'profiler' command is absent). Launch "
+                "(the resolved backend lacks the fork-only "
+                "'criticalTimeStep' command). Launch "
                 "this script under a python whose openseespy is the fork "
                 "build, or drop require_fork to run on stock OpenSees."
             )
@@ -8557,8 +8559,10 @@ class apeSees:
         Validated here (non-zero finite coefficients, DOFs >= 1, a
         non-empty retained set, the constrained DOF not among the retained
         ones) and at emit (nodes exist, DOFs fit each node's ndf). The
-        in-process run needs the Ladruno fork, like every
-        ``equationConstraint``; a partitioned emit refuses the rows, and
+        in-process run needs a build with ``equationConstraint``
+        (openseespy >= 3.8.0 — one such model per process, since stock
+        ``wipe()`` keeps the rows — or the fork); a partitioned emit
+        refuses the rows, and
         ``ops.h5(...)`` does not archive them (``H5FeatureDeferredWarning``).
         """
         try:
@@ -8618,14 +8622,16 @@ class apeSees:
     def mass_from_model(self) -> None:
         """Stream per-node lumped masses straight from the model snapshot.
 
-        Equivalent to looping ``ops.mass(nodes=[m.node_id], values=m.mass)``
+        In 3-D, equivalent to looping ``ops.mass(nodes=[m.node_id], values=m.mass)``
         over every entry in ``fem.nodes.masses`` (e.g. the per-node tributary
         masses produced by ``g.masses.volume(...)``), but **without
         materializing one bridge ``MassRecord`` per node** — the snapshot
         masses are streamed at emit time. On a multi-million-node model this
         avoids a multi-GB resident list and millions of small objects (ADR
-        0065 Tier 2). Emits byte-identical deck lines and honours per-node
-        ``ndf`` via the same ``fit_dof_vector`` as :meth:`mass`.
+        0065 Tier 2). Honours per-node ``ndf``; each broker mass is spatially
+        ordered ``(mx, my, mz, Ixx, Iyy, Izz)`` and is mapped onto the node's
+        DOFs by ``broker_mass_components`` — byte-identical to the explicit
+        loop in 3-D, and ``(mx, my[, Izz])`` on a 2-D (``ndm=2``) node.
 
         Model-wide declaration (no arguments). May be combined with explicit
         :meth:`mass` calls only on *disjoint* node sets — overlap raises at

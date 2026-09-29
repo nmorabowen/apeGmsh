@@ -750,8 +750,9 @@ def mass_payload_dtype() -> np.dtype:
     """Payload dtype for :class:`MassRecord`.
 
     Always six components: ``(mx, my, mz, Ixx, Iyy, Izz)``.  The
-    OpenSees bridge slices to ``ndf`` when emitting ``mass``
-    commands; the broker zone stores the full 6-vector so a
+    OpenSees bridge maps them onto each node's DOFs by ``(ndm, ndf)``
+    when emitting ``mass`` commands; the broker zone stores the full
+    6-vector so a
     consumer can pick whichever components it needs.
 
     The ``name`` field (added in neutral schema 2.5.0) carries the

@@ -15,6 +15,8 @@ Having the logic here avoids duplicating Gmsh API calls across modules.
 
 from __future__ import annotations
 
+import hashlib
+
 import gmsh
 import numpy as np
 from numpy import ndarray
@@ -379,3 +381,31 @@ def extract_partitions(dim: int | None) -> dict[int, dict]:
                                  dtype=np.int64),
         }
     return result
+
+
+# =====================================================================
+# Producing-model identity
+# =====================================================================
+
+def gmsh_model_identity() -> tuple[str, str]:
+    """Name and cheap fingerprint of the current Gmsh model.
+
+    Recorded on a FEMData snapshot at extraction and recomputed before
+    a raw ``(dim, tag)`` selection asks live Gmsh, so the snapshot never
+    answers from a different model.  The name alone cannot identify the
+    model: every session defaults to ``"ModelName"`` and Gmsh accepts
+    duplicate names.  The fingerprint folds the entity list, the max
+    node and element tags, and the nodes on geometry points (tags and
+    coordinates); every call is O(1) or O(entities), independent of
+    mesh size.
+    """
+    h = hashlib.blake2b(digest_size=16)
+    h.update(np.asarray(gmsh.model.getEntities(), dtype=np.int64).tobytes())
+    h.update(np.asarray(
+        [gmsh.model.mesh.getMaxNodeTag(), gmsh.model.mesh.getMaxElementTag()],
+        dtype=np.int64).tobytes())
+    tags, coords, _ = gmsh.model.mesh.getNodes(
+        dim=0, tag=-1, returnParametricCoord=False)
+    h.update(np.asarray(tags, dtype=np.int64).tobytes())
+    h.update(np.asarray(coords, dtype=np.float64).tobytes())
+    return gmsh.model.getCurrent(), h.hexdigest()

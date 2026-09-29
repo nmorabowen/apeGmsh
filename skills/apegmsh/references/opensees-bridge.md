@@ -99,6 +99,8 @@ sec    = ops.section.Fiber(
 )
 slab   = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2, rho=2400)
 transf = ops.geomTransf.Linear(vecxz=(1, 0, 0))    # or .PDelta / .Corotational
+# 2-D model (ndm=2): ops.geomTransf.Linear() with NO vecxz — a vecxz along
+# global Z is dropped at emit, any other vector raises BridgeError
 integ  = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
 ```
 
@@ -230,6 +232,10 @@ ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
 # g.masses.volume) without per-node bridge records — combinable with
 # explicit ops.mass only on DISJOINT node sets (overlap raises at emit):
 ops.mass_from_model()   # verified: tests/opensees/integration/test_mass_from_model.py::test_mass_from_model_byte_identical_to_explicit_loop
+# In 2-D the broker (mx, my, mz, Ixx, Iyy, Izz) maps by (ndm, ndf): ndf=2 -> (mx, my),
+# ndf=3 frame -> (mx, my, Izz); a default-filled mz is dropped, but a z-only
+# mass (dofs=[3]) or a non-zero Ixx/Iyy raises (so derive_rotational on a 2-D solid raises).
+# verified: tests/opensees/integration/test_mass_from_model_2d.py::test_2d_frame_mass_lands_on_translations_not_rz
 
 # Nodal loads + prescribed (non-zero) SP — pattern-scoped.
 ts = ops.timeSeries.Linear()                    # also Constant/Path/Trig/Pulse
@@ -477,8 +483,10 @@ longer raises `H5EquationConstraintDeviationWarning` (ADR 0068 item 4, #753).
 A hand-written row is `ops.equation_constraint(constrained=(node, dof),
 retained=[(node, dof, coef), ...], coef=1.0)` — OpenSees' sum-to-zero form
 `coef·u_c + Σ rcoef·u_r = 0`, FEM node ids. It follows the same handler rules
-(auto `Lagrange`/`LadrunoProjection`, `Transformation` refused), needs the fork
-to run in-process, refuses a partitioned emit, and is **not** archived by
+(auto `Lagrange`/`LadrunoProjection`, `Transformation` refused), runs
+in-process on openseespy >= 3.8.0 or the fork (on stock: one tied model per
+process — stock `wipe()` keeps EQ rows, so the live emitter refuses the next
+model), refuses a partitioned emit, and is **not** archived by
 `ops.h5` (`H5FeatureDeferredWarning`).
 The fork contact generator `g.constraints.contact(...)` (NTS/mortar,
 plus `contact_plane(...)` rigid planes) **auto-emits**
@@ -1029,8 +1037,10 @@ else:
     ops.element.FourNodeTetrahedron(pg="Body", material=m)
 ```
 
-`has_fork` tracks the fork-only `profiler` command (the same gate the
-live emitter uses). `capabilities()` introspects the **live** runtime
+`has_fork` is the backend resolver's verdict (`get_backend_name() ==
+"ladruno-fork"`, the fork-only `criticalTimeStep` command), the same test
+the live emitter gates fork-only verbs on; `has_profiler` reports the
+`profiler` command itself. `capabilities()` introspects the **live** runtime
 only — the subprocess paths bind their own interpreter / binary.
 
 ## Remote SLURM runs — `ops.run_remote` + `apeGmsh.hpc` (ADR 0060)

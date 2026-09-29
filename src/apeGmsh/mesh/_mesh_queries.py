@@ -165,12 +165,14 @@ class _Queries:
         Caching (Phase 3B.2b-prep / ADR 0038)
         ------------------------------------
         Repeat calls return the same :class:`FEMData` object identity
-        until a broker mutation invalidates the cache (every
-        ``g.constraints.X`` / ``g.loads.X`` / ``g.masses.X`` call bumps
-        an internal counter; the cache is fresh iff the counter has
-        not advanced since the last extraction).  This means the
-        session has a single canonical "chain head" snapshot that
-        ``FEMData.with_*`` transforms and the upcoming
+        until a declaration invalidates the cache (every
+        ``g.constraints.X`` / ``g.loads.X`` / ``g.masses.X`` /
+        ``g.displacements.X`` call, ``g.reinforce`` / ``g.embed`` /
+        ``g.rebar.place`` / ``g.decouple_node``, and each composite's
+        ``clear()`` bumps an internal counter; the cache is fresh iff
+        the counter has not advanced since the last extraction).  This
+        means the session has a single canonical "chain head" snapshot
+        that ``FEMData.with_*`` transforms and the upcoming
         ``FEMData.compose(...)`` engine (Phase 3B.2c) will update.
 
         Vanilla sessions (no ``_fem_counter`` attribute — direct

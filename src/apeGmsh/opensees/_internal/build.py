@@ -146,6 +146,7 @@ __all__ = [
     "validate_constraint_master_ndf",
     "validate_record_ndf_consistency",
     "fit_dof_vector",
+    "broker_mass_components",
     "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
@@ -3015,13 +3016,22 @@ def emit_transform_specs(
             # (``geomTransf <Type> $tag`` with no vecxz vector, which
             # is required in 2D and invalid in 3D). The primitive's
             # _emit can't take this branch because it doesn't know ndm.
-            bare_2d = (
-                ndm == 2
-                and type(transf) in _TRANSF_TYPE_TOKEN
-                and getattr(transf, "vecxz", None) is None
-                and getattr(transf, "orientation", None) is None
-            )
+            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
             if bare_2d:
+                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
+                # ``geomTransf`` rejects any trailing args (and exits
+                # 0), while openseespy silently ignores them.  Only a
+                # vector along global Z matches what a 2-D model can
+                # mean (local z = global Z); anything else is a 3-D
+                # intent the 2-D transform cannot honor.
+                vecxz = getattr(transf, "vecxz", None)
+                if vecxz is not None and not _is_global_z(vecxz):
+                    raise BridgeError(
+                        f"geomTransf {type(transf).__name__}: "
+                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
+                        "2-D transforms take no vecxz (local z is always "
+                        "global Z); drop the vecxz= kwarg."
+                    )
                 emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
                 if replay_log is not None:
                     replay_log.append(
@@ -3118,6 +3128,12 @@ def emit_transform_specs(
                 overrides[(id(transf), eid)] = assigned
 
     return overrides
+
+
+def _is_global_z(v: "tuple[float, float, float]") -> bool:
+    """True when ``v`` is a non-zero vector along global ±Z."""
+    x, y, z = (float(c) for c in v)
+    return abs(z) > 0.0 and float(np.hypot(x, y)) <= VECXZ_TOL * abs(z)
 
 
 def _node_coord(fem: "FEMData", node_id: int) -> np.ndarray:
@@ -4250,7 +4266,8 @@ def validate_sanisand_substep_cap(elements: "Iterable[Element]") -> None:
                 f"it converges on it — worse than the uncapped force-accept, "
                 f"which at least integrates the whole increment. Use an "
                 f"element MEASURED to propagate a material refusal (e.g. "
-                f"LadrunoBrick, LadrunoQuad, TenNodeTetrahedron), or leave "
+                f"LadrunoBrick, LadrunoQuad, or TenNodeTetrahedron as the "
+                f"fork builds it — stock's is 6x too soft), or leave "
                 f"max_substeps=0 (uncapped)."
             )
 
@@ -4308,7 +4325,9 @@ def validate_asdplastic_host(elements: "Iterable[Element]") -> None:
         f"and every other fail-loud material contract never reach the "
         f"analysis, so a non-converged or inadmissible state is committed "
         f"as if it had converged. Use LadrunoBrick or TenNodeTetrahedron "
-        f"for a fail-loud deck.",
+        f"for a fail-loud deck, on a fork build: the refusal contract is "
+        f"fork-only, and stock's TenNodeTetrahedron is 6x too soft (the live "
+        f"run refuses it there).",
         ASDPlasticHostWarning,
         stacklevel=2,
     )
@@ -5061,6 +5080,84 @@ def broker_load_components(
             f"includes the missing DOF."
         )
     return tuple(spatial[i] for i in layout)
+
+
+_MASS_COMPONENT_LABELS = ("mx", "my", "mz", "Ixx", "Iyy", "Izz")
+
+
+def broker_mass_components(
+    mass: "Iterable[float]", ndf: int, ndm: int, *, node: int,
+) -> tuple[float, ...]:
+    """Map a broker ``(mx, my, mz, Ixx, Iyy, Izz)`` mass onto a node's DOFs.
+
+    The mass counterpart of :func:`broker_load_components`. Broker masses
+    (``fem.nodes.masses``) are spatially ordered, not DOF-ordered, so a
+    positional trim is wrong in 2-D: an ``ndm=2, ndf=3`` frame node is
+    ``(ux, uy, rz)`` and must receive ``(mx, my, Izz)``, not ``(mx, my, mz)``.
+
+    * ``ndm != 2`` delegates to :func:`fit_dof_vector` (positional), which
+      is already the right layout for 3-D (``ndf`` 3 or 6); 3-D decks are
+      unchanged.
+    * ``ndm == 2`` places components by :func:`_load_dof_layout`
+      (``ndf=2`` → ``(mx, my)``, ``ndf=3`` → ``(mx, my, Izz)``). ``mz`` is
+      dropped when it rides with in-plane mass: the resolver fills it by
+      default (``dofs=None`` means ``mx = my = mz = m``), and a 2-D model
+      has no z-translation. A z-ONLY mass (``mz != 0`` with ``mx = my =
+      0``, e.g. ``dofs=[3]``) is explicit out-of-plane intent and fails
+      loud, like ``Fz`` in :func:`broker_load_components`. Any other
+      non-zero component with no DOF to land on also fails loud: ``Ixx`` /
+      ``Iyy``, or ``Izz`` on an ``ndf=2`` node, come from an explicit
+      ``rotational=`` or ``derive_rotational=True``; ``my`` on an ``ndf=1``
+      node is an in-plane translation the node lacks.
+
+    Known gap: the record does not carry the resolver's ``dofs`` mask, so
+    a mixed explicit mask such as ``dofs=[1, 3]`` (``mx = mz = m``, ``my =
+    0``) is indistinguishable from a default fill and its ``mz`` is
+    dropped silently. Likewise, the guard sees the per-node *accumulated*
+    record, so a z-only def (``dofs=[3]``) whose nodes all also carry
+    in-plane mass from another def is absorbed into the default-fill case
+    and its ``mz`` is dropped without error. Closing both needs the mask
+    on ``MassRecord``.
+    """
+    if int(ndm) != 2:
+        return fit_dof_vector(mass, ndf, kind="mass", node=node)
+    vals = [float(v) for v in mass]
+    vals += [0.0] * (6 - len(vals))
+    ndf_i = int(ndf)
+    if vals[2] != 0.0 and vals[0] == 0.0 and vals[1] == 0.0:
+        raise BridgeError(
+            f"mass on node {node} is z-translation only (mz={vals[2]:g}, "
+            f"mx = my = 0), but a 2-D model (ndm=2, ndf={ndf_i}) has no "
+            f"z-translation — the mass would be silently dropped. Use "
+            f"in-plane DOFs (dofs=[1, 2]) for a 2-D model."
+        )
+    layout = _load_dof_layout(ndf_i, 2)
+    carried = set(layout) | {2}
+    dropped = [
+        i for i in range(6) if i not in carried and vals[i] != 0.0
+    ]
+    if dropped:
+        causes = []
+        if any(i < 3 for i in dropped):
+            causes.append(
+                f"the node has only {ndf_i} DOF(s), so an in-plane "
+                f"translational mass it lacks cannot land (check the node's "
+                f"ndf, or restrict the mass with dofs=)")
+        if any(i >= 3 for i in dropped):
+            causes.append(
+                "rotational inertia about an axis the node cannot rotate "
+                "about (a 2-D node rotates only about z, and only on an "
+                "ndf=3 frame node): use rotational=(0, 0, Izz), or drop "
+                "derive_rotational on a node without that DOF")
+        labels = ", ".join(
+            f"{_MASS_COMPONENT_LABELS[i]}={vals[i]:g}" for i in dropped)
+        raise BridgeError(
+            f"mass on node {node} has component(s) {labels} that the 2-D "
+            f"model (ndm=2, ndf={ndf_i}) cannot carry — it would be "
+            f"silently dropped: {'; '.join(causes)}."
+        )
+    out = tuple(vals[i] for i in layout)
+    return out + (0.0,) * (int(ndf) - len(out))
 
 
 def _emit_from_model_case(

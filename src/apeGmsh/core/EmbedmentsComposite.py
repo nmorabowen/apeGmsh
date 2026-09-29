@@ -39,12 +39,11 @@ from apeGmsh._kernel.defs.constraints import EmbedDef
 from apeGmsh._kernel.records._constraints import EmbedTieRecord
 from apeGmsh._kernel.resolvers._embed import resolve_embed
 
-# Reuse the reinforce composite's gmsh host-kind maps (single source of
+# Reuse the reinforce composite's gmsh host-kind map (single source of
 # truth for the straight-sided host taxonomy).
-from apeGmsh.core.ReinforcementsComposite import (
-    _GMSH_HOST_FULL_NPE,
-    _GMSH_HOST_KIND,
-)
+from apeGmsh.core.ReinforcementsComposite import _GMSH_HOST_KIND
+
+from ._declarations import _DeclarationsMixin
 
 
 def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
@@ -98,7 +97,7 @@ def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
     return False
 
 
-class EmbedmentsComposite:
+class EmbedmentsComposite(_DeclarationsMixin):
     """General node-to-host embedment generator — declare on geometry,
     resolve to ``LadrunoEmbeddedNode`` ties after meshing.
 
@@ -113,6 +112,8 @@ class EmbedmentsComposite:
 
         g.embed(host="block", nodes="probe_pt")
     """
+
+    _DECLARATION_STORES = {"embed_defs": (EmbedDef,)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -193,8 +194,7 @@ class EmbedmentsComposite:
             tolerance=tolerance, snap=snap,
             name=name,
         )
-        self.embed_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def validate_pre_mesh(self) -> None:
         """No-op — embedment resolves at ``get_fem_data`` time."""
@@ -274,6 +274,7 @@ class EmbedmentsComposite:
         """
         import gmsh
         import warnings as _warnings
+        from apeGmsh.mesh._element_types import element_topology
 
         host_node_ids: list[list[int]] = []
         host_node_coords: list[np.ndarray] = []
@@ -302,8 +303,9 @@ class EmbedmentsComposite:
                         f"(tri6/quad8/quad9/tet10/hex20). Prism / pyramid "
                         f"hosts are deferred."
                     )
-                kind, n_corner = _GMSH_HOST_KIND[code]
-                full_npe = _GMSH_HOST_FULL_NPE[code]
+                kind = _GMSH_HOST_KIND[code]
+                topo = element_topology(code, dim=int(dim))
+                n_corner, full_npe = topo.n_corner, topo.npe
                 conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
                 for row in conn:
                     corners = [int(n) for n in row[:n_corner]]
@@ -420,7 +422,7 @@ class EmbedmentsComposite:
             for d in self.embed_defs]
 
     def clear(self) -> None:
-        self.embed_defs.clear()
+        self._clear_declarations()
         self.embed_records.clear()
 
     def __repr__(self) -> str:

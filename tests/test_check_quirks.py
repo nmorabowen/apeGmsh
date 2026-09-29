@@ -325,6 +325,101 @@ def test_resolve_swallow_scope_exists_in_this_checkout() -> None:
         assert target.is_file() or any(target.rglob("*.py")), f"{path} moved: update SWALLOW_SCOPE"
 
 
+# --- openseespy-import: 9ffe6aa2, and the sites that kept the import ---------
+
+
+def test_openseespy_import_flags_the_domain_capture_fallback(tmp_path: Path) -> None:
+    # 9ffe6aa2 put the live emitter first and kept the import as the fallback.
+    _write(tmp_path, "src/apeGmsh/results/capture/_domain.py", """\
+        def _lazy_ops(self):
+            live_ops = getattr(self._bridge, "_live_emitter", None)
+            if live_ops is not None:
+                return live_ops
+            import openseespy.opensees as ops
+            return ops
+        """)
+    assert _found(tmp_path) == ["openseespy-import:_domain.py:5"]
+
+
+def test_openseespy_import_flags_the_example_that_runs_then_imports(tmp_path: Path) -> None:
+    # arch-pushover: the bridge builds the model, then the loop drives another module.
+    _write(tmp_path, "examples/shoebuckle_arch.py", """\
+        def run_to_limit(ops, fem):
+            ops.run(wipe=True)
+            import openseespy.opensees as osi
+            return osi.analyze(1)
+        """)
+    assert _found(tmp_path) == ["openseespy-import:shoebuckle_arch.py:3"]
+
+
+@pytest.mark.parametrize("statement", [
+    "import openseespy.opensees as ops_module",      # LiveMPCO, LiveRecorders
+    "import openseespy.opensees as o",               # interop.solve
+    "import openseespy",
+    "import os, openseespy.opensees",
+    "from openseespy import opensees",
+    "from openseespy.opensees import getPID",
+    "from openseespy.opensees \\\n        import getPID",
+    "ops = importlib.import_module('openseespy.opensees')",
+    "ops = __import__('openseespy.opensees')",
+])
+def test_openseespy_import_flags_every_spelling(tmp_path: Path, statement: str) -> None:
+    _write(tmp_path, "src/apeGmsh/results/live/_mpco.py", f"def enter(self):\n    {statement}\n")
+    assert _found(tmp_path) == ["openseespy-import:_mpco.py:2"]
+
+
+def test_openseespy_import_exempts_the_resolver(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/live.py", """\
+        def _stock():
+            import openseespy.opensees as _ops
+            return _ops
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_openseespy_import_passes_what_binds_something_else(tmp_path: Path) -> None:
+    # The py emitter writes the deck's import as a string, a probe binds
+    # nothing, and neither a relative module nor a wheel sharing the prefix is
+    # openseespy. The deck string makes the file parse, so the AST decides.
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/py.py", '''\
+        from .openseespy import shim
+        import openseespylinux
+
+        HEADER = ["import openseespy.opensees as ops", "ops.wipe()"]
+
+        def available():
+            """``import openseespy.opensees`` is only quoted here.
+
+            >>> import openseespy.opensees as ops
+            """
+            return find_spec("openseespy") is not None
+        ''')
+    assert _found(tmp_path) == []
+
+
+@pytest.mark.parametrize("rel", ["tests/test_a.py", "scripts/render.py", "src/sections/_rect.py"])
+def test_openseespy_import_ignores_code_outside_the_scope(tmp_path: Path, rel: str) -> None:
+    # Tests check py decks, which bind openseespy by design; `sections` is a
+    # standalone package built into the caller's openseespy.
+    _write(tmp_path, rel, "import openseespy.opensees as ops\n")
+    assert _found(tmp_path) == []
+
+
+def test_openseespy_import_waiver(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/studio/examples/raw/raw.py", """\
+        # apegmsh-lint: openseespy-import-ok a hand-written openseespy walkthrough,
+        # with no bridge domain to share.
+        import openseespy.opensees as ops
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_openseespy_import_scope_exists_in_this_checkout() -> None:
+    # A moved scope turns the rule off silently; a moved resolver flags itself.
+    for path in (*quirks.IMPORT_SCOPE, quirks.RESOLVER):
+        assert (quirks.REPO / path).exists(), f"{path} moved: update the openseespy-import scope"
+
+
 # --- waivers -------------------------------------------------------------------
 
 

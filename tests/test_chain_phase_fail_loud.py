@@ -147,6 +147,8 @@ class TestUnroutedKindsRaise:
             with g.displacements.case("push_gap"):
                 g.displacements.surface("m_face", disp_xyz=(0, 0, -1.0))
         assert len(list(g._fem.nodes.sp)) == 0
+        # The rejected def is not left in the store either.
+        assert g.displacements.disp_defs == []
 
     def test_gravity_load_raises(self, tmp_path: Path) -> None:
         g = _from_h5(_quad_face_fem(), tmp_path)
@@ -154,6 +156,7 @@ class TestUnroutedKindsRaise:
             with g.loads.case("dead"):
                 g.loads.gravity("m_face", g=(0, 0, -9.81), density=2400.0)
         assert len(list(g._fem.nodes.loads)) == 0
+        assert g.loads.load_defs == []
 
     def test_live_session_stays_lenient(self) -> None:
         """A session WITHOUT _fem_from_h5 (live post-extraction cache)
