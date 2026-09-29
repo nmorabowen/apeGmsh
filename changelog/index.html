@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a FEMData snapshot answers a raw (dim, tag) selection only from the Gmsh model it was extracted from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3843,6 +3854,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a FEMData snapshot answers a raw (dim, tag) selection only from the Gmsh model it was extracted from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4101,6 +4123,23 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from">FIXED — a FEMData snapshot answers a raw <code>(dim, tag)</code> selection only from the Gmsh model it was extracted from<a class="headerlink" href="#fixed-a-femdata-snapshot-answers-a-raw-dim-tag-selection-only-from-the-gmsh-model-it-was-extracted-from" title="Permanent link">&para;</a></h3>
+<p><code>fem.nodes.select(target=[(dim, tag)])</code> and <code>fem.elements.select(...)</code> look a
+raw DimTag up in live Gmsh, and they asked whatever model was current. A
+snapshot of model A queried while model B was live returned B's entities with
+no error: an audit probe at 07f757e0 got 48 nodes back, only 10 of them among
+A's 58 top-face nodes. The model name cannot tell the two apart, because every
+session defaults to <code>"ModelName"</code> and Gmsh accepts duplicate names.
+<code>from_gmsh</code> and <code>from_msh</code> now record the producing model on the snapshot: its
+name plus a fingerprint of the entity list, the max node and element tags and
+the nodes on geometry points, read in O(entities) and independent of mesh
+size. A raw DimTag lookup raises <code>RuntimeError</code> unless the current model
+matches both, so it refuses when another session is current, the producing
+session was closed, the model was re-meshed, or the snapshot was loaded from
+<code>model.h5</code>. <code>compose</code> carries the host's record, since it keeps host ids
+verbatim. <code>pg=</code>, <code>label=</code> and part selection still resolve from the snapshot
+alone; the record is not part of <code>snapshot_id</code>, and the snapshot still
+pickles. <code>tests/test_femdata_raw_dimtag_source.py</code>.</p>
 <h3 id="added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports">ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports<a class="headerlink" href="#added-agentic-remediation-program-charter-pinned-model-worker-roster-orchestrator-skill-and-the-architectural-strains-assessment-and-expert-panel-reports" title="Permanent link">&para;</a></h3>
 <p>This PR adds the program that runs the architectural remediation, but no library code.</p>
 <p><strong>Reports</strong>
