@@ -1161,6 +1161,7 @@ class RebarComposite(_DeclarationsMixin):
                 "so a chain-phase session already carries them"
             ),
         )
+        from apeGmsh.mesh._element_types import element_topology
         out: list[RebarElementRecord] = []
         for m in self._emit_members:
             segments: list[tuple[int, int]] = []
@@ -1169,9 +1170,9 @@ class RebarComposite(_DeclarationsMixin):
                     dim=1, tag=int(tag))
                 for etype, nodes in zip(etypes, enodes):
                     code = int(etype)
-                    full_npe = 2 if code == 1 else 3 if code == 8 else 0
-                    if full_npe == 0 or len(nodes) == 0:
+                    if code not in (1, 8) or len(nodes) == 0:  # Line2 / Line3
                         continue
+                    full_npe = element_topology(code, dim=1).npe
                     conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
                     for row in conn:
                         segments.append((int(row[0]), int(row[1])))

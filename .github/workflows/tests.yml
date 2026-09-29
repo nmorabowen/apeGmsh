@@ -316,10 +316,11 @@ jobs:
   # root conftest); what nothing checks is that everything else still
   # works on the build a user gets from `pip install openseespy`.
   #
-  # NB the Linux wheel (openseespylinux) trails the Windows one — 3.7.x
-  # where a dev box may be on 3.8.x. That is fine for this lane's
-  # purpose: it is still stock, and the divergence class it guards is
-  # fork-vs-stock, not version-vs-version.
+  # Python 3.12, not the 3.11 the other lanes use: openseespylinux 3.8.0.0
+  # requires Python >= 3.12, and on 3.11 pip silently backtracks to 3.7.1.2
+  # (Feb 2025), which predates upstream's equationConstraint (2025-05-10).
+  # The lane then skipped every equation-tie test while users on 3.12 got
+  # 3.8.0. The import step below asserts the command exists.
   live-stock:
     runs-on: ubuntu-latest
     # ~80 s of tests locally; the cap is for a backend that hangs
@@ -330,7 +331,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
 
       - name: Install apt deps for Qt/VTK
@@ -377,9 +378,12 @@ jobs:
           from apeGmsh.sections._mc import backend_available
           from apeGmsh.opensees.emitter.live import get_backend_name
           assert backend_available(), 'openseespy did not import — this lane would skip its entire reason to exist'
+          from apeGmsh.opensees.emitter.live import _get_ops
           name = get_backend_name()
-          print('resolved backend:', name)
+          ops = _get_ops()
+          print('resolved backend:', name, ops.version())
           assert name == 'stock-openseespy', f'expected stock, resolved {name!r}'
+          assert hasattr(ops, 'equationConstraint'), 'stock build predates equationConstraint: every equation-tie test would skip'
           "
 
       - name: Run the live surface (stock backend)

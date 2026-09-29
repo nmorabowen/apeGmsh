@@ -623,8 +623,10 @@ class DomainCapture:
         output
             Path the resulting :class:`DomainCapture` will write to.
         ops
-            Optional openseespy module (or test stand-in). Defaults
-            to lazy-loading ``openseespy.opensees``.
+            Optional OpenSees module (or test stand-in). Defaults to
+            the module the bridge drives
+            (:func:`~apeGmsh.opensees.emitter.live.get_ops`), loaded
+            lazily.
 
         Returns
         -------
@@ -1076,6 +1078,10 @@ class DomainCapture:
     def _lazy_ops(self) -> Any:
         """The OpenSees module to query — the one the bridge is DRIVING.
 
+        An explicit ``ops=`` wins, then the live emitter's module, then the
+        resolver's (:func:`~apeGmsh.opensees.emitter.live.get_ops`): the
+        module ``analyze()`` will drive.
+
         This used to go straight to ``import openseespy.opensees``, which is
         a *different module object* from the ``opensees`` the live emitter
         imports whenever both are importable — a fork build on ``PYTHONPATH``
@@ -1085,7 +1091,8 @@ class DomainCapture:
         analysis it is meant to be sampling ran, and converged, in the other.
         The two coincide in a normally-wired venv (``openseespy.opensees is
         opensees``), so the split only appears in mixed setups — and there it
-        reads exactly like a solver regression.
+        reads exactly like a solver regression. 9ffe6aa2 added the live
+        emitter step but kept that import as the fallback.
 
         Resolved late rather than in ``__init__`` on purpose:
         ``ops.domain_capture(...)`` is entered *before* ``analyze()`` creates
@@ -1097,14 +1104,16 @@ class DomainCapture:
         live_ops = getattr(live, "ops", None)
         if live_ops is not None:
             return live_ops
+        from ...opensees.emitter.live import get_ops
+
         try:
-            import openseespy.opensees as ops
+            return get_ops()
         except ImportError as exc:
             raise RuntimeError(
-                "openseespy is not installed. DomainCapture requires "
-                "openseespy at runtime, or pass an ops= mock for testing."
+                "No OpenSees backend is importable (neither the Ladruno fork "
+                "nor openseespy). DomainCapture needs one at runtime, or pass "
+                "an ops= mock for testing."
             ) from exc
-        return ops
 
 
 # =====================================================================

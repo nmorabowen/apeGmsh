@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, TypeVar
 
+from ._compose_errors import ChainPhaseError, is_kernelless_session
+
 _D = TypeVar("_D")
 
 
@@ -42,15 +44,20 @@ class _DeclarationsMixin:
     def _declare(self, defn: _D) -> _D:
         """Record ``defn`` and invalidate the FEMData cache.
 
-        1. Append ``defn`` to the store :attr:`_DECLARATION_STORES`
-           names for its type.
-        2. Route it into the chain-phase broker with
+        1. Route it into the chain-phase broker with
            :func:`try_chain_phase_route`.  That is a no-op before the
            first extraction and for def kinds the router does not
            cover; in a ``from_h5`` session it applies the def or raises.
+        2. Append ``defn`` to the store :attr:`_DECLARATION_STORES`
+           names for its type.
         3. Bump the session's FEMData counter, so the next
            ``get_fem_data()`` re-extracts instead of returning the
            snapshot taken before ``defn`` existed.
+
+        Routing comes first so a def the router rejects is never
+        stored: the call raised, and the store must not keep what it
+        declared.  The router reads only the broker and ``defn``, never
+        the store.
 
         Returns ``defn``, so a verb can end with
         ``return self._declare(defn)``.
@@ -61,14 +68,32 @@ class _DeclarationsMixin:
             try_chain_phase_route,
         )
 
-        self._store_for(defn).append(defn)
+        store = self._store_for(defn)
         try_chain_phase_route(self._parent, defn)
+        store.append(defn)
         self._invalidate_fem()
         return defn
 
     def _clear_declarations(self) -> None:
         """Empty every store in :attr:`_DECLARATION_STORES` and
-        invalidate the FEMData cache."""
+        invalidate the FEMData cache.
+
+        Raises :class:`~apeGmsh.core._compose_errors.ChainPhaseError`
+        in a ``from_h5`` / compose session, before anything is emptied.
+        There ``get_fem_data()`` returns the broker itself, which holds
+        the records the router already applied and those loaded from
+        the file; emptying the stores would not retract them.
+        """
+        if is_kernelless_session(self._parent):
+            raise ChainPhaseError(
+                f"{type(self).__name__}.clear() cannot retract records "
+                f"in a from_h5/compose (chain-phase) session: the "
+                f"records already applied to the FEMData broker, and "
+                f"those loaded from model.h5, stay in every later "
+                f"get_fem_data().  Start again from the saved file with "
+                f"apeGmsh.from_h5(path), or remove the declaration in "
+                f"the source session and save again."
+            )
         for attr in self._DECLARATION_STORES:
             getattr(self, attr).clear()
         self._invalidate_fem()

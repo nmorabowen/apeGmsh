@@ -167,59 +167,105 @@ def test_assembly_rejects_unknown_kind_still(tmp_path: Path):
 # --------------------------------------------------------------------------
 # LIVE — the tied interface transmits correctly: series closed form
 # --------------------------------------------------------------------------
+#
+# Two blocks of equal height under nu=0: the exact solution is uniform axial
+# strain, which every mesh here represents, so K = EA/L_total is an oracle
+# wherever the tie passes the patch test — a nested interface, or
+# ``method="mortar"``. Node-to-surface collocation on an unstructured
+# interface does not quite (it reproduces uniform displacement, not uniform
+# traction transfer) and reads a few tenths of a percent soft, identically
+# on every engine.
+#
+# The engine question and the element question are separated on purpose.
+# Stock ``TenNodeTetrahedron`` is 6x too soft (upstream ``shp3d`` applies the
+# tetrahedral 1/6 twice; fork PR #520 fixed it), and one 6x-soft block in
+# series reads (1/(1+6)) / (1/(1+1)) = 2/7 of the closed form: the "71 %
+# soft" once blamed on the stock tie. With a plate that is right on every
+# build, stock and fork agree to nine digits.
+#
+# Each tied model runs in a FRESH interpreter: stock ``wipe()`` keeps
+# ``equationConstraint`` rows (upstream ``Domain::clearAll()`` omits them),
+# so the live emitter refuses a second model in a stock process that ran
+# one — and a test process that ran one could not run any later live test.
 
-# ``enforce="equation"`` is fork-only at run time: stock openseespy takes
-# the equationConstraint command but does not enforce it equivalently (this
-# assertion read 71 % soft there before the live route was gated).
-@pytest.mark.ladruno_fork
-def test_tied_stack_matches_series_closed_form(tmp_path: Path):
-    """Two stacked blocks, nu=0, equation tie: K = EA/L_total exactly.
+DELTA = 0.01                          # prescribed shortening, mm
+K_EXACT = E * SIDE * SIDE / (2 * H)   # series: EA/L / 2 per block
 
-    hex8 (order 1) under tet10 (order 2) — mixed order ACROSS the tie.
-    With nu=0 the exact solution is uniform axial strain, representable
-    by both meshes, and ``enforce="equation"`` is exact — so the
-    assembled stiffness must match ``EA/L_total`` to solver precision
-    (asserted at 0.1 %; measured error is orders tighter).
-    """
-    openseespy = pytest.importorskip("openseespy.opensees")
+#: plate -> (mesh, order, size, OpenSees element, plate element count).
+#: The cover is always hex8 at size 5 (2x2x2), so every interface is
+#: non-matching: tri6 / tri3 faces on quad4, 4x4 or 3x3 quad4 on 2x2.
+_PLATES = {
+    "tet10": ("tet", 2, 6.0, "TenNodeTetrahedron", None),
+    "tet4": ("tet", 1, 6.0, "FourNodeTetrahedron", None),
+    "hex8-nested": ("hex", 1, 2.5, "stdBrick", 64),
+    "hex8": ("hex", 1, 3.4, "stdBrick", 27),
+}
+
+
+def _live_ops():
+    """The resolved OpenSees backend module, or skip when there is none."""
+    from apeGmsh.opensees.emitter.live import _get_ops
+    try:
+        return _get_ops()
+    except ImportError as e:
+        pytest.skip(f"no OpenSees backend: {e}")
+
+
+def _require_equation_constraint() -> None:
+    # openseespy 3.7.1.2 (the last wheel for Python < 3.12 on Linux)
+    # predates upstream's equationConstraint (2025-05-10, OpenSees 3.8.0).
+    if not hasattr(_live_ops(), "equationConstraint"):
+        pytest.skip("this OpenSees build predates equationConstraint "
+                    "(upstream 2025-05-10, openseespy >= 3.8.0)")
+
+
+def _tet10_volume_fixed():
+    from apeGmsh.opensees.emitter.live import _tet10_volume_fixed
+    return _tet10_volume_fixed(_live_ops())
+
+
+def _tied_stack(workdir: Path, plate: str, method: str) -> dict:
+    """Solve the stack IN THIS PROCESS; K plus the worst tie-row residual."""
+    import numpy as np
+
     from apeGmsh.assembly import Assembly
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-    cover = tmp_path / "part_cover.h5"
-    plate = tmp_path / "part_plate.h5"
+    mesh, order, size, element, n_plate = _PLATES[plate]
+    cover_h5 = workdir / "part_cover.h5"
+    plate_h5 = workdir / "part_plate.h5"
     _build_block(
-        cover, name="cover", z0=0.0, mesh="hex", order=1, size=5.0,
+        cover_h5, name="cover", z0=0.0, mesh="hex", order=1, size=5.0,
         vol_pg="CoverVol", bot_pg="Base", top_pg="CoverTop",
     )
     _build_block(
-        plate, name="plate", z0=H, mesh="tet", order=2, size=6.0,
+        plate_h5, name="plate", z0=H, mesh=mesh, order=order, size=size,
         vol_pg="PlateVol", bot_pg="PlateBot", top_pg="PlateTop",
     )
-
+    extra = {} if method == "collocation" else {"method": method}
     g = (
         Assembly("two_blocks")
-        .add("cover", str(cover))
-        .add("pl", str(plate))
+        .add("cover", str(cover_h5))
+        .add("pl", str(plate_h5))
         .couple("cover", "pl", kind="tie", ports=("CoverTop", "PlateBot"),
-                dofs=[1, 2, 3], enforce="equation")
+                dofs=[1, 2, 3], enforce="equation", **extra)
         .materialize()
     )
     fem = g.mesh.queries.get_fem_data(dim=None)
-
-    delta = 0.01                                  # prescribed shortening, mm
-    area = SIDE * SIDE
-    k_exact = E * area / (2 * H)                  # series: EA/L / 2 per block
+    if n_plate is not None:
+        got = len(list(fem.elements.select(pg="pl.PlateVol").ids))
+        assert got == n_plate, f"{plate} plate meshed as {got} elements"
 
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
     steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU)
     ops.element.stdBrick(pg="CoverVol", material=steel)
-    ops.element.TenNodeTetrahedron(pg="pl.PlateVol", material=steel)
+    getattr(ops.element, element)(pg="pl.PlateVol", material=steel)
     ops.fix(pg="Base", dofs=(1, 1, 1))
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as pat:
-        pat.sp(pg="pl.PlateTop", dof=3, value=-delta)
+        pat.sp(pg="pl.PlateTop", dof=3, value=-DELTA)
     # equation ties need the Lagrange handler + an unsymmetric solver.
     ops.constraints.Lagrange()
     ops.numberer.Plain()
@@ -233,13 +279,165 @@ def test_tied_stack_matches_series_closed_form(tmp_path: Path):
     ops.build().emit(emitter)
     assert emitter.analyze(steps=1) == 0
 
-    openseespy.reactions()
+    live = emitter.ops
+    live.reactions()
     base_ids = [int(t) for t in fem.nodes.select(pg="Base").ids]
-    r_z = sum(openseespy.nodeReaction(t, 3) for t in base_ids)
-    k_measured = abs(r_z) / delta
+    r_z = sum(live.nodeReaction(t, 3) for t in base_ids)
+    residual = 0.0
+    for rec in fem.elements.constraints:
+        if getattr(rec, "enforce", None) != "equation":
+            continue
+        weights = np.asarray(rec.weights, dtype=float)
+        masters = [int(m) for m in rec.master_nodes]
+        for d in rec.dofs:
+            u_s = live.nodeDisp(int(rec.slave_node), int(d))
+            u_m = sum(w * live.nodeDisp(m, int(d))
+                      for w, m in zip(weights, masters))
+            residual = max(residual, abs(u_s - u_m))
+    return {"k": abs(r_z) / DELTA, "residual": residual}
 
-    assert k_measured == pytest.approx(k_exact, rel=1e-3), (
-        f"tied stack K = {k_measured:.6g} vs closed form {k_exact:.6g} "
-        f"({(k_measured / k_exact - 1) * 100:+.3f} %)"
-    )
-    openseespy.wipe()
+
+def _stack_main() -> None:
+    """``python -c`` entry: argv = workdir, then plate:method pairs solved
+    back to back in this one process. ``--no-guards`` lifts the stock tet10
+    refusal and the stock second-model refusal, to measure the engine
+    behind them."""
+    import json
+    import sys
+
+    args = sys.argv[1:]
+    if "--no-guards" in args:
+        args.remove("--no-guards")
+        from apeGmsh.opensees.emitter import live
+
+        live._tet10_volume_fixed = lambda ops: True  # type: ignore[assignment]
+        real_init = live.LiveOpsEmitter.__init__
+
+        def init(self, *, wipe=True):
+            live._STOCK_EQ_ROWS_LIVE = False
+            real_init(self, wipe=wipe)
+
+        live.LiveOpsEmitter.__init__ = init  # type: ignore[method-assign]
+    workdir = Path(args[0])
+    out = []
+    for i, case in enumerate(args[1:]):
+        plate, method = case.split(":")
+        sub = workdir / f"m{i}"
+        sub.mkdir(parents=True)
+        out.append(_tied_stack(sub, plate, method))
+    print("RESULT " + json.dumps(out))
+
+
+def _in_fresh_process(tmp_path: Path, *cases: str, no_guards: bool = False):
+    """Run ``_stack_main`` in a new interpreter; one result dict per case."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(root), str(root / "src"), env.get("PYTHONPATH", "")])
+    env.setdefault("LADRUNO_OPENSEES_QUIET", "1")
+    argv = [sys.executable, "-c",
+            "from tests.test_meshable_part_route import _stack_main; "
+            "_stack_main()", str(tmp_path), *cases]
+    if no_guards:
+        argv.append("--no-guards")
+    proc = subprocess.run(argv, env=env, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=600)
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")]
+    assert proc.returncode == 0 and lines, (
+        f"tied-stack subprocess failed (rc={proc.returncode}):\n"
+        f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+    return json.loads(lines[-1][len("RESULT "):])
+
+
+def _vs_closed_form(k: float) -> str:
+    return (f"tied stack K = {k:.9g} vs closed form {K_EXACT:.9g} "
+            f"({(k / K_EXACT - 1) * 100:+.4f} %)")
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("plate, method, rel", [
+    ("hex8-nested", "collocation", 1e-6),   # nested: collocation is exact
+    ("tet4", "mortar", 1e-6),               # mortar passes the patch test
+    ("hex8", "mortar", 1e-6),
+    # collocation's own patch-test error, the same on every engine
+    # (-0.132 % on this mesh, stock and fork alike)
+    ("tet4", "collocation", 5e-3),
+], ids=["hex8-nested-collocation", "tet4-mortar", "hex8-mortar",
+        "tet4-collocation"])
+def test_tied_stack_without_tet10_matches_series_closed_form(
+    tmp_path: Path, plate: str, method: str, rel: float,
+):
+    """Any build with ``equationConstraint``, stock included: the tie is exact.
+
+    The plate is an element that is right on every build, so this is the
+    engine's tie alone against the closed form, and every emitted row holds
+    to round-off in the solved state. The ``live`` marker puts it in CI's
+    stock lane.
+    """
+    _require_equation_constraint()
+    (res,) = _in_fresh_process(tmp_path, f"{plate}:{method}")
+    assert res["residual"] < 1e-12, res
+    assert res["k"] == pytest.approx(K_EXACT, rel=rel), _vs_closed_form(res["k"])
+
+
+@pytest.mark.ladruno_fork
+def test_tied_stack_matches_series_closed_form(tmp_path: Path):
+    """Two stacked blocks, nu=0, equation tie: K = EA/L_total.
+
+    hex8 (order 1) under tet10 (order 2) — mixed order ACROSS the tie
+    (asserted at 0.1 %; the residual is collocation's, about -0.01 %).
+    Fork-only because stock ``TenNodeTetrahedron`` is 6x too soft — not
+    because of the tie, which is exact on stock (the test above) — and only
+    on a fork build that can be shown to carry that fix.
+    """
+    if _tet10_volume_fixed() is not True:
+        pytest.skip("fork build predates the ladrunoBuild stamp: cannot "
+                    "confirm the TenNodeTetrahedron fix (fork PR #520)")
+    (res,) = _in_fresh_process(tmp_path, "tet10:collocation")
+    assert res["k"] == pytest.approx(K_EXACT, rel=1e-3), _vs_closed_form(res["k"])
+
+
+@pytest.mark.live
+def test_tied_stack_tet10_plate_reads_two_sevenths_on_stock(tmp_path: Path):
+    """Stock: the old "71 % soft" is 2/7 — the tet10 defect in series.
+
+    Measures the engine behind the stock tet10 refusal. The tie is exact
+    (above) and the plate alone is 1/6 stiff, so the stack reads
+    (1/(1+6)) / (1/(1+1)) = 2/7, to collocation's ~1e-4.
+    """
+    _require_equation_constraint()
+    if _tet10_volume_fixed() is not False:
+        pytest.skip("stock-only: this build's TenNodeTetrahedron is not "
+                    "the known-defective upstream element")
+    (res,) = _in_fresh_process(tmp_path, "tet10:collocation", no_guards=True)
+    assert res["k"] / K_EXACT == pytest.approx(2 / 7, rel=1e-3), (
+        _vs_closed_form(res["k"]))
+
+
+@pytest.mark.live
+def test_stock_wipe_keeps_equation_rows(tmp_path: Path):
+    """Stock: a second tied model in one process is WRONG — why it is refused.
+
+    Upstream ``Domain::clearAll()`` does not clear EQ constraints (the fork
+    does, since fork PR #312), so model A's rows survive ``wipe()`` into
+    model B. With the guard lifted, B converges to twice the closed form.
+    With the guard on, B is refused. If upstream ever clears them, the
+    first assertion on B fails: lift the guard.
+    """
+    _require_equation_constraint()
+    if hasattr(_live_ops(), "criticalTimeStep"):
+        pytest.skip("stock-only: the fork clears EQ rows on wipe()")
+    a, b = _in_fresh_process(tmp_path / "unguarded", "tet4:mortar",
+                             "hex8-nested:collocation", no_guards=True)
+    assert a["k"] == pytest.approx(K_EXACT, rel=1e-6), _vs_closed_form(a["k"])
+    assert b["k"] / K_EXACT == pytest.approx(2.0, rel=1e-6), (
+        _vs_closed_form(b["k"]))
+
+    with pytest.raises(AssertionError, match="stock wipe\\(\\) cannot clear"):
+        _in_fresh_process(tmp_path / "guarded", "tet4:mortar",
+                          "hex8-nested:collocation")
