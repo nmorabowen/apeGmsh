@@ -11,7 +11,7 @@ The [concepts page](../concepts/results.md) covers what a `Results`
 object does; this one covers why it is shaped that way. It is written
 for contributors: every mechanism named here has an ADR, and the ADR
 numbers (plain text throughout) are where the full trade-off records
-live, under `src/apeGmsh/opensees/architecture/decisions/`.
+live, under `architecture/decisions/`.
 
 ## The three-broker chain
 

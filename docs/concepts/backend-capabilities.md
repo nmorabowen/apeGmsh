@@ -232,7 +232,7 @@ eight names (`dp_branch`, `dp_gamma_cone`, `dp_gamma_cutoff`,
 `dp_det_a_min`) and offers two censuses over it — `corner_census()` for
 `dp_branch == 3`, and the material-agnostic `tension_census()` for
 `mean_stress >= 0`. See
-[ADR 0108](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0108-ladruno-branch-read-back.md).
+[ADR 0108](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0108-ladruno-branch-read-back.md).
 
 ### Recorders
 

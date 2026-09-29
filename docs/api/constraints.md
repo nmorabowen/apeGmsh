@@ -281,7 +281,7 @@ offending slave node and its barycentric excess. Either fix the
 geometry / mesh so the embed lies inside the host, or widen
 `tolerance=` explicitly if extrapolation is intentional.
 
-See [ADR 0036](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0036-embedded-host-decomposition.md)
+See [ADR 0036](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0036-embedded-host-decomposition.md)
 for the full decision record (Kuhn-table orientation invariants,
 alternatives rejected, `HostProjector` RFC deferral).
 

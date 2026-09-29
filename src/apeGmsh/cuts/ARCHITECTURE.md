@@ -1,7 +1,7 @@
 # `apeGmsh.cuts` — section-cut spec producer
 
 Architecture note for the `apeGmsh.cuts` subpackage. Lives next to the
-code, like `opensees/architecture/`.
+code, like `architecture/`.
 
 ## Charter
 
@@ -807,7 +807,7 @@ src/apeGmsh/cuts/
 src/apeGmsh/opensees/emitter/h5.py
 └── SCHEMA_VERSION 2.4.0 → 2.5.0; history note
 
-src/apeGmsh/opensees/architecture/h5-schema.md
+architecture/h5-schema.md
 └── /opensees/cuts/ and /opensees/sweeps/ sections; 2.5.0 entry
 
 src/apeGmsh/opensees/apesees.py

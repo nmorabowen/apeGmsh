@@ -16,7 +16,7 @@ ops.tcl("model.tcl")     # or ops.py(...), ops.h5(...), ops.run()
 The legacy ``g.opensees`` session composite and its sub-composites
 (``materials`` / ``elements`` / ``ingest`` / ``inspect`` /
 ``export``) were removed in Phase 8 of the bridge teardown
-([ADR 0009](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md)).
+([ADR 0009](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0009-no-backwards-compat-with-solvers.md)).
 `apeSees` brings the session in three ways (ADR 0051): **MP
 constraints** (``g.constraints.*``) **auto-emit**; **loads** (``g.loads.*``)
 and **prescribed displacements** (``g.displacements.*``) are **opt-in** —
@@ -44,7 +44,7 @@ Since the teardown, the bridge has been progressively widened:
   authoritative (see the note above).
 - **MP constraints emit automatically** from ``fem.nodes.constraints``
   / ``fem.elements.constraints``
-  ([ADR 0022](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md),
+  ([ADR 0022](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0022-mp-constraint-emission-fanout.md),
   Phase 7b) — ``equalDOF`` / ``rigidLink`` / ``rigidDiaphragm`` /
   ``ASDEmbeddedNodeElement`` lines land in the runnable Tcl/Py
   deck without an ``ingest`` step. The ``apeSees.h5(path)`` write
@@ -55,13 +55,13 @@ Since the teardown, the bridge has been progressively widened:
 - **Staged analysis** ships via ``ops.stage(name)`` —
   see [Staged analysis](#staged-analysis) below for the user-
   surface walkthrough, and the in-repo internals doc at
-  [staged-analysis.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md)
+  [staged-analysis.md](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/staged-analysis.md)
   for the per-stage emit pipeline.
 - **Read-side broker.**
   ``OpenSeesModel.from_h5(path, fem_root=)`` provides a frozen
   read-only view of the persisted ``/opensees/`` zone with the
   embedded ``FEMData`` lazily attached
-  ([ADR 0019](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0019-opensees-model-read-side-broker.md)).
+  ([ADR 0019](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0019-opensees-model-read-side-broker.md)).
   Re-emit via ``om.build("tcl", path)`` / ``om.build("py", path)``
   / ``om.build("live")`` without rehydrating the apeSees
   primitives.
@@ -69,7 +69,7 @@ Since the teardown, the bridge has been progressively widened:
 For the full user-facing surface (typed materials, sections,
 elements, recorders, patterns, analysis chain, staged analysis,
 SSI helpers, cuts and sweeps), see the in-repo
-[api-design.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md).
+[api-design.md](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/api-design.md).
 
 ## Public surface
 
@@ -118,13 +118,13 @@ PR [#313](https://github.com/nmorabowen/apeGmsh/pull/313)).
 The full lifecycle table, builder verbs, validator surface, MP
 partitioned + staged emit (Phase SSI-2.C), and the SSI-1
 initial-stress ramp live in
-[architecture/api-design.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md)
+[architecture/api-design.md](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/api-design.md)
 §"Staged analysis"; the internals (deck layout, ownership
 computation, hook dispatcher, per-emitter dialect divergence,
 cleanup contract) live in
-[architecture/staged-analysis.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md)
+[architecture/staged-analysis.md](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/staged-analysis.md)
 and
-[architecture/emitter.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/emitter.md).
+[architecture/emitter.md](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/emitter.md).
 
 ## Orientation helpers
 

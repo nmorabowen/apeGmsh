@@ -14,7 +14,7 @@ description: >
 
 Each item points at where its lesson lives. Open that file and grep for
 the quoted heading. Paths are from the repo root; `architecture/` is
-`src/apeGmsh/opensees/architecture/`.
+`architecture/`.
 
 ## Before code
 

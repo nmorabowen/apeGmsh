@@ -21,7 +21,7 @@ reader (no ``apeGmsh`` import, no ``h5py``) needs to draw a model:
 masses, constraints, ties, contacts, interfaces, and the compose
 provenance groups) is real and is written by the same writer, but it is
 **not** published here — see :data:`KNOWN_UNPUBLISHED_ROOT_GROUPS` and
-``src/apeGmsh/opensees/architecture/h5-schema.md`` for those.
+``architecture/h5-schema.md`` for those.
 
 Path patterns use ``{type}`` / ``{name}`` for the one variable segment
 in a path; every other segment is literal.

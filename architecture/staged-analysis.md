@@ -238,7 +238,7 @@ The relevant entry points are
 single-partition models and `BuiltModel.emit → _emit_partitioned →
 _emit_stages_partitioned` for MP-partitioned models (per Phase
 SSI-2.C; see "MP partitioned + stages" below). Both branches live
-in [apesees.py](../apesees.py). Per-stage helpers live in
+in [apesees.py](../src/apeGmsh/opensees/apesees.py). Per-stage helpers live in
 `opensees/_internal/build.py::compute_stage_ownership` /
 `emit_initial_stress_global` /
 `emit_initial_stress_addtoparameter`.
@@ -246,7 +246,7 @@ in [apesees.py](../apesees.py). Per-stage helpers live in
 ## Ownership computation (Phase SSI-2.B)
 
 `compute_stage_ownership(stage_records, elements, fem)` in
-[`_internal/build.py:1830-1902`](../_internal/build.py) returns two
+[`_internal/build.py:1830-1902`](../src/apeGmsh/opensees/_internal/build.py) returns two
 maps:
 
 - `element_owner: dict[id(spec), stage_index]` — element-primitive
@@ -406,7 +406,7 @@ proc body:
 | Persist cumulative | `set _stressCtrl_N(<XX|YY|ZZ>) $current` | `set <name>_state(cum_<tag>) $_cur` |
 
 The acceptance test
-[`tests/opensees/subprocess/test_initial_stress_acceptance.py`](../../../../tests/opensees/subprocess/test_initial_stress_acceptance.py)
+[`tests/opensees/subprocess/test_initial_stress_acceptance.py`](../tests/opensees/subprocess/test_initial_stress_acceptance.py)
 locks the FIXED ramp values against
 `C:\Users\nmora\opensees_runs\cerro_lindo\ssi_test_stressctrl\result_fixed.csv`
 within ±0.5 kPa per step. The discriminating step is step 5:
@@ -486,7 +486,7 @@ per-rank loop.
    - **`stage_close()`** (global).
 
 The 4-quad 2-partition 2-PG fixture at
-[`tests/opensees/integration/test_emit_partitioned_staged.py`](../../../../tests/opensees/integration/test_emit_partitioned_staged.py)
+[`tests/opensees/integration/test_emit_partitioned_staged.py`](../tests/opensees/integration/test_emit_partitioned_staged.py)
 locks every assertion above — rank-K-owned nodes only appear in
 that rank's `partition_open(K)` block; `domain_change` lands once
 globally after the per-rank topology loop; `addToParameter` lines
@@ -578,62 +578,62 @@ authoritative; see ADR 0051 §7. The no-mixing guard stays.)
 
 | Concern | Source |
 |---|---|
-| User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py`](../apesees.py) `class _StageBuilder` |
-| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs` + SSI-2.D ext `stage_constraint_records`) | [`_internal/build.py`](../_internal/build.py) `class StageRecord` |
-| `InitialStressRecord` dataclass | [`_internal/build.py`](../_internal/build.py) `class InitialStressRecord` |
-| Per-stage emit pipeline (single-partition) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_flat` |
-| Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_partitioned` |
-| Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
-| Recorder claiming + skip in global emit | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
-| Stage-scoped pattern builder + claim + skip (ADR 0051 BL-3) | [`apesees.py`](../apesees.py) `_StageBuilder.pattern`, `apeSees._stage_claimed_pattern_ids`, `BuiltModel._claimed_pattern_ids`; per-rank `_emit_one_pattern_partitioned` / `_stage_pattern_specs_have_owned_content`; `StageRecord.pattern_specs` in [`_internal/build.py`](../_internal/build.py) |
-| Stage-bound MP-constraint claim + skip in global emit (SSI-2.D ext) | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_constraint_ids`, `BuiltModel._claimed_constraint_ids`, `_StageBuilder._claim_constraints_by_name` |
-| Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build.py`](../_internal/build.py) `emit_stage_mp_constraints`, `plan_stage_mp_constraints_partitioned` + `emit_stage_mp_constraints_partitioned` (split so the per-rank content gate and the emit share one plan — ADR 0034, amended 2026-07-28), `StageConstraintRankPlan`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
-| Ghost SP synchronisation across stages (ADR 0027 INV-2, amended 2026-07-28) | [`apesees.py`](../apesees.py) `_emit_stages_partitioned` locals `sp_ops_so_far` / `ghosts_held` / `stage_sp_delta`; [`_internal/build.py`](../_internal/build.py) `emit_ghost_sp_ops`, `GhostSPOp`, `_emit_foreign_node_declarations` |
-| Stage-bound MP-constraint builder methods (SSI-2.D ext) | [`apesees.py`](../apesees.py) `_StageBuilder.embedded` / `.tie` / `.distributing` / `.equal_dof` / `.rigid_link` / `.rigid_diaphragm` / `.kinematic_coupling` / `.node_to_surface` / `.node_to_surface_spring` |
-| `s.initial_stress(...)` PUSH builder + shared validation helper (SSI-2.D ext) | [`apesees.py`](../apesees.py) `_StageBuilder.initial_stress`, `_build_initial_stress_record` |
-| `apeSees.h5` staged archival (#313 guard lifted by ADR 0055 Phases 2+5) | [`apesees.py`](../apesees.py) `apeSees.h5` |
-| Ownership computation | [`_internal/build.py`](../_internal/build.py) `compute_stage_ownership` |
-| Tag pre-allocation | [`_internal/build.py`](../_internal/build.py) `allocate_element_tags` |
-| Initial-stress global emit | [`_internal/build.py`](../_internal/build.py) `emit_initial_stress_global` |
-| Initial-stress `addToParameter` fan-out | [`_internal/build.py`](../_internal/build.py) `emit_initial_stress_addtoparameter` |
-| Tcl emitter SSI methods | [`emitter/tcl.py`](../emitter/tcl.py) |
-| Py emitter SSI methods | [`emitter/py.py`](../emitter/py.py) |
-| Live emitter SSI methods + raises | [`emitter/live.py`](../emitter/live.py) |
-| H5 emitter no-ops (deferred archival) | [`emitter/h5.py`](../emitter/h5.py) |
-| Recording emitter capture | [`emitter/recording.py`](../emitter/recording.py) |
-| Build-time validators (PR #312 + Phase SSI-2.D) — orchestrator | [`apesees.py`](../apesees.py) `BuiltModel._run_staged_bc_validators` (H1 / V1 / V2 / V3 / V4) |
-| Ownership-tier offender helpers | [`apesees.py`](../apesees.py) `_collect_ownership_offenders`, `_render_offender_line`, `_records_as_targets` |
-| Recorder target resolvers (V4) | [`apesees.py`](../apesees.py) `_recorder_node_targets`, `_recorder_element_targets`, `_build_fem_eid_owner_stage_map` |
-| Bridge introspection (Phase SSI-2.D Red #19) | [`apesees.py`](../apesees.py) `apeSees.all_fix_records` / `all_mass_records` / `all_region_records` / `all_recorder_specs` |
+| User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `class _StageBuilder` |
+| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs` + SSI-2.D ext `stage_constraint_records`) | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `class StageRecord` |
+| `InitialStressRecord` dataclass | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `class InitialStressRecord` |
+| Per-stage emit pipeline (single-partition) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `BuiltModel._emit_stages_flat` |
+| Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `BuiltModel._emit_stages_partitioned` |
+| Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
+| Recorder claiming + skip in global emit | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
+| Stage-scoped pattern builder + claim + skip (ADR 0051 BL-3) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.pattern`, `apeSees._stage_claimed_pattern_ids`, `BuiltModel._claimed_pattern_ids`; per-rank `_emit_one_pattern_partitioned` / `_stage_pattern_specs_have_owned_content`; `StageRecord.pattern_specs` in [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) |
+| Stage-bound MP-constraint claim + skip in global emit (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees._stage_claimed_constraint_ids`, `BuiltModel._claimed_constraint_ids`, `_StageBuilder._claim_constraints_by_name` |
+| Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_stage_mp_constraints`, `plan_stage_mp_constraints_partitioned` + `emit_stage_mp_constraints_partitioned` (split so the per-rank content gate and the emit share one plan — ADR 0034, amended 2026-07-28), `StageConstraintRankPlan`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
+| Ghost SP synchronisation across stages (ADR 0027 INV-2, amended 2026-07-28) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_emit_stages_partitioned` locals `sp_ops_so_far` / `ghosts_held` / `stage_sp_delta`; [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_ghost_sp_ops`, `GhostSPOp`, `_emit_foreign_node_declarations` |
+| Stage-bound MP-constraint builder methods (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.embedded` / `.tie` / `.distributing` / `.equal_dof` / `.rigid_link` / `.rigid_diaphragm` / `.kinematic_coupling` / `.node_to_surface` / `.node_to_surface_spring` |
+| `s.initial_stress(...)` PUSH builder + shared validation helper (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.initial_stress`, `_build_initial_stress_record` |
+| `apeSees.h5` staged archival (#313 guard lifted by ADR 0055 Phases 2+5) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees.h5` |
+| Ownership computation | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `compute_stage_ownership` |
+| Tag pre-allocation | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `allocate_element_tags` |
+| Initial-stress global emit | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_initial_stress_global` |
+| Initial-stress `addToParameter` fan-out | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_initial_stress_addtoparameter` |
+| Tcl emitter SSI methods | [`emitter/tcl.py`](../src/apeGmsh/opensees/emitter/tcl.py) |
+| Py emitter SSI methods | [`emitter/py.py`](../src/apeGmsh/opensees/emitter/py.py) |
+| Live emitter SSI methods + raises | [`emitter/live.py`](../src/apeGmsh/opensees/emitter/live.py) |
+| H5 emitter no-ops (deferred archival) | [`emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) |
+| Recording emitter capture | [`emitter/recording.py`](../src/apeGmsh/opensees/emitter/recording.py) |
+| Build-time validators (PR #312 + Phase SSI-2.D) — orchestrator | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `BuiltModel._run_staged_bc_validators` (H1 / V1 / V2 / V3 / V4) |
+| Ownership-tier offender helpers | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_collect_ownership_offenders`, `_render_offender_line`, `_records_as_targets` |
+| Recorder target resolvers (V4) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_recorder_node_targets`, `_recorder_element_targets`, `_build_fem_eid_owner_stage_map` |
+| Bridge introspection (Phase SSI-2.D Red #19) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees.all_fix_records` / `all_mass_records` / `all_region_records` / `all_recorder_specs` |
 
 ## Test map
 
 | Suite | Coverage |
 |---|---|
-| [`tests/opensees/unit/test_stages.py`](../../../../tests/opensees/unit/test_stages.py) | `_StageBuilder` lifecycle, `StageRecord` shape, `BuiltModel.emit` per-stage analysis-chain re-emit. |
-| [`tests/opensees/unit/test_stage_activation.py`](../../../../tests/opensees/unit/test_stage_activation.py) | `s.activate(pgs=)` ownership computation, node + element routing, `domain_change` emission, duplicate-PG and global-shared-node rules. |
-| [`tests/opensees/unit/test_phase3_helpers.py`](../../../../tests/opensees/unit/test_phase3_helpers.py) | `convergence_confinement` and `imposed_displacement` validations + emitted-pattern shape. |
-| [`tests/opensees/unit/test_ssi_post_merge_cleanup.py`](../../../../tests/opensees/unit/test_ssi_post_merge_cleanup.py) | Red-team H1/H2/H3/M4 hardening — the build-time validators added in #312. |
-| [`tests/opensees/unit/test_emitter_initial_stress.py`](../../../../tests/opensees/unit/test_emitter_initial_stress.py) | Per-emitter `addToParameter` / `step_hook_ramp` shapes + hook-wrapped `analyze`. |
-| [`tests/opensees/unit/test_initial_stress_integration.py`](../../../../tests/opensees/unit/test_initial_stress_integration.py) | End-to-end build pipeline: `InitialStressRecord` → `parameter` decls → ramp proc → `addToParameter` per element. |
-| [`tests/opensees/unit/test_asd_plastic_material_3d.py`](../../../../tests/opensees/unit/test_asd_plastic_material_3d.py) | `ASDPlasticMaterial3D` + `MohrCoulombSoil` + `PlaneStrain` primitives. |
-| [`tests/opensees/subprocess/test_stages_subprocess.py`](../../../../tests/opensees/subprocess/test_stages_subprocess.py) | Tcl + Py subprocess smoke — multi-stage deck runs end-to-end on `OpenSees` / `python -m openseespy`. |
-| [`tests/opensees/subprocess/test_stage_activation_subprocess.py`](../../../../tests/opensees/subprocess/test_stage_activation_subprocess.py) | Subprocess smoke for the topology-activation path. |
-| [`tests/opensees/subprocess/test_phase3_subprocess.py`](../../../../tests/opensees/subprocess/test_phase3_subprocess.py) | Subprocess smoke for `convergence_confinement` + `imposed_displacement`. |
-| [`tests/opensees/subprocess/test_initial_stress_smoke.py`](../../../../tests/opensees/subprocess/test_initial_stress_smoke.py) | Subprocess smoke for the SSI-1 ramp end-to-end on `OpenSees`. |
-| [`tests/opensees/subprocess/test_initial_stress_acceptance.py`](../../../../tests/opensees/subprocess/test_initial_stress_acceptance.py) | Empirical acceptance — locks the FIXED ramp values against `result_fixed.csv` within ±0.5 kPa per step; gated on the reference CSV and the Ladruno OpenSees binary being available. |
-| [`tests/opensees/h5/test_h5_staged_fail_loud.py`](../../../../tests/opensees/h5/test_h5_staged_fail_loud.py) | The INVERTED #313 guard contract (ADR 0055) — staged builds (flat AND partitioned) now WRITE successfully; vanilla writes carry no `/opensees/stages` key. |
-| [`tests/opensees/integration/test_emit_partitioned_staged.py`](../../../../tests/opensees/integration/test_emit_partitioned_staged.py) | Phase SSI-2.C — 4-quad 2-PG 2-partition fixture; locks per-rank topology routing, global `domain_change` after the per-rank loop, `addToParameter` inside `partition_open(K)` only, cross-stage tag identity. |
-| [`tests/opensees/unit/test_stage_bound_validators.py`](../../../../tests/opensees/unit/test_stage_bound_validators.py) | Phase SSI-2.D PR-A — V1 / V2 / V3 ownership-tier + duplicate-fix + region-name validators; StageRecord shape lock; orchestrator H1-before-V1 ordering. |
-| [`tests/opensees/unit/test_stage_bound_fix_mass.py`](../../../../tests/opensees/unit/test_stage_bound_fix_mass.py) | Phase SSI-2.D PR-B — `s.fix` / `s.mass` builder positive + negative + XOR; `__slots__` assertion; `bridge.all_fix_records` / `all_mass_records` introspection; flat emit shape + slot ordering; unified `domain_change` gate (BC-only stage). |
-| [`tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py) | Phase SSI-2.D PR-B — per-rank fix/mass routing on owning rank, zero leak into global scope, single global `domain_change`, empty-bracket skip on non-contributing rank, BC-only stage drives per-rank loop. |
-| [`tests/opensees/unit/test_stage_bound_region_recorder.py`](../../../../tests/opensees/unit/test_stage_bound_region_recorder.py) | Phase SSI-2.D PR-C — `s.region` / `s.recorder` builder positive + negative; recorder type / membership / double-claim checks; global-emit skip on claimed; slot ordering (chain → recorder → analyze; region → `domain_change`); V4 positive + negative; `all_region_records` / `all_recorder_specs` introspection. |
-| [`tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py) | Phase SSI-2.D PR-C — cross-rank region shares tag (per-stage tag cache), single-rank region skips non-contributing ranks (INV-4), per-stage tag cache scoping across stages, global+stage tag disjointness. |
-| [`tests/opensees/unit/test_stage_initial_stress_push.py`](../../../../tests/opensees/unit/test_stage_initial_stress_push.py) | Phase SSI-2.D extension — `s.initial_stress(...)` PUSH ↔ `s.add(record)` PULL byte-identical deck parity; return-record contract; stage-scoped error-message prefix. |
-| [`tests/opensees/unit/test_stage_embedded_claim.py`](../../../../tests/opensees/unit/test_stage_embedded_claim.py) | Phase SSI-2.D extension — `s.embedded(name=...)` claim semantics: pool population, double-claim refusal, missing-name fail-loud, empty-name fail-loud, global-emit skip on claimed, unclaimed-record passthrough. |
-| [`tests/opensees/unit/test_stage_constraint_siblings.py`](../../../../tests/opensees/unit/test_stage_constraint_siblings.py) | Phase SSI-2.D extension — smoke tests for `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` / `s.distributing` claim-and-route into stage block. |
-| [`tests/opensees/unit/test_stage_constraint_e2e_2stage.py`](../../../../tests/opensees/unit/test_stage_constraint_e2e_2stage.py) | Phase SSI-2.D extension — Cerro Lindo SSI V5 forcing-function fix: 2-stage SSI deck structure with cimbra + embed inside stage 2, `domainChange` AFTER constraint emit and BEFORE analysis chain, no leak into stage 1 or pre-stage block. |
-| [`tests/opensees/unit/test_stage_patterns.py`](../../../../tests/opensees/unit/test_stage_patterns.py) | ADR 0051 BL-3 — `s.pattern(series=)` records + claims a stage-owned `Plain`; load/sp lands inside the stage block (after chain, before `loadConst`); two stages independent; `from_model(case)` import inside a stage pattern (loads + prescribed-sp-only); global pattern unaffected; partitioned per-rank routing + empty-rank bracket skip. |
+| [`tests/opensees/unit/test_stages.py`](../tests/opensees/unit/test_stages.py) | `_StageBuilder` lifecycle, `StageRecord` shape, `BuiltModel.emit` per-stage analysis-chain re-emit. |
+| [`tests/opensees/unit/test_stage_activation.py`](../tests/opensees/unit/test_stage_activation.py) | `s.activate(pgs=)` ownership computation, node + element routing, `domain_change` emission, duplicate-PG and global-shared-node rules. |
+| [`tests/opensees/unit/test_phase3_helpers.py`](../tests/opensees/unit/test_phase3_helpers.py) | `convergence_confinement` and `imposed_displacement` validations + emitted-pattern shape. |
+| [`tests/opensees/unit/test_ssi_post_merge_cleanup.py`](../tests/opensees/unit/test_ssi_post_merge_cleanup.py) | Red-team H1/H2/H3/M4 hardening — the build-time validators added in #312. |
+| [`tests/opensees/unit/test_emitter_initial_stress.py`](../tests/opensees/unit/test_emitter_initial_stress.py) | Per-emitter `addToParameter` / `step_hook_ramp` shapes + hook-wrapped `analyze`. |
+| [`tests/opensees/unit/test_initial_stress_integration.py`](../tests/opensees/unit/test_initial_stress_integration.py) | End-to-end build pipeline: `InitialStressRecord` → `parameter` decls → ramp proc → `addToParameter` per element. |
+| [`tests/opensees/unit/test_asd_plastic_material_3d.py`](../tests/opensees/unit/test_asd_plastic_material_3d.py) | `ASDPlasticMaterial3D` + `MohrCoulombSoil` + `PlaneStrain` primitives. |
+| [`tests/opensees/subprocess/test_stages_subprocess.py`](../tests/opensees/subprocess/test_stages_subprocess.py) | Tcl + Py subprocess smoke — multi-stage deck runs end-to-end on `OpenSees` / `python -m openseespy`. |
+| [`tests/opensees/subprocess/test_stage_activation_subprocess.py`](../tests/opensees/subprocess/test_stage_activation_subprocess.py) | Subprocess smoke for the topology-activation path. |
+| [`tests/opensees/subprocess/test_phase3_subprocess.py`](../tests/opensees/subprocess/test_phase3_subprocess.py) | Subprocess smoke for `convergence_confinement` + `imposed_displacement`. |
+| [`tests/opensees/subprocess/test_initial_stress_smoke.py`](../tests/opensees/subprocess/test_initial_stress_smoke.py) | Subprocess smoke for the SSI-1 ramp end-to-end on `OpenSees`. |
+| [`tests/opensees/subprocess/test_initial_stress_acceptance.py`](../tests/opensees/subprocess/test_initial_stress_acceptance.py) | Empirical acceptance — locks the FIXED ramp values against `result_fixed.csv` within ±0.5 kPa per step; gated on the reference CSV and the Ladruno OpenSees binary being available. |
+| [`tests/opensees/h5/test_h5_staged_fail_loud.py`](../tests/opensees/h5/test_h5_staged_fail_loud.py) | The INVERTED #313 guard contract (ADR 0055) — staged builds (flat AND partitioned) now WRITE successfully; vanilla writes carry no `/opensees/stages` key. |
+| [`tests/opensees/integration/test_emit_partitioned_staged.py`](../tests/opensees/integration/test_emit_partitioned_staged.py) | Phase SSI-2.C — 4-quad 2-PG 2-partition fixture; locks per-rank topology routing, global `domain_change` after the per-rank loop, `addToParameter` inside `partition_open(K)` only, cross-stage tag identity. |
+| [`tests/opensees/unit/test_stage_bound_validators.py`](../tests/opensees/unit/test_stage_bound_validators.py) | Phase SSI-2.D PR-A — V1 / V2 / V3 ownership-tier + duplicate-fix + region-name validators; StageRecord shape lock; orchestrator H1-before-V1 ordering. |
+| [`tests/opensees/unit/test_stage_bound_fix_mass.py`](../tests/opensees/unit/test_stage_bound_fix_mass.py) | Phase SSI-2.D PR-B — `s.fix` / `s.mass` builder positive + negative + XOR; `__slots__` assertion; `bridge.all_fix_records` / `all_mass_records` introspection; flat emit shape + slot ordering; unified `domain_change` gate (BC-only stage). |
+| [`tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py`](../tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py) | Phase SSI-2.D PR-B — per-rank fix/mass routing on owning rank, zero leak into global scope, single global `domain_change`, empty-bracket skip on non-contributing rank, BC-only stage drives per-rank loop. |
+| [`tests/opensees/unit/test_stage_bound_region_recorder.py`](../tests/opensees/unit/test_stage_bound_region_recorder.py) | Phase SSI-2.D PR-C — `s.region` / `s.recorder` builder positive + negative; recorder type / membership / double-claim checks; global-emit skip on claimed; slot ordering (chain → recorder → analyze; region → `domain_change`); V4 positive + negative; `all_region_records` / `all_recorder_specs` introspection. |
+| [`tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py`](../tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py) | Phase SSI-2.D PR-C — cross-rank region shares tag (per-stage tag cache), single-rank region skips non-contributing ranks (INV-4), per-stage tag cache scoping across stages, global+stage tag disjointness. |
+| [`tests/opensees/unit/test_stage_initial_stress_push.py`](../tests/opensees/unit/test_stage_initial_stress_push.py) | Phase SSI-2.D extension — `s.initial_stress(...)` PUSH ↔ `s.add(record)` PULL byte-identical deck parity; return-record contract; stage-scoped error-message prefix. |
+| [`tests/opensees/unit/test_stage_embedded_claim.py`](../tests/opensees/unit/test_stage_embedded_claim.py) | Phase SSI-2.D extension — `s.embedded(name=...)` claim semantics: pool population, double-claim refusal, missing-name fail-loud, empty-name fail-loud, global-emit skip on claimed, unclaimed-record passthrough. |
+| [`tests/opensees/unit/test_stage_constraint_siblings.py`](../tests/opensees/unit/test_stage_constraint_siblings.py) | Phase SSI-2.D extension — smoke tests for `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` / `s.distributing` claim-and-route into stage block. |
+| [`tests/opensees/unit/test_stage_constraint_e2e_2stage.py`](../tests/opensees/unit/test_stage_constraint_e2e_2stage.py) | Phase SSI-2.D extension — Cerro Lindo SSI V5 forcing-function fix: 2-stage SSI deck structure with cimbra + embed inside stage 2, `domainChange` AFTER constraint emit and BEFORE analysis chain, no leak into stage 1 or pre-stage block. |
+| [`tests/opensees/unit/test_stage_patterns.py`](../tests/opensees/unit/test_stage_patterns.py) | ADR 0051 BL-3 — `s.pattern(series=)` records + claims a stage-owned `Plain`; load/sp lands inside the stage block (after chain, before `loadConst`); two stages independent; `from_model(case)` import inside a stage pattern (loads + prescribed-sp-only); global pattern unaffected; partitioned per-rank routing + empty-rank bracket skip. |
 
 ## Cross-references
 

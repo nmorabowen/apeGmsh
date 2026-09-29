@@ -15,7 +15,7 @@ description: >
 
 Each item points at where its lesson lives. Open that file and grep for
 the quoted heading. `decisions/` is
-`src/apeGmsh/opensees/architecture/decisions/`.
+`architecture/decisions/`.
 
 ## Changing code under `viewers/`
 

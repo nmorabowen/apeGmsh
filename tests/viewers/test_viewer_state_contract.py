@@ -1,7 +1,7 @@
 """ADR 0056 V2/V3 — viewer state & event contract AST guards.
 
 Machine-enforces INV-5 of
-[ADR 0056](../../src/apeGmsh/opensees/architecture/decisions/0056-viewer-state-and-event-contract.md):
+[ADR 0056](../../architecture/decisions/0056-viewer-state-and-event-contract.md):
 in the guarded scopes no code may render, flip render artifacts, or
 import a render backend directly — UI code calls owner mutators and
 fires dispatcher events; the reconciler (the dispatcher's pumps + the

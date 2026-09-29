@@ -2,7 +2,7 @@
 
 Phase 8.5 makes the :class:`apeGmsh.mesh.FEMData` broker write the
 neutral-zone groups that the master plan
-([phase-8-untangle.md §3 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md))
+([phase-8-untangle.md §3 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8-untangle.md))
 places at the root of ``model.h5``:
 
 * ``/meta``                — file-level metadata (schema_version, ndm,

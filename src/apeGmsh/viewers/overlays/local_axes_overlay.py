@@ -8,7 +8,7 @@ element as three colour-coded arrow glyphs at the element midpoint:
 * **local-z** (blue)  — the ``vecxz`` plane direction
 
 This is the implementation of the "Local-axis glyph overlay" feature
-specified in ``opensees/architecture/viewer-integration.md`` (the
+specified in ``architecture/viewer-integration.md`` (the
 x=red / y=green / z=blue convention is taken from there).  Frame
 precedence matches the line-force / fiber diagrams: the recorder's
 true beam frame (``.ladruno`` ``MODEL/LOCAL_AXES``, via

@@ -8,7 +8,7 @@ element order — see
 :class:`apeGmsh.opensees._internal.tag_allocator.TagAllocator`). They
 diverge in two common cases:
 
-* ``g.compose`` ([ADR 0038](../../opensees/architecture/decisions/0038-compose-model-composition.md))
+* ``g.compose`` ([ADR 0038](../../../../architecture/decisions/0038-compose-model-composition.md))
   bakes per-module base-tag OFFSETS into element ``fem_eid``s;
 * gmsh numbers lower-dimensional elements first, so **any** solid model
   whose surfaces are meshed (e.g. carries surface physical groups) has

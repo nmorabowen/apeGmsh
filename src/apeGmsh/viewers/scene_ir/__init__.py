@@ -1,7 +1,7 @@
 """Backend-agnostic scene description for the viewer subsystem.
 
 The render-side seam introduced by
-[ADR 0042](../../opensees/architecture/decisions/0042-render-backend-seam.md):
+[ADR 0042](../../../../architecture/decisions/0042-render-backend-seam.md):
 domain logic emits :class:`SceneLayer` value types and drives a
 :class:`RenderBackend`; backends (PyVistaQt desktop, trame web) own all
 VTK/pyvista/trame construction.

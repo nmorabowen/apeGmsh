@@ -1,7 +1,7 @@
 """ADR 0087 D3 — viewer visual-design-system style guards.
 
 Machine-enforces the enforceable slice of
-[ADR 0087](../../src/apeGmsh/opensees/architecture/decisions/0087-viewer-visual-design-system.md):
+[ADR 0087](../../architecture/decisions/0087-viewer-visual-design-system.md):
 no literal colors outside ``theme.py`` (G-HEX), no shouted header
 labels (G-SHOUT), no dangling QSS selectors (G-QSS-SYNC), and a
 per-file ``setStyleSheet`` call-site ratchet (G-INLINE). Sibling of

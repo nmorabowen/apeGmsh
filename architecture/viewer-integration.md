@@ -182,7 +182,7 @@ sub-group.
 **UI:** list per-kind rows; on click, walk the symmetric outer
 compound (`target_kind`, `target`, `payload_kind`, `payload`) and
 decode the payload using the per-kind dtype.  Helpers live in
-[`mesh/_record_h5.py`](../../mesh/_record_h5.py); the contract is
+[`mesh/_record_h5.py`](../src/apeGmsh/mesh/_record_h5.py); the contract is
 documented in [`h5-schema.md`](h5-schema.md) under "Symmetric
 compound contract".
 
@@ -375,7 +375,7 @@ when a sidecar file is found.
 | Sidecar discovery | viewer entry point | Add `.h5` discovery (see "File discovery" above) when implementing the enrichment panels. |
 
 The structural contract is locked by the AST acceptance test
-[tests/test_viewers_pure_h5_consumer.py](../../../../tests/test_viewers_pure_h5_consumer.py):
+[tests/test_viewers_pure_h5_consumer.py](../tests/test_viewers_pure_h5_consumer.py):
 `apeGmsh.viewers/*` may not import from `apeGmsh.mesh` and may only
 import from `apeGmsh.opensees.emitter.h5_reader` within
 `apeGmsh.opensees.*`.

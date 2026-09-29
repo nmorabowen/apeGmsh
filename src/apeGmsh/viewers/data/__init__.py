@@ -4,7 +4,7 @@ Phase 8.7 commit 3 introduces :class:`ViewerData` as the viewer's
 single point of consumption — the seam that decouples viewer code
 from :class:`apeGmsh.mesh.FEMData` and lets a ``model.h5`` file alone
 drive the viewer (Phase 8.7 acceptance criterion;
-[ADR 0014](../../opensees/architecture/decisions/0014-viewer-is-pure-h5-consumer.md)).
+[ADR 0014](../../../../architecture/decisions/0014-viewer-is-pure-h5-consumer.md)).
 
 Two builders:
 

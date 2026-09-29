@@ -13,7 +13,7 @@ below is what the writer emits **today**, verified against
 
 If you are reading this to change apeGmsh rather than to consume its
 output, the internal specification —
-[`src/apeGmsh/opensees/architecture/h5-schema.md`](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/h5-schema.md)
+[`architecture/h5-schema.md`](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/h5-schema.md)
 — covers all three zones and every record group. This page covers the
 consumer-facing subset, in more detail, and is machine-checked.
 

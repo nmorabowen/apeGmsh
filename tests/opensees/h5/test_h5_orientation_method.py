@@ -6,7 +6,7 @@ the correct ``{fem_eid: vecxz}`` mapping, and that the fail-loud guards
 (ADR 0018 INV-6/7/9) raise at inject time.
 
 This is the C2 acceptance test from
-https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/modeldata-enrichment-scope.md §3 C2 (pinned at a9f8b670).
+https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/modeldata-enrichment-scope.md §3 C2 (pinned at a9f8b670).
 """
 from __future__ import annotations
 

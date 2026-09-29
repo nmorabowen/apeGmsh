@@ -12,7 +12,7 @@ in the comment block directly above it:
     # apegmsh-lint: <rule>-ok <reason>
 
 The reason is mandatory, and a waiver that no longer suppresses anything
-is itself a finding. The repo-level rules `adr-number` and `doc-path` have no
+is itself a finding. The repo-level rules `adr-number`, `arch-path` and `doc-path` have no
 waiver: a collision is never right, and a dead citation is fixed in the doc.
 
     python scripts/check_quirks.py              # this checkout
@@ -44,7 +44,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-DECISIONS = Path("src/apeGmsh/opensees/architecture/decisions")
+DECISIONS = Path("architecture/decisions")
 FEMDATA = Path("src/apeGmsh/mesh/FEMData.py")
 
 #: The rebuilds that must carry a whole model: compose, and the model.h5
@@ -86,7 +86,10 @@ IMPORT_TEXT = re.compile(
 AGENTS = Path("AGENTS.md")
 SKILLS = Path(".claude/skills")
 DERIVED_SKILL = "apegmsh-helper"
-ARCHITECTURE = Path("src/apeGmsh/opensees/architecture")
+ARCHITECTURE = Path("architecture")
+#: Where the architecture docs lived until N3 (#1197): nothing may be tracked there.
+#: (Built from parts so a grep for the old path finds only stale citations.)
+OLD_ARCHITECTURE = Path("src/apeGmsh/opensees") / "architecture"
 #: Where a backticked path may be rooted, after the doc's own folder: the
 #: repo, `src`, the package, the bridge and the architecture folder are the
 #: shorthands the docs use (`mesh/FEMData.py`, `emitter/h5.py`, `decisions/README.md`).
@@ -161,6 +164,12 @@ RULES: dict[str, str] = {
         "source (AGENTS.md, 'What this repo is'); the 2026-09-28 panel found 11% of the "
         "paths these docs cite dead (#1192 P6, #1197 N1)"
     ),
+    "arch-path": (
+        "a file sits under the old architecture folder, src/apeGmsh/opensees/" "architecture/: "
+        "architecture docs live in `architecture/` since N3 (#1197), so put the file there. "
+        "Lesson: the doc tree (2.8 MB of Markdown) shipped inside the package. No waiver is "
+        "offered: there is no legitimate file at the old path"
+    ),
     "getattr-private": (
         "getattr/hasattr with a literal _private name on an object that is not self or cls, "
         "and no module of this top-level subpackage defines that name: it reaches across a "
@@ -190,6 +199,19 @@ class Finding:
 
     def __str__(self) -> str:
         return f"{self.path}:{self.line}: [{self.rule}] {self.message}"
+
+
+# --- arch-path ---------------------------------------------------------------
+
+
+def check_arch_path(root: Path) -> list[Finding]:
+    folder = root / OLD_ARCHITECTURE
+    if not folder.is_dir():
+        return []
+    return [
+        Finding(p.relative_to(root).as_posix(), 1, "arch-path", RULES["arch-path"])
+        for p in sorted(folder.rglob("*")) if p.is_file()
+    ]
 
 
 # --- adr-number -------------------------------------------------------------
@@ -891,7 +913,7 @@ def _scan(root: Path) -> list[Finding]:
     for cache in (_sites_cache, _probe_cache, _tree_cache):
         for key in [k for k in cache if k[0] == root]:
             del cache[key]
-    findings = check_adr_numbers(root) + check_doc_paths(root)
+    findings = check_adr_numbers(root) + check_doc_paths(root) + check_arch_path(root)
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
     findings.extend(_stale_baseline(root))

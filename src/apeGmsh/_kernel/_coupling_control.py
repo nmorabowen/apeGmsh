@@ -264,7 +264,7 @@ class EmbeddedNodeControl(CouplingControl):
     NOT here yet — they need host-gradient emission from the node-to-
     surface resolver (the fork parser errors on ``-rot``/``-corot``
     without ``-dNdx``) and uniaxial-material-tag translation, so they land
-    together in a follow-up (see https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/plan_ladruno_constraints_coverage.md (pinned at a9f8b670)).
+    together in a follow-up (see https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/plan_ladruno_constraints_coverage.md (pinned at a9f8b670)).
     """
     pressure: bool = False
     kp: float | None = None

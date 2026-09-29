@@ -3,7 +3,7 @@
 Walks every Python source file under ``src/apeGmsh/viewers/diagrams/``
 and asserts none of them import ``vtk`` / ``vtkmodules`` / ``pyvista``
 / ``pyvistaqt``.  This is INV-2 of
-[ADR 0042](../src/apeGmsh/opensees/architecture/decisions/0042-render-backend-seam.md):
+[ADR 0042](../architecture/decisions/0042-render-backend-seam.md):
 after the R-B diagram migrations, the domain layer emits ``SceneLayer``
 value types through a ``RenderBackend`` and never touches a render
 backend's API directly — so it must be constructible and testable with

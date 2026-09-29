@@ -1,6 +1,6 @@
 """``RenderBackend`` Protocol — the viewer-side render contract.
 
-Defined by [ADR 0042](../../opensees/architecture/decisions/0042-render-backend-seam.md)
+Defined by [ADR 0042](../../../../architecture/decisions/0042-render-backend-seam.md)
 (§Decision, Part 2).  A backend consumes :mod:`SceneLayer
 <apeGmsh.viewers.scene_ir._layers>` value types and produces pixels.
 The domain layer (``diagrams/``, ``overlays/``, colour/visibility in

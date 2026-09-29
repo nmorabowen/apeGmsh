@@ -26,7 +26,7 @@ The neutral zone is written at schema `NEUTRAL_SCHEMA_VERSION`
 (`"2.10.0"`, defined in `mesh/_femdata_h5_io.py`); the OpenSees
 zone written by the bridge carries its own `SCHEMA_VERSION`
 (`"2.12.0"`). Readers honour a two-version compatibility window
-([ADR 0023](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0023-per-zone-schema-versioning.md)).
+([ADR 0023](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0023-per-zone-schema-versioning.md)).
 
 This is the same neutral zone the session writes via
 `apeGmsh(save_to=...)` / `g.save()` — see the

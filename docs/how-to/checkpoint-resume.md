@@ -18,7 +18,7 @@ an uninterrupted run.
     do.
 
 !!! note "apeGmsh `checkpoint` / `from_checkpoint` is planned, not shipped"
-    **ADR 0043** (`src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md`,
+    **ADR 0043** (`architecture/decisions/0043-connectivity-graph-and-flexible-emit.md`,
     §*Restart surfaces*) designs first-class `res.checkpoint("tag")` /
     `apeSees.from_checkpoint("tag")`
     wrappers (FE_Datastore save **paired with a `model.h5`** for a deterministic

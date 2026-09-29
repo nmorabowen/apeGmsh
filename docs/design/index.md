@@ -26,7 +26,7 @@ without importing apeGmsh.
 
 The authoritative record of *decisions* — what was chosen, what was
 rejected, and why — is the append-only ADR log in the repository at
-[`src/apeGmsh/opensees/architecture/decisions/`](https://github.com/nmorabowen/apeGmsh/tree/main/src/apeGmsh/opensees/architecture/decisions).
+[`architecture/decisions/`](https://github.com/nmorabowen/apeGmsh/tree/main/architecture/decisions).
 These pages cite ADRs by number; the log is where you read them.
 
 ---

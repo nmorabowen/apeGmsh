@@ -134,7 +134,7 @@ jobs:
             tests/benchmarks/test_emit_regression_gate.py
 
   # Static gates for the strictly-typed bridge package (charter P12;
-  # src/apeGmsh/opensees/architecture/testing.md § "CI gating" declared
+  # architecture/testing.md § "CI gating" declared
   # these required but they were never enforced, and drift accumulated).
   # ruff on the opensees package is fully clean -> hard gate. mypy
   # carries a legacy error baseline -> ratchet: the job fails only when

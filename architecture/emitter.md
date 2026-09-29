@@ -72,7 +72,7 @@ speak OpenSees vocabulary; users never see this surface.
 
 The block above is the locked **Phase 0** shape. The Protocol has
 since been widened in a series of architecture events; see
-[`emitter/base.py`](../emitter/base.py) for the current canonical
+[`emitter/base.py`](../src/apeGmsh/opensees/emitter/base.py) for the current canonical
 shape and the table below for the ADR-cited additions.
 
 ## Protocol widenings since Phase 0
@@ -95,7 +95,7 @@ this widening drove (see [ADR 0023](decisions/0023-per-zone-schema-versioning.md
 | PR [#343](https://github.com/nmorabowen/apeGmsh/pull/343) | SSI-2.E | `set_time`, `set_creep`, `reset`, `remove_sp`, `remove_element` | none — Tcl/Py text emit only; staged-H5 stays fail-loud at `apeSees.h5(path)` | Between-stage Domain mutators. Removals emit BEFORE same-stage `fix`/`mass`/`region`/MP-constraint block (atomic-replace pattern). `set_time` / `set_creep` emit right after `stage_open`; `reset` emits between recorder declarations and analyze. |
 
 The current canonical Protocol shape lives in
-[`emitter/base.py`](../emitter/base.py). The header docstring in
+[`emitter/base.py`](../src/apeGmsh/opensees/emitter/base.py). The header docstring in
 that file is the source of truth for every "architecture event"
 above; the table here is the navigable index.
 
@@ -251,7 +251,7 @@ Element tag allocation moves earlier on the staged path (both
 `fem_eid_to_ops_tag` map. See
 [staged-analysis.md](staged-analysis.md) §"Validation surface" for
 the V5 / V6 rules; see
-[`tests/opensees/unit/test_stage_ssi_2e_mutators.py`](../../../../tests/opensees/unit/test_stage_ssi_2e_mutators.py)
+[`tests/opensees/unit/test_stage_ssi_2e_mutators.py`](../tests/opensees/unit/test_stage_ssi_2e_mutators.py)
 for the 34-test coverage.
 
 ## Execution modes

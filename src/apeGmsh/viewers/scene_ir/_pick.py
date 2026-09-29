@@ -1,7 +1,7 @@
 """``PickBackend`` Protocol + pick IR — the viewer-side *pick* contract.
 
 Defined by
-[ADR 0047](../../opensees/architecture/decisions/0047-pick-backend-and-export.md)
+[ADR 0047](../../../../architecture/decisions/0047-pick-backend-and-export.md)
 (Phase R-D), the pick-side sibling of the render seam (ADR 0042
 :mod:`RenderBackend <apeGmsh.viewers.scene_ir._backend>`).  The backend
 owns *all* VTK ray-casting and screen↔world geometry; the domain layer

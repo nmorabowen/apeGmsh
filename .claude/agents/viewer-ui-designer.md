@@ -22,7 +22,7 @@ by implementing agents, so precision beats mood boards.
 ## Read the canon before designing
 
 Never design from memory of these documents — open them. All under
-`src/apeGmsh/opensees/architecture/decisions/` unless noted:
+`architecture/decisions/` unless noted:
 
 1. `0087-viewer-visual-design-system.md` — tokens, INV-1..INV-6
    (no inner titles; controls only when they act; sectioned forms;

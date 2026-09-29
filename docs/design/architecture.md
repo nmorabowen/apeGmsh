@@ -217,7 +217,7 @@ Every non-obvious choice above — and roughly eighty more — is recorded
 as an append-only ADR next to the code it governs. When this page says
 "deliberately," the ADR says why, with the alternatives that lost. The
 index is at
-[the decisions log](https://github.com/nmorabowen/apeGmsh/tree/main/src/apeGmsh/opensees/architecture/decisions).
+[the decisions log](https://github.com/nmorabowen/apeGmsh/tree/main/architecture/decisions).
 
 ---
 

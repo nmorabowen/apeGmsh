@@ -9,7 +9,7 @@ them here would re-establish the forbidden ``viewers/`` →
 ``mesh/`` coupling (Phase 8.7 acceptance criterion).
 
 The duplication is intentional and documented in
-[ADR 0014](../../opensees/architecture/decisions/0014-viewer-is-pure-h5-consumer.md):
+[ADR 0014](../../../../architecture/decisions/0014-viewer-is-pure-h5-consumer.md):
 the schema document (``architecture/h5-schema.md``) is the single
 source-of-truth for the on-disk contract; row dataclasses here echo
 the field names so the schema seam stays one-directional.

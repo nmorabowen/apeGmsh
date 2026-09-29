@@ -511,7 +511,7 @@ from pathlib import Path as _Path
 
 _H5_SCHEMA_DOC = (
     _Path(__file__).resolve().parents[3]
-    / "src" / "apeGmsh" / "opensees" / "architecture" / "h5-schema.md"
+    / "architecture" / "h5-schema.md"
 )
 
 

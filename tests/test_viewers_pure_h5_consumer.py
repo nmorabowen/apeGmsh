@@ -2,8 +2,8 @@
 
 Walks every Python source file under ``src/apeGmsh/viewers/`` and
 asserts the import surface complies with the contract recorded in
-[ADR 0014](../src/apeGmsh/opensees/architecture/decisions/0014-viewer-is-pure-h5-consumer.md)
-and [phase-8.7-scope.md §6 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md):
+[ADR 0014](../architecture/decisions/0014-viewer-is-pure-h5-consumer.md)
+and [phase-8.7-scope.md §6 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8.7-scope.md):
 
 * ``viewers/*`` may NOT ``from apeGmsh.mesh ...`` (the broker is
   off-limits to the viewer package after Phase 8.7).
@@ -133,7 +133,7 @@ def test_viewers_have_no_mesh_or_opensees_imports() -> None:
             f"{sorted(ALLOWED_OPENSEES_MODULES)!r}.\n"
             f"Found {len(rel_leaks)} forbidden import(s):\n{msg}\n\n"
             "See ADR 0014 (decisions/0014-viewer-is-pure-h5-consumer.md) "
-            "and phase-8.7-scope.md §6 (pinned at a9f8b670: https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md) for the contract."
+            "and phase-8.7-scope.md §6 (pinned at a9f8b670: https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8.7-scope.md) for the contract."
         )
 
 

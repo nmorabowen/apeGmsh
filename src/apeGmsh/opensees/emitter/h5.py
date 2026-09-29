@@ -22,7 +22,7 @@ generated names. No Protocol extension was required.
 
 **Schema layout.** Phase 8.4 partitioned ``model.h5`` into two zones
 (see ``architecture/h5-schema.md`` and
-https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md §3 (pinned at a9f8b670)):
+https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8-untangle.md §3 (pinned at a9f8b670)):
 
 * ``/meta`` and ``/elements`` stay at the file root.  ``/elements``
   sits in the neutral zone because Phase 8.5 hands the writer from

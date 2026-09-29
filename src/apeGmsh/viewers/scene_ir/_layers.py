@@ -1,7 +1,7 @@
 """SceneLayer value types — the backend-agnostic scene description.
 
 These are the frozen value types defined by
-[ADR 0042](../../opensees/architecture/decisions/0042-render-backend-seam.md)
+[ADR 0042](../../../../architecture/decisions/0042-render-backend-seam.md)
 (§Decision, Part 1).  A viewer's domain logic (``diagrams/``,
 ``overlays/``, the colour/visibility logic in ``core/``) *emits* these
 and never touches a render backend's API directly.

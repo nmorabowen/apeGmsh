@@ -45,7 +45,7 @@ snapshot in memory (geometry only) nor the STKO/MPCO results
 
 * The **neutral zone** (broker-owned, Phase 8.5) holds geometry and
   pre-solver model declarations. Every top-level group/dataset is
-  written by [`write_neutral_zone`](../../mesh/_femdata_h5_io.py) (the
+  written by [`write_neutral_zone`](../src/apeGmsh/mesh/_femdata_h5_io.py) (the
   enumeration below tracks that function — the ratchet test
   `test_h5_schema_doc_names_every_neutral_zone_group` fails if a new
   one is added here without a matching doc mention): `/meta`, `/nodes`,
@@ -299,7 +299,7 @@ composite (the hand-constructed case) writes only into
 
 **The 2.10 split closes the snapshot_id drift bug**
 ([ADR 0021's 2026-05-28 amendment](decisions/0021-lineage-chain-replaces-snapshot-id.md#amendment--2026-05-28--inv-1-retired-with-schema-210-b2--pr-398)
-and [project memory `project_h5_schema_2_10_b2_shipped`](../../../../README.md)).
+and [project memory `project_h5_schema_2_10_b2_shipped`](../README.md)).
 Prior to 2.10 the layout was flat (`/physical_groups/{name}/...`)
 and the reader heuristically classified entries by field presence,
 producing phantom node-side entries that flipped the hash on
@@ -365,8 +365,8 @@ dataset uses the symmetric outer compound (see below); the inner
 | NodeToSurface (`node_to_surface`, `node_to_surface_spring`) | `master_node`, `slave_nodes`/`phantom_nodes` (vlen-int), `phantom_coords` (vlen-f64, flat `3*n`), `dofs` (vlen-int) |
 
 Per-record-type payload dtypes are defined in
-[`mesh/_record_h5.py`](../../mesh/_record_h5.py); the writer in
-[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) bins
+[`mesh/_record_h5.py`](../src/apeGmsh/mesh/_record_h5.py); the writer in
+[`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) bins
 records by `kind` and dispatches to the right dtype based on the
 record class.
 
@@ -417,7 +417,7 @@ The `payload` dtype varies by record kind; the outer three fields
 are uniform.  Readers dispatch on `payload_kind` and decode
 `payload` with the matching per-kind dtype.
 
-Helpers in [`mesh/_record_h5.py`](../../mesh/_record_h5.py):
+Helpers in [`mesh/_record_h5.py`](../src/apeGmsh/mesh/_record_h5.py):
 
 * `make_record_dtype(payload_dtype)` returns the outer compound.
 * Per-record-type factories (`node_pair_payload_dtype`,
@@ -762,9 +762,9 @@ with the model definition. Present only when the producer was given a
 non-empty `cuts=` kwarg (via `apeSees.h5(path, cuts=[...])`) or when
 `apeGmsh.cuts.persist_to_h5(path, cuts=[...])` was called against an
 existing file. Writer lives in
-[`apeGmsh.cuts._h5_io.write_cuts_into`](../../cuts/_h5_io.py); reader
+[`apeGmsh.cuts._h5_io.write_cuts_into`](../src/apeGmsh/cuts/_h5_io.py); reader
 in `read_cuts_and_sweeps`. Full design rationale in
-[`apeGmsh/cuts/ARCHITECTURE.md`](../../cuts/ARCHITECTURE.md) — "## v4
+[`apeGmsh/cuts/ARCHITECTURE.md`](../src/apeGmsh/cuts/ARCHITECTURE.md) — "## v4
 — Cuts persisted in `model.h5`".
 
 One sub-group per cut, named positionally (`cut_0`, `cut_1`, …) in
@@ -879,7 +879,7 @@ predates the split and is **non-authoritative** (back-compat only —
 see "Legacy envelope" below).
 
 The central logic lives in
-[`opensees/_internal/schema_version.py`](../_internal/schema_version.py).
+[`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py).
 `reader_version(zone)` sources each zone's current value directly from
 the writer's constant, so reader and writer **cannot drift**; readers
 call `validate_zone_version(...)` for each zone before reading it.
@@ -888,16 +888,16 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.33.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
-| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../../results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
-| cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../../cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.33.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
+| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
+| cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
 
 > The registry's *current* values are a snapshot — the writer
 > constants above are the authoritative source. The test
-> [`tests/opensees/h5/test_h5_schema_compat.py`](../../../../tests/opensees/h5/test_h5_schema_compat.py)
+> [`tests/opensees/h5/test_h5_schema_compat.py`](../tests/opensees/h5/test_h5_schema_compat.py)
 > (`test_reader_version_reflects_writer_constants`) pins reader↔writer
-> agreement; [`tests/fixtures/schema.py`](../../../../tests/fixtures/schema.py)
+> agreement; [`tests/fixtures/schema.py`](../tests/fixtures/schema.py)
 > centralizes the values fixtures stamp.
 
 ### Bump rules (per zone)
@@ -935,9 +935,9 @@ our own output is held by
 
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
-[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py), current
+[`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py), current
 through **2.33.0**. The opensees zone's per-version history is
-maintained inline in [`opensees/emitter/h5.py`](../emitter/h5.py)
+maintained inline in [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
 
@@ -1034,7 +1034,7 @@ History:
 
 **From 2.13.0 onward** the per-version rationale is maintained inline
 as the canonical log in the `NEUTRAL_SCHEMA_VERSION` docstring in
-[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) — this table
+[`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) — this table
 condenses it to one line per version; consult the docstring for the
 full "why" and the exact affected dtype columns:
 
@@ -1114,7 +1114,7 @@ The opensees zone advanced past 2.10 independently of the neutral
 zone (it shares the early lineage above through 2.10; the entries
 below are opensees-only and have no neutral-zone counterpart). Full
 detail lives in the `SCHEMA_VERSION` docstring in
-[`opensees/emitter/h5.py`](../emitter/h5.py):
+[`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py):
 
 - `2.11.0` — bug fix: the bridge emits **0-based runtime ranks**
   (matching `OpenSeesMP::getPID()`) instead of Gmsh's 1-based
@@ -1131,7 +1131,7 @@ detail lives in the `SCHEMA_VERSION` docstring in
   the C++ parser, so legacy decks behave identically. Additive — old
   2.11.x readers ignore the new columns.
 - `2.13.0`–`2.16.0` — see the `SCHEMA_VERSION` docstring in
-  [`opensees/emitter/h5.py`](../emitter/h5.py) (named primitives sidecar,
+  [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) (named primitives sidecar,
   `/opensees/nodes_ndf`, `/opensees/dampings`, `/opensees/initial_stress`).
   From 2.16.0 onward a minor bump is a producer **hard floor** — a 2.N.x
   reader REFUSES a 2.(N+1).x file (the window only lets a newer reader open
@@ -1187,7 +1187,7 @@ detail lives in the `SCHEMA_VERSION` docstring in
   files; a 2.20.x reader refuses a 2.21.x file).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
-[`opensees/emitter/h5.py`](../emitter/h5.py)); check that constant
+[`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
 directly before trusting this list on a future read — it is a
 condensed log, not the source of truth.
 

@@ -8,7 +8,7 @@ under ``apeGmsh.results.spec``. Phase 8.8 deletes the package
 entirely.
 
 These tests verify the Phase 8 acceptance criteria from
-https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md (pinned at a9f8b670):
+https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8-untangle.md (pinned at a9f8b670):
 
 - ``apeGmsh/solvers/`` directory is empty / deleted.
 - ``git grep \"from apeGmsh.solvers\" src/`` returns zero matches.

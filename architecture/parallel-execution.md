@@ -354,7 +354,7 @@ OpenSees emit helpers into the bridge, reshuffle model.h5 into
 zoned namespaces, and make the viewer a pure model.h5 consumer.
 The "no `from apeGmsh.mesh` imports in `viewers/`" invariant is
 enforced going forward by the AST acceptance test at
-[`tests/test_viewers_pure_h5_consumer.py`](../../../../tests/test_viewers_pure_h5_consumer.py)
+[`tests/test_viewers_pure_h5_consumer.py`](../tests/test_viewers_pure_h5_consumer.py)
 (Phase 8.7 commit 7).
 
 See [phase-8-untangle.md (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8-untangle.md) for the full plan,

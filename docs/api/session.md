@@ -57,7 +57,7 @@ ops = apeSees(g.mesh.queries.get_fem_data(dim=3))
 `model.h5` into the current session under a namespaced `label`,
 applying an optional rigid placement (`translate`, `rotate`,
 `anchor`) and reserving a disjoint tag span so child tags never
-collide ([ADR 0038](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0038-compose-model-composition.md)).
+collide ([ADR 0038](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0038-compose-model-composition.md)).
 It returns a `ComposedModule` handle.
 
 ```python
@@ -82,7 +82,7 @@ string-keyed Module modes (`'Module'`, `'Module: Root'`,
 
 To spatially couple several saved `model.h5` modules without
 hand-wiring `compose` + constraints, use the declarative builder
-(shipped in v2.0.0, [ADR 0043](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md)
+(shipped in v2.0.0, [ADR 0043](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md)
 slice 1.4). It is imported from a **sub-path** — `apeGmsh.Assembly`
 is intentionally not exported, so the top-level "the session *is* the
 assembly" model is unchanged.

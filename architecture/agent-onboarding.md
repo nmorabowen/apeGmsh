@@ -56,13 +56,13 @@ prompt:
 You are implementing slice [PHASE] of the apeGmsh.opensees package.
 
 CONTEXT (read these in order before anything else):
-  1. src/apeGmsh/opensees/architecture/README.md
-  2. src/apeGmsh/opensees/architecture/charter.md
+  1. architecture/README.md
+  2. architecture/charter.md
   3. run `python scripts/nav.py map` (folder structure + naming)
-  4. src/apeGmsh/opensees/architecture/api-design.md
-  5. src/apeGmsh/opensees/architecture/emitter.md
-  6. src/apeGmsh/opensees/architecture/testing.md
-  7. src/apeGmsh/opensees/architecture/parallel-execution.md
+  4. architecture/api-design.md
+  5. architecture/emitter.md
+  6. architecture/testing.md
+  7. architecture/parallel-execution.md
 
   Then read these specifically for your slice:
   - parallel-execution.md § "[PHASE_SECTION]"

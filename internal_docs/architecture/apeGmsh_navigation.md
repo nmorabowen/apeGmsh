@@ -1377,8 +1377,8 @@ Module-level helpers:
   (`apeSees.model()`, `OpenSeesModel.from_compose_buffers()`,
   `OpenSeesModel.from_h5()`) asserts envelope ≥ max(declared
   overrides); mismatch raises `BridgeError` naming the offending
-  node ([ADR 0033](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md);
-  builds on the [ADR 0032](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
+  node ([ADR 0033](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md);
+  builds on the [ADR 0032](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0032-explicit-only-per-node-ndf.md)
   broker contract).
   - `.__init__(self, fem)`
   - `.model(self, *, ndm, ndf)` — must be called first.

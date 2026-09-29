@@ -22,7 +22,7 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 ## Before you start
 
 - [ ] Read the ADR that owns the surface (index: `decisions/README.md` under
-      `src/apeGmsh/opensees/architecture/`): render seam 0042; pick 0045/0047; state and events 0056; concurrent
+      `architecture/`): render seam 0042; pick 0045/0047; state and events 0056; concurrent
       geometries 0058; cascade freeze 0084; design system to legend 0087–0090; stills 0094;
       results session 0098.
 - [ ] The results viewer is where fixing one thing breaks another. Before touching pumps, the

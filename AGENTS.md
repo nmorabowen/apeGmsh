@@ -19,8 +19,8 @@ covers how to *use* apeGmsh; the task guides below cover how to *change* apeGmsh
 
 | Path | Holds |
 |---|---|
-| `src/apeGmsh/opensees/architecture/` | the bridge's charter (14 principles), layout, API design, emitter, H5 schema, [testing.md](src/apeGmsh/opensees/architecture/testing.md) (test layers), and [agent-onboarding.md](src/apeGmsh/opensees/architecture/agent-onboarding.md) (the slice prompt template) |
-| `src/apeGmsh/opensees/architecture/decisions/` | the ADRs, append-only; the index is its README. **Before numbering a new ADR, list the directory on `origin/main`**, not your worktree: numbers have collided with work that merged after the cut |
+| `architecture/` | the bridge's charter (14 principles), layout, API design, emitter, H5 schema, [testing.md](architecture/testing.md) (test layers), and [agent-onboarding.md](architecture/agent-onboarding.md) (the slice prompt template) |
+| `architecture/decisions/` | the ADRs, append-only; the index is its README. **Before numbering a new ADR, list the directory on `origin/main`**, not your worktree: numbers have collided with work that merged after the cut |
 | `internal_docs/` | plans (`plan_*.md`), handoffs (`handoff_*.md`), user-facing guide drafts, [changelog_workflow.md](internal_docs/changelog_workflow.md), [docs_style.md](internal_docs/docs_style.md) |
 | `internal_docs/program/` | the remediation program: its charter [PROGRAM.md](internal_docs/program/PROGRAM.md), the slice-card template [slice_card.md](internal_docs/program/slice_card.md), and the panel prototypes. Live program state is on GitHub under the `program` label (board #1203). `/apegmsh-program <link>` runs a link as orchestrator; the `prog-*` workers are defined in `.claude/agents/` |
 | `docs/` + `mkdocs.yml` | the published site. It follows the docs_style contract, and `mkdocs build --strict` gates it |

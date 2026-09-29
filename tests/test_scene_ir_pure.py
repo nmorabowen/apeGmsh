@@ -4,7 +4,7 @@ Walks every Python source file under ``src/apeGmsh/viewers/scene_ir/``
 and asserts none of them import ``vtk`` / ``vtkmodules`` / ``pyvista``
 / ``pyvistaqt``.  This is the render-side mirror of
 ``test_viewers_pure_h5_consumer.py`` and enforces INV-1 of
-[ADR 0042](../src/apeGmsh/opensees/architecture/decisions/0042-render-backend-seam.md):
+[ADR 0042](../architecture/decisions/0042-render-backend-seam.md):
 the scene IR is a pure value vocabulary, constructible and assertable
 with no GPU and no render context.
 

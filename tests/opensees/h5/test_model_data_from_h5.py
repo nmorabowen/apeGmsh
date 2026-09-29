@@ -1,7 +1,7 @@
 """ADR 0018 C4 — ``ModelData.from_h5`` round-trip + enrich.
 
 Acceptance gate from
-https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/modeldata-enrichment-scope.md §3 C4 (pinned at a9f8b670):
+https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/modeldata-enrichment-scope.md §3 C4 (pinned at a9f8b670):
 
 * Round-trip — load → rewrite is fixed-point on the orientation pair
   (INV-9: ``fem_eids ↔ per_element_emitted_tag ↔ args`` row order

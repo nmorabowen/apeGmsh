@@ -1,7 +1,7 @@
 """ViewerNodes — node-side composite of :class:`ViewerData`.
 
 Mirrors only the FEMData node-side accessors audited in
-[phase-8.7-scope.md §2 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/src/apeGmsh/opensees/architecture/phase-8.7-scope.md)
+[phase-8.7-scope.md §2 (deleted in N3, pinned at a9f8b670)](https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d400b/architecture/phase-8.7-scope.md)
 — the surface the viewer actually exercises.  Anything outside that
 slice (e.g. the ``fem.nodes.select(...)`` selection API, partitions)
 stays on the FEMData and is not migrated.

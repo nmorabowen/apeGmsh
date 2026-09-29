@@ -50,7 +50,7 @@ def _found(root: Path) -> list[str]:
 
 # --- adr-number: a second 0065 (#676 -> #677) --------------------------------
 
-DECISIONS = "src/apeGmsh/opensees/architecture/decisions"
+DECISIONS = "architecture/decisions"
 
 
 def _adrs(root: Path, names: list[str], indexed: list[str]) -> None:
@@ -664,7 +664,7 @@ def test_an_undecodable_file_is_skipped_not_fatal(tmp_path: Path) -> None:
 
 # --- doc-path: the panel's 11% dead citations (#1192 P6, #1197 N1) ------------
 
-ARCH = "src/apeGmsh/opensees/architecture"
+ARCH = "architecture"
 GUIDE = ".claude/skills/apegmsh-bridge-feature/SKILL.md"
 MODULE = "def emit_mp_constraints(b):\n    pass\n\nclass _StageBuilder:\n    def stage_open(self):\n        pass\n"
 
@@ -683,7 +683,7 @@ def test_doc_path_passes_citations_that_resolve(tmp_path: Path) -> None:
     _doc(tmp_path, f"{ARCH}/testing.md", "# t")
     _doc(tmp_path, f"{ARCH}/decisions/README.md", "# ADRs")
     _doc(tmp_path, "AGENTS.md",
-         "See [testing.md](src/apeGmsh/opensees/architecture/testing.md) and `mesh/FEMData.py`.",
+         "See [testing.md](architecture/testing.md) and `mesh/FEMData.py`.",
          "Lift `_internal/build.py::emit_mp_constraints`; `_internal/build.py::_StageBuilder.stage_open`",
          "and `src/apeGmsh/opensees/_internal/build.py:12` (a line is not checked).",
          "Not paths: `~/venv/x.py`, `C:\\venv\\x.py`, `ranks/rank<K>.yml`, `tests/**/*.py`,",
@@ -700,7 +700,7 @@ def test_doc_path_flags_a_path_that_does_not_resolve(tmp_path: Path) -> None:
 def test_doc_path_flags_a_markdown_link_only_relative_to_the_doc(tmp_path: Path) -> None:
     # A renderer resolves a link from the doc's folder, never from the package roots.
     _doc(tmp_path, f"{ARCH}/testing.md", "# t")
-    _doc(tmp_path, f"{ARCH}/h5-schema.md", "([README](../../../README.md)) and [t](testing.md)")
+    _doc(tmp_path, f"{ARCH}/h5-schema.md", "([README](README.md)) and [t](testing.md)")
     _doc(tmp_path, "README.md", "# r")
     assert _doc_paths(tmp_path) == ["h5-schema.md:1"]
 
@@ -738,6 +738,23 @@ def test_doc_path_scope_exists_in_this_checkout() -> None:
     assert (quirks.REPO / quirks.AGENTS).is_file()
     assert any((quirks.REPO / quirks.SKILLS).glob("apegmsh-*/SKILL.md")), "the task guides moved"
     assert any((quirks.REPO / quirks.ARCHITECTURE).glob("*.md")), "architecture/ moved: update ARCHITECTURE"
+
+
+# --- arch-path: no file at the old architecture folder (N3, #1197) -----------
+
+
+def test_arch_path_flags_a_file_at_the_old_path(tmp_path: Path) -> None:
+    old = "src/apeGmsh/opensees/" + "architecture/x.md"
+    _write(tmp_path, old, "# x\n")
+    found = [f for f in quirks.scan(tmp_path) if f.rule == "arch-path"]
+    assert [f.path for f in found] == [old]
+    assert "`architecture/` since N3 (#1197)" in found[0].message
+    assert "doc tree" in found[0].message
+
+
+def test_arch_path_passes_the_same_file_under_architecture(tmp_path: Path) -> None:
+    _write(tmp_path, "architecture/x.md", "# x\n")
+    assert [f for f in quirks.scan(tmp_path) if f.rule == "arch-path"] == []
 
 
 # --- doc-path: the review of #1236 (suffix forms escaped; `::symbol` was loose) ---
