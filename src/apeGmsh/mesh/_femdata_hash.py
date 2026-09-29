@@ -74,12 +74,11 @@ def _hash_nodes(h: "hashlib._Hash", fem: "FEMData") -> None:
     h.update(coords[sort_idx].tobytes())
 
     # Per-node ndf (shell-to-solid coupling, S1b → S2).  Skip the
-    # fold when the channel is empty: ``_ndf is None`` (legacy /
-    # direct-test FEMs and from_msh which has no NodeNDFComposite)
-    # OR all-sentinel (from_gmsh with no ``g.node_ndf`` calls).  Both
-    # cases mean "the user declared no per-node ndf", so the digest
-    # must be identical — otherwise from_msh and from_gmsh of the
-    # same uniform-ndf geometry would hash differently.  ``getattr``
+    # fold when the channel is empty: ``_ndf is None`` (from_gmsh /
+    # from_msh, and direct-test FEMs — per-node ndf is inferred by the
+    # bridge, ADR 0048) OR all-sentinel (a legacy ``/nodes/ndf``
+    # dataset written with no declarations).  Both cases mean "no
+    # per-node ndf", so the digest must be identical.  ``getattr``
     # tolerates ``SimpleNamespace`` mocks in
     # ``test_results_femdata_hash`` that omit ``_ndf`` entirely.
     ndf = getattr(fem.nodes, "_ndf", None)

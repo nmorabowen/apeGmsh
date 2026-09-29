@@ -148,9 +148,9 @@ from the host material at emit, so it lands a few orders above the element
 stiffness in whatever unit system you model in). `"equation"` emits exact
 multi-point equations (translations only) enforced by a constraint handler,
 and `"penalty_al"` uses the fork's augmented-Lagrange penalty element. Start
-with the default; switch to `"equation"` when you need the interface exact
-**and you are running on a Ladruno fork build** — the live equation route is
-fork-gated, though deck emission is not
+with the default; switch to `"equation"` when you need the interface exact.
+It runs in-process on openseespy ≥ 3.8.0 or the fork. On stock, that means
+one tied model per process, because stock `wipe()` keeps the rows
 ([Backend capabilities](backend-capabilities.md)).
 
 How the tie's *weights* are computed is a third, orthogonal choice —

@@ -7,6 +7,10 @@ the bars share the load: ``u = P / (2 E A / L)``. Dropped (what
 
 No handler is declared, so the bridge auto-emits ``Lagrange`` — the check
 that the auto-emit took the EQ-capable handler, not ``Transformation``.
+
+Fork-only because it runs in the test process: stock openseespy >= 3.8.0
+enforces the row too, but its ``wipe()`` keeps EQ rows, so a stock process
+that ran one refuses every later live model.
 """
 from __future__ import annotations
 

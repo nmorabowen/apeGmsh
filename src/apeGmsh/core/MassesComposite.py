@@ -689,6 +689,7 @@ class MassesComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         edges: list[tuple[int, int]] = []
         for d, t in dts:
             if d != 1:
@@ -698,10 +699,12 @@ class MassesComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                npe = 2 if int(etype) == 1 else 3
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(etype, dim=1,
+                                        context=f"mass target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
-                    edges.append((int(row[0]), int(row[-1])))
+                    # gmsh lists a line's two end nodes first
+                    edges.append((int(row[0]), int(row[1])))
         return edges
 
     def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
@@ -709,6 +712,7 @@ class MassesComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         faces: list[list[int]] = []
         for d, t in dts:
             if d != 2:
@@ -718,14 +722,11 @@ class MassesComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                etype = int(etype)
-                npe = {2: 3, 3: 4, 9: 6, 16: 8}.get(etype, None)
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
-                corners_per = {3: 3, 4: 4, 6: 3, 8: 4}[npe]
+                topo = element_topology(etype, dim=2,
+                                        context=f"mass target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
-                    faces.append([int(n) for n in row[:corners_per]])
+                    faces.append([int(n) for n in row[:topo.n_corner]])
         return faces
 
     def _target_elements(self, target, source: str = "auto"):
@@ -733,6 +734,7 @@ class MassesComposite(_DeclarationsMixin):
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
         conns: list[np.ndarray] = []
         for d, t in dts:
             if d != 3:
@@ -742,12 +744,9 @@ class MassesComposite(_DeclarationsMixin):
             except Exception:
                 continue
             for etype, enodes in zip(etypes, enodes_list):
-                etype = int(etype)
-                npe_map = {4: 4, 5: 8, 6: 6, 11: 10, 17: 20}
-                npe = npe_map.get(etype, None)
-                if npe is None:
-                    continue
-                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                topo = element_topology(etype, dim=3, integrable=True,
+                                        context=f"mass target {target!r}")
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, topo.npe)
                 for row in arr:
                     conns.append(row)
         return conns

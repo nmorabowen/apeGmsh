@@ -105,7 +105,7 @@ fem = FEMData.from_h5(assembly)
 # --- 3. Build the two-bay OpenSees model through the typed bridge ---
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=3)
-transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+transf = ops.geomTransf.Linear()
 
 # Host bay keeps BARE names; the composed bay is prefixed "bay2."
 ops.element.elasticBeamColumn(pg="Columns",      transf=transf, A=Ac, E=E, Iz=Ic)

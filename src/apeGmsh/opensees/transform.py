@@ -12,7 +12,10 @@ OpenSees command shape::
 
 In 3D, ``vecxz`` is required: a vector in the local x-z plane that
 fixes the section's strong axis. In 2D, ``vecxz`` is omitted and
-local axes are derived from the element's node order.
+local axes are derived from the element's node order: the build
+pipeline emits the bare ``geomTransf <Type> tag`` form, dropping an
+explicit ``vecxz`` along global Z and refusing any other vector (Tcl's
+2-D ``geomTransf`` rejects trailing args).
 
 Two ways to pin orientation at construction:
 
