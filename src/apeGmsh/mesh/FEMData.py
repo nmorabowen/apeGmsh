@@ -193,6 +193,46 @@ PROVENANCE_MESH: int = 0
 PROVENANCE_DECOUPLED: int = 1
 
 
+def _require_live_source(source, dim: int, tag: int) -> None:
+    """Refuse a raw ``(dim, tag)`` lookup unless live Gmsh is the model
+    this snapshot was extracted from.
+
+    ``source`` is the ``(model name, fingerprint)`` pair recorded at
+    extraction (``_fem_extract.gmsh_model_identity``), or ``None`` for a
+    snapshot loaded from a file or built directly.  Without this check a
+    snapshot answers from whatever model is current and silently returns
+    another model's nodes or elements.
+    """
+    import gmsh
+    what = f"could not resolve raw DimTag ({dim}, {tag}) —"
+    fix = "Select by pg= or label=, which resolve from the snapshot alone."
+    if source is None:
+        raise RuntimeError(
+            f"{what} this FEMData was not extracted from a live Gmsh "
+            f"model (it was loaded from a file or built directly), so "
+            f"there is no model to ask. {fix}"
+        )
+    if not gmsh.isInitialized():
+        raise RuntimeError(
+            f"{what} the Gmsh session that produced this FEMData "
+            f"(model {source[0]!r}) has been closed. {fix}"
+        )
+    from ._fem_extract import gmsh_model_identity
+    live = gmsh_model_identity()
+    if live != source:
+        now = (
+            "has that name but a different geometry or mesh (another "
+            "session, or the model changed after extraction)"
+            if live[0] == source[0]
+            else f"is {live[0]!r}"
+        )
+        raise RuntimeError(
+            f"{what} this FEMData was extracted from Gmsh model "
+            f"{source[0]!r}, and the current Gmsh model {now}; asking "
+            f"it would return another model's entities. {fix}"
+        )
+
+
 class NodeComposite:
     """Access and query nodes from the FEM mesh.
 
@@ -229,6 +269,7 @@ class NodeComposite:
         ndf: ndarray | None = None,
         module_label: ndarray | None = None,
         provenance: ndarray | None = None,
+        gmsh_source: tuple[str, str] | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -247,6 +288,12 @@ class NodeComposite:
         # needing a live Gmsh session (parts registry may be gone
         # by the time the user queries). Dict of ``str -> set[int]``.
         self._part_node_map: dict[str, set[int]] = part_node_map or {}
+        # ``(model name, fingerprint)`` of the Gmsh model this snapshot
+        # was extracted from; ``None`` when it came from anywhere else.
+        # A raw ``(dim, tag)`` target asks live Gmsh only while that
+        # model is the current one (``_require_live_source``).  Not part
+        # of ``snapshot_id``.
+        self._gmsh_source = gmsh_source
 
         # Per-node ``ndf`` (DOF count) — int8 array aligned 1:1 with
         # ``self._ids``.  Sentinel ``0`` means "undeclared".  In the
@@ -415,7 +462,10 @@ class NodeComposite:
             Label name, physical group name, part name,
             ``(dim, tag)`` pair, raw int tag, or a list thereof.
             A string resolves through label → PG → part name in
-            that order.
+            that order.  A ``(dim, tag)`` pair is looked up in live
+            Gmsh, so it resolves only while the model this snapshot
+            was extracted from is the current Gmsh model, and raises
+            ``RuntimeError`` otherwise.
         pg :
             Physical group name or list of names.
         label :
@@ -577,8 +627,16 @@ class NodeComposite:
         )
 
     def _nodes_on_dimtag(self, dim: int, tag: int):
-        """Mesh nodes on a raw geometry entity via live Gmsh."""
+        """Mesh nodes on a raw geometry entity via live Gmsh.
+
+        Only while the model this snapshot was extracted from is the
+        current Gmsh model; otherwise raises instead of answering from
+        another model.
+        """
         import gmsh
+        # getattr: a snapshot pickled before the source was recorded
+        # has no attribute, and is refused like any unknown source.
+        _require_live_source(getattr(self, "_gmsh_source", None), dim, tag)
         try:
             nt, _, _ = gmsh.model.mesh.getNodes(
                 dim=dim, tag=tag, includeBoundary=True,
@@ -586,10 +644,8 @@ class NodeComposite:
             )
         except Exception as e:
             raise RuntimeError(
-                f"could not resolve raw DimTag ({dim}, {tag}) — the "
-                f"Gmsh session may have been closed. Pass the target "
-                f"through an explicit `label=` or `pg=` that was "
-                f"tagged before the session exited."
+                f"could not resolve raw DimTag ({dim}, {tag}) in the "
+                f"Gmsh model this FEMData was extracted from: {e}"
             ) from e
         return self._nodes_from_ids({int(n) for n in nt})
 
@@ -754,6 +810,7 @@ class ElementComposite:
         contact_planes=None,
         rebar_elements=None,
         interfaces=None,
+        gmsh_source: tuple[str, str] | None = None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -823,6 +880,8 @@ class ElementComposite:
         # FEM-build time. Lets ``get(target=part_label)`` resolve
         # without a live Gmsh session.
         self._part_elem_map: dict[str, set[int]] = part_elem_map or {}
+        # Producing Gmsh model — same contract as NodeComposite._gmsh_source.
+        self._gmsh_source = gmsh_source
 
         # Per-element ``module_label`` (Phase 3B.2c / ADR 0038) —
         # dict keyed by element-type code, each value an object
@@ -1085,16 +1144,21 @@ class ElementComposite:
             f"Parts: {list(self._part_elem_map)}"
         )
 
-    @staticmethod
-    def _elements_on_dimtag(dim: int, tag: int) -> set[int]:
-        """Element IDs on a raw geometry entity via live Gmsh."""
+    def _elements_on_dimtag(self, dim: int, tag: int) -> set[int]:
+        """Element IDs on a raw geometry entity via live Gmsh.
+
+        Only while the model this snapshot was extracted from is the
+        current Gmsh model; otherwise raises instead of answering from
+        another model.
+        """
         import gmsh
+        _require_live_source(getattr(self, "_gmsh_source", None), dim, tag)
         try:
             _, etags_list, _ = gmsh.model.mesh.getElements(dim, tag)
         except Exception as e:
             raise RuntimeError(
-                f"could not resolve raw DimTag ({dim}, {tag}) — the "
-                f"Gmsh session may have been closed."
+                f"could not resolve raw DimTag ({dim}, {tag}) in the "
+                f"Gmsh model this FEMData was extracted from: {e}"
             ) from e
         out: set[int] = set()
         for arr in etags_list:
@@ -1158,7 +1222,10 @@ class ElementComposite:
             Label name, physical group name, part name,
             ``(dim, tag)`` pair, raw int tag, or a list thereof.
             A string resolves through label → PG → part name in
-            that order.
+            that order.  A ``(dim, tag)`` pair is looked up in live
+            Gmsh, so it resolves only while the model this snapshot
+            was extracted from is the current Gmsh model, and raises
+            ``RuntimeError`` otherwise.
         pg :
             Physical group name or list of names.
         label :

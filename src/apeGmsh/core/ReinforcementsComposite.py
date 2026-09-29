@@ -41,37 +41,34 @@ from apeGmsh._kernel.defs.constraints import ReinforceDef
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 from apeGmsh._kernel.resolvers._reinforce import resolve_reinforce
 
+from ._declarations import _DeclarationsMixin
 
-# gmsh element-type code → (inverse-map host kind, corner-node count).
+
+# gmsh element-type code → inverse-map host kind.
 #
 # v1 = straight-sided hosts (``_inverse_map.HOST_KINDS``): the four linear
 # kinds map directly; a straight-sided higher-order host maps with its
 # **corner** kind + corner subset (gmsh orders corner nodes first), since
 # the host's geometry / ξ domain is defined by the corner sub-element.
-_GMSH_HOST_KIND: dict[int, tuple[str, int]] = {
-    2:  ("tri3", 3),    # tri3
-    3:  ("quad4", 4),   # quad4
-    4:  ("tet4", 4),    # tet4
-    5:  ("hex8", 8),    # hex8
-    9:  ("tri3", 3),    # tri6  → corner tri3
-    10: ("quad4", 4),   # quad9 → corner quad4
-    11: ("tet4", 4),    # tet10 → corner tet4
-    16: ("quad4", 4),   # quad8 → corner quad4
-    17: ("hex8", 8),    # hex20 → corner hex8
+# The connectivity width and corner count come from the shared topology
+# table (``apeGmsh.mesh._element_types.element_topology``).
+_GMSH_HOST_KIND: dict[int, str] = {
+    2:  "tri3",    # tri3
+    3:  "quad4",   # quad4
+    4:  "tet4",    # tet4
+    5:  "hex8",    # hex8
+    9:  "tri3",    # tri6  → corner tri3
+    10: "quad4",   # quad9 → corner quad4
+    11: "tet4",    # tet10 → corner tet4
+    16: "quad4",   # quad8 → corner quad4
+    17: "hex8",    # hex20 → corner hex8
 }
 
-# gmsh host element-type code → full per-element node count (corner +
-# midside), used to reshape the flat connectivity gmsh returns.
-_GMSH_HOST_FULL_NPE: dict[int, int] = {
-    2: 3, 3: 4, 4: 4, 5: 8,
-    9: 6, 10: 9, 11: 10, 16: 8, 17: 20,
-}
-
-# gmsh line-element codes → corner-node count (Line2 / Line3).
-_GMSH_LINE_NPE: dict[int, int] = {1: 2, 8: 2}
+# gmsh line-element codes a bar may be meshed with (Line2 / Line3).
+_GMSH_BAR_LINE_CODES: frozenset[int] = frozenset({1, 8})
 
 
-class ReinforcementsComposite:
+class ReinforcementsComposite(_DeclarationsMixin):
     """Embedded-reinforcement generator — declare on geometry, resolve to
     ``LadrunoEmbeddedRebar`` ties after meshing.
 
@@ -90,6 +87,8 @@ class ReinforcementsComposite:
         g.reinforce(host="concrete", bars="rebar",
                     bond="bond1", bar_diameter=0.025)
     """
+
+    _DECLARATION_STORES = {"reinforce_defs": (ReinforceDef,)}
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -185,8 +184,7 @@ class ReinforcementsComposite:
             tolerance=tolerance, snap=snap,
             name=name,
         )
-        self.reinforce_defs.append(defn)
-        return defn
+        return self._declare(defn)
 
     def validate_pre_mesh(self) -> None:
         """No-op — reinforcement resolves at ``get_fem_data`` time."""
@@ -266,6 +264,7 @@ class ReinforcementsComposite:
         fail loud.
         """
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
 
         host_node_ids: list[list[int]] = []
         host_node_coords: list[np.ndarray] = []
@@ -293,11 +292,11 @@ class ReinforcementsComposite:
                         f"higher-order forms (tri6/quad8/quad9/tet10/hex20). "
                         f"Prism / pyramid hosts are deferred."
                     )
-                kind, n_corner = _GMSH_HOST_KIND[code]
-                full_npe = _GMSH_HOST_FULL_NPE[code]
-                conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
+                kind = _GMSH_HOST_KIND[code]
+                topo = element_topology(code, dim=int(dim))
+                conn = np.asarray(nodes, dtype=int).reshape(-1, topo.npe)
                 for row in conn:
-                    corners = [int(n) for n in row[:n_corner]]
+                    corners = [int(n) for n in row[:topo.n_corner]]
                     host_node_ids.append(corners)
                     host_node_coords.append(
                         np.vstack([coord_of[n] for n in corners]))
@@ -320,6 +319,7 @@ class ReinforcementsComposite:
         record ordering.
         """
         import gmsh
+        from apeGmsh.mesh._element_types import element_topology
 
         seen: dict[int, None] = {}
         segments: list[tuple[int, int]] = []
@@ -337,9 +337,9 @@ class ReinforcementsComposite:
                 ) from exc
             for etype, nodes in zip(etypes, enodes):
                 code = int(etype)
-                if code not in _GMSH_LINE_NPE or len(nodes) == 0:
+                if code not in _GMSH_BAR_LINE_CODES or len(nodes) == 0:
                     continue
-                full_npe = 2 if code == 1 else 3
+                full_npe = element_topology(code, dim=1).npe
                 conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
                 for row in conn:
                     a, b = int(row[0]), int(row[1])
@@ -405,7 +405,7 @@ class ReinforcementsComposite:
             for d in self.reinforce_defs]
 
     def clear(self) -> None:
-        self.reinforce_defs.clear()
+        self._clear_declarations()
         self.reinforce_records.clear()
 
     def __repr__(self) -> str:

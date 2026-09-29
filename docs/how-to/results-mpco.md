@@ -14,6 +14,7 @@ on entry and flushes the HDF5 on exit — no per-stage `begin_stage` /
 `end_stage` ceremony.
 
 ```python
+import numpy as np
 import openseespy.opensees as ops
 from apeGmsh.opensees import apeSees, OpenSeesModel
 from apeGmsh.results import Results
@@ -27,7 +28,7 @@ from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
 # Masses and support fixities ARE re-declared on the bridge (ops.mass / ops.fix).
 ops_bridge = apeSees(fem)
 ops_bridge.model(ndm=3, ndf=3)
-# ... materials, elements, fix, mass, pattern ...
+# ... materials, elements, fix, mass, pattern, analysis chain ...
 
 # Persist the canonical two-zone model.h5 — from_mpco needs it (model_h5=).
 ops_bridge.h5("model.h5")
@@ -40,37 +41,43 @@ spec = ResolvedRecorderSpec(
             category="nodes", name="top",
             components=("displacement_x", "displacement_y", "displacement_z"),
             dt=None, n_steps=None,
-            node_ids=fem.nodes.select(pg="Top").ids,
+            node_ids=np.asarray(fem.nodes.select(pg="Top").ids),
         ),
         ResolvedRecorderRecord(
             category="gauss", name="body",
             components=("stress_xx",),
             dt=None, n_steps=None,
-            element_ids=fem.elements.select(pg="Body").ids,
+            element_ids=np.asarray(fem.elements.select(pg="Body").ids),
         ),
     ),
 )
 
-# Drive the run; MPCO writes ONE file with every stage inside.
+# Build the declared model into openseespy, then drive the run; MPCO
+# writes ONE file with every stage inside.
+ops_bridge.run()
 with spec.emit_mpco("run.mpco"):
-    ops.analysis("Transient")
     for _ in range(n_steps):
         ops.analyze(1, dt)
 
 # Read it back — model_h5= is REQUIRED (a sibling path, not the in-memory
-# model object). Omitting it raises TypeError.
-results = Results.from_mpco("run.mpco", model_h5="model.h5")
+# model object). Omitting it raises TypeError. fem= is what lets pg= names
+# resolve: without it the reader knows only the ids the .mpco file carries.
+results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 
 disp = results.nodes.get(pg="Top", component="displacement_z")
 sigma = results.elements.gauss.get(pg="Body", component="stress_xx")
 ```
 
-**Prefer to run under STKO instead of in-process?** Export the deck and let
-STKO write the file, then read identically:
+**Prefer to run under STKO instead of in-process?** Declare the recorder on
+the bridge so it rides into the exported deck, run the deck under STKO's
+OpenSees, then read identically:
 
 ```python
-ops_bridge.tcl("model.tcl", recorders=spec, mpco=True)   # run with STKO loaded
-results = Results.from_mpco("run.mpco", model_h5="model.h5")
+ops_bridge.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",),
+                         elem_responses=("stresses",))
+ops_bridge.tcl("model.tcl", analyze_steps=n_steps, analyze_dt=dt)
+# ... run model.tcl under an OpenSees that has the MPCO recorder ...
+results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
 ```
 
 The read-side `Results` API is **identical** to every other strategy —
@@ -90,8 +97,9 @@ data came from MPCO.
 - **MPCO needs an STKO-built openseespy.** Vanilla `openseespy` distributions
   don't ship the MPCO recorder; `emit_mpco.__enter__` raises a `RuntimeError`
   with a remediation pointer. If you don't have STKO's bundled Python, use
-  native domain **capture** (`spec.capture(...)` → `Results.from_native`) for
-  the same fibers/layers/modal coverage without MPCO.
+  native domain **capture** (`ops_bridge.domain_capture(...)` →
+  `Results.from_native`) for the same fibers/layers/modal coverage without
+  MPCO.
 - **Loads are opt-in.** `g.loads.*` cases do not auto-emit; import each into a
   pattern with `p.from_model("<case>")`. Because nothing auto-emits, there is no
   double-count trap.
@@ -102,8 +110,9 @@ data came from MPCO.
   each rank stores only its own elements' share.
   Pass `merge_partitions=False` to read only the named partition.
 - **MPCO vs native capture:** use MPCO for STKO interoperability and parallel
-  runs; use `spec.capture(...)` when you control a plain openseespy build and
-  want apeGmsh's native HDF5 (same read API, broadest coverage, no STKO build).
+  runs; use `ops_bridge.domain_capture(...)` when you control a plain
+  openseespy build and want apeGmsh's native HDF5 (same read API, broadest
+  coverage, no STKO build).
 
 ## See also
 

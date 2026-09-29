@@ -29,6 +29,7 @@ Neither replaces the other.
 | `src/apeGmsh/opensees/architecture/` | the bridge's charter (14 principles), layout, API design, emitter, H5 schema, [testing.md](src/apeGmsh/opensees/architecture/testing.md) (test layers), and [agent-onboarding.md](src/apeGmsh/opensees/architecture/agent-onboarding.md) (the slice prompt template) |
 | `src/apeGmsh/opensees/architecture/decisions/` | the ADRs, append-only; the index is its README. **Before numbering a new ADR, list the directory on `origin/main`**, not your worktree: numbers have collided with work that merged after the cut |
 | `internal_docs/` | plans (`plan_*.md`), handoffs (`handoff_*.md`), user-facing guide drafts, [changelog_workflow.md](internal_docs/changelog_workflow.md), [docs_style.md](internal_docs/docs_style.md) |
+| `internal_docs/program/` | the remediation program: its charter [PROGRAM.md](internal_docs/program/PROGRAM.md), the slice-card template, and the panel prototypes. Live program state is on GitHub under the `program` label (board #1203). The `prog-*` workers are defined in `.claude/agents/` |
 | `docs/` + `mkdocs.yml` | the published site. It follows the docs_style contract, and `mkdocs build --strict` gates it |
 | `skills/apegmsh/` | the canonical user skill. `.claude/skills/apegmsh-helper/` is **derived**; never edit the mirror |
 | `CHANGELOG.md` | one section per PR, by [changelog_workflow.md](internal_docs/changelog_workflow.md) |
@@ -144,6 +145,7 @@ that points at the lesson; it never copies it.
 | Adding or changing an OpenSees primitive, a fork (Ladruno) feature, the emit path, a FEMData stream or the H5 schema | [`.claude/skills/apegmsh-bridge-feature/SKILL.md`](.claude/skills/apegmsh-bridge-feature/SKILL.md) |
 | Changing `results/` or `viewers/`: readers, derived results, the results↔viewer boundary. It routes viewer internals to `apegmsh-viewers-change` and visual proof to `apegmsh-viewers-visual-check` (#1170) | [`.claude/skills/apegmsh-viewer-results/SKILL.md`](.claude/skills/apegmsh-viewer-results/SKILL.md) |
 | Writing an ADR, a plan, a CHANGELOG section, a docs page, an example or the skill | [`.claude/skills/apegmsh-adr-docs/SKILL.md`](.claude/skills/apegmsh-adr-docs/SKILL.md) |
+| Running a remediation-program link as orchestrator (`/apegmsh-program <link>`), or working a program slice issue | [`.claude/skills/apegmsh-program/SKILL.md`](.claude/skills/apegmsh-program/SKILL.md) (orchestrator); [PROGRAM.md](internal_docs/program/PROGRAM.md) §7 (worker protocol) |
 
 A lesson that bites again and names a pattern a machine can see becomes
 a rule in `scripts/check_quirks.py`, proven against the commit that had

@@ -59,6 +59,371 @@ positional. The H5 archival emitter still rejects `mass_from_model()`:
 `model.h5` keeps the neutral 6-vector. Tests:
 `tests/opensees/integration/test_mass_from_model_2d.py`.
 
+### FIXED — a FEMData snapshot answers a raw `(dim, tag)` selection only from the Gmsh model it was extracted from
+
+`fem.nodes.select(target=[(dim, tag)])` and `fem.elements.select(...)` look a
+raw DimTag up in live Gmsh, and they asked whatever model was current. A
+snapshot of model A queried while model B was live returned B's entities with
+no error: an audit probe at 07f757e0 got 48 nodes back, only 10 of them among
+A's 58 top-face nodes. The model name cannot tell the two apart, because every
+session defaults to `"ModelName"` and Gmsh accepts duplicate names.
+`from_gmsh` and `from_msh` now record the producing model on the snapshot: its
+name plus a fingerprint of the entity list, the max node and element tags and
+the nodes on geometry points, read in O(entities) and independent of mesh
+size. A raw DimTag lookup raises `RuntimeError` unless the current model
+matches both, so it refuses when another session is current, the producing
+session was closed, the model was re-meshed, or the snapshot was loaded from
+`model.h5`. `compose` carries the host's record, since it keeps host ids
+verbatim. `pg=`, `label=` and part selection still resolve from the snapshot
+alone; the record is not part of `snapshot_id`, and the snapshot still
+pickles. `tests/test_femdata_raw_dimtag_source.py`.
+
+### ADDED — agentic remediation program: charter, pinned-model worker roster, orchestrator skill, and the architectural-strains assessment and expert-panel reports
+
+This PR adds the program that runs the architectural remediation, but no library code.
+
+**Reports**
+- `internal_docs/plan_architectural_strains_2026-09.md` covers the eight root strains, the verified silent defects D1–D11, and errata E1–E7.
+- `internal_docs/plan_expert_panel_2026-09.md` records the decisions of a nine-seat Fable/Opus panel:
+  - Fork policy is "B with amendments": the default target is auto-detected, fork tokens in the neutral layers are held to a ratchet, and going fork-only is a review trigger.
+  - The resolved `model.h5` archive becomes the program, test-first.
+  - About 37k LOC are cut.
+  - `nav.py` and a family-completeness gate are added.
+  - `land_pr.py` stays at about 80 lines.
+
+**The program**
+- `internal_docs/program/PROGRAM.md` is the static charter. Live state lives on GitHub: board #1203, ten chain issues (#1193–#1202), and the panel papers in #1192.
+- `internal_docs/program/slice_card.md` is the slice template. `internal_docs/program/prototypes/` holds the panel's scripts and expires on 2026-11-30.
+- Eight `.claude/agents/prog-*.md` workers pin model and effort: mechanic Sonnet/medium, builders Opus or Fable/high, architects Opus/max and Fable/xhigh, read-only cross-family reviewers, and an auditor on Haiku/low.
+- The `/apegmsh-program <link>` orchestrator skill boots from the ledger, dispatches workers, reviews, and lands only `mechanical` PRs. It queues the next link as a task chip.
+- AGENTS.md gains a routing row for each.
+
+### FIXED — results-strategy docs prescribed calls that do not exist; drift lane added
+
+`docs/how-to/choose-results-strategy.md` told readers to record with
+`spec.capture(...)`, `ops.tcl(..., recorders=spec)` and
+`ops.tcl(..., recorders=spec, mpco=True)`. None of them exist: `capture`
+left the recorder spec with the Phase 9 `Recorders` helper, and
+`apeSees.tcl` / `apeSees.py` take neither `recorders=` nor `mpco=`. The
+page is rewritten around the real calls (`ops.domain_capture`,
+`ResolvedRecorderSpec.emit_recorders` / `emit_mpco` / `to_tcl_commands`,
+`ops.recorder.MPCO` before `ops.run()` or `ops.tcl()`), with one runnable
+recipe per cell on a cantilever whose tip deflection (6.75 mm) every
+recipe reads back. Every block was executed as published, including both
+exported decks under OpenSees.exe. It also records two traps found on the
+way: the bridge's `ops.analyze(steps=1)` rebuilds the domain on each call,
+so it cannot drive a capture loop; and bridge-declared recorders write
+files `from_recorders` does not look for.
+`docs/how-to/results-mpco.md` had the same phantoms, and its recipe could
+not run: node/element ids came in as lists (`MeshSelection.ids`), the live
+domain was never built, and `from_mpco` lacked `fem=` for its `pg=` reads.
+All are fixed and verified end to end. The new
+`tests/test_docs_results_api_drift.py` statically resolves the imports,
+attribute chains and keyword arguments in the python fences and inline
+code of five results-API pages against the live code. It flags all ten
+phantoms in both pages as they shipped at 07f757e0.
+
+### FIXED — stock equation ties run live; the "71 % soft" was stock `TenNodeTetrahedron`, now refused on stock
+
+The live refusal of `enforce="equation"` ties on stock openseespy rested on a
+two-block series column that read 71 % soft on stock. That number is 2/7,
+exactly what one 6×-soft block in series gives, and the plate was a
+`TenNodeTetrahedron`. Upstream's element applies the tetrahedral 1/6 volume
+factor twice (`xsj = Jdet`), in every release through openseespy 3.8.0 and
+on upstream master `93f7e8e58`; the fork fixed it in PR #520. With a plate
+that is right on every build, stock 3.8.0 and the fork agree to nine digits
+against the closed form, and every tie row holds to about 1e-17. The
+survey ran on CI in fresh processes (tet4 / hex8 plates, collocation and
+mortar ties). The locally deployed fork build (2026-06-25, before PR #520)
+reproduced the 71 % too.
+
+- **Equation ties run live on stock** builds that have `equationConstraint`
+  (openseespy >= 3.8.0). A build without it gets a curated refusal.
+- **One tied model per stock process.** Upstream `Domain::clearAll()` does
+  not clear EQ constraints (the fork does since PR #312), and no stock
+  command removes one. So `wipe()` keeps the rows, and the next model in the
+  process enforces them. Measured on stock: a second tied model converged to
+  2× the closed form; a model missing a stale row's node hits a FATAL that
+  exits the process. After a stock process has taken an `equationConstraint`
+  row, `LiveOpsEmitter(wipe=True)` refuses to start another model.
+- **`TenNodeTetrahedron` is refused on stock** in the live run. On a fork
+  build without the `ladrunoBuild` stamp (older than 2026-08-10), which may
+  predate PR #520, it runs with `Tet10UnverifiedBuildWarning`.
+- **`constraints LadrunoProjection`** (auto-picked for equation ties under an
+  explicit integrator) gets the curated fork message on stock instead of a
+  bare `OpenSeesError`.
+- **CI:** `live-stock` moves to Python 3.12. On 3.11, pip resolves
+  openseespy 3.7.1.2, which predates `equationConstraint`, so the lane never
+  exercised a tie. The import step now asserts the command exists.
+- The two `build.py` messages that recommend `TenNodeTetrahedron` say it
+  must be the fork's. Docs and docstrings that called the live equation route
+  fork-only are corrected (`backend-capabilities.md` gains "Stock engine
+  defects").
+
+Tests name the engine against the closed form: the series stack without
+tet10 (exact on any build, run in fresh interpreters); stock tet10 stack =
+2/7; stock second model = 2×; tet10 block = 1/6 on stock and exact on a fixed
+fork; and fake-module unit tests for every gate branch.
+
+### FIXED — masses and loads on quad9, hex27 and line3 elements were silently dropped or halved
+
+`g.masses` and `g.loads` read a target's elements from gmsh through
+element-type tables copied into each composite. Two copies omitted quad9
+and three omitted hex27, the types `set_order(2)` produces by default
+(`bubble=True`) on a recombined surface and on a structured hex block. On
+quad9, `g.masses.surface` (both reductions) and a tributary surface load
+(`pressure`, `traction`, `shear`) produced zero records without a warning,
+and `force_resultant_center_mass` / `g.displacements.surface` with
+`normal=True` raised a misleading "got empty `faces`". On hex27,
+`g.masses.volume`, `g.loads.gravity` and `g.loads.body` produced zero
+records. The edge walks took a line3's mid node for its far end (gmsh lists
+the two end nodes first), so `g.masses.line` and a tributary `g.loads.line`
+on an order-2 curve came out at half. The consistent pressure and
+consistent line-load walks already handled quad9 and line3.
+
+Every `getElements` walk in `core/` now reads the connectivity width and
+corner count from one table, `TOPOLOGY_BY_CODE` in
+`apeGmsh.mesh._element_types`, derived from the curated alias table,
+through `element_topology()`. A walk no longer skips an element type it
+cannot handle; it raises. That covers a type outside the table (the
+order-3 serendipity quad12) and, on the walks that pass whole connectivity
+rows to a resolver (consistent pressure, gravity and body loads, volume
+masses), a type without shape functions: tri9, which the resolvers'
+node-count dispatch would integrate as a quad9, or tet20. The
+outward-normal walk for pressure now recognises hex27 volumes; it used to
+warn and fall back to the connectivity normal. The reinforce, embed and
+rebar walks read their widths and corner counts from the same table, with
+unchanged behaviour. Tests: `tests/test_higher_order_mass_load_targets.py`
+(13 of its cases fail with the fix reverted) and the guard
+`tests/test_element_topology.py`, which checks the table against gmsh's own
+element properties and checks that every type `set_order` produces at
+orders 1 and 2 resolves.
+
+### FIXED — 2-D `geomTransf` Tcl decks no longer carry a `vecxz` (every beam was silently dropped)
+
+`ops.geomTransf.Linear/PDelta/Corotational(vecxz=...)` on an `ndm=2`
+bridge wrote `geomTransf Linear 1 0.0 0.0 1.0`. OpenSees' Tcl 2-D
+`geomTransf` accepts only `tag <-jntOffset ...>`, so the line failed with
+"bad command" and every element referencing it was never built. The
+interpreter still exits 0, and in-process openseespy ignores the extra
+args, which is why no run caught it. The build pipeline now emits the bare
+`geomTransf <Type> <tag>` whenever `ndm == 2`: a `vecxz` along global Z (the
+only direction a 2-D model can mean) is dropped, and any other vector
+raises `BridgeError` at emit, matching the existing 2-D `orientation=`
+refusal. The docs and tutorials that passed `vecxz=(0.0, 0.0, 1.0)` in
+2-D models now call `ops.geomTransf.Linear()`, and the skill states the
+2-D rule. Guarded by `tests/opensees/integration/test_geomtransf_2d_vecxz.py`.
+
+### FIXED — a chain-phase declaration the router rejects is no longer stored; `clear()` fails loud in a `from_h5` session
+
+In a `from_h5` / compose session, `_declare` appended the def to its
+store and then routed it into the broker. When the router raised
+(`KeyError` for an unresolvable name, `ValueError` from
+`boundary_faces_for`, `ChainPhaseError` for an unrouted kind), the call
+failed but the def stayed in `constraint_defs` / `load_defs` /
+`disp_defs`, and `list_defs()` reported it. `_declare` now routes
+first, then appends, then bumps, so a rejected def never reaches the
+store. The router reads only the broker and the def, so the order does
+not change what it applies.
+
+`g.constraints.clear()`, `g.reinforce.clear()` and `g.embed.clear()`
+emptied their def lists in a `from_h5` session, but `get_fem_data()`
+there returns the broker itself, which still held the records the
+router had applied and those loaded from `model.h5`. `clear()` was a
+silent no-op on the model. It now raises `ChainPhaseError` before
+emptying anything and names the remedy: reload with
+`apeGmsh.from_h5(path)`, or remove the declaration in the source
+session and save again. Live sessions are unchanged.
+
+Tests: `test_failed_strict_route_leaves_store_unchanged` and
+`TestClearInChainPhase` in
+`tests/test_phase_v1_1_a_chain_phase_router.py`, and store assertions
+on the two unrouted-kind tests in `tests/test_chain_phase_fail_loud.py`.
+
+### FIXED — `LadrunoRCConcrete` `beta_c` / `cracked_nu` are refused on the live route until a fork build carries them
+
+This corrects the #1184 section "C2 fork flags: `cracked_nu`, `beta_c`, `vc`
+tension-stiffening default 500→200". Fork PR #873, which carried
+`-betaC` / `-crackedNu`, was **closed unmerged** on 2026-09-27 and is being
+re-landed as fork PR #877. No build of the fork's `ladruno` branch parses the
+flags (checked at `891978c9e`). That parser's option loop ignores unknown
+tokens, so `beta_c=` / `cracked_nu=` were silently discarded on every
+`ladruno` build: the model ran with the elastic `nu` after cracking and
+`C = 170`, with no error.
+
+- **Live route refuses them.** `LiveOpsEmitter.nDMaterial` raises
+  `RuntimeError` for a `LadrunoRCConcrete` / `LadrunoRCFiniteStrain` line
+  that carries `-betaC` or `-crackedNu` while the new floor
+  `LADRUNO_RC_C2_MIN_BUILD` (`apeGmsh.opensees.material.nd`) is `None`.
+  Once it is set to #877's merge SHA, only a build with no
+  `ladrunoBuild()` stamp is refused. A bare hash cannot prove ancestry
+  (ADR 0107 D4).
+- **Tcl / openseespy decks warn.** `ops.tcl(...)` / `ops.py(...)` still
+  emit the flags but raise a `LadrunoRCBuildWarning`: the deck is correct
+  only on a build that carries them.
+- **`tens_stiff_c` default, corrected.** #1184 said the fork moved the `vc`
+  default from 500 to 200. That happened only on the unmerged branch. Every
+  `ladruno` build still defaults to **500**, so `tens_stiff_c=None` keeps
+  the old curve there and gets 200 once #877 merges. Pass `tens_stiff_c`
+  explicitly to pin the curve. The `_LadrunoRC` docstring, both
+  `ops.nDMaterial` wrappers and `docs/concepts/backend-capabilities.md` now
+  say so.
+
+Tests: `tests/opensees/unit/test_ladruno_rc_c2_gate.py` covers the live
+refusal, the stamped-build pass, and the deck warning, using fake `ops`.
+`test_ladruno_rc_cracked_nu_live.py` now asserts the refusal while the floor
+is `None`. No quirk-lint rule was added: this is the first time a flag from
+an unmerged fork PR shipped, and `scripts/check_quirks.py` takes a lesson
+only after it recurs. The lesson is a checklist line in the bridge-feature
+guide instead.
+
+### FIXED — recorder-spec messages point at the real in-process capture route; `ResolvedRecorderRecord` accepts list IDs
+
+- The `emit_recorders` refusals and warnings (modal records raise,
+  fiber/layer records warn-and-skip), the `LiveRecorders` module
+  docstring, the gauss-strain `.out` warning in `results/spec/_emit.py`,
+  and the `emit_recorders` docstring named `spec.capture(...)` and
+  `apeGmsh.results.spec.Recorders`. Phase 9 deleted both. They now name
+  `ops.domain_capture(DomainCaptureSpec(opensees=ops), path=...)`, with
+  `DomainCapture.capture_modes(n)` for modes, and `spec.emit_mpco(...)`.
+- `ResolvedRecorderRecord` coerces `node_ids` / `element_ids` to an
+  ndarray. A list such as `fem.nodes.select(...).ids` used to crash
+  emit with `AttributeError: 'list' object has no attribute 'size'`.
+- `ResolvedRecorderSpec.emit_recorders` / `emit_mpco` carry return
+  annotations (`LiveRecorders` / `LiveMPCO`).
+
+### REMOVED — dead `g.node_ndf` populator in the FEM factory
+
+`mesh/_fem_factory.py` still carried `_populate_node_ndf` /
+`_resolve_ndf_target_to_node_ids`, which read `session.node_ndf` and
+called `_defs` / `_targeted_defs()` / `_default_def()` on it. The
+`g.node_ndf` composite was deleted by ADR 0048 (per-node `ndf` is
+inferred from the declared elements; `ops.ndf` covers element-less
+nodes), nothing sets `session.node_ndf`, and `_targeted_defs` is
+defined nowhere, so the `getattr` always returned `None` and the broker
+always got `ndf=None`. The helpers and their call site are removed (no
+behaviour change), and stale `g.node_ndf` mentions in the hash-fold
+comment and test docstrings now describe inference.
+
+### FIXED — capture, live recorders and `solve_and_extract` talk to the module the bridge drives; `has_fork` is the resolver's verdict
+
+The bridge resolves its OpenSees module fork-first (`APEGMSH_OPENSEES_BIN`,
+then a bare `import opensees`, then stock `openseespy.opensees`), but five
+sites imported `openseespy.opensees` by name: `DomainCapture`'s fallback
+before `analyze()` has built a live emitter, `LiveMPCO` and `LiveRecorders`
+(`spec.emit_mpco` / `spec.emit_recorders` without `ops=`), and both steps of
+`interop.solve_and_extract`. Beside a fork build those are two modules with
+two domains: the recorders attached to a domain the analysis never touched,
+and the capture sampled an empty one (the 9ffe6aa2 symptom; that fix kept the
+import as its fallback). All five now resolve through the new public
+`apeGmsh.opensees.emitter.live.get_ops()`, and an explicit `ops=` still wins.
+`solve_and_extract` builds the model with `apeSees.run()` instead of
+`runpy`-ing an emitted py deck, which binds `openseespy.opensees` itself, so
+the build, the static solve and the queries share one module, and
+`APEGMSH_OPENSEES_BIN` now reaches it (a model with ETABS property modifiers
+emits the fork-only `LadrunoShellModifier`). The arch-pushover example
+(`examples/shoebuckle_arch.py` and its studio copy) drove its analysis loop
+through the same import after `ops.run()` and now calls `get_ops()`.
+
+`OpenSeesCapabilities.has_fork`, and `has_ladruno_up`, which mirrors it, now
+read `get_backend_name() == "ladruno-fork"`: the `criticalTimeStep` test that
+tags the backend and gates the live emitter's fork-only verbs, instead of
+`hasattr(ops, "profiler")`. A fork build that registers both commands reads
+the same as before; `has_profiler` still reports the `profiler` command.
+
+New quirk rule `openseespy-import` (`scripts/check_quirks.py`): no `import
+openseespy`, `from openseespy… import` or literal
+`import_module("openseespy…")` in `src/apeGmsh/` or `examples/` outside the
+resolver, `emitter/live.py`. Run against the pre-fix tree it flags exactly the
+seven sites above; `tests/test_check_quirks.py` holds the shapes.
+
+### FIXED — declarations made after the first `get_fem_data()` no longer return a stale snapshot; `g.constraints.clear()` empties all five def lists
+
+`g.constraints.contact(...)`, `contact_plane(...)`, `interface(...)`,
+`g.reinforce(...)` and `g.embed(...)` declared **after** the first
+`g.mesh.queries.get_fem_data()` did not invalidate the session's FEMData
+cache (ADR 0038). The next `get_fem_data()` returned the **same**
+snapshot without them: 0 `fem.elements.contact_planes` while
+`g.constraints.contact_plane_defs` held 1, so the model solved without
+the contact, interface or tie. Only a variant call such as
+`get_fem_data(dim=3)`, which bypasses the cache, included them.
+
+Each declaration had to bump the cache counter by hand, and only 7 sites
+did. The new `_DeclarationsMixin` (`src/apeGmsh/core/_declarations.py`)
+makes storing, chain-phase routing and the bump one step (`_declare`).
+All eight composites that record defs inherit it and list their stores
+in `_DECLARATION_STORES`: `g.constraints`, `g.reinforce`, `g.embed`,
+`g.rebar`, `g.loads`, `g.displacements`, `g.masses` and
+`g.decoupled_nodes`. The `g.rebar` workaround, a local bump after
+forwarding to `g.reinforce`, is gone.
+
+`clear()` had the same bug and a second one. None of the three `clear()`
+methods bumped the counter, and `g.constraints.clear()` emptied only the
+MP `constraint_defs`, leaving the `bc`, `contact`, `contact_plane` and
+`interface` defs in place. It now empties all five lists and their
+records, and invalidates the cache.
+
+Guards: `tests/test_declaration_coverage.py` is an AST gate: no composite
+writes a declaration store except through the mixin, and every public
+verb that builds a def reaches `_declare`. `tests/test_fem_cache_invalidation.py`
+covers every declaration kind and every `clear()` end to end.
+
+### ADDED — RC layered shells: `ops.section.RCLayeredShell` + `RebarMesh`, `ops.nDMaterial.PlateFiber`, `ASDShellQ4(no_eas=)`; `ShellLayer` refuses layers OpenSees cannot use
+
+- **`RCLayeredShell(h=, concrete=, meshes=[RebarMesh...], n_concrete=10)`**
+  (`section/plate.py`; namespace `ops.section.RCLayeredShell`) builds a
+  reinforced-concrete `LayeredShell` from bar meshes. It adds no emit
+  surface; the result is a plain `section LayeredShell`. Each `RebarMesh`
+  (steel uniaxial, `angle` in degrees, `area_per_width = A_s / s`, centroid
+  as `z` or `cover` + `face`; `RebarMesh.from_bars(bar_area=, spacing=)`)
+  becomes its own thin `PlateRebar` layer centred on the bar. The concrete
+  fills the gaps around the bars, so its total is `h - sum(A_s / s)`: the
+  steel is never a `rho`-weighted overlay inside a concrete layer.
+  `n_concrete` layers are split over the concrete regions in proportion to
+  their thickness, with at least one per region. The topmost concrete layer
+  takes the rounding, so the stack sums to `h`. Meshes with the same steel
+  instance and angle share one `PlateRebar`. The builder refuses a bar
+  outside `[-h/2, h/2]`, overlapping bars (touching is fine) and a stack
+  with no concrete left. Below six concrete layers it warns
+  (`CoarseShellLayeringWarning`): the section integrates each layer at its
+  mid-plane, which drops `1/n**2` of the bending stiffness of `n` equal
+  layers. The namespace method registers the new `PlateRebar` layers and
+  the section; the concrete and steel must already be registered.
+- **`PlateFiber(material=<3-D nD>)`** emits `nDMaterial PlateFiber $tag
+  $threeDTag` (stock). It condenses a 3-D law to a shell layer by iterating
+  `eps33` to `sigma33 = 0`. Usually not needed, since a layered section
+  asks each 3-D layer for its PlateFiber view itself. OpenSees takes
+  `getCopy("ThreeDimensional")` of the inner without a null check, so
+  `PlateFiber` refuses `PlateRebar`, `PlateFromPlaneStress`,
+  `PlaneStressRebar` and `LogStrain2D` (null copy), and `PlaneStrain` and
+  `PlateFiber` (wrong-order copy). `PlateFromPlaneStress` now also refuses
+  a `PlateFiber` inner, whose "plane-stress" copy would be order 5.
+- **`ShellLayer` refuses** a `UniaxialMaterial` (the section parser looks
+  layer tags up among the nDMaterials, a separate tag space, so the tag
+  named a missing or an unrelated nD material), pointing to `PlateRebar` /
+  `RCLayeredShell`. It also refuses anything that is not an `NDMaterial`,
+  plus `PlaneStrain` (order-3 copy for every type) and `LogStrain2D` (null
+  PlateFiber copy, so the C++ side would call `exit(-1)`). `LayeredShell` /
+  `LayeredShellFiberSection` refuse a layer that is not a `ShellLayer`.
+- **`ASDShellQ4(no_eas=True)`** emits `-noeas`, which turns off the
+  enhanced (AGQI/EAS) membrane. It was the last `OPS_ASDShellQ4` option
+  without a keyword. `-local`, `-drillingStab` and `-drillingNL` were fixed
+  or added in #1183.
+
+Tests: `tests/opensees/unit/primitives/test_sections_rc_layered_shell.py`
+(layer arithmetic, bar depths, concrete reduction, apportioning, dedup,
+validation, the warning, and namespace registration and emit order in Tcl
+and Python), new `PlateFiber` and `ShellLayer` cases in
+`test_materials_plate_layers.py`, `-noeas` emission in
+`test_elements_shell.py`, and an H5 round-trip
+(`tests/opensees/h5/test_h5_rc_layered_shell_roundtrip.py`). Two live
+tests, run on both the fork and stock openseespy 3.7.1.2: one
+`ASDShellQ4` with a helper-built two-curtain section gives membrane
+stiffness `E_c (h - sum t_s) + E_s sum t_s,along` along x and along y to
+1e-6 (`tests/opensees/live/test_rc_layered_shell_live.py`), and `-noeas`
+stiffens one element in in-plane bending (0.74x the enhanced tip
+displacement).
+
 ### ADDED — `LadrunoRCConcrete`/`LadrunoRCFiniteStrain` C2 fork flags: `cracked_nu`, `beta_c`, `vc` tension-stiffening default 500→200
 
 Exposes the three `_LadrunoRC` (base of `LadrunoRCConcrete` /

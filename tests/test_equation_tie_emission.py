@@ -379,11 +379,10 @@ def test_ladruno_projection_ic_tol_requires_project_ics():
 # when openseespy is not importable (e.g. a plain CI Python).
 # --------------------------------------------------------------------------
 
-# Stock openseespy satisfies THIS isolated row exactly, but diverges from
-# the fork on a realistic non-matching interface (see the 71 %-soft tied
-# stack in tests/test_meshable_part_route.py), so LiveOpsEmitter gates the
-# live equationConstraint route on the fork build — which puts this test
-# on the fork side too.
+# Fork-only because it runs IN the test process: stock enforces the row
+# exactly too, but stock wipe() keeps equationConstraint rows, so a stock
+# process that ran one refuses every later live model. The stock tie is
+# measured in fresh interpreters in tests/test_meshable_part_route.py.
 @pytest.mark.ladruno_fork
 def test_equation_tie_enforced_in_live_solve():
     ops = pytest.importorskip("openseespy.opensees")

@@ -12,12 +12,11 @@ mesh nodes have no ETABS id and are skipped. Requires ``openseespy``.
 """
 from __future__ import annotations
 
-import runpy
-import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..opensees._internal.analyze_rc import check_analyze_rc
+from ..opensees.emitter.live import get_ops
 from .etabs_import import (
     apply_subgrade_springs,
     build_opensees,
@@ -96,7 +95,7 @@ def solve_and_extract(
     ops = build_opensees(fem, one_case, result, ndm=ndm, ndf=ndf)
     converged = _run_static(ops, tol=tol, max_iter=max_iter)
 
-    import openseespy.opensees as o
+    o = get_ops()  # the module _run_static built and ran the model in
 
     tag_of = _joint_tag_map(fem, one_case)
     dofs = range(1, ndf + 1)
@@ -133,12 +132,15 @@ def _resolve_case(model: StructuralModel, case: str | None) -> str:
 
 
 def _run_static(ops, *, tol: float, max_iter: int) -> bool:
-    """Write + run the deck, configure a linear static step, return converged."""
-    with tempfile.TemporaryDirectory() as d:
-        deck = Path(d) / "deck.py"
-        ops.py(str(deck))
-        runpy.run_path(str(deck))
-    import openseespy.opensees as o
+    """Build the model in-process, configure a linear static step, return converged.
+
+    ``ops.run()`` emits through the bridge's live emitter, into the module
+    :func:`get_ops` returns, so the model and the analysis share one domain.
+    Running an emitted py deck instead built the model in whatever
+    ``openseespy.opensees`` named: beside a fork build, a second module.
+    """
+    ops.run()
+    o = get_ops()
 
     o.system("UmfPack")
     o.numberer("RCM")

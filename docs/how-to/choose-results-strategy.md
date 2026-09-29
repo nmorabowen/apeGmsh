@@ -1,110 +1,284 @@
 # Running & reading: choose your path
 
-You have a meshed model and a typed `apeSees(fem)` bridge. Two independent
-decisions stand between you and a `results` object: **how to run** OpenSees,
-and **how to read** what it wrote. This page is the fork. Pick a cell; the
-`Results` query API is identical no matter which one you land on.
+You have a meshed model and a typed `apeSees(fem)` bridge. This page settles
+the two decisions between you and a `results` object, **how to run** OpenSees
+and **how to read** what it wrote, and gives the working calls for each
+combination. Whichever cell you pick, the `Results` query API you read with
+afterwards is the same.
 
 ## The two axes
 
-- **RUN** — *in-process* drives the live `openseespy` domain from your
-  notebook (`ops.analyze(...)` in the same kernel); *export* writes a
-  standalone `.tcl` / `.py` deck (`ops.tcl(...)` / `ops.py(...)`) you run
-  elsewhere — a cluster, STKO, or a separate process.
-- **READ** — how the run's output gets back into apeGmsh's label/query
-  world: **native capture** (apeGmsh probes the domain and writes its own
-  HDF5), **classic recorders** (OpenSees `.out`/`.xml` files), or **MPCO**
-  (STKO's `.mpco` HDF5).
+**Run** decides where the analysis executes. *In-process* builds the model
+into the live openseespy domain of your own Python session and steps it
+there. *Export* writes a standalone `.tcl` or `.py` deck (`ops.tcl(...)` /
+`ops.py(...)`) that you run somewhere else: a cluster, STKO, or a separate
+process.
+
+**Read** decides how the numbers get back into apeGmsh's label and query
+world: **native capture** (apeGmsh queries the live domain and writes its
+own HDF5), **classic recorders** (OpenSees `.out` / `.xml` files), or
+**MPCO** (STKO's `.mpco` HDF5).
+
+On this page `ops` is always the bridge and `opspy` is the openseespy module
+(`import openseespy.opensees as opspy`).
 
 ## The grid
 
-|              | **Read: native capture** → `from_native` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
-|--------------|-------------------------------------------|-------------------------------------------------|------------------------------|
-| **Run: in-process** (notebook) | **`spec.capture(...)`** — the default, broadest path. apeGmsh queries the live domain each `cap.step(t)` and writes native HDF5. Every topology level (nodes → gauss → fibers → layers → springs) **plus modal via `cap.capture_modes(n)`**. This is what the tutorials use. | **`spec.emit_recorders("out/")`** — classic recorders pushed into the live domain, no subprocess. Lightweight nodes / elements / gauss / line_stations. **No** fibers / layers; **modal raises** — use capture. Read one stage at a time with `stage_id=`. | **`spec.emit_mpco("run.mpco")`** — MPCO recorder in-process. Native fibers / layers / modal. **Requires an STKO-built openseespy**; vanilla builds raise at `__enter__`. |
-| **Run: export** (cluster / external) | — *(capture needs a live domain; export decks can't carry it)* | **`ops.tcl(..., recorders=spec)`** / **`ops.py(...)`** — emit a deck, run OpenSees anywhere, parse the `.out`/`.xml`. Reproducible, check-in-able, cluster-friendly. | **`ops.tcl(..., recorders=spec, mpco=True)`** — one `recorder mpco` line; run under **STKO-loaded** OpenSees, parallel-aware. The STKO-shop production path. |
+|  | **Read: native capture** → `from_native` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
+|---|---|---|---|
+| **Run: in-process** | `ops.domain_capture(capture_spec, path=...)`. The default: every category from nodes to fibers and layers, plus mode shapes via `cap.capture_modes(n)`. | `recorder_spec.emit_recorders("out")`. Nodes, element forces, gauss points and line stations; fiber and layer records are skipped and modal ones raise. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibers, layers and modes, on a build that has the MPCO recorder. |
+| **Run: export** | *(none: capture needs a live domain in your Python session)* | `recorder_spec.to_tcl_commands(...)` in a driver around `ops.tcl(...)`. Reproducible, check-in-able, cluster-friendly. | `ops.recorder.MPCO(...)` before `ops.tcl(...)`. One `recorder mpco` line in the deck; run it under an OpenSees that has the recorder. |
 
-> Native capture is a *run-side* technique — it only exists in-process,
-> so that cell of the export row is intentionally empty. Everything else
-> has a home.
+`capture_spec` is a `DomainCaptureSpec`, which names what to record by
+physical group. `recorder_spec` is a `ResolvedRecorderSpec`, which holds
+concrete node and element IDs. The recipes below build both.
 
-## When to reach for each
+Start with in-process capture unless something pushes you off it. It needs
+nothing beyond a stock openseespy, covers the most, and writes one file that
+carries its own model, which is why the tutorials use it. The other cells
+answer specific pressures: classic recorders when you want plain OpenSees
+output files, MPCO when the results must open in STKO, and export when the
+run has to happen somewhere your notebook is not.
 
-- **In-process + capture** (`spec.capture` → `from_native`): the default.
-  Interactive, broadest coverage, modal handled natively, zero subprocess.
-  Start here unless something pushes you off it. **The tutorials use this
-  on purpose** — it is the least-surprise path.
-- **In-process + recorders** (`spec.emit_recorders` → `from_recorders`):
-  when you want plain-OpenSees recorder semantics in the notebook and only
-  need nodes / elements / gauss / line_stations. Lighter than capture for
-  very long runs.
-- **In-process + MPCO** (`spec.emit_mpco` → `from_mpco`): when you have an
-  STKO-built openseespy and want fibers / layers / modal written by the
-  battle-tested STKO recorder — see [Get results via MPCO](results-mpco.md).
-- **Export + recorders** (`ops.tcl`/`ops.py` → `from_recorders`): cluster
-  jobs, reproducible decks, non-Python tooling — see
-  [Export a standalone deck](export-script.md).
-- **Export + MPCO** (`ops.tcl(mpco=True)` → `from_mpco`): big parallel runs
-  in the STKO ecosystem — also covered in [results-mpco.md](results-mpco.md).
+## The recipes
+
+Every recipe solves the same model: a 3 m steel cantilever carrying a 10 kN
+tip load, applied in ten load steps. Its tip deflects *PL*³/3*EI* = 6.75 mm,
+and each recipe reads that number back.
+
+```python
+import numpy as np
+import openseespy.opensees as opspy
+from apeGmsh import apeGmsh, Results
+from apeGmsh.opensees import apeSees, OpenSeesModel
+
+L, E, b, h, P = 3.0, 200e9, 0.10, 0.20, 10_000.0
+A, Iz = b * h, b * h**3 / 12.0
+
+with apeGmsh(model_name="cantilever") as g:
+    p0 = g.model.geometry.add_point(0.0, 0.0, 0.0)
+    p1 = g.model.geometry.add_point(L, 0.0, 0.0)
+    beam = g.model.geometry.add_line(p0, p1)
+    g.model.sync()
+    g.physical.add(1, [beam], name="Beam")
+    g.physical.add(0, [p0], name="Fixed")
+    g.physical.add(0, [p1], name="Tip")
+    g.mesh.sizing.set_global_size(L / 10.0)
+    g.mesh.generation.generate(1)
+    fem = g.mesh.queries.get_fem_data(dim=1)
+
+def build_bridge():
+    """A fresh bridge: the cantilever and a ten-step static analysis chain."""
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    transf = ops.geomTransf.Linear()          # a 2-D transform takes no vecxz
+    ops.element.elasticBeamColumn(pg="Beam", transf=transf, A=A, E=E, Iz=Iz)
+    ops.fix(pg="Fixed", dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as pat:
+        pat.load(pg="Tip", forces=(0.0, -P, 0.0))
+    ops.constraints.Plain(); ops.numberer.Plain(); ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=10); ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=0.1); ops.analysis.Static()
+    return ops
+```
+
+Each recipe starts from a fresh bridge, because a recorder declared on a
+bridge rides along into everything that bridge emits afterwards.
+
+### In-process, native capture
+
+`ops.run()` builds the model and its analysis chain into openseespy without
+analysing, so your loop can call `cap.step` after every increment:
+
+```python
+from apeGmsh.results.capture import DomainCaptureSpec
+
+ops = build_bridge()
+capture_spec = DomainCaptureSpec(opensees=ops)
+capture_spec.nodes(pg="Tip", components=["displacement"])
+
+ops.run()
+with ops.domain_capture(capture_spec, path="run.h5") as cap:
+    cap.begin_stage("load", kind="static")
+    for _ in range(10):
+        opspy.analyze(1)
+        cap.step(t=opspy.getTime())
+    cap.end_stage()
+opspy.wipe()
+
+results = Results.from_native("run.h5", fem=fem,
+                              model=OpenSeesModel.from_h5("run.h5"))
+```
+
+Don't step with the bridge's own `ops.analyze(steps=1)` here: it rebuilds
+the domain from scratch on every call, so each `cap.step` would record the
+first increment again. The run file carries its own model, which is why the
+same path feeds `OpenSeesModel.from_h5`. For mode shapes, call
+`cap.capture_modes(n)` inside the block on a model that has mass.
+
+### In-process, classic recorders
+
+Reach for this when you want plain OpenSees recorder files from a notebook
+run and need only nodes, element forces, gauss points or line stations. A
+`ResolvedRecorderSpec` holds IDs rather than names, so resolve the physical
+group once, as an array:
+
+```python
+from apeGmsh.results.spec import ResolvedRecorderRecord, ResolvedRecorderSpec
+
+recorder_spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="tip",
+        components=("displacement_x", "displacement_y"),
+        dt=None, n_steps=None,
+        node_ids=np.asarray(fem.nodes.select(pg="Tip").ids),
+    ),),
+)
+
+ops = build_bridge()
+ops.h5("model.h5")                  # the model archive the read needs
+ops.run()
+with recorder_spec.emit_recorders("out") as live:
+    live.begin_stage("load", kind="static")
+    for _ in range(10):
+        opspy.analyze(1)
+    live.end_stage()                # removing the recorders flushes out/
+opspy.wipe()
+
+results = Results.from_recorders(recorder_spec, "out", fem=fem, stage_id="load",
+                                 model=OpenSeesModel.from_h5("model.h5"))
+```
+
+Each stage's files are prefixed `<stage>__`, which is why the read names
+`stage_id=`.
+
+### In-process, MPCO
+
+Reach for this when the results must open in STKO. Declare the recorder on
+the bridge and it opens with the domain:
+
+```python
+ops = build_bridge()
+ops.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",))
+ops.h5("model.h5")
+ops.run()
+for _ in range(10):
+    opspy.analyze(1)
+opspy.wipe()                        # closes the recorder, flushing run.mpco
+
+results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
+```
+
+If you already hold a `recorder_spec`, wrapping the loop in
+`with recorder_spec.emit_mpco("run.mpco"):` does the same without touching
+the bridge. The [MPCO how-to](results-mpco.md) covers partitioned runs and
+where to write the file.
+
+### Export, classic recorders
+
+Reach for this for cluster jobs and for decks you keep under version
+control. `ops.tcl` writes the model and its analysis chain, and a short
+driver adds the recorders and the analysis:
+
+```python
+from pathlib import Path
+
+ops = build_bridge()
+ops.h5("model.h5")
+ops.tcl("model.tcl")
+Path("run.tcl").write_text("\n".join([
+    "source model.tcl",
+    "file mkdir out",
+    *recorder_spec.to_tcl_commands(output_dir="out"),
+    "analyze 10",
+    "wipe",
+]) + "\n")
+```
+
+Run `run.tcl` wherever OpenSees lives, bring `out/` back beside `model.h5`,
+and read it. A deck's files carry no stage prefix, so the read takes no
+`stage_id=`:
+
+```python
+results = Results.from_recorders(recorder_spec, "out", fem=fem,
+                                 model=OpenSeesModel.from_h5("model.h5"))
+```
+
+For an openseespy deck, `recorder_spec.to_python_commands(output_dir="out")`
+returns the same recorders as `ops.recorder(...)` lines.
+
+### Export, MPCO
+
+The STKO-shop production path, and the one that scales to parallel runs.
+The bridge's MPCO recorder rides into the deck as one `recorder mpco` line:
+
+```python
+ops = build_bridge()
+ops.recorder.MPCO(file="run.mpco", nodal_responses=("displacement",))
+ops.h5("model.h5")
+ops.tcl("model.tcl", analyze_steps=10)
+```
+
+Run `model.tcl` under an OpenSees that has the MPCO recorder, then:
+
+```python
+results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
+```
 
 ## The read side is identical
 
-Whichever cell you picked, the run produced a file (or a directory of
-recorder files) and a canonical `model.h5`. From there the query surface
-does not change:
+Whichever recipe ran, the query is the same:
 
 ```python
-from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel
-
-# Constructors differ ONLY in which file each strategy wrote.
-# All three REQUIRE the model broker — omitting it raises TypeError.
-model   = OpenSeesModel.from_h5("model.h5")
-results = Results.from_native("run.h5",  fem=fem, model=model)      # capture
-# results = Results.from_recorders(spec, "out/", fem=fem, model=model)  # recorders
-# results = Results.from_mpco("run.mpco", model_h5="model.h5")          # MPCO (path, not object)
-
-# From here ON, the code is the same for every strategy — target by PG NAME.
-disp  = results.nodes.get(pg="Top",  component="displacement_z")
-sigma = results.elements.gauss.get(pg="Body", component="stress_xx")
-for mode in results.modes:
-    print(mode.mode_index, mode.frequency_hz)
-
-# Human-facing viewer. results.viewer() defaults to blocking=None (auto):
-# scripts block; a Jupyter kernel takes the subprocess / show_web path.
-# Explicit blocking=True still crashes a Jupyter kernel.
-results.show_web()
+tip = results.nodes.get(pg="Tip", component="displacement_y")
+print(f"tip deflection = {tip.values[-1, 0] * 1e3:.2f} mm")
+results.close()
 ```
+
+```text
+tip deflection = -6.75 mm
+```
+
+Everything else about reading, from stages and time slicing to modes,
+fibers and the viewers, works the same way whichever constructor opened the
+file; the [Results concept page](../concepts/results.md) walks through it.
 
 ## Notes / gotchas
 
-- **`model=` / `model_h5=` is required on every constructor.** `from_native`
-  and `from_recorders` take the in-memory `model=` object; `from_mpco` takes
-  `model_h5=` as a **path** (MPCO files carry no `/opensees/` zone). Omitting
-  it raises `TypeError`. `from_recorders` additionally needs `fem=`.
+- **Every constructor needs the model.** `from_native` and `from_recorders`
+  take an in-memory `model=` (`OpenSeesModel.from_h5(...)`); `from_mpco`
+  takes `model_h5=` as a path, because MPCO files carry no `/opensees/`
+  zone. Omitting it raises `TypeError`. `from_recorders` also needs `fem=`.
+- **Bridge-declared recorders are not what `from_recorders` reads.** The
+  read finds files by the names its spec generates (`out/tip_disp.out`
+  above). Recorders declared on the bridge ride into `ops.run()` and every
+  deck, but name their files their own way: `ops.recorder.declare(...)`
+  after the declaration (`out/default__default__disp.out`),
+  `ops.recorder.Node(...)` after its `file=`. Use them when you consume the
+  `.out` files yourself, and generate the recorders from the spec when
+  apeGmsh should read them back.
+- **Fibers, layers and modes skip the classic path.** `emit_recorders`
+  warns and skips fiber and layer records, and raises at `__enter__` on a
+  modal one. Route those through native capture or MPCO.
+- **MPCO needs a build that has it.** Not every openseespy build ships the
+  MPCO recorder (STKO's bundled Python does), and `emit_mpco` raises at
+  `__enter__` with a remediation pointer when it is missing. Without such a
+  build, native capture gives the same fiber, layer and modal coverage.
 - **Loads are opt-in (ADR 0051).** MP constraints auto-emit, but
-  `g.loads.*` do **not**: import a load case into a bridge pattern with
-  `p.from_model(case)` (or author one via `pat.load(...)`). Masses and support
-  fixities/SPs are re-declared on the bridge (`ops.mass` / `ops.fix`).
-- **`emit_recorders` can't do modal or fibers/layers.** Modal records raise
-  at `__enter__`; fibers / layers warn-and-skip. Route those through
-  `spec.capture` (native) or `spec.emit_mpco` (STKO build).
-- **`emit_mpco` / `tcl(mpco=True)` need an STKO-built openseespy.** Vanilla
-  distributions don't ship the MPCO recorder. If you don't have STKO's
-  bundled Python, use native capture for the same fibers/layers/modal
-  coverage.
-- **`from_recorders` after `emit_recorders` needs `stage_id=`.** Per-stage
-  files are prefixed `<stage>__`; pass `stage_id="gravity"` matching your
-  `begin_stage` name, or the loader won't find them.
+  `g.loads.*` cases do not: import one into a bridge pattern with
+  `pat.from_model(case)`, or author loads with `pat.load(...)` as the
+  recipes do. Masses and supports are re-declared on the bridge
+  (`ops.mass`, `ops.fix`).
 
 ## See also
 
-- Concept: [Obtaining results — the five strategies](../concepts/results.md)
-  — the full A₁/A₂/A₃/B/C₁/C₂ breakdown with coverage tables and a decision
-  flowchart this grid summarizes.
-- How-to: [Export a standalone deck](export-script.md) (recorder export) ·
-  [Get results via MPCO](results-mpco.md) (STKO).
-- API: [`apeGmsh.results.Results`](../api/results.md) — `from_native`,
-  `from_recorders`, `from_mpco`, the composite query surface, and slab shapes.
+- Concept: [Results](../concepts/results.md), the read model that every
+  constructor on this page opens onto.
+- How-to: [Export to a Tcl or openseespy script](export-script.md) ·
+  [Get results via MPCO](results-mpco.md).
+- API: [`apeGmsh.results.Results`](../api/results.md): `from_native`,
+  `from_recorders`, `from_mpco` and the fork's `from_ladruno`.
 
 ---
 
