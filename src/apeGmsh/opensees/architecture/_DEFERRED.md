@@ -133,7 +133,7 @@ the OpenSees subprocess runs every stage's analyze loop and
 inter-stage cleanup as part of executing the deck. The Cerro
 Lindo migration uses this; live execution is the ergonomic gap.
 
-Lives in `emitter/live.py::stage_open` / `stage_close` (currently
+Lives in `emitter/live.py::LiveOpsEmitter.stage_open` / `stage_close` (currently
 raise); `apesees.py::analyze` / `eigen` (currently refuse).
 
 ### H5 archival of staged structure + initial-stress
@@ -170,7 +170,7 @@ before that lands:
   `Stage` discriminator on the slab.
 
 Lives in `apesees.py::h5` (the bridge-side guard, #313) and
-`emitter/h5.py::addToParameter` / `step_hook_ramp` / `stage_open`
+`emitter/h5.py::H5Emitter.addToParameter` / `step_hook_ramp` / `stage_open`
 / `stage_close` / `domain_change` (the schema-side no-ops).
 
 ### ✅ `remove sp` / `remove element` / mass overwrite / time-state mutators (Phase SSI-2.E, SHIPPED 2026-05)

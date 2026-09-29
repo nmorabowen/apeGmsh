@@ -602,3 +602,67 @@ def test_doc_path_skips_the_historical_plan_docs(tmp_path: Path) -> None:
         _doc(tmp_path, f"{ARCH}/{name}", "`mesh/records/_kinds.py` moves.")
     _doc(tmp_path, f"{ARCH}/_DEFERRED.md", "`mesh/records/_kinds.py` moves.")
     assert _doc_paths(tmp_path) == ["_DEFERRED.md:1"]
+
+
+# --- doc-path: the review of #1236 (suffix forms escaped; `::symbol` was loose) ---
+
+SCOPED = '''\
+import a.b
+from x import y as Alias
+try:
+    import z
+except ImportError:
+    z = None
+p, q = 1, 2
+
+def test_geom_2d():
+    some_local = 1
+    return some_local
+
+class Cls:
+    CONST = 1
+    def __init__(self):
+        self.attr = 0
+    def method(self):
+        pass
+'''
+
+
+def test_doc_path_checks_the_file_under_every_suffix_form(tmp_path: Path) -> None:
+    # `:10-20`, `::foo()` and `#L3` used to fail the regex, so the file went unchecked too.
+    _doc(tmp_path, "AGENTS.md", "`scripts/gone.py:10-20`", "`scripts/gone.py::foo()`", "`scripts/gone.py#L3`",
+         "`scripts/gone.py:7`", "`scripts/gone.py#L3-L9`", "`scripts/gone.py::a / b`")
+    assert _doc_paths(tmp_path) == [f"AGENTS.md:{n}" for n in range(1, 7)]
+
+
+def test_doc_path_reads_every_suffix_form_on_a_real_file(tmp_path: Path) -> None:
+    _write(tmp_path, "x/real.py", SCOPED)
+    _doc(tmp_path, "AGENTS.md", "`x/real.py:10-20` `x/real.py:7` `x/real.py#L3` `x/real.py#L3-L9`",
+         "`x/real.py::Cls.method()` `x/real.py::Cls.method / Cls.attr` `x/real.py::test_geom_*`")
+    assert _doc_paths(tmp_path) == []
+
+
+def test_doc_path_flags_an_unreadable_suffix(tmp_path: Path) -> None:
+    _write(tmp_path, "x/real.py", SCOPED)
+    _doc(tmp_path, "AGENTS.md", "`x/real.py and friends`", "`x/real.py:abc`", "`x/real.py::Cls.*`")
+    found = quirks.scan(tmp_path)
+    assert [f.line for f in found] == [1, 2]
+    assert "unreadable suffix ` and friends`" in found[0].message
+
+
+def test_doc_path_resolves_a_symbol_in_its_scope(tmp_path: Path) -> None:
+    _write(tmp_path, "x/real.py", SCOPED)
+    _doc(tmp_path, "AGENTS.md",
+         "`x/real.py::Alias` `x/real.py::a` `x/real.py::z` `x/real.py::q` `x/real.py::Cls.CONST`",
+         "`x/real.py::Cls.attr` `x/real.py::Cls.__init__` `x/real.py::test_geom_2d`",
+         "`x/real.py::some_local`",   # a function-local name is not a module name
+         "`x/real.py::Nope.method`",  # no such class
+         "`x/real.py::Cls.missing`",
+         "`x/real.py::a.b.c`",        # deeper than Class.member: not read
+         "`x/real.py::attr`")         # an instance attribute is not top-level
+    found = quirks.scan(tmp_path)
+    assert [f.line for f in found] == [3, 4, 5, 6, 7]
+    assert "defines no `some_local` at the top level" in found[0].message
+    assert "has no class `Nope`" in found[1].message
+    assert "defines no `missing` in class Cls" in found[2].message
+    assert "cannot be checked for `a.b.c`" in found[3].message
