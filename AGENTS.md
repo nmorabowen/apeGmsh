@@ -122,7 +122,9 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   - **After the merge, `compare/main...<merge-sha>` reads `behind` or
     `identical`**; `diverged` means it did not reach `main` (#858).
     `git merge-base --is-ancestor` cannot tell you: once the head branch is
-    auto-deleted the orphaned merge commit is on no fetched ref.
+    auto-deleted the orphaned merge commit is on no fetched ref. A nightly
+    Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
+    recent PRs and opens one `[Orphans]` issue when work is missing.
   - **The branch tip did not move past the merged head.** #1097 was pushed
     to after its merge and that commit stayed on the orphaned branch;
     `headRefOid` freezes at the merge, so the script reads `git ls-remote`.
@@ -132,11 +134,13 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   set/dict/list literal, because git sees no textual conflict (#605 + #606
   → #608). After merging a PR that shares a literal with an open one,
   re-run the other's tests on the merge.
-- **CHANGELOG: insert one section directly below the anchor comment, the
-  first thing under `## Unreleased`, and never edit existing lines**
+- **CHANGELOG: add one fragment file `changelog.d/<slug>.md` (one `### `
+  section), and never edit `CHANGELOG.md`**
   ([changelog_workflow.md](internal_docs/changelog_workflow.md), guarded
-  by `tests/test_changelog_structure.py`). Nothing goes between the header
-  and the anchor: one section there (#974) left the anchor at line 868.
+  by `python scripts/changelog.py --check` and
+  `tests/test_changelog_structure.py`). Two PRs then touch different
+  files, so the union merge cannot drop a blank line (#1219). A maintainer
+  runs `--assemble` at release time; never in CI.
 - **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -`
   sets the body to a literal "-".
 - **Skill changes:** edit `skills/apegmsh/`, run
