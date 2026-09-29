@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — the ADR index (decisions/README.md) is generated from each ADR's Status line (program slice A1.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3898,6 +3909,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — the ADR index (decisions/README.md) is generated from each ADR's Status line (program slice A1.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4211,6 +4233,15 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13">CHANGED — the ADR index (<code>decisions/README.md</code>) is generated from each ADR's Status line (program slice A1.3)<a class="headerlink" href="#changed-the-adr-index-decisionsreadmemd-is-generated-from-each-adrs-status-line-program-slice-a13" title="Permanent link">&para;</a></h3>
+<p><code>scripts/adr_index.py</code> now writes the README as the hand-written preamble
+plus one short row per ADR (<code>| [NNNN](file) | title | status |</code>), reading the
+title from each ADR's H1 and the first clause of its <code>**Status:**</code> line;
+<code>--check</code> exits 1 when the README is stale. The <code>adr-number</code> rule of
+<code>scripts/check_quirks.py</code> runs that check, so a stale README fails
+<code>static-gates</code>. The README drops from 91 KB to 14 KB. It also fixes seven
+stale Status cells (0052, 0053, 0056, 0077, 0089, 0094, 0095: "Proposed" in
+the README, "Accepted" in the ADR). No ADR file changed.</p>
 <h3 id="fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run">FIXED — a second push to <code>main</code> no longer cancels the first push's <code>Tests</code> run<a class="headerlink" href="#fixed-a-second-push-to-main-no-longer-cancels-the-first-pushs-tests-run" title="Permanent link">&para;</a></h3>
 <p><code>.github/workflows/tests.yml</code> set <code>cancel-in-progress: true</code> for every
 event, so back-to-back merges to <code>main</code> cancelled the earlier push's
