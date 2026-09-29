@@ -14,6 +14,17 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — the ADR index (`decisions/README.md`) is generated from each ADR's Status line (program slice A1.3)
+
+`scripts/adr_index.py` now writes the README as the hand-written preamble
+plus one short row per ADR (`| [NNNN](file) | title | status |`), reading the
+title from each ADR's H1 and the first clause of its `**Status:**` line;
+`--check` exits 1 when the README is stale. The `adr-number` rule of
+`scripts/check_quirks.py` runs that check, so a stale README fails
+`static-gates`. The README drops from 91 KB to 14 KB. It also fixes seven
+stale Status cells (0052, 0053, 0056, 0077, 0089, 0094, 0095: "Proposed" in
+the README, "Accepted" in the ADR). No ADR file changed.
+
 ### FIXED — `GeomTransfViewer` draws the OpenSees local frame (local y and z were both negated) and defaults `vecxz` to what the bridge emits
 
 `GeomTransfViewer` computed the local frame in its page's JavaScript as
