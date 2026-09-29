@@ -16,7 +16,6 @@ validation:
 
 exclude_docs: |
   __pycache__/
-  api-flows/_embed.py
 
 theme:
   name: material
@@ -233,7 +232,6 @@ nav:
       - "The model.h5 neutral zone": design/model-h5-neutral-zone.md
   - API Reference:
       - Overview: api/index.md
-      - API Flow Atlas: api-flows/index.md
       - Session (apeGmsh): api/session.md
       - Model: api/model.md
       - Parts: api/parts.md
