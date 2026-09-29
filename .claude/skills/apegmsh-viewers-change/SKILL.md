@@ -69,7 +69,7 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
       › "Fixed by ADR 0098 Amendment 3".
 - [ ] Navigation docks (outline, browser) are construction-time; never `restoreDockWidget` them.
       See `test_dock_invariant.py` › "returned 3+ times", which scans only the mesh and model
-      viewers. Session pane docks call it by design (`session/_host.py`, ADR 0098 A3.3).
+      viewers. Session pane docks call it by design (`viewers/session/_host.py`, ADR 0098 A3.3).
 - [ ] A key the window documents as global is a `QShortcut` with `ApplicationShortcut`, because
       `add_key_event` only fires while the viewport has focus. Tab needs an `eventFilter`.
       See `internal_docs/viewer_lessons.md` › "Key bindings in a VTK-hosted window". The digit

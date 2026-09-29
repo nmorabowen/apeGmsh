@@ -320,10 +320,10 @@ visualization sanity check), seed it explicitly and document.
 | Material | `unit/primitives/test_materials_*.py` | Add class to `ALL_UNIAXIAL` / `ALL_ND` in contract test |
 | Section | `unit/primitives/test_sections_*.py` | Add to `ALL_SECTIONS` |
 | Element | `unit/primitives/test_elements_*.py` | Add to `ALL_ELEMENTS` |
-| Time series | `unit/primitives/test_time_series.py` | Add to `ALL_TIME_SERIES` |
-| Pattern | `unit/primitives/test_patterns.py` | — |
-| Recorder | `unit/primitives/test_recorders.py` | — |
-| Analysis primitive | `unit/primitives/test_analysis.py` | — |
+| Time series | `tests/opensees/unit/primitives/test_time_series.py` | Add to `ALL_TIME_SERIES` |
+| Pattern | `tests/opensees/unit/primitives/test_patterns.py` | — |
+| Recorder | `tests/opensees/unit/primitives/test_recorders.py` | — |
+| Analysis primitive | `tests/opensees/unit/primitives/test_analysis.py` | — |
 | Emitter | `unit/test_emitter_<name>.py` + `parity/` | New parity case |
 | Recipe | `unit/recipes/test_<name>.py` | — |
 | Aggregate (Node, etc.) | `integration/test_<aggregate>.py` | — |

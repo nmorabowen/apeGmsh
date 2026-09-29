@@ -516,3 +516,81 @@ def test_an_undecodable_file_is_skipped_not_fatal(tmp_path: Path) -> None:
     _raw(tmp_path, RESOLVER, b"# caf\xe9\nx = 1\n")
     _write(tmp_path, FACTORY, _SWALLOW)
     assert _found(tmp_path) == ["resolve-swallow:_fem_factory.py:4"]
+
+
+# --- doc-path: the panel's 11% dead citations (#1192 P6, #1197 N1) ------------
+
+ARCH = "src/apeGmsh/opensees/architecture"
+GUIDE = ".claude/skills/apegmsh-bridge-feature/SKILL.md"
+MODULE = "def emit_mp_constraints(b):\n    pass\n\nclass _StageBuilder:\n    def stage_open(self):\n        pass\n"
+
+
+def _doc(root: Path, rel: str, *lines: str) -> None:
+    _write(root, rel, "\n".join(lines) + "\n")
+
+
+def _doc_paths(root: Path) -> list[str]:
+    return [f"{Path(f.path).name}:{f.line}" for f in quirks.scan(root) if f.rule == "doc-path"]
+
+
+def test_doc_path_passes_citations_that_resolve(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/_internal/build.py", MODULE)
+    _write(tmp_path, "src/apeGmsh/mesh/FEMData.py", FEMDATA)
+    _doc(tmp_path, f"{ARCH}/testing.md", "# t")
+    _doc(tmp_path, f"{ARCH}/decisions/README.md", "# ADRs")
+    _doc(tmp_path, "AGENTS.md",
+         "See [testing.md](src/apeGmsh/opensees/architecture/testing.md) and `mesh/FEMData.py`.",
+         "Lift `_internal/build.py::emit_mp_constraints`; `_internal/build.py::_StageBuilder.stage_open`",
+         "and `src/apeGmsh/opensees/_internal/build.py:12` (a line is not checked).",
+         "Not paths: `~/venv/x.py`, `C:\\venv\\x.py`, `ranks/rank<K>.yml`, `tests/**/*.py`,",
+         "`https://x.org/a.md`, `{name}/fields.json`, and a bare `build.py`.")
+    _doc(tmp_path, GUIDE, "`decisions/README.md`, `opensees/_internal/build.py`, [t](../../../AGENTS.md)")
+    assert _doc_paths(tmp_path) == []
+
+
+def test_doc_path_flags_a_path_that_does_not_resolve(tmp_path: Path) -> None:
+    _doc(tmp_path, "AGENTS.md", "Read `scripts/nav.py` first.", "Then `viewers/ui/viewer_window.py`.")
+    assert _doc_paths(tmp_path) == ["AGENTS.md:1", "AGENTS.md:2"]
+
+
+def test_doc_path_flags_a_markdown_link_only_relative_to_the_doc(tmp_path: Path) -> None:
+    # A renderer resolves a link from the doc's folder, never from the package roots.
+    _doc(tmp_path, f"{ARCH}/testing.md", "# t")
+    _doc(tmp_path, f"{ARCH}/h5-schema.md", "([README](../../../README.md)) and [t](testing.md)")
+    _doc(tmp_path, "README.md", "# r")
+    assert _doc_paths(tmp_path) == ["h5-schema.md:1"]
+
+
+def test_doc_path_flags_a_symbol_the_file_does_not_define(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/h5.py", MODULE)
+    _doc(tmp_path, f"{ARCH}/_DEFERRED.md", "lift touches `emitter/h5.py::_write_mp_constraints`,",
+         "and `emitter/h5.py::emit_mp_constraints` (still there).")
+    found = quirks.scan(tmp_path)
+    assert [f"{f.rule}:{f.line}" for f in found] == ["doc-path:1"]
+    assert "defines no `_write_mp_constraints`" in found[0].message
+
+
+def test_doc_path_flags_a_symbol_into_a_file_that_does_not_parse(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/x.py", "def (:\n")
+    _doc(tmp_path, "AGENTS.md", "`src/apeGmsh/x.py::f`")
+    assert _doc_paths(tmp_path) == ["AGENTS.md:1"]
+
+
+def test_doc_path_ignores_the_adrs_and_the_derived_skill_mirror(tmp_path: Path) -> None:
+    _doc(tmp_path, f"{ARCH}/decisions/0001-x.md", "`src/apeGmsh/gone.py` was the plan.")
+    _doc(tmp_path, ".claude/skills/apegmsh-helper/SKILL.md", "`src/apeGmsh/gone.py`")
+    _doc(tmp_path, ".claude/skills/apegmsh-helper/references/x.md", "`src/apeGmsh/gone.py`")
+    _doc(tmp_path, "internal_docs/plan_x.md", "`src/apeGmsh/gone.py`")
+    assert _found(tmp_path) == []
+
+
+def test_doc_path_cannot_be_waived(tmp_path: Path) -> None:
+    _write(tmp_path, "tests/test_a.py", "# apegmsh-lint: doc-path-ok because\nx = 1\n")
+    assert _found(tmp_path) == ["waiver:test_a.py:1"]
+
+
+def test_doc_path_scope_exists_in_this_checkout() -> None:
+    # A moved doc folder turns the rule off silently (N3 moves architecture/ out of src/).
+    assert (quirks.REPO / quirks.AGENTS).is_file()
+    assert any((quirks.REPO / quirks.SKILLS).glob("apegmsh-*/SKILL.md")), "the task guides moved"
+    assert any((quirks.REPO / quirks.ARCHITECTURE).glob("*.md")), "architecture/ moved: update ARCHITECTURE"

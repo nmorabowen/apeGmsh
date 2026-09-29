@@ -94,7 +94,7 @@ never implement.
   - never with `--delete-branch` from a worktree.
 
   Then confirm `compare/main...<sha>` reports `behind` or `identical`. Once A2
-  ships, use `scripts/land_pr.py` instead.
+  ships, use its `land_pr` script instead.
 - **Clean up:** close the slice issue and remove `in-flight`.
 
 ## 6. Record and chain

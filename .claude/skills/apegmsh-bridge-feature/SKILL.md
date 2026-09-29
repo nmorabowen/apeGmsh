@@ -13,17 +13,18 @@ description: >
 # Read this before changing the OpenSees bridge
 
 Each item points at where its lesson lives. Open that file and grep for
-the quoted heading. Paths are from the repo root; `arch/` means
+the quoted heading. Paths are from the repo root; `architecture/` is
 `src/apeGmsh/opensees/architecture/`.
 
 ## Before code
 
-- [ ] Read `arch/charter.md`, "Principles". The 14 principles are what new
+- [ ] Read `architecture/charter.md`, "Principles". The 14 principles are what new
       code is judged against; P2 (primitives never touch `ops`), P7 (one
       way to declare each thing) and P12 (static typing first) are the
       ones PRs trip on.
-- [ ] A new primitive follows `arch/agent-onboarding.md` "The standard
-      slice", and adds exactly what `arch/testing.md` "What every PR adds"
+- [ ] A new primitive follows `architecture/agent-onboarding.md` "The
+      standard slice", and adds exactly what `architecture/testing.md`
+      "What every PR adds"
       lists for its kind (the `ALL_*` contract lists included).
 - [ ] Check the source, not the docs, for what exists today (AGENTS.md,
       "What this repo is"). If you are numbering an ADR, list the decisions
@@ -75,7 +76,7 @@ the quoted heading. Paths are from the repo root; `arch/` means
 
 ## Schema
 
-- [ ] A schema bump follows `arch/h5-schema.md` and ADR 0023, "Bump
+- [ ] A schema bump follows `architecture/h5-schema.md` and ADR 0023, "Bump
       cadence — locked policy" and "Per-zone read validation — two-version
       reader window". Cite the ADR's Decision section, not older prose.
 - [ ] Tests read versions from `tests/fixtures/schema.py`, never a literal.

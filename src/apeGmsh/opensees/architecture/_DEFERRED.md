@@ -547,7 +547,7 @@ H5 readback of MP identity).
 
 **Cost estimate (informational):** lift touches
 `_internal/build.py::emit_mp_constraints`,
-`emitter/h5.py::_write_mp_constraints`, and per-dialect
+the MP-constraint rows in `emitter/h5.py`, and per-dialect
 tag-capture work in every emitter (Tcl / Py / Live / Recording
 — shape TBD per "Refactor shape" note above; the Emitter
 Protocol classifies any new method as an architecture event per

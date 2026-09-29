@@ -12,7 +12,8 @@ in the comment block directly above it:
     # apegmsh-lint: <rule>-ok <reason>
 
 The reason is mandatory, and a waiver that no longer suppresses anything
-is itself a finding. `adr-number` has no waiver: a collision is never right.
+is itself a finding. The repo-level rules `adr-number` and `doc-path` have no
+waiver: a collision is never right, and a dead citation is fixed in the doc.
 
     python scripts/check_quirks.py              # this checkout
     python scripts/check_quirks.py --root DIR   # another tree, e.g. a `git archive`
@@ -73,6 +74,29 @@ IMPORT_TEXT = re.compile(
     r"|\b(?:import_module|__import__)\(\s*[rbu]?['\"]openseespy\b"
 )
 
+#: The agent-facing docs whose citations must resolve: AGENTS.md, the task
+#: guides (not the derived user-skill mirror) and the non-ADR architecture
+#: docs. ADRs are append-only history and stay out.
+AGENTS = Path("AGENTS.md")
+SKILLS = Path(".claude/skills")
+DERIVED_SKILL = "apegmsh-helper"
+ARCHITECTURE = Path("src/apeGmsh/opensees/architecture")
+#: Where a backticked path may be rooted, after the doc's own folder: the
+#: repo, `src`, the package, the bridge and the architecture folder are the
+#: shorthands the docs use (`mesh/FEMData.py`, `emitter/h5.py`, `decisions/README.md`).
+#: A Markdown link resolves only against the doc's folder, as a renderer does.
+DOC_BASES = (Path("."), Path("src"), Path("src/apeGmsh"), Path("src/apeGmsh/opensees"), ARCHITECTURE)
+DOC_EXTENSIONS = r"(?:py|md|json|toml|yml|yaml)"
+#: `x/y.py`, `x/y.md`, ... in backticks, optionally with `:line` (not checked)
+#: or `::symbol` (must be defined in that file). A slash is required: a bare
+#: file name is not a citation the rule can place.
+CITATION = re.compile(
+    r"`(?P<path>[^`\s]*/[^`\s]*?\." + DOC_EXTENSIONS + r")(?::\d+|::(?P<symbol>[\w.]+))?`"
+)
+MD_LINK = re.compile(r"\]\((?P<path>[^)#\s]+?\." + DOC_EXTENSIONS + r")(?:#[^)]*)?\)")
+#: Not a repo path: a URL, a home or Windows path, a placeholder or a glob.
+NOT_A_PATH = re.compile(r"^(?:https?:|~|[A-Za-z]:[\\/])|[*{}<>\[\]$]")
+
 WAIVER = re.compile(r"#\s*apegmsh-lint:\s*(?P<rule>[a-z-]+?)-ok\b(?P<reason>.*)$")
 
 RULES: dict[str, str] = {
@@ -110,6 +134,15 @@ RULES: dict[str, str] = {
         "apeGmsh.opensees.emitter.live.get_ops(). Lesson: DomainCapture sampled an empty "
         "domain (fixed 9ffe6aa2, which kept the import as its fallback); that fallback, "
         "LiveMPCO, LiveRecorders, interop.solve and the arch-pushover example still bound it"
+    ),
+    "doc-path": (
+        "an agent-facing doc cites a path or symbol that does not exist, so the reader "
+        "is sent to a file that moved or a name that was renamed and reads the doc as "
+        "current anyway. Cite the current path (from the doc's folder, the repo root, "
+        "src, src/apeGmsh, src/apeGmsh/opensees or the architecture folder), or drop the "
+        "backticks from a reference that names nothing in this repo. Lesson: docs lag the "
+        "source (AGENTS.md, 'What this repo is'); the 2026-09-28 panel found 11% of the "
+        "paths these docs cite dead (#1192 P6, #1197 N1)"
     ),
 }
 
@@ -178,6 +211,83 @@ def check_adr_numbers(root: Path) -> list[Finding]:
                     Finding(f"{rel}/README.md", 0, "adr-number",
                             f"the index is {detail}. " + RULES["adr-number"])
                 )
+    return findings
+
+
+# --- doc-path ---------------------------------------------------------------
+
+
+def _agent_docs(root: Path) -> list[Path]:
+    docs = [root / AGENTS] if (root / AGENTS).is_file() else []
+    docs += sorted(
+        p for p in (root / SKILLS).glob("apegmsh-*/SKILL.md") if p.parent.name != DERIVED_SKILL
+    )
+    docs += sorted((root / ARCHITECTURE).glob("*.md"))  # not decisions/: ADRs are history
+    return docs
+
+
+def _defined_names(path: Path, cache: dict[Path, set[str] | None]) -> set[str] | None:
+    """Every name a module defines at any depth; None if it does not parse."""
+    if path not in cache:
+        source = _read_source(path)
+        try:
+            tree = ast.parse(source or "", filename=str(path)) if source is not None else None
+        except SyntaxError:
+            tree = None
+        names: set[str] | None = None
+        if tree is not None:
+            names = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names.add(node.name)
+                elif isinstance(node, ast.Assign):
+                    names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+                elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+        cache[path] = names
+    return cache[path]
+
+
+def _resolve_citation(cited: str, doc: Path, root: Path, link: bool) -> Path | None:
+    bases = [doc.parent] if link else [doc.parent, *(root / base for base in DOC_BASES)]
+    for base in bases:
+        candidate = base / cited
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def check_doc_paths(root: Path) -> list[Finding]:
+    """Every backticked repo path and relative Markdown link in the agent-facing
+    docs resolves, and a `::symbol` is defined in that file (AST, last dotted part).
+
+    A path with no slash, a URL, a placeholder or a glob is not a citation and
+    passes. A `.py` file a symbol points into that does not parse is a finding.
+    """
+    findings: list[Finding] = []
+    cache: dict[Path, set[str] | None] = {}
+    for doc in _agent_docs(root):
+        rel = doc.relative_to(root).as_posix()
+        for number, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+            cited = [(m.group("path"), m.group("symbol"), False) for m in CITATION.finditer(line)]
+            cited += [(m.group("path"), None, True) for m in MD_LINK.finditer(line)]
+            for path, symbol, link in cited:
+                if NOT_A_PATH.search(path):
+                    continue
+                target = _resolve_citation(path, doc, root, link)
+                if target is None:
+                    findings.append(Finding(rel, number, "doc-path",
+                                            f"`{path}` does not resolve. " + RULES["doc-path"]))
+                elif symbol and target.suffix == ".py":
+                    names = _defined_names(target, cache)
+                    if names is None:
+                        findings.append(Finding(rel, number, "doc-path",
+                                                f"`{path}` does not parse, so `::{symbol}` "
+                                                "cannot be checked. " + RULES["doc-path"]))
+                    elif symbol.rsplit(".", 1)[-1] not in names:
+                        findings.append(Finding(rel, number, "doc-path",
+                                                f"`{path}` defines no `{symbol}`. "
+                                                + RULES["doc-path"]))
     return findings
 
 
@@ -488,7 +598,7 @@ def _python_files(root: Path) -> list[Path]:
 
 
 def scan(root: Path) -> list[Finding]:
-    findings = check_adr_numbers(root)
+    findings = check_adr_numbers(root) + check_doc_paths(root)
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule))

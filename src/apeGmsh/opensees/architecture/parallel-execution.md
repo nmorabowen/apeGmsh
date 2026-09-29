@@ -125,7 +125,7 @@ tests/opensees/
 4. **`_internal/tag_allocator.py`** — `TagAllocator` per primitive
    kind. Sequential. Resettable.
 
-5. **`_internal/ns.py`** — base classes for namespace objects:
+5. **`_internal/ns/_base.py`** — base classes for namespace objects:
    - `_BridgeNamespace(bridge)` — every namespace inherits.
    - Helper for the `_register_and_return` pattern used by every
      namespace method.
@@ -144,13 +144,13 @@ tests/opensees/
 
 ### Tests that ship in Phase 0
 
-- `unit/test_apesees_class.py` — bridge construction, `set_model`,
+- `tests/opensees/unit/test_apesees_class.py` — bridge construction, `set_model`,
   empty build.
-- `unit/test_tag_allocator.py` — sequential allocation, per-kind
+- `tests/opensees/unit/test_tag_allocator.py` — sequential allocation, per-kind
   isolation.
-- `unit/test_emitter_protocol.py` — `RecordingEmitter` records
+- `tests/opensees/unit/test_emitter_protocol.py` — `RecordingEmitter` records
   calls correctly.
-- `contract/test_primitive_base.py` — every typed class to land
+- `tests/opensees/contract/test_primitive_base.py` — every typed class to land
   later will satisfy this contract; we enshrine it now with a
   parametrize-list that starts empty and grows.
 
@@ -181,9 +181,9 @@ update.
 **Namespace methods:** matching `_UniaxialMaterialNS` methods on
 the bridge.
 
-**Tests:** `unit/primitives/test_materials_uniaxial.py`. Add each
+**Tests:** `tests/opensees/unit/primitives/test_materials_uniaxial.py`. Add each
 class to `ALL_UNIAXIAL` in
-`contract/test_uniaxial_material_contract.py`.
+`tests/opensees/contract/test_uniaxial_material_contract.py`.
 
 **Reference:** mirror parameter shapes from `apeSees/materials/`
 (Steel02, Concrete02 already have validated typed classes there).
@@ -229,7 +229,7 @@ Can run parallel with 1A-1C. **Classes:** `Linear`, `Constant`,
 
 **Namespace:** `_TimeSeriesNS`.
 
-**Reference:** mirror `apeSees/timeseries/protocols.py` for the
+**Reference:** mirror the legacy apeSees timeseries protocols module for the
 loading-protocol classes — those are already validated and well
 designed.
 

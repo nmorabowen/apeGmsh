@@ -299,7 +299,7 @@ composite (the hand-constructed case) writes only into
 
 **The 2.10 split closes the snapshot_id drift bug**
 ([ADR 0021's 2026-05-28 amendment](decisions/0021-lineage-chain-replaces-snapshot-id.md#amendment--2026-05-28--inv-1-retired-with-schema-210-b2--pr-398)
-and [project memory `project_h5_schema_2_10_b2_shipped`](../../../README.md)).
+and [project memory `project_h5_schema_2_10_b2_shipped`](../../../../README.md)).
 Prior to 2.10 the layout was flat (`/physical_groups/{name}/...`)
 and the reader heuristically classified entries by field presence,
 producing phantom node-side entries that flipped the hash on
