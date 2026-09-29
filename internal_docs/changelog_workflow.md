@@ -1,38 +1,46 @@
 # CHANGELOG workflow — union merge driver + frozen header
 
 **Status:** Active since 2026-06-12.
-**Guards:** `tests/test_changelog_structure.py` (curated suite) ·
+**Guards:** `scripts/changelog.py --check` · `tests/test_changelog_structure.py` (curated suite) ·
 `.gitattributes` (`CHANGELOG.md merge=union`).
 
 ## How to add an entry (the whole workflow)
 
-Insert **one contiguous section** directly below the anchor comment
-(`<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT … -->`). The anchor
-is the first thing under the `## Unreleased` header, so directly below it
-is the top of Unreleased, and the newest entry is always first. Never
-insert between the header and the anchor:
+Since 2026-09-29 (program slice A2.1) each PR adds **one fragment file**,
+`changelog.d/<slug>.md`, and does not touch `CHANGELOG.md`. The slug is
+lowercase kebab-case, preferably date-prefixed
+(`2026-09-29-my-change.md`) so ordering is deterministic. The file is
+exactly one section in the usual form: one `### ` header, a blank line, the
+body, one final newline. No `## ` header.
 
 ```markdown
 ### ADDED — short highlight title (ADR/PR reference if any)
 
 One paragraph (or a few) describing the change. The section title IS
-the highlight — there is no separate header item to append anymore.
+the highlight.
 ```
 
 Rules:
 
-1. **Insert only — never edit existing lines.** In particular the
-   single-line `## Unreleased — item · item · …` ledger is **frozen**
-   (entries up to 2026-06-12 live there; nothing is ever appended).
-2. One section per PR, contiguous (title + body, no interleaved
-   edits elsewhere in the file).
-3. Keep a blank line before and after your section. A union merge of two
-   sections at the anchor can drop the blank line between them; the
-   structure test fails on a `###` heading with none above it.
-4. The anchor stays the first non-blank line under the header, and
-   there is exactly one (`test_entry_anchor_is_top_of_unreleased`).
+1. One fragment per PR. `changelog.d/README.md` is not a fragment.
+2. Run `python scripts/changelog.py --check` before pushing. It fails on
+   a malformed fragment, on a `CHANGELOG.md` structure violation, and on a
+   `### ` header with no blank line above it. `tests/test_changelog_structure.py`
+   runs the same check in the curated suite.
+3. `python scripts/changelog.py --assemble` inserts every fragment below
+   the anchor in sorted filename order, one blank line between sections,
+   and deletes the fragments. It is idempotent. A maintainer runs it at
+   release time or in a housekeeping PR; **never in CI, never in a
+   feature PR** (releases are a human gate).
+4. Branches cut before this change may still carry a direct section at the
+   anchor. That stays valid: the union driver, the anchor guards and the
+   insert-only rule below are kept for them. Do not edit existing lines,
+   and the frozen `## Unreleased — …` ledger stays frozen.
 
-That's it. No fragments directory, no assembly step.
+The legacy rule for a direct section, for old branches only: insert one
+contiguous section directly below the anchor comment
+(`<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT … -->`, the first
+thing under `## Unreleased`), with a blank line before and after it.
 
 ## Why
 
@@ -124,7 +132,15 @@ Before merging:
 2. re-add your entry as a single `###` section at the anchor comment,
 3. drop your header-line edit entirely.
 
-## Rejected alternative
+## Fragments, adopted (2026-09-29)
+
+The alternative rejected below was adopted after the union driver dropped
+the blank line between sections at least three more times (#1219: repaired
+by hand in #1186, #1191 and #1217). The assembly step is manual and runs
+at release time, so `CHANGELOG.md` lags main by the unreleased fragments
+by design; `changelog.d/` is the live ledger between releases.
+
+## Rejected alternative (superseded, kept for the record)
 
 Changelog fragments (towncrier-style `changelog.d/` + CI assembly)
 also eliminate the conflict class, but add tooling, an assembly step,
