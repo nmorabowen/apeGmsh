@@ -110,7 +110,9 @@ apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.
   `gh api repos/{owner}/{repo}/compare/main...<merge-sha> --jq .status`
   reads `behind` or `identical`; `diverged` means it did not (#858).
   `git merge-base --is-ancestor` cannot tell you: once the head branch is
-  auto-deleted the orphaned merge commit is on no fetched ref.
+  auto-deleted the orphaned merge commit is on no fetched ref. A nightly
+  Action (`orphans.yml`, `scripts/find_orphans.py`) runs this check over
+  recent PRs and opens one `[Orphans]` issue when work is missing.
 - **Before pushing to a PR branch, check `gh pr view <N> --json state`.**
   A push after the merge lands on an orphaned branch (#335 → #336).
   Before merging a branch you just pushed, wait until `headRefOid` equals
