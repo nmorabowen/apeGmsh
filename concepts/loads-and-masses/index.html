@@ -3913,7 +3913,8 @@ The <code>point</code> verb skips the mapping and writes the values directly.
 Prescribed displacements group into cases exactly like loads and ride the
 same opt-in import — <code>from_model(case)</code> emits them as <code>sp</code> lines inside
 the pattern, scaled by its series. Homogeneous fixes are never imported
-that way; they are model-level and emit through <code>ops.fix(...)</code>.</p>
+that way; they are model-level and emit through <code>ops.fix(...)</code>, or all at
+once through <code>ops.fix_from_model()</code>.</p>
 <h2 id="masses">Masses<a class="headerlink" href="#masses" title="Permanent link">&para;</a></h2>
 <p>Masses are declared like loads — same dimension-indexed verbs, same
 name-based targets, same resolve-at-<code>get_fem_data</code> timing — but they are
@@ -3939,7 +3940,9 @@ density unit mistake shows up there instantly.</p>
 <p>On the bridge, masses follow the model-definition side of the split, not
 the load-case side: they emit through an explicit <code>ops.mass(...)</code>, or in
 one stroke with <code>ops.mass_from_model()</code>, which streams every resolved
-nodal mass from the snapshot into the deck. And keep mass and weight
+nodal mass from the snapshot into the deck. Unlike an unimported load
+case, masses the deck never restates are flagged at emit, so a massless
+eigen run cannot pass unnoticed. And keep mass and weight
 distinct in your head, because the library does: <code>g.masses</code> populates the
 mass matrix (dynamics, eigenvalues), <code>g.loads.gravity</code> applies a force
 (statics). A dynamic model under gravity legitimately declares both from

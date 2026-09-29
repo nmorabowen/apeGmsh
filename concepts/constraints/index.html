@@ -3888,9 +3888,12 @@ model units — <code>1e-6</code> is right for a metre model and uselessly tight
 millimetre one. The single exception to the index convention is
 <code>g.constraints.bc(...)</code>, the fix-to-ground boundary condition, which takes an
 OpenSees-style restraint <em>mask</em> (<code>dofs=[1, 1, 0]</code> means "fix x and y") because
-it becomes <code>ops.fix</code> downstream. It lives on <code>g.constraints</code> because fixity is
-permanent, not load-pattern-scoped; the recipe is in
-<a href="../../how-to/supports-bcs/">Supports &amp; BCs</a>.</p>
+it mirrors <code>ops.fix</code>. It is also the one verb here that does not emit by
+itself: it resolves into <code>fem.nodes.sp</code>, not the constraint records above, and
+the deck carries it only once the bridge restates it with <code>ops.fix(...)</code> or
+<code>ops.fix_from_model()</code> (emit warns when it does not). It lives on
+<code>g.constraints</code> because fixity is permanent, not load-pattern-scoped; the
+recipe is in <a href="../../how-to/supports-bcs/">Supports &amp; BCs</a>.</p>
 <h2 id="same-mesh-co-located-pairs-and-rigid-clusters">Same mesh: co-located pairs and rigid clusters<a class="headerlink" href="#same-mesh-co-located-pairs-and-rigid-clusters" title="Permanent link">&para;</a></h2>
 <p>When two parts genuinely share node positions at their boundary — a conformal
 interface, typically the product of <code>g.parts.fragment_all()</code> or careful

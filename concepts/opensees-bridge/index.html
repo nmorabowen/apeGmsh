@@ -3842,8 +3842,13 @@ inside the pattern; <code>p.load</code> / <code>p.sp</code> author loads directl
 A case you don't import is simply not applied — there is exactly one channel
 into the deck, so the old double-counting trap (declared on the session <em>and</em>
 the bridge) cannot happen. Masses and support fixities are re-declared
-explicitly with <code>ops.mass</code> and <code>ops.fix</code> for the same reason: the deck is
-authoritative, and reading it tells you exactly what the analysis contains.
+explicitly with <code>ops.mass</code> and <code>ops.fix</code>, or wholesale with
+<code>ops.mass_from_model()</code> and <code>ops.fix_from_model()</code>, for the same reason: the
+deck is authoritative, and reading it tells you exactly what the analysis
+contains. They are not a per-deck choice the way a load case is, though, so
+when the session declared <code>g.constraints.bc</code> supports or <code>g.masses</code> and the
+deck restates none of them, emit warns (<code>UnconsumedModelDefinitionWarning</code>)
+rather than writing an unsupported, massless model in silence.
 Everything the session declared — imported or not — still persists into
 <code>model.h5</code> for the viewer and <code>Results</code>.</p>
 <h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>

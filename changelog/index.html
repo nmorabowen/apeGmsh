@@ -3572,6 +3572,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — g.constraints.bc / g.masses records a deck never restates now warn at emit (UnconsumedModelDefinitionWarning) + ops.fix_from_model() (ADR 0051 §4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3865,6 +3876,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — g.constraints.bc / g.masses records a deck never restates now warn at emit (UnconsumedModelDefinitionWarning) + ops.fix_from_model() (ADR 0051 §4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4145,6 +4167,41 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4">FIXED — <code>g.constraints.bc</code> / <code>g.masses</code> records a deck never restates now warn at emit (<code>UnconsumedModelDefinitionWarning</code>) + <code>ops.fix_from_model()</code> (ADR 0051 §4)<a class="headerlink" href="#fixed-gconstraintsbc-gmasses-records-a-deck-never-restates-now-warn-at-emit-unconsumedmodeldefinitionwarning-opsfix_from_model-adr-0051-4" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.bc(...)</code> resolves into homogeneous SP records on
+<code>fem.nodes.sp</code> and <code>g.masses.*</code> into <code>fem.nodes.masses</code>, but <code>apeSees</code>
+emits neither unless the deck restates them. An audit at 07f757e0 found
+a broker holding 174 SP + 339 mass records whose deck carried 0 <code>fix</code> /
+0 <code>mass</code> lines, with no warning: an unsupported, massless model that
+still ran.</p>
+<ul>
+<li><strong><code>UnconsumedModelDefinitionWarning</code></strong> (exported from
+  <code>apeGmsh.opensees</code>, a <code>UserWarning</code> subclass) fires once per emit when
+  a homogeneous SP <code>(node, DOF)</code> has no <code>ops.fix</code> / <code>s.fix</code> /
+  <code>s.support</code> flagging it, or a broker mass node has no <code>ops.mass</code> /
+  <code>s.mass</code> and <code>mass_from_model()</code> is off. It names the counts and the
+  verbs that restate them, pointing at the caller's line. Broker SP
+  records are spatial (<code>ux uy uz rx ry rz</code>) and are matched to deck DOFs
+  by <code>(ndm, ndf)</code>, so a 2-D frame's <code>uz</code> record is not read as its <code>rz</code>;
+  a component the node lacks is not counted, and <code>ops.h5</code> (archival,
+  never solved) skips the check. Decks that
+  restate everything stay silent and emit exactly what they did before.</li>
+<li><strong><code>ops.fix_from_model()</code></strong>, the support twin of <code>ops.mass_from_model()</code>:
+  one <code>fix</code> per node carrying homogeneous records, its DOFs unioned into
+  one mask, so two <code>bc</code> targets sharing a corner emit one line; the
+  same <code>(ndm, ndf)</code> mapping pins a 2-D frame's base with <code>fix n 1 1 0</code>
+  (<code>bc</code>'s default <code>[1, 1, 1]</code> leaves <code>rz</code> free). It is
+  materialized at <code>build()</code> as ordinary fix records, so the flat,
+  partitioned, staged and H5 paths treat it like <code>ops.fix</code>; an explicit
+  fix on an overlapping DOF raises, since OpenSees refuses a second SP on
+  a constrained DOF.</li>
+<li>The <code>bc()</code> and <code>g.masses</code> docstrings, the docs (supports how-to;
+  bridge, constraints and loads-and-masses concepts; masses API page) and
+  the skill no longer imply either channel reaches the deck by itself,
+  notably the how-to's "<code>g.loads.*</code> and <code>g.constraints.*</code> <em>do</em>
+  auto-emit". ADR 0051 gains a dated amendment on why this is not the
+  case audit §7 rejected.</li>
+</ul>
 <h3 id="fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position">FIXED — <code>ops.mass_from_model()</code> maps broker masses onto 2-D node DOFs by <code>(ndm, ndf)</code>, not by position<a class="headerlink" href="#fixed-opsmass_from_model-maps-broker-masses-onto-2-d-node-dofs-by-ndm-ndf-not-by-position" title="Permanent link">&para;</a></h3>
 <p>Broker masses (<code>fem.nodes.masses</code>, from <code>g.masses.*</code>) are spatial
 <code>(mx, my, mz, Ixx, Iyy, Izz)</code> 6-vectors. <code>mass_from_model()</code> used to trim

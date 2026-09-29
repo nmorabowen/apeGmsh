@@ -3728,8 +3728,10 @@ settlement / motion instead of a force.</p>
 <p>Supports are <strong>single-point constraints (SPs)</strong>. They are <em>not</em>
 auto-ingested from the session — you <strong>re-declare</strong> them on the bridge:
 homogeneous fixities with <code>ops.fix(...)</code>, non-zero prescribed values with
-<code>p.sp(...)</code> inside a pattern. (Contrast: <code>g.loads.*</code> and <code>g.constraints.*</code>
-<em>do</em> auto-emit.) Target a physical-group <strong>name</strong>, never a raw tag.</p>
+<code>p.sp(...)</code> inside a pattern. That holds for <code>g.constraints.bc(...)</code> too:
+it resolves into <code>fem.nodes.sp</code>, not into the MP constraints the rest of
+<code>g.constraints</code> auto-emits. Target a physical-group <strong>name</strong>, never a raw
+tag.</p>
 <h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
@@ -3813,10 +3815,14 @@ carry rotations (<code>ndf=6</code>).</p>
   fixities are model-level → <code>ops.fix</code>. Any non-zero imposed value goes
   in a pattern → <code>p.sp</code>. Don't try to fake a prescribed displacement with
   <code>ops.fix</code>.</li>
-<li><strong>Supports are NOT auto-ingested.</strong> If you declared a face SP on the
-  session via <code>g.displacements.surface(...)</code>, it resolves into <code>fem.nodes.sp</code> and
-  feeds the viewer / <code>Results</code>, but it does <strong>not</strong> reach the runnable
-  deck — re-declare it: homogeneous → <code>ops.fix</code>, prescribed → <code>p.sp</code>.</li>
+<li><strong>Supports are NOT auto-ingested.</strong> A <code>g.constraints.bc(...)</code>, or a
+  face SP declared via <code>g.displacements.surface(...)</code>, resolves into
+  <code>fem.nodes.sp</code> and feeds the viewer / <code>Results</code>, but it does <strong>not</strong>
+  reach the runnable deck by itself. Homogeneous records need <code>ops.fix</code>,
+  or <code>ops.fix_from_model()</code>, which fixes every one of them with its own
+  mask; prescribed ones need <code>p.sp</code> or <code>p.from_model(case)</code>. Emit warns
+  with <code>UnconsumedModelDefinitionWarning</code> when homogeneous records (or
+  <code>g.masses</code>) never made it into the deck.</li>
 <li><strong><code>g.constraints.bc</code> vs. <code>g.displacements</code> ownership.</strong>
   <code>g.constraints.bc</code> owns permanent homogeneous fixes; <code>g.displacements</code>
   owns prescribed motion (any non-zero value, or a pattern-bound /
