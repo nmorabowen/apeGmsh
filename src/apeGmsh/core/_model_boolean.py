@@ -65,6 +65,34 @@ def _collect_topology_rebuild_targets(
     return targets, skip_pg_names
 
 
+def _boundary_closure(dimtags: list[DimTag]) -> set[tuple[int, int]]:
+    """Return *dimtags* plus every sub-entity bounding them.
+
+    Walked dim-by-dim with ``recursive=False`` because
+    ``getBoundary(recursive=True)`` returns only the leaf points (same
+    walk as ``_geometry_topology._gather_keep_set``).  An input the
+    model does not know yet (not synchronized) contributes only itself.
+    """
+    closure = {(int(d), int(t)) for d, t in dimtags}
+    frontier = set(closure)
+    for parent_dim in (3, 2, 1):
+        parents = [(d, t) for d, t in frontier if d == parent_dim]
+        if not parents:
+            continue
+        try:
+            children = gmsh.model.getBoundary(
+                parents, oriented=False, recursive=False, combined=False,
+            )
+        except Exception:
+            continue
+        for d_c, t_c in children:
+            dt = (abs(int(d_c)), abs(int(t_c)))
+            if dt not in closure:
+                closure.add(dt)
+                frontier.add(dt)
+    return closure
+
+
 class _Boolean:
     """Boolean-operation sub-composite extracted from Model."""
 
@@ -117,6 +145,18 @@ class _Boolean:
                 input_label_names.update(labels_comp.labels_for_entity(d, t))
 
         absorbed = fn_name in ('fuse', 'intersect')
+
+        # Pre-op snapshot for the registry bookkeeping after the op:
+        # the inputs' boundary closure (a consumed line takes its
+        # registered end points with it, and those are not inputs),
+        # and the registered curve / point inputs whose pieces inherit
+        # the registration (see the post-op block).
+        meta = self._model._metadata
+        input_closure = _boundary_closure(obj_dt + tool_dt)
+        registered_low = {
+            dt: meta[dt] for dt in obj_dt + tool_dt
+            if int(dt[0]) < 2 and dt in meta
+        }
 
         # ── Pre-op: identify Part instances with topology-rebuild
         # hooks whose volumes are touched by this boolean.  Collect
@@ -171,16 +211,47 @@ class _Boolean:
             for inst, rebuild_fn in rebuild_targets:
                 rebuild_fn(parent, inst)
 
-        # Clean up registry: remove consumed objects/tools
+        # Clean up registry: remove consumed objects/tools.  For a
+        # non-absorbing op the input's own ``result_map`` entry is the
+        # test: OCC reuses freed tags, so a consumed column line's tag
+        # can come back as an unrelated slab edge that sits in
+        # ``result`` — keeping the key would mis-register that edge.
         result_set = set(result)
-        if remove_object:
-            for dt in obj_dt:
-                if dt not in result_set:
+        own_map = {
+            dt: set(new_dts)
+            for dt, new_dts in zip(obj_dt + tool_dt, result_map)
+        }
+        for dts, removed in ((obj_dt, remove_object), (tool_dt, remove_tool)):
+            if not removed:
+                continue
+            for dt in dts:
+                survivors = result_set if absorbed else own_map.get(dt, result_set)
+                if dt not in survivors:
                     self._model._metadata.pop(dt, None)
-        if remove_tool:
-            for dt in tool_dt:
-                if dt not in result_set:
-                    self._model._metadata.pop(dt, None)
+        # Reap the consumed inputs' sub-entities too (e.g. the end
+        # points of a line fragmented against a slab): a key whose tag
+        # is gone would fail the closed-world ``validate_pre_mesh``
+        # that ``generate()`` runs.  Needs a synced model to see what
+        # survived.
+        if sync:
+            live = {(int(d), int(t)) for d, t in gmsh.model.getEntities()}
+            for dt in input_closure:
+                if dt not in live:
+                    meta.pop(dt, None)
+
+        # A registered curve / point split by the op stays user-
+        # intentional: its pieces inherit the registration, so the
+        # free column segments of a frame + slab fragment survive
+        # :func:`sweep_dangling` / ``remove_orphans()``.  Surfaces are
+        # excluded on purpose — the overhang of a fragmented cutting
+        # plane must still be swept (see the target-dim rule below).
+        for old_dt, new_dts in zip(obj_dt + tool_dt, result_map):
+            old_meta = registered_low.get(old_dt)
+            if old_meta is None:
+                continue
+            for d, t in new_dts:
+                if int(d) == int(old_dt[0]) and (d, t) not in meta:
+                    self._model._register(d, t, None, old_meta['kind'])
 
         tags = [t for _, t in result]
         # Register only the target-dim outputs as user-intentional —
@@ -428,8 +499,12 @@ class _Boolean:
             ``add_plane_surface``, etc.) because those entities live
             in ``_metadata``.  Default flipped to ``True`` once the
             safer sweep landed; pass ``cleanup_free=False`` only when
-            you need OCC's raw output (no orphan removal, no stale-
-            metadata reap) for downstream inspection.
+            you need OCC's raw output (no orphan removal) for
+            downstream inspection.  The ``_metadata`` bookkeeping runs
+            either way: keys of consumed inputs and of their boundary
+            sub-entities are reaped, and the pieces of a registered
+            curve or point inherit its registration (free column
+            segments split by slab surfaces stay user-intentional).
         sync : synchronise the OCC kernel (default True).
         tolerance : float | None
             Optional override for ``Geometry.ToleranceBoolean`` during
@@ -454,7 +529,9 @@ class _Boolean:
         # the user created.  ``sweep_dangling`` protects metadata-
         # registered surfaces by definition, but skipping the sweep
         # in the 2D-only case is cheaper and avoids any debate about
-        # what "orphan" means without volumes.
+        # what "orphan" means without volumes.  Skipping it no longer
+        # leaves stale ``_metadata`` behind: ``_bool_op`` reaps the
+        # consumed inputs and their sub-entities itself.
         if cleanup_free and gmsh.model.getEntities(3):
             sweep_dangling(self._model)
 
