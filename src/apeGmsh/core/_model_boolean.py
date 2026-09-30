@@ -120,6 +120,7 @@ class _Boolean:
         sync          : bool = True,
         label         : str | None = None,
         tolerance     : float | None = None,
+        target_dim_only : bool = False,
     ) -> list[Tag]:
         parent = self._model._parent
         # Phase 3B.2d / ADR 0038 — every boolean operation
@@ -253,7 +254,15 @@ class _Boolean:
                 if int(d) == int(old_dt[0]) and (d, t) not in meta:
                     self._model._register(d, t, None, old_meta['kind'])
 
-        tags = [t for _, t in result]
+        # ``target_dim_only`` (fragment): OCC's ``result`` holds the top
+        # pieces of EVERY input dim (slab surfaces AND column curves /
+        # points for a frame + slab fragment); keep only the objects'
+        # top dim — ``default_dim`` for bare integer tags.
+        top_dim = max((int(d) for d, _ in obj_dt), default=int(default_dim))
+        tags = [
+            t for d, t in result
+            if not target_dim_only or int(d) == top_dim
+        ]
         # Register only the target-dim outputs as user-intentional —
         # ``fragment`` returns ALL surviving entities of every dim
         # (split surfaces, edges, etc.) as byproducts, and stashing
@@ -516,12 +525,17 @@ class _Boolean:
         Returns
         -------
         list[Tag]
-            Tags of all surviving entities at the target dimension.
+            Tags of all surviving entities at the target dimension: the
+            highest dimension among the resolved *objects* (``dim`` for
+            bare integer tags).  Lower-dim pieces of the tools (e.g. the
+            column segments of ``fragment(slabs, columns, dim=2)``) are
+            not listed; query them with ``gmsh.model.getEntities(1)``
+            or through their labels.
         """
         result = self._bool_op(
             'fragment', objects, tools, dim,
             remove_object, remove_tool, sync,
-            tolerance=tolerance,
+            tolerance=tolerance, target_dim_only=True,
         )
 
         # In a 2D-only model every surface is "free" (there ARE no
