@@ -52,7 +52,6 @@ with apeGmsh(model_name="footfall-two-bay") as g:
             base = geo.add_point(x, y, -H_COL)
             cols.append(geo.add_line(base, top))
     g.model.boolean.fragment(bays, cols, dim=2)
-    g.model.geometry.remove_orphans()   # fragment consumed the column-top points
     g.model.sync()
 
     eps = 1e-6

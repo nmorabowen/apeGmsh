@@ -302,6 +302,72 @@ class TestFragment:
 
 
 # =====================================================================
+# fragment: frame + slab (free column lines through slab surfaces)
+# =====================================================================
+
+def _free_curves() -> list[int]:
+    """Curves that bound no surface (the free column segments)."""
+    return [
+        t for _, t in gmsh.model.getEntities(1)
+        if len(gmsh.model.getAdjacencies(1, t)[0]) == 0
+    ]
+
+
+class TestFragmentFrameSlab:
+    """``fragment(slabs, columns + points, dim=2)`` keeps ``_metadata``
+    consistent and the column pieces user-intentional."""
+
+    def _slabs_and_column(self, g):
+        geo = g.model.geometry
+        slabs = [geo.add_rectangle(0, 0, z, 1, 1) for z in (0.0, 1.0)]
+        col = geo.add_line(geo.add_point(0, 0, -1), geo.add_point(0, 0, 2))
+        return slabs, col
+
+    def test_minimal_frame_meshes_with_three_free_segments(self, g):
+        slabs, col = self._slabs_and_column(g)
+        g.model.boolean.fragment(slabs, [(1, col)], dim=2)
+
+        assert g.model.geometry.find_stale_metadata() == []
+        assert len(_free_curves()) == 3
+        g.mesh.generation.generate(dim=2)
+
+    def test_remove_orphans_keeps_fragmented_column_pieces(self, g):
+        slabs, col = self._slabs_and_column(g)
+        g.model.boolean.fragment(slabs, [(1, col)], dim=2)
+
+        removed = g.model.geometry.remove_orphans()
+        assert removed == {0: [], 1: [], 2: []}
+        assert len(_free_curves()) == 3
+        g.mesh.generation.generate(dim=2)
+
+    def test_consumed_endpoints_and_reused_tags_are_reaped(self, g):
+        """Several columns plus an embedded centre point per slab: the
+        consumed columns' end points were not fragment inputs but must
+        leave ``_metadata`` too, and a column tag that OCC reuses for a
+        slab edge must not stay registered."""
+        geo = g.model.geometry
+        slabs = [geo.add_rectangle(0, 0, z, 2, 2) for z in (0.0, 1.0)]
+        cols = [
+            geo.add_line(geo.add_point(x, y, -1), geo.add_point(x, y, 2))
+            for x, y in ((0, 0), (2, 2), (1, 0))
+        ]
+        centres = [geo.add_point(1, 1, z) for z in (0.0, 1.0)]
+        g.model.boolean.fragment(
+            slabs, [(1, c) for c in cols] + [(0, p) for p in centres], dim=2,
+        )
+
+        assert g.model.geometry.find_stale_metadata() == []
+        free = set(_free_curves())
+        assert len(free) == 9
+        registered_curves = {
+            t for d, t in g.model._metadata if d == 1
+        }
+        assert registered_curves == free
+        assert g.model.geometry.remove_orphans() == {0: [], 1: [], 2: []}
+        g.mesh.generation.generate(dim=2)
+
+
+# =====================================================================
 # label= override
 # =====================================================================
 

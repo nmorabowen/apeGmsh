@@ -173,12 +173,15 @@ Refused on every channel. Before the fix an undamped mode made the modal
 denominator `0+0j` on the grid point that sits exactly on it, the argmax
 selected the NaN, and the map wrote all-NaN with no error.
 
-### ❌ Column lines fragmented into slab surfaces, then mesh → ✅ `remove_orphans()` first
-`g.model.boolean.fragment(bays, cols, dim=2)` consumes the column-top points
-and leaves stale `_metadata` entries; `generate()` raises
-`GeometryValidationError: model._metadata has stale entries`. Call
-`g.model.geometry.remove_orphans()` before `sync()` (the two-bay footfall
-example does this).
+### ✅ Column lines fragmented into slab surfaces mesh directly (no `remove_orphans()` needed)
+`g.model.boolean.fragment(slabs, cols + centre_points, dim=2)` reaps the
+`_metadata` of the consumed lines *and their end points*, and the pieces of a
+registered curve or point inherit its registration. So `generate()` passes
+without cleanup, and a `remove_orphans()` call keeps the free column segments
+(they are user-intentional, even though they bound no face). Surfaces do not
+inherit: the overhang of a fragmented cutting *plane* is still swept.
+Before this fix the gotcha recommended `remove_orphans()` after the fragment;
+that call deleted the column segments that stick out past the slabs.
 
 ## Pitfalls not covered in the other references
 
