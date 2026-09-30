@@ -154,3 +154,45 @@ g.constraints.equal_dof(...)
 > `src/apeGmsh/interop/etabs_import.py` (the decomposition functions are
 > still the private `_inject_diaphragms` / `_emit_springs`) before relying on
 > the `skip=`/`only=` API.
+
+## STKO `.scd` documents — `apeGmsh.interop.stko`
+
+STKO (ASDEA's OpenSees pre/post-processor) saves its CAE document as HDF5.
+`read_scd` reads it into plain frozen dataclasses (no gmsh, no OCC, no
+OpenSees): geometries with per-sub-shape property assignments, the mesh,
+selection sets, physical / element properties, conditions, interactions,
+local axes, definitions and analysis steps. `write_brep` extracts the OCC
+geometry for `g.model.io.load_brep` (needs `cadquery-ocp`, the
+`apeGmsh[stko]` extra). Use it to harvest an STKO model's values and to
+check an apeGmsh rebuild against it.
+
+```python
+from apeGmsh.interop.stko import read_scd, write_brep
+
+scd = read_scd("1A_TH_000.scd")
+slab = scd.physical_property("Slab_Elastic")      # XObject
+slab.type, slab["E"], slab["h"]                   # "sections.ElasticMembranePlateSection", 25000.0, 200.0
+scd.set_elements("Columns_Set")                   # element IDs (as STKO's .mpco.cdata)
+scd.set_nodes("Columns_Set")                      # + nodes on the set's vertices
+scd.analysis_elements()                           # what OpenSees receives: {eid: AnalysisElement}
+scd.condition("mass_Slabs").geometry              # {geom_id: SubShapes(faces=(...))}
+write_brep(scd, "1a.brep", geometry=353)          # one geometry, or the whole compound
+```
+`# src/apeGmsh/interop/stko/model.py, read_scd.py, geometry.py`
+`# verified: tests/interop/test_stko_reader.py::test_analysis_elements_skip_the_edge_meshes`
+
+- **Addressing is STKO's:** a geometry is one child of the document's OCC
+  compound; sub-shapes are 0-based per kind (`vertices`, `edges`, `faces`,
+  `solids`). After `write_brep` → `load_brep`, STKO face *i* is gmsh face
+  tag *i + 1* and edge *i* is edge tag *i + 1*; **vertices are reordered** —
+  match them by coordinate through `scd.mesh.vertex_nodes`.
+- **`scd.mesh.elements` is every meshed entity**, not the analysis mesh:
+  edge meshes of shells and face meshes of solids are in it. Use
+  `analysis_elements()` (sub-shapes with an element property, plus
+  interaction-generated elements).
+- **Parameters** keep STKO's names (`"E"`, `"Drilling DOF Type"`); `INDEX` /
+  `INDEX_VEC` values are IDs of other objects (listed in
+  `XObject.references`). Nested custom objects (section outlines, fiber
+  sections) come back as dicts of arrays.
+- **Documents carry unused template properties** — map what is assigned
+  (`Geometry.element_property` / `physical_property`), not every definition.
