@@ -301,12 +301,12 @@ marker (auto-skipped off-fork), or `live-stock` where the path is stock.
 
 | Slice | Gap | Effort | Oracle |
 |---|---|---|---|
-| F1 | G-4 fold `ops.fix(pg=)` masks per node | S | unit: two PGs sharing an edge emit one `fix` per node with the OR-ed mask; live-stock: the R1 boundary set runs |
-| F2 | G-3 `geomTransf` under ndf < 6 | S | unit: deck shows the transform inside an ndf-6 builder, or a named refusal at `build()`; live-stock: an ndf-3 envelope beam-in-brick model runs |
-| F3 | G-2 infer ndf = ndm for element-less contact/coupling nodes | M | unit: inferred ndf of skin nodes is 3; live fork: R1's B deck without the rotation fix is non-singular and matches 0.6955 mm |
-| F4 | G-1 refuse one `outward` on a master whose normals span > 90°; the two stale docstrings | S | unit: a cylinder master with `tie=True` and a global outward raises, naming the sector remedy |
-| F5 | G-7 refuse `"auto"` penalty on an element-less master | S | unit: raise at resolve, not at run time |
-| F6 | G-8 de-duplicate NTS slave nodes across contacts sharing a slave label | M | unit: resolved slave node sets are disjoint and their union is the label's node set |
+| F1 ([#1259](https://github.com/nmorabowen/apeGmsh/issues/1259)) | G-4 fold `ops.fix(pg=)` masks per node | S | unit: two PGs sharing an edge emit one `fix` per node with the OR-ed mask; live-stock: the R1 boundary set runs |
+| F2 ([#1260](https://github.com/nmorabowen/apeGmsh/issues/1260)) | G-3 `geomTransf` under ndf < 6 | S | unit: deck shows the transform inside an ndf-6 builder, or a named refusal at `build()`; live-stock: an ndf-3 envelope beam-in-brick model runs |
+| F3 ([#1261](https://github.com/nmorabowen/apeGmsh/issues/1261)) | G-2 infer ndf = ndm for element-less contact/coupling nodes | M | unit: inferred ndf of skin nodes is 3; live fork: R1's B deck without the rotation fix is non-singular and matches 0.6955 mm |
+| F4 ([#1262](https://github.com/nmorabowen/apeGmsh/issues/1262)) | G-1 refuse one `outward` on a master whose normals span > 90°; the two stale docstrings | S | unit: a cylinder master with `tie=True` and a global outward raises, naming the sector remedy |
+| F5 ([#1263](https://github.com/nmorabowen/apeGmsh/issues/1263)) | G-7 refuse `"auto"` penalty on an element-less master | S | unit: raise at resolve, not at run time |
+| F6 ([#1264](https://github.com/nmorabowen/apeGmsh/issues/1264)) | G-8 de-duplicate NTS slave nodes across contacts sharing a slave label | M | unit: resolved slave node sets are disjoint and their union is the label's node set |
 
 F1, F2, F4 and F5 are one-file changes and can be dispatched in parallel.
 F3 changes ndf inference, so it goes through the bridge-feature guide and is
@@ -369,15 +369,16 @@ P3 → P5 → P6 when the fork lands → P7, P8 → P9.
    origin/main architecture/decisions/` ends at 0110, and no open PR adds a
    decision file). Re-list before writing it: numbers collide.
 
-## 7. Decisions needed from the owner
+## 7. Decisions (owner, 2026-09-30)
 
-- **D1.** Accept the `g.piles` composite plus `apeGmsh.piles` L1 layer (the
-  ADR 0067 pattern) over a Part factory or a free function.
-- **D2.** File the six standalone fixes F1–F6 as issues now, ahead of the
-  helper, and let R2 keep its workarounds meanwhile.
-- **D3.** Whether `Frictional` defaults εT to εN/10 (R1's only converging
-  ratio) or requires both penalties explicitly.
-- **D4.** Which mode P2 ships first. The plan picks the skin (B, C), the
-  candidate to beat; A first is cheaper if R2 promotes A.
-- **D5.** Whether the cap (P9) belongs in this helper or in a separate
-  foundation composite shared with footings.
+- **D1. Accepted.** The `g.piles` composite plus the `apeGmsh.piles` L1 layer
+  (the ADR 0067 pattern).
+- **D2. Accepted.** F1–F6 are filed as issues now. R2 keeps its workarounds in
+  the meantime.
+- **D3. Both penalties explicit.** `Frictional` requires `eps_n` and `eps_t`.
+  The docstring cites the R1 evidence that εT = εN/10 is the only ratio that
+  converged there, and that the fork's own default εT = εN diverged. One
+  problem is not enough to justify a default.
+- **D4. Skin first.** P2 ships B/C; A follows in P3.
+- **D5. Deferred to R6.** P9 is specified so that the cap can move to a shared
+  foundation composite without breaking the `g.piles` API.
