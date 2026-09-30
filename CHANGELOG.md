@@ -14,6 +14,32 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — CAD imports default to `highest_dim_only=False`; FIXED — `heal_shapes()` no longer deletes free curves; ADDED — `g.model.io.load_brep`
+
+`g.model.io.heal_shapes()` with no `tags` calls OCC's heal-everything,
+whose face sewing drops every curve and point that belongs to no face. On
+a frame + shell model (shells plus beam / column lines, as STKO exports)
+that silently deleted the frame: 192 columns of a 1,016-face building.
+When the model has faces plus free curves or points, the call now heals
+without sewing and fires the new `WarnGeomHealSkipsSewing`
+(`apeGmsh.core._geometry_errors`); models without free curves heal and sew
+exactly as before.
+
+`g.model.io.load_brep(path, ...)` imports OpenCASCADE's native BREP
+(what STKO and other OCC-based pre-processors write), with the same
+signature and return shape as `load_step`.
+
+**Behaviour change:** `load_step` / `load_iges` / `load_brep` and
+`g.parts.import_step` / `g.parts.add` now default to
+`highest_dim_only=False`. With `True`, OCC imports only the highest
+dimension, so a shell's free beam / column curves never reached the
+model. The returned dict now holds every dimension (each tag once;
+`importShapes` repeats shared sub-entities). `label=`, `heal=` and the
+parts transforms / umbrella label act on the imported shapes (the
+entities that bound nothing: volumes, a shell's faces, free curves), so a
+labelled solid import still labels only its volumes and a free column
+moves with its shell. Pass `highest_dim_only=True` for the old behaviour.
+
 ### REMOVED — API Flow Atlas (`docs/api-flows/`) and `architecture/layout.md` (program slice N1.3, #1229)
 
 Both were hand-maintained maps that lagged the code. `docs/api-flows/`

@@ -182,14 +182,15 @@ sweep(dimtags, curves, *, num_elems=None)        thru_sections(wires, *, make_so
 
 ```
 diagnose(*, warn=False) -> ImportHealth          # NON-mutating health scan; never heals
-load_step(path, *, highest_dim_only=True, heal=False, dedupe=False, fuse=False, label=None, sync=True)
-load_iges(path, *, highest_dim_only=True, heal=False, dedupe=False, fuse=False, label=None, sync=True)
+load_step(path, *, highest_dim_only=False, heal=False, dedupe=False, fuse=False, label=None, sync=True)
+load_iges(path, *, highest_dim_only=False, heal=False, dedupe=False, fuse=False, label=None, sync=True)
+load_brep(path, *, highest_dim_only=False, heal=False, dedupe=False, fuse=False, label=None, sync=True)  # OCC native
 load_dxf(path, *, point_tolerance=1e-6, create_physical_groups=True, sync=True)
 heal_shapes(tags=None, *, dim=3, tolerance=1e-8, fix_degenerated=True, fix_small_edges=True,
             fix_small_faces=True, sew_faces=True, make_solids=True, sync=True) -> _IO
 save_step(path, dimtags=None)        save_msh(path)
 ```
-`# src/apeGmsh/core/_model_io.py:701 (diagnose), :556 (load_step), :627 (heal_shapes)`
+`# src/apeGmsh/core/_model_io.py:801 (diagnose), :587 (load_step), :660 (load_brep), :707 (heal_shapes)`
 
 `ImportHealth` (frozen dataclass): `.n_solids`, `.is_suspect` (True iff
 short_edges or tiny_faces — slivers; a surface-only import does NOT
@@ -202,6 +203,16 @@ mm/m models, so `heal=True` now actually heals (and renumbers).
 Raw imports auto-fire `WarnGeomImportHealth` (a `UserWarning`,
 `from apeGmsh.core._geometry_errors import WarnGeomImportHealth`) when
 slivers appear.
+
+**Imports default to `highest_dim_only=False`:** every shape and every dim
+comes back (each tag once), so frame + shell models (shells plus free beam /
+column curves) keep their frame; `label=` / `heal=` act on the shapes, not
+their sub-entities. `highest_dim_only=True` drops free lower-dim shapes.
+Sewing drops every free curve, so
+`heal_shapes()` on such a model heals without sewing and fires
+`WarnGeomHealSkipsSewing`. An explicit `tags=` list is healed one entity
+at a time and never sews.
+`# verified: tests/test_heal_free_curves.py::test_heal_everything_keeps_the_free_column_and_warns`
 `# verified: tests/test_import_health.py::test_diagnose_clean_box`
 `# verified: tests/test_import_health.py::test_load_step_heal_auto_uses_scale_aware_tolerance`
 
@@ -520,7 +531,7 @@ back and tracks label↔entity membership through fragmentation.
 instances() -> dict[str, Instance]    part(label) -> Part    get(label) -> Instance   labels() -> list[str]
 register(label, dimtags) -> Instance  from_model(label, dimtags_or_model, ...) -> Instance
 add(part, *, label=None, translate=None, rotate=None, ...)
-import_step(path, *, label=None, translate=(0,0,0), rotate=None, highest_dim_only=True,
+import_step(path, *, label=None, translate=(0,0,0), rotate=None, highest_dim_only=False,
             heal=False, dedupe=False, properties=None) -> Instance
 build_node_map(*, conformal=True) -> dict[str, set[int]]    build_face_map(...) -> dict
 rename(old, new)   delete(label)   fragment_all()   fuse_group(label, ...)

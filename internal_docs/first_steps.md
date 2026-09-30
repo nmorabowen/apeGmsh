@@ -895,21 +895,20 @@ sizing gotcha:
 ### 8.2  Loading — `g.model.io.load_step` / `load_iges`
 
 ```python
-imported = g.model.io.load_step(
-    "bracket.step",
-    highest_dim_only=True,   # default — return only top-dim entities
-)
-# imported → {3: [5, 6, 7]}   (one dict key per dimension present)
+imported = g.model.io.load_step("bracket.step")
+# imported → {3: [5, 6, 7], 2: [...], 1: [...], 0: [...]}   (every dim, each tag once)
 
 volumes = imported[3]
 ```
 
-- **`highest_dim_only=True`** — the default. Returns volumes for
-  solid models, surfaces for surface models. Use this unless you
-  need sub-entities.
-- **`highest_dim_only=False`** — returns every dim. Needed for
-  wireframe frames (1D models) where the entities of interest
-  are curves.
+- **`highest_dim_only=False`** — the default. Imports every shape in
+  the file and returns every dim, so a shell with free beam / column
+  curves keeps its frame. `label=` and `heal=` act on the imported
+  shapes (volumes, the faces of a shell, free curves), not on their
+  sub-entities.
+- **`highest_dim_only=True`** — imports only the highest dimension
+  (volumes for solids, surfaces for surface models); free
+  lower-dimension shapes beside it are dropped.
 
 Sister methods: `save_step`, `save_iges`, `load_dxf`, `save_dxf`.
 **Prefer STEP** — modern spec, preserves exact NURBS + tolerances.

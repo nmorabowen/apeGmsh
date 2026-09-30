@@ -145,12 +145,12 @@ imported = g.model.io.load_step("bracket.step")
 bodies = imported[3]      # all imported volume tags
 ```
 
-`load_iges` has the same signature and return shape. By default only the
-top-dimensional entities come back (`highest_dim_only=True`) — a solid model
-returns its volumes, not the hundreds of face and edge tags underneath them.
-Pass `highest_dim_only=False` when the next step is tagging a specific face,
-though as we'll see below, discovering faces by query is usually the better
-move.
+`load_iges` (and `load_brep`, for OCC's native format) has the same
+signature and return shape. By default every shape in the file comes in and
+every dimension comes back (`highest_dim_only=False`), so a shell with free
+beam / column curves keeps its frame; `label=` still lands on the shapes, not
+their sub-entities. Pass `highest_dim_only=True` to import only the top
+dimension.
 
 The one idea to internalize about CAD import: **STEP gives you geometry, not a
 model.** The format carries no physical groups, no mesh, no loads. After

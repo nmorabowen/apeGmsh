@@ -1686,6 +1686,12 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.heal_shapes"
     },
+    "g.model.io.load_brep": {
+      "doc": "Import an OpenCASCADE BREP file into the current model.",
+      "signature": "load_brep(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.model.io.load_brep"
+    },
     "g.model.io.load_dxf": {
       "doc": "Import a DXF file into the current model.",
       "signature": "load_dxf(file_path: 'Path | str', *, point_tolerance: 'float' = 1e-06, create_physical_groups: 'bool' = True, sync: 'bool' = True) -> 'dict[str, dict[int, list[Tag]]]'",
@@ -1700,7 +1706,7 @@
     },
     "g.model.io.load_iges": {
       "doc": "Import an IGES file into the current model.",
-      "signature": "load_iges(file_path: 'Path | str', *, highest_dim_only: 'bool' = True, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "signature": "load_iges(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.load_iges"
     },
@@ -1712,7 +1718,7 @@
     },
     "g.model.io.load_step": {
       "doc": "Import a STEP file into the current model.",
-      "signature": "load_step(file_path: 'Path | str', *, highest_dim_only: 'bool' = True, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "signature": "load_step(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.load_step"
     },
@@ -2012,7 +2018,7 @@
     },
     "g.parts.add": {
       "doc": "Import a saved Part into the session.",
-      "signature": "add(part: \"'Part'\", *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = True) -> 'Instance'",
+      "signature": "add(part: \"'Part'\", *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = False) -> 'Instance'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.parts.add"
     },
@@ -2102,7 +2108,7 @@
     },
     "g.parts.import_step": {
       "doc": "Import a STEP or IGES file as a named instance.",
-      "signature": "import_step(file_path: 'str | Path', *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, properties: 'dict[str, Any] | None' = None) -> 'Instance'",
+      "signature": "import_step(file_path: 'str | Path', *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = False, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, properties: 'dict[str, Any] | None' = None) -> 'Instance'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.parts.import_step"
     },
