@@ -36,8 +36,11 @@ from apeGmsh.opensees.material.uniaxial import (
     LadrunoUniaxialJ2,
     Maxwell,
     MultiLinear,
+    PySimple1,
+    QzSimple1,
     Steel01,
     Steel02,
+    TzSimple1,
     Viscous,
     ViscousDamper,
 )
@@ -592,6 +595,210 @@ class TestMultiLinear:
         # legitimate backbone (post-peak softening).
         m = MultiLinear(points=((0.001, 100.0), (0.005, 40.0)))
         assert m.points[1][1] == 40.0
+
+
+# ---------------------------------------------------------------------------
+# PySimple1 / TzSimple1 / QzSimple1 — soil–pile springs
+# ---------------------------------------------------------------------------
+
+class TestPySimple1:
+    def test_construction(self) -> None:
+        m = PySimple1(soil_type=2, pult=150.0, y50=0.01, Cd=0.3)
+        assert (m.soil_type, m.pult, m.y50, m.Cd, m.c) == (
+            2, 150.0, 0.01, 0.3, 0.0,
+        )
+
+    def test_emit_omits_zero_dashpot(self) -> None:
+        rec = RecordingEmitter()
+        PySimple1(soil_type=1, pult=150.0, y50=0.01, Cd=0.3)._emit(rec, tag=5)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("PySimple1", 5, 1, 150.0, 0.01, 0.3), {}),
+        ]
+
+    def test_emit_appends_nonzero_dashpot(self) -> None:
+        rec = RecordingEmitter()
+        PySimple1(
+            soil_type=2, pult=150.0, y50=0.01, Cd=1.0, c=2.5,
+        )._emit(rec, tag=5)
+        assert rec.calls[0][1] == ("PySimple1", 5, 2, 150.0, 0.01, 1.0, 2.5)
+
+    def test_tcl_line(self) -> None:
+        e = TclEmitter()
+        PySimple1(soil_type=1, pult=150.0, y50=0.01, Cd=0.3, c=2.5)._emit(
+            e, tag=3,
+        )
+        assert [ln for ln in e.lines() if "PySimple1" in ln] == [
+            "uniaxialMaterial PySimple1 3 1 150.0 0.01 0.3 2.5",
+        ]
+
+    def test_py_line(self) -> None:
+        e = PyEmitter()
+        PySimple1(soil_type=2, pult=150.0, y50=0.01, Cd=0.3)._emit(e, tag=3)
+        assert [ln for ln in e.lines() if "PySimple1" in ln] == [
+            "ops.uniaxialMaterial('PySimple1', 3, 2, 150.0, 0.01, 0.3)",
+        ]
+
+    def test_dependencies_is_empty(self) -> None:
+        m = PySimple1(soil_type=1, pult=1.0, y50=1.0, Cd=0.0)
+        assert m.dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "PySimple1" in repr(
+            PySimple1(soil_type=1, pult=1.0, y50=1.0, Cd=0.0),
+        )
+
+    @pytest.mark.parametrize("bad", [0, 3, -1, True])
+    def test_validation_rejects_unknown_soil_type(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="soil_type must be 1"):
+            PySimple1(soil_type=bad, pult=1.0, y50=1.0, Cd=0.0)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("field", ["pult", "y50"])
+    @pytest.mark.parametrize("bad", [0.0, -1.0])
+    def test_validation_rejects_nonpositive(
+        self, field: str, bad: float,
+    ) -> None:
+        kw: dict[str, float] = {"pult": 1.0, "y50": 1.0}
+        kw[field] = bad
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            PySimple1(soil_type=1, Cd=0.0, **kw)
+
+    def test_validation_rejects_negative_drag(self) -> None:
+        with pytest.raises(ValueError, match="Cd must be >= 0"):
+            PySimple1(soil_type=1, pult=1.0, y50=1.0, Cd=-0.1)
+
+    def test_validation_rejects_negative_dashpot(self) -> None:
+        with pytest.raises(ValueError, match="c must be >= 0"):
+            PySimple1(soil_type=1, pult=1.0, y50=1.0, Cd=0.3, c=-1.0)
+
+
+class TestTzSimple1:
+    def test_construction(self) -> None:
+        m = TzSimple1(tz_type=1, tult=40.0, z50=0.002)
+        assert (m.tz_type, m.tult, m.z50, m.c) == (1, 40.0, 0.002, 0.0)
+
+    def test_emit_omits_zero_dashpot(self) -> None:
+        rec = RecordingEmitter()
+        TzSimple1(tz_type=2, tult=40.0, z50=0.002)._emit(rec, tag=8)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("TzSimple1", 8, 2, 40.0, 0.002), {}),
+        ]
+
+    def test_emit_appends_nonzero_dashpot(self) -> None:
+        rec = RecordingEmitter()
+        TzSimple1(tz_type=1, tult=40.0, z50=0.002, c=0.7)._emit(rec, tag=8)
+        assert rec.calls[0][1] == ("TzSimple1", 8, 1, 40.0, 0.002, 0.7)
+
+    def test_tcl_line(self) -> None:
+        e = TclEmitter()
+        TzSimple1(tz_type=1, tult=40.0, z50=0.002)._emit(e, tag=4)
+        assert [ln for ln in e.lines() if "TzSimple1" in ln] == [
+            "uniaxialMaterial TzSimple1 4 1 40.0 0.002",
+        ]
+
+    def test_py_line(self) -> None:
+        e = PyEmitter()
+        TzSimple1(tz_type=2, tult=40.0, z50=0.002, c=0.7)._emit(e, tag=4)
+        assert [ln for ln in e.lines() if "TzSimple1" in ln] == [
+            "ops.uniaxialMaterial('TzSimple1', 4, 2, 40.0, 0.002, 0.7)",
+        ]
+
+    def test_dependencies_is_empty(self) -> None:
+        assert TzSimple1(tz_type=1, tult=1.0, z50=1.0).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "TzSimple1" in repr(TzSimple1(tz_type=1, tult=1.0, z50=1.0))
+
+    @pytest.mark.parametrize("bad", [0, 3, True])
+    def test_validation_rejects_unknown_tz_type(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="tz_type must be 1"):
+            TzSimple1(tz_type=bad, tult=1.0, z50=1.0)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("field", ["tult", "z50"])
+    def test_validation_rejects_nonpositive(self, field: str) -> None:
+        kw: dict[str, float] = {"tult": 1.0, "z50": 1.0}
+        kw[field] = 0.0
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            TzSimple1(tz_type=1, **kw)
+
+    def test_validation_rejects_negative_dashpot(self) -> None:
+        with pytest.raises(ValueError, match="c must be >= 0"):
+            TzSimple1(tz_type=1, tult=1.0, z50=1.0, c=-0.1)
+
+
+class TestQzSimple1:
+    def test_construction(self) -> None:
+        m = QzSimple1(qz_type=2, qult=900.0, z50=0.005)
+        assert (m.qz_type, m.qult, m.z50, m.suction, m.c) == (
+            2, 900.0, 0.005, 0.0, 0.0,
+        )
+
+    def test_emit_omits_both_optionals_when_default(self) -> None:
+        rec = RecordingEmitter()
+        QzSimple1(qz_type=1, qult=900.0, z50=0.005)._emit(rec, tag=9)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("QzSimple1", 9, 1, 900.0, 0.005), {}),
+        ]
+
+    def test_emit_suction_alone_carries_zero_dashpot(self) -> None:
+        # The Tcl parser reads argv[7] (c) whenever argc > 6: a lone
+        # suction would read past the argument list, so the pair travels
+        # together.
+        rec = RecordingEmitter()
+        QzSimple1(qz_type=1, qult=900.0, z50=0.005, suction=0.05)._emit(
+            rec, tag=9,
+        )
+        assert rec.calls[0][1] == ("QzSimple1", 9, 1, 900.0, 0.005, 0.05, 0.0)
+
+    def test_emit_dashpot_alone_carries_zero_suction(self) -> None:
+        rec = RecordingEmitter()
+        QzSimple1(qz_type=1, qult=900.0, z50=0.005, c=3.0)._emit(rec, tag=9)
+        assert rec.calls[0][1] == ("QzSimple1", 9, 1, 900.0, 0.005, 0.0, 3.0)
+
+    def test_tcl_line(self) -> None:
+        e = TclEmitter()
+        QzSimple1(qz_type=2, qult=900.0, z50=0.005, suction=0.1, c=3.0)._emit(
+            e, tag=6,
+        )
+        assert [ln for ln in e.lines() if "QzSimple1" in ln] == [
+            "uniaxialMaterial QzSimple1 6 2 900.0 0.005 0.1 3.0",
+        ]
+
+    def test_py_line(self) -> None:
+        e = PyEmitter()
+        QzSimple1(qz_type=1, qult=900.0, z50=0.005)._emit(e, tag=6)
+        assert [ln for ln in e.lines() if "QzSimple1" in ln] == [
+            "ops.uniaxialMaterial('QzSimple1', 6, 1, 900.0, 0.005)",
+        ]
+
+    def test_dependencies_is_empty(self) -> None:
+        assert QzSimple1(qz_type=1, qult=1.0, z50=1.0).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "QzSimple1" in repr(QzSimple1(qz_type=1, qult=1.0, z50=1.0))
+
+    @pytest.mark.parametrize("bad", [0, 3, True])
+    def test_validation_rejects_unknown_qz_type(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="qz_type must be 1"):
+            QzSimple1(qz_type=bad, qult=1.0, z50=1.0)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("field", ["qult", "z50"])
+    def test_validation_rejects_nonpositive(self, field: str) -> None:
+        kw: dict[str, float] = {"qult": 1.0, "z50": 1.0}
+        kw[field] = -1.0
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            QzSimple1(qz_type=1, **kw)
+
+    @pytest.mark.parametrize("bad", [-0.01, 0.11])
+    def test_validation_rejects_suction_out_of_range(self, bad: float) -> None:
+        with pytest.raises(ValueError, match=r"suction must be in \[0, 0.1\]"):
+            QzSimple1(qz_type=1, qult=1.0, z50=1.0, suction=bad)
+
+    def test_suction_bounds_are_inclusive(self) -> None:
+        assert QzSimple1(qz_type=1, qult=1.0, z50=1.0, suction=0.1).suction == 0.1
+
+    def test_validation_rejects_negative_dashpot(self) -> None:
+        with pytest.raises(ValueError, match="c must be >= 0"):
+            QzSimple1(qz_type=1, qult=1.0, z50=1.0, c=-1.0)
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
@@ -34,6 +34,9 @@ __all__ = [
     "Concrete02",
     "Hysteretic",
     "MultiLinear",
+    "PySimple1",
+    "TzSimple1",
+    "QzSimple1",
     "ElasticMaterial",
     "ENT",
     "ElasticPP",
@@ -697,6 +700,285 @@ class MultiLinear(UniaxialMaterial):
         emitter.uniaxialMaterial(
             "MultiLinear", tag, *[v for pt in self.points for v in pt],
         )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Soil–pile springs — PySimple1 / TzSimple1 / QzSimple1 (Boulanger et al.)
+#
+# Stock OpenSees (``SRC/material/uniaxial/PY/``). Tcl dispatches through
+# ``TclModelBuilder_addPyTzQzMaterial`` and openseespy through the
+# ``OPS_PySimple1`` / ``OPS_TzSimple1`` / ``OPS_QzSimple1`` factories; the
+# positional order is the same on both. Every validation rule below guards
+# what the C++ does on bad input, which is worse than an error: an unknown
+# backbone type or a non-positive capacity / reference displacement calls
+# ``exit(-1)`` in ``revertToStart`` (killing the interpreter), and the
+# out-of-range optionals are silently clamped.
+# ---------------------------------------------------------------------------
+
+PyTzQzType = Literal[1, 2]
+"""Backbone selector shared by the three soil–pile springs (``1`` = clay,
+``2`` = sand); see each class for the curve it approximates."""
+
+
+def _check_soil_type(cls_name: str, arg: str, value: object) -> None:
+    # ``bool`` is an ``int`` subclass: ``True`` would emit as ``True`` in Tcl.
+    if isinstance(value, bool) or value not in (1, 2):
+        raise ValueError(
+            f"{cls_name}: {arg} must be 1 (clay) or 2 (sand), got "
+            f"{value!r} — OpenSees exit(-1)s on any other value."
+        )
+
+
+def _check_positive(cls_name: str, arg: str, value: float) -> None:
+    if value <= 0:
+        raise ValueError(
+            f"{cls_name}: {arg} must be > 0, got {value!r} — OpenSees "
+            f"exit(-1)s on a non-positive value."
+        )
+
+
+def _check_dashpot(cls_name: str, c: float) -> None:
+    if c < 0:
+        raise ValueError(
+            f"{cls_name}: c must be >= 0, got {c!r} — OpenSees silently "
+            f"resets a negative dashpot to 0."
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PySimple1(UniaxialMaterial):
+    """``uniaxialMaterial PySimple1`` — lateral soil–pile (p-y) spring.
+
+    OpenSees command::
+
+        uniaxialMaterial PySimple1 tag soilType pult Y50 Cd [c]
+
+    Stock OpenSees (Boulanger et al. 1999). The response is an elastic
+    (far-field), a plastic (near-field) and a gap component in series;
+    the gap is a closure spring in parallel with a nonlinear drag spring.
+    Loading is symmetric: the same backbone applies in both directions.
+
+    ``soil_type`` selects the backbone shape:
+
+    * ``1`` — approximates Matlock (1970) soft clay.
+    * ``2`` — approximates API (1993) sand.
+
+    Units follow the model; nothing is converted. ``pult`` is a
+    **force**, not a force per length: the design-equation ``p_ult``
+    (force / length of pile) times the tributary length of pile this
+    spring represents. ``y50`` is a displacement in the model's length
+    unit, and ``c`` is force·time / length.
+
+    .. note::
+       The dashpot ``c`` consumes the strain rate, so it acts only in a
+       rate-capable element (``ZeroLength`` / ``TwoNodeLink``). Inside a
+       ``section Aggregator`` / ``zeroLengthSection`` the backbone still
+       works but the dashpot is inert. The class does not flag itself
+       ``is_rate_dependent``, because the backbone is rate-independent.
+
+    Parameters
+    ----------
+    soil_type
+        Backbone selector, ``1`` (Matlock soft clay) or ``2`` (API sand).
+    pult
+        Ultimate capacity of the spring (> 0).
+    y50
+        Displacement at which 50 % of ``pult`` is mobilized in monotonic
+        loading (> 0).
+    Cd
+        Drag ratio: the drag resistance within a fully mobilized gap is
+        ``Cd * pult`` (>= 0). ``Cd = 1`` means no gap forms. OpenSees
+        replaces a value at or below its internal tolerance with that
+        tolerance, so ``0`` gives a (near-)zero drag, not an error.
+    c
+        Viscous damping coefficient of the dashpot on the far-field
+        (elastic) component, for radiation damping (>= 0, default 0).
+        Emitted only when nonzero.
+    """
+
+    soil_type: PyTzQzType
+    pult: float
+    y50: float
+    Cd: float
+    c: float = 0.0
+
+    def __post_init__(self) -> None:
+        _check_soil_type("PySimple1", "soil_type", self.soil_type)
+        _check_positive("PySimple1", "pult", self.pult)
+        _check_positive("PySimple1", "y50", self.y50)
+        if self.Cd < 0:
+            raise ValueError(
+                f"PySimple1: Cd must be >= 0, got {self.Cd!r} — OpenSees "
+                f"silently replaces a negative drag ratio with its "
+                f"tolerance."
+            )
+        _check_dashpot("PySimple1", self.c)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.soil_type, self.pult, self.y50, self.Cd]
+        if self.c != 0.0:
+            params.append(self.c)
+        emitter.uniaxialMaterial("PySimple1", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TzSimple1(UniaxialMaterial):
+    """``uniaxialMaterial TzSimple1`` — pile shaft-friction (t-z) spring.
+
+    OpenSees command::
+
+        uniaxialMaterial TzSimple1 tag tzType tult z50 [c]
+
+    Stock OpenSees (Boulanger et al. 1999). The response is an elastic
+    (far-field) and a plastic (near-field) component in series; there is
+    no gap. Loading is symmetric: the same backbone applies in both
+    directions.
+
+    ``tz_type`` selects the backbone shape:
+
+    * ``1`` — approximates Reese & O'Neill (1987), drilled shafts in clay.
+    * ``2`` — approximates Mosher (1984), piles in sand.
+
+    Units follow the model; nothing is converted. ``tult`` is a
+    **force**: the design-equation ``t_ult`` (force / length of pile)
+    times the tributary length of pile this spring represents. ``z50``
+    is a displacement in the model's length unit, and ``c`` is
+    force·time / length.
+
+    .. note::
+       The dashpot ``c`` acts only in a rate-capable element
+       (``ZeroLength`` / ``TwoNodeLink``); see :class:`PySimple1`.
+
+    Parameters
+    ----------
+    tz_type
+        Backbone selector, ``1`` (Reese & O'Neill clay) or ``2``
+        (Mosher sand).
+    tult
+        Ultimate capacity of the spring (> 0).
+    z50
+        Displacement at which 50 % of ``tult`` is mobilized in monotonic
+        loading (> 0).
+    c
+        Viscous damping coefficient of the dashpot on the far-field
+        (elastic) component, for radiation damping (>= 0, default 0).
+        Emitted only when nonzero.
+    """
+
+    tz_type: PyTzQzType
+    tult: float
+    z50: float
+    c: float = 0.0
+
+    def __post_init__(self) -> None:
+        _check_soil_type("TzSimple1", "tz_type", self.tz_type)
+        _check_positive("TzSimple1", "tult", self.tult)
+        _check_positive("TzSimple1", "z50", self.z50)
+        _check_dashpot("TzSimple1", self.c)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.tz_type, self.tult, self.z50]
+        if self.c != 0.0:
+            params.append(self.c)
+        emitter.uniaxialMaterial("TzSimple1", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class QzSimple1(UniaxialMaterial):
+    """``uniaxialMaterial QzSimple1`` — pile end-bearing (q-z) spring.
+
+    OpenSees command::
+
+        uniaxialMaterial QzSimple1 tag qzType qult Z50 [suction c]
+
+    Stock OpenSees (after Boulanger et al. 1999, modified for the
+    compression/uplift asymmetry). The response is an elastic
+    (far-field), a plastic (near-field) and a gap component in series;
+    the gap is a closure spring in parallel with a suction (drag) spring.
+
+    .. important::
+       The law is **asymmetric**. Compression (bearing) is the
+       **negative** direction: the full ``qult`` is mobilized only there.
+       In tension (uplift) the resistance is capped at
+       ``suction * qult``. With the ``zeroLength`` deformation taken as
+       jnode minus inode, put the fixed node on the inode and the pile tip
+       on the jnode, so a downward (negative) tip settlement compresses
+       the spring.
+
+    ``qz_type`` selects the backbone shape:
+
+    * ``1`` — approximates Reese & O'Neill (1987), drilled shafts in clay.
+    * ``2`` — approximates Vijayvergiya (1977), piles in sand. That
+      relation is stated in terms of the critical displacement
+      ``z_crit`` at which ``qult`` is fully mobilized; the matching
+      ``z50`` is ``0.125 * z_crit``.
+
+    Units follow the model; nothing is converted. ``qult`` is a
+    **force**: the design-equation ``q_ult`` (a stress) times the pile
+    tip area. ``z50`` is a displacement in the model's length unit, and
+    ``c`` is force·time / length.
+
+    The optional ``suction`` and ``c`` are emitted together or not at
+    all. The Tcl parser reads both once either is present (it reads
+    ``argv[7]`` whenever ``argc > 6``), so a lone ``suction`` would read
+    past the end of the argument list.
+
+    .. note::
+       The dashpot ``c`` acts only in a rate-capable element
+       (``ZeroLength`` / ``TwoNodeLink``); see :class:`PySimple1`.
+
+    Parameters
+    ----------
+    qz_type
+        Backbone selector, ``1`` (Reese & O'Neill clay) or ``2``
+        (Vijayvergiya sand).
+    qult
+        Ultimate end-bearing capacity of the spring (> 0).
+    z50
+        Displacement at which 50 % of ``qult`` is mobilized in monotonic
+        loading (> 0).
+    suction
+        Uplift resistance as a fraction of ``qult``, in ``[0, 0.1]``
+        (default 0). OpenSees clamps a value above 0.1 to 0.1 with only a
+        printed warning, and replaces a value at or below its internal
+        tolerance with that tolerance.
+    c
+        Viscous damping coefficient of the dashpot on the far-field
+        (elastic) component, for radiation damping (>= 0, default 0).
+    """
+
+    qz_type: PyTzQzType
+    qult: float
+    z50: float
+    suction: float = 0.0
+    c: float = 0.0
+
+    def __post_init__(self) -> None:
+        _check_soil_type("QzSimple1", "qz_type", self.qz_type)
+        _check_positive("QzSimple1", "qult", self.qult)
+        _check_positive("QzSimple1", "z50", self.z50)
+        if not (0.0 <= self.suction <= 0.1):
+            raise ValueError(
+                f"QzSimple1: suction must be in [0, 0.1], got "
+                f"{self.suction!r} — OpenSees silently clamps it into that "
+                f"range."
+            )
+        _check_dashpot("QzSimple1", self.c)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.qz_type, self.qult, self.z50]
+        if self.suction != 0.0 or self.c != 0.0:
+            params += [self.suction, self.c]
+        emitter.uniaxialMaterial("QzSimple1", tag, *params)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

@@ -197,6 +197,12 @@ ops.element.ZeroLength(nodes=("boundary_node", gnd),           # mesh-node label
   uniaxials — they produce a velocity-proportional force with **no `-doRayleigh`**.
   A pure `Viscous` has zero static stiffness → parallel it with an elastic spring
   on the same DOF, or the static tangent is singular.
+- **Soil–pile springs** `PySimple1(soil_type=, pult=, y50=, Cd=, c=0)`,
+  `TzSimple1(tz_type=, tult=, z50=, c=0)`, `QzSimple1(qz_type=, qult=, z50=,
+  suction=0, c=0)`: type `1` = clay, `2` = sand. `pult`/`tult`/`qult` are
+  **forces** (per-length capacity × tributary length, or tip stress × area), in
+  model units. `QzSimple1` is asymmetric: bearing is the **negative**
+  direction, uplift is capped at `suction·qult` (`suction ≤ 0.1`).
 - **`ZeroLengthSection`** (fiber / `section.Aggregator` hinge, real P–M coupling)
   requires `ndf` 3 (2D) or 6 (3D), and its `do_rayleigh` defaults **ON** — the
   inverse of plain `ZeroLength`. Pass `do_rayleigh=False` to disable.
