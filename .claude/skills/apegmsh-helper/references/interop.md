@@ -196,3 +196,61 @@ write_brep(scd, "1a.brep", geometry=353)          # one geometry, or the whole c
   sections) come back as dicts of arrays.
 - **Documents carry unused template properties** — map what is assigned
   (`Geometry.element_property` / `physical_property`), not every definition.
+
+### Translating an STKO document — `translate_scd` + `build_opensees` (ADR 0111)
+
+The translator is **mesh-faithful**. STKO's own nodes and elements go into
+the session with STKO's ids, as gmsh discrete entities. The session is never
+meshed or renumbered. The deck then reproduces STKO's export: sections,
+materials, elements, masses, loads, fixities, rigid diaphragms, time series,
+Rayleigh damping and the static stages.
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh.interop.stko import read_scd, translate_scd, build_opensees, collect_unsupported
+
+scd = read_scd("1C_TH_000.scd")
+collect_unsupported(scd)                        # () when everything is translatable
+with apeGmsh(model_name="1C") as g:             # an EMPTY session
+    result = translate_scd(g, scd, records={2: accel_values})   # Path series values
+    fem = g.mesh.queries.get_fem_data(dim=None) # NEVER generate() / renumber() here
+ops = build_opensees(fem, result)               # apeSees: props, elements, conditions, static stages
+ops.tcl("1C.tcl")
+result.plan.patterns, result.plan.stages        # UniformExcitation + transient stage: data only
+result.mesh.element_groups                      # PG per (element prop, physical prop, local axis)
+```
+`# src/apeGmsh/interop/stko/translate.py (+ translate_mesh/_props/_conditions/_types.py)`
+`# verified: tests/interop/test_stko_translate.py::test_build_opensees_emits_the_whole_document`
+
+- **Fails loud, all at once.** An unknown or tier-only STKO type (stdBrick,
+  zeroLength, absorbing boundaries, ASDEmbeddedNodeElement, H5DRM, hex8
+  meshes, …), or an option that is not translated, raises one
+  `UnsupportedSTKOTypes`. It lists every offender (`.items`) before the
+  session is touched. Unassigned template properties are not scanned.
+- **Element tags are STKO's element ids.** `build_opensees` builds the bridge
+  with `apeSees(fem, element_tags="fem")`; `element_tags="sequential"` keeps
+  the bridge's own numbering. Tags the bridge makes itself (springs,
+  couplings) land above the largest FEM element id. Node tags are STKO's
+  either way.
+- **Serial by default.** `chain="serial"` maps STKO's `Mumps` to `Pardiso`
+  and `ParallelRCM` to `RCM`. `chain="stko"` keeps STKO's choices, for a
+  partitioned deck.
+- **Time-series values.** The `.scd` holds one-value placeholders
+  (`TimeSeriesSpec.placeholder`). Pass the real record with `records=`.
+- **IMPL-EX `dTime`: your time-history driver must set it every step.** Each
+  static stage starts with STKO's reset of `dTimeCommit` / `dTimeInitial` /
+  `dTime` on `result.plan.implex_dt_targets` (`duration/numIncr`). After it
+  the ASDConcrete materials stop reading OpenSees' own increment, so before
+  each transient step set `dTime` on those elements (and `dTimeCommit` /
+  `dTimeInitial` at the first step), as STKO's deck does.
+  `build_conditions(..., implex_dtime=False)` writes no reset.
+- **Rigid diaphragms are STKO's links, checked.** One
+  `g.constraints.rigid_diaphragm` per master, on carriers that hold only that
+  master and its slaves, with a tolerance that keeps an off-plane slave.
+  `build_conditions` checks the FEM's resolved records against
+  `result.plan.diaphragm_pairs` (`translate_conditions.verify_diaphragms`).
+- **Recipes:** `declare_translation(ops, result)` returns `(props, series)`
+  for a bridge you made yourself. `translate_props.asdconcrete_9p(attrs)` and
+  `translate_props.fiber_rows(section)` are STKO's computations, usable as a
+  source of definitions. `result.plan.summaries` gives each condition as an
+  intent (value, per area/length/node, its PGs, the patterns that use it).

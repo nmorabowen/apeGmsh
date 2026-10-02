@@ -348,10 +348,10 @@ def test_write_brep_extracts_the_compound_and_one_geometry(tmp_path: Path) -> No
 
 # ── the real San Ramon documents (skipped unless available) ──────────
 
-_SAMPLES = os.environ.get("APEGMSH_STKO_SAMPLES")
+_SAMPLES = os.environ.get("APEGMSH_STKO_ORACLES")
 
 
-@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_SAMPLES to the stko-rev0-tcl folder")
+@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_ORACLES to the stko-rev0-tcl folder")
 def test_san_ramon_1a_matches_the_tcl_export() -> None:
     m = read_scd(Path(_SAMPLES) / "Tier_1" / "1A" / "1A_TH_000.scd")
     assert len(m.mesh.node_ids) == 14003
@@ -369,7 +369,7 @@ def test_san_ramon_1a_matches_the_tcl_export() -> None:
     assert (len(m.set_nodes("Columns_Set")), len(m.set_elements("Columns_Set"))) == (752, 736)
 
 
-@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_SAMPLES to the stko-rev0-tcl folder")
+@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_ORACLES to the stko-rev0-tcl folder")
 def test_san_ramon_4d_matches_the_tcl_export() -> None:
     m = read_scd(Path(_SAMPLES) / "Tier_4" / "4D" / "4D_TH_000.scd")
     assert len(m.mesh.node_ids) == 55980
@@ -379,7 +379,7 @@ def test_san_ramon_4d_matches_the_tcl_export() -> None:
     assert m.condition("DRM").type == "Loads.Generic.H5DRM"
 
 
-@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_SAMPLES to the stko-rev0-tcl folder")
+@pytest.mark.skipif(not _SAMPLES, reason="set APEGMSH_STKO_ORACLES to the stko-rev0-tcl folder")
 def test_san_ramon_1a_geometry_keeps_face_and_edge_order(tmp_path: Path) -> None:
     """STKO face i is gmsh face i + 1 (edges likewise): the property
     assignments of the .scd land on the right gmsh entities."""
