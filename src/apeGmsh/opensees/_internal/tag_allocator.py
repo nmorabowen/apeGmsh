@@ -62,6 +62,22 @@ class TagAllocator:
         self._counters[kind] = base + n
         return base + 1
 
+    def last(self, kind: str) -> int:
+        """The last tag handed out for ``kind`` (``0`` before the first)."""
+        return self._counters.get(kind, 0)
+
+    def reserve_through(self, kind: str, last: int) -> None:
+        """Mark every tag ``<= last`` of ``kind`` as taken.
+
+        Raises the counter to ``max(counter, last)`` so the next
+        :meth:`allocate` / :meth:`allocate_block` returns a tag above
+        ``last``; never lowers it. Used by ``element_tags="fem"`` (ADR
+        0111 D2) to put every bridge-synthesised element above the
+        model's FEM element ids, which the plan uses verbatim as tags.
+        """
+        if last > self._counters.get(kind, 0):
+            self._counters[kind] = int(last)
+
     def allocate_for(self, primitive: object, kind: str) -> int:
         """Allocate a tag for a primitive, idempotent on repeat calls.
 

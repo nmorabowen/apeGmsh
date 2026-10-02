@@ -115,6 +115,9 @@ __all__ = [
     "VECXZ_TOL",
     "compute_stage_ownership",
     "allocate_element_tags",
+    "reserve_fem_element_tags",
+    "ElementTagMode",
+    "ELEMENT_TAG_MODES",
     "build_element_partition_owner",
     "build_node_partition_owners",
     "runtime_rank_from_partition_record",
@@ -8743,12 +8746,96 @@ def build_element_partition_owner(fem: "FEMData") -> "SortedIntToInt":
     return SortedIntToInt(uniq_eids, uniq_ranks)
 
 
+#: ``apeSees(fem, element_tags=...)`` modes (ADR 0111 D2).
+ElementTagMode = Literal["sequential", "fem"]
+ELEMENT_TAG_MODES: "tuple[str, ...]" = ("sequential", "fem")
+
+
+def reserve_fem_element_tags(
+    elements: "Iterable[Element]",
+    fem: "FEMData",
+    tags: TagAllocator,
+) -> int:
+    """Reserve the FEM element-id range for ``element_tags="fem"``.
+
+    ADR 0111 D2: with ``"fem"`` every physical-group element's OpenSees
+    tag IS its FEM element id. Called once per emit, before any element
+    tag is allocated, it checks that those ids can be tags (each ``> 0``,
+    no id fanned out by two specs or twice by one) and raises the
+    ``"element"`` counter to their maximum (or the snapshot's largest
+    element id, if larger), so every element the bridge synthesises
+    afterwards (node-pair springs, interface ``zeroLength``,
+    embedded / rebar / rigid-body / coupling elements) lands strictly
+    above the range and cannot collide with a FEM id. Returns that
+    maximum (``0`` for an empty snapshot with no physical-group spec).
+
+    Raises :class:`BridgeError` listing the offending ids.
+    """
+    blocks: "list[np.ndarray]" = []
+    owners: "list[np.ndarray]" = []
+    specs: "list[Element]" = []
+    for spec in elements:
+        if getattr(spec, "pg", None) is None:
+            continue                        # node-pair form: no FEM id
+        eids = np.asarray(expand_spec_to_elements(fem, spec).eids,
+                          dtype=np.int64)
+        blocks.append(eids)
+        owners.append(np.full(eids.shape[0], len(specs), dtype=np.int64))
+        specs.append(spec)
+    all_eids = (np.concatenate(blocks) if blocks
+                else np.empty((0,), dtype=np.int64))
+    bad = all_eids[all_eids <= 0]
+    if bad.size:
+        raise BridgeError(
+            f"apeSees(element_tags='fem'): {bad.size} FEM element id(s) "
+            f"are <= 0 (first: {sorted(set(bad.tolist()))[:10]}); an "
+            f"OpenSees element tag must be a positive integer. Use "
+            f"element_tags='sequential' or renumber the mesh."
+        )
+    uniq, counts = np.unique(all_eids, return_counts=True)
+    dup = uniq[counts > 1]
+    if dup.size:
+        first = int(dup[0])
+        who = sorted({
+            f"{type(specs[int(k)]).__name__}(pg={specs[int(k)].pg!r})"  # type: ignore[attr-defined]
+            for k in np.concatenate(owners)[all_eids == first]
+        })
+        raise BridgeError(
+            f"apeSees(element_tags='fem'): {dup.size} FEM element id(s) "
+            f"would be emitted more than once (first: "
+            f"{dup[:10].tolist()}); element {first} is fanned out by "
+            f"{', '.join(who)}. With FEM ids as tags every element "
+            f"belongs to exactly one element declaration — split the "
+            f"physical groups, or use element_tags='sequential'."
+        )
+    top = int(uniq[-1]) if uniq.size else 0
+    # Reserve through the snapshot's largest element id too, not only the
+    # emitted ones: a synthesised tag must not reuse the id of a FEM
+    # element that exists but is not emitted (a point carrier, an
+    # unassigned group), or a results reader keyed by FEM id would take
+    # the synthesised element for it.
+    snap_ids = getattr(getattr(fem, "elements", None), "ids", None)
+    if snap_ids is not None and len(snap_ids):
+        top = max(top, int(np.max(np.asarray(snap_ids, dtype=np.int64))))
+    tags.reserve_through("element", top)
+    return top
+
+
 def allocate_element_tags(
     elements: "Iterable[Element]",
     fem: "FEMData",
     tags: TagAllocator,
+    *,
+    element_tags: ElementTagMode = "sequential",
 ) -> "list[tuple[Element, ElementPlanRows]]":
     """Allocate canonical element tags up-front, return per-spec plan.
+
+    ``element_tags="fem"`` (ADR 0111 D2) makes each physical-group row's
+    tag its FEM element id (explicit per-row ``tags``); node-pair specs
+    still draw from the counter. :func:`reserve_fem_element_tags` must
+    have run on ``tags`` first (``BuiltModel.emit`` does), so the counter
+    already sits at or above every FEM id; this function refuses
+    otherwise rather than risk a counter tag inside the FEM range.
 
     Returns a list of ``(spec, ElementPlanRows)`` so the per-rank
     fan-out can simply look up each element's pre-allocated tag instead
@@ -8797,6 +8884,20 @@ def allocate_element_tags(
                 f"check that get_fem_data(dim=...) was not called with a "
                 f"dim that excludes this group's cells."
             )
+        if element_tags == "fem" and pg is not None:
+            eids = np.asarray(fanout.eids, dtype=np.int64)
+            if n and int(eids.max()) > tags.last("element"):
+                raise BridgeError(
+                    "internal: element_tags='fem' but the FEM element-id "
+                    "range was not reserved before allocation (call "
+                    "reserve_fem_element_tags first); a counter tag "
+                    "could collide with a FEM id."
+                )
+            plan.append(
+                (spec, ElementPlanRows(fanout.eids, fanout.conn, 0,
+                                       tags=eids))
+            )
+            continue
         tag_start = tags.allocate_block("element", n)
         # Share the fan-out's arrays by reference — they are read-only
         # (memoised) so the plan and the fan-out cache alias one buffer

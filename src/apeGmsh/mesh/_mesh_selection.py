@@ -450,24 +450,40 @@ class MeshSelection(SelectionChain):
             for nid, xyz in zip(ids, coords):
                 yield int(nid), xyz
             return
-        # element level — (eid, conn_row).  The element payload differs
-        # by engine and the pair-view follows it byte-faithfully:
-        #   * broker / results → ``GroupResult`` (iterate its
-        #     ``ElementGroup`` blocks, each yielding ``(eid, conn)``);
+        # element level — (eid, conn_row), in ``.ids`` order (the same
+        # order as ``.coords`` and ``.connectivity``).  The row payload
+        # differs by engine and follows it byte-faithfully:
+        #   * broker / results → ``GroupResult`` (its ``ElementGroup``
+        #     blocks yield ``(eid, conn)``);
         #   * live mesh → the flat ``dict`` shape
         #     ``{'element_ids', 'connectivity'}`` (the legacy
-        #     ``MeshSelectionChain._materialize`` return) — zip the two
-        #     into the same ``(eid, conn_row)`` pair shape.
+        #     ``MeshSelectionChain._materialize`` return), rows as tuples.
+        # Before 2026-10 this iterated the payload's STORAGE order, which
+        # differs from ``.ids`` whenever the seed is a set (``pg=`` /
+        # ``label=`` / ``tag=``) or the mesh stores elements unsorted.
+        rows = self._element_rows()
+        for eid in self._items:
+            yield int(eid), rows[int(eid)]
+
+    def _element_rows(self) -> "dict[int, Any]":
+        """``{eid: conn_row}`` for every selected element; fail loud on
+        an id the engine does not hold (``.coords`` raises the same way)."""
         res = self._materialize()
+        rows: dict[int, Any] = {}
         if isinstance(res, dict):             # live-mesh element payload
-            eids = res["element_ids"]
-            conn = res["connectivity"]
-            for eid, row in zip(eids, conn):
-                yield int(eid), tuple(int(n) for n in row)
-            return
-        for grp in res:                       # GroupResult → ElementGroup
-            for eid, conn_row in grp:         # ElementGroup → (eid, conn)
-                yield eid, conn_row
+            for eid, row in zip(res["element_ids"], res["connectivity"]):
+                rows[int(eid)] = tuple(int(n) for n in row)
+        else:
+            for grp in res:                   # GroupResult → ElementGroup
+                for eid, conn_row in grp:     # ElementGroup → (eid, conn)
+                    rows[int(eid)] = conn_row
+        missing = [int(a) for a in self._items if int(a) not in rows]
+        if missing:
+            raise KeyError(
+                f"element id(s) {missing[:10]} are not in this mesh "
+                f"({len(missing)} missing) — no connectivity to return."
+            )
+        return rows
 
     # ── accessors (the unified terminal surface) ────────────
     @property
@@ -489,14 +505,18 @@ class MeshSelection(SelectionChain):
     def connectivity(self) -> np.ndarray:
         """Connectivity of the selected **elements** (element level).
 
-        Reuses the materialised element payload, so the shape /
-        homogeneous-vs-mixed behaviour is byte-identical to the legacy
-        chain's ``.result()`` for that engine:
+        Row ``i`` belongs to element ``.ids[i]``: the rows follow the
+        selection's id order, not the mesh's storage order (they
+        differed for a ``pg=`` seed on an unsorted mesh before 2026-10,
+        so ``zip(.ids, .connectivity)`` paired elements with the wrong
+        nodes).  Shape and dtype follow the materialised payload:
 
         * broker / results element → ``GroupResult.connectivity``
           (raises ``TypeError`` for a mixed-type result, by design —
           use ``.groups()`` / iterate);
         * live-mesh element → the live ``connectivity`` ndarray.
+
+        Raises ``KeyError`` when a selected id is not in the mesh.
         """
         if self._level != "element":
             raise TypeError(
@@ -505,8 +525,22 @@ class MeshSelection(SelectionChain):
             )
         res = self._materialize()
         if isinstance(res, dict):             # live-mesh element payload
-            return np.asarray(res["connectivity"])
-        return res.connectivity               # GroupResult.connectivity
+            conn = np.asarray(res["connectivity"])
+            stored = np.asarray(res["element_ids"], dtype=np.int64)
+        else:
+            conn = res.connectivity           # GroupResult.connectivity
+            stored = np.asarray(res.ids, dtype=np.int64)
+        want = np.asarray(self._items, dtype=np.int64)
+        if want.shape == stored.shape and np.array_equal(want, stored):
+            return conn                       # already in .ids order
+        pos = {int(e): i for i, e in enumerate(stored)}
+        missing = [int(a) for a in want if int(a) not in pos]
+        if missing:
+            raise KeyError(
+                f"element id(s) {missing[:10]} are not in this mesh "
+                f"({len(missing)} missing) — no connectivity to return."
+            )
+        return conn[np.asarray([pos[int(a)] for a in want], dtype=np.int64)]
 
     def groups(self):
         """The per-type element blocks for an element selection.
