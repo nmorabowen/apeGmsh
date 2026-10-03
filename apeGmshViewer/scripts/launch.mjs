@@ -14,7 +14,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const [mode, file, outArg] = process.argv.slice(2);
+// `--uncapped` (measure only) lifts the vsync / frame-rate cap so the orbit
+// fps shows GPU throughput instead of the display refresh.
+const flags = process.argv.slice(2).filter((a) => a.startsWith("--"));
+const [mode, file, outArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const uncapped = flags.includes("--uncapped");
+if (flags.some((f) => f !== "--uncapped") || (uncapped && mode !== "measure")) {
+  console.error(`unknown flags ${flags.join(" ")}; only "measure ... --uncapped" takes one`);
+  process.exit(2);
+}
 
 if (!["view", "measure", "capture"].includes(mode ?? "")) {
   console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png]");
@@ -43,6 +51,7 @@ if (mode === "capture") mkdirSync(dirname(out), { recursive: true });
 
 const args = [root, `--mode=${mode}`, `--t0=${Date.now()}`];
 if (file) args.push(`--file=${resolve(file)}`);
+if (uncapped) args.push("--uncapped=1");
 if (out) args.push(`--out=${out}`);
 
 const child = spawn(electronBinary, args, { stdio: "inherit" });
@@ -104,6 +113,20 @@ function printRow(r) {
   const mem = `${f0(r.memory.mainMB + r.memory.rendererMB)} (${f0(r.memory.mainMB)} + ${f0(r.memory.rendererMB)})`;
   const insp = r.inspector ? `${f1(r.inspector.fillMs)}${r.inspector.pickedTarget ? "" : " (picked a neighbour)"}` : "n/a";
   const day = new Date().toISOString().slice(0, 10);
+  if (uncapped) {
+    // Uncapped frames are shorter than the timer resolution, so the median
+    // interval is quantised: report the mean over the whole orbit instead.
+    // The other columns are not comparable here (the loop saturates the
+    // renderer), so this mode prints its own row.
+    console.log("| date | commit | model | size (MB) | elements | orbit frames | orbit ms | mean fps (uncapped) |");
+    console.log("|---|---|---|---|---|---|---|---|");
+    console.log(
+      `| ${day} | ${headCommit()} | ${name} | ${(r.sizeBytes / 1048576).toFixed(2)} | ${elements} | ` +
+        `${r.orbit.frames} | ${f0(r.orbit.durationMs)} | ${f0((1000 * r.orbit.frames) / r.orbit.durationMs)} |`,
+    );
+    console.log(`GPU "${r.gpu}"; canvas ${r.viewport.join("x")} @ ${r.pixelRatio}x`);
+    return;
+  }
   console.log(
     "| date | commit | model | size (MB) | nodes | elements | first frame (ms) | median fps (orbit) | render CPU (ms) | memory MB main+renderer | inspector fill (ms) |",
   );

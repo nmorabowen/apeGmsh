@@ -35,8 +35,12 @@ function leadingNumbers(args: Param[]): number {
   return n;
 }
 
-const beamWithIntegration: Decoder = (args) =>
-  isNum(args[0]) && isNum(args[1])
+// New-style syntax only: `transfTag integrationTag` then flags. The old style
+// `numIntgrPts secTag transfTag` also starts with numbers, so it is told
+// apart by its count of leading numeric args (3) and refused, never decoded.
+const beamWithIntegration: Decoder = (args) => {
+  const n = leadingNumbers(args);
+  return n === 2
     ? {
         syntax: "transfTag integrationTag",
         slots: [
@@ -44,7 +48,8 @@ const beamWithIntegration: Decoder = (args) =>
           { slot: 1, family: "beamIntegration", label: "integrationTag" },
         ],
       }
-    : { reason: "first two args are not numeric tags (old-style syntax is not decoded)" };
+    : { reason: `${n} leading numeric args; only the 2-tag form 'transfTag integrationTag' is decoded (old-style syntax is not)` };
+};
 
 const elasticBeam: Decoder = (args) => {
   const n = leadingNumbers(args);
@@ -88,10 +93,17 @@ const shellSec: Decoder = (args) =>
     ? { syntax: "secTag", slots: [{ slot: 0, family: "section", label: "secTag" }] }
     : { reason: "first arg is not a numeric secTag" };
 
+// quad: `thick type matTag ...` (FourNodeQuad.cpp).
 const quadMat: Decoder = (args) =>
-  isNum(args[2])
+  isNum(args[0]) && typeof args[1] === "string" && isNum(args[2])
     ? { syntax: "thick type matTag", slots: [{ slot: 2, family: "nDMaterial", label: "matTag" }] }
-    : { reason: "third arg is not a numeric matTag" };
+    : { reason: "args are not 'thick type matTag'" };
+
+// SSPquad: `matTag type thickness ...` (SSPquad.cpp).
+const sspQuadMat: Decoder = (args) =>
+  isNum(args[0]) && typeof args[1] === "string" && isNum(args[2])
+    ? { syntax: "matTag type thickness", slots: [{ slot: 0, family: "nDMaterial", label: "matTag" }] }
+    : { reason: "args are not 'matTag type thickness'" };
 
 export const ELEMENT_SYNTAX: Readonly<Record<string, Decoder>> = {
   dispBeamColumn: beamWithIntegration,
@@ -109,7 +121,7 @@ export const ELEMENT_SYNTAX: Readonly<Record<string, Decoder>> = {
   ShellNLDKGQ: shellSec,
   ASDShellQ4: shellSec,
   quad: quadMat,
-  SSPquad: quadMat,
+  SSPquad: sspQuadMat,
 };
 
 const secThenN: Decoder = (params) =>

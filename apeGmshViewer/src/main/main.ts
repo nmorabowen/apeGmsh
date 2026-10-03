@@ -28,6 +28,12 @@ const file = arg("file");
 const out = arg("out");
 const t0 = Number(arg("t0") ?? Date.now());
 
+// Measurement of GPU throughput: lift the vsync and frame-rate caps.
+if (arg("uncapped") === "1") {
+  app.commandLine.appendSwitch("disable-frame-rate-limit");
+  app.commandLine.appendSwitch("disable-gpu-vsync");
+}
+
 if ((mode === "measure" || mode === "capture") && (!file || !out)) {
   throw new Error(`--mode=${mode} needs --file and --out`);
 }

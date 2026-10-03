@@ -25,8 +25,15 @@ Add a row with `npm run measure -- <model.h5>` (it prints the row and a
   main process, the copy to the renderer and the mesh build.
 - **median fps (orbit)**: one full turn about the view-up axis over 6 s, the
   camera moved and the scene rendered every animation frame; the median of
-  1000 / frame interval. **render CPU** is the median CPU time of one
-  `renderer.render` call; it shows the headroom under the 60 fps vsync cap.
+  1000 / frame interval. It is capped by vsync, so it answers "is it
+  interactive", not "how much headroom". **render CPU** is the median CPU time
+  of one `renderer.render` call (CPU only, no GPU time).
+- **uncapped orbit** (`npm run measure -- <model.h5> --uncapped`): the same
+  orbit with Chromium's `disable-frame-rate-limit` and `disable-gpu-vsync`
+  switches, so frames are paced by the CPU + GPU pipeline, not the display.
+  The fps is the mean over the 6 s orbit (frames / duration); uncapped frame
+  intervals are below the timer resolution, so a median would be quantised.
+  The other columns are not comparable in this mode, so it prints its own row.
 - **memory**: working set of the main and renderer processes after the orbit
   and the click (`app.getAppMetrics()`), in MB. The GPU process, about 85 to
   215 MB, is reported in the `detail:` line and not in the column.
@@ -63,9 +70,23 @@ Notes on the rows:
 - `stress_box.h5` is not a maintainer model. It is a scale probe: two
   tet-meshed blocks, 220 889 tets written by `fem.to_h5` (no `/opensees`
   zone), 7.6 times the largest maintainer file. It is not committed.
-- The orbit is pinned at the 60 Hz vsync cap on every model. The render CPU
-  time (0.2 to 0.5 ms) is about 3 % of the 16.7 ms frame budget, so these
-  sizes are far from the GPU limit on this integrated GPU.
+- The capped orbit is pinned at the 60 Hz vsync cap on every model; the
+  uncapped rows below give the throughput behind it.
+
+### Uncapped orbit (GPU throughput)
+
+| date | commit | model | size (MB) | elements | orbit frames | orbit ms | mean fps (uncapped) |
+|---|---|---|---|---|---|---|---|
+| 2026-10-03 | efa99699 | `fixtures/shoebuckle.h5` | 0.18 | 123 | 10346 | 6000 | 1724 |
+| 2026-10-03 | efa99699 | maintainer: `ladruno_4D6-24_coarse.model.h5` | 3.46 | 5076 (+2028 OpenSees-only) | 4383 | 6009 | 729 |
+| 2026-10-03 | efa99699 | maintainer: `footing_analysis_composed.h5` | 0.50 | 575 | 7921 | 6002 | 1320 |
+| 2026-10-03 | efa99699 | scale probe: `stress_box.h5` | 26.17 | 220889 | 3866 | 6017 | 643 |
+
+The scale probe draws 18 718 boundary triangles and still renders 643 frames
+a second end to end on the integrated GPU, about 21 times the 30 fps
+threshold. (`efa99699` is a merge of `origin/main`; the app code is the same as
+at `14ac06c0` except for this measure mode and the decoder fixes, which do not
+touch rendering.)
 
 ## Kill-criteria verdict (P0)
 
@@ -73,7 +94,9 @@ Notes on the rows:
 Threshold: a median orbit of at least 30 fps, **maintainer-confirmed
 (2026-10-03)**. **Pass.** Every measured model orbits at the 60 fps cap,
 including the largest maintainer model (3.46 MB, 4254 nodes, about 7100
-elements) and a scale probe 7.6 times larger (26 MB, 220 889 tets). The read
+elements) and a scale probe 7.6 times larger (26 MB, 220 889 tets). Without
+the vsync cap the same orbits run at 643 to 1724 fps (mean), so the margin is
+measured, not inferred from CPU time. The read
 in the main process took 0.1 to 0.4 s on all of them, so nothing here asks for
 a data server (D5).
 
@@ -116,9 +139,9 @@ token, `i` a neutral-zone row and `r` an element_meta row.
 | OpenSees type | `/opensees/element_meta/{type}` (group name) | read |
 | OpenSees tag | `/opensees/element_meta/{type}/ids[r]` | read |
 | args | `/opensees/element_meta/{type}/args[r]`, with `args_str[r]` where a slot is a string; trailing NaN padding to the type's widest row is dropped | read |
-| link: transfTag → geomTransf | `args[r][k]` matched to `/opensees/transforms/*@tag`; `k` from the element's OpenSees syntax (`dispBeamColumn`/`forceBeamColumn`: slot 0; `elasticBeamColumn`: slot 1, 3 or 6) | **interpreted** |
+| link: transfTag → geomTransf | `args[r][k]` matched to `/opensees/transforms/*@tag`; `k` from the element's OpenSees syntax (`dispBeamColumn`/`forceBeamColumn`: slot 0, new-style 2-tag form only, the old `numIntgrPts secTag transfTag` form is refused; `elasticBeamColumn`: slot 1, 3 or 6) | **interpreted** |
 | link: integrationTag → beamIntegration | `args[r][1]` matched to `/opensees/beam_integration/*@tag` (`dispBeamColumn`, `forceBeamColumn`) | **interpreted** |
-| link: matTag / secTag (other elements) | `args[r][k]` matched to `/opensees/materials/{uniaxial,nd}/*@tag` or `/opensees/sections/*@tag` (`Truss`, `CorotTruss`: slot 1; bricks and tets: slot 0; shells: slot 0; `quad`: slot 2; `elasticBeamColumn` section form: slot 0) | **interpreted** |
+| link: matTag / secTag (other elements) | `args[r][k]` matched to `/opensees/materials/{uniaxial,nd}/*@tag` or `/opensees/sections/*@tag` (`Truss`, `CorotTruss`: slot 1; bricks and tets: slot 0; shells: slot 0; `quad`: slot 2; `SSPquad`: slot 0; `elasticBeamColumn` section form: slot 0) | **interpreted** |
 
 ### geomTransf, beamIntegration, section, material (each object)
 
