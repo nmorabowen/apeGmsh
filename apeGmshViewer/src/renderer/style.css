@@ -1,0 +1,105 @@
+:root {
+  --bg-0: #121418;
+  --bg-1: #1b1e24;
+  --panel: rgba(30, 33, 40, 0.92);
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #e6e8ec;
+  --muted: #8b919c;
+  --accent: #f5c542;
+  --interp: #f0a04b;
+  --error: #ff6b6b;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, var(--bg-1), var(--bg-0));
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+
+#viewport { position: fixed; inset: 0; }
+#viewport canvas { display: block; }
+
+#header {
+  position: fixed; top: 14px; left: 16px;
+  display: flex; gap: 14px; align-items: baseline;
+  padding: 7px 12px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#file-name { font-weight: 600; }
+#file-stats { color: var(--muted); font-size: 12px; }
+
+#banner {
+  position: fixed; top: 58px; left: 16px; max-width: 560px;
+  padding: 8px 12px; border-radius: 9px;
+  background: rgba(70, 40, 20, 0.92); border: 1px solid var(--interp);
+  color: #ffd7a8; font-size: 12px;
+}
+#banner div + div { margin-top: 3px; }
+
+#legend {
+  position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
+  padding: 10px 12px; border-radius: 10px; min-width: 180px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#legend h3, #inspector h3 {
+  margin: 0 0 6px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.chip { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+#inspector {
+  position: fixed; top: 14px; right: 14px; bottom: 14px; width: 470px;
+  overflow: auto; padding: 14px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.problems {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.4);
+  color: var(--error); font-size: 12px;
+}
+.node {
+  margin: 0 0 10px; padding: 10px 11px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line);
+}
+.node-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.role {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px; background: rgba(245, 197, 66, 0.14); color: var(--accent);
+}
+.node-name { font-size: 14px; font-weight: 600; }
+.node-type { color: var(--muted); }
+.node-src { color: var(--muted); font: 11px var(--mono); margin: 2px 0 6px; overflow-wrap: anywhere; }
+.via { font-size: 12px; margin: 0 0 6px; color: var(--muted); }
+.via b { color: var(--text); font-weight: 600; }
+table.fields { width: 100%; border-collapse: collapse; }
+table.fields td { padding: 3px 4px; vertical-align: top; border-top: 1px solid var(--line); }
+td.f-label { color: var(--muted); white-space: nowrap; width: 1%; padding-right: 12px; }
+td.f-value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.f-src { font: 10.5px var(--mono); color: #6f7682; overflow-wrap: anywhere; margin-top: 1px; }
+.tag-interp {
+  display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px;
+  font: 600 10px "Segoe UI", sans-serif; color: #1b1e24; background: var(--interp);
+}
+.children { margin-left: 14px; padding-left: 10px; border-left: 1px dashed rgba(255, 255, 255, 0.12); }
+
+#empty {
+  position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+}
+#empty[hidden] { display: none; }
+.empty-card {
+  padding: 26px 34px; border-radius: 14px; text-align: center;
+  border: 1.5px dashed rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.02);
+}
+.empty-title { font-size: 17px; font-weight: 600; }
+.empty-sub { color: var(--muted); margin-top: 6px; }
+.empty-error { color: var(--error); margin-top: 10px; max-width: 520px; }
+code { font-family: var(--mono); }

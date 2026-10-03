@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>apeGmshViewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="viewport"></div>
+  <header id="header" hidden>
+    <span id="file-name"></span>
+    <span id="file-stats"></span>
+  </header>
+  <div id="banner" hidden></div>
+  <aside id="legend" hidden></aside>
+  <aside id="inspector" hidden></aside>
+  <div id="empty">
+    <div class="empty-card">
+      <div class="empty-title">Drop a model.h5 here</div>
+      <div class="empty-sub">or run <code>npm start -- path/to/model.h5</code></div>
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

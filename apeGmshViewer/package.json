@@ -1,0 +1,31 @@
+{
+  "name": "apegmsh-viewer",
+  "version": "0.0.1",
+  "private": true,
+  "description": "apeGmshViewer: a read-only desktop app that opens model.h5 files (ADR 0112, P0 spike).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "dist/main.mjs",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "start": "node scripts/build.mjs && node scripts/launch.mjs view",
+    "measure": "node scripts/build.mjs && node scripts/launch.mjs measure",
+    "capture": "node scripts/build.mjs && node scripts/launch.mjs capture"
+  },
+  "dependencies": {
+    "h5wasm": "0.10.3",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/three": "0.186.0",
+    "electron": "44.5.1",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}
