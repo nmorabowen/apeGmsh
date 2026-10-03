@@ -3542,6 +3542,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-cad-imports-default-to-highest_dim_onlyfalse-fixed-heal_shapes-no-longer-deletes-free-curves-added-gmodelioload_brep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — CAD imports default to highest_dim_only=False; FIXED — heal_shapes() no longer deletes free curves; ADDED — g.model.io.load_brep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-api-flow-atlas-docsapi-flows-and-architecturelayoutmd-program-slice-n13-1229" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3901,6 +3912,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-cad-imports-default-to-highest_dim_onlyfalse-fixed-heal_shapes-no-longer-deletes-free-curves-added-gmodelioload_brep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — CAD imports default to highest_dim_only=False; FIXED — heal_shapes() no longer deletes free curves; ADDED — g.model.io.load_brep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-api-flow-atlas-docsapi-flows-and-architecturelayoutmd-program-slice-n13-1229" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4247,6 +4269,28 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-cad-imports-default-to-highest_dim_onlyfalse-fixed-heal_shapes-no-longer-deletes-free-curves-added-gmodelioload_brep">CHANGED — CAD imports default to <code>highest_dim_only=False</code>; FIXED — <code>heal_shapes()</code> no longer deletes free curves; ADDED — <code>g.model.io.load_brep</code><a class="headerlink" href="#changed-cad-imports-default-to-highest_dim_onlyfalse-fixed-heal_shapes-no-longer-deletes-free-curves-added-gmodelioload_brep" title="Permanent link">&para;</a></h3>
+<p><code>g.model.io.heal_shapes()</code> with no <code>tags</code> calls OCC's heal-everything,
+whose face sewing drops every curve and point that belongs to no face. On
+a frame + shell model (shells plus beam / column lines, as STKO exports)
+that silently deleted the frame: 192 columns of a 1,016-face building.
+When the model has faces plus free curves or points, the call now heals
+without sewing and fires the new <code>WarnGeomHealSkipsSewing</code>
+(<code>apeGmsh.core._geometry_errors</code>); models without free curves heal and sew
+exactly as before.</p>
+<p><code>g.model.io.load_brep(path, ...)</code> imports OpenCASCADE's native BREP
+(what STKO and other OCC-based pre-processors write), with the same
+signature and return shape as <code>load_step</code>.</p>
+<p><strong>Behaviour change:</strong> <code>load_step</code> / <code>load_iges</code> / <code>load_brep</code> and
+<code>g.parts.import_step</code> / <code>g.parts.add</code> now default to
+<code>highest_dim_only=False</code>. With <code>True</code>, OCC imports only the highest
+dimension, so a shell's free beam / column curves never reached the
+model. The returned dict now holds every dimension (each tag once;
+<code>importShapes</code> repeats shared sub-entities). <code>label=</code>, <code>heal=</code> and the
+parts transforms / umbrella label act on the imported shapes (the
+entities that bound nothing: volumes, a shell's faces, free curves), so a
+labelled solid import still labels only its volumes and a free column
+moves with its shell. Pass <code>highest_dim_only=True</code> for the old behaviour.</p>
 <h3 id="removed-api-flow-atlas-docsapi-flows-and-architecturelayoutmd-program-slice-n13-1229">REMOVED — API Flow Atlas (<code>docs/api-flows/</code>) and <code>architecture/layout.md</code> (program slice N1.3, #1229)<a class="headerlink" href="#removed-api-flow-atlas-docsapi-flows-and-architecturelayoutmd-program-slice-n13-1229" title="Permanent link">&para;</a></h3>
 <p>Both were hand-maintained maps that lagged the code. <code>docs/api-flows/</code>
 (<code>atlas.html</code>, <code>flows.json</code>, <code>index.md</code>, <code>_embed.py</code>) and
