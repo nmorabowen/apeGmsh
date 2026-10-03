@@ -2975,7 +2975,11 @@ class H5Emitter:
         * ``fem_eids`` — int64 ``(N,)`` of FEM element ids the
           bridge fanned each OpenSees tag out from.  Entries are
           ``-1`` (:data:`MISSING_FEM_ELEMENT_ID`) for records emitted
-          outside a bridge fan-out (test scenarios).
+          outside a PG fan-out: test scenarios and the bridge-minted
+          rows (node-pair / interface ``zeroLength``, auto-emitted
+          rebar ``CorotTruss``, couplings).  ``architecture/h5-schema.md``
+          "Bridge-minted rows" documents the sentinel and the rebar
+          join key (#1290).
         * ``args`` — float64 ``(N, max_tail)`` of positional args
           after the connectivity prefix; NaN in slots that hold a
           string token.
@@ -3016,7 +3020,8 @@ class H5Emitter:
             # (fem_eid, ops_tag) mapping the master plan put under
             # `/opensees/tag_map/`.  Entries are
             # `MISSING_FEM_ELEMENT_ID` (`-1`) for records emitted
-            # outside a bridge fan-out (e.g. standalone test calls).
+            # outside a PG fan-out (standalone test calls and the
+            # bridge-minted rows, h5-schema.md "Bridge-minted rows").
             g.create_dataset(
                 "fem_eids",
                 data=np.asarray([r.fem_eid for r in recs], dtype=np.int64),

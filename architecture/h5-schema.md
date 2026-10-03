@@ -575,8 +575,8 @@ index to the broker's `/elements/{gmsh_alias}` keyed by GMSH alias.
 ├── attrs: type="forceBeamColumn"
 ├── ids               (N,) int64                  — OpenSees element tags
 ├── fem_eids          (N,) int64                  — FEM element ids (Phase 8.6;
-│                                                    -1 sentinel for records
-│                                                    emitted outside a bridge fan-out)
+│                                                    -1 sentinel for bridge-minted
+│                                                    rows, see below)
 ├── args              (N, max_tail) float64       — parameter tail (NaN at string slots)
 ├── args_str          (N, max_tail) vlen-utf-8    — string tokens (present only
 │                                                    when any slot is a string)
@@ -621,6 +621,44 @@ embedded here next to the per-type metadata it concerns rather than
 duplicating the type-keying.  Records emitted outside a bridge
 fan-out (test scenarios that drive `.element(...)` directly) carry
 the sentinel `-1`.
+
+### Bridge-minted rows (`fem_eids = -1`)
+
+The bridge also mints elements that no `ops.element.X(pg=...)` fan-out
+produced.  Each such row carries `fem_eids = -1`
+(`MISSING_FEM_ELEMENT_ID`), never the id of a neighbouring mesh row
+([ADR 0049](decisions/0049-decoupled-nodes.md) convention,
+applied to every mint by the ADR 0093 S10 fix, 75614e08):
+
+| Minted row | Type group | `inline_connectivity` row |
+|---|---|---|
+| node-pair element (`ops.element.ZeroLength(nodes=...)`, …) | its own type | the endpoint pair |
+| interface spring (`g.constraints.interface`, ADR 0093) | `zeroLength` | the endpoint pair |
+| auto-emitted rebar bar (`g.rebar.place(emit_elements=True)`, ADR 0067 P5.2) | `CorotTruss` | the bar cell's `(i, j)` pair |
+| coupling / rigid-body / embedded-node element | its own type | empty |
+
+The `-1` is load-bearing: readers restore a row's connectivity from
+`inline_connectivity` only when `fem_eid < 0`, because a minted row's
+nodes need not be a cell in `/elements`.  A dim-3 extraction
+(`get_fem_data(dim=3)`) drops a rebar bar's line cells from `/elements`,
+so a real gmsh id there would dangle.  `-1` therefore means "no
+`/elements` row to join on", not "no geometry".
+
+**Joining a rebar bar to its `CorotTruss` rows.**  Use the node pair, not
+`fem_eids`:
+
+1. `/rebar_elements/elements` holds one record per bar (`pg`,
+   `material` name, `area`, `connectivity` as flat `(i, j)` pairs).  The
+   bar's `CorotTruss` rows appear in that order, record by record and pair
+   by pair, and each row's `inline_connectivity` equals the record's pair.
+2. When the extraction kept the dim-1 cells, every cell of the bar's
+   physical group (`/physical_groups/element_side/<pg>/element_ids`, cells
+   in `/elements/<line alias>`) matches exactly one `CorotTruss` row by its
+   first two (corner) nodes, in gmsh node order.
+3. `args[:, 1]` is the uniaxial material tag.  `/opensees/names` maps
+   `(kind="uniaxialMaterial", tag)` back to the record's `material` name.
+
+`tests/rebar/test_rebar_h5_join.py` pins this join with raw h5py reads.
 
 ## `/opensees/time_series`
 

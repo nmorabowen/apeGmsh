@@ -7280,10 +7280,13 @@ def emit_rebar_elements(
             )
         for i_node, j_node in rec.connectivity:
             ele_tag = tags.allocate("element")
-            # Minted bar cell — no backing mesh element, args start with
-            # the node pair: ADR 0049 node-pair convention (sentinel
-            # fem_eid + true endpoints), same rationale as the interface
-            # zeroLength above (ADR 0093 S10 finding).
+            # Minted bar cell — the line cell has a gmsh id, but a dim-3
+            # extraction drops it from /elements, so there is no row to
+            # join on; args start with the node pair: ADR 0049 node-pair
+            # convention (sentinel fem_eid + true endpoints), same
+            # rationale as the interface zeroLength above (ADR 0093 S10
+            # finding).  Readers join by node pair (h5-schema.md
+            # "Bridge-minted rows", #1290).
             set_current_fem_element_id(emitter, MISSING_FEM_ELEMENT_ID)
             set_element_nodes(emitter, (int(i_node), int(j_node)))
             emitter.element(
