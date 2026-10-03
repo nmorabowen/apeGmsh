@@ -15,8 +15,11 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
-from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
+from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR, OPENSEES_CURRENT
+from tests.opensees.h5._opensees_model_fixtures import (
+    build_simple_frame_fem,
+    build_simple_frame_h5,
+)
 
 
 def _write_frame(tmp_path: Path, *, ndm: int, ndf: int) -> Path:
@@ -98,7 +101,7 @@ def test_model_data_2d_frame_writes_and_reads_ndm(tmp_path: Path) -> None:
 def test_opensees_model_from_h5_salvages_a_pre_fix_stamp(
     tmp_path: Path,
 ) -> None:
-    """A file written before neutral 2.33.1 stamped the mesh dimension;
+    """A file written before neutral 2.34.0 stamped the mesh dimension;
     the reader still recovers the spatial ndm from the transforms."""
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
@@ -138,6 +141,82 @@ def test_composed_results_forward_the_declared_ndm(tmp_path: Path) -> None:
         composed, fem_root="/model", opensees_root="/opensees",
     )
     assert om.ndm == 2
+
+
+def test_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
+    tmp_path: Path,
+) -> None:
+    """A pre-2.34.0 sidecar (3-D frame stamped ``ndm=1``) composed into a
+    ``results.h5`` must not have its stale stamp forwarded under the
+    current writer's version, where the reader would trust it."""
+    import numpy as np
+
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+    from apeGmsh.results.writers import NativeWriter
+
+    src, fem = build_simple_frame_h5(tmp_path)
+    with h5py.File(src, "r+") as f:
+        f["meta"].attrs["ndm"] = 1
+        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+    composed = tmp_path / "composed_stale.h5"
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    with NativeWriter(composed) as w:
+        w.open(fem=fem, model_h5_src=src)
+        sid = w.begin_stage(name="g", kind="static", time=np.array([0.0]))
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"displacement_z": np.zeros((1, node_ids.size))},
+        )
+        w.end_stage()
+
+    with h5py.File(composed, "r") as f:
+        assert int(f["model/meta"].attrs["ndm"]) == 3
+    om = OpenSeesModel.from_h5(
+        composed, fem_root="/model", opensees_root="/opensees",
+    )
+    assert om.ndm == 3
+
+
+def test_opensees_model_refuses_to_build_from_a_broker_only_file(
+    tmp_path: Path,
+) -> None:
+    """``fem.to_h5`` declares no ndm (``0``); emitting a deck from it
+    fails loud instead of writing ``model -ndm 0``."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    fem = build_simple_frame_fem()
+    src = tmp_path / "broker_only.h5"
+    fem.to_h5(str(src))
+    om = OpenSeesModel.from_h5(src)
+    assert om.ndm == 0
+    with pytest.raises(ValueError, match="no declared ndm"):
+        om.build("tcl")
+    with pytest.raises(ValueError, match="no declared ndm"):
+        om.to_h5(tmp_path / "rewritten.h5")
+
+
+def test_domain_capture_from_h5_refuses_an_undeclared_ndm(
+    tmp_path: Path,
+) -> None:
+    """``DomainCapture.from_h5`` never resolves a spec in zero dimensions."""
+    from apeGmsh.results.capture import DomainCaptureSpec
+    from apeGmsh.results.capture._domain import DomainCapture
+
+    model_path = tmp_path / "broker_only_meta.h5"
+    with h5py.File(model_path, "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["schema_version"] = OPENSEES_CURRENT
+        meta.attrs["ndm"] = 0
+        meta.attrs["ndf"] = 0
+        meta.attrs["snapshot_id"] = "stub"
+        meta.attrs["model_name"] = "stub"
+    spec = DomainCaptureSpec()
+    spec.nodes(components=["displacement"], ids=[1])
+    with pytest.raises(RuntimeError, match="no declared ndm"):
+        DomainCapture.from_h5(
+            model_path, spec=spec, fem=build_simple_frame_fem(),
+            output=tmp_path / "run.h5", ops=None,
+        )
 
 
 def test_compose_refuses_an_undeclared_ndm(tmp_path: Path) -> None:

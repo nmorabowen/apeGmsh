@@ -420,21 +420,24 @@ __all__ = [
 #: window, readers tolerate 2.32.x and 2.33.x; a 2.32.x file lacks the
 #: columns (probed via ``p.dtype.names``) and decodes ``al_update=None``.
 #:
-#: v2.33.1 (October 2026, #1291 — ``/meta/ndm`` is the spatial
-#: dimension): fix-only, no shape change.  ``write_meta`` used to stamp
-#: the highest element dimension of the mesh, so a line-only frame
-#: declared with ``ops.model(ndm=2, ndf=3)`` carried ``ndm=1`` and a
-#: shell-only 3-D model carried ``ndm=2``.  Composed files now stamp
-#: the ``ops.model`` ndm the bridge declared; broker-only files
-#: (``fem.to_h5``) stamp ``0`` — undeclared, the same sentinel ``ndf``
-#: has always used.  ``OpenSeesModel.from_h5`` trusts ``/meta/ndm``
-#: from this patch on and keeps its transform-based salvage for older
-#: files.  Per ADR 0023 a patch bump: readers parse identically.
+#: v2.34.0 (October 2026, #1291 — ``/meta/ndm`` is the spatial
+#: dimension): the meaning of an existing attribute changes and a new
+#: value appears, so a minor bump (ADR 0023: readers may branch on a
+#: minor, never on a patch).  ``write_meta`` used to stamp the highest
+#: element dimension of the mesh, so a line-only frame declared with
+#: ``ops.model(ndm=2, ndf=3)`` carried ``ndm=1`` and a shell-only 3-D
+#: model carried ``ndm=2``.  Composed files now stamp the ``ops.model``
+#: ndm the bridge declared; broker-only files (``fem.to_h5``) stamp
+#: ``0`` — undeclared, the same sentinel ``ndf`` has always used, which
+#: deck-building and capture readers refuse.  ``h5_reader.
+#: read_spatial_ndm`` trusts ``/meta/ndm`` from this minor on and keeps
+#: the transform-based salvage for 2.33.x files, which the two-version
+#: window still admits.
 #:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.33.1"
+NEUTRAL_SCHEMA_VERSION: str = "2.34.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the

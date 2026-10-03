@@ -32,9 +32,10 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 from .._internal.schema_version import (
+    NEUTRAL,
     OPENSEES,
     SchemaVersionError,
     read_zone_version,
@@ -1964,6 +1965,71 @@ class H5Model:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+#: First neutral-zone version whose ``/meta/ndm`` is the ``ops.model``
+#: spatial dimension (#1291), as a ``(major, minor, patch)`` triple.
+#: Older writers stamped the highest element dimension of the mesh, so
+#: a 3-D frame of line elements read ``1``.
+META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 34, 0)
+
+
+def read_spatial_ndm(meta: "Mapping[str, Any]", f: Any) -> int:
+    """Return the model's spatial ndm from a ``/meta`` attribute mapping (#1291).
+
+    A file written at neutral ``2.34.0`` or later carries the
+    ``ops.model`` ndm in ``/meta/ndm`` and is read as-is: a missing
+    attribute is a malformed file, not a case to guess.  An older file
+    stamped the mesh dimension; keep the pre-fix salvage, which lifts
+    the stamp to 3 when a 3-wide ``vecxz`` under ``f["opensees"]``
+    proves a 3-D bridge wrote it (a 2-D frame still reads 1 there — the
+    defect 2.34.0 fixes).  ``0`` is the broker-only "undeclared"
+    sentinel and comes back as-is; callers that need a dimension
+    refuse it.
+
+    ``meta`` is the attribute mapping (``H5Model.meta()`` or an h5py
+    ``attrs``); ``f`` is the group holding ``opensees/``.
+    """
+    version = read_zone_version(meta, NEUTRAL)
+    if version is not None and (
+        (version.major, version.minor, version.patch)
+        >= META_NDM_IS_SPATIAL_FROM
+    ):
+        try:
+            return int(meta["ndm"])
+        except KeyError as exc:
+            raise MalformedH5Error(
+                f"/meta/ndm is missing (neutral_schema_version={version}); "
+                "the writer always stamps the ops.model ndm."
+            ) from exc
+    return max(int(meta.get("ndm", 0)), _infer_ndm_from_transforms(f))
+
+
+def _infer_ndm_from_transforms(f: Any) -> int:
+    """Best-effort spatial dimension from ``/opensees/transforms/*/per_element_vecxz``.
+
+    Salvage for files older than neutral ``2.34.0``, whose
+    ``/meta/ndm`` was the mesh dimension (see :func:`read_spatial_ndm`).
+    Returns 0 when no transforms are present (caller's ``max(broker_ndm,
+    inferred)`` falls back to the broker value).  The H5 emitter
+    writes ``per_element_vecxz`` as ``(N, 3)`` even in 2D, so this
+    can't distinguish 2D from 3D — but distinguishes "has bridge
+    output at all" from "broker only" which is the case worth
+    salvaging at read time.
+    """
+    if "opensees" not in f:
+        return 0
+    if "transforms" not in f["opensees"]:
+        return 0
+    for tname in f["opensees/transforms"]:
+        g = f[f"opensees/transforms/{tname}"]
+        if "per_element_vecxz" in g:
+            shape = g["per_element_vecxz"].shape
+            if len(shape) >= 2 and shape[1] >= 3:
+                return 3
+            if len(shape) >= 2 and shape[1] == 2:
+                return 2
+    return 0
+
 
 def _recorder_group_order(name: str) -> "tuple[int, str]":
     """Sort key recovering recorder emit order from group names.

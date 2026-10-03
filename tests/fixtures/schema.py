@@ -10,5 +10,5 @@ and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
 OPENSEES_CURRENT     = "2.21.0"  # SSI-2.E (/opensees/stages/*/update_material_stage)
 OPENSEES_PRIOR_MINOR = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
-NEUTRAL_CURRENT      = "2.33.1"  # #1291: /meta/ndm is the ops.model spatial dimension (fix-only patch)
-NEUTRAL_PRIOR_MINOR  = "2.32.0"  # 3D interface: additive `orient_t2` column on interface_payload_dtype
+NEUTRAL_CURRENT      = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
+NEUTRAL_PRIOR_MINOR  = "2.33.0"  # fork #839: additive `cpl_al_update` column on the coupling-control lane

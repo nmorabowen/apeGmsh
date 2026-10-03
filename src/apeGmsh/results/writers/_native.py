@@ -263,16 +263,24 @@ class NativeWriter:
             # enrichment OpenSeesModel.from_h5(fem_root="/model") would
             # surface those defaults instead of the bridge's values,
             # losing parity with the standalone ``apeSees(fem).h5()``
-            # rehydrate.  ndm is inferred from transforms by the read
-            # side, so it's not forwarded here.
+            # rehydrate.  ndm is forwarded too (#1291): /model/meta is
+            # written by the CURRENT neutral writer, so a reader trusts
+            # its ndm as the spatial dimension.  A pre-2.34.0 source
+            # stamped the mesh dimension instead; forwarding that raw
+            # value under a new version stamp would launder it past the
+            # reader's salvage, so the value forwarded is what the
+            # reader would resolve from the SOURCE (its own version
+            # stamp, its transforms).
             if "meta" in src and "/model/meta" in h5:
+                from apeGmsh.opensees.emitter.h5_reader import read_spatial_ndm
+
                 src_meta = src["meta"].attrs
                 dst_meta = h5["/model/meta"].attrs
                 # The embedded /model/meta is broker-only (ndm=ndf=0,
                 # undeclared); the bridge's ops.model declaration lives
                 # on the source model.h5, so forward both (#1291).
                 if "ndm" in src_meta:
-                    dst_meta["ndm"] = int(src_meta["ndm"])
+                    dst_meta["ndm"] = int(read_spatial_ndm(src_meta, src))
                 if "ndf" in src_meta:
                     dst_meta["ndf"] = int(src_meta["ndf"])
                 if "model_name" in src_meta:

@@ -654,6 +654,17 @@ class DomainCapture:
                     f"DomainCapture.from_h5: {model_path!s} has no "
                     f"ndm/ndf attrs in /meta (got {sorted(meta)!r})."
                 ) from exc
+            if ndm < 1:
+                # ``0`` is the broker-only "undeclared" sentinel (#1291);
+                # resolving a spec against it would expand components
+                # in zero dimensions and record nothing, silently.
+                raise RuntimeError(
+                    f"DomainCapture.from_h5: {model_path!s} has no "
+                    "declared ndm: written by fem.to_h5 without the bridge "
+                    "(/meta/ndm = 0). Pass a model.h5 written by "
+                    "apeSees.h5 / ModelData.write, or use "
+                    "ops.domain_capture on the live bridge."
+                )
         resolved = spec._resolve_with_explicit_ndm_ndf(
             fem, ndm=ndm, ndf=ndf,
         )

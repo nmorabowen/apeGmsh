@@ -290,7 +290,7 @@ class OpenSeesModel:
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
-            ndm = _read_spatial_ndm(meta, model.handle)
+            ndm = h5_reader.read_spatial_ndm(meta, model.handle)
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 
@@ -518,6 +518,7 @@ class OpenSeesModel:
         # replay and discarded it — pure waste, and a staged model
         # would trip the flat-replay guard before reaching the
         # stage-aware compose path.)
+        self._require_declared_ndm()
         from .emitter.h5 import H5Emitter
 
         emitter = H5Emitter(
@@ -559,10 +560,12 @@ class OpenSeesModel:
         Raises
         ------
         ValueError
-            ``target`` is unrecognised.
+            ``target`` is unrecognised, or the archive declares no ndm
+            (a broker-only ``fem.to_h5`` file, ``/meta/ndm = 0``).
         TypeError
             ``out=`` missing for the ``"h5"`` target.
         """
+        self._require_declared_ndm()
         if target == "tcl":
             return self._build_text("tcl", out)
         if target == "py":
@@ -599,8 +602,24 @@ class OpenSeesModel:
 
     @property
     def ndm(self) -> int:
-        """``/meta/ndm`` value from the source archive."""
+        """``/meta/ndm`` value from the source archive.
+
+        ``0`` on a broker-only archive (``fem.to_h5`` without the
+        bridge): no ``ops.model`` declaration was ever made, so no
+        deck can be built from it (:meth:`build` and :meth:`to_h5`
+        refuse).
+        """
         return self._ndm
+
+    def _require_declared_ndm(self) -> None:
+        """Refuse to emit a model whose archive declares no ndm (#1291)."""
+        if int(self._ndm) < 1:
+            raise ValueError(
+                "OpenSeesModel: model.h5 has no declared ndm: written by "
+                "fem.to_h5 without the bridge (/meta/ndm = 0). Build the "
+                "model through apeSees(fem) and ops.model(ndm=, ndf=) first; "
+                "a deck cannot be emitted without its spatial dimension."
+            )
 
     @property
     def ndf(self) -> int:
@@ -1520,64 +1539,3 @@ def _resolve_fem_root_for_read(path: str, fem_root: str) -> str:
     return fem_root
 
 
-#: First neutral-zone version whose ``/meta/ndm`` is the ``ops.model``
-#: spatial dimension (#1291), as a ``(major, minor, patch)`` triple.
-#: Older writers stamped the highest element dimension of the mesh, so
-#: a 3-D frame of line elements read ``1``.
-_META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 33, 1)
-
-
-def _read_spatial_ndm(meta: Mapping[str, Any], f: Any) -> int:
-    """Return the model's spatial ndm from ``/meta`` (#1291).
-
-    A file written at neutral ``2.33.1`` or later carries the
-    ``ops.model`` ndm in ``/meta/ndm`` and is read as-is: a missing
-    attribute is a malformed file, not a case to guess.  An older file
-    stamped the mesh dimension; keep the pre-fix salvage, which lifts
-    the stamp to 3 when a 3-wide ``vecxz`` proves a 3-D bridge wrote
-    it (a 2-D frame still reads 1 there — the defect this version
-    fixes).
-    """
-    from ._internal.schema_version import NEUTRAL, read_zone_version
-    from .emitter.h5_reader import MalformedH5Error
-
-    version = read_zone_version(meta, NEUTRAL)
-    if version is not None and (
-        (version.major, version.minor, version.patch)
-        >= _META_NDM_IS_SPATIAL_FROM
-    ):
-        try:
-            return int(meta["ndm"])
-        except KeyError as exc:
-            raise MalformedH5Error(
-                f"/meta/ndm is missing (neutral_schema_version={version}); "
-                "the writer always stamps the ops.model ndm."
-            ) from exc
-    return max(int(meta.get("ndm", 0)), _infer_ndm_from_transforms(f))
-
-
-def _infer_ndm_from_transforms(f: Any) -> int:
-    """Best-effort spatial dimension from ``/opensees/transforms/*/per_element_vecxz``.
-
-    Salvage for files older than neutral ``2.33.1``, whose
-    ``/meta/ndm`` was the mesh dimension (see :func:`_read_spatial_ndm`).
-    Returns 0 when no transforms are present (caller's ``max(broker_ndm,
-    inferred)`` falls back to the broker value).  The H5 emitter
-    writes ``per_element_vecxz`` as ``(N, 3)`` even in 2D, so this
-    can't distinguish 2D from 3D — but distinguishes "has bridge
-    output at all" from "broker only" which is the case worth
-    salvaging at read time.
-    """
-    if "opensees" not in f:
-        return 0
-    if "transforms" not in f["opensees"]:
-        return 0
-    for tname in f["opensees/transforms"]:
-        g = f[f"opensees/transforms/{tname}"]
-        if "per_element_vecxz" in g:
-            shape = g["per_element_vecxz"].shape
-            if len(shape) >= 2 and shape[1] >= 3:
-                return 3
-            if len(shape) >= 2 and shape[1] == 2:
-                return 2
-    return 0
