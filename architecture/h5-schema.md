@@ -503,22 +503,43 @@ are attribute-only, like materials.
 ## `/opensees/transforms`
 
 ```
-/opensees/transforms/Cols/
+/opensees/transforms/PDelta_5/                ← "{type}_{tag}", one group per emitted geomTransf call
 ├── attrs: type="PDelta", tag=5,
-│         orientation_kind="Cylindrical",   ← optional, present if orientation was used
-│         orientation_origin=[0.0, 0.0, 0.0],
-│         orientation_axis=[0.0, 0.0, 1.0],
-│         roll_deg=0.0
-├── per_element_vecxz       float dataset (n_elements, 3)
-│                            row i corresponds to /elements/Cols/ids[i]
-└── per_element_emitted_tag int dataset (n_elements,)
-                             which OpenSees geomTransf tag was assigned
-                             (multiple if orientation fan-out)
+│         __deviation__="per-emitted-call grouping"
+├── per_element_vecxz       float64 (1, 3) in 3-D, (1, 0) in 2-D
+│                            the vecxz of this one geomTransf call
+└── per_element_emitted_tag int64 (1,)
+                             the call's geomTransf tag (equals attr tag)
 ```
 
-When the user supplied an explicit `vecxz=` (no orientation), `per_element_vecxz`
-is still present — every row holds the same vector — so the viewer
-can read uniformly.
+One group per emitted `geomTransf` call, not per element and not per
+user-declared transform (`H5Emitter._write_transforms`). Both datasets
+hold one row:
+
+* **3-D.** `per_element_vecxz` is `(1, 3)`, the `vecxz` written on the
+  `geomTransf` line.
+* **2-D.** A 2-D `geomTransf` takes no `vecxz`, so the dataset is
+  `(1, 0)`: one row with zero columns, not a missing value. The
+  column count is the vector's length, and `OpenSeesModel.from_h5`
+  infers `ndm=3` from a 3-column row when `/meta/ndm` is absent.
+* **Orientation fan-out.** A transform declared with `orientation=`
+  emits one `geomTransf` line per distinct per-element vecxz (ADR 0010).
+  Each line is its own group. The first reuses the declared transform's
+  tag and the rest take fresh tags. No orientation parameters are
+  stored, only the resolved vectors.
+
+`__deviation__` (string, always `"per-emitted-call grouping"`) marks
+this departure from the original per-element design. The dataset names
+keep their `per_element_` prefix from that design, and the attribute
+tells a reader that each group is one call.
+
+**Element ↔ transform join.** Row order does not map elements to
+transforms. Each beam-column element's geomTransf tag is the
+transf-tag slot of its row in `/opensees/element_meta/{type}/args`.
+The element vocabulary gives that slot's position per element type and
+`ndm`. `fem_eids` maps the row back to the broker element id.
+`H5Model.element_local_axes_vecxz()` performs this join and returns
+`{fem_element_id: vecxz}` (3-D only, because 2-D groups carry no vector).
 
 **Authoring front doors.** Two surfaces produce this zone (one schema,
 one writer in `H5Emitter`):
@@ -1243,9 +1264,8 @@ column.h5
     │   │              ny=8, nz=8, coords=[-0.20,-0.20,0.20,0.20,nan,nan,nan,nan]
     │   └── /fibers   → 8 rows of (y, z, area,
     │                              material_ref="/opensees/materials/uniaxial/Steel")
-    ├── /transforms/Col/
-    │   ├── attrs: type="PDelta", tag=1, orientation_kind="Cartesian",
-    │   │          orientation_origin=[0,0,0], orientation_axis=[0,0,1], roll_deg=0.0
+    ├── /transforms/PDelta_1/
+    │   ├── attrs: type="PDelta", tag=1, __deviation__="per-emitted-call grouping"
     │   ├── per_element_vecxz       (1, 3) = [[1, 0, 0]]
     │   └── per_element_emitted_tag (1,)   = [1]
     ├── /element_meta/forceBeamColumn/        ← bridge keying (OpenSees type)
