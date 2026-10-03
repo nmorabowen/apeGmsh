@@ -1,6 +1,6 @@
 # ADR 0112 — The files are the model; apeGmshViewer, a read-only TypeScript app, replaces the Qt viewers
 
-**Status:** Proposed (2026-10-03)
+**Status:** Accepted (2026-10-03; proposed and accepted the same day by the owner)
 
 **Owner:** nmora
 
