@@ -20,7 +20,7 @@ through Node's type stripping; nothing is compiled for the tests).
 |---|---|
 | `npm ci` | install the exact pinned dependencies from `package-lock.json` |
 | `npm run typecheck` | `tsc` over `src/` and `test/` |
-| `npm test` | reader, chain resolution and mesh tests, on the fixture and on synthetic files |
+| `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
 | `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row |
 | `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window |
@@ -34,7 +34,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `src/mesh/build.ts` | flat render buffers coloured by physical group (pure, tested in Node) |
 | `src/state/store.ts` | the single state store and its reducer (ADR 0112 D6) |
 | `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge |
-| `src/renderer/` | the three.js viewport, the panels and the page |
+| `src/renderer/` | the three.js viewport, the panels and the page; `navigation.ts` is the Z-up turntable camera, and `bindings.ts` is the only table of mouse and key bindings (left-click selects, right-drag orbits about the point under the cursor, middle-drag or shift + right-drag pans, the wheel zooms to the cursor, `F` fits) |
 | `scripts/` | `build.mjs` (esbuild bundles) and `launch.mjs` (starts Electron in a mode) |
 | `fixtures/` | a small committed `model.h5` with beams; its README names the command that made it |
 | `screenshots/` | stills for the maintainer to approve |

@@ -23,8 +23,9 @@ Add a row with `npm run measure -- <model.h5>` (it prints the row and a
   first frame painted with the mesh. It includes Electron start-up (about
   0.4 to 1.4 s of it; the `detail:` line splits it out), the HDF5 read in the
   main process, the copy to the renderer and the mesh build.
-- **median fps (orbit)**: one full turn about the view-up axis over 6 s, the
-  camera moved and the scene rendered every animation frame; the median of
+- **median fps (orbit)**: one full turn about the vertical (Z) axis through the
+  fitted centre over 6 s, the camera moved and the scene rendered every
+  animation frame; the median of
   1000 / frame interval. It is capped by vsync, so it answers "is it
   interactive", not "how much headroom". **render CPU** is the median CPU time
   of one `renderer.render` call (CPU only, no GPU time).
@@ -54,6 +55,7 @@ Add a row with `npm run measure -- <model.h5>` (it prints the row and a
 | 2026-10-03 | 14ac06c0 | maintainer: `footing_analysis_composed.h5` | 0.50 | 1218 | 575 | 2106 | 59.9 | 0.30 | 213 (129 + 84) | 38.3 |
 | 2026-10-03 | 14ac06c0 | scale probe: `stress_box.h5` | 26.17 | 40093 | 220889 | 3298 | 59.9 | 0.30 | 412 (213 + 199) | 51.1 (picked a neighbour) |
 | 2026-10-03 | f030ba33 | maintainer: `sanramon_1A` `model.h5` | 26.00 | 13893 | 16840 | 3821 | 59.9 | 0.30 | 276 (152 + 124) | 47.2 (picked a neighbour) |
+| 2026-10-03 | be94cc88 | maintainer: `sanramon_1A` `model.h5`, from `sanramon_1A_h5.py` | 26.00 | 13893 | 16840 | 15189 (machine loaded) | 59.9 | 0.30 | 223 (109 + 115) | 204.1 (picked a neighbour) |
 
 Notes on the rows:
 
@@ -68,8 +70,10 @@ Notes on the rows:
   2.26.0 / 2.19.0, outside the reader window: it opens with a warning banner.
   Its elements are `BezierTri6`, which the syntax table does not know, so the
   inspector reports the chain as not decoded, by type name.
-- `sanramon_1A` `model.h5` is the maintainer's San Ramon building, built on
-  `32d6a85b` by another session (read in place, not committed): 3510 `line2`
+- `sanramon_1A` `model.h5` is the maintainer's San Ramon building. Source:
+  `sanramon_1A_h5.py`, which builds it from the maintainer's
+  `Documents\gitAPE\Epistemic Uncertanty` project at apeGmsh `32d6a85b`; the
+  file is read in place from a session scratchpad and is not committed. 3510 `line2`
   cells, of which 736 are `elasticBeamColumn` columns (`Columns_Set`), 12 841
   `quad4` `ASDShellQ4` shells on 6 `ElasticMembranePlateSection`s named in
   `/opensees/names`, and 489 `point1`. The measured click hit one of the 2774
@@ -81,6 +85,12 @@ Notes on the rows:
   zone), 7.6 times the largest maintainer file. It is not committed.
 - The capped orbit is pinned at the 60 Hz vsync cap on every model; the
   uncapped rows below give the throughput behind it.
+- `be94cc88` is the Z-up turntable navigation (#1289); the scripted orbit
+  now goes through the turntable code a right-drag uses. Its rows were taken
+  while the machine was loaded by other work: Electron took about 10 s to
+  start (about 1 s before), which inflates the first frame and the paint
+  share of the inspector fill (pick plus state plus DOM stayed at 11 ms). The
+  orbit stayed at the 60 fps cap.
 
 ### Uncapped orbit (GPU throughput)
 
@@ -91,6 +101,13 @@ Notes on the rows:
 | 2026-10-03 | efa99699 | maintainer: `footing_analysis_composed.h5` | 0.50 | 575 | 7921 | 6002 | 1320 |
 | 2026-10-03 | efa99699 | scale probe: `stress_box.h5` | 26.17 | 220889 | 3866 | 6017 | 643 |
 | 2026-10-03 | f030ba33 | maintainer: `sanramon_1A` `model.h5` | 26.00 | 16840 | 4736 | 6004 | 789 |
+| 2026-10-03 | be94cc88 | maintainer: `sanramon_1A` `model.h5`, from `sanramon_1A_h5.py` | 26.00 | 16840 | 4179 | 6005 | 696 |
+
+The `be94cc88` row is the median of five runs on the loaded machine (618 to
+770 fps). Interleaved with the code before the navigation change on the same
+load, the uncapped orbit read 755 and 868 fps at `c69723af` against 744 and
+696 at `be94cc88`: the runs overlap, and the change adds no draw work (the
+same buffers; one quaternion product per frame).
 
 The scale probe draws 18 718 boundary triangles and still renders 643 frames
 a second end to end on the integrated GPU, about 21 times the 30 fps
@@ -166,7 +183,7 @@ token, `i` a neutral-zone row and `r` an element_meta row.
 | tag | `{object}@tag` | read |
 | params | `{object}@params[j]`, with `{object}@params_str[j]` where a slot is a string | read, but positional: the file has no parameter names, so the inspector shows `[0] 2e11 · [1] 3.75e8 ...`, not `E`, `fy` |
 | other attributes | `{object}@{attr}` (for example a transform's orientation attributes and `__deviation__`) | read |
-| tables | every dataset under the object (`patches`, `fibers`, `layers`, `per_element_vecxz`, `per_element_emitted_tag`), as row count and columns | read |
+| tables | every dataset under the object (`patches`, `fibers`, `layers`, `per_element_vecxz`, `per_element_emitted_tag`): a plain array as its values (`[1, 0, 0]`; a zero-width one, such as a 2-D transform's `per_element_vecxz` of shape (1, 0), as "empty"), a compound table as row count and columns. Rows are shown in file order and joined to no element: elements reach a transform through the transfTag slot (#1295) | read |
 | link: secTag → section (beamIntegration) | `{integration}@params[0]` matched to `/opensees/sections/*@tag` (`Legendre`, `Lobatto`, `Radau`, `NewtonCotes`, `Trapezoidal`, `CompositeSimpson`) | **interpreted** |
 | link: section → material (Fiber) | `/opensees/sections/{name}/{patches,fibers,layers}[j].material_ref`, an HDF5 path | read |
 | section with no material (`ElasticMembranePlateSection`, `Elastic`, `ElasticShear`) | none: the constants (for `ElasticMembranePlateSection`: E, nu, h, rho) are the section's own `@params`; the chain ends at the section. Which section types reference no material is part of the syntax table | **interpreted** (that the chain ends here) |
