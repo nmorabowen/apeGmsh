@@ -63,7 +63,6 @@ src/apeGmsh/viewers/backends/_pyvista_pick.py::GetDataSet
 src/apeGmsh/viewers/core/entity_registry.py::cell_connectivity
 src/apeGmsh/viewers/core/entity_registry.py::regular_faces
 src/apeGmsh/viewers/model_viewer.py::mass_type
-src/apeGmsh/viewers/model_viewer.py::type
 src/apeGmsh/viewers/results_viewer.py::_cloud
 src/apeGmsh/viewers/results_viewer.py::mapToGlobal
 src/apeGmsh/viewers/ui/_log_router.py::exc_traceback

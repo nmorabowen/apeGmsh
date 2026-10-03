@@ -124,6 +124,7 @@ _ALL_EXCLUSIONS = {
     "animation": "imageio-ffmpeg is a large binary payload",
     "partition-pymetis": "no PyPI Windows wheel; conda-forge only",
     "partition-networkx": "inert without nxmetis, which is git-install only",
+    "stko": "cadquery-ocp is a large OCC binary wheel; only write_brep needs it",
 }
 
 
