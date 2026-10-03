@@ -55,12 +55,20 @@ const BEAM_TYPES = new Set(["dispBeamColumn", "forceBeamColumn", "elasticBeamCol
  * The element a scripted click targets: a beam-column if any; else an element
  * whose chain resolves with at least one link; else the middle drawn element.
  * A bounded sample (from the middle outwards) keeps this cheap on big models.
- * With `pickType`, only an element of that OpenSees type whose chain resolves;
- * none found raises, naming the type.
+ * With `pickType`, every drawn element is a candidate (not only the sample),
+ * and the first of that OpenSees type whose chain resolves wins; none found
+ * raises, naming the type.
  */
 function demoTarget(pickType: string | null = null): ElementRef | null {
   const s = store.get();
   if (!s.model || !s.mesh) return null;
+  if (pickType !== null) {
+    for (const r of [...s.mesh.lineRefs, ...s.mesh.triRefs]) {
+      const c = resolveChain(s.model, r);
+      if (c.root.type === pickType && c.problems.length === 0) return r;
+    }
+    throw new Error(`--pick=${pickType}: no drawn element of that type with a resolved chain`);
+  }
   const sample = (list: ElementRef[]) => {
     const step = Math.max(1, Math.floor(list.length / 200));
     const out: ElementRef[] = [];
@@ -70,11 +78,6 @@ function demoTarget(pickType: string | null = null): ElementRef | null {
   };
   const candidates = [...sample(s.mesh.lineRefs), ...sample(s.mesh.triRefs)];
   const chains = candidates.map((r) => ({ r, c: resolveChain(s.model!, r) }));
-  if (pickType !== null) {
-    const hit = chains.find(({ c }) => c.root.type === pickType && c.problems.length === 0);
-    if (!hit) throw new Error(`--pick=${pickType}: no drawn element of that type with a resolved chain`);
-    return hit.r;
-  }
   const beam = chains.find(({ c }) => BEAM_TYPES.has(c.root.type) && c.problems.length === 0);
   const linked = chains.find(({ c }) => c.root.children.length > 0 && c.problems.length === 0);
   return (beam ?? linked)?.r ?? candidates[0] ?? null;
@@ -108,30 +111,28 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
   const s = store.get();
   const model = s.model!;
 
-  // Scripted orbit: one turn about the view-up axis through the target, 6 s.
+  // Scripted orbit: one turn about the vertical (Z) axis through the fitted
+  // centre, 6 s, through the same turntable code a right-drag uses.
   const ORBIT_MS = 6000;
-  const target = viewport.controls.target.clone();
-  const offset = viewport.camera.position.clone().sub(target);
-  const axis = viewport.camera.up.clone().normalize();
+  const target = viewport.nav.target.clone();
   const deltas: number[] = [];
   const renderMs: number[] = [];
   viewport.continuous = true;
   const start = await nextFrame();
   let last = start;
+  let turned = 0;
   for (;;) {
     const now = await nextFrame();
     deltas.push(now - last);
     last = now;
-    const ang = ((now - start) / ORBIT_MS) * Math.PI * 2;
-    viewport.camera.position.copy(target).add(offset.clone().applyAxisAngle(axis, ang));
-    viewport.camera.lookAt(target);
+    const ang = Math.min(1, (now - start) / ORBIT_MS) * Math.PI * 2;
+    viewport.nav.orbit(target, ang - turned, 0);
+    turned = ang;
     viewport.renderNow();
     renderMs.push(viewport.lastRenderMs);
     if (now - start >= ORBIT_MS) break;
   }
   viewport.continuous = false;
-  viewport.camera.position.copy(target).add(offset);
-  viewport.camera.lookAt(target);
   viewport.renderNow();
   await painted();
 

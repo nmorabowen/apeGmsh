@@ -6,7 +6,7 @@
 // be resolved is reported in `problems`, by name; the chain never drops
 // a link silently.
 
-import type { ElementMeta, ModelFile, OpsFamily, OpsObject, Param } from "../model/types.ts";
+import type { ElementMeta, ModelFile, OpsFamily, OpsObject, Param, Table } from "../model/types.ts";
 import {
   ELEMENT_SYNTAX,
   INTEGRATION_SYNTAX,
@@ -105,6 +105,28 @@ function fmt(p: Param | unknown): string {
   return JSON.stringify(p);
 }
 
+/** Rows of a plain array the inspector prints in full before it summarises. */
+const TABLE_ROWS_SHOWN = 8;
+
+/**
+ * An object's dataset as the inspector shows it. A plain numeric array (the
+ * reader names its columns `value` or `[j]`) prints its values: one bracket
+ * per row (`[1, 0, 0]`), or one list for a 1-D array (`[3, 4]`); a compound table prints its row count and column
+ * names. A dataset with no values (a 2-D transform's `per_element_vecxz`,
+ * shape (1, 0) by design) is "empty". Rows are listed in file order and
+ * joined to nothing: elements reach a transform through its tag (#1295).
+ */
+export function formatTable(t: Table): string {
+  if (t.rows.length === 0 || t.columns.length === 0) return "empty (no values)";
+  const positional = t.columns.every((c, j) => (t.columns.length === 1 ? c === "value" : c === `[${j}]`));
+  if (!positional) return `${t.rows.length} rows (${t.columns.join(", ")})`;
+  const row = (r: unknown[]) => (r.length === 1 ? fmt(r[0]) : `[${r.map(fmt).join(", ")}]`);
+  const shown = t.rows.slice(0, TABLE_ROWS_SHOWN).map(row);
+  const flat = t.columns.length === 1 ? `[${shown.join(", ")}]` : shown.join("; ");
+  const more = t.rows.length - shown.length;
+  return more > 0 ? `${flat} ... (+${more} rows)` : flat;
+}
+
 function objectNode(model: ModelFile, obj: OpsObject, via: Field | null): ChainNode {
   const alias = model.opensees?.names.find((n) => n.kind === NAME_KIND[obj.family] && n.tag === obj.tag);
   const fields: Field[] = [
@@ -126,7 +148,7 @@ function objectNode(model: ModelFile, obj: OpsObject, via: Field | null): ChainN
   for (const [k, t] of Object.entries(obj.tables)) {
     fields.push({
       label: k,
-      value: `${t.rows.length} rows (${t.columns.join(", ")})`,
+      value: formatTable(t),
       source: t.path,
       interpreted: false,
     });
