@@ -616,16 +616,20 @@ vocabulary-aware reader recovers cross-references (`transf_ref`,
 known signature.
 
 `inline_connectivity` (schema 2.17.0, ADR 0049) carries the endpoint node
-tags of **node-pair** elements (`ops.element.ZeroLength(nodes=…)` and the
-rest of the zeroLength family wired to a `g.decouple_node` ground).  Such
-an element has `fem_eid = -1` and **no gmsh cell** in the neutral
-`/elements` zone, so its connectivity cannot be sourced from there on
-re-emit — it is stored inline here instead, one ragged row per element
-(empty for ordinary PG-fanned rows whose connectivity lives in
-`/elements`).  The dataset is written **only** when a type group has at
-least one node-pair row, so PG-only models are byte-identical and their
-`model_hash` is unperturbed; when present it folds into `model_hash`
-(connectivity is model-defining).
+tags of every **bridge-minted** row whose args start with a node pair:
+node-pair elements (`ops.element.ZeroLength(nodes=…)` and the rest of the
+zeroLength family wired to a `g.decouple_node` ground), interface springs,
+and auto-emitted rebar bars (see "Bridge-minted rows" below).  Such a row
+has `fem_eid = -1` and **no row to join on** in the neutral `/elements`
+zone: a node-pair element has no gmsh cell at all, and a rebar bar's line
+cell is absent from `/elements` whenever the extraction dropped dim-1
+cells.  Its connectivity therefore cannot be sourced from there on
+re-emit, so it is stored inline here, one ragged row per element (empty
+for ordinary PG-fanned rows whose connectivity lives in `/elements`).
+The dataset is written **only** when a type group has at least one such
+row, so PG-only models are byte-identical and their `model_hash` is
+unperturbed; when present it folds into `model_hash` (connectivity is
+model-defining).
 
 Phase 8.5 split element storage across two zones (master plan §3):
 broker owns geometry (`/elements/{gmsh_alias}` with ids +
@@ -657,7 +661,16 @@ applied to every mint by the ADR 0093 S10 fix, 75614e08):
 | node-pair element (`ops.element.ZeroLength(nodes=...)`, …) | its own type | the endpoint pair |
 | interface spring (`g.constraints.interface`, ADR 0093) | `zeroLength` | the endpoint pair |
 | auto-emitted rebar bar (`g.rebar.place(emit_elements=True)`, ADR 0067 P5.2) | `CorotTruss` | the bar cell's `(i, j)` pair |
-| coupling / rigid-body / embedded-node element | its own type | empty |
+| coupling / rigid-body / embedded-node element | its own type | empty (code-derived: `H5Emitter.element` clears the node channel, and these sites do not set it; not yet observed in a written file) |
+
+The first three rows are observed in written files
+(`tests/opensees/unit/test_node_pair_zerolength.py`,
+`tests/opensees/integration/test_interface_emit_e2e.py`,
+`tests/rebar/test_rebar_h5_join.py`).  A
+`LadrunoEmbeddedRebar` tie (`g.reinforce`, `coupling="embedded"`) is
+**not** an `element_meta` row: the H5 emitter's `embedded_rebar` writes
+nothing under `/opensees`, and the tie lives in the neutral
+`/reinforce_ties` group.
 
 The `-1` is load-bearing: readers restore a row's connectivity from
 `inline_connectivity` only when `fem_eid < 0`, because a minted row's
@@ -669,10 +682,16 @@ so a real gmsh id there would dangle.  `-1` therefore means "no
 **Joining a rebar bar to its `CorotTruss` rows.**  Use the node pair, not
 `fem_eids`:
 
-1. `/rebar_elements/elements` holds one record per bar (`pg`,
-   `material` name, `area`, `connectivity` as flat `(i, j)` pairs).  The
-   bar's `CorotTruss` rows appear in that order, record by record and pair
-   by pair, and each row's `inline_connectivity` equals the record's pair.
+1. The rebar rows are the `CorotTruss` rows with `fem_eids == -1`, and
+   they form **one contiguous block**.  A user
+   `ops.element.CorotTruss(pg=...)` writes into the same type group with
+   real `fem_eids` and empty `inline_connectivity` rows (it is emitted in
+   the element pass, before the rebar pass, so its rows precede the
+   block).  `/rebar_elements/elements` holds one record per bar; the
+   fields are under the symmetric compound's `payload` (table below).
+   Inside the block, the rows follow the records in order, record by
+   record and pair by pair, and each row's `inline_connectivity` equals
+   the record's pair.
 2. When the extraction kept the dim-1 cells, every cell of the bar's
    physical group (`/physical_groups/element_side/<pg>/element_ids`, cells
    in `/elements/<line alias>`) matches exactly one `CorotTruss` row by its
@@ -680,7 +699,26 @@ so a real gmsh id there would dangle.  `-1` therefore means "no
 3. `args[:, 1]` is the uniaxial material tag.  `/opensees/names` maps
    `(kind="uniaxialMaterial", tag)` back to the record's `material` name.
 
-`tests/rebar/test_rebar_h5_join.py` pins this join with raw h5py reads.
+`tests/rebar/test_rebar_h5_join.py` pins this join with raw h5py reads,
+including a model that mixes a user `CorotTruss` PG with rebar bars.
+
+**`/rebar_elements/elements`** (neutral schema 2.16.0, ADR 0067 P5.2 /
+B1a.2) is one [symmetric compound](#symmetric-compound-contract) dataset,
+written only when the model has auto-emitted bars.  The outer fields are
+`target_kind = "pg"`, `target = <bar pg>` and
+`payload_kind = "rebar_element"`; the `payload` fields
+(`rebar_element_payload_dtype` in
+[`mesh/_record_h5.py`](../src/apeGmsh/mesh/_record_h5.py)) are:
+
+| `payload` field | Type | Meaning |
+|---|---|---|
+| `pg` | vlen utf-8 | the bar's physical-group label |
+| `element` | vlen utf-8 | `"truss"` (emitted as `CorotTruss`) or `"beam"` |
+| `material` | vlen utf-8 | uniaxial-material **name** |
+| `area` | float64 | bar area `π·d_b²/4` |
+| `role` | vlen utf-8 | bar role (`"longitudinal"`, `"tie"`, …), diagnostics only |
+| `connectivity` | vlen int64 | the bar's line cells as flat `(i, j)` pairs, `2·n_cells` long |
+| `n_cells` | int64 | `len(connectivity) // 2`, for validation |
 
 ## `/opensees/time_series`
 
