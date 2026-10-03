@@ -23,6 +23,7 @@ emit corpus (#1258). What is locked:
 from __future__ import annotations
 
 import ast
+import math
 import re
 import warnings
 from pathlib import Path
@@ -112,19 +113,31 @@ def test_fem_mode_changes_only_element_tags(
         assert mapping.setdefault(s, f) == f, "one tag, one FEM id"
     assert len(set(mapping.values())) == len(mapping)
 
+    # Decimal values compare to round-off: the last bit of an
+    # orientation-derived vecxz is not reproducible across platforms /
+    # numpy allocation patterns (pre-existing; the same rendering on Linux
+    # outside CI differs from the golden deck in the last digit in BOTH
+    # modes). Integers must differ only by the element-tag mapping.
+    num = r"-?\d+\.\d+(?:[eE][-+]?\d+)?|\d+|\D+"
     wl, gl = want.split("\n"), got.split("\n")
     assert len(wl) == len(gl)
     for i, (a, b) in enumerate(zip(wl, gl)):
         if a == b:
             continue
-        ta, tb = re.findall(r"\d+|\D+", a), re.findall(r"\d+|\D+", b)
+        ta, tb = re.findall(num, a), re.findall(num, b)
         assert len(ta) == len(tb), f"line {i + 1}: {a!r} vs {b!r}"
         for x, y in zip(ta, tb):
-            if x != y:
-                assert x.isdigit() and mapping.get(int(x)) == int(y), (
-                    f"line {i + 1}: {a!r} -> {b!r} changes more than an "
-                    f"element tag"
+            if x == y:
+                continue
+            if "." in x and "." in y:
+                assert math.isclose(float(x), float(y), rel_tol=1e-14), (
+                    f"line {i + 1}: {a!r} -> {b!r} changes a value"
                 )
+                continue
+            assert x.isdigit() and mapping.get(int(x)) == int(y), (
+                f"line {i + 1}: {a!r} -> {b!r} changes more than an "
+                f"element tag"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +376,7 @@ def _element_allocation_sites() -> set[tuple[str, str]]:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         rel = path.relative_to(root).as_posix()
 
-        def visit(node: ast.AST, scope: str) -> None:
+        def visit(node: ast.AST, scope: str, rel: str = rel) -> None:
             for child in ast.iter_child_nodes(node):
                 inner = scope
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -377,7 +390,7 @@ def _element_allocation_sites() -> set[tuple[str, str]]:
                             for a in child.args)
                 ):
                     found.add((rel, scope))
-                visit(child, inner)
+                visit(child, inner, rel)
 
         visit(tree, "<module>")
     return found
