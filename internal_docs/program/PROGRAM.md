@@ -58,6 +58,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | P0, K, T | Opus @ high |
 | C, F, S | Opus @ medium |
 | A, B, N, X | Fable @ medium |
+| V | Opus @ high for V0–V1, Opus @ medium from V2 |
 
 ## 3. The ledger
 
@@ -138,7 +139,8 @@ The full link specs are in the chain issues.
 | N1 | `nav.py`, the navigation paragraph, the doc-path rule; delete the atlas and `layout.md` | none |
 | N2 / N3 | AGENTS.md ≤150 lines + ADR summaries / move `architecture/` out of `src/` | N1 |
 | F0 → F3 | Clean fork workspace → artifact, fail-closed parsers, hook → `FORK_PIN` + `live-fork` + `BackendInfo` → two-sided roster | the maintainer (fork) |
-| X1 → X4 | Dead code and dead ends → port to the session → delete the legacy viewer → retirement ledger | B1; C2 for X3 |
+| X1 → X4 | Dead code and dead ends → port to the session → delete the legacy viewer → retirement ledger. On viewers, ADR 0112 overrides (X2 moves features only; X4 freezes `viewers/`) | B1; C2 for X3 |
+| V0 → V5 | apeGmshViewer (ADR 0112): zone + state-store design → P0 spike → unconditional write, `/geometry`, provenance → readable stages → results → delete the Qt viewers | V0 ratified; K1 for V3; human gate at V5 |
 | S1 → S3 | `_StageBuilder` + procedures → `build/` layers → `nd`/compose/h5io | C2 + C3; S1 must need ≤1 fix in 7 days |
 | K0 → K4 | `VERBS` design → archive completeness → round-trip oracle → fork loader (KC1–6) → dated flip | C1 + C2; F2 for K3 |
 
@@ -150,6 +152,7 @@ The full link specs are in the chain issues.
 | 2 | A2 · C2 · C3 · F0/F1 · X1 |
 | 3 | F2 · N2 · K0/K1 · S1 · X2 |
 | 4 and later | K2 · S2 · X3 · F3 · X4 · N3 · S3 |
+| any time | V1 (no `src/` change); V0 beside K0 |
 
 Run at most 2–3 orchestrator sessions at once. Put the parallelism inside each session.
 
@@ -248,6 +251,7 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 - **The archive is the program**, test-first.
 - **Structure.** No DeckProgram, ColumnSpec or picture IR. The `BuiltModel` split is dropped. Pure-move splits happen one hub at a time.
 - **Scope.** Cuts of about 37k LOC. Studio is frozen, interop kept.
+- **Viewers: ADR 0112 is canonical** (2026-10-03, maintainer). It supersedes the panel's K21 two-render-technology rule (VTK + matplotlib) with three.js + matplotlib, VTK in sunset, and its chain V replaces the Qt viewers.
 - **Tooling.** `land_pr.py` of about 80 lines; `preflight` is cut; `nav.py` plus the completeness gate.
 
 **Open decisions** (P0.3 in #1193):
