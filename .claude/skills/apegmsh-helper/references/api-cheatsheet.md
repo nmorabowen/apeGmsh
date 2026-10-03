@@ -842,6 +842,11 @@ fluent** — separate statements.
 
 ```python
 ops = apeSees(fem, *, default_orientation=None, opensees=None)   # opensees: OpenSeesTarget | None
+#   element_tags="sequential" (default: 1, 2, ... in declaration order)
+#   | "fem": each pg= element keeps its FEM element id as its tag (an STKO
+#     import keeps STKO's ids); synthesised elements (springs, interfaces,
+#     couplings) are numbered above the largest FEM id; an id <= 0 or an
+#     element in two declarations -> BridgeError at emit
 ops.model(*, ndm, ndf)
 
 # typed namespaces — return handles:

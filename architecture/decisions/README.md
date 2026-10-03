@@ -126,3 +126,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0108](0108-ladruno-branch-read-back.md) | The `ladrunoBranch` read-back contract (fork ADR-95) | Accepted |
 | [0109](0109-footfall-vibration-frf-method.md) | Footfall vibration by the FRF method (AISC Design Guide 11, 2nd ed., Chapter 7) | Accepted |
 | [0110](0110-ladruno-threads-run-option.md) | `ladruno_threads`, a fork-only run option with a client-side refusal roster | Proposed |
+| [0111](0111-stko-translator.md) | STKO translator: a mesh-faithful `.scd` → session + apeSees deck, driven by an `XOBJ_META` registry | Proposed |

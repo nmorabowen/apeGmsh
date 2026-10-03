@@ -41,8 +41,11 @@ from ._internal.build import (
     StageRecord,
     SupportRecord,
     ZeroVelocityRecord,
+    ELEMENT_TAG_MODES,
+    ElementTagMode,
     _emit_node_with_inferred_ndf,
     allocate_element_tags,
+    reserve_fem_element_tags,
     bucket_primary_nodes_by_rank,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -934,6 +937,10 @@ class BuiltModel:
     # ``MassRecord`` per node (the 7M-object double-store). Set by
     # ``apeSees.mass_from_model()``; consumed in the mass emit paths.
     mass_from_model:         bool = False
+    # ADR 0111 D2 — ``"sequential"`` (default: element tags 1, 2, ... in
+    # declaration order) or ``"fem"`` (each physical-group element keeps
+    # its FEM element id as its OpenSees tag; see ``emit``).
+    element_tags:            ElementTagMode = "sequential"
     # ADR 0062 — per-build cache of resolved moment-tensor ``(node, force)``
     # pairs, keyed by ``id(rec)``. The host search in
     # ``resolve_moment_tensor_pairs`` runs against the full FEM snapshot and is
@@ -1158,6 +1165,19 @@ class BuiltModel:
             tags.allocate_for(prim, _kind_of(prim))
         # tag_for already mirrors the assignments; nothing else to do
         # for the seeded primitives.
+
+        # ADR 0111 D2: ``element_tags="fem"`` reserves the FEM element-id
+        # range on the ``"element"`` counter HERE, before any emit path
+        # allocates an element tag (the element plan, interface /
+        # embedded / rebar / rigid-body / coupling elements, node-pair
+        # springs), so every synthesised tag lands above max(FEM id) on
+        # every path: flat, split, staged and partitioned alike. It also
+        # refuses ids that cannot be tags (<= 0, or fanned out twice).
+        if self.element_tags == "fem":
+            reserve_fem_element_tags(
+                [p for p in self.primitives if isinstance(p, Element)],
+                self.fem, tags,
+            )
 
         # Tag resolver: returns the bridge-allocated tag for any
         # primitive in self.primitives. Fan-out helpers may install
@@ -1725,7 +1745,8 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            element_plan = allocate_element_tags(elements, self.fem, tags)
+            element_plan = allocate_element_tags(
+                elements, self.fem, tags, element_tags=self.element_tags)
             # ADR 0065 v2 B3: columnar tag map off the plan (no per-element
             # boxed dict). Node-pair sentinel rows are dropped in from_plan.
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
@@ -1807,7 +1828,8 @@ class BuiltModel:
         # the element / geomTransf counters are unaffected by the move —
         # the staged branch above has always allocated here.
         if element_plan is None:
-            element_plan = allocate_element_tags(elements, self.fem, tags)
+            element_plan = allocate_element_tags(
+                elements, self.fem, tags, element_tags=self.element_tags)
             # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
         if fem_eid_to_ops_tag is None:
@@ -2169,7 +2191,8 @@ class BuiltModel:
         # geomTransf counters are unaffected by allocating ahead of the
         # transform fan-out, and allocation itself emits nothing: an
         # unhoisted deck does not move a byte.
-        element_plan = allocate_element_tags(elements, self.fem, tags)
+        element_plan = allocate_element_tags(
+            elements, self.fem, tags, element_tags=self.element_tags)
         # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
         fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
@@ -3250,7 +3273,8 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            early_element_plan = allocate_element_tags(elements, self.fem, tags)
+            early_element_plan = allocate_element_tags(
+                elements, self.fem, tags, element_tags=self.element_tags)
             # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
             early_fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(
                 early_element_plan
@@ -3351,7 +3375,8 @@ class BuiltModel:
                 )
             fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
         else:
-            element_plan = allocate_element_tags(elements, self.fem, tags)
+            element_plan = allocate_element_tags(
+                elements, self.fem, tags, element_tags=self.element_tags)
             # Global fem-eid → ops-tag map; used by the initial_stress
             # per-rank ``addToParameter`` fan-out to translate the user's
             # FEM element selection into OpenSees element tags (Phase
@@ -8145,6 +8170,17 @@ class apeSees:
         no sense. Pass a custom orientation (e.g.
         ``Cartesian(reference_axis=(0,1,0))`` for a Y-up CAD import)
         to set the model-wide default once.
+    element_tags
+        How emitted elements are numbered. ``"sequential"`` (default)
+        tags them 1, 2, ... in declaration order. ``"fem"`` (ADR 0111
+        D2) keeps every physical-group element's FEM element id as its
+        OpenSees tag, so a deck translated from another pre-processor
+        (STKO) keeps that tool's element ids; elements the bridge
+        synthesises (node-pair springs, interface ``zeroLength``,
+        embedded / rebar / rigid-body / coupling elements) are numbered
+        above the largest FEM id. ``"fem"`` refuses an id ``<= 0`` and
+        an element fanned out by two declarations (``BridgeError`` at
+        emit).
     """
 
     def __init__(
@@ -8153,8 +8189,16 @@ class apeSees:
         *,
         default_orientation: Orientation | None | _UnsetType = _UNSET,
         opensees: "OpenSeesTarget | None" = None,
+        element_tags: ElementTagMode = "sequential",
     ) -> None:
+        if element_tags not in ELEMENT_TAG_MODES:
+            raise ValueError(
+                f"apeSees: element_tags must be one of {ELEMENT_TAG_MODES}, "
+                f"not {element_tags!r}."
+            )
         self._fem: "FEMData" = fem
+        # ADR 0111 D2 — how element tags are numbered at emit (BuiltModel).
+        self._element_tags: ElementTagMode = element_tags
         # Last live emitter from :meth:`analyze` — retained so post-run live
         # queries (e.g. :meth:`ladruno_projection_tie_force`) can reach the
         # openseespy session that just ran. ``None`` until a live analyze runs.
@@ -12039,6 +12083,7 @@ class apeSees:
                 nm: tag for nm, _kind, tag in self._name_records()
             },
             mass_from_model=self._mass_from_model,
+            element_tags=self._element_tags,
         )
 
     # -- Internal helpers ------------------------------------------------

@@ -122,7 +122,9 @@ class Condition:
 @dataclass(frozen=True, slots=True)
 class SubShapeRef:
     """``(geometry, kind code, index)`` as STKO stores interaction
-    sides. Kind code 3 is a face; other codes are kept as read."""
+    sides. Kind codes: 1 vertex, 2 edge, 3 face, 4 solid (1B's
+    rigid-diaphragm interaction has masters on code 1 and slaves on
+    codes 1 and 2); ``translate_types.REF_KIND`` maps them to kinds."""
 
     geometry: int
     kind: int

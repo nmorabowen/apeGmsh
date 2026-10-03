@@ -258,9 +258,20 @@ def _read_interactions(f: h5py.File) -> dict[int, Interaction]:
 
 
 def _read_local_axes(f: h5py.File) -> dict[int, LocalAxes]:
+    """``LOCAX_<n>`` entries. STKO stores each as a 12-value dataset with
+    ``NAME`` / ``TYPE`` attributes (1B's ``rotatedWalls``); a group holding
+    one such dataset is read too."""
+    entries: list[tuple[int, h5py.Group | h5py.Dataset]] = []
+    for key, child in f["LOCAL_AXES"].items():
+        m = re.fullmatch(r"LOCAX_(\d+)", key)
+        if m:
+            entries.append((int(m.group(1)), child))
     out: dict[int, LocalAxes] = {}
-    for lid, g in _children(f["LOCAL_AXES"], "LOCAX"):
-        values = next(v[()] for v in g.values() if isinstance(v, h5py.Dataset))
+    for lid, g in sorted(entries, key=lambda kv: kv[0]):
+        if isinstance(g, h5py.Dataset):
+            values = g[()]
+        else:
+            values = next(v[()] for v in g.values() if isinstance(v, h5py.Dataset))
         v = [float(x) for x in np.asarray(values).ravel()]
         if len(v) != 12:
             raise ValueError(f"{f.filename}: LOCAL_AXES/LOCAX_{lid} has {len(v)} values, expected 12")
