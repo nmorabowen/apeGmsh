@@ -3,7 +3,10 @@
 Run from the repository root.  It rewrites ``MANIFEST.json`` and every
 golden under ``cells/``, deletes goldens no cell owns any more, and prints
 one ``changed`` / ``unchanged`` / ``new`` / ``removed`` line per file plus
-a count.  A regen is a maintainer-visible act: a PR that changes goldens
+a count.  ``--exact`` also rewrites a deck that differs from its golden only
+within the float tolerance: use it when ``src`` deliberately changes the
+bits of an emitted float (the default keeps another host's last-ulp libm
+difference from rewriting the corpus).  A regen is a maintainer-visible act: a PR that changes goldens
 lists the changed cells in its body (see ``README.md``).  No test and no
 workflow calls this module; ``test_golden_corpus.py`` asserts the latter.
 """
@@ -22,19 +25,22 @@ if str(_SRC) not in sys.path:
 from tests.opensees.golden import builder  # noqa: E402
 
 
-def _write_if_changed(path: Path, text: str, *, deck: bool = False) -> str:
+def _write_if_changed(
+    path: Path, text: str, *, deck: bool = False, exact: bool = False,
+) -> str:
     """Write ``text`` unless the committed file already holds it.
 
     A deck that matches its golden within the float tolerance the test
     uses (``builder.first_deck_mismatch``) is left as committed, so a
-    last-ulp libm difference on another platform never rewrites it.
+    last-ulp libm difference on another platform never rewrites it,
+    unless ``exact`` asks for the bytes.
     """
     data = text.encode("utf-8")
     if path.exists():
         old = path.read_bytes()
         if old == data:
             return "unchanged"
-        if deck and builder.first_deck_mismatch(
+        if deck and not exact and builder.first_deck_mismatch(
             old.decode("utf-8").replace("\r\n", "\n"), text,
         ) is None:
             return "unchanged"
@@ -46,7 +52,7 @@ def _write_if_changed(path: Path, text: str, *, deck: bool = False) -> str:
     return status
 
 
-def regenerate() -> dict[str, str]:
+def regenerate(*, exact: bool = False) -> dict[str, str]:
     """Rewrite the corpus; return ``{cell id or file: status}``.
 
     A golden cell is ``changed`` when its deck or its h5 dump changed
@@ -70,7 +76,7 @@ def regenerate() -> dict[str, str]:
                 "deck": _write_if_changed(
                     deck_path,
                     builder.render_deck(f, m, o, scratch / f"d{n}"),
-                    deck=True,
+                    deck=True, exact=exact,
                 ),
                 "h5dump": _write_if_changed(
                     dump_path,
@@ -96,8 +102,12 @@ def regenerate() -> dict[str, str]:
     return report
 
 
-def main() -> int:
-    report = regenerate()
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if any(a != "--exact" for a in args):
+        print("usage: python -m tests.opensees.golden.regen [--exact]")
+        return 2
+    report = regenerate(exact="--exact" in args)
     for key, status in report.items():
         print(f"{status:24s} {key}")
     n_changed = sum(1 for s in report.values() if s != "unchanged")

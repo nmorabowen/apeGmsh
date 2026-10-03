@@ -13,7 +13,7 @@ ops.system('Mumps', '-matrixType', 0)
 ops.analysis('Static')
 ops.geomTransf('Linear', 1, 0.9659258262890683, 0.0, 0.2588190451025207)
 ops.geomTransf('Linear', 2, 0.7071067811865476, 0.0, 0.7071067811865475)
-ops.geomTransf('Linear', 3, 0.25881904510252085, 0.0, 0.9659258262890684)
+ops.geomTransf('Linear', 3, 0.2588190451025208, 0.0, 0.9659258262890682)
 try:
     from openseespy.opensees import getPID
 except ImportError:

@@ -56,7 +56,7 @@ from typing import (
 
 import numpy as np
 
-from .._orientation import resolve_vecxz
+from .._orientation import _div3, _norm3, _sub3, _vec3, resolve_vecxz
 
 from ..element.beam_column import (
     ElasticTimoshenkoBeam,
@@ -1883,17 +1883,18 @@ def compute_vecxz_for_element(
             "orientation; caller should have used the explicit vecxz "
             "path."
         )
-    p_i = np.asarray(p_i, dtype=float)
-    p_j = np.asarray(p_j, dtype=float)
-    edge = p_j - p_i
-    norm = float(np.linalg.norm(edge))
+    # Scalar fixed-order math, not numpy reductions: the vecxz is written
+    # into the deck and must be bit-identical on every host (#1279).
+    a, b = _vec3(p_i), _vec3(p_j)
+    edge = _sub3(b, a)
+    norm = _norm3(edge)
     if norm <= 0.0:
         raise BridgeError(
             "compute_vecxz_for_element: element has zero-length edge; "
-            f"p_i={p_i}, p_j={p_j}."
+            f"p_i={a}, p_j={b}."
         )
-    tangent = edge / norm
-    midpoint = 0.5 * (p_i + p_j)
+    tangent = _div3(edge, norm)
+    midpoint = (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]))
     e1, e2, e3 = transf.orientation.triad_at(midpoint)
     return resolve_vecxz(tangent, e1, e2, e3, transf.roll_deg)
 

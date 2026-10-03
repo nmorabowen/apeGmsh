@@ -39,7 +39,6 @@ The orientation rule applied at each beam element:
 from __future__ import annotations
 
 import math
-from typing import cast
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -60,21 +59,87 @@ _TOL = 1e-9
 # lists, or arrays interchangeably for the 3-vector inputs.
 
 
-def _unit(v: ArrayLike) -> np.ndarray:
-    a = np.asarray(v, dtype=float)
-    n = float(np.linalg.norm(a))
+# ---------------------------------------------------------------------------
+# Scalar 3-vector math
+# ---------------------------------------------------------------------------
+#
+# Every vecxz lands in the emitted deck, so its bits must not depend on the
+# host. numpy reductions (``np.dot`` / ``np.linalg.norm`` go through BLAS
+# ``ddot``; ``einsum`` picks SIMD kernels by alignment) round differently by
+# CPU, BLAS build and memory alignment: the last bit of the golden arch's
+# vecxz changed between hosts and between runs (#1279). These helpers use
+# Python floats in a fixed operation order; each ``+ - * /`` and
+# ``math.sqrt`` is one correctly rounded IEEE-754 operation, so the result
+# is the same everywhere. Keep vecxz math on them.
+
+_Vec3 = tuple[float, float, float]
+
+
+def _vec3(v: ArrayLike) -> _Vec3:
+    a = np.asarray(v, dtype=float).reshape(3)
+    return (float(a[0]), float(a[1]), float(a[2]))
+
+
+def _dot3(a: _Vec3, b: _Vec3) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross3(a: _Vec3, b: _Vec3) -> _Vec3:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _norm3(a: _Vec3) -> float:
+    return math.sqrt(_dot3(a, a))
+
+
+def _sub3(a: _Vec3, b: _Vec3) -> _Vec3:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _scale3(a: _Vec3, k: float) -> _Vec3:
+    return (a[0] * k, a[1] * k, a[2] * k)
+
+
+def _div3(a: _Vec3, d: float) -> _Vec3:
+    return (a[0] / d, a[1] / d, a[2] / d)
+
+
+def _arr(a: _Vec3) -> np.ndarray:
+    return np.array(a, dtype=float)
+
+
+def _unit3(v: ArrayLike) -> _Vec3:
+    a = _vec3(v)
+    n = _norm3(a)
     if n < 1e-12:
-        raise ValueError(f"zero-length vector: {tuple(a)}")
-    return a / n
+        raise ValueError(f"zero-length vector: {a}")
+    return _div3(a, n)
 
 
-def _rodrigues(v: np.ndarray, axis: np.ndarray, angle_deg: float) -> np.ndarray:
-    """Rotate ``v`` about unit ``axis`` by ``angle_deg`` (right-hand rule)."""
+def _unit(v: ArrayLike) -> np.ndarray:
+    return _arr(_unit3(v))
+
+
+def _rodrigues(v: _Vec3, axis: _Vec3, angle_deg: float) -> _Vec3:
+    """Rotate ``v`` about unit ``axis`` by ``angle_deg`` (right-hand rule).
+
+    ``math.cos`` / ``math.sin`` come from the platform libm, which need not
+    round correctly, so a non-zero roll can still differ in the last bit
+    between hosts; the rest of the rule cannot.
+    """
     th = math.radians(angle_deg)
     c, s = math.cos(th), math.sin(th)
-    k = axis
-    return cast(np.ndarray, v * c + np.cross(k, v) * s
-                + k * float(np.dot(k, v)) * (1.0 - c))
+    kxv = _cross3(axis, v)
+    kdv = _dot3(axis, v) * (1.0 - c)
+    return (
+        v[0] * c + kxv[0] * s + axis[0] * kdv,
+        v[1] * c + kxv[1] * s + axis[1] * kdv,
+        v[2] * c + kxv[2] * s + axis[2] * kdv,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,22 +176,10 @@ class Cartesian:
     """
 
     def __init__(self, reference_axis: ArrayLike = (0.0, 0.0, 1.0)) -> None:
-        e3 = _unit(reference_axis)
         # Pick the global axis least aligned with e3, project it
         # perpendicular to e3, normalise -> e1.
-        candidates = (
-            np.array([1.0, 0.0, 0.0]),
-            np.array([0.0, 1.0, 0.0]),
-            np.array([0.0, 0.0, 1.0]),
-        )
-        idx = int(np.argmin([abs(float(np.dot(c, e3))) for c in candidates]))
-        c0 = candidates[idx]
-        e1 = c0 - float(np.dot(c0, e3)) * e3
-        e1 /= float(np.linalg.norm(e1))
-        e2 = np.cross(e3, e1)
-        self._e1 = e1
-        self._e2 = e2
-        self._e3 = e3
+        self._e1, self._e2, self._e3 = _perp_triad_from_e3(
+            _unit(reference_axis))
 
     def triad_at(self, p: ArrayLike) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         return self._e1, self._e2, self._e3
@@ -178,20 +231,21 @@ class Cylindrical:
         self._axis = _unit(axis)
 
     def triad_at(self, p: ArrayLike) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        d = np.asarray(p, dtype=float) - self._origin
-        radial = d - float(np.dot(d, self._axis)) * self._axis
-        r_mag = float(np.linalg.norm(radial))
+        axis = _vec3(self._axis)
+        d = _sub3(_vec3(p), _vec3(self._origin))
+        radial = _sub3(d, _scale3(axis, _dot3(d, axis)))
+        r_mag = _norm3(radial)
         if r_mag < 1e-12:
             # On the axis — pick any vector perpendicular to axis.
-            fallback = np.array([1.0, 0.0, 0.0])
-            radial = fallback - float(np.dot(fallback, self._axis)) * self._axis
-            if float(np.linalg.norm(radial)) < 1e-9:
-                fallback = np.array([0.0, 1.0, 0.0])
-                radial = fallback - float(np.dot(fallback, self._axis)) * self._axis
-            r_mag = float(np.linalg.norm(radial))
-        e_r = radial / r_mag
-        e_theta = np.cross(self._axis, e_r)
-        return e_r, e_theta, self._axis
+            fallback: _Vec3 = (1.0, 0.0, 0.0)
+            radial = _sub3(fallback, _scale3(axis, _dot3(fallback, axis)))
+            if _norm3(radial) < 1e-9:
+                fallback = (0.0, 1.0, 0.0)
+                radial = _sub3(fallback, _scale3(axis, _dot3(fallback, axis)))
+            r_mag = _norm3(radial)
+        e_r = _div3(radial, r_mag)
+        e_theta = _cross3(axis, e_r)
+        return _arr(e_r), _arr(e_theta), self._axis
 
     def __repr__(self) -> str:
         return (
@@ -237,8 +291,8 @@ class Spherical:
         self._origin = np.asarray(origin, dtype=float)
 
     def triad_at(self, p: ArrayLike) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        d = np.asarray(p, dtype=float) - self._origin
-        r_mag = float(np.linalg.norm(d))
+        d = _sub3(_vec3(p), _vec3(self._origin))
+        r_mag = _norm3(d)
         if r_mag < 1e-12:
             # At origin — degenerate; return global axes.
             return (
@@ -246,19 +300,18 @@ class Spherical:
                 np.array([0.0, 1.0, 0.0]),
                 np.array([0.0, 0.0, 1.0]),
             )
-        e_r = d / r_mag
-        z_axis = np.array([0.0, 0.0, 1.0])
-        cross_zr = np.cross(z_axis, e_r)
-        cross_mag = float(np.linalg.norm(cross_zr))
+        e_r = _div3(d, r_mag)
+        cross_zr = _cross3((0.0, 0.0, 1.0), e_r)
+        cross_mag = _norm3(cross_zr)
         if cross_mag < 1e-9:
             # At a pole of the sphere — pick an arbitrary tangent.
-            e_phi = np.array([0.0, 1.0, 0.0])
-            e_theta = np.cross(e_phi, e_r)
-            e_theta /= float(np.linalg.norm(e_theta))
+            e_phi: _Vec3 = (0.0, 1.0, 0.0)
+            e_theta = _cross3(e_phi, e_r)
+            e_theta = _div3(e_theta, _norm3(e_theta))
         else:
-            e_phi = cross_zr / cross_mag
-            e_theta = np.cross(e_phi, e_r)
-        return e_theta, e_phi, e_r
+            e_phi = _div3(cross_zr, cross_mag)
+            e_theta = _cross3(e_phi, e_r)
+        return _arr(e_theta), _arr(e_phi), _arr(e_r)
 
     def __repr__(self) -> str:
         return f"Spherical(origin={tuple(self._origin)})"
@@ -275,17 +328,18 @@ def _perp_triad_from_e3(e3: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndar
     perpendicular to e3 and normalized; e2 = e3 × e1. Deterministic
     in the choice of e1 — same algorithm as :class:`Cartesian`.
     """
-    candidates = (
-        np.array([1.0, 0.0, 0.0]),
-        np.array([0.0, 1.0, 0.0]),
-        np.array([0.0, 0.0, 1.0]),
+    z = _vec3(e3)
+    candidates: tuple[_Vec3, ...] = (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
     )
-    idx = int(np.argmin([abs(float(np.dot(c, e3))) for c in candidates]))
-    c0 = candidates[idx]
-    e1 = c0 - float(np.dot(c0, e3)) * e3
-    e1 /= float(np.linalg.norm(e1))
-    e2 = np.cross(e3, e1)
-    return e1, e2, e3
+    # The first minimum wins, as ``np.argmin`` picked it.
+    align = [abs(_dot3(c, z)) for c in candidates]
+    c0 = candidates[align.index(min(align))]
+    e1 = _sub3(c0, _scale3(z, _dot3(c0, z)))
+    e1 = _div3(e1, _norm3(e1))
+    return _arr(e1), _arr(_cross3(z, e1)), _arr(z)
 
 
 class AlongBeam:
@@ -428,8 +482,9 @@ class AlongBeam:
         diff = proj - p_arr                                          # (M, 3)
         d2 = np.einsum("ij,ij->i", diff, diff)                       # (M,)
         i = int(np.argmin(d2))
-        e3 = self._seg[i] / float(np.sqrt(self._seg_len2[i]))
-        return _perp_triad_from_e3(e3)
+        # The vectorised search only picks the segment; its tangent is
+        # recomputed with scalar math so its bits do not depend on the host.
+        return _perp_triad_from_e3(_arr(_unit3(self._seg[i])))
 
     def __repr__(self) -> str:
         return f"AlongBeam(reference_pg={self._reference_pg!r})"
@@ -440,10 +495,10 @@ class AlongBeam:
 # ---------------------------------------------------------------------------
 
 def resolve_vecxz(
-    tangent: np.ndarray,
-    e1     : np.ndarray,
-    e2     : np.ndarray,
-    e3     : np.ndarray,
+    tangent: ArrayLike,
+    e1     : ArrayLike,
+    e2     : ArrayLike,
+    e3     : ArrayLike,
     roll_deg: float = 0.0,
 ) -> tuple[float, float, float]:
     """
@@ -454,28 +509,27 @@ def resolve_vecxz(
     orthonormal triad.  ``roll_deg`` rotates the result about
     ``tangent`` (right-hand rule).
     """
-    t = np.asarray(tangent, dtype=float)
-    e2 = np.asarray(e2, dtype=float)
-    e3 = np.asarray(e3, dtype=float)
+    t = _vec3(tangent)
+    z = _vec3(e3)
 
-    if abs(float(np.dot(t, e3))) < 1.0 - _TOL:
-        ly = np.cross(e3, t)
-        ly /= float(np.linalg.norm(ly))
+    if abs(_dot3(t, z)) < 1.0 - _TOL:
+        ly = _cross3(z, t)
+        ly = _div3(ly, _norm3(ly))
     else:
         # Beam is parallel to e3 — fall back to e2 (perpendicular by
         # construction of the triad).
-        ly = e2
+        ly = _vec3(e2)
 
-    lz = np.cross(t, ly)
-    lz_mag = float(np.linalg.norm(lz))
+    lz = _cross3(t, ly)
+    lz_mag = _norm3(lz)
     if lz_mag < 1e-12:
         raise ValueError(
             "resolve_vecxz: degenerate triad — local_y is collinear "
             "with tangent."
         )
-    lz = lz / lz_mag
+    lz = _div3(lz, lz_mag)
 
     if roll_deg != 0.0:
         lz = _rodrigues(lz, t, roll_deg)
 
-    return (float(lz[0]), float(lz[1]), float(lz[2]))
+    return lz
