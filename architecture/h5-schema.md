@@ -429,20 +429,36 @@ Helpers in [`mesh/_record_h5.py`](../src/apeGmsh/mesh/_record_h5.py):
 ```
 /opensees/materials/
 ├── /uniaxial/
-│   ├── /Steel_S420/                  group
-│   │   attrs: type="Steel02", tag=3, fy=420e6, E=200e9, b=0.01,
-│   │          R0=20.0, cR1=0.925, cR2=0.15
-│   └── /Concrete_C30/
-│       attrs: type="Concrete02", tag=4, fpc=-30e6, epsc0=-0.002, ...
+│   ├── /Steel02_1/                   group, named {type}_{tag}
+│   │   attrs: type="Steel02", tag=1,
+│   │          params=[4.2e8, 2.0e11, 0.01, 20.0, 0.925, 0.15]
+│   └── /Concrete02_2/
+│       attrs: type="Concrete02", tag=2,
+│              params=[-3e7, -2e-3, -2.5e7, -6e-3, 0.1, 2.5e6, 2e8]
 └── /nd/
-    └── /Concrete_3D/
-        attrs: type="ElasticIsotropic", tag=1, E=30e9, nu=0.2, rho=2400.0
+    └── /ElasticIsotropic_3/
+        attrs: type="ElasticIsotropic", tag=3, params=[3e10, 0.2, 2400.0]
 ```
 
 Each material is a **group with no datasets, only attributes**. The
-attributes are the constitutive parameters, named exactly as in the
-typed dataclass (`fy`, `E`, `b`, …). The OpenSees type token lives in
-the `type` attribute.
+constitutive parameters are stored **positionally**, in OpenSees
+argument order after the tag, never by name:
+
+* `params` — attribute, float64, shape `(n_args,)` (an empty float64
+  array if the command has no arguments). A slot that holds a string
+  token (a flag such as `-GJ`) is `NaN`.
+* `params_str` — attribute, vlen UTF-8 string array, same shape, empty
+  string where the slot is numeric. Written **only** when at least one
+  slot is a string; pure-numeric parameter lists have no `params_str`.
+* `type` (OpenSees token) and `tag` (int64) are the other attributes.
+
+Slot `i` is read from whichever of `params[i]` / `params_str[i]` is not
+the sentinel. Writer: `_write_param_array` in
+`opensees/emitter/h5.py`. The meaning of each slot is the OpenSees
+manual's argument order for `type`; the file carries no parameter
+names. Storing parameters by name is a pending requirement of chain K
+(K0-8, ratified on #1283); until it ships, a reader must carry its own
+per-type name table.
 
 Optional: a `/comments` attribute (string) for user-supplied notes.
 
@@ -450,13 +466,18 @@ Optional: a `/comments` attribute (string) for user-supplied notes.
 
 Sections that aggregate (Fiber, LayeredShell) carry compound datasets
 for their components. Sections that don't (ElasticMembranePlateSection)
-are attribute-only, like materials.
+are attribute-only, like materials. Every section group is named
+`{type}_{tag}` and carries `type`, `tag`, and the positional `params` /
+`params_str` attribute pair described under `/opensees/materials`
+(float64 `(n_args,)`, `NaN` + `params_str` for flag tokens).
 
 ### Fiber section
 
 ```
 /opensees/sections/Cols/
-├── attrs: type="Fiber", tag=1, GJ=1.0e9
+├── attrs: type="Fiber", tag=1,
+│         params=[nan, 1.0e9], params_str=["-GJ", ""]
+│                                ← the `-GJ` flag is a positional slot, not a `GJ` attr
 ├── /patches             compound dataset, shape (n_patches,)
 │     fields: kind (string), material_ref (string),
 │             ny (int), nz (int),
@@ -503,7 +524,7 @@ are attribute-only, like materials.
 ## `/opensees/transforms`
 
 ```
-/opensees/transforms/Cols/
+/opensees/transforms/Cols/        (no `params` array: the vecxz is the dataset below)
 ├── attrs: type="PDelta", tag=5,
 │         orientation_kind="Cylindrical",   ← optional, present if orientation was used
 │         orientation_origin=[0.0, 0.0, 0.0],
@@ -557,7 +578,8 @@ One group per `beamIntegration` call.  Keyed by `{type}_{tag}`
 ```
 /opensees/beam_integration/Lobatto_1/
 └── attrs: type="Lobatto", tag=1,
-          params=[sec_tag, n_ip, ...]
+          params=[1.0, 5.0]            ← float64 (n_args,): sec_tag, n_ip
+          (params_str only if a slot is a flag token)
 ```
 
 Force / disp-based beam-column elements reference the integration
@@ -1268,19 +1290,20 @@ column.h5
 │   ├── ids           [1]
 │   └── connectivity  [[1, 2]]
 └── /opensees/
-    ├── /materials/uniaxial/Steel/
-    │   type="Steel02", tag=1, fy=420e6, E=200e9, b=0.01, R0=20.0,
-    │   cR1=0.925, cR2=0.15
-    ├── /materials/uniaxial/Concrete/
-    │   type="Concrete02", tag=2, fpc=-30e6, epsc0=-0.002,
-    │   fpcu=-25e6, epsu=-0.006, lambda_val=0.1, ft=2.5e6, Ets=200e6
-    ├── /sections/Col/
-    │   ├── attrs: type="Fiber", tag=1, GJ=1.0e9
+    ├── /materials/uniaxial/Steel02_1/
+    │   type="Steel02", tag=1,
+    │   params=[4.2e8, 2.0e11, 0.01, 20.0, 0.925, 0.15]
+    ├── /materials/uniaxial/Concrete02_2/
+    │   type="Concrete02", tag=2,
+    │   params=[-3e7, -2e-3, -2.5e7, -6e-3, 0.1, 2.5e6, 2e8]
+    ├── /sections/Fiber_1/
+    │   ├── attrs: type="Fiber", tag=1,
+    │   │          params=[nan, 1.0e9], params_str=["-GJ", ""]
     │   ├── /patches  → 1 row: kind="rect",
-    │   │              material_ref="/opensees/materials/uniaxial/Concrete",
+    │   │              material_ref="/opensees/materials/uniaxial/Concrete02_2",
     │   │              ny=8, nz=8, coords=[-0.20,-0.20,0.20,0.20,nan,nan,nan,nan]
     │   └── /fibers   → 8 rows of (y, z, area,
-    │                              material_ref="/opensees/materials/uniaxial/Steel")
+    │                              material_ref="/opensees/materials/uniaxial/Steel02_1")
     ├── /transforms/Col/
     │   ├── attrs: type="PDelta", tag=1, orientation_kind="Cartesian",
     │   │          orientation_origin=[0,0,0], orientation_axis=[0,0,1], roll_deg=0.0
