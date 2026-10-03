@@ -1262,10 +1262,10 @@ column.h5
     │   ├── attrs: type="Fiber", tag=1,
     │   │          params=[nan, 1.0e9], params_str=["-GJ", ""]
     │   ├── /patches  → 1 row: kind="rect",
-    │   │              material_ref="/opensees/materials/uniaxial/Concrete",
+    │   │              material_ref="/opensees/materials/uniaxial/Concrete02_2",
     │   │              ny=8, nz=8, coords=[-0.20,-0.20,0.20,0.20,nan,nan,nan,nan]
     │   └── /fibers   → 8 rows of (y, z, area,
-    │                              material_ref="/opensees/materials/uniaxial/Steel")
+    │                              material_ref="/opensees/materials/uniaxial/Steel02_1")
     ├── /transforms/Col/
     │   ├── attrs: type="PDelta", tag=1, orientation_kind="Cartesian",
     │   │          orientation_origin=[0,0,0], orientation_axis=[0,0,1], roll_deg=0.0
