@@ -11914,6 +11914,7 @@ class apeSees:
         _compose_model_h5(
             self._fem, emitter, path,
             model_name=name,
+            ndm=int(bm.ndm),
             ndf=int(self._ndf or 0),
             cuts=cuts,
             sweeps=sweeps,

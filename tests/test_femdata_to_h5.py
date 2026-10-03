@@ -163,7 +163,10 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
         # again 2.5.0 → 2.6.0 for the additive /meta/lineage
         # sub-group.
         assert f["meta"].attrs["schema_version"] == NEUTRAL_CURRENT
-        assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
+        # Broker-only files declare no ndm (#1291): ``0`` is the
+        # undeclared sentinel, as it has always been for ``ndf``.
+        assert int(f["meta"].attrs["ndm"]) == 0
+        assert int(f["meta"].attrs["ndf"]) == 0
         assert f["meta"].attrs["model_name"] == "demo"
 
 

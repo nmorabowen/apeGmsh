@@ -290,24 +290,7 @@ class OpenSeesModel:
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
-            # Broker-stamped ``/meta.ndm`` reflects element-type
-            # dimensionality, which can be less than the bridge's
-            # spatial ndm (a 3-D frame composed of 1-D line elements
-            # has broker ndm=1 but bridge ndm=3).  For ``build()`` we
-            # need the bridge's spatial ndm so the re-emitted deck
-            # validates against ``ops.model(ndm=N, ndf=ndf)``.
-            # ADR 0019 INV-5: tag identity may diverge across
-            # round-trip; this ndm-inference branch documents that the
-            # spatial dimension also has to be reconstituted.  Phase 6
-            # (ADR 0021 lineage) is the right place to surface this
-            # explicitly; Phase 3 derives via the transform vecxz
-            # vector length (the bridge writes a vecxz of length 3 in
-            # 3D and length 0 in pure 2D — a non-empty vecxz with N
-            # components implies ndm >= N).
-            ndm = max(
-                int(meta.get("ndm", 0)),
-                _infer_ndm_from_transforms(model.handle),
-            )
+            ndm = _read_spatial_ndm(meta, model.handle)
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 
@@ -1293,6 +1276,7 @@ class OpenSeesModel:
             emitter_fresh,
             path,
             model_name=self._model_name,
+            ndm=int(self._ndm),
             ndf=int(self._ndf),
             cuts=self._cuts,
             sweeps=self._sweeps,
@@ -1536,9 +1520,47 @@ def _resolve_fem_root_for_read(path: str, fem_root: str) -> str:
     return fem_root
 
 
+#: First neutral-zone version whose ``/meta/ndm`` is the ``ops.model``
+#: spatial dimension (#1291), as a ``(major, minor, patch)`` triple.
+#: Older writers stamped the highest element dimension of the mesh, so
+#: a 3-D frame of line elements read ``1``.
+_META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 33, 1)
+
+
+def _read_spatial_ndm(meta: Mapping[str, Any], f: Any) -> int:
+    """Return the model's spatial ndm from ``/meta`` (#1291).
+
+    A file written at neutral ``2.33.1`` or later carries the
+    ``ops.model`` ndm in ``/meta/ndm`` and is read as-is: a missing
+    attribute is a malformed file, not a case to guess.  An older file
+    stamped the mesh dimension; keep the pre-fix salvage, which lifts
+    the stamp to 3 when a 3-wide ``vecxz`` proves a 3-D bridge wrote
+    it (a 2-D frame still reads 1 there — the defect this version
+    fixes).
+    """
+    from ._internal.schema_version import NEUTRAL, read_zone_version
+    from .emitter.h5_reader import MalformedH5Error
+
+    version = read_zone_version(meta, NEUTRAL)
+    if version is not None and (
+        (version.major, version.minor, version.patch)
+        >= _META_NDM_IS_SPATIAL_FROM
+    ):
+        try:
+            return int(meta["ndm"])
+        except KeyError as exc:
+            raise MalformedH5Error(
+                f"/meta/ndm is missing (neutral_schema_version={version}); "
+                "the writer always stamps the ops.model ndm."
+            ) from exc
+    return max(int(meta.get("ndm", 0)), _infer_ndm_from_transforms(f))
+
+
 def _infer_ndm_from_transforms(f: Any) -> int:
     """Best-effort spatial dimension from ``/opensees/transforms/*/per_element_vecxz``.
 
+    Salvage for files older than neutral ``2.33.1``, whose
+    ``/meta/ndm`` was the mesh dimension (see :func:`_read_spatial_ndm`).
     Returns 0 when no transforms are present (caller's ``max(broker_ndm,
     inferred)`` falls back to the broker value).  The H5 emitter
     writes ``per_element_vecxz`` as ``(N, 3)`` even in 2D, so this

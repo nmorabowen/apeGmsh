@@ -117,10 +117,10 @@ class ModelData:
             inject time to produce real positive ``fem_eid``s.
         ndm
             2 or 3.  Required, kwarg-only — the reader's transf-arg
-            slot index is ``ndm``-dependent (ADR 0018 INV-9).  Must
-            match the geometry stored in ``fem``: ``write()`` checks
-            ``_derive_ndm(fem)`` against this value and raises on
-            mismatch.
+            slot index is ``ndm``-dependent (ADR 0018 INV-9), and
+            ``write()`` stamps it as ``/meta/ndm``.  It is the model's
+            spatial dimension, not the mesh's: a line-only 2-D frame
+            takes ``ndm=2``.
         ndf
             DOFs per node.  Required, kwarg-only — stamped into
             ``/meta`` so consumers know the DOF space.  Typical:
@@ -411,39 +411,17 @@ class ModelData:
     def write(self, path: str) -> None:
         """Compose ``model.h5`` at ``path`` via the shared composer.
 
-        Validates that the bound ``fem``'s derived spatial dimension
-        matches ``self._ndm`` before writing — a mismatch would stamp
-        ``/meta.ndm`` from the fem while the orientation slot was
-        placed for the caller's ``ndm``, causing a silent reader
-        mis-read (ADR 0018 INV-9).
+        ``/meta/ndm`` is stamped from ``self._ndm`` — the same value
+        the orientation slot was placed for (ADR 0018 INV-9) — so a
+        line-only frame declared with ``ndm=2`` writes ``2`` (#1291).
         """
-        from ..mesh._femdata_h5_io import _derive_ndm
-
-        fem_ndm: int | None
-        try:
-            fem_ndm = int(_derive_ndm(self._fem))
-        except Exception:
-            # Stub FEM that doesn't expose .info.types — accept the
-            # caller's ndm and rely on the writer's own ndm parameter
-            # for slot placement (still correct internally).
-            fem_ndm = None
-        if fem_ndm is not None and fem_ndm != self._ndm:
-            raise ValueError(
-                "ModelData.write: ndm mismatch — caller passed "
-                f"ndm={self._ndm} but the bound fem encodes "
-                f"ndm={fem_ndm}.  /meta.ndm would be stamped from "
-                "fem while the orientation slot was placed for the "
-                "caller's ndm, causing a silent reader mis-read "
-                "(ADR 0018 INV-9).  Pass the matching ndm to "
-                "ModelData(...)."
-            )
-
         name = self._model_name or _path_stem(path)
         _compose_model_h5(
             self._fem,
             self._em,
             path,
             model_name=name,
+            ndm=self._ndm,
             ndf=self._ndf,
             # ``self._loaded_snapshot_id`` is set by ``from_h5`` to
             # the exact ``/meta/snapshot_id`` byte string read from

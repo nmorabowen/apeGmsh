@@ -1,0 +1,154 @@
+"""``/meta/ndm`` is the model's spatial dimension, not the mesh dimension (#1291).
+
+A line-only frame declared with ``ops.model(ndm=2, ndf=3)`` used to stamp
+``/meta/ndm = 1`` (the highest element dimension), and every reader that
+takes ``/meta/ndm`` as the ``ops.model`` dimension mis-read it:
+``OpenSeesModel.from_h5(...).build()`` re-emitted ``model -ndm 1``.
+
+The oracle is the ``ndm`` the caller passed to ``ops.model``: the file
+must carry it back unchanged through every composer caller and reader.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import h5py
+import pytest
+
+from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
+from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
+
+
+def _write_frame(tmp_path: Path, *, ndm: int, ndf: int) -> Path:
+    """One line element, declared in ``ndm`` dimensions, archived to H5."""
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.section.fiber import FiberPoint
+
+    fem = build_simple_frame_fem()
+    ops = apeSees(fem)
+    ops.model(ndm=ndm, ndf=ndf)
+    steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    sec = ops.section.Fiber(
+        GJ=1.0e9,
+        fibers=(FiberPoint(material=steel, y=0.0, z=0.0, area=0.01),),
+    )
+    if ndm == 3:
+        transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    else:
+        transf = ops.geomTransf.Linear()
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+    ops.element.forceBeamColumn(
+        pg="Cols", transf=transf, integration=integ,
+    )
+    out = tmp_path / f"frame_{ndm}d.h5"
+    ops.h5(str(out))
+    return out
+
+
+@pytest.mark.parametrize("ndm, ndf", [(2, 3), (3, 6)])
+def test_apesees_h5_stamps_the_declared_ndm(
+    tmp_path: Path, ndm: int, ndf: int,
+) -> None:
+    """A line-only frame carries the ``ops.model`` ndm, never the mesh dim."""
+    out = _write_frame(tmp_path, ndm=ndm, ndf=ndf)
+    with h5py.File(out, "r") as f:
+        assert int(f["meta"].attrs["ndm"]) == ndm
+        assert int(f["meta"].attrs["ndf"]) == ndf
+
+
+def test_opensees_model_from_h5_reads_the_declared_ndm(tmp_path: Path) -> None:
+    """The rebuilt deck declares the same ndm the archive was built with."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    out = _write_frame(tmp_path, ndm=2, ndf=3)
+    om = OpenSeesModel.from_h5(out)
+    assert om.ndm == 2
+    model_lines = [
+        line for line in om.build("tcl").splitlines()
+        if line.startswith("model ")
+    ]
+    assert model_lines == ["model BasicBuilder -ndm 2 -ndf 3"]
+
+
+def test_opensees_model_to_h5_round_trips_the_declared_ndm(
+    tmp_path: Path,
+) -> None:
+    """``from_h5 -> to_h5`` re-stamps the ndm it read, not the mesh dim."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    src = _write_frame(tmp_path, ndm=2, ndf=3)
+    dst = tmp_path / "rewritten.h5"
+    OpenSeesModel.from_h5(src).to_h5(dst)
+    with h5py.File(dst, "r") as f:
+        assert int(f["meta"].attrs["ndm"]) == 2
+
+
+def test_model_data_2d_frame_writes_and_reads_ndm(tmp_path: Path) -> None:
+    """``ModelData(ndm=2)`` on a line-only fem writes, and reads back, 2."""
+    from apeGmsh.opensees.model_data import ModelData
+
+    fem = build_simple_frame_fem()
+    out = tmp_path / "md.h5"
+    ModelData(fem, ndm=2, ndf=3).write(str(out))
+    with h5py.File(out, "r") as f:
+        assert int(f["meta"].attrs["ndm"]) == 2
+    assert ModelData.from_h5(str(out)).ndm == 2
+
+
+def test_opensees_model_from_h5_salvages_a_pre_fix_stamp(
+    tmp_path: Path,
+) -> None:
+    """A file written before neutral 2.33.1 stamped the mesh dimension;
+    the reader still recovers the spatial ndm from the transforms."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    out = _write_frame(tmp_path, ndm=3, ndf=6)
+    with h5py.File(out, "r+") as f:
+        f["meta"].attrs["ndm"] = 1
+        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+    assert OpenSeesModel.from_h5(out).ndm == 3
+
+
+def test_composed_results_forward_the_declared_ndm(tmp_path: Path) -> None:
+    """A composed ``results.h5`` embeds the fem broker-only under
+    ``/model/``; the sidecar's declared ndm is forwarded onto
+    ``/model/meta`` alongside ``ndf``."""
+    import numpy as np
+
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+    from apeGmsh.results.writers import NativeWriter
+
+    src = _write_frame(tmp_path, ndm=2, ndf=3)
+    fem = build_simple_frame_fem()
+    composed = tmp_path / "composed.h5"
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    with NativeWriter(composed) as w:
+        w.open(fem=fem, model_h5_src=src)
+        sid = w.begin_stage(name="g", kind="static", time=np.array([0.0]))
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"displacement_x": np.zeros((1, node_ids.size))},
+        )
+        w.end_stage()
+
+    with h5py.File(composed, "r") as f:
+        assert int(f["model/meta"].attrs["ndm"]) == 2
+        assert int(f["model/meta"].attrs["ndf"]) == 3
+    om = OpenSeesModel.from_h5(
+        composed, fem_root="/model", opensees_root="/opensees",
+    )
+    assert om.ndm == 2
+
+
+def test_compose_refuses_an_undeclared_ndm(tmp_path: Path) -> None:
+    """The composer never stamps ``ndm=0`` on a bridge-written file."""
+    from apeGmsh.opensees._internal.compose import _compose_model_h5
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    fem = build_simple_frame_fem()
+    emitter = H5Emitter(model_name="m", snapshot_id=str(fem.snapshot_id))
+    with pytest.raises(ValueError, match="ndm"):
+        _compose_model_h5(
+            fem, emitter, str(tmp_path / "m.h5"),
+            model_name="m", ndm=0, ndf=6,
+        )

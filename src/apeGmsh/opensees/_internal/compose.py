@@ -73,6 +73,7 @@ def _compose_model_h5(
     path: str,
     *,
     model_name: str,
+    ndm: int,
     ndf: int,
     cuts: "Sequence[Any]" = (),
     sweeps: "Sequence[Any]" = (),
@@ -97,8 +98,13 @@ def _compose_model_h5(
         An already-populated :class:`H5Emitter`.
     path
         Destination HDF5 path (opened ``"w"``).
-    model_name, ndf
-        Written into ``/meta`` by the broker writer.
+    model_name, ndm, ndf
+        Written into ``/meta`` by the broker writer.  ``ndm`` / ``ndf``
+        are the ``ops.model`` declaration (the spatial dimension and
+        DOFs per node); the writer never derives them from the mesh,
+        so a line-only 2-D frame stamps ``ndm=2`` (#1291).  An
+        undeclared ``ndm`` (``< 1``) is refused: every reader takes
+        ``/meta/ndm`` as the model's dimension.
     cuts, sweeps
         apeGmsh.cuts v4 sequences; empty ⇒ no cuts/sweeps groups.
     names
@@ -125,11 +131,19 @@ def _compose_model_h5(
         write_lineage_attrs,
     )
 
+    if int(ndm) < 1:
+        raise ValueError(
+            f"_compose_model_h5: ndm={ndm!r} is not a declared spatial "
+            "dimension; call ops.model(ndm=, ndf=) before writing model.h5 "
+            "(/meta/ndm is read as the model's dimension, #1291)."
+        )
+
     with h5py.File(path, "w") as f:
         broker_used = _try_write_broker_zone(
             fem, f,
             schema_version=NEUTRAL_SCHEMA_VERSION,
             model_name=model_name,
+            ndm=int(ndm),
             ndf=ndf,
         )
         if not broker_used:
@@ -199,6 +213,7 @@ def _try_write_broker_zone(
     *,
     schema_version: str,
     model_name: str,
+    ndm: int,
     ndf: int,
 ) -> bool:
     """Attempt to write the broker's ``/meta`` + neutral zone.
@@ -217,6 +232,7 @@ def _try_write_broker_zone(
             fem, f,  # type: ignore[arg-type]
             schema_version=schema_version,
             model_name=model_name,
+            ndm=ndm,
             ndf=ndf,
         )
         write_neutral_zone(fem, f)  # type: ignore[arg-type]

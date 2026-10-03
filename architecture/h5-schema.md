@@ -187,8 +187,8 @@ Attributes only.
 | `opensees_schema_version` | string | per-zone version of the `/opensees/` zone (e.g. `"2.20.0"`); forward-stamped even on broker-only files |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
-| `ndm` | int | spatial dimension |
-| `ndf` | int | DOFs per node |
+| `ndm` | int | the model's spatial dimension as declared by `ops.model(ndm=)`, never the mesh dimension: a line-only 2-D frame carries `2`. `0` on broker-only files (`fem.to_h5`), which declare none (#1291, neutral 2.33.1; older composed files stamped the highest element dimension) |
+| `ndf` | int | DOFs per node as declared by `ops.model(ndf=)`; `0` on broker-only files |
 | `snapshot_id` | string | hash of FEMData snapshot the bridge was built from |
 | `model_name` | string | user-provided model name |
 | `tag_span_max` | int | `max(max_node,max_elem) - min(min_node,min_elem) + 1`; sizes compose tag-offset reservations (ADR 0038) |
@@ -910,7 +910,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.33.0** |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.33.1** |
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
@@ -958,7 +958,7 @@ our own output is held by
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
 [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py), current
-through **2.33.0**. The opensees zone's per-version history is
+through **2.33.1**. The opensees zone's per-version history is
 maintained inline in [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
@@ -1129,6 +1129,14 @@ full "why" and the exact affected dtype columns:
   `g.constraints.kinematic_coupling(..., al_update=...)` round-trips.
   `0` = the flag is omitted and the fork's own `commit` cadence
   applies, which is precisely what every pre-2.33.0 file meant.
+- `2.33.1` — #1291: `/meta/ndm` is the `ops.model` spatial dimension.
+  Fix-only, no shape change (ADR 0023 patch). The writer used to stamp
+  the highest element dimension of the mesh, so a line-only 2-D frame
+  carried `ndm=1` and a shell-only 3-D model `ndm=2`. Composed files
+  now stamp the bridge's declared `ndm`; broker-only files (`fem.to_h5`)
+  stamp `0`, the undeclared sentinel `ndf` has always used.
+  `OpenSeesModel.from_h5` trusts `/meta/ndm` from this patch on and
+  keeps its transform-based salvage for older files.
 
 ### OpenSees-zone history (post-2.10)
 

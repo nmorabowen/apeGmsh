@@ -74,9 +74,8 @@ def test_from_h5_reports_model_metadata(tmp_path: Path) -> None:
     src, _ = build_simple_frame_h5(tmp_path)
     om = OpenSeesModel.from_h5(src)
     assert om.model_name == "simple_frame"
-    # Bridge ndm inferred from transforms (broker /meta.ndm is 1 for
-    # a line-only FEM; the inference yields 3 from the vecxz vector
-    # length).  See ADR 0019 §"On _replay_into" for the rationale.
+    # ``/meta/ndm`` is the ``ops.model`` ndm the fixture declared, not
+    # the mesh dimension of its line-only FEM (#1291).
     assert om.ndm == 3
     assert om.ndf == 6
 

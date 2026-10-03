@@ -268,6 +268,11 @@ class NativeWriter:
             if "meta" in src and "/model/meta" in h5:
                 src_meta = src["meta"].attrs
                 dst_meta = h5["/model/meta"].attrs
+                # The embedded /model/meta is broker-only (ndm=ndf=0,
+                # undeclared); the bridge's ops.model declaration lives
+                # on the source model.h5, so forward both (#1291).
+                if "ndm" in src_meta:
+                    dst_meta["ndm"] = int(src_meta["ndm"])
                 if "ndf" in src_meta:
                     dst_meta["ndf"] = int(src_meta["ndf"])
                 if "model_name" in src_meta:

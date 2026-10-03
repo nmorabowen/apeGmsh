@@ -44,7 +44,7 @@ neutral zone; ignore what else is in the file.
 **Read this before reading any data.** Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.
 
-Versions are **semver strings**, not integers — `"2.33.0"`, stored as
+Versions are **semver strings**, not integers — `"2.33.1"`, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.
 
@@ -55,7 +55,7 @@ independent version; they do not share a number.
 | `schema_version` | — | **no** — legacy envelope |
 
 The neutral zone is gated by **`neutral_schema_version` alone**. At the
-time of writing the writer stamps `2.33.0`.
+time of writing the writer stamps `2.33.1`.
 
 `schema_version` is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
@@ -171,8 +171,8 @@ Attributes only — no datasets, no children except the optional
 | `schema_version` | string | legacy envelope. Non-authoritative — do not branch on it. |
 | `apeGmsh_version` | string | producing apeGmsh version. **May be the empty string** — `fem.to_h5()` does not fill it in. |
 | `created_iso` | string | ISO 8601 UTC timestamp of the write. The only attribute that varies between two writes of the same model. |
-| `ndm` | int64 | spatial dimension, derived as the maximum element dimension present (`3` when there are no elements to derive it from). Note this does **not** change the width of `/nodes/coords`. |
-| `ndf` | int64 | DOFs per node. **`0` means "not declared"**, not "zero DOFs" — broker-only writes always pass 0. |
+| `ndm` | int64 | the model's spatial dimension as declared by `ops.model(ndm=)` — never the mesh dimension: a frame of line elements declared in 2-D carries `2`. **`0` means "not declared"** — broker-only writes (`fem.to_h5`) always pass 0. Files older than neutral `2.33.1` stamped the maximum element dimension instead (#1291). Note this does **not** change the width of `/nodes/coords`. |
+| `ndf` | int64 | DOFs per node as declared by `ops.model(ndf=)`. **`0` means "not declared"**, not "zero DOFs" — broker-only writes always pass 0. |
 | `snapshot_id` | string | hash of the `FEMData` snapshot; 32 lowercase hex characters. |
 | `model_name` | string | user-supplied name. May be the empty string. |
 | `tag_span_max` | int64 | `max(max_node, max_elem) - min(min_node, min_elem) + 1` over nodes and elements together. Sizes tag reservations when composing. `0` for an empty mesh. |
