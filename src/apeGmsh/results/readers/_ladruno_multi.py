@@ -122,9 +122,58 @@ class LadrunoMultiPartitionReader:
         for r in self._readers:
             r.attach_tag_map(tag_map)
 
+    def _validate_part_set(self) -> None:
+        """Refuse a part set mixed from different runs (fork WP-165).
+
+        Every part file must report the same ``NUM_PARTITIONS``, equal to
+        the number of files, and ``PARTITION_ID`` must cover ``0..N-1``.
+        When the files carry a shared run identity (``RUN_ID_SCOPE`` other
+        than ``"process"``), ``RUN_ID`` must match too. A mismatch means
+        stale ``.part-N`` files from an earlier run sit next to the new
+        ones. Files that predate an attribute skip that check.
+        """
+        mans = [r.partition_manifest() for r in self._readers]
+        names = [p.name for p in self._paths]
+        n = len(self._readers)
+
+        def listing(key: str) -> str:
+            return ", ".join(f"{nm}={m[key]!r}" for nm, m in zip(names, mans))
+
+        nums = [m["NUM_PARTITIONS"] for m in mans]
+        if any(v is not None for v in nums):
+            if any(v != n for v in nums):
+                raise ValueError(
+                    f"Partitioned .ladruno set of {n} file(s) disagrees on "
+                    f"NUM_PARTITIONS (expected {n} in every file): "
+                    f"{listing('NUM_PARTITIONS')}. Stale part files from "
+                    "an earlier run are probably mixed in; delete them and "
+                    "re-run, or pass the exact file list."
+                )
+            ids = [m["PARTITION_ID"] for m in mans]
+            if all(v is not None for v in ids) and sorted(ids) != list(range(n)):
+                raise ValueError(
+                    f"Partitioned .ladruno set has PARTITION_ID values "
+                    f"{listing('PARTITION_ID')}; expected each of "
+                    f"0..{n - 1} exactly once."
+                )
+
+        scopes = [m["RUN_ID_SCOPE"] for m in mans]
+        run_ids = [m["RUN_ID"] for m in mans]
+        if all(v is not None for v in run_ids) and not any(
+            s is None or s == "process" for s in scopes
+        ):
+            if len(set(run_ids)) > 1:
+                raise ValueError(
+                    "Partitioned .ladruno files come from different runs "
+                    f"(RUN_ID differs): {listing('RUN_ID')}. Stale part "
+                    "files from an earlier run are mixed in; delete them "
+                    "and re-run, or pass the exact file list."
+                )
+
     def _validate_consistency(self) -> None:
+        self._validate_part_set()
         sigs = [
-            tuple((s.id, s.name, s.kind, s.n_steps) for s in r.stages())
+            tuple((s.id, s.name, s.kind) for s in r.stages())
             for r in self._readers
         ]
         first = sigs[0]
@@ -134,15 +183,35 @@ class LadrunoMultiPartitionReader:
                     f"Partition {i} ({self._paths[i].name}) reports different "
                     f"stage signatures than partition 0: {s} vs {first}."
                 )
+        # Step counts and time vectors are compared only across the parts
+        # that hold results for the stage: an EMPTY_PARTITION stage (fork
+        # WP-165) may carry no TIME axis at all.
         for stage in self._readers[0].stages():
-            t0 = self._readers[0].time_vector(stage.id)
-            for i, r in enumerate(self._readers[1:], start=1):
+            live = self._live(stage.id)
+            ref_i, ref = live[0]
+            t0 = ref.time_vector(stage.id)
+            for i, r in live[1:]:
                 ti = r.time_vector(stage.id)
                 if ti.shape != t0.shape or not np.allclose(ti, t0):
                     raise ValueError(
-                        f"Partition {i} time vector for stage {stage.name!r} "
-                        f"differs from partition 0."
+                        f"Partition {i} ({self._paths[i].name}) time vector "
+                        f"for stage {stage.name!r} differs from partition "
+                        f"{ref_i} ({self._paths[ref_i].name})."
                     )
+
+    def _live(self, stage_id: str) -> "list[tuple[int, LadrunoReader]]":
+        """``(index, reader)`` of the parts that hold results for a stage.
+
+        Parts whose stage is marked ``EMPTY_PARTITION`` drop out. If every
+        part is empty, all of them are returned, so reads still answer
+        with the empty slab a single empty file gives.
+        """
+        pairs = list(enumerate(self._readers))
+        live = [(i, r) for i, r in pairs if not r.is_empty_partition(stage_id)]
+        return live or pairs
+
+    def _live_readers(self, stage_id: str) -> "list[LadrunoReader]":
+        return [r for _, r in self._live(stage_id)]
 
     # -- lifecycle -----------------------------------------------------
 
@@ -165,10 +234,18 @@ class LadrunoMultiPartitionReader:
     # -- stages / time / partitions ------------------------------------
 
     def stages(self) -> list[StageInfo]:
-        return self._readers[0].stages()
+        # Step counts come from a part that holds the stage's results:
+        # partition 0 may be an EMPTY_PARTITION with no TIME axis.
+        out: list[StageInfo] = []
+        for s in self._readers[0].stages():
+            ref = self._live_readers(s.id)[0]
+            out.append(s if ref is self._readers[0] else next(
+                rs for rs in ref.stages() if rs.id == s.id
+            ))
+        return out
 
     def time_vector(self, stage_id: str) -> ndarray:
-        return self._readers[0].time_vector(stage_id)
+        return self._live_readers(stage_id)[0].time_vector(stage_id)
 
     def partitions(self, stage_id: str) -> list[str]:
         return [f"partition_{i}" for i in range(len(self._readers))]
@@ -184,11 +261,15 @@ class LadrunoMultiPartitionReader:
         return merged
 
     def opensees_model(self):
-        """The minimal broker is built from partition 0's MODEL.
+        """The minimal broker is built from the first part with a MODEL.
 
+        Partition 0 unless its MODEL is empty (``EMPTY_PARTITION``).
         Mirrors the single-file self-sufficient path; richer lineage
         still comes via ``model_h5=`` on :meth:`Results.from_ladruno`.
         """
+        for r in self._readers:
+            if r.fem() is not None:
+                return r.opensees_model()
         return self._readers[0].opensees_model()
 
     # -- components / reads --------------------------------------------
@@ -205,11 +286,16 @@ class LadrunoMultiPartitionReader:
         self, stage_id: str, component: str, *,
         node_ids: Optional[ndarray] = None, time_slice: TimeSlice = None,
     ) -> NodeSlab:
+        live = self._live(stage_id)
+        readers = [r for _, r in live]
         return _merge_node_slabs(
             [r.read_nodes(stage_id, component, node_ids=node_ids,
-                          time_slice=time_slice) for r in self._readers],
+                          time_slice=time_slice) for r in readers],
             component,
-            _node_reduction(self._readers, self._paths, stage_id, component),
+            _node_reduction(
+                readers, [self._paths[i] for i, _ in live],
+                stage_id, component,
+            ),
         )
 
     def read_energy(self, stage_id: str, **_kw):
@@ -229,9 +315,10 @@ class LadrunoMultiPartitionReader:
             "with Results.from_ladruno(<part file>, merge_partitions=False)."
         )
 
-    def _per_partition(self, read) -> list:
-        """Run ``read(reader)`` on every partition, tolerating ranks that
-        record no element results.
+    def _per_partition(self, stage_id: str, read) -> list:
+        """Run ``read(reader)`` on every partition that holds results for
+        the stage (``EMPTY_PARTITION`` parts drop out), tolerating ranks
+        that record no element results.
 
         A rank owning none of the recorded elements legitimately writes a
         file with no ``ON_ELEMENTS`` group, and
@@ -241,7 +328,7 @@ class LadrunoMultiPartitionReader:
         """
         out: list = []
         missing: "Optional[MissingElementResults]" = None
-        for r in self._readers:
+        for r in self._live_readers(stage_id):
             try:
                 out.append(read(r))
             except MissingElementResults as exc:
@@ -256,6 +343,7 @@ class LadrunoMultiPartitionReader:
     ) -> ElementSlab:
         return _concat_element_slabs(
             self._per_partition(
+                stage_id,
                 lambda r: r.read_elements(
                     stage_id, component, element_ids=element_ids,
                     time_slice=time_slice,
@@ -270,6 +358,7 @@ class LadrunoMultiPartitionReader:
     ) -> LineStationSlab:
         return _concat_line_station_slabs(
             self._per_partition(
+                stage_id,
                 lambda r: r.read_line_stations(
                     stage_id, component, element_ids=element_ids,
                     time_slice=time_slice,
@@ -284,6 +373,7 @@ class LadrunoMultiPartitionReader:
     ) -> GaussSlab:
         return _concat_gauss_slabs(
             self._per_partition(
+                stage_id,
                 lambda r: r.read_gauss(
                     stage_id, component, element_ids=element_ids,
                     time_slice=time_slice,
@@ -299,6 +389,7 @@ class LadrunoMultiPartitionReader:
     ) -> FiberSlab:
         return _concat_fiber_slabs(
             self._per_partition(
+                stage_id,
                 lambda r: r.read_fibers(
                     stage_id, component, element_ids=element_ids,
                     gp_indices=gp_indices, time_slice=time_slice,
