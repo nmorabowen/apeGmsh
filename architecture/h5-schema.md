@@ -661,16 +661,17 @@ applied to every mint by the ADR 0093 S10 fix, 75614e08):
 | node-pair element (`ops.element.ZeroLength(nodes=...)`, …) | its own type | the endpoint pair |
 | interface spring (`g.constraints.interface`, ADR 0093) | `zeroLength` | the endpoint pair |
 | auto-emitted rebar bar (`g.rebar.place(emit_elements=True)`, ADR 0067 P5.2) | `CorotTruss` | the bar cell's `(i, j)` pair |
-| coupling / rigid-body / embedded-node element | its own type | empty (code-derived: `H5Emitter.element` clears the node channel, and these sites do not set it; not yet observed in a written file) |
+| coupling / rigid-body element | its own type | empty (code-derived: `H5Emitter.element` clears the node channel, and these sites do not set it; not yet observed in a written file) |
 
 The first three rows are observed in written files
 (`tests/opensees/unit/test_node_pair_zerolength.py`,
 `tests/opensees/integration/test_interface_emit_e2e.py`,
 `tests/rebar/test_rebar_h5_join.py`).  A
-`LadrunoEmbeddedRebar` tie (`g.reinforce`, `coupling="embedded"`) is
-**not** an `element_meta` row: the H5 emitter's `embedded_rebar` writes
-nothing under `/opensees`, and the tie lives in the neutral
-`/reinforce_ties` group.
+`LadrunoEmbeddedRebar` tie (`g.reinforce`, `coupling="embedded"`) and a
+`LadrunoEmbeddedNode` tie (`g.embed`) are **not** `element_meta` rows:
+the H5 emitter's `embedded_rebar` and `embedded_node` write nothing under
+`/opensees`, and the ties live in the neutral `/reinforce_ties` and
+`/embed_ties` groups.
 
 The `-1` is load-bearing: readers restore a row's connectivity from
 `inline_connectivity` only when `fem_eid < 0`, because a minted row's
