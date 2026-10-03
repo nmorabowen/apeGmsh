@@ -18,7 +18,7 @@ g = apeGmsh(model_name="bracket")
 g.begin()
 
 # 1. Import raw, then inspect. load_step does NOT create physical groups.
-g.model.io.load_step("bracket.step")          # default: highest_dim_only=True → volumes only
+g.model.io.load_step("bracket.step")          # default: every shape, every dim
 
 report = g.model.io.diagnose()                # -> ImportHealth, non-mutating
 print(report)                                 # solids, dim_counts, short_edges, tiny_faces, suggested_tolerance

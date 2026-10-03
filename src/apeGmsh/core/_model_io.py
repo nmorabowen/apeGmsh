@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import gmsh
 
 from ._helpers import Tag, TagsLike
-from ._geometry_errors import WarnGeomImportHealth
+from ._geometry_errors import WarnGeomHealSkipsSewing, WarnGeomImportHealth
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -41,6 +41,34 @@ def _model_bbox_diag() -> float:
     if not all(math.isfinite(v) for v in pts):
         return 0.0
     return math.dist((xn, yn, zn), (xx, yx, zx))
+
+
+def _free_curves_and_points() -> list[tuple[int, int]]:
+    """Curves and points that bound nothing higher (beam / column
+    lines, reference points)."""
+    return [
+        (d, t)
+        for d in (1, 0)
+        for _, t in gmsh.model.getEntities(d)
+        if len(gmsh.model.getAdjacencies(d, t)[0]) == 0
+    ]
+
+
+def _top_level_entities(
+    dimtags: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """The entities of ``dimtags`` that bound nothing higher, once each,
+    in order: a CAD import's shapes (volumes, faces of a shell, free
+    beam / column curves) without their sub-entities."""
+    seen: set[tuple[int, int]] = set()
+    top: list[tuple[int, int]] = []
+    for d, t in dimtags:
+        if (d, t) in seen:
+            continue
+        seen.add((d, t))
+        if d == 3 or len(gmsh.model.getAdjacencies(d, t)[0]) == 0:
+            top.append((d, t))
+    return top
 
 
 def _suggested_heal_tolerance(diag: float) -> float:
@@ -378,7 +406,8 @@ class _IO:
         label          : str | None = None,
     ) -> dict[int, list[Tag]]:
         """
-        Core import helper shared by ``load_iges`` and ``load_step``.
+        Core import helper shared by ``load_iges``, ``load_step`` and
+        ``load_brep``.
 
         Calls ``gmsh.model.occ.importShapes``, captures the returned
         (dim, tag) pairs, registers every imported entity, and returns a
@@ -427,7 +456,13 @@ class _IO:
             else:
                 heal_tol = float(heal)
             if raw:
-                self.heal_shapes(list(raw), tolerance=heal_tol, sync=True)
+                # The shapes only: OCC heals a list one entity at a
+                # time, so re-healing every sub-entity is slow and adds
+                # nothing.
+                self.heal_shapes(
+                    _top_level_entities(list(raw)),
+                    tolerance=heal_tol, sync=True,
+                )
 
         if dedupe:
             dedupe_tol = None if dedupe is True else float(dedupe)
@@ -447,8 +482,10 @@ class _IO:
                         if (d, t) not in self._model._metadata:
                             self._model._register(d, t, None, kind)
         else:
+            # importShapes repeats shared sub-entities (an edge once per
+            # face it bounds): keep each tag once.
             result = {}
-            for dim, tag in raw:
+            for dim, tag in dict.fromkeys(raw):
                 result.setdefault(dim, []).append(tag)
 
         fused = False
@@ -467,11 +504,17 @@ class _IO:
                 fused = True
 
         if label is not None and not fused:
+            # The imported shapes carry the label, not their
+            # sub-entities (one label per dim they span).
             labels_comp = getattr(self._model._parent, 'labels', None)
             if labels_comp is not None:
-                for dim, tags in result.items():
-                    if tags:
-                        labels_comp.add(dim, tags, name=label)
+                shapes: dict[int, list[Tag]] = {}
+                for d, t in _top_level_entities(
+                    [(d, t) for d, ts in result.items() for t in ts]
+                ):
+                    shapes.setdefault(d, []).append(t)
+                for dim, tags in shapes.items():
+                    labels_comp.add(dim, tags, name=label)
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
         suffix = ""
@@ -502,7 +545,7 @@ class _IO:
         self,
         file_path       : Path | str,
         *,
-        highest_dim_only: bool = True,
+        highest_dim_only: bool = False,
         sync            : bool = True,
         heal            : bool | float | str = False,
         dedupe          : bool | float = False,
@@ -518,10 +561,14 @@ class _IO:
         Parameters
         ----------
         highest_dim_only : bool
-            If True (default) only the highest-dimension entities are
-            returned and registered (volumes for solids, surfaces for
-            surface models).  Set to False to capture every sub-entity
-            (faces, edges, vertices) as well.
+            False (default): import every shape in the file and return
+            every entity (volumes, faces, edges, vertices), so free
+            lower-dimension shapes beside the top dimension (beam /
+            column curves next to a shell) come in too.  True: import
+            only the highest dimension (volumes for solids, surfaces for
+            surface models); free lower-dimension shapes are dropped.
+            ``heal=`` and ``label=`` act on the imported shapes either
+            way, not on their sub-entities.
         heal : bool, float, or "auto"
             Run ``heal_shapes`` on the imported entities immediately
             after import.  ``True`` and ``"auto"`` derive a
@@ -574,7 +621,7 @@ class _IO:
         self,
         file_path       : Path | str,
         *,
-        highest_dim_only: bool = True,
+        highest_dim_only: bool = False,
         sync            : bool = True,
         heal            : bool | float | str = False,
         dedupe          : bool | float = False,
@@ -590,9 +637,14 @@ class _IO:
         Parameters
         ----------
         highest_dim_only : bool
-            If True (default) only the highest-dimension entities are
-            returned and registered.  Set to False to include all
-            sub-entities.
+            False (default): import every shape in the file and return
+            every entity (volumes, faces, edges, vertices), so free
+            lower-dimension shapes beside the top dimension (beam /
+            column curves next to a shell) come in too.  True: import
+            only the highest dimension (volumes for solids, surfaces for
+            surface models); free lower-dimension shapes are dropped.
+            ``heal=`` and ``label=`` act on the imported shapes either
+            way, not on their sub-entities.
         heal : bool, float, or "auto"
             Run ``heal_shapes`` on the imported entities immediately
             after import.  ``True`` and ``"auto"`` derive a
@@ -641,6 +693,48 @@ class _IO:
             heal=heal, dedupe=dedupe, fuse=fuse, label=label,
         )
 
+    def load_brep(
+        self,
+        file_path       : Path | str,
+        *,
+        highest_dim_only: bool = False,
+        sync            : bool = True,
+        heal            : bool | float | str = False,
+        dedupe          : bool | float = False,
+        fuse            : bool = False,
+        label           : str | None = None,
+    ) -> dict[int, list[Tag]]:
+        """
+        Import an OpenCASCADE BREP file into the current model.
+
+        BREP is OCC's native format (what STKO and other OCC-based
+        pre-processors write), so it keeps exact curve types and the
+        shared topology that STEP / IGES exports can lose.  Same
+        signature, options and return shape as :meth:`load_step`.
+
+        Parameters
+        ----------
+        highest_dim_only, heal, dedupe, fuse, label
+            As in :meth:`load_step`.
+
+        Returns
+        -------
+        dict[int, list[Tag]]
+            ``{dim: [tag, ...]}`` indexed by dimension.
+
+        Example
+        -------
+        ::
+
+            # shell + free columns: both come in
+            imported = g.model.io.load_brep("frame.brep")
+            slabs_and_walls = imported[2]
+        """
+        return self._import_shapes(
+            Path(file_path), 'brep', highest_dim_only, sync,
+            heal=heal, dedupe=dedupe, fuse=fuse, label=label,
+        )
+
     def heal_shapes(
         self,
         tags: TagsLike | None = None,
@@ -664,6 +758,8 @@ class _IO:
         Parameters
         ----------
         tags : entities to heal (default: all entities in the model).
+            OCC heals an explicit list one entity at a time, so only
+            the default sews faces together.
         dim : default dimension for bare integer tags.
         tolerance : healing tolerance (default 1e-8).
         fix_degenerated : fix degenerate edges/faces.
@@ -676,6 +772,14 @@ class _IO:
         Returns
         -------
         self — for method chaining.
+
+        Notes
+        -----
+        Sewing everything drops every free curve and point (they belong
+        to no face): in a frame + shell model that deletes the columns.
+        So when ``tags=None`` and the model has faces plus free curves
+        or points, the call heals without sewing and emits
+        :class:`WarnGeomHealSkipsSewing`.
 
         Example
         -------
@@ -694,6 +798,16 @@ class _IO:
             dt = self._model._as_dimtags(tags, dim)
         else:
             dt = []  # empty = heal everything
+            free = _free_curves_and_points() if sew_faces else []
+            if free and gmsh.model.getEntities(2):
+                n_curves = sum(1 for d, _ in free if d == 1)
+                warnings.warn(WarnGeomHealSkipsSewing(
+                    f"heal_shapes(): sewing faces would delete the model's "
+                    f"{n_curves} free curve(s) and {len(free) - n_curves} "
+                    f"free point(s); healing without sewing instead. To sew, "
+                    f"heal the faces before adding the free curves."
+                ), stacklevel=2)
+                sew_faces = False
 
         out: list[tuple[int, int]] = gmsh.model.occ.healShapes(
             dimTags=dt,
