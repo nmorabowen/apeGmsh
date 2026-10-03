@@ -132,8 +132,14 @@ behind it, one more than the design started with.
   the file count, and the same `INFO/RUN_ID` unless `RUN_ID_SCOPE` is
   `"process"` (files written before the fork added `RUN_ID` skip that
   check). A stage marked `EMPTY_PARTITION = 1`, a part that held none of
-  the recorded nodes, joins the stitch as an empty contribution. The
-  contract is the fork's `ladruno_schema_v1.md` §2.
+  the recorded nodes, joins the stitch as an empty contribution. Stages
+  pair across parts by name when every part names them alike. A
+  rank-local topology change can stamp ranks with different
+  `MODEL_STAGE[<n>]` numbers for one stage, so when the names differ but
+  the stage counts agree, stages pair by numeric stamp order with a
+  `StageOrderMatchWarning`, and callers see the first non-empty part's
+  names. Different stage counts are refused. The contract is the fork's
+  `ladruno_schema_v1.md` §2.
 - **`from_recorders`** is not a fourth on-disk format: it transcodes
   classic recorder output into a native file and opens *that* through
   `NativeReader`.

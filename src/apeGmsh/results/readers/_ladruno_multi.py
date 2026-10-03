@@ -17,6 +17,7 @@ files (reactions sum across partitions, kinematics keep one copy).
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
@@ -49,6 +50,16 @@ from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
+
+
+class StageOrderMatchWarning(UserWarning):
+    """Part files named their stages differently; stages were paired by order.
+
+    Fork WP-165 starts a ``MODEL_STAGE`` only on a topology change, but a
+    rank-local change can still give ranks different ``MODEL_STAGE[<n>]``
+    stamps for one logical stage. With equal stage counts the reader pairs
+    the stages by numeric stamp order and warns with this class.
+    """
 
 
 _PARTITION_FILENAME_RE = re.compile(
@@ -172,17 +183,7 @@ class LadrunoMultiPartitionReader:
 
     def _validate_consistency(self) -> None:
         self._validate_part_set()
-        sigs = [
-            tuple((s.id, s.name, s.kind) for s in r.stages())
-            for r in self._readers
-        ]
-        first = sigs[0]
-        for i, s in enumerate(sigs[1:], start=1):
-            if s != first:
-                raise ValueError(
-                    f"Partition {i} ({self._paths[i].name}) reports different "
-                    f"stage signatures than partition 0: {s} vs {first}."
-                )
+        self._pair_stages()
         # Step counts and time vectors are compared only across the parts
         # that hold results for the stage: an EMPTY_PARTITION stage (fork
         # WP-165) may carry no TIME axis at all.
@@ -197,6 +198,59 @@ class LadrunoMultiPartitionReader:
                         f"Partition {i} ({self._paths[i].name}) time vector "
                         f"for stage {stage.name!r} differs from partition "
                         f"{ref_i} ({self._paths[ref_i].name})."
+                    )
+
+    def _pair_stages(self) -> None:
+        """Pair each part's stages with the other parts' (fork WP-165).
+
+        Every reader numbers its stages ``stage_0..`` in order of the
+        integer stamp inside ``MODEL_STAGE[<n>]``, and reads go by that
+        id, so pairing is by ordinal position. When every part has the
+        same stage names this is pairing by name. A rank-local topology
+        change can make ranks stamp different numbers for one logical
+        stage: then, if the stage counts agree, the stages are matched by
+        order with a :class:`StageOrderMatchWarning`. Different counts are
+        refused. The name exposed to callers is the first non-empty
+        part's (see :meth:`stages`).
+        """
+        per = [r.stages() for r in self._readers]
+        names = [[s.name for s in st] for st in per]
+
+        def listing() -> str:
+            return "; ".join(
+                f"{p.name}: {nm}" for p, nm in zip(self._paths, names)
+            )
+
+        if len({len(nm) for nm in names}) > 1:
+            raise ValueError(
+                "Partitioned .ladruno files have different stage counts "
+                f"({listing()}). The part files cannot be paired stage by "
+                "stage; they are probably not from one run."
+            )
+        if any(nm != names[0] for nm in names[1:]):
+            warnings.warn(
+                "Partitioned .ladruno files name their stages differently "
+                f"({listing()}); stages were matched by order (numeric "
+                "MODEL_STAGE stamp). A rank-local topology change stamps "
+                "ranks differently; if the files are not from one run, the "
+                "pairing is wrong.",
+                StageOrderMatchWarning,
+                stacklevel=4,
+            )
+        # Paired stages must agree on KIND; EMPTY_PARTITION stages hold
+        # their ordinal slot but have no say.
+        for k in range(len(per[0])):
+            kinds = [
+                (i, st[k]) for i, st in enumerate(per)
+                if not self._readers[i].is_empty_partition(st[k].id)
+            ]
+            for i, s in kinds[1:]:
+                i0, s0 = kinds[0]
+                if s.kind != s0.kind:
+                    raise ValueError(
+                        f"Stage {k} is {s0.kind!r} in {self._paths[i0].name} "
+                        f"({s0.name}) but {s.kind!r} in "
+                        f"{self._paths[i].name} ({s.name})."
                     )
 
     def _live(self, stage_id: str) -> "list[tuple[int, LadrunoReader]]":
@@ -422,4 +476,8 @@ class LadrunoMultiPartitionReader:
         )
 
 
-__all__ = ["LadrunoMultiPartitionReader", "discover_partition_files"]
+__all__ = [
+    "LadrunoMultiPartitionReader",
+    "StageOrderMatchWarning",
+    "discover_partition_files",
+]

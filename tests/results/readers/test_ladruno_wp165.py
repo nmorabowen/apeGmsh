@@ -29,7 +29,10 @@ import pytest
 
 from apeGmsh.results.readers import _ladruno_hyperslab as hs
 from apeGmsh.results.readers._ladruno import LadrunoReader
-from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
+from apeGmsh.results.readers._ladruno_multi import (
+    LadrunoMultiPartitionReader,
+    StageOrderMatchWarning,
+)
 
 _T = 6
 _TIME = np.linspace(0.1, 0.6, _T)
@@ -47,8 +50,10 @@ def _write_part(
     path: Path, node_ids, *,
     part: Optional[int] = None, num_parts: Optional[int] = None,
     run_id: Optional[str] = None, run_scope: Optional[str] = None,
-    empty: bool = False, chunks=None,
+    empty: bool = False, chunks=None, stamps=(1,),
 ) -> Path:
+    """One part file. Stage ``k`` (in ``stamps`` order) holds
+    ``_disp(ids) + 1e6 * k`` so a test can tell the stages apart."""
     ids = np.asarray(node_ids, dtype=np.int64)
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
@@ -63,26 +68,30 @@ def _write_part(
             info.attrs["RUN_ID"] = np.bytes_(run_id.encode())
         if run_scope is not None:
             info.attrs["RUN_ID_SCOPE"] = np.bytes_(run_scope.encode())
-        stage = f.create_group("MODEL_STAGE[1]")
-        stage.attrs["KIND"] = np.bytes_(b"static")
-        nodes = stage.create_group("MODEL/NODES")
-        nodes.create_dataset("ID", data=ids.reshape(-1, 1))
-        nodes.create_dataset(
-            "COORDINATES",
-            data=np.column_stack([ids, np.zeros_like(ids), np.zeros_like(ids)])
-            .astype(np.float64).reshape(-1, 3),
-        )
-        stage.create_group("MODEL/ELEMENTS")
-        if empty:
-            # WP-165 MP-8: zero-length NODES, no node/element results.
-            stage.attrs["EMPTY_PARTITION"] = 1
-            return path
-        res = stage.create_group("RESULTS/ON_NODES/DISPLACEMENT")
-        res.attrs["COMPONENTS"] = np.array([b"Ux,Uy,Uz"])
-        res.create_dataset("ID", data=ids.reshape(-1, 1))
-        res.create_dataset("DATA", data=_disp(ids), chunks=chunks)
-        res.create_dataset("TIME", data=_TIME)
-        res.create_dataset("STEP", data=np.arange(_T))
+        for k, stamp in enumerate(stamps):
+            stage = f.create_group(f"MODEL_STAGE[{stamp}]")
+            stage.attrs["KIND"] = np.bytes_(b"static")
+            nodes = stage.create_group("MODEL/NODES")
+            nodes.create_dataset("ID", data=ids.reshape(-1, 1))
+            nodes.create_dataset(
+                "COORDINATES",
+                data=np.column_stack(
+                    [ids, np.zeros_like(ids), np.zeros_like(ids)],
+                ).astype(np.float64).reshape(-1, 3),
+            )
+            stage.create_group("MODEL/ELEMENTS")
+            if empty:
+                # WP-165 MP-8: zero-length NODES, no node/element results.
+                stage.attrs["EMPTY_PARTITION"] = 1
+                continue
+            res = stage.create_group("RESULTS/ON_NODES/DISPLACEMENT")
+            res.attrs["COMPONENTS"] = np.array([b"Ux,Uy,Uz"])
+            res.create_dataset("ID", data=ids.reshape(-1, 1))
+            res.create_dataset(
+                "DATA", data=_disp(ids) + 1e6 * k, chunks=chunks,
+            )
+            res.create_dataset("TIME", data=_TIME)
+            res.create_dataset("STEP", data=np.arange(_T))
     return path
 
 
@@ -275,3 +284,91 @@ def test_empty_partition_alone(tmp_path: Path) -> None:
         assert r.is_empty_partition("stage_0")
         assert r.fem() is None
         assert r.read_nodes("stage_0", "displacement_x").node_ids.size == 0
+
+
+# ---------------------------------------------------------------------
+# Stage pairing across parts (WP-165: rank-local stamps may differ)
+# ---------------------------------------------------------------------
+
+def _staged_pair(tmp_path: Path, stamps0, stamps1, *, empty1: bool = False):
+    ids0, ids1 = np.array([1, 2, 3]), np.array([3, 4])
+    return [
+        _write_part(
+            tmp_path / "st.part-0.ladruno", ids0, part=0, num_parts=2,
+            stamps=stamps0,
+        ),
+        _write_part(
+            tmp_path / "st.part-1.ladruno", [] if empty1 else ids1,
+            part=1, num_parts=2, stamps=stamps1, empty=empty1,
+        ),
+    ]
+
+
+def _check_stitched_stages(r, n_stages: int) -> None:
+    ids = np.array([1, 2, 3, 4])
+    for k in range(n_stages):
+        slab = r.read_nodes(f"stage_{k}", "displacement_x")
+        assert slab.node_ids.tolist() == ids.tolist()
+        np.testing.assert_array_equal(slab.values, _disp(ids)[:, :, 0] + 1e6 * k)
+
+
+def test_same_stage_names_pair_by_name_without_warning(tmp_path: Path) -> None:
+    import warnings
+
+    paths = _staged_pair(tmp_path, (1, 4), (1, 4))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", StageOrderMatchWarning)
+        with LadrunoMultiPartitionReader(paths) as r:
+            assert [s.name for s in r.stages()] == [
+                "MODEL_STAGE[1]", "MODEL_STAGE[4]",
+            ]
+            _check_stitched_stages(r, 2)
+
+
+@pytest.mark.parametrize("stamps0, stamps1", [
+    ((1, 4), (1, 7)),
+    ((2, 10), (2, 11)),   # lexicographic order would put [10] before [2]
+    ((2, 10), (3, 9)),
+])
+def test_different_stage_names_pair_by_order_with_warning(
+    tmp_path: Path, stamps0, stamps1,
+) -> None:
+    paths = _staged_pair(tmp_path, stamps0, stamps1)
+    with pytest.warns(StageOrderMatchWarning, match="matched by order") as rec:
+        r = LadrunoMultiPartitionReader(paths)
+    msg = str(rec[0].message)
+    assert "st.part-0.ladruno" in msg and "st.part-1.ladruno" in msg
+    with r:
+        # Canonical names: the first non-empty part's (part 0 here).
+        assert [s.name for s in r.stages()] == [
+            f"MODEL_STAGE[{s}]" for s in stamps0
+        ]
+        _check_stitched_stages(r, 2)
+
+
+def test_order_pairing_canonical_name_skips_empty_part(tmp_path: Path) -> None:
+    """Part 0 empty in every stage: names come from part 1."""
+    ids1 = np.array([5, 6])
+    paths = [
+        _write_part(tmp_path / "e.part-0.ladruno", [], part=0, num_parts=2,
+                    stamps=(2, 10), empty=True),
+        _write_part(tmp_path / "e.part-1.ladruno", ids1, part=1, num_parts=2,
+                    stamps=(2, 11)),
+    ]
+    with pytest.warns(StageOrderMatchWarning):
+        r = LadrunoMultiPartitionReader(paths)
+    with r:
+        assert [s.name for s in r.stages()] == [
+            "MODEL_STAGE[2]", "MODEL_STAGE[11]",
+        ]
+        slab = r.read_nodes("stage_1", "displacement_x")
+        assert slab.node_ids.tolist() == [5, 6]
+        np.testing.assert_array_equal(slab.values, _disp(ids1)[:, :, 0] + 1e6)
+
+
+def test_different_stage_counts_are_refused(tmp_path: Path) -> None:
+    paths = _staged_pair(tmp_path, (1, 4), (1, 4, 9))
+    with pytest.raises(ValueError, match="different stage counts") as exc:
+        LadrunoMultiPartitionReader(paths)
+    msg = str(exc.value)
+    assert "st.part-0.ladruno" in msg and "MODEL_STAGE[9]" in msg

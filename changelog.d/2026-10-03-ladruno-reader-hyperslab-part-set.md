@@ -22,3 +22,11 @@ Follows the Ladruno fork's recorder work packages WP-163/164/165
   and the stage's step count and time vector come from a part that holds
   results. New `LadrunoReader.is_empty_partition(stage_id)` and
   `LadrunoReader.partition_manifest()`.
+- **Stages pair by order when ranks stamp them differently.** A rank-local
+  topology change can give ranks different `MODEL_STAGE[<n>]` stamps for
+  one logical stage, which the stitch used to refuse. Same stage names
+  still pair by name. Different names with equal stage counts now pair by
+  numeric stamp order (not lexicographic), with a `StageOrderMatchWarning`
+  naming each file and its stages; callers see the first non-empty part's
+  stage names. Different stage counts raise `ValueError` listing each
+  file's stages. `EMPTY_PARTITION` stages keep their slot in the order.
