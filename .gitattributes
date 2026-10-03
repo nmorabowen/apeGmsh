@@ -13,3 +13,11 @@
 
 # ADR 0100 P3 golden deck: byte-exact ordering oracle; no EOL translation.
 tests/opensees/parity/*.golden.tcl -text
+
+# The studio API index is a byte-exact oracle: tests/studio/test_lookup.py
+# compares serialize_index(build_index()) (always LF) against the file's
+# bytes. Under core.autocrlf=true a Windows checkout rewrote it to CRLF and
+# the test failed locally while passing on Linux CI. Pin it to LF, the
+# opposite of the *.bat rule above and for the same reason: the bytes on
+# disk must not depend on the cloning machine.
+src/apeGmsh/studio/_api_index.json text eol=lf
