@@ -782,7 +782,7 @@ class DomainCaptureSpec:
         fem: "FEMData",
         element_ids: ndarray,
     ) -> Optional[LayerSectionMetadata]:
-        """Build LayerSectionMetadata from the attached ``apeSees`` bridge.
+        r"""Build LayerSectionMetadata from the attached ``apeSees`` bridge.
 
         Walks the bridge's ``Element`` primitives for those whose
         ``section`` is a :class:`LayeredShell` /

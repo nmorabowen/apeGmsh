@@ -3960,7 +3960,7 @@ _STAGE_MARKER_UNSAFE = str.maketrans({
 
 
 def stage_marker_name(name: str) -> str:
-    """The stage name as it appears on an ``APEGMSH_STAGE`` marker line.
+    r"""The stage name as it appears on an ``APEGMSH_STAGE`` marker line.
 
     ADR 0106 D2 — the marker is a runtime ``puts "..."`` / ``print("...")``
     whose only job is to survive the S1 parser's ``(.+)$``, so the name is
