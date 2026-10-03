@@ -23,7 +23,6 @@ emit corpus (#1258). What is locked:
 from __future__ import annotations
 
 import ast
-import math
 import re
 import warnings
 from pathlib import Path
@@ -113,11 +112,9 @@ def test_fem_mode_changes_only_element_tags(
         assert mapping.setdefault(s, f) == f, "one tag, one FEM id"
     assert len(set(mapping.values())) == len(mapping)
 
-    # Decimal values compare to round-off: the last bit of an
-    # orientation-derived vecxz is not reproducible across platforms /
-    # numpy allocation patterns (pre-existing; the same rendering on Linux
-    # outside CI differs from the golden deck in the last digit in BOTH
-    # modes). Integers must differ only by the element-tag mapping.
+    # Every value is exact: the orientation-derived vecxz is
+    # bit-reproducible (test_vecxz_determinism.py). Integers may differ
+    # only by the element-tag mapping.
     num = r"-?\d+\.\d+(?:[eE][-+]?\d+)?|\d+|\D+"
     wl, gl = want.split("\n"), got.split("\n")
     assert len(wl) == len(gl)
@@ -128,11 +125,6 @@ def test_fem_mode_changes_only_element_tags(
         assert len(ta) == len(tb), f"line {i + 1}: {a!r} vs {b!r}"
         for x, y in zip(ta, tb):
             if x == y:
-                continue
-            if "." in x and "." in y:
-                assert math.isclose(float(x), float(y), rel_tol=1e-14), (
-                    f"line {i + 1}: {a!r} -> {b!r} changes a value"
-                )
                 continue
             assert x.isdigit() and mapping.get(int(x)) == int(y), (
                 f"line {i + 1}: {a!r} -> {b!r} changes more than an "
