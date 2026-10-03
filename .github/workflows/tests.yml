@@ -203,6 +203,11 @@ jobs:
       - name: Quirk lint (scripts/check_quirks.py)
         run: python scripts/check_quirks.py
 
+      # ADR 0112 D4: the app in apeGmshViewer/ never imports or spawns apeGmsh.
+      # No waivers; passes while the directory does not exist.
+      - name: App wall lint (scripts/check_app_wall.py)
+        run: python scripts/check_app_wall.py
+
   # Real-window Qt lifecycle tests (ADR 0084 D7, fork F-B). These 15
   # tests across 9 files build actual ResultsViewer/QtInteractor
   # windows; they were deselected by addopts (`-m "not qt"`) and
