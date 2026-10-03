@@ -120,18 +120,25 @@ self-contained.
 - **Not masked.** `schema_version`, `opensees_schema_version` and
   `snapshot_id` (empty for a stub). These are emit outputs, so a change to
   any of them is a real change.
-- **Floats.** Values computed through libm differ in the last ulp between
-  platforms. #1258 hit this on the `Spherical` orientation vecxz
-  (sin/cos): the golden has `geomTransf Linear 3 0.25881904510252085 0.0
-  0.9659258262890684` and the CI runner emitted `0.2588190451025208 0.0
-  0.9659258262890682`. Two rules absorb it:
+- **Floats.** Values computed through libm, or through numpy reductions
+  (`np.dot` and `np.linalg.norm` round by CPU dispatch, BLAS build and
+  memory alignment), can differ in the last ulp between platforms. #1258
+  and #1279 hit this on the `Spherical` orientation vecxz: one host emitted
+  `geomTransf Linear 3 0.25881904510252085 0.0 0.9659258262890684` and
+  another `0.2588190451025208 0.0 0.9659258262890682`. The cause was numpy
+  reductions, not libm. The orientation math now runs on Python floats in a
+  fixed order, so the vecxz is bit-identical everywhere, and
+  `tests/opensees/unit/test_vecxz_determinism.py` pins it exactly. The
+  tolerance below still absorbs any libm-derived value. Two rules apply:
   - **Decks** are compared token by token (`builder.first_deck_mismatch`).
     Float literals, meaning digits with a `.` or an exponent that are not
     glued to an identifier, must agree within a relative tolerance of 1e-12
     (`FLOAT_REL_TOL`), with an absolute floor of 1e-15 (`FLOAT_ABS_TOL`).
     Integers, signs, keywords, whitespace and line counts stay exact. The
     committed text is not rewritten: regen treats a deck within tolerance
-    as unchanged.
+    as unchanged. When `src` deliberately changes the bits of an emitted
+    float, run `python -m tests.opensees.golden.regen --exact`, which
+    rewrites every deck whose bytes differ.
   - **H5 dumps** hash every float dataset and attribute through its text at
     12 significant digits, and any `|x| < 1e-15` hashes as 0
     (`FLOAT_SIG_DIGITS` and `FLOAT_ZERO_FLOOR` in the dump script). This
