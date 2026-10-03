@@ -1,8 +1,8 @@
-# CHANGELOG workflow — union merge driver + frozen header
+# CHANGELOG workflow — fragments + frozen header
 
-**Status:** Active since 2026-06-12.
-**Guards:** `scripts/changelog.py --check` · `tests/test_changelog_structure.py` (curated suite) ·
-`.gitattributes` (`CHANGELOG.md merge=union`).
+**Status:** Fragments since 2026-09-29; PRs barred from `CHANGELOG.md` since 2026-10-03.
+**Guards:** `scripts/changelog.py --check` · `--check --base HEAD^1` in CI `lock-tests` (a PR
+that edits `CHANGELOG.md` fails) · `tests/test_changelog_structure.py` (curated suite).
 
 ## How to add an entry (the whole workflow)
 
@@ -32,15 +32,27 @@ Rules:
    and deletes the fragments. It is idempotent. A maintainer runs it at
    release time or in a housekeeping PR; **never in CI, never in a
    feature PR** (releases are a human gate).
-4. Branches cut before this change may still carry a direct section at the
-   anchor. That stays valid: the union driver, the anchor guards and the
-   insert-only rule below are kept for them. Do not edit existing lines,
-   and the frozen `## Unreleased — …` ledger stays frozen.
+4. **A PR never edits `CHANGELOG.md`.** CI's `lock-tests` runs
+   `python scripts/changelog.py --check --base HEAD^1` and fails a PR whose
+   diff touches it, unless the diff also deletes fragments (an assemble)
+   or changes `scripts/changelog.py` (tooling). A branch that still carries
+   a direct section moves it: copy the section into
+   `changelog.d/<slug>.md`, then `git checkout origin/main -- CHANGELOG.md`.
 
-The legacy rule for a direct section, for old branches only: insert one
-contiguous section directly below the anchor comment
-(`<!-- ⚓ NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT … -->`, the first
-thing under `## Unreleased`), with a blank line before and after it.
+## Why PRs may not touch CHANGELOG.md (2026-10-03)
+
+Rule 4 used to say a direct section at the anchor "stays valid", and the
+anchor comment inside `CHANGELOG.md` still told readers to insert there.
+Agents opening the file did. GitHub never honoured the union driver
+(the 2026-06-12 rollout below left that unverified): #1267 and #1279 merged
+cleanly with `git merge-tree` locally and showed CONFLICTING on GitHub,
+and with the attribute ignored the only conflicting file was
+`CHANGELOG.md`. So every merge that touched the file re-conflicted every
+open PR that touched it, `land_pr.py` refused them, and concurrent
+sessions spent their turns rebasing each other. The fix has three parts:
+the CI guard above, the anchor comment rewritten to say "do not edit", and
+`merge=union` removed from `.gitattributes`, so a local merge now reports
+the same conflict GitHub does instead of hiding it.
 
 ## Why
 
@@ -56,7 +68,7 @@ consequences, both documented in
   items** (#634/#635 were dropped and restored three times in one
   day).
 
-## How the fix works
+## How the union fix worked (2026-06-12, superseded)
 
 `.gitattributes` registers git's built-in **union** merge driver for
 CHANGELOG.md. When two branches insert different sections at the same

@@ -44,13 +44,13 @@ the quoted heading. `decisions/` is
       edit `CHANGELOG.md`
       (`internal_docs/changelog_workflow.md` "How to add an entry"). Run
       `python scripts/changelog.py --check` before pushing.
-- [ ] Why: the union merge driver on `CHANGELOG.md` never conflicts, it
-      mangles: blank lines dropped between sections (repaired inside #773
-      and #783, three times on 2026-09-25, and in #1186, #1191 and #1217).
-      Fragments are separate files, so nothing merges. A maintainer folds
-      them in with `--assemble` at release time; never run it in a PR.
-      Old branches that still carry a direct section at the anchor stay
-      valid.
+- [ ] Why: a PR that edits `CHANGELOG.md` conflicts on GitHub with every
+      other one (#1267, #1279), and CI's `lock-tests` now fails it
+      (`changelog.py --check --base HEAD^1`). Fragments are separate files,
+      so nothing merges. A maintainer folds them in with `--assemble` at
+      release time; never run it in a PR. A branch that still carries a
+      direct section moves it into a fragment and restores `CHANGELOG.md`
+      from `origin/main`.
 
 ## The docs site
 

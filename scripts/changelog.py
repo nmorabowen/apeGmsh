@@ -3,10 +3,11 @@
 
 Each PR adds one file ``changelog.d/<slug>.md`` holding exactly one
 CHANGELOG section (one ``### `` header plus body). Two PRs then never
-touch the same lines, so the union merge driver on ``CHANGELOG.md`` can
-no longer drop the blank line between sections (lesson #1219).
+touch the same lines and never conflict (lessons #1219, and #1267 with
+#1279: GitHub ignored the union driver and flagged every pair).
 
     python scripts/changelog.py --check      # exit 1 on any violation
+    python scripts/changelog.py --check --base HEAD^1   # also: PR leaves CHANGELOG.md alone
     python scripts/changelog.py --assemble   # fold fragments in, delete them
 
 ``--assemble`` is a release-time / maintainer housekeeping step, never
@@ -16,11 +17,12 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ANCHOR_MARK = "NEW ENTRIES GO DIRECTLY BELOW THIS COMMENT"
+ANCHOR_MARK = "FRAGMENTS ARE ASSEMBLED BELOW THIS COMMENT"
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.md$")
 NOT_FRAGMENTS = {"README.md"}
 
@@ -120,6 +122,34 @@ def check(root: Path = REPO_ROOT) -> list[str]:
     return problems
 
 
+def check_pr_diff(base: str, root: Path = REPO_ROOT) -> list[str]:
+    """A PR must leave CHANGELOG.md alone (#1267 and #1279, 2026-10-03).
+
+    GitHub ignored the union merge driver when it computed mergeability,
+    so a PR that edited CHANGELOG.md went CONFLICTING the moment any other
+    CHANGELOG.md edit landed, and concurrent sessions rebased each other in
+    turn. Two diffs may touch the file: an assemble (it deletes fragments)
+    and a change to this tool (it may restructure the file).
+    """
+    out = subprocess.run(
+        ["git", "diff", "--name-status", base, "HEAD"],
+        cwd=root, check=True, capture_output=True, text=True,
+    ).stdout
+    rows = [ln.split("\t") for ln in out.splitlines() if ln.strip()]
+    paths = {r[-1] for r in rows}
+    if "CHANGELOG.md" not in paths:
+        return []
+    assembles = any(
+        r[0] == "D" and r[-1].startswith("changelog.d/")
+        and r[-1] != "changelog.d/README.md" for r in rows)
+    if assembles or "scripts/changelog.py" in paths:
+        return []
+    return ["CHANGELOG.md: a PR must not edit it. Move your section to "
+            "changelog.d/<slug>.md and restore CHANGELOG.md from main "
+            "(git checkout origin/main -- CHANGELOG.md). Two PRs that both "
+            "edit it conflict on GitHub."]
+
+
 def assemble(root: Path = REPO_ROOT) -> list[str]:
     """Insert every fragment below the anchor comment, then delete them.
 
@@ -152,9 +182,14 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--check", action="store_true")
     g.add_argument("--assemble", action="store_true")
     ap.add_argument("--root", type=Path, default=REPO_ROOT)
+    ap.add_argument("--base", metavar="REF",
+                    help="with --check: also fail if the diff REF..HEAD edits "
+                         "CHANGELOG.md (CI passes HEAD^1 of the PR merge ref)")
     args = ap.parse_args(argv)
     if args.check:
         problems = check(args.root)
+        if args.base:
+            problems += check_pr_diff(args.base, args.root)
         for p in problems:
             print(p, file=sys.stderr)
         return 1 if problems else 0

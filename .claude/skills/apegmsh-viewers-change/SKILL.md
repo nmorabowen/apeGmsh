@@ -102,7 +102,7 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 ## Before the PR
 
 - [ ] Run the visual-check guide, and attach its reference and candidate stills to the PR.
-- [ ] Add one insert-only `CHANGELOG.md` section (`internal_docs/changelog_workflow.md`).
+- [ ] Add one `changelog.d/<slug>.md` fragment; never edit `CHANGELOG.md` (`internal_docs/changelog_workflow.md`).
 - [ ] A bench finding is a claim about code, so re-check it against the code. See
       `viewer_bench/README.md` › "This entry was wrong for a while".
 

@@ -1,16 +1,9 @@
-# CHANGELOG.md uses git's built-in union merge driver: concurrent PRs
-# each insert ONE contiguous section at the fixed anchor below the
-# "## Unreleased" header, and union keeps both insertions instead of
-# conflicting. This ended the header-conflict treadmill where every
-# merge to main re-conflicted every open PR on CHANGELOG.md alone
-# (see internal_docs/changelog_workflow.md).
-#
-# CAVEAT: union NEVER reports a conflict — it keeps both sides of any
-# overlapping edit. That is only safe for append/insert-only files.
-# Never edit existing CHANGELOG lines (especially the frozen
-# "## Unreleased — ..." ledger line); tests/test_changelog_structure.py
-# guards the known mangling mode (duplicated header line).
-CHANGELOG.md merge=union
+# CHANGELOG.md has no merge driver on purpose. The union driver it had
+# (2026-06-12 to 2026-10-03) never reached GitHub's mergeability check,
+# so PRs merged clean locally and showed CONFLICTING on GitHub (#1267,
+# #1279), and union silently mangled the file locally. PRs now add
+# changelog.d/ fragments; scripts/changelog.py --base fails a PR that
+# edits CHANGELOG.md (internal_docs/changelog_workflow.md).
 
 # Batch files are cmd.exe-only and must check out with CRLF regardless of
 # the cloning machine's core.autocrlf: cmd can mis-parse `goto` labels in

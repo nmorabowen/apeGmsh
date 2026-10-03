@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # HEAD^1 for the changelog step below
 
       - uses: actions/setup-python@v5
         with:
@@ -42,6 +44,16 @@ jobs:
       # front-matter. Pure-stdlib check, so it runs before the slow installs.
       - name: Skill mirror in sync (canonical -> derived)
         run: python scripts/sync_skill.py --check
+
+      # A PR adds a changelog.d/ fragment and leaves CHANGELOG.md alone.
+      # GitHub ignored the union driver CHANGELOG.md used to carry, so two
+      # PRs that edited it went CONFLICTING and concurrent sessions rebased
+      # each other in turn (#1267, #1279). On a pull_request run HEAD is the
+      # merge ref and HEAD^1 is the base tip, so HEAD^1..HEAD is exactly
+      # this PR's change, however stale its branch.
+      - name: PR leaves CHANGELOG.md alone (fragments only)
+        if: github.event_name == 'pull_request'
+        run: python scripts/changelog.py --check --base HEAD^1
 
       - name: Install apt deps for Qt/VTK
         run: |

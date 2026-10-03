@@ -100,9 +100,9 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
   git sees no textual conflict (#605 + #606 → #608). After merging a PR that shares a literal
   with an open one, re-run the other's tests on the merge.
 - **CHANGELOG: add one fragment `changelog.d/<slug>.md` (one `### ` section) and never edit
-  `CHANGELOG.md`** (guarded by `python scripts/changelog.py --check` and
-  `tests/test_changelog_structure.py`). Separate files give the union merge no blank line to
-  drop (#1219). A maintainer runs `--assemble` at release time; never in CI.
+  `CHANGELOG.md`**: CI fails a PR that does (`changelog.py --check --base HEAD^1`), because
+  GitHub flags every pair of such PRs CONFLICTING (#1267, #1279). A maintainer runs
+  `--assemble` at release time; never in CI.
 - **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -` sets a literal "-".
 - **Skill changes** follow the adr-docs guide, "The skill": edit `skills/apegmsh/` only and
   regenerate the mirror with `python scripts/sync_skill.py`.
