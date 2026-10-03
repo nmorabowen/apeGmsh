@@ -1686,6 +1686,12 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.heal_shapes"
     },
+    "g.model.io.load_brep": {
+      "doc": "Import an OpenCASCADE BREP file into the current model.",
+      "signature": "load_brep(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.model.io.load_brep"
+    },
     "g.model.io.load_dxf": {
       "doc": "Import a DXF file into the current model.",
       "signature": "load_dxf(file_path: 'Path | str', *, point_tolerance: 'float' = 1e-06, create_physical_groups: 'bool' = True, sync: 'bool' = True) -> 'dict[str, dict[int, list[Tag]]]'",
@@ -1700,7 +1706,7 @@
     },
     "g.model.io.load_iges": {
       "doc": "Import an IGES file into the current model.",
-      "signature": "load_iges(file_path: 'Path | str', *, highest_dim_only: 'bool' = True, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "signature": "load_iges(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.load_iges"
     },
@@ -1712,7 +1718,7 @@
     },
     "g.model.io.load_step": {
       "doc": "Import a STEP file into the current model.",
-      "signature": "load_step(file_path: 'Path | str', *, highest_dim_only: 'bool' = True, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
+      "signature": "load_step(file_path: 'Path | str', *, highest_dim_only: 'bool' = False, sync: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, fuse: 'bool' = False, label: 'str | None' = None) -> 'dict[int, list[Tag]]'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.io.load_step"
     },
@@ -2012,7 +2018,7 @@
     },
     "g.parts.add": {
       "doc": "Import a saved Part into the session.",
-      "signature": "add(part: \"'Part'\", *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = True) -> 'Instance'",
+      "signature": "add(part: \"'Part'\", *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = False) -> 'Instance'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.parts.add"
     },
@@ -2102,7 +2108,7 @@
     },
     "g.parts.import_step": {
       "doc": "Import a STEP or IGES file as a named instance.",
-      "signature": "import_step(file_path: 'str | Path', *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = True, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, properties: 'dict[str, Any] | None' = None) -> 'Instance'",
+      "signature": "import_step(file_path: 'str | Path', *, label: 'str | None' = None, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None, highest_dim_only: 'bool' = False, heal: 'bool | float | str' = False, dedupe: 'bool | float' = False, properties: 'dict[str, Any] | None' = None) -> 'Instance'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.parts.import_step"
     },
@@ -4020,6 +4026,18 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.MultiLinear"
     },
+    "ops.uniaxialMaterial.PySimple1": {
+      "doc": "``uniaxialMaterial PySimple1`` — lateral soil–pile (p-y) spring.",
+      "signature": "PySimple1(*, soil_type: 'PyTzQzType', pult: 'float', y50: 'float', Cd: 'float', c: 'float' = 0.0, name: 'str | None' = None) -> 'PySimple1'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.PySimple1"
+    },
+    "ops.uniaxialMaterial.QzSimple1": {
+      "doc": "``uniaxialMaterial QzSimple1`` — pile end-bearing (q-z) spring.",
+      "signature": "QzSimple1(*, qz_type: 'PyTzQzType', qult: 'float', z50: 'float', suction: 'float' = 0.0, c: 'float' = 0.0, name: 'str | None' = None) -> 'QzSimple1'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.QzSimple1"
+    },
     "ops.uniaxialMaterial.Steel01": {
       "doc": "",
       "signature": "Steel01(*, fy: 'float', E: 'float', b: 'float', a1: 'float | None' = None, a2: 'float | None' = None, a3: 'float | None' = None, a4: 'float | None' = None, name: 'str | None' = None) -> 'Steel01'",
@@ -4031,6 +4049,12 @@
       "signature": "Steel02(*, fy: 'float', E: 'float', b: 'float', R0: 'float' = 20.0, cR1: 'float' = 0.925, cR2: 'float' = 0.15, a1: 'float | None' = None, a2: 'float | None' = None, a3: 'float | None' = None, a4: 'float | None' = None, sig_init: 'float | None' = None, name: 'str | None' = None) -> 'Steel02'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.Steel02"
+    },
+    "ops.uniaxialMaterial.TzSimple1": {
+      "doc": "``uniaxialMaterial TzSimple1`` — pile shaft-friction (t-z) spring.",
+      "signature": "TzSimple1(*, tz_type: 'PyTzQzType', tult: 'float', z50: 'float', c: 'float' = 0.0, name: 'str | None' = None) -> 'TzSimple1'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.TzSimple1"
     },
     "ops.uniaxialMaterial.Viscous": {
       "doc": "``uniaxialMaterial Viscous`` — pure dashpot ``F = C·|v|^alpha``.",

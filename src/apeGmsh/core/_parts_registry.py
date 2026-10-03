@@ -427,7 +427,7 @@ class PartsRegistry(_PartsFragmentationMixin):
         label: str | None = None,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
-        highest_dim_only: bool = True,
+        highest_dim_only: bool = False,
     ) -> Instance:
         """Import a saved Part into the session.
 
@@ -438,7 +438,9 @@ class PartsRegistry(_PartsFragmentationMixin):
         label : str, optional
             Auto-generated as ``"{part.name}_1"`` if omitted.
         translate, rotate : placement transforms.
-        highest_dim_only : keep only highest-dim entities from the CAD.
+        highest_dim_only : import only the highest dimension; the
+            default (False) also imports free lower-dimension shapes
+            (beam / column curves beside a shell).
         """
         if not part.has_file:
             hint = (
@@ -1176,7 +1178,7 @@ class PartsRegistry(_PartsFragmentationMixin):
         label: str | None = None,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
-        highest_dim_only: bool = True,
+        highest_dim_only: bool = False,
         heal: bool | float | str = False,
         dedupe: bool | float = False,
         properties: dict[str, Any] | None = None,
@@ -1373,14 +1375,17 @@ class PartsRegistry(_PartsFragmentationMixin):
         gmsh.model.occ.synchronize()
 
         if heal:
-            from ._model_io import _model_bbox_diag, _suggested_heal_tolerance
+            from ._model_io import (
+                _model_bbox_diag, _suggested_heal_tolerance, _top_level_entities,
+            )
             if heal is True or heal == "auto":
                 heal_tol = _suggested_heal_tolerance(_model_bbox_diag())
             else:
                 heal_tol = float(heal)
             if raw:
                 self._parent.model.io.heal_shapes(
-                    list(raw), tolerance=heal_tol, sync=True,
+                    _top_level_entities(list(raw)),
+                    tolerance=heal_tol, sync=True,
                 )
         if dedupe:
             dedupe_tol = None if dedupe is True else float(dedupe)
@@ -1423,14 +1428,13 @@ class PartsRegistry(_PartsFragmentationMixin):
         # in one operation.  Passing the full ``dimtags_all`` list to
         # ``translate`` raises "OpenCASCADE transform changed the
         # number of shapes" because the lower-dim sub-shapes try to
-        # transform twice.  Use only the highest-dim entities as the
-        # transform handles.
+        # transform twice.  Use the imported shapes — the entities that
+        # bound nothing, which includes free beam / column curves
+        # beside a shell — as the transform handles.
+        from ._model_io import _top_level_entities
+        shape_dimtags = _top_level_entities(dimtags_all)
         top_dim = max(entities) if entities else -1
-        if top_dim >= 0:
-            transform_dimtags = [(top_dim, t) for t in entities[top_dim]]
-        else:
-            transform_dimtags = []
-        self._apply_transforms(transform_dimtags, translate, rotate)
+        self._apply_transforms(shape_dimtags, translate, rotate)
         dx, dy, dz = translate
 
         # Rebind labels from the sidecar (if present).
@@ -1490,16 +1494,21 @@ class PartsRegistry(_PartsFragmentationMixin):
         # This allows ``fem.nodes.get(label="column")`` to return
         # all nodes of the part, not just a sub-component.
         if labels_comp is not None and top_dim >= 0:
-            try:
-                labels_comp.add(top_dim, entities[top_dim], name=label)
-                label_names.append(label)
-            except Exception as exc:
-                import warnings
-                warnings.warn(
-                    f"Umbrella label creation failed for "
-                    f"{label!r} (dim={top_dim}): {exc}",
-                    stacklevel=2,
-                )
+            shapes_by_dim: dict[int, list[int]] = {}
+            for d, t in shape_dimtags:
+                shapes_by_dim.setdefault(d, []).append(t)
+            for d, tags in shapes_by_dim.items():
+                try:
+                    labels_comp.add(d, tags, name=label)
+                    if label not in label_names:
+                        label_names.append(label)
+                except Exception as exc:
+                    import warnings
+                    warnings.warn(
+                        f"Umbrella label creation failed for "
+                        f"{label!r} (dim={d}): {exc}",
+                        stacklevel=2,
+                    )
 
         inst = Instance(
             label=label,

@@ -61,6 +61,19 @@ class WarnGeomImportHealth(UserWarning):
     """
 
 
+class WarnGeomHealSkipsSewing(UserWarning):
+    """Advisory: :meth:`_IO.heal_shapes` healed the whole model without
+    sewing faces, because sewing would have deleted its free curves and
+    points.
+
+    OCC's heal-everything call sews the faces into shells and drops
+    every entity that belongs to no face, so a frame + shell model
+    (STKO-style: shells plus beam / column lines) would lose its frame.
+    The message names how many free curves and points were kept.  Heal
+    the faces before adding the frame lines when sewing is needed.
+    """
+
+
 class WarnGeomSharpPolylineCorner(UserWarning):
     """Advisory: a polyline vertex turns more than 30° with no fillet
     or chamfer (ADR 0097).

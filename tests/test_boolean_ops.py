@@ -340,6 +340,32 @@ class TestFragmentFrameSlab:
         assert len(_free_curves()) == 3
         g.mesh.generation.generate(dim=2)
 
+    def test_returns_only_target_dim_tags(self, g):
+        """The result lists the slab pieces only, not the column
+        segments or points that the fragment also produced."""
+        slabs, col = self._slabs_and_column(g)
+        centre = g.model.geometry.add_point(0.5, 0.5, 0.0)
+        result = g.model.boolean.fragment(
+            slabs, [(1, col), (0, centre)], dim=2,
+        )
+        assert sorted(result) == sorted(
+            t for _, t in gmsh.model.getEntities(2)
+        )
+
+    def test_label_objects_return_their_dim_not_default_dim(self, g):
+        """Label objects resolve to surfaces, so the default ``dim=3``
+        must not filter the result down to nothing."""
+        geo = g.model.geometry
+        for z in (0.0, 1.0):
+            geo.add_rectangle(0, 0, z, 1, 1, label="slabs")
+        geo.add_line(
+            geo.add_point(0, 0, -1), geo.add_point(0, 0, 2), label="cols",
+        )
+        result = g.model.boolean.fragment("slabs", "cols")
+        assert sorted(result) == sorted(
+            t for _, t in gmsh.model.getEntities(2)
+        )
+
     def test_consumed_endpoints_and_reused_tags_are_reaped(self, g):
         """Several columns plus an embedded centre point per slab: the
         consumed columns' end points were not fragment inputs but must

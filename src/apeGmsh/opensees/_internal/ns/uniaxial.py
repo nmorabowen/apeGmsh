@@ -28,8 +28,12 @@ from ...material.uniaxial import (
     LadrunoUniaxialJ2,
     Maxwell,
     MultiLinear,
+    PySimple1,
+    PyTzQzType,
+    QzSimple1,
     Steel01,
     Steel02,
+    TzSimple1,
     Viscous,
     ViscousDamper,
 )
@@ -277,6 +281,67 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         return self._bridge._register(
             MultiLinear(
                 points=tuple((float(u), float(f)) for u, f in points),
+            ),
+            name=name,
+        )
+
+    def PySimple1(
+        self, *,
+        soil_type: PyTzQzType,
+        pult:      float,
+        y50:       float,
+        Cd:        float,
+        c:         float = 0.0,
+        name: str | None = None,
+    ) -> PySimple1:
+        """``uniaxialMaterial PySimple1`` — lateral soil–pile (p-y) spring.
+
+        ``soil_type`` ``1`` approximates Matlock (1970) soft clay, ``2``
+        API (1993) sand. ``pult`` is a force (``p_ult`` times the
+        tributary pile length). See :class:`PySimple1`.
+        """
+        return self._bridge._register(
+            PySimple1(soil_type=soil_type, pult=pult, y50=y50, Cd=Cd, c=c),
+            name=name,
+        )
+
+    def TzSimple1(
+        self, *,
+        tz_type: PyTzQzType,
+        tult:    float,
+        z50:     float,
+        c:       float = 0.0,
+        name: str | None = None,
+    ) -> TzSimple1:
+        """``uniaxialMaterial TzSimple1`` — pile shaft-friction (t-z) spring.
+
+        ``tz_type`` ``1`` approximates Reese & O'Neill (1987) clay, ``2``
+        Mosher (1984) sand. ``tult`` is a force (``t_ult`` times the
+        tributary pile length). See :class:`TzSimple1`.
+        """
+        return self._bridge._register(
+            TzSimple1(tz_type=tz_type, tult=tult, z50=z50, c=c), name=name,
+        )
+
+    def QzSimple1(
+        self, *,
+        qz_type: PyTzQzType,
+        qult:    float,
+        z50:     float,
+        suction: float = 0.0,
+        c:       float = 0.0,
+        name: str | None = None,
+    ) -> QzSimple1:
+        """``uniaxialMaterial QzSimple1`` — pile end-bearing (q-z) spring.
+
+        ``qz_type`` ``1`` approximates Reese & O'Neill (1987) clay, ``2``
+        Vijayvergiya (1977) sand. ``qult`` is a force (``q_ult`` times
+        the tip area). Asymmetric: bearing is the NEGATIVE direction;
+        uplift is capped at ``suction * qult``. See :class:`QzSimple1`.
+        """
+        return self._bridge._register(
+            QzSimple1(
+                qz_type=qz_type, qult=qult, z50=z50, suction=suction, c=c,
             ),
             name=name,
         )

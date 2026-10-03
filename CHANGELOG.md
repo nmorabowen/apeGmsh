@@ -14,28 +14,31 @@
      guards the duplicated-header mangling and this comment's position.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### ADDED — `apeGmsh.interop.stko`: read STKO `.scd` documents
+### CHANGED — CAD imports default to `highest_dim_only=False`; FIXED — `heal_shapes()` no longer deletes free curves; ADDED — `g.model.io.load_brep`
 
-`read_scd(path)` reads an STKO CAE document (HDF5) into frozen dataclasses:
-geometries with their per-sub-shape element / physical property and
-local-axes assignments, the mesh (nodes, element records, which elements
-each sub-shape generated, orientation quaternions), selection sets,
-physical / element properties, conditions (with their geometry or
-interaction assignments), interactions, local axes, definitions and
-analysis steps. Parameters keep STKO's names and decode every encoding
-the documents use (`BOOL` / `INT` / `REAL` / `QNT_SCALAR` / `INDEX`,
-`STRING` / `QNT_VEC3` / `QNT_VECN` / `INDEX_VEC`, nested custom objects).
-`ScdModel.set_elements` / `set_nodes` expand selection sets the way STKO
-writes them to `.mpco.cdata`; `analysis_elements()` separates what OpenSees
-receives from the rest of the mesh (shell edge meshes, solid face meshes).
-`write_brep(scd, out, geometry=None)` extracts the OCC geometry as text
-BREP for `g.model.io.load_brep`; it needs the new `apeGmsh[stko]` extra
-(`cadquery-ocp`), kept out of `[all]`.
+`g.model.io.heal_shapes()` with no `tags` calls OCC's heal-everything,
+whose face sewing drops every curve and point that belongs to no face. On
+a frame + shell model (shells plus beam / column lines, as STKO exports)
+that silently deleted the frame: 192 columns of a 1,016-face building.
+When the model has faces plus free curves or points, the call now heals
+without sewing and fires the new `WarnGeomHealSkipsSewing`
+(`apeGmsh.core._geometry_errors`); models without free curves heal and sew
+exactly as before.
 
-Checked on the San Ramon documents: 1A gives 13,704 analysis elements and
-4D 57,906 (shells, fiber columns, soil bricks, 7,324 embedded links), both
-matching STKO's own Tcl exports; STKO face / edge *i* is gmsh tag *i + 1*,
-so the 192 column edges of 1A land on gmsh's 192 free curves.
+`g.model.io.load_brep(path, ...)` imports OpenCASCADE's native BREP
+(what STKO and other OCC-based pre-processors write), with the same
+signature and return shape as `load_step`.
+
+**Behaviour change:** `load_step` / `load_iges` / `load_brep` and
+`g.parts.import_step` / `g.parts.add` now default to
+`highest_dim_only=False`. With `True`, OCC imports only the highest
+dimension, so a shell's free beam / column curves never reached the
+model. The returned dict now holds every dimension (each tag once;
+`importShapes` repeats shared sub-entities). `label=`, `heal=` and the
+parts transforms / umbrella label act on the imported shapes (the
+entities that bound nothing: volumes, a shell's faces, free curves), so a
+labelled solid import still labels only its volumes and a free column
+moves with its shell. Pass `highest_dim_only=True` for the old behaviour.
 
 ### REMOVED — API Flow Atlas (`docs/api-flows/`) and `architecture/layout.md` (program slice N1.3, #1229)
 

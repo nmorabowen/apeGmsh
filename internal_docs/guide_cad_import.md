@@ -41,8 +41,8 @@ g = apeGmsh(model_name="bracket")
 g.begin()
 
 imported = g.model.io.load_step("bracket.step")
-# imported == {3: [1], 2: [6, 7, 8, ...], 1: [...], 0: [...]}   (if highest_dim_only=False)
-# imported == {3: [1]}                                          (default)
+# imported == {3: [1], 2: [6, 7, 8, ...], 1: [...], 0: [...]}   (default)
+# imported == {3: [1]}                                          (if highest_dim_only=True)
 
 bodies = imported[3]      # all imported volume tags
 ```
@@ -53,29 +53,30 @@ format differs.
 
 ### 1.2 `highest_dim_only` — what actually comes back
 
-The OCC importer returns every sub-entity (faces, edges, vertices) of
-the imported shape by default, which is almost never what you want for
-structural work — it pollutes the registry with hundreds of low-dim tags
-you will never reference. apeGmsh flips this on its head: the default is
-`highest_dim_only=True`, meaning the returned dict only contains the
-top-dimensional entities.
+The default, `highest_dim_only=False`, imports every shape in the file
+and returns every entity (volumes, faces, edges, vertices), each tag
+once. That matters for structural CAD that mixes dimensions: a building
+exported as a shell plus free beam / column curves (STKO and other
+OCC-based pre-processors write this) keeps its frame. With
+`highest_dim_only=True` OCC imports only the highest dimension and the
+free curves never reach the model.
 
 ```python
-# Default — clean: only volumes for a solid model
+# Default — every shape, every dim
 imported = g.model.io.load_step("part.step")
-assert list(imported.keys()) == [3]
-
-# Everything — useful if you need to tag specific faces / edges
-imported = g.model.io.load_step("part.step", highest_dim_only=False)
 volumes  = imported[3]
-faces    = imported[2]     # now addressable for physical groups
+faces    = imported[2]     # addressable for physical groups
 edges    = imported[1]
+
+# Opt-in — only the top dimension (free lower-dim shapes are dropped)
+imported = g.model.io.load_step("part.step", highest_dim_only=True)
+assert list(imported.keys()) == [3]
 ```
 
-Use `highest_dim_only=False` when the next step is *"assign a boundary
-condition to that specific face of the imported CAD"*. Otherwise keep
-the default and discover faces with `getBoundary` / `getEntitiesInBoundingBox`
-when you actually need them.
+`label=` and `heal=` act on the imported *shapes* — the entities that
+bound nothing (volumes, the faces of a shell, free curves) — not on
+their sub-entities, so a labelled solid import still labels only its
+volumes.
 
 ### 1.3 `sync` — when to skip synchronisation
 
@@ -508,6 +509,7 @@ All import/export lives in `core/_model_io.py` and
 |---------------------------------|-----------|--------------------------------|
 | `g.model.io.load_step(path)`       | in        | `{dim: [tag,...]}`             |
 | `g.model.io.load_iges(path)`       | in        | `{dim: [tag,...]}`             |
+| `g.model.io.load_brep(path)`       | in        | `{dim: [tag,...]}`             |
 | `g.model.io.heal_shapes(...)`      | —         | `self` (chainable)             |
 | `g.model.io.diagnose(warn=False)`  | —         | `ImportHealth` (non-mutating)  |
 | `g.model.io.save_step(path)`       | out       | `None`                         |
@@ -525,7 +527,7 @@ other `FEMData` — see `guide_fem_broker.md`.
 
 ??? note "For maintainers — source map"
 
-    - `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`,
+    - `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`, `load_brep`,
       `heal_shapes`, `diagnose` / `ImportHealth`, `load_msh`, `save_*`
     - `src/apeGmsh/mesh/MshLoader.py` — standalone and composite `.msh`
       loader

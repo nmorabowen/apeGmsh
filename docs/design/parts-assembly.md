@@ -88,8 +88,9 @@ bounding-box diagonal — so the same code works in millimetres and metres.
 The bbox tiebreaker is what disambiguates symmetric Parts, where two faces
 can be equidistant from a stored COM.
 
-One subtlety: imports default to `highest_dim_only=True`, but a sidecar can
-carry anchors at any dimension (a face label on a solid). Rebinding
+One subtlety: an import with `highest_dim_only=True` returns only the top
+dimension, but a sidecar can carry anchors at any dimension (a face label on a
+solid). Rebinding
 therefore matches against *all* entities in the model, re-enumerated per
 dim, not just the dimtags `importShapes` returned — otherwise every
 sub-dimension anchor would silently miss.

@@ -118,7 +118,7 @@ composite:
 
 | Entry point | File / line | Use case |
 |---|---|---|
-| `g.parts.add(part, *, label=None, translate=..., rotate=..., highest_dim_only=True)` | `_parts_registry.py` | Import a `Part` object (auto STEP round-trip) |
+| `g.parts.add(part, *, label=None, translate=..., rotate=..., highest_dim_only=False)` | `_parts_registry.py` | Import a `Part` object (auto STEP round-trip) |
 | `g.parts.import_step(file_path, *, label=None, translate=..., rotate=...)` | `_parts_registry.py` | Import a CAD file directly |
 | `with g.parts.part(label): ...` | `_parts_registry.py` | Inline geometry block; entities created in the block are auto-tagged |
 | `g.parts.register(label, dimtags)` | `_parts_registry.py` | Manually tag existing entities as an instance |
