@@ -16,11 +16,19 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // `--uncapped` (measure only) lifts the vsync / frame-rate cap so the orbit
 // fps shows GPU throughput instead of the display refresh.
+// `--pick=<OpenSees type>` (capture only) selects an element of that type
+// instead of the default target (a beam-column if any).
 const flags = process.argv.slice(2).filter((a) => a.startsWith("--"));
 const [mode, file, outArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const uncapped = flags.includes("--uncapped");
-if (flags.some((f) => f !== "--uncapped") || (uncapped && mode !== "measure")) {
-  console.error(`unknown flags ${flags.join(" ")}; only "measure ... --uncapped" takes one`);
+const pick = flags.find((f) => f.startsWith("--pick="))?.slice("--pick=".length);
+const badFlag = flags.find(
+  (f) =>
+    !(f === "--uncapped" && mode === "measure") &&
+    !(f.startsWith("--pick=") && f.length > "--pick=".length && mode === "capture"),
+);
+if (badFlag) {
+  console.error(`unknown flag ${badFlag}; only "measure ... --uncapped" and "capture ... --pick=<type>" take one`);
   process.exit(2);
 }
 
@@ -52,6 +60,7 @@ if (mode === "capture") mkdirSync(dirname(out), { recursive: true });
 const args = [root, `--mode=${mode}`, `--t0=${Date.now()}`];
 if (file) args.push(`--file=${resolve(file)}`);
 if (uncapped) args.push("--uncapped=1");
+if (pick) args.push(`--pick=${pick}`);
 if (out) args.push(`--out=${out}`);
 
 const child = spawn(electronBinary, args, { stdio: "inherit" });

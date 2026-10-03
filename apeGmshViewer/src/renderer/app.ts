@@ -10,7 +10,14 @@ import { mountPanels } from "./panels.ts";
 import { Viewport, sameRef } from "./viewport.ts";
 
 interface Bridge {
-  config(): Promise<{ mode: "view" | "measure" | "capture"; file: string | null; t0: number; appReadyMs: number; configMs: number }>;
+  config(): Promise<{
+    mode: "view" | "measure" | "capture";
+    file: string | null;
+    t0: number;
+    appReadyMs: number;
+    configMs: number;
+    pick: string | null;
+  }>;
   openModel(path: string): Promise<{ ok: true; model: ModelFile } | { ok: false; error: string }>;
   pathForFile(f: File): string;
   metrics(): Promise<{ mainMB: number; rendererMB: number; gpuProcessMB: number; gpuDevices: unknown[] }>;
@@ -48,8 +55,10 @@ const BEAM_TYPES = new Set(["dispBeamColumn", "forceBeamColumn", "elasticBeamCol
  * The element a scripted click targets: a beam-column if any; else an element
  * whose chain resolves with at least one link; else the middle drawn element.
  * A bounded sample (from the middle outwards) keeps this cheap on big models.
+ * With `pickType`, only an element of that OpenSees type whose chain resolves;
+ * none found raises, naming the type.
  */
-function demoTarget(): ElementRef | null {
+function demoTarget(pickType: string | null = null): ElementRef | null {
   const s = store.get();
   if (!s.model || !s.mesh) return null;
   const sample = (list: ElementRef[]) => {
@@ -61,6 +70,11 @@ function demoTarget(): ElementRef | null {
   };
   const candidates = [...sample(s.mesh.lineRefs), ...sample(s.mesh.triRefs)];
   const chains = candidates.map((r) => ({ r, c: resolveChain(s.model!, r) }));
+  if (pickType !== null) {
+    const hit = chains.find(({ c }) => c.root.type === pickType && c.problems.length === 0);
+    if (!hit) throw new Error(`--pick=${pickType}: no drawn element of that type with a resolved chain`);
+    return hit.r;
+  }
   const beam = chains.find(({ c }) => BEAM_TYPES.has(c.root.type) && c.problems.length === 0);
   const linked = chains.find(({ c }) => c.root.children.length > 0 && c.problems.length === 0);
   return (beam ?? linked)?.r ?? candidates[0] ?? null;
@@ -194,7 +208,7 @@ async function main() {
   // chain is taller than the window, a second still shows its end.
   const settle = () => new Promise((r) => setTimeout(r, 300));
   viewport.renderNow();
-  const tgt = demoTarget();
+  const tgt = demoTarget(cfg.pick);
   if (tgt) store.dispatch({ type: "select", ref: tgt });
   viewport.renderNow();
   await settle();

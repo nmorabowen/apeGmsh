@@ -39,7 +39,14 @@ if ((mode === "measure" || mode === "capture") && (!file || !out)) {
 }
 
 let appReadyAt = 0;
-ipcMain.handle("app:config", () => ({ mode, file: file ? resolve(file) : null, t0, appReadyMs: appReadyAt - t0, configMs: Date.now() - t0 }));
+ipcMain.handle("app:config", () => ({
+  mode,
+  file: file ? resolve(file) : null,
+  t0,
+  appReadyMs: appReadyAt - t0,
+  configMs: Date.now() - t0,
+  pick: arg("pick") ?? null,
+}));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
   try {

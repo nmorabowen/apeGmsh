@@ -23,7 +23,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm test` | reader, chain resolution and mesh tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
 | `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row |
-| `npm run capture -- <model.h5> <out.png>` | write a still from a hidden window, with a beam selected; a second still `<out>.chain-end.png` when the chain is taller than the window |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window |
 
 ## Layout
 

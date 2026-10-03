@@ -53,6 +53,7 @@ Add a row with `npm run measure -- <model.h5>` (it prints the row and a
 | 2026-10-03 | 14ac06c0 | maintainer: `ladruno_4D6-24_coarse.model.h5` | 3.46 | 4254 | 5076 (+2028 OpenSees-only) | 2323 | 59.9 | 0.50 | 231 (135 + 96) | 56.1 (picked a neighbour) |
 | 2026-10-03 | 14ac06c0 | maintainer: `footing_analysis_composed.h5` | 0.50 | 1218 | 575 | 2106 | 59.9 | 0.30 | 213 (129 + 84) | 38.3 |
 | 2026-10-03 | 14ac06c0 | scale probe: `stress_box.h5` | 26.17 | 40093 | 220889 | 3298 | 59.9 | 0.30 | 412 (213 + 199) | 51.1 (picked a neighbour) |
+| 2026-10-03 | f030ba33 | maintainer: `sanramon_1A` `model.h5` | 26.00 | 13893 | 16840 | 3821 | 59.9 | 0.30 | 276 (152 + 124) | 47.2 (picked a neighbour) |
 
 Notes on the rows:
 
@@ -67,6 +68,14 @@ Notes on the rows:
   2.26.0 / 2.19.0, outside the reader window: it opens with a warning banner.
   Its elements are `BezierTri6`, which the syntax table does not know, so the
   inspector reports the chain as not decoded, by type name.
+- `sanramon_1A` `model.h5` is the maintainer's San Ramon building, built on
+  `32d6a85b` by another session (read in place, not committed): 3510 `line2`
+  cells, of which 736 are `elasticBeamColumn` columns (`Columns_Set`), 12 841
+  `quad4` `ASDShellQ4` shells on 6 `ElasticMembranePlateSection`s named in
+  `/opensees/names`, and 489 `point1`. The measured click hit one of the 2774
+  `line2` cells that are in no physical group and have no OpenSees element, so
+  its inspector says "no row in element_meta"; the stills select a column and
+  a shell directly.
 - `stress_box.h5` is not a maintainer model. It is a scale probe: two
   tet-meshed blocks, 220 889 tets written by `fem.to_h5` (no `/opensees`
   zone), 7.6 times the largest maintainer file. It is not committed.
@@ -81,6 +90,7 @@ Notes on the rows:
 | 2026-10-03 | efa99699 | maintainer: `ladruno_4D6-24_coarse.model.h5` | 3.46 | 5076 (+2028 OpenSees-only) | 4383 | 6009 | 729 |
 | 2026-10-03 | efa99699 | maintainer: `footing_analysis_composed.h5` | 0.50 | 575 | 7921 | 6002 | 1320 |
 | 2026-10-03 | efa99699 | scale probe: `stress_box.h5` | 26.17 | 220889 | 3866 | 6017 | 643 |
+| 2026-10-03 | f030ba33 | maintainer: `sanramon_1A` `model.h5` | 26.00 | 16840 | 4736 | 6004 | 789 |
 
 The scale probe draws 18 718 boundary triangles and still renders 643 frames
 a second end to end on the integrated GPU, about 21 times the 30 fps
@@ -112,13 +122,16 @@ OpenSees knowledge, not apeGmsh semantics, and never decodes apeGmsh replay
 tokens. The table is the price; the gaps section says what in the file would
 remove it.
 
-**Not yet shown on a maintainer model: a beam chain.** None of the maintainer's
-model files that the auditor found has beam-columns. The models carry trusses,
-bricks and Bezier triangles, so the human gate cannot be a click on a beam in
-one of them yet. A beam model run on current `main` writes the whole chain:
-the fixture is such a run (`examples/shoebuckle_arch.py` on `32d6a85b`), and it
-resolves with no unresolved link. The maintainer picks or re-runs a beam model
-for the screenshot gate, and its row is added here.
+**A beam chain on a maintainer model: `sanramon_1A` model.h5.** The archived
+maintainer files the auditor found had no beam-columns, so the maintainer's
+San Ramon building was rebuilt on `main` (`32d6a85b`). Its columns are
+`elasticBeamColumn` with inline properties (no section), so the beam chain is
+element → geomTransf, with A, E, G, J, Iy, Iz shown as positional args; its
+`ASDShellQ4` shells resolve element → `ElasticMembranePlateSection`, a section
+with no material (E, nu, h, rho are its own params). Both resolve with no
+unresolved link (`screenshots/sanramon_1A.beam.png`, `sanramon_1A.shell.png`).
+The full beam → integration → section → material chain is shown on the fixture
+(`examples/shoebuckle_arch.py` on `32d6a85b`).
 
 ## Inspector fields and their HDF5 sources
 
@@ -141,7 +154,8 @@ token, `i` a neutral-zone row and `r` an element_meta row.
 | args | `/opensees/element_meta/{type}/args[r]`, with `args_str[r]` where a slot is a string; trailing NaN padding to the type's widest row is dropped | read |
 | link: transfTag → geomTransf | `args[r][k]` matched to `/opensees/transforms/*@tag`; `k` from the element's OpenSees syntax (`dispBeamColumn`/`forceBeamColumn`: slot 0, new-style 2-tag form only, the old `numIntgrPts secTag transfTag` form is refused; `elasticBeamColumn`: slot 1, 3 or 6) | **interpreted** |
 | link: integrationTag → beamIntegration | `args[r][1]` matched to `/opensees/beam_integration/*@tag` (`dispBeamColumn`, `forceBeamColumn`) | **interpreted** |
-| link: matTag / secTag (other elements) | `args[r][k]` matched to `/opensees/materials/{uniaxial,nd}/*@tag` or `/opensees/sections/*@tag` (`Truss`, `CorotTruss`: slot 1; bricks and tets: slot 0; shells: slot 0; `quad`: slot 2; `SSPquad`: slot 0; `elasticBeamColumn` section form: slot 0) | **interpreted** |
+| inline section properties (`elasticBeamColumn` without a section) | `args[r][0..2]` (2-D: A E Iz) or `args[r][0..5]` (3-D: A E G J Iy Iz) | read, but positional: the inspector shows them in `args` unnamed; naming them would need the same syntax table |
+| link: matTag / secTag (other elements) | `args[r][k]` matched to `/opensees/materials/{uniaxial,nd}/*@tag` or `/opensees/sections/*@tag` (`Truss`, `CorotTruss`: slot 1; bricks and tets: slot 0; shells (`ASDShellQ4`, `ShellMITC4`, `ShellDKGQ`, `ShellNLDKGQ`): slot 0; `quad`: slot 2; `SSPquad`: slot 0; `elasticBeamColumn` section form: slot 0) | **interpreted** |
 
 ### geomTransf, beamIntegration, section, material (each object)
 
@@ -155,6 +169,7 @@ token, `i` a neutral-zone row and `r` an element_meta row.
 | tables | every dataset under the object (`patches`, `fibers`, `layers`, `per_element_vecxz`, `per_element_emitted_tag`), as row count and columns | read |
 | link: secTag → section (beamIntegration) | `{integration}@params[0]` matched to `/opensees/sections/*@tag` (`Legendre`, `Lobatto`, `Radau`, `NewtonCotes`, `Trapezoidal`, `CompositeSimpson`) | **interpreted** |
 | link: section → material (Fiber) | `/opensees/sections/{name}/{patches,fibers,layers}[j].material_ref`, an HDF5 path | read |
+| section with no material (`ElasticMembranePlateSection`, `Elastic`, `ElasticShear`) | none: the constants (for `ElasticMembranePlateSection`: E, nu, h, rho) are the section's own `@params`; the chain ends at the section. Which section types reference no material is part of the syntax table | **interpreted** (that the chain ends here) |
 
 ## Gaps found (evidence for V0 and V2)
 
@@ -178,7 +193,8 @@ token, `i` a neutral-zone row and `r` an element_meta row.
    only through the OpenSees-only overlay, which the picker prefers when the
    two coincide.
 4. **`/meta/ndm` is the mesh dimension, not the OpenSees ndm.** The 2-D
-   fixture (`ops.model(ndm=2, ndf=3)`) has `/meta/ndm = 1`.
+   fixture (`ops.model(ndm=2, ndf=3)`) has `/meta/ndm = 1`, and the 3-D
+   `sanramon_1A` building (ndf 6) has `/meta/ndm = 2`.
 5. **`/opensees/transforms/{name}` differs from the schema document.** The
    fixture's `Linear_1` has `per_element_vecxz` of shape (1, 0) and
    `per_element_emitted_tag` of shape (1,), not one row per element as the
@@ -190,7 +206,8 @@ token, `i` a neutral-zone row and `r` an element_meta row.
 
 **Works on this machine.** `npm run capture` opens a hidden `BrowserWindow`
 (`show: false`), selects the scripted target and calls
-`webContents.capturePage()`; the stills in `screenshots/` were made that way.
+`webContents.capturePage()`; the stills in `screenshots/` were made that way
+(`--pick=ASDShellQ4` for `sanramon_1A.shell.png`; each still is under 0.6 MB).
 Two limits: the hidden window is clamped to the screen height, so a tall chain
 needs the second still (`<out>.chain-end.png`, inspector scrolled to the end);
 and the run needs a desktop session, since Electron still creates a GPU
