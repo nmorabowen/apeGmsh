@@ -280,7 +280,7 @@ g.mesh.field.set_background(f_t)
 ### `g.mesh.structured` — (`_Structured`)
 
 ```
-set_transfinite_curve(tag, num_nodes, *, mesh_type="Progression", coef=1.0)
+set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # tag: int, label/PG name, or a list
 set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
@@ -555,7 +555,9 @@ don't hand-write the deck.
 ```
 equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None)
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
-rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
+rigid_diaphragm(master_label, slave_label, *, master_point=(0,0,0), plane_normal=(0,0,1),
+                constrained_dofs=None, plane_tolerance=1.0, name=None)
+penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
 tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness="auto", enforce="penalty",
     control=None, method="collocation"|"mortar", outward=None)   # method= ADR 0086
