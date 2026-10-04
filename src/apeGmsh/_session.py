@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import importlib
 import threading
+import uuid
+import warnings
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, ClassVar
 
@@ -27,6 +29,9 @@ import gmsh
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterator
+    from pathlib import Path
+
+    from .mesh._geometry_h5_io import GeometryCapture
 
 from ._optional import MissingOptionalDependency
 
@@ -197,10 +202,29 @@ class _SessionBase:
 
     _COMPOSITES: ClassVar[tuple[tuple[str, str, str, bool], ...]] = ()
 
+    # ADR 0112 D1: a session that is *the model* writes its artifacts
+    # (``model.h5`` and the ``<stem>.geometry.h5`` sibling) on every
+    # ``end()``, unconditionally.  Only ``apeGmsh`` sets this; a
+    # ``Part`` or a bare fixture session owns no artifact and writes
+    # nothing.  The subclass that sets it must define
+    # ``_resolve_save_target`` and ``_do_save``.
+    _WRITES_ARTIFACTS: ClassVar[bool] = False
+
     def __init__(self, name: str, *, verbose: bool = False) -> None:
         self.name: str = name
         self._verbose: bool = verbose
         self._active: bool = False
+        # The session's identity (h5-schema.md, "/meta/session_id"):
+        # one uuid4 minted by ``begin()``, handed to every snapshot
+        # ``FEMData.from_gmsh`` extracts for this session and stamped
+        # on the geometry sibling, so a reader pairs the two files by
+        # equality.  ``None`` until ``begin()``.
+        self._session_id: str | None = None
+        # The geometry captured at the exit of the last successful
+        # ``g.mesh.generation.generate(dim >= 2)``; ``None`` means the
+        # session never meshed its surfaces and ``end()`` builds a 2-D
+        # temporary mesh to capture them (V0 decision 6, amendment 3).
+        self._geometry_capture: "GeometryCapture | None" = None
         # When True, ``Model._register`` auto-creates a physical group
         # for every entity that has a user-supplied ``label=``.  Set to
         # True only on ``Part`` — the main ``apeGmsh`` session leaves
@@ -240,6 +264,8 @@ class _SessionBase:
             )
         if verbose is not None:
             self._verbose = verbose
+        self._session_id = str(uuid.uuid4())
+        self._geometry_capture = None
         _gmsh_acquire()
         try:
             gmsh.model.add(self.name)
@@ -260,29 +286,88 @@ class _SessionBase:
     def end(self) -> None:
         """Close the Gmsh session.
 
-        If the subclass set a ``_save_to`` path (autosave configured at
-        construction), the broker snapshot is written before
-        ``gmsh.finalize()``.  Save failures are logged and swallowed —
-        the gmsh process must still finalize.
+        An artifact-writing session (``_WRITES_ARTIFACTS``, i.e.
+        ``apeGmsh``) first writes its artifacts **unconditionally** (ADR
+        0112 D1): ``model.h5`` at ``save_to`` or, when none was given, at
+        the conventional path ``<artifact dir>/<model_name>.h5``, and the
+        geometry sibling ``<stem>.geometry.h5`` beside it.  Every failure
+        is a warning, never an exception: the gmsh process must still
+        finalize.
         """
         if self._active:
-            save_to = getattr(self, "_save_to", None)
-            if save_to is not None:
-                try:
-                    # A directory save_to resolves to ``<dir>/<name>.h5``
-                    # so autosave matches g.save(); a bare directory
-                    # truncate-opens as a file and fails on Windows.
-                    resolve = getattr(self, "_resolve_save_target", None)
-                    target = resolve(None) if resolve is not None else save_to
-                    self._do_save(target)
-                except Exception as exc:  # noqa: BLE001
-                    import warnings
-                    warnings.warn(
-                        f"autosave to {save_to} failed: {exc!r}",
-                        stacklevel=2,
-                    )
-            _gmsh_release()
-            self._active = False
+            try:
+                if self._WRITES_ARTIFACTS:
+                    self._write_artifacts()
+            finally:
+                # A KeyboardInterrupt during the write must not leak the
+                # acquire: release runs whatever happened above.
+                _gmsh_release()
+                self._active = False
+
+    def _write_artifacts(self) -> None:
+        """Write ``model.h5`` and ``<stem>.geometry.h5`` before finalize.
+
+        Order matters: the model file is extracted from the session's
+        real state first; the geometry capture may then build and clear
+        a temporary 2-D mesh for a session that never meshed.  The
+        sibling is stamped with the ``session_id`` of the snapshot the
+        model file carries (``self._fem`` after the save), so the two
+        files pair by equality even when that snapshot was minted by
+        ``compose`` rather than inherited from this session.
+        """
+        from .mesh._geometry_h5_io import (
+            GeometryArtifactWarning,
+            capture_temp_mesh,
+            geometry_sibling_path,
+            write_geometry_h5,
+        )
+
+        target: "Path | None" = None
+        try:
+            target = self._resolve_save_target(None)
+            self._do_save(target)
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(
+                f"autosave to {target if target is not None else '<unresolved>'} "
+                f"failed: {exc!r}",
+                stacklevel=3,
+            )
+        if target is None:
+            return
+        try:
+            fem = getattr(self, "_fem", None)
+            session_id = (
+                fem.session_id if fem is not None else self._session_id
+            )
+            if session_id is None:
+                raise RuntimeError("session has no session_id (begin() never ran)")
+            capture = self._geometry_capture
+            if capture is None:
+                capture = capture_temp_mesh()
+            from . import __version__ as _ver
+            write_geometry_h5(
+                geometry_sibling_path(target), capture,
+                session_id=session_id, model_name=self.name,
+                apegmsh_version=_ver,
+            )
+        except Exception as exc:  # noqa: BLE001
+            warnings.warn(
+                f"geometry sibling for {target} not written: {exc!r}",
+                GeometryArtifactWarning,
+                stacklevel=3,
+            )
+
+    def _resolve_save_target(self, path: "str | Path | None") -> "Path":
+        """The ``model.h5`` path; defined by the ``_WRITES_ARTIFACTS`` subclass."""
+        raise NotImplementedError(
+            f"{type(self).__name__} writes no artifacts (_WRITES_ARTIFACTS is False)"
+        )
+
+    def _do_save(self, path: "Path") -> None:
+        """Write the broker snapshot; defined by the ``_WRITES_ARTIFACTS`` subclass."""
+        raise NotImplementedError(
+            f"{type(self).__name__} writes no artifacts (_WRITES_ARTIFACTS is False)"
+        )
 
     # Context-manager support
     def __enter__(self) -> "_SessionBase":

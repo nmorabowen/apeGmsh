@@ -1864,11 +1864,26 @@ class FEMData:
             DOFs per node for load/mass vector padding.
         remove_orphans : bool
             If True, remove mesh nodes not connected to any element.
+
+        The snapshot takes the session's ``session_id`` (h5-schema.md,
+        "Who mints it"): the session owns one uuid4 from ``begin()``, so
+        every extraction of one session, and the geometry sibling it
+        writes, carry the same id.  Without a session the snapshot mints
+        its own.
         """
         from ._fem_factory import _from_gmsh
-        return _from_gmsh(
+        fem = _from_gmsh(
             cls, dim=dim, session=session, ndf=ndf,
             remove_orphans=remove_orphans)
+        if session is not None:
+            session_id = session._session_id
+            if session_id is None:
+                raise RuntimeError(
+                    "FEMData.from_gmsh: the session has no session_id; "
+                    "begin() never ran on it"
+                )
+            fem.session_id = _validated_session_id(session_id)
+        return fem
 
     @classmethod
     def from_msh(
