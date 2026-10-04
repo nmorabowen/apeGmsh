@@ -170,8 +170,8 @@ const v = (t: { major: number }, minor: number) => `${t.major}.${minor}.0`;
 // the floor to the target opens with no banner; a newer minor of the same
 // major opens with exactly one banner naming the file's stamp and the target.
 
-test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.11, geometry 1.0, provenance 1.0)", () => {
-  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 11, geometry: 0, provenance: 0 });
+test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0)", () => {
+  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0 });
 });
 
 test("neutral: the floor and an older minor above it open with no banner", () => {
@@ -201,11 +201,11 @@ test("neutral: a newer minor opens with exactly one banner naming the stamp and 
   ]);
 });
 
-test("opensees: below the floor (2.10, before the rank flip) is refused, naming it", () => {
+test("opensees: below the floor (2.11, the era whose files never opened: #1303) is refused, naming it", () => {
   const stamp = v(OPENSEES_TARGET, ZONE_FLOOR.opensees - 1);
   assert.throws(() => read(writeFile("o-old.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, stamp)), (e: unknown) => {
     const r = parseRefusal((e as Error).message);
-    return /opensees_schema_version 2\.10\.0: layouts before 2\.11 are not supported/.test((e as Error).message) && r?.zone === "opensees" && r.newer === false;
+    return /opensees_schema_version 2\.11\.0: layouts before 2\.12 are not supported/.test((e as Error).message) && r?.zone === "opensees" && r.newer === false;
   });
 });
 
