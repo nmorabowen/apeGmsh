@@ -34,6 +34,7 @@ from .._gauss_extrapolation import (
     extrapolate_gauss_slab_per_element,
     extrapolate_gauss_slab_to_nodes,
 )
+from .._composites import _require_fem
 from ._arrows import auto_arrow_scale, filter_significant, model_diagonal
 from ._beams import (
     axes_from_quaternion,
@@ -532,9 +533,7 @@ class ResultsPlot:
         _require_mpl()
         ax = self._ensure_ax(ax)
 
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError("vector_glyph requires a bound FEMData.")
+        fem = _require_fem(self._r, "vector_glyph")
         coords = np.asarray(fem.nodes.coords, dtype=np.float64)
 
         # Read vector triple component-wise. Missing components → zeros.
@@ -663,9 +662,7 @@ class ResultsPlot:
         _require_mpl()
         ax = self._ensure_ax(ax)
 
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError("loads requires a bound FEMData.")
+        fem = _require_fem(self._r, "loads")
 
         loads_composite = getattr(fem.nodes, "loads", None)
         if loads_composite is None or not hasattr(loads_composite, "patterns"):
@@ -809,9 +806,7 @@ class ResultsPlot:
         _require_mpl()
         ax = self._ensure_ax(ax)
 
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError("line_force requires a bound FEMData.")
+        fem = _require_fem(self._r, "line_force")
         coords = np.asarray(fem.nodes.coords, dtype=np.float64)
         all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
         max_id = int(all_ids.max()) if all_ids.size else 0
@@ -986,9 +981,7 @@ class ResultsPlot:
         """
         _require_mpl()
         ax = self._ensure_ax(ax)
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError("fibers requires a bound FEMData.")
+        fem = _require_fem(self._r, "fibers")
 
         slab = self._r.elements.fibers.get(
             component=component, time=step, stage=stage,
@@ -1432,13 +1425,7 @@ class ResultsPlot:
         self,
     ) -> tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]:
         if self._facet_cache is None:
-            fem = self._r._fem
-            if fem is None:
-                raise RuntimeError(
-                    "results.plot.* requires a bound FEMData. Open "
-                    "with Results.from_native(path) or call "
-                    "results.bind(fem)."
-                )
+            fem = _require_fem(self._r, "results.plot.*")
             tris, segs, tri_owner, seg_owner = extract_facets_owned(fem)
             lookup, coords = coords_lookup(fem)
             self._facet_cache = (

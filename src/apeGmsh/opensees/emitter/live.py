@@ -283,7 +283,7 @@ _TET10_STOCK_DEFECT = (
     "stock release through openseespy 3.8.0; upstream master as of "
     "2026-09-25). It converges to that answer without a warning. The "
     "Ladruno fork carries the fix (fork PR #520). On stock, mesh tet4 "
-    "(FourNodeTetrahedron) or hexahedra (stdBrick / SSPbrick / bbarBrick). "
+    "(FourNodeTetrahedron) or hexahedra (stdBrick). "
     "Deck emission via ops.tcl(...) / ops.py(...) works on any build."
 )
 

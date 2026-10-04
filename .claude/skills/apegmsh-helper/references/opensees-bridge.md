@@ -107,7 +107,9 @@ integ  = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
 Which namespace:
 
 - **`ops.nDMaterial`** → solid elements (`FourNodeTetrahedron`,
-  `stdBrick`, `SSPbrick`, `quad`, `tri31`, `SSPquad`).
+  `stdBrick`, `FourNodeQuad`, `Tri31`; fork: `LadrunoBrick`, `LadrunoQuad`).
+  `SSPbrick` / `bbarBrick` / `SSPquad` are deferred (not on `ops.element`);
+  the fork's `LadrunoBrick` / `LadrunoQuad` `formulation=` selectors cover them.
 - **`ops.uniaxialMaterial`** → `truss`, `corotTruss`, `zeroLength` /
   `twoNodeLink` / `CoupledZeroLength` springs, and fiber-section beams.
 - **`ops.section`** → shell elements (`ElasticMembranePlateSection`)
@@ -145,8 +147,8 @@ The bridge is agnostic; pick by mechanics. One-clause defaults (for the
 
 | Mesh | Default | Reach for instead |
 |---|---|---|
-| 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | `SSPbrick` (cheaper, stabilized hourglass), `bbarBrick` (near-incompressible / plasticity, beats volumetric locking) |
-| 2-D solid | `quad` (`SSPquad` stabilized) | `tri31` only where a quad mesh won't form |
+| 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | fork: `LadrunoBrick(formulation="ssp")` or `"bbar"` (stabilized hourglass / near-incompressible); stock: no anti-locking hex yet (`SSPbrick` / `bbarBrick` are deferred) |
+| 2-D solid | `FourNodeQuad` (fork: `LadrunoQuad(formulation="ssp")` stabilized; `SSPquad` is deferred) | `Tri31` only where a quad mesh won't form |
 | Shell | `ShellMITC4` (general 4-node) | `ASDShellQ4` (drilling DOF, large-disp), `ShellDKGQ` (thin, no shear) |
 | Beam/column | `forceBeamColumn` (force-based, fewer elems for spread plasticity) | `dispBeamColumn` (displacement-based, stiff/short members or when force-based won't converge) |
 
@@ -713,8 +715,11 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
   a staged deck.
-- **H5 archival refuses staged models** — `apeSees(fem).h5()` raises
-  on a staged build (`apesees.py:4665`); `split='parts'` also refuses.
+- **H5 archival supports staged models**: `apeSees(fem).h5()` archives
+  staged builds (flat and partitioned) into `/opensees/stages` (ADR 0055
+  Phase 2 + Phase 5). The one remaining staged refusal is a stage-claimed
+  interface (phantom nodes / `node_to_surface`). `split='parts'` still
+  refuses staged models (`BridgeError`).
 - `s.mass` re-applying mass to a node already massed in another tier
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).

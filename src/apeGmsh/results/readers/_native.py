@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING, Optional, Sequence
 import numpy as np
 from numpy import ndarray
 
-from ...opensees._internal.schema_version import SchemaVersionError
+from ...opensees._internal.schema_version import (
+    SchemaVersion,
+    SchemaVersionError,
+)
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -59,6 +62,10 @@ class NativeReader:
 
         self._path = Path(path)
         self._h5: "h5py.File" = h5py.File(self._path, "r")
+        # ADR 0113 D9 — embedded zones below their floor: zone id ->
+        # the refusal text. ``/stages`` reads; ``fem()`` and
+        # ``opensees_model()`` refuse with that text.
+        self._unavailable: dict[str, str] = {}
         # ADR 0023 — validate per-zone schema versions for every
         # embedded zone (results envelope, neutral, opensees). Failure
         # raises SchemaVersionError before any read API is offered.
@@ -88,9 +95,18 @@ class NativeReader:
           (Phase 7a writers), then from ``/model/meta`` per-zone key,
           then envelope fallback.
 
-        INV-3: the three windows are conjunctive but independent — a
+        INV-3: the three checks are conjunctive but independent — a
         mismatched neutral version refuses with neutral context;
         opensees mismatch with opensees context.
+
+        ADR 0113 D9 (#1303): results outlive their model zones. An
+        embedded zone **below** its floor (an older minor, or an older
+        major) does not refuse the file: it is recorded in
+        :attr:`unavailable_zones`, a :class:`UserWarning` says so, and
+        :meth:`fem` / :meth:`opensees_model` refuse with the same text
+        while ``/stages`` reads. An embedded zone **newer** than the
+        reader still refuses (INV-4, D2), as does the results zone
+        itself in either direction.
         """
         from ...opensees._internal.schema_version import (
             NEUTRAL,
@@ -123,15 +139,7 @@ class NativeReader:
                 h5["model/meta"].attrs, NEUTRAL,
             )
             if neutral_version is not None:
-                try:
-                    validate_zone_version(
-                        neutral_version, reader_version(NEUTRAL),
-                        zone=NEUTRAL,
-                    )
-                except SchemaVersionError as exc:
-                    raise SchemaVersionError(
-                        f"{self._path}: {exc}"
-                    ) from None
+                self._check_embedded_zone(NEUTRAL, neutral_version)
 
         # OpenSees — only when /opensees/ is embedded. Prefer the root
         # per-zone key (Phase 7a forward); fall back to /model/meta's
@@ -143,15 +151,57 @@ class NativeReader:
                     h5["model/meta"].attrs, OPENSEES,
                 )
             if opensees_version is not None:
-                try:
-                    validate_zone_version(
-                        opensees_version, reader_version(OPENSEES),
-                        zone=OPENSEES,
-                    )
-                except SchemaVersionError as exc:
-                    raise SchemaVersionError(
-                        f"{self._path}: {exc}"
-                    ) from None
+                self._check_embedded_zone(OPENSEES, opensees_version)
+
+    def _check_embedded_zone(self, zone: str, version: SchemaVersion) -> None:
+        """Floor-check one embedded zone (ADR 0113 D9).
+
+        Below the floor (older minor or older major): flag the zone and
+        warn; the refusal text from :func:`validate_zone_version` is
+        kept as the reason. Anything else goes through the unchanged
+        check, so a newer zone refuses the whole file (INV-4).
+        """
+        import warnings
+
+        from ...opensees._internal.schema_version import (
+            reader_floor,
+            reader_version,
+            validate_zone_version,
+        )
+
+        floor = reader_floor(zone)
+        below = (version.major, version.minor) < (floor.major, floor.minor)
+        try:
+            validate_zone_version(version, reader_version(zone), zone=zone)
+        except SchemaVersionError as exc:
+            if not below:
+                raise SchemaVersionError(f"{self._path}: {exc}") from None
+            reason = f"{self._path}: {exc}"
+            self._unavailable[zone] = reason
+            warnings.warn(
+                f"{reason} The /stages open read-only; the embedded "
+                f"{zone} zone is unavailable (ADR 0113 D9).",
+                UserWarning,
+                stacklevel=4,
+            )
+
+    @property
+    def unavailable_zones(self) -> dict[str, str]:
+        """Embedded zones below their floor, zone id -> why (ADR 0113 D9).
+
+        Empty on a file whose embedded zones all open. A listed zone is
+        one :meth:`fem` (``"neutral"``) or :meth:`opensees_model`
+        (either) refuses to read; ``/stages`` reads regardless.
+        """
+        return dict(self._unavailable)
+
+    def _require_zone(self, zone: str) -> None:
+        reason = self._unavailable.get(zone)
+        if reason is not None:
+            raise SchemaVersionError(
+                f"{reason} The embedded {zone} zone is unavailable; only "
+                "/stages reads (ADR 0113 D9)."
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -234,6 +284,9 @@ class NativeReader:
     def fem(self) -> "Optional[FEMData]":
         if _native.MODEL_GROUP[1:] not in self._h5:
             return None
+        from ...opensees._internal.schema_version import NEUTRAL
+
+        self._require_zone(NEUTRAL)
         from ...mesh.FEMData import FEMData
         return FEMData.from_native_h5(self._h5[_native.MODEL_GROUP[1:]])
 
@@ -263,6 +316,12 @@ class NativeReader:
         """
         if "opensees" not in self._h5:
             return None
+        from ...opensees._internal.schema_version import NEUTRAL, OPENSEES
+
+        # The broker pairs /opensees with /model: both must be inside
+        # their floors (ADR 0113 D9).
+        self._require_zone(OPENSEES)
+        self._require_zone(NEUTRAL)
         from ...opensees.opensees_model import OpenSeesModel
         return OpenSeesModel.from_h5(
             str(self._path),

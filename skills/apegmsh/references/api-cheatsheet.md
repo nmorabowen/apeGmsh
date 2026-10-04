@@ -1037,13 +1037,13 @@ Gmsh code (`4`), or Gmsh name (`"Tetrahedron 4"`).
 | Code | Gmsh name      | Alias   | OpenSees typical mapping |
 |------|----------------|---------|--------------------------|
 | 1    | Line 2         | `line2` | `truss`, `elasticBeamColumn` |
-| 2    | Triangle 3     | `tri3`  | `tri31` |
-| 3    | Quad 4         | `quad4` | `quad`, `SSPquad`, `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
+| 2    | Triangle 3     | `tri3`  | `Tri31` |
+| 3    | Quad 4         | `quad4` | `FourNodeQuad`, `LadrunoQuad` (fork), `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
 | 4    | Tetrahedron 4  | `tet4`  | `FourNodeTetrahedron` |
-| 5    | Hexahedron 8   | `hex8`  | `stdBrick`, `SSPbrick`, `bbarBrick` |
+| 5    | Hexahedron 8   | `hex8`  | `stdBrick`, `LadrunoBrick` (fork; `SSPbrick` / `bbarBrick` are deferred) |
 | 6    | Prism 6        | —       | (not directly mapped) |
 | 8    | Line 3 (quad)  | —       | demote via `split_higher_order_lines` |
-| 9    | Triangle 6     | `tri6`  | `tri6n` (SixNodeTri), `BezierTri6` (Ladruno fork) |
+| 9    | Triangle 6     | `tri6`  | `SixNodeTri`, `BezierTri6` (Ladruno fork) |
 | 10   | Quad 9         | `quad9` | — |
 | 11   | Tetrahedron 10 | `tet10` | `TenNodeTetrahedron`, `BezierTet10` (Ladruno fork) |
 
