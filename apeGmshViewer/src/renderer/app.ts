@@ -237,7 +237,10 @@ async function main() {
   }
   // Two palette stills with nothing selected (a selection dims the model):
   // `<out>.groups.png` coloured by physical group, `<out>.role.png` by role.
+  // With nothing selected, `frameSelection` frames the whole model again
+  // after `F` framed the selection above.
   store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
   await settle();
   viewport.renderNow();
   await bridge.captureStill("groups");
