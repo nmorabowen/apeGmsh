@@ -1809,9 +1809,9 @@ class H5Model:
         side-discriminator the existing callers need.  ``{}`` when
         the root group is absent or both sub-trees are absent.
         """
-        parent = self._neutral.get(group_name)
-        if parent is None:
+        if group_name not in self._neutral:
             return {}
+        parent = self._neutral[group_name]
         out: dict[str, dict[str, Any]] = {}
         # PGs + labels use the 2.10.0 sub-tree split; ``mesh_selections``
         # still uses the flat shape (one entry per safe-name directly
@@ -1868,9 +1868,9 @@ class H5Model:
             if group.split("/", 1)[0] in ("opensees", "stages")
             else self._neutral
         )
-        g = base.get(group)
-        if g is None:
+        if group not in base:
             return {}
+        g = base[group]
         return {name: _attrs_as_dict(g[name]) for name in g}
 
     # -- Validation ------------------------------------------------------

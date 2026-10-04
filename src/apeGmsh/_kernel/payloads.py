@@ -38,6 +38,8 @@ from numpy import ndarray
 if TYPE_CHECKING:
     import pandas as pd
 
+    from ..mesh._element_types import ElementTypeInfo
+
 # NOTE: ``ElementTypeInfo`` lives in ``apeGmsh.mesh._element_types`` and
 # is referenced ONLY in string annotations below (PEP 563 — never
 # evaluated at runtime).  It is deliberately NOT imported here: an

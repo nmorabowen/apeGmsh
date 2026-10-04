@@ -44,5 +44,5 @@ class AssessmentReport:
     findings: tuple[Finding, ...]
     text: str
     figures: tuple[Path, ...] = ()
-    lineage: Lineage | None = None
+    lineage: Lineage | None = None  # noqa: F821  (ADR 0094 Am.2: deliberately unimported)
     skipped: tuple[tuple[str, str], ...] = ()

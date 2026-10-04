@@ -50,7 +50,7 @@ _AXIS_TOKENS = {
 _TRANSVERSE_ROLES = frozenset({"tie", "crosstie", "hoop", "stirrup"})
 
 if TYPE_CHECKING:
-    from .._core import _ApeGmshSession
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 
 # ── resolution-side records (not L1 specs) ───────────────────────────
