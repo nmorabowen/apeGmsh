@@ -231,6 +231,7 @@ def test_domain_capture_from_h5_refuses_an_undeclared_ndm(
     with h5py.File(model_path, "w") as f:
         meta = f.create_group("meta")
         meta.attrs["schema_version"] = OPENSEES_CURRENT
+        meta.attrs["opensees_schema_version"] = OPENSEES_CURRENT
         meta.attrs["ndm"] = 0
         meta.attrs["ndf"] = 0
         meta.attrs["snapshot_id"] = "stub"

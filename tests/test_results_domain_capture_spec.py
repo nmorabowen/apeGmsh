@@ -287,6 +287,7 @@ class TestFromH5:
         with h5py.File(path, "w") as f:
             meta = f.create_group("meta")
             meta.attrs["schema_version"] = OPENSEES_CURRENT
+            meta.attrs["opensees_schema_version"] = OPENSEES_CURRENT
             meta.attrs["ndm"] = ndm
             meta.attrs["ndf"] = ndf
             meta.attrs["snapshot_id"] = "stub-snapshot"

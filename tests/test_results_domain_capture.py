@@ -564,6 +564,7 @@ def test_domain_capture_from_h5(tmp_path: Path) -> None:
     with h5py.File(model_path, "w") as f:
         meta = f.create_group("meta")
         meta.attrs["schema_version"] = OPENSEES_CURRENT
+        meta.attrs["opensees_schema_version"] = OPENSEES_CURRENT
         meta.attrs["ndm"] = 3
         meta.attrs["ndf"] = 6
         meta.attrs["snapshot_id"] = "stub-snapshot"
