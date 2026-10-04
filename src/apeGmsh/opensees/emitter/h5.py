@@ -2124,17 +2124,15 @@ class H5Emitter:
         support pattern; the bucket's open pattern records the
         ``(node, dof)`` pair and the deck emitters re-render the
         ``sp <node> <dof> [nodeDisp …] -const`` form on replay.
-        Outside a stage bracket this stays a no-op (unreachable from
-        bridge-driven call sites; Protocol-conformance tests drive it
-        bare).
+        Outside a stage bracket it raises (ADR 0114 D2); the bridge only
+        emits it inside a stage's HOLD pattern.
         """
-        self._stage_block("sp_hold")
+        blk = self._stage_block("sp_hold")
         pat = self._active_pattern("sp_hold")
         # P5.1: a HOLD on a cross-rank shared node emits inside every
         # owning rank's copy of the stage's HOLD pattern — capture once.
         if self._partition_dup(
-            ("sp_hold", self._stage_current.name, pat.tag,
-             int(node), int(dof)),
+            ("sp_hold", blk.name, pat.tag, int(node), int(dof)),
         ):
             return
         pat.sp_holds.append((int(node), int(dof)))

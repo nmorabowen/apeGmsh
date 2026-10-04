@@ -70,10 +70,11 @@ def test_unknown_or_protocol_verb_raises_on_every_emitter(verb: str) -> None:
     tcl, py, rec, h5 = TclEmitter(), PyEmitter(), RecordingEmitter(), H5Emitter()
     ops = _Ops()
     live = _live(ops)
+    before = (tcl.lines(), py.lines())  # the deck preambles
     for emitter in (tcl, py, rec, h5, live):
         with pytest.raises(ValueError, match="ADR 0114 D3"):
             emitter.command(verb, *ARGS)
-    assert tcl.lines() == [] and py.lines() == []
+    assert (tcl.lines(), py.lines()) == before
     assert rec.calls == [] and ops.calls == []
 
 
@@ -85,8 +86,8 @@ def test_tcl_py_recording_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     tcl.command("probeCmd", *ARGS)
     py.command("probeCmd", *ARGS)
     rec.command("probeCmd", *ARGS)
-    assert tcl.lines() == ["probeCmd 1 2.5 x"]
-    assert py.lines() == ["ops.probeCmd(1, 2.5, 'x')"]
+    assert tcl.lines()[-1] == "probeCmd 1 2.5 x"
+    assert py.lines()[-1] == "ops.probeCmd(1, 2.5, 'x')"
     assert rec.calls == [("command", ("probeCmd", 1, 2.5, "x"), {})]
 
 
