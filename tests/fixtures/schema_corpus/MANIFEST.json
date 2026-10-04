@@ -1,6 +1,6 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "67a3bf29489f2c87f834f0967e15ccf7dff32548",
+ "base": "9c526f0ce8198cc9f86c12f2ab747cdb0032fd6b",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
@@ -654,18 +654,18 @@
   {
    "zone": "neutral",
    "minor": "2.35",
-   "sha": "67a3bf29489f2c87f834f0967e15ccf7dff32548",
+   "sha": "9c526f0ce8198cc9f86c12f2ab747cdb0032fd6b",
    "date": "2026-10-04",
    "version": "2.35.0",
    "bump_commits": [
-    "1d37fe87f5c7206db907246cba577056cf4a8660"
+    "68a225bcf5d54d1bb0d886846beca7b327a40ef9"
    ],
    "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
    "status": "ok",
    "files": {
     "h5": {
      "name": "neutral_2.35.h5",
-     "sha256": "71fe95a5cc9a4dc6aff681b97d37f719a1f7b0f51c9a3e09a1c16c8cda5ce342"
+     "sha256": "723d44ce372d48d22df160cda70e1704c053585334d1d2916bcf822c2ab3e76d"
     },
     "dump": {
      "name": "neutral_2.35.dump.json",
