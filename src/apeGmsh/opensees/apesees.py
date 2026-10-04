@@ -11957,7 +11957,15 @@ class apeSees:
         return prim
 
     def register(self, prim: _P) -> _P:
-        """Register a standalone primitive with the bridge (P11)."""
+        """Register a standalone primitive with the bridge (P11).
+
+        Idempotent on the object: registering an instance the bridge
+        already holds (a namespace handle, or a second ``register``)
+        returns it unchanged, so it stays once in the primitive list
+        (#1409).
+        """
+        if self._tags.tag_for(prim) is not None:
+            return prim
         return self._register(prim)
 
     def _resolve(
