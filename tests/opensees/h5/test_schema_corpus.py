@@ -97,11 +97,9 @@ SHIM_LEDGER: tuple[tuple[tuple[int, int, int], tuple[str, ...]], ...] = (
 
 #: The ``frame2d`` variant declared ``ops.model(ndm=2, ndf=3)``; its
 #: pre-2.34.0 writer stamped the mesh dimension (1) in ``/meta/ndm``. The
-#: file still says 2-D: a ``(1, 0)`` vecxz exists only in 2-D, and
-#: ``/meta/ndf = 3``. Today's ``read_spatial_ndm`` reads the stamp, 1, and
-#: ``build()`` drops every y coordinate: #1358. ``check_entry`` therefore
-#: asserts no declared ndm for this file; ``test_frame2d_reads_its_declared_ndm``
-#: holds the 2 as a strict xfail that #1358's fix flips.
+#: file still says 2-D: a ``(1, 0)`` vecxz exists only in 2-D. Since #1358
+#: ``read_spatial_ndm`` salvages 2 from that signature (before it, the
+#: stamp, 1, stood and ``build()`` dropped every y coordinate).
 FRAME2D_DECLARED_NDM = 2
 
 #: The ``(dof, value)`` multiset the ``sp_cases`` variant authored: 9 base
@@ -216,11 +214,11 @@ def check_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if has_bridge:
         model = OpenSeesModel.from_h5(str(h5))
         today["model"] = dump_model(model)
-        if entry.get("variant") != "frame2d":  # frame2d: see FRAME2D_DECLARED_NDM
-            assert model.ndm == DECLARED_NDM, (
-                f"{h5.name}: today's reader resolves ndm={model.ndm}, "
-                f"the generator declared {DECLARED_NDM}"
-            )
+        want = FRAME2D_DECLARED_NDM if entry.get("variant") == "frame2d" else DECLARED_NDM
+        assert model.ndm == want, (
+            f"{h5.name}: today's reader resolves ndm={model.ndm}, "
+            f"the generator declared {want}"
+        )
     assert era["fem"]["dump_format"] == DUMP_FORMAT, (
         f"{h5.name}: the era dump is format {era['fem']['dump_format']}, the "
         f"oracle is {DUMP_FORMAT}; rebuild the corpus with scripts/build_schema_corpus.py"
@@ -408,17 +406,25 @@ def test_frame2d_before_2_34_0_takes_the_ndm_shim() -> None:
     assert OpenSeesModel.from_h5(str(plain_h5)).ndm == DECLARED_NDM
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#1358: read_spatial_ndm reads the pre-2.34.0 stamp (1) for a 2-D "
-           "frame whose (1, 0) vecxz and /meta/ndf = 3 say 2-D, and build() "
-           "then drops every y coordinate; the fix flips this test",
-)
 def test_frame2d_reads_its_declared_ndm() -> None:
-    """The right answer for the ``frame2d`` file is the declared 2."""
+    """The right answer for the ``frame2d`` file is the declared 2 (#1358),
+    and the rebuilt deck carries every node's (x, y) from the file."""
     entry = _variant("frame2d")
-    model = OpenSeesModel.from_h5(str(CORPUS / entry["files"]["h5"]["name"]))
+    h5 = CORPUS / entry["files"]["h5"]["name"]
+    model = OpenSeesModel.from_h5(str(h5))
     assert model.ndm == FRAME2D_DECLARED_NDM
+    deck = model.build("tcl").splitlines()
+    assert "model BasicBuilder -ndm 2 -ndf 3" in deck
+    with h5py.File(h5, "r") as f:
+        want = {
+            int(n): (float(c[0]), float(c[1]))
+            for n, c in zip(f["nodes/ids"][()], f["nodes/coords"][()])
+        }
+    got = {
+        int(p[1]): tuple(float(v) for v in p[2:])
+        for p in (line.split() for line in deck) if p and p[0] == "node"
+    }
+    assert got == want
 
 
 # ---------------------------------------------------------------------------

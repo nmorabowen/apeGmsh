@@ -1287,7 +1287,7 @@ table is the one list of them.
 
 | Zone | Constant | Below it | At or above it |
 |---|---|---|---|
-| neutral | `META_NDM_IS_SPATIAL_FROM` = 2.34.0 (`opensees/emitter/h5_reader.py`) | `/meta/ndm` is the mesh dimension; `read_spatial_ndm` salvages the spatial `ndm` | the attribute is trusted |
+| neutral | `META_NDM_IS_SPATIAL_FROM` = 2.34.0 (`opensees/emitter/h5_reader.py`) | `/meta/ndm` is the mesh dimension; `read_spatial_ndm(meta, f, *, coords)` salvages the spatial `ndm` from the `per_element_vecxz` widths: width 0 (a 2-D transform) resolves 2, width 3 lifts to 3, and conflicting evidence, an unknown width, or a result that would drop a non-zero coordinate column refuses (a pre-2.34 2-D truss with y≠0 and a 2-D surface at z≠0 refuse; #1358) | the attribute is trusted |
 | neutral | SP loads before 2.26.1 (no named constant: the data carries it) | every SP record sits in one `default` case; the per-case split is not reconstructed | one group per case under `/loads/sp` |
 
 A shim never forwards an old value under a newer stamp (ADR 0113 INV 9):
@@ -1500,9 +1500,12 @@ full "why" and the exact affected dtype columns:
   stamp `0`, the undeclared sentinel `ndf` has always used, which
   `OpenSeesModel.build`/`to_h5` and `DomainCapture.from_h5` refuse.
   `h5_reader.read_spatial_ndm` trusts `/meta/ndm` from this minor on
-  and keeps the transform-based salvage for files below 2.34.0 (the shim
-  ledger above), which the floor admits; `NativeWriter` forwards the salvaged
-  value (not the raw stamp) onto a composed file's `/model/meta`.
+  and salvages it for older files (which the floor admits) from the `per_element_vecxz` widths:
+  `0` (a 2-D `geomTransf`, which has no vecxz) resolves 2, `3` lifts the
+  stamp to 3, and conflicting evidence, an unknown width, or a result
+  that would drop a non-zero coordinate column refuses (#1358);
+  `NativeWriter` forwards the salvaged value (not the raw stamp) onto a
+  composed file's `/model/meta`.
 
 ### OpenSees-zone history (post-2.10)
 
