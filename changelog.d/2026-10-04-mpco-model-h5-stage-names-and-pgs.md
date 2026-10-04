@@ -19,6 +19,7 @@ paired onto the prefix; more groups than program stages keeps the file's
 names), and `DuplicateStageNameWarning` (two `ops.stage` blocks share a
 name; `stage(name)` picks the first, the `stage_<k>` ids stay unique).
 
-`results.stage(x)` now resolves by exact id, then by name, then by alias,
-so the `stage_<k>` ids the viewers scope by never land on a program stage
-that happens to be *named* `stage_<k>`.
+`results.stage(x)` and the results viewer's `ResultsDirector.set_stage(x)`
+now resolve by exact id, then by name, then by alias, so the `stage_<k>` ids
+the viewers scope by never land on a program stage that happens to be
+*named* `stage_<k>`.
