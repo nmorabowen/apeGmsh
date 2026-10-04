@@ -175,7 +175,7 @@ def test_geometry_value_junk_refused_at_load(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# version window edges (the "1.-1.0" hole) + misc
+# version string edges (the "1.-1.0" hole) + misc
 # ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("version", [
