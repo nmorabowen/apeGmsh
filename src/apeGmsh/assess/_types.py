@@ -3,14 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
-# ``Lineage`` (apeGmsh.opensees._internal.lineage) is intentionally NOT
-# imported, not even under TYPE_CHECKING: ADR 0094 Amendment 2 extends
-# INV-1 to forbid apeGmsh.opensees anywhere in this package. The
-# ``lineage`` field below stays an unresolved forward-reference string
-# (postponed evaluation, PEP 563) — nothing in-tree calls
-# ``typing.get_type_hints`` on these dataclasses.
+# ``lineage`` is typed ``Any``: ``Lineage`` (apeGmsh.opensees._internal.lineage)
+# may not be imported here, even under TYPE_CHECKING (ADR 0094 Am.2 / INV-1).
 
 Severity = Literal["error", "warning", "info"]
 
@@ -44,5 +40,6 @@ class AssessmentReport:
     findings: tuple[Finding, ...]
     text: str
     figures: tuple[Path, ...] = ()
-    lineage: Lineage | None = None  # noqa: F821  (ADR 0094 Am.2: deliberately unimported)
+    # Lineage (apeGmsh.opensees); not imported, per ADR 0094 Am.2 INV-1
+    lineage: Any | None = None
     skipped: tuple[tuple[str, str], ...] = ()

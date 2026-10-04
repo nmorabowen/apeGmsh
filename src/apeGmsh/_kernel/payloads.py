@@ -22,7 +22,7 @@ working).  Relocating this triad closes HT1 (``_record_set`` straddle),
 HT8 (iteration contract) and R3-B (element payload) simultaneously.
 
 Pure: stdlib ``typing`` + numpy only (``NodeResult.to_dataframe`` has a
-deferred ``import pandas``).  Zero ``apeGmsh.*`` imports.
+deferred ``import pandas``).  Zero eager ``apeGmsh.*`` imports; one annotation-only ``TYPE_CHECKING`` import.
 ``ElementTypeInfo`` / ``make_type_info`` / the alias machinery stay in
 :mod:`apeGmsh.mesh._element_types` (they never call this trio, so no
 back-edge).
