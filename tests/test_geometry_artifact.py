@@ -271,6 +271,27 @@ def test_generate_dim1_defers_to_temp_mesh(monkeypatch, tmp_path: Path) -> None:
         assert f["geometry/surfaces/triangles"].shape[0] > 0
 
 
+def test_surface_with_embedded_curve_tessellates() -> None:
+    """A slab with an embedded column line: its elements use nodes
+    classified on the embedded curve, which a per-surface
+    ``getNodes(includeBoundary=True)`` does not return (San Ramon 1A lost
+    13 slabs this way)."""
+    with apeGmsh(model_name="embed") as g:
+        gm = g.model.geometry
+        gm.add_rectangle(0, 0, 0, 2, 2, label="slab")
+        p1 = gm.add_point(0.7, 0.9, 0)
+        p2 = gm.add_point(1.3, 1.1, 0)
+        line = gm.add_line(p1, p2, label="column")
+        gmsh.model.occ.synchronize()
+        gmsh.model.mesh.embed(1, [line], 2, 1)
+        g.mesh.sizing.set_global_size(0.3)
+        g.mesh.generation.generate(2)
+        cap = g._geometry_capture
+    assert cap is not None and cap.status == "ok"
+    exact = 4.0
+    assert abs(_tessellated_area(cap) - exact) / exact < 0.02
+
+
 def test_curves_are_sampled_parametrically() -> None:
     with apeGmsh(model_name="arc") as g:
         gm = g.model.geometry

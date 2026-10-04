@@ -176,21 +176,33 @@ def _sample_curve(tag: int, n: int) -> np.ndarray:
     return xyz.reshape(-1, 3)
 
 
-def _tessellate_surface(tag: int) -> tuple[np.ndarray, np.ndarray]:
+def _node_table() -> tuple[np.ndarray, np.ndarray]:
+    """Every mesh node of the model, sorted by tag: ``(tags, xyz)``.
+
+    One call for the whole capture.  A per-surface ``getNodes(2, tag,
+    includeBoundary=True)`` is not enough: a surface's elements also use
+    the nodes of entities *embedded* in it (a column line in a slab),
+    which are classified on the embedded entity, not on the surface or
+    its boundary (San Ramon 1A: 13 slabs failed that way).
+    """
+    tags, coords, _ = gmsh.model.mesh.getNodes()
+    tags = np.asarray(tags, dtype=np.int64)
+    xyz = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
+    order = np.argsort(tags)
+    return tags[order], xyz[order]
+
+
+def _tessellate_surface(
+    tag: int, node_tags: np.ndarray, node_xyz: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     """``(vertices (V,3), triangles (T,3))`` of a meshed surface.
 
     Triangles index the surface's own vertex slice (0-based, local).  Only
     corner nodes are used: a quad becomes two triangles, a high-order
     element its primary corners.  A surface without 2-D elements (not
-    meshed) raises, so the caller marks it ``ok = 0``.
+    meshed), or one whose elements name a node the model does not have,
+    raises, so the caller marks it ``ok = 0``.
     """
-    node_tags, coords, _ = gmsh.model.mesh.getNodes(2, tag, includeBoundary=True)
-    node_tags = np.asarray(node_tags, dtype=np.int64)
-    coords = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
-    uniq, first = np.unique(node_tags, return_index=True)
-    vertices = coords[first]
-    local = {int(t): i for i, t in enumerate(uniq)}
-
     etypes, _etags, enodes = gmsh.model.mesh.getElements(2, tag)
     tris: list[np.ndarray] = []
     for etype, nodes in zip(etypes, enodes):
@@ -198,12 +210,11 @@ def _tessellate_surface(tag: int) -> tuple[np.ndarray, np.ndarray]:
             gmsh.model.mesh.getElementProperties(etype)
         conn = np.asarray(nodes, dtype=np.int64).reshape(-1, int(n_nodes))
         corners = conn[:, : int(n_primary)]
-        loc = np.vectorize(local.__getitem__, otypes=[np.int64])(corners)
         if n_primary == 3:
-            tris.append(loc)
+            tris.append(corners)
         elif n_primary == 4:
-            tris.append(loc[:, (0, 1, 2)])
-            tris.append(loc[:, (0, 2, 3)])
+            tris.append(corners[:, (0, 1, 2)])
+            tris.append(corners[:, (0, 2, 3)])
         else:
             raise ValueError(
                 f"surface {tag}: element type {etype} has {n_primary} "
@@ -211,7 +222,17 @@ def _tessellate_surface(tag: int) -> tuple[np.ndarray, np.ndarray]:
             )
     if not tris:
         raise ValueError(f"surface {tag} has no 2-D mesh elements")
-    return vertices, np.vstack(tris)
+    tri_tags = np.vstack(tris)
+    uniq, inverse = np.unique(tri_tags, return_inverse=True)
+    idx = np.searchsorted(node_tags, uniq)
+    found = (idx < node_tags.shape[0])
+    found[found] = node_tags[idx[found]] == uniq[found]
+    if not np.all(found):
+        raise KeyError(
+            f"surface {tag}: element nodes {uniq[~found][:5].tolist()} "
+            f"are not in the model's node table"
+        )
+    return node_xyz[idx], np.asarray(inverse, dtype=np.int64).reshape(-1, 3)
 
 
 def capture_geometry(*, source: str, curve_samples: int = CURVE_SAMPLES) -> GeometryCapture:
@@ -257,6 +278,7 @@ def capture_geometry(*, source: str, curve_samples: int = CURVE_SAMPLES) -> Geom
     v_offsets: list[int] = [0]
     v_faces: list[int] = []
 
+    node_tags, node_xyz = _node_table()
     for i, (d, t) in enumerate(entities):
         if d == 0:
             p_entity.append(i)
@@ -279,7 +301,7 @@ def capture_geometry(*, source: str, curve_samples: int = CURVE_SAMPLES) -> Geom
             surface_row[t] = len(s_entity)
             s_entity.append(i)
             try:
-                verts, tris = _tessellate_surface(t)
+                verts, tris = _tessellate_surface(t, node_tags, node_xyz)
                 s_vertices.append(verts)
                 s_triangles.append(tris)
                 s_voffsets.append(s_voffsets[-1] + verts.shape[0])
