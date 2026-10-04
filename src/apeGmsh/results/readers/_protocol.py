@@ -139,7 +139,11 @@ class ResultsReader(Protocol):
     def fem(self) -> "Optional[FEMData]":
         """Embedded / synthesized FEMData snapshot.
 
-        - ``NativeReader``: reconstructs from ``/model/`` (always available).
+        - ``NativeReader``: reconstructs from ``/model/`` when the file
+          carries it. An embedded ``/model`` below its floor is listed in
+          ``NativeReader.unavailable_zones`` and this raises
+          ``SchemaVersionError`` with that text instead of reading it
+          (ADR 0113 D9); ``/stages`` read regardless.
         - ``MPCOReader``: synthesizes a partial FEMData from ``/MODEL/``
           (no apeGmsh labels, no Part provenance).
         """
@@ -149,8 +153,11 @@ class ResultsReader(Protocol):
         """Embedded :class:`OpenSeesModel` from the file's ``/opensees/`` zone.
 
         Phase 4 (ADR 0020) — the Composed-file pattern. Native readers
-        auto-resolve from the file when the zone is present (silent, no
-        warning); third-party file readers (MPCO) return ``None``.
+        auto-resolve from the file when the zone is present, and raise
+        ``SchemaVersionError`` when that zone or the ``/model`` it pairs
+        with is below its floor (ADR 0113 D9: the zone is flagged in
+        ``NativeReader.unavailable_zones`` and never read silently);
+        third-party file readers (MPCO) return ``None``.
 
         Returns
         -------
