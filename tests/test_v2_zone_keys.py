@@ -236,13 +236,25 @@ def _add_dummy_zones(path: Path) -> None:
         ent = geo.create_group("entities")
         ent.create_dataset("dim", data=np.array([3], dtype=np.int8))
         ent.create_dataset("tag", data=np.array([1], dtype=np.int32))
+        # A complete, empty /provenance (h5-schema.md, "/provenance"): the
+        # reader refuses a partial zone, so every table and column exists.
         prov = f.create_group("provenance")
-        rec = prov.create_group("records")
-        rec.create_dataset(
-            "path", data=np.array(["opensees/element/#1"], dtype=object),
-            dtype=h5py.string_dtype("utf-8"),
-        )
-        rec.create_dataset("seq", data=np.array([0], dtype=np.int32))
+        prov.attrs["base_dir"] = path.parent.as_posix()
+        for table, cols in (
+            ("files", {"path": str, "sha256": str, "kind": str}),
+            ("sites", {"file": int, "line": int, "function": str}),
+            ("records", {"path": str, "site": int, "script": int,
+                         "seq": int}),
+        ):
+            grp = prov.create_group(table)
+            for name, kind in cols.items():
+                if kind is str:
+                    grp.create_dataset(
+                        name, data=np.array([], dtype=object),
+                        dtype=h5py.string_dtype("utf-8"))
+                else:
+                    grp.create_dataset(
+                        name, data=np.array([], dtype=np.int32))
         f["meta"].attrs[GEOMETRY_KEY] = GEOMETRY_CURRENT
         f["meta"].attrs[PROVENANCE_KEY] = PROVENANCE_CURRENT
 
