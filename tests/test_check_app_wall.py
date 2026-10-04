@@ -116,11 +116,11 @@ def test_w4_flags_panel_import(repo, src):
 
 
 def test_w4_flags_a_multi_line_import_in_a_panel(repo):
-    # `import\n * as R from` spans lines; the ` * as` line is not a comment.
-    _put(repo, "apeGmshViewer/src/panels/header.ts", "import\n * as R\n from '../reader/read.ts';\nexport const r = R;\n")
+    # `import\n * as R from '...'` spans lines; the ` * as R from` line is not a comment.
+    _put(repo, "apeGmshViewer/src/panels/header.ts", "import\n * as R from '../reader/read.ts';\nexport const r = R;\n")
     found = wall.scan(repo)
     assert [f.split(": ")[1].split(" ")[0] for f in found] == ["W4"]
-    assert found[0].startswith("apeGmshViewer/src/panels/header.ts:3: W4 ")
+    assert found[0].startswith("apeGmshViewer/src/panels/header.ts:2: W4 ")
 
 
 @pytest.mark.parametrize("src", [
