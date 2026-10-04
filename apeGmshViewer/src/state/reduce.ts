@@ -22,6 +22,7 @@ export const initialState: State = {
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
+  view: { frameSeq: 0 },
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -168,6 +169,9 @@ export function reduce(s: State, e: Event): State {
       return { ...s, windows: { open: [...s.windows.open, e.window] } };
     case "closeWindow":
       return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
+    case "frameSelection":
+      if (!s.mesh) return s;
+      return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);
