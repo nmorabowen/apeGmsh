@@ -137,7 +137,12 @@ export interface LegendEntry {
   name: string;
   color: readonly [number, number, number];
   elements: number;
+  /** a second cue beside the colour (a repeated hue past the eight office colours): stripes on the chip */
+  cue: "stripe" | "stripe2" | null;
 }
+
+/** What colours the model: its physical groups, or the structural role each element's file records. */
+export type ColourBy = "group" | "role";
 
 /** The render derivation of the model artifact: blob refs, per-primitive indices, legend and bounds. */
 export interface MeshInfo {
@@ -215,7 +220,7 @@ export interface State {
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
   selection: { decls: DeclPath[]; picks: Pick[] };
   hover: Pick | DeclPath | null;
-  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number };
+  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number; colourBy: ColourBy };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
@@ -278,6 +283,7 @@ export type Event =
   | { type: "showAll" }
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
+  | { type: "setColourBy"; by: ColourBy }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }

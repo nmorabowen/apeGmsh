@@ -9,7 +9,7 @@ import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
-import { NO_GROUP, OPS_ONLY, paletteFor } from "./palette.ts";
+import { NO_GROUP, OPS_ONLY, paletteEntry } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
 import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ZoneStatus } from "./types.ts";
 
@@ -176,11 +176,13 @@ function pathOfRef(model: ModelFile, r: ElementRef): DeclPath {
 export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore): MeshInfo {
   // Legend: build.ts's rows (most elements first), with generated colours (R2).
   const groups = mesh.legend.filter((e) => e.name !== NO_GROUP_ROW && e.name !== OPS_ONLY_ROW);
-  const colours = paletteFor(groups.length);
   const legend: LegendEntry[] = mesh.legend.map((e) => {
     const gi = groups.indexOf(e);
-    if (gi >= 0) return { decl: `mesh/physical_group/${e.name}`, name: e.name, color: colours[gi]!, elements: e.elements };
-    return { decl: null, name: e.name, color: e.name === NO_GROUP_ROW ? NO_GROUP : OPS_ONLY, elements: e.elements };
+    if (gi >= 0) {
+      const { color, ring } = paletteEntry(gi);
+      return { decl: `mesh/physical_group/${e.name}`, name: e.name, color, elements: e.elements, cue: ring === 0 ? null : ring === 1 ? "stripe" : "stripe2" };
+    }
+    return { decl: null, name: e.name, color: e.name === NO_GROUP_ROW ? NO_GROUP : OPS_ONLY, elements: e.elements, cue: null };
   });
   const legendIndex = new Map(legend.map((e, i) => [e.name, i]));
   const noGroupRow = legendIndex.get(NO_GROUP_ROW) ?? -1;

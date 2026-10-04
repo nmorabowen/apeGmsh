@@ -1,0 +1,4 @@
+Archivo Narrow — Copyright (c) 2012–2019 Omnibus-Type (www.omnibus-type.com).
+Licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org/open-font-license-official-text/
+Source: https://github.com/Omnibus-Type/ArchivoNarrow
+Bundled unmodified for the APE house style; the licence permits bundling and redistribution.

@@ -128,6 +128,7 @@ const EVERY: Record<EventType, Event> = {
   showAll: { type: "showAll" },
   setEdges: { type: "setEdges", on: false },
   setOpacity: { type: "setOpacity", value: 0.5 },
+  setColourBy: { type: "setColourBy", by: "role" },
   setPhase: { type: "setPhase", at: { kind: "mesh" } },
   setResultStep: { type: "setResultStep", step: 3 },
   inspectorPin: { type: "inspectorPin", decl: archPath },
@@ -152,7 +153,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 25, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f) and frameSelection");
+  assert.equal(Object.keys(EVERY).length, 26, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection and setColourBy");
 });
 
 test("frameSelection counts a view request; without a mesh it is a no-op", () => {
@@ -225,6 +226,11 @@ test("visibility: hide, isolate, showAll, edges, opacity clamped, NaN refused", 
   assert.equal(reduce(s, EVERY.setEdges).visibility.edges, false);
   assert.equal(reduce(s, { type: "setOpacity", value: 7 }).visibility.opacity, 1);
   assert.throws(() => reduce(s, { type: "setOpacity", value: NaN }), RangeError);
+  assert.equal(loaded.visibility.colourBy, "group");
+  const byRole = reduce(loaded, EVERY.setColourBy);
+  assert.equal(byRole.visibility.colourBy, "role");
+  assert.equal(reduce(byRole, EVERY.setColourBy), byRole, "the same mode again is a no-op");
+  assert.throws(() => reduce(loaded, { type: "setColourBy", by: "size" as never }), RangeError);
 });
 
 test("phase: the mesh is on the axis after a load; a key off the axis is refused", () => {
