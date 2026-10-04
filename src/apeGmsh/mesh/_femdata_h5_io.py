@@ -2625,18 +2625,13 @@ def read_neutral_zone_from_group(
     nodes_grp = parent["nodes"]
     node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
     node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
-    # Per-node ndf (additive in 2.7.0; absent in 2.6.x files — readers
-    # must tolerate the omission per the two-version window).  Probe
-    # with ``in`` not ``Group.get`` per the h5py optional-child .get()
-    # hazard (project_h5py_optional_child_get_hazard).
+    # Per-node ndf (additive in 2.7.0).  Probe with ``in`` not
+    # ``Group.get`` per the h5py optional-child .get() hazard
+    # (project_h5py_optional_child_get_hazard).
     #
     # If the dataset is present, use it.  If absent:
-    #   * Pre-2.7.0 file: the writer didn't know about ndf at all.
-    #     Synthesise the all-sentinel array so the loaded FEM hashes
-    #     identically to what ``from_gmsh``-with-no-declarations
-    #     would produce — both are empty-channel cases that the hash
-    #     fold gate skips.
-    #   * 2.7.0+ file with no ``/nodes/ndf``: the writer intentionally
+    #   * The file is at or above 2.7.0 (the floor refuses older ones)
+    #     and the writer intentionally
     #     omitted it because ``_ndf=None`` at write time (hand-built
     #     test fixture or from_msh).  Stored snapshot_id was computed
     #     without the ndf fold, so leave ``_ndf=None`` to keep the
@@ -2655,13 +2650,10 @@ def read_neutral_zone_from_group(
                 f"match /nodes/ids shape {node_ids.shape}."
             )
     else:
-        # Tuple-compare the dataclass fields (SchemaVersion isn't
-        # ordering-enabled, but its fields are comparable).
-        _fv = (file_version.major, file_version.minor, file_version.patch)
-        if _fv < (2, 7, 0):
-            node_ndf = np.zeros(node_ids.shape, dtype=np.int8)
-        else:
-            node_ndf = None
+        # Every readable file is at or above NEUTRAL_SCHEMA_FLOOR (2.10.0,
+        # past the 2.7.0 that added ndf): validate_zone_version above
+        # refuses anything older, so there is no pre-ndf case to salvage.
+        node_ndf = None
 
     # Per-node provenance (decoupled nodes — ADR 0049; neutral schema
     # 2.11.0).  Absent in pre-2.11.0 files and in any 2.11.0+ file with
