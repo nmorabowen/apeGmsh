@@ -259,14 +259,47 @@ def _reaches(method: _FuncDef, helpers: dict[str, _FuncDef], target: str) -> boo
     return False
 
 
-def _raises_refusal_itself(method: _FuncDef) -> bool:
-    """True when ``method``'s own body has ``raise NotImplementedError(...)``
-    or ``raise H5RefusedVerb(...)``: a refusal that bypasses ``_refuse``."""
-    for node in ast.walk(method):
-        if isinstance(node, ast.Raise) and node.exc is not None:
-            exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-            if isinstance(exc, ast.Name) and exc.id in _REFUSAL_EXCEPTIONS:
-                return True
+def _refusal_names(tree: ast.Module) -> frozenset[str]:
+    """``NotImplementedError``, ``H5RefusedVerb`` and every name bound to
+    one of them anywhere in ``tree`` (``E = NotImplementedError``), so an
+    aliased raise is still a refusal."""
+    names = set(_REFUSAL_EXCEPTIONS)
+    grew = True
+    while grew:
+        grew = False
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
+                    and node.value.id in names):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id not in names:
+                        names.add(target.id)
+                        grew = True
+    return frozenset(names)
+
+
+def _raises_refusal(
+    method: _FuncDef, helpers: dict[str, _FuncDef], names: frozenset[str],
+    *, skip: frozenset[str], depth: int = 3,
+) -> bool:
+    """True when ``method``, or a ``self._helper(...)`` it calls within
+    ``depth`` hops, has ``raise <refusal>(...)`` for a name in ``names``.
+    Helpers in ``skip`` (``_refuse`` itself) are not followed: reaching
+    ``_refuse`` is the sanctioned path, checked by :func:`_reaches`."""
+    seen: set[str] = set()
+    stack: list[tuple[_FuncDef, int]] = [(method, 0)]
+    while stack:
+        fn, hops = stack.pop()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Raise) and node.exc is not None:
+                exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+                if isinstance(exc, ast.Name) and exc.id in names:
+                    return True
+        if hops >= depth:
+            continue
+        for name in _self_calls(fn):
+            if name in helpers and name not in skip and name not in seen:
+                seen.add(name)
+                stack.append((helpers[name], hops + 1))
     return False
 
 
@@ -288,6 +321,10 @@ def _is_trivial(stmt: ast.stmt) -> bool:
     return False
 
 
+def _h5_tree() -> ast.Module:
+    return ast.parse((_EMITTER_DIR / "h5.py").read_text(encoding="utf-8"))
+
+
 def _h5_methods() -> dict[str, _FuncDef]:
     return {m.name: m for m in _methods(_class_node("h5", "H5Emitter"))}
 
@@ -295,8 +332,10 @@ def _h5_methods() -> dict[str, _FuncDef]:
 def test_f_h5_column_agrees_with_the_h5_emitter_source() -> None:
     """A ``refuse`` row's ``H5Emitter`` method reaches ``self._refuse(``, a
     ``ledger`` row's reaches ``self._ledger(``, and no method reaches the
-    helper its row does not name or raises a refusal itself (K1-2)."""
+    helper its row does not name or raises a refusal outside ``_refuse``
+    (itself, through a helper within three hops, or under an alias)."""
     methods = _h5_methods()
+    names = _refusal_names(_h5_tree())
     for helper in ("_refuse", "_ledger"):
         assert helper in methods, f"H5Emitter.{helper} is gone; every row body routes through it"
     for verb, row in PROTOCOL_ROWS.items():
@@ -304,8 +343,9 @@ def test_f_h5_column_agrees_with_the_h5_emitter_source() -> None:
         method = methods[verb]
         refuses = _reaches(method, methods, "_refuse")
         ledgers = _reaches(method, methods, "_ledger")
-        assert not _raises_refusal_itself(method), (
-            f"H5Emitter.{verb} raises a refusal itself; call self._refuse(verb, detail)"
+        assert not _raises_refusal(method, methods, names, skip=frozenset({"_refuse"})), (
+            f"H5Emitter.{verb} raises a refusal outside self._refuse (directly, "
+            "through a helper, or under an alias); call self._refuse(verb, detail)"
         )
         assert refuses == (row.h5 == "refuse"), (
             f"{verb} is {row.h5!r} but H5Emitter.{verb} "
@@ -374,28 +414,70 @@ def test_e_side_channels_cover_exactly_the_five_emitters() -> None:
 COMMAND_VERBS = frozenset(k for k, v in VERBS.items() if v.via == "command")
 
 
-def _command_call_violations(
-    tree: ast.AST, label: str, allowed: frozenset[str], *, replay: bool,
-) -> list[str]:
-    """Every ``x.command(...)`` call in ``tree`` that breaks ADR 0114 D3.
+def _primitive_classes(trees: list[ast.Module]) -> frozenset[str]:
+    """Names of the classes whose base chain reaches ``Primitive``, resolved
+    by base **name** across ``trees`` (a primitive's bases, ``Numberer``,
+    ``Integrator``, ..., are imported from ``_internal/types.py``). Two
+    classes sharing a name share their bases, which only widens the set."""
+    bases: dict[str, set[str]] = {}
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                bases.setdefault(node.name, set()).update(
+                    ast.unparse(b).split(".")[-1] for b in node.bases)
+    primitives = {"Primitive"}
+    grew = True
+    while grew:
+        grew = False
+        for name, its_bases in bases.items():
+            if name not in primitives and its_bases & primitives:
+                primitives.add(name)
+                grew = True
+    return frozenset(primitives)
 
-    ``allowed`` is the set of ``via == "command"`` verbs; ``replay`` is
-    True for ``_internal/compose.py``, where any function may call it.
-    Elsewhere the caller must be a method named ``_emit`` on a class.
+
+def _command_call_violations(
+    tree: ast.AST, label: str, allowed: frozenset[str],
+    primitives: frozenset[str], *, replay: bool,
+) -> list[str]:
+    """Every use of ``command`` in ``tree`` that breaks ADR 0114 D3.
+
+    ``allowed`` is the set of ``via == "command"`` verbs, ``primitives``
+    the class names that resolve to ``Primitive``; ``replay`` is True for
+    ``_internal/compose.py``, where any function may call it. Elsewhere
+    the caller must be a ``_emit`` method of a ``Primitive`` subclass, the
+    verb a string literal with a row, and the call a direct
+    ``<x>.command(...)``: ``getattr(<x>, "command")`` and a bound
+    ``<x>.command`` that is not called on the spot (``cmd = e.command``)
+    are flagged, since the scanner cannot follow them to their verb.
     """
     out: list[str] = []
+    called_attrs = {
+        id(node.func) for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
 
     def visit(node: ast.AST, func: _FuncDef | None, cls: ast.ClassDef | None) -> None:
         if isinstance(node, ast.ClassDef):
             cls, func = node, None
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func = node
+        where = f"{label}:{getattr(node, 'lineno', '?')}"
+        if isinstance(node, ast.Attribute) and node.attr == "command" and id(node) not in called_attrs:
+            out.append(f"{where}: <x>.command bound without being called; call it directly")
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr" and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant) and node.args[1].value == "command"):
+            out.append(f"{where}: command() reached through getattr(); call <x>.command(...) directly")
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "command"):
-            where = f"{label}:{node.lineno}"
             caller = func.name if func is not None else "<module>"
-            if not replay and not (caller == "_emit" and cls is not None):
-                out.append(f"{where}: command() called from {caller!r}, not a Primitive._emit")
+            owner = cls.name if cls is not None else None
+            if not replay and not (caller == "_emit" and owner in primitives):
+                out.append(
+                    f"{where}: command() called from "
+                    f"{(owner + '.' if owner else '') + caller!r}, not a Primitive._emit"
+                )
             verb = node.args[0] if node.args else None
             if not (isinstance(verb, ast.Constant) and isinstance(verb.value, str)):
                 out.append(f"{where}: command() verb is not a string literal")
@@ -408,30 +490,41 @@ def _command_call_violations(
     return out
 
 
-def test_g_command_callers_pass_an_allowed_literal_from_an_emit() -> None:
+def test_g_command_callers_pass_an_allowed_literal_from_a_primitive_emit() -> None:
+    paths = sorted(_OPENSEES_DIR.rglob("*.py"))
+    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in paths]
+    primitives = _primitive_classes(trees)
+    assert {"Primitive", "Numberer", "Plain", "Integrator"} <= primitives, (
+        "the Primitive hierarchy no longer resolves by base name; fix the resolver"
+    )
     violations: list[str] = []
-    for path in sorted(_OPENSEES_DIR.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in zip(paths, trees):
         violations += _command_call_violations(
-            tree, str(path.relative_to(_ROOT)), COMMAND_VERBS,
+            tree, str(path.relative_to(_ROOT)), COMMAND_VERBS, primitives,
             replay=path == _COMMAND_REPLAY_MODULE,
         )
     assert not violations, "\n".join(violations)
 
 
 _OK_CALL = """
-class P:
+class P(Primitive):
     def _emit(self, emitter, tag):
         emitter.command("probe", tag, 1.5)
 """
+_OK_VIA_INTERMEDIATE_BASE = """
+class Mid(Primitive): ...
+class P(Mid):
+    def _emit(self, emitter, tag):
+        emitter.command("probe", tag)
+"""
 _NON_LITERAL = """
-class P:
+class P(Primitive):
     def _emit(self, emitter, tag):
         verb = "probe"
         emitter.command(verb, tag)
 """
 _NO_ROW = """
-class P:
+class P(Primitive):
     def _emit(self, emitter, tag):
         emitter.command("fix", tag, 1)
 """
@@ -440,9 +533,25 @@ def helper(emitter):
     emitter.command("probe", 1)
 """
 _METHOD_NOT_EMIT = """
-class P:
+class P(Primitive):
     def emit_extra(self, emitter):
         self._emitter.command("probe", 1)
+"""
+_EMIT_ON_NON_PRIMITIVE = """
+class Helper:
+    def _emit(self, emitter, tag):
+        emitter.command("probe", tag)
+"""
+_GETATTR_BYPASS = """
+class P(Primitive):
+    def _emit(self, emitter, tag):
+        getattr(emitter, "command")("probe", tag)
+"""
+_ALIAS_BYPASS = """
+class P(Primitive):
+    def _emit(self, emitter, tag):
+        cmd = emitter.command
+        cmd("probe", tag)
 """
 
 
@@ -450,21 +559,58 @@ class P:
     ("source", "replay", "n_violations"),
     [
         (_OK_CALL, False, 0),
+        (_OK_VIA_INTERMEDIATE_BASE, False, 0),
         (_NON_LITERAL, False, 1),
         (_NO_ROW, False, 1),
         (_WRONG_CALLER, False, 1),
         (_METHOD_NOT_EMIT, False, 1),
+        (_EMIT_ON_NON_PRIMITIVE, False, 1),
+        (_GETATTR_BYPASS, False, 1),
+        (_ALIAS_BYPASS, False, 1),
         (_WRONG_CALLER, True, 0),
         (_NON_LITERAL, True, 1),
+        (_GETATTR_BYPASS, True, 1),
     ],
-    ids=["ok", "non-literal", "no-row", "module-function", "other-method",
-         "replay-module", "replay-non-literal"],
+    ids=["ok", "ok-intermediate-base", "non-literal", "no-row", "module-function",
+         "other-method", "emit-on-non-primitive", "getattr-bypass", "alias-bypass",
+         "replay-module", "replay-non-literal", "replay-getattr-bypass"],
 )
 def test_g_scanner_catches_each_planted_violation(
     source: str, replay: bool, n_violations: int,
 ) -> None:
     """The (g) scanner on planted sources: ``"probe"`` stands for a verb
-    with a ``via='command'`` row, ``"fix"`` for one without."""
+    with a ``via='command'`` row, ``"fix"`` for one without; ``Primitive``
+    resolves from the planted source itself."""
+    tree = ast.parse(source)
     found = _command_call_violations(
-        ast.parse(source), "<planted>", frozenset({"probe"}), replay=replay)
+        tree, "<planted>", frozenset({"probe"}), _primitive_classes([tree]),
+        replay=replay)
     assert len(found) == n_violations, found
+
+
+def test_f_detector_catches_the_review_plants() -> None:
+    """Finding 1 of the K1-2 review: a refusal raised in a helper called
+    from a verb, and a refusal raised under an alias, are both caught."""
+    source = """
+E = NotImplementedError
+class H5Emitter:
+    def fix(self, tag, *dofs):
+        self._defer_fix()
+    def _defer_fix(self):
+        raise NotImplementedError("x")
+    def mass(self, tag, *values):
+        raise E("x")
+    def node(self, tag):
+        self._refuse("node", "ok path")
+    def _refuse(self, verb, detail):
+        raise H5RefusedVerb(verb, None, detail)
+"""
+    tree = ast.parse(source)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    methods = {m.name: m for m in _methods(cls)}
+    names = _refusal_names(tree)
+    assert "E" in names
+    skip = frozenset({"_refuse"})
+    assert _raises_refusal(methods["fix"], methods, names, skip=skip)
+    assert _raises_refusal(methods["mass"], methods, names, skip=skip)
+    assert not _raises_refusal(methods["node"], methods, names, skip=skip)
