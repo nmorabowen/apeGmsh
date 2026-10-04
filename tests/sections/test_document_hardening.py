@@ -249,14 +249,17 @@ def _bridge():
 _REFUSE_CASES = [
     # a key ElasticMaterial lacks: the bind text must name it (the
     # sorted params list alone is not enough)
-    ({"E": 1.0, "fillet": 2.0}, "unexpected keyword argument 'fillet'"),
-    # its required key missing: the given keys are not blamed
-    ({}, "missing a required keyword-only argument: 'E'"),
+    ({"E": 1.0, "fillet": 2.0}, ("unexpected keyword argument 'fillet'",)),
+    # its required key missing: the given keys are not blamed. The bind
+    # text is asserted in two pieces because 3.12+ says "missing a
+    # required keyword-only argument: 'E'" and 3.10/3.11 drop
+    # "keyword-only".
+    ({}, ("missing a required", "'E'")),
 ]
 
 
-@pytest.mark.parametrize("params,bind_text", _REFUSE_CASES)
-def test_uniaxial_params_refuse_at_to_section(tmp_path, params, bind_text):
+@pytest.mark.parametrize("params,bind_texts", _REFUSE_CASES)
+def test_uniaxial_params_refuse_at_to_section(tmp_path, params, bind_texts):
     """The loader keeps no bridge signatures, so the document opens;
     ``to_section`` binds the params against the real constructor and
     refuses with the material, the key and the version named."""
@@ -268,7 +271,7 @@ def test_uniaxial_params_refuse_at_to_section(tmp_path, params, bind_text):
     msg = str(ei.value)
     assert "material 'm'" in msg
     assert f"ElasticMaterial() rejects params {sorted(params)}" in msg
-    assert bind_text in msg
+    assert all(t in msg for t in bind_texts), msg
     assert "does not take" not in msg
     assert f"section_doc_version {SECTION_DOC_VERSION}" in msg
     # the mutation path lands on the same splat
@@ -277,11 +280,11 @@ def test_uniaxial_params_refuse_at_to_section(tmp_path, params, bind_text):
     doc2.add_point(material="m", y=0.0, z=0.0, area=1.0)
     with pytest.raises(SectionDocumentError) as ei2:
         doc2.to_section(_bridge())
-    assert bind_text in str(ei2.value)
+    assert all(t in str(ei2.value) for t in bind_texts), str(ei2.value)
 
 
-@pytest.mark.parametrize("params,bind_text", _REFUSE_CASES)
-def test_uniaxial_params_refuse_continuum_lane(tmp_path, params, bind_text):
+@pytest.mark.parametrize("params,bind_texts", _REFUSE_CASES)
+def test_uniaxial_params_refuse_continuum_lane(tmp_path, params, bind_texts):
     """The continuum lane (``_to_computed_fiber``) resolves region and
     bar materials through the same helper: a bad bar-material spec
     refuses after the mesh builds, naming the same three things."""
@@ -299,7 +302,7 @@ def test_uniaxial_params_refuse_continuum_lane(tmp_path, params, bind_text):
     msg = str(ei.value)
     assert "material 'steel'" in msg
     assert f"ElasticMaterial() rejects params {sorted(params)}" in msg
-    assert bind_text in msg
+    assert all(t in msg for t in bind_texts), msg
     assert f"section_doc_version {SECTION_DOC_VERSION}" in msg
 
 
