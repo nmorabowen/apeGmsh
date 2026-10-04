@@ -596,6 +596,26 @@ def make_two_node_beam(*, ndm: int = 3) -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
+def make_coincident_spring() -> FEMStub:
+    """One zeroLength spring: nodes 1 and 2 both at the origin.
+
+    Same PGs as :func:`make_two_node_beam` (``"Cols"`` the element,
+    ``"Base"`` node 1, ``"Top"`` node 2). Spring tests used to borrow the
+    beam fixture under ``ndm=2``, where the ends coincided only because
+    node 2's z = 1 was dropped (#1337).
+    """
+    return FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2],
+            coords=[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            node_pgs={"Base": [1], "Top": [2]},
+        ),
+        elements=_ElementsStub(elem_pgs={
+            "Cols": _ElementGroupView(ids=(1,), connectivity=((1, 2),)),
+        }),
+    )
+
+
 def make_two_column_frame(*, ndm: int = 3) -> FEMStub:
     """Two parallel columns sharing a common base PG.
 

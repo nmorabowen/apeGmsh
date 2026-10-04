@@ -31,39 +31,16 @@ from apeGmsh.opensees._internal.types import UniaxialMaterial
 from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-from tests.opensees.fixtures.fem_stub import (
-    FEMStub,
-    _ElementGroupView,
-    _ElementsStub,
-    _NodesStub,
-)
+from tests.opensees.fixtures.fem_stub import make_coincident_spring
 
 _N_STEPS = 200
-
-
-def _spring_fem() -> FEMStub:
-    """One zeroLength spring: nodes 1 (``"Base"``) and 2 at the origin.
-
-    The spring's ends coincide in the model plane. They used to coincide
-    only because ``ndm=2`` dropped node 2's z = 1 (#1337).
-    """
-    return FEMStub(
-        nodes=_NodesStub(
-            ids=[1, 2],
-            coords=[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
-            node_pgs={"Base": [1], "Top": [2]},
-        ),
-        elements=_ElementsStub(elem_pgs={
-            "Cols": _ElementGroupView(ids=(1,), connectivity=((1, 2),)),
-        }),
-    )
 
 
 def _drive(
     make_mat: str, kwargs: dict[str, float], u_end: float,
 ) -> tuple[list[float], list[float]]:
     """Push the spring monotonically to ``u_end``; return (u, F) samples."""
-    fem = _spring_fem()
+    fem = make_coincident_spring()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
 
