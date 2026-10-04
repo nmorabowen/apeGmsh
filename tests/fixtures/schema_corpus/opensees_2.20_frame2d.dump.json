@@ -43,15 +43,15 @@
     "1:Cols": 6
    }
   },
-  "snapshot_id": "abeb80412e720ebb8b91d269f04967be"
+  "snapshot_id": "1354e49cf4cc9fd99bd0d8a6860da555"
  },
  "generator_notes": {
-  "declared_ndm": 3,
-  "neutral_case_api": "g.loads.pattern",
-  "neutral_load_api": "g.loads.point(pg=, force_xyz=)"
+  "declared_ndm": 2,
+  "neutral_case_api": "g.loads.case",
+  "neutral_load_api": "g.loads.point.force(pg=, force=)"
  },
  "meta": {
-  "ndf": 6,
+  "ndf": 3,
   "ndm": 1
  },
  "model": {
@@ -74,9 +74,6 @@
     "args": [
      0.01,
      200000000000,
-     80000000000,
-     0.0003,
-     0.0002,
      0.0001,
      1
     ],
@@ -90,9 +87,6 @@
     "args": [
      0.01,
      200000000000,
-     80000000000,
-     0.0003,
-     0.0002,
      0.0001,
      1
     ],
@@ -106,9 +100,6 @@
     "args": [
      0.01,
      200000000000,
-     80000000000,
-     0.0003,
-     0.0002,
      0.0001,
      1
     ],
@@ -122,9 +113,6 @@
     "args": [
      0.01,
      200000000000,
-     80000000000,
-     0.0003,
-     0.0002,
      0.0001,
      1
     ],
@@ -200,15 +188,12 @@
      "1:Cols": 6
     }
    },
-   "snapshot_id": "abeb80412e720ebb8b91d269f04967be"
+   "snapshot_id": "1354e49cf4cc9fd99bd0d8a6860da555"
   },
   "fixes": [
    {
     "__type__": "FixRecord",
     "dofs": [
-     1,
-     1,
-     1,
      1,
      1,
      1
@@ -218,9 +203,6 @@
    {
     "__type__": "FixRecord",
     "dofs": [
-     1,
-     1,
-     1,
      1,
      1,
      1
@@ -235,9 +217,6 @@
     "values": [
      100.0,
      100.0,
-     100.0,
-     0.0,
-     0.0,
      0.0
     ]
    }
@@ -259,9 +238,9 @@
     }
    ]
   },
-  "model_name": "opensees_2.11",
-  "ndf": 6,
-  "ndm": 3,
+  "model_name": "opensees_2.20_frame2d",
+  "ndf": 3,
+  "ndm": 1,
   "patterns": [
    {
     "__type__": "PatternRecord",
@@ -275,40 +254,14 @@
       "forces": [
        5000.0,
        0.0,
-       0.0,
-       0.0,
-       0.0,
        0.0
       ],
       "target": 2
      }
     ],
+    "sp_holds": [],
     "sps": [],
     "tag": 1,
-    "type_token": "Plain"
-   },
-   {
-    "__type__": "PatternRecord",
-    "args": [
-     2
-    ],
-    "ele_loads": [],
-    "loads": [
-     {
-      "__type__": "LoadRecord",
-      "forces": [
-       10000.0,
-       0.0,
-       0.0,
-       0.0,
-       0.0,
-       0.0
-      ],
-      "target": 2
-     }
-    ],
-    "sps": [],
-    "tag": 2,
     "type_token": "Plain"
    }
   ],
@@ -333,27 +286,18 @@
      }
     ],
     "layers": [],
-    "params": [
-     "-GJ",
-     24000000
-    ],
+    "params": [],
     "patches": [],
     "tag": 1,
     "type_token": "Fiber"
    }
   ],
-  "snapshot_id": "abeb80412e720ebb8b91d269f04967be",
+  "snapshot_id": "1354e49cf4cc9fd99bd0d8a6860da555",
   "time_series": [
    {
     "__type__": "TimeSeriesRecord",
     "args": [],
     "tag": 1,
-    "type_token": "Linear"
-   },
-   {
-    "__type__": "TimeSeriesRecord",
-    "args": [],
-    "tag": 2,
     "type_token": "Linear"
    }
   ],
@@ -362,11 +306,7 @@
     "__type__": "TransformRecord",
     "tag": 1,
     "type_token": "Linear",
-    "vec": [
-     0.0,
-     1.0,
-     0.0
-    ]
+    "vec": []
    }
   ]
  }

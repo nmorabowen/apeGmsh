@@ -4,7 +4,7 @@
    "element": 0,
    "node": 0
   },
-  "dump_format": 1,
+  "dump_format": 2,
   "element_counts": {
    "line2": 6
   },
@@ -23,7 +23,12 @@
    "sp_patterns": []
   },
   "masses": 0,
+  "mesh_selections": {},
   "n_nodes": 7,
+  "ndf": {
+   "declared": {},
+   "undeclared": 7
+  },
   "physical_groups": {
    "element_side": {
     "0:Base": -1,
@@ -41,8 +46,13 @@
   "snapshot_id": "dfd7c7b4d90b18e36a2f2da7ffe2ce73"
  },
  "generator_notes": {
+  "declared_ndm": 3,
   "neutral_case_api": "g.loads.case",
   "neutral_load_api": "g.loads.point.force(pg=, force=)"
+ },
+ "meta": {
+  "ndf": 6,
+  "ndm": 3
  },
  "model": {
   "analysis": {},
@@ -57,7 +67,7 @@
     "type_token": "Lobatto"
    }
   ],
-  "dump_format": 1,
+  "dump_format": 2,
   "elements": [
    {
     "__type__": "ElementRecord",
@@ -151,7 +161,7 @@
     "element": 0,
     "node": 0
    },
-   "dump_format": 1,
+   "dump_format": 2,
    "element_counts": {
     "line2": 6
    },
@@ -170,7 +180,12 @@
     "sp_patterns": []
    },
    "masses": 0,
+   "mesh_selections": {},
    "n_nodes": 7,
+   "ndf": {
+    "declared": {},
+    "undeclared": 7
+   },
    "physical_groups": {
     "element_side": {
      "0:Base": -1,

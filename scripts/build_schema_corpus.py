@@ -120,6 +120,21 @@ def _version_at(sha: str, zone: str) -> str:
     return v
 
 
+def tree_constant(zone: str, name: str) -> str:
+    """A floor or version constant as the **working tree** holds it.
+
+    The floors and current minors describe today's reader, the claim the
+    corpus proves; the era history comes from ``base``, a commit on main.
+    Reading them from the tree lets a PR that moves a floor build its
+    corpus against a main ``base`` whose source still holds the old one.
+    """
+    path = ZONES[zone][0]
+    v = _const((ROOT / path).read_text(encoding="utf-8"), name)
+    if v is None:
+        raise RuntimeError(f"{name} not found in the working tree's {path}")
+    return v
+
+
 def _minor(v: str) -> tuple[int, int]:
     major, minor, _patch = (int(p) for p in v.split("."))
     return major, minor
@@ -157,9 +172,8 @@ def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
     below-floor evidence era is rebuilt rather than dropped.
     """
     path, const, floor_const = ZONES[zone]
-    head_src = _git("show", f"{base}:{path}")
-    floor = _minor(_const(head_src, floor_const) or "")
-    current = _minor(_const(head_src, const) or "")
+    floor = _minor(tree_constant(zone, floor_const))
+    current = _minor(tree_constant(zone, const))
     log = _git("log", "--first-parent", "--reverse", f"-G^{const}",
                "--format=%H", base, "--", path).split()
     bumps = [(sha, _version_at(sha, zone)) for sha in log]
@@ -337,8 +351,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--variant", choices=tuple(VARIANTS),
                     help="build only this variant (its zone and era are fixed)")
     ap.add_argument("--base", default=None,
-                    help="the main commit the plan is read from "
-                         "(default: merge-base of HEAD and origin/main)")
+                    help="the main commit the era history is read from, and the "
+                         "writer of the current minors (default: merge-base of "
+                         "HEAD and origin/main); floors and current minors come "
+                         "from the working tree")
     ap.add_argument("--list", action="store_true", help="print the plan and stop")
     ap.add_argument("--manifest-only", action="store_true",
                     help="re-classify the existing entries and rewrite MANIFEST.json")
@@ -352,9 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     manifest = _load_manifest()
     entries = {_key(e): e for e in manifest.get("entries", [])}
     floors, currents = {}, {}
-    for zone, (path, const, floor_const) in ZONES.items():
-        src = _git("show", f"{base}:{path}")
-        floors[zone], currents[zone] = _const(src, floor_const), _const(src, const)
+    for zone, (_path, const, floor_const) in ZONES.items():
+        floors[zone] = tree_constant(zone, floor_const)
+        currents[zone] = tree_constant(zone, const)
     if a.manifest_only:
         _write_manifest(base, floors, currents, entries)
         return 0

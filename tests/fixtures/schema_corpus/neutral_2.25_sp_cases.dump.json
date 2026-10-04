@@ -21,8 +21,10 @@
    "element_patterns": [],
    "nodal": 0,
    "nodal_patterns": [],
-   "sp": 0,
-   "sp_patterns": []
+   "sp": 54,
+   "sp_patterns": [
+    "default"
+   ]
   },
   "masses": 0,
   "mesh_selections": {
@@ -48,7 +50,12 @@
   },
   "snapshot_id": "cf440e5563dbf732a988ef198073acd0"
  },
- "generator_notes": {},
+ "generator_notes": {
+  "sp_cases": [
+   "PushA",
+   "PushB"
+  ]
+ },
  "meta": {
   "ndf": 0,
   "ndm": 3
