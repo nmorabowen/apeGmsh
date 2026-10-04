@@ -10,6 +10,7 @@ diagram to the wrong stage.  Headless: no scene, no backend, no window.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -28,11 +29,22 @@ from tests.test_results_mpco_model_h5_binding import (
 
 @pytest.fixture
 def id_like_results(tmp_path: Path):
+    """Program names that collide with the reader's ids.
+
+    Opening it warns ``ShadowedStageNameWarning`` by design (pinned in
+    ``tests/test_results_mpco_model_h5_binding.py``); these tests are
+    about where ``set_stage`` lands, so the warning is silenced here.
+    """
+    from apeGmsh.results._bind import ShadowedStageNameWarning
+
     mpco = _write_mpco(tmp_path / "r.mpco", n_stages=2)
     model_h5, _fem = _write_model_h5(
         tmp_path / "idlike.h5", stage_names=("stage_1", "stage_2"),
     )
-    with Results.from_mpco(mpco, model_h5=model_h5) as r:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ShadowedStageNameWarning)
+        r = Results.from_mpco(mpco, model_h5=model_h5)
+    with r:
         assert [(s.id, s.name) for s in r.stages] == [
             ("stage_0", "stage_1"), ("stage_1", "stage_2"),
         ]

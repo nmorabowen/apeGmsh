@@ -8,16 +8,20 @@ requires carries both. It now uses them: the `ops.stage(name=...)` names
 from `/opensees/stages` replace the `MODEL_STAGE[<k>]` names in order
 (`MODEL_STAGE[<k>]` stays resolvable as an alias, `StageInfo.aliases`), and
 the neutral FEMData archived in `model_h5` is the bound `results.fem`
-whenever its node ids cover the capture's at the capture's coordinates. An
-explicit `fem=` keeps priority. Three warnings in `apeGmsh.results._bind`
+whenever its node ids cover the capture's at the capture's coordinates (the
+model's `ndm` columns: a 2-D model on an offset plane, legal since #1346,
+compares in `x, y` only). An explicit `fem=` keeps priority. Four warnings in
+`apeGmsh.results._bind`
 mark a doubtful pairing instead of guessing: `ModelFemMismatchWarning` (the
 archive's FEMData misses a capture node, or is another mesh of the same part
 whose ids cover the capture's at other coordinates; the MPCO `MODEL/`
 synthesis is bound, as before), `StageCountMismatchWarning` (a partial run
 holds fewer `MODEL_STAGE` groups than the program declares: the names are
 paired onto the prefix; more groups than program stages keeps the file's
-names), and `DuplicateStageNameWarning` (two `ops.stage` blocks share a
-name; `stage(name)` picks the first, the `stage_<k>` ids stay unique).
+names), `DuplicateStageNameWarning` (two `ops.stage` blocks share a
+name; `stage(name)` picks the first, the `stage_<k>` ids stay unique), and
+`ShadowedStageNameWarning` (a stage is named like another stage's
+`stage_<k>` id, which id-first resolution makes unreachable by name).
 
 `results.stage(x)` and the results viewer's `ResultsDirector.set_stage(x)`
 now resolve by exact id, then by name, then by alias, so the `stage_<k>` ids

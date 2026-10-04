@@ -452,8 +452,9 @@ class Results:
         - **FEMData.** ``fem=`` wins when given. Otherwise the neutral
           FEMData stored in ``model_h5`` (physical groups, labels) is
           bound whenever its node ids cover the capture's and sit at
-          the capture's coordinates, so ``pg=`` queries work from files
-          alone; a ``model_h5`` from another model or another mesh of
+          the capture's coordinates (the model's ``ndm`` columns: a 2-D
+          model on an offset plane compares in ``x, y``), so ``pg=``
+          queries work from files alone; a ``model_h5`` from another model or another mesh of
           the same part warns (``ModelFemMismatchWarning``) and the
           partial FEMData synthesized from the MPCO ``MODEL/`` group is
           bound instead.

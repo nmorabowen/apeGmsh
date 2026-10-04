@@ -107,10 +107,16 @@ def _quad_plate(
     return FEMData(nodes=nodes, elements=elements, info=info)
 
 
-def _plate_fem() -> FEMData:
-    """One quad: the mesh the synthetic ``.mpco`` was recorded from."""
+def _plate_fem(z: float = 0.0) -> FEMData:
+    """One quad: the mesh the synthetic ``.mpco`` was recorded from.
+
+    ``z`` lifts the whole plate onto an offset plane: still a legal
+    ``ndm=2`` model since #1346 (the dropped axis is uniform).
+    """
+    coords = COORDS.copy()
+    coords[:, 2] = z
     return _quad_plate(
-        NODE_IDS, COORDS, np.array([[1, 2, 3, 4]], dtype=np.int64),
+        NODE_IDS, coords, np.array([[1, 2, 3, 4]], dtype=np.int64),
         left=np.array([1, 4], dtype=np.int64),
         right=np.array([2, 3], dtype=np.int64),
     )
@@ -188,11 +194,13 @@ def _ux(stage_k: int, step: int, nid: int) -> float:
 def _write_mpco(
     path: Path, *, n_stages: int,
     node_ids: np.ndarray = NODE_IDS, coords: np.ndarray = COORDS,
-    n_steps: int = 2,
+    n_steps: int = 2, ndm: int = 3,
 ) -> Path:
+    """``ndm=2`` stores two COORDINATES columns, as a 2-D deck's recorder does."""
+    coords = np.asarray(coords, dtype=np.float64)[:, :ndm]
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
-        info.create_dataset("SPATIAL_DIM", data=3)
+        info.create_dataset("SPATIAL_DIM", data=ndm)
         info.create_dataset("SOLVER_NAME", data=np.bytes_(b"OpenSees"))
         info.create_dataset("SOLVER_VERSION", data=np.array([3, 7, 1]))
         for k in range(1, n_stages + 1):
@@ -353,13 +361,45 @@ def test_duplicate_program_names_warn_and_ids_stay_unique(
 
 @pytest.fixture
 def id_like_names_model_h5(tmp_path: Path) -> Path:
-    """A program whose stage *names* collide with the reader's *ids*."""
+    """A program whose stage *names* collide with the reader's *ids*.
+
+    Opening it warns ``ShadowedStageNameWarning`` by design
+    (``test_program_name_that_matches_another_stage_id_warns``); the
+    lookup tests are about where the lookup lands, so they ignore it.
+    """
     path, _fem = _write_model_h5(
         tmp_path / "idlike.h5", stage_names=("stage_1", "stage_2"),
     )
     return path
 
 
+def test_program_name_that_matches_another_stage_id_warns(
+    mpco_two_stages: Path, tmp_path: Path,
+) -> None:
+    """``stage_1`` at id ``stage_0`` is unreachable by name: say so."""
+    from apeGmsh.results._bind import ShadowedStageNameWarning
+
+    model_h5, _fem = _write_model_h5(
+        tmp_path / "idlike.h5", stage_names=("stage_1", "stage_2"),
+    )
+    with pytest.warns(
+        ShadowedStageNameWarning, match=r"'stage_1' \(id 'stage_0'",
+    ):
+        r = Results.from_mpco(mpco_two_stages, model_h5=model_h5)
+    r.close()
+    # A name that equals its OWN id is not shadowed.
+    own, _fem = _write_model_h5(
+        tmp_path / "own.h5", stage_names=("stage_0", "stage_1"),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ShadowedStageNameWarning)
+        with Results.from_mpco(mpco_two_stages, model_h5=own) as r:
+            assert [s.name for s in r.stages] == ["stage_0", "stage_1"]
+
+
+@pytest.mark.filterwarnings(
+    "ignore::apeGmsh.results._bind.ShadowedStageNameWarning",
+)
 def test_stage_lookup_prefers_the_exact_id_over_a_name(
     mpco_two_stages: Path, id_like_names_model_h5: Path,
 ) -> None:
@@ -387,6 +427,9 @@ def test_stage_lookup_prefers_the_exact_id_over_a_name(
         assert r.stage("MODEL_STAGE[1]")._stage_id == "stage_0"
 
 
+@pytest.mark.filterwarnings(
+    "ignore::apeGmsh.results._bind.ShadowedStageNameWarning",
+)
 def test_viewer_id_lookup_reads_the_stage_it_names(
     mpco_two_stages: Path, id_like_names_model_h5: Path,
 ) -> None:
@@ -503,6 +546,52 @@ def test_superset_mesh_model_h5_warns_and_falls_back_to_mpco_synthesis(
         # The archive's stage names still apply: the program ran this
         # capture even though its archived mesh is not this mesh.
         assert [s.name for s in r.stages] == list(STAGE_NAMES)
+
+
+def test_offset_plane_2d_model_binds_without_a_warning(tmp_path: Path) -> None:
+    """``ndm=2`` at ``z = 5``: the recorder stores ``x, y``; the archive keeps ``z``.
+
+    The MPCO synthesis pads its two columns with ``z = 0`` while the
+    archive's FEMData carries gmsh's ``z = 5``, so a comparison over
+    every column reads a 5.0 mismatch on a correct pairing and drops the
+    physical groups.  Only the model's ``ndm`` columns are compared
+    (#1346 made the offset plane a supported ``ndm=2`` model).
+    """
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    mpco = _write_mpco(tmp_path / "flat.mpco", n_stages=2, ndm=2)
+    lifted, _fem = _write_model_h5(
+        tmp_path / "lifted.h5", fem=_plate_fem(z=5.0),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelFemMismatchWarning)
+        r = Results.from_mpco(mpco, model_h5=lifted)
+    with r:
+        assert r.model.ndm == 2
+        assert sorted(r.fem.nodes.physical.names()) == [
+            "Left", "Plate", "Right",
+        ]
+        assert np.all(r.fem.nodes.coords[:, 2] == 5.0)
+        slab = r.stage("elastic_50pct").nodes.get(
+            pg="Right", component="displacement_x",
+        )
+        assert sorted(int(n) for n in slab.node_ids) == [2, 3]
+
+
+def test_offset_plane_2d_model_still_refuses_an_in_plane_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Dropping ``z`` from the comparison must not drop ``x, y``."""
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    mpco = _write_mpco(tmp_path / "flat.mpco", n_stages=2, ndm=2)
+    shifted = _plate_fem(z=5.0)
+    shifted.nodes.coords[:, 0] += 0.5
+    wrong, _fem = _write_model_h5(tmp_path / "shifted.h5", fem=shifted)
+    with pytest.warns(ModelFemMismatchWarning, match="differ by up to 0.5"):
+        r = Results.from_mpco(mpco, model_h5=wrong)
+    with r:
+        assert r.fem.nodes.physical.names() == []
 
 
 def test_unrelated_model_h5_with_explicit_fem_is_silent(

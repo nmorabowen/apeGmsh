@@ -68,6 +68,17 @@ class DuplicateStageNameWarning(UserWarning):
     """
 
 
+class ShadowedStageNameWarning(UserWarning):
+    """A program stage is named like ANOTHER capture stage's id.
+
+    ``results.stage(x)`` resolves the exact id ``stage_<k>`` before any
+    name, so a stage named ``stage_1`` that sits at id ``stage_0`` is
+    unreachable by its name: ``stage("stage_1")`` is the second stage.
+    The name is still attached; select the shadowed stage by its id or
+    its ``MODEL_STAGE[<k>]`` alias, or rename it in the program.
+    """
+
+
 # Coordinates agree when every component differs by less than this
 # fraction of the model's bounding-box diagonal.  The deck round-trips
 # float64 through ``repr`` (exact) and STKO stores float64, so a real
@@ -79,19 +90,26 @@ _COORD_RTOL = 1e-6
 def _coords_mismatch(
     capture_ids: np.ndarray, capture_xyz: np.ndarray,
     archive_ids: np.ndarray, archive_xyz: np.ndarray,
+    *, ndm: int,
 ) -> "tuple[float, float]":
     """``(max |dx|, tolerance)`` over the capture's ids, both in the archive.
 
     The caller has already proved every capture id is in the archive.
     Coordinates are ``(N, 3)`` on both sides (``FEMData`` pads 2-D to
-    three columns), so the comparison is per component.
+    three columns), but only the first ``ndm`` columns are the model's:
+    a 2-D deck emits ``x, y`` and the recorder stores two columns that
+    the MPCO synthesis pads with ``z = 0``, while the archive keeps
+    gmsh's real ``z``.  An ``ndm=2`` model drawn on an offset plane
+    (legal since #1346) agrees in ``x, y`` and differs in ``z`` by the
+    offset, so the dropped axis is not compared.  The tolerance is
+    relative to the archive's bounding box over the same columns.
     """
     order = np.argsort(archive_ids, kind="stable")
     pos = order[np.searchsorted(archive_ids[order], capture_ids)]
-    archive_at = np.asarray(archive_xyz, dtype=np.float64)[pos]
-    capture_at = np.asarray(capture_xyz, dtype=np.float64)
-    ncol = min(archive_at.shape[1], capture_at.shape[1])
-    diff = np.abs(archive_at[:, :ncol] - capture_at[:, :ncol])
+    ncol = max(1, min(int(ndm), 3))
+    archive_at = np.asarray(archive_xyz, dtype=np.float64)[pos][:, :ncol]
+    capture_at = np.asarray(capture_xyz, dtype=np.float64)[:, :ncol]
+    diff = np.abs(archive_at - capture_at)
     max_diff = float(diff.max()) if diff.size else 0.0
     extent = archive_at.max(axis=0) - archive_at.min(axis=0)
     diag = float(np.sqrt(np.sum(extent * extent)))
@@ -144,9 +162,12 @@ def _resolve_fem_via_model(
             f"(e.g. {shown}{more})"
         )
     else:
+        # ``/meta/ndm`` is 0 on a broker-only archive (no ``ops.model``
+        # call, so no deck ran from it); compare every column then.
+        ndm = int(model.ndm) if int(model.ndm) >= 1 else 3
         max_diff, tol = _coords_mismatch(
             capture_ids, embedded.nodes.coords,
-            archive_ids, model_fem.nodes.coords,
+            archive_ids, model_fem.nodes.coords, ndm=ndm,
         )
         if max_diff <= tol:
             return model_fem
@@ -229,6 +250,23 @@ def _bind_stage_names(
                 f"of each. Select the others by id "
                 f"(results.stage('stage_<k>')) or by their MODEL_STAGE "
                 f"alias."
+            ),
+            stacklevel=3,
+        )
+    ids = [s.id for s in capture]
+    shadowed = [
+        f"{name!r} (id {ids[i]!r}, shadowed by id {name!r})"
+        for i, name in enumerate(paired)
+        if name in ids and ids.index(name) != i
+    ]
+    if shadowed:
+        warnings.warn(
+            ShadowedStageNameWarning(
+                f"model_h5={str(model_path)!r} names a stage like another "
+                f"stage's id: {', '.join(shadowed)}. results.stage(x) "
+                f"resolves the exact id first, so that name reaches the "
+                f"other stage; select the shadowed stage by its id or its "
+                f"MODEL_STAGE alias, or rename it in the program."
             ),
             stacklevel=3,
         )
