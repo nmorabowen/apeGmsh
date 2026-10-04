@@ -15,7 +15,7 @@
 
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
-import { candidates, classify, sameSet, stemSet, type OpenSet } from "./pairing.ts";
+import { candidates, FOLD_CASE, inSet, sameSet, stemSet, type Candidates, type OpenSet } from "./pairing.ts";
 
 export interface WatchSink {
   changed(path: string): void;
@@ -31,8 +31,7 @@ export interface WatchOptions {
 
 export const DEFAULT_WATCH: WatchOptions = { stableMs: 300, pollMs: 50 };
 
-const foldCase = process.platform === "win32" || process.platform === "darwin";
-const key = (name: string) => (foldCase ? name.toLowerCase() : name);
+const key = (name: string) => (FOLD_CASE ? name.toLowerCase() : name);
 
 /** `size:mtime`, `missing`, or `error:<code>` (never settles). */
 function signature(path: string): string {
@@ -46,8 +45,8 @@ function signature(path: string): string {
 }
 
 export class SetWatcher {
-  private readonly stem: string;
-  private readonly preferredResults: string | null;
+  private readonly dir: string;
+  private readonly cands: Candidates;
   private readonly paths: Map<string, string>; // basename key -> candidate path
   private readonly reported = new Map<string, string>(); // path -> last signature
   private readonly polls = new Map<string, ReturnType<typeof setInterval>>();
@@ -60,20 +59,19 @@ export class SetWatcher {
   constructor(opened: string, sink: WatchSink, opts: WatchOptions = DEFAULT_WATCH) {
     this.sink = sink;
     this.opts = opts;
-    const { kind, stem } = classify(opened);
-    this.stem = stem;
-    this.preferredResults = kind === "results" ? opened : null;
-    this.paths = new Map(candidates(stem).map((p) => [key(basename(p)), p]));
+    this.cands = candidates(opened);
+    this.dir = dirname(opened);
+    this.paths = new Map(Object.values(this.cands).map((p) => [key(basename(p)), p]));
     for (const p of this.paths.values()) this.reported.set(p, signature(p));
     this.set = this.current();
   }
 
   private current(): OpenSet {
-    return stemSet(this.stem, this.preferredResults, existsSync);
+    return stemSet(this.cands, existsSync);
   }
 
   start(): this {
-    this.fsw = watch(dirname(this.stem), (_event, filename) => {
+    this.fsw = watch(this.dir, (_event, filename) => {
       if (filename === null) {
         // Some platforms omit the name: check every candidate.
         for (const p of this.paths.values()) this.poll(p);
@@ -82,7 +80,7 @@ export class SetWatcher {
       const p = this.paths.get(key(basename(filename.toString())));
       if (p) this.poll(p);
     });
-    this.fsw.on("error", (err) => this.sink.error(`watching ${dirname(this.stem)}: ${err.message}`));
+    this.fsw.on("error", (err) => this.sink.error(`watching ${this.dir}: ${err.message}`));
     return this;
   }
 
@@ -119,7 +117,7 @@ export class SetWatcher {
     if (!sameSet(next, this.set)) {
       this.set = next;
       this.sink.reopened(next);
-    } else if (path === next.model || path === next.geometry || path === next.results) {
+    } else if (inSet(next, path)) {
       this.sink.changed(path);
     }
   }

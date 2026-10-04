@@ -21,19 +21,22 @@ npm run dist        # writes out/installer/apeGmshViewer Setup <version>.exe
 ```
 
 The installer is per-user: it installs under `%LOCALAPPDATA%\Programs` and
-registers the `.h5` association under `HKCU`, so it needs no admin rights. It
-is not code-signed, so SmartScreen may ask once ("More info", then "Run
-anyway"). If another program already owns `.h5`, pick apeGmshViewer once in
-"Open with" and tick "Always". Uninstall it from Windows Settings, Apps.
+adds apeGmshViewer to the **"Open with"** list of `.h5` files under `HKCU`, so
+it needs no admin rights. It does not make itself the default `.h5` program,
+because other tools open `.h5` too. To open every `.h5` with it on
+double-click, choose it once in "Open with", then "Always". It is not
+code-signed, so SmartScreen may ask once ("More info", then "Run anyway").
+Uninstall it from Windows Settings, Apps; the uninstaller removes the `.h5`
+registry entries the installer wrote (`packaging/installer.nsh`).
 
 Then:
 
-- **Double-click** a `.h5` file to open it. A second double-click opens the new
-  file in the window already running.
+- **Open** a `.h5` file: "Open with", apeGmshViewer, or a double-click once it
+  is your `.h5` program. A second open goes to the window already running.
 - **Drag and drop** a file onto the window.
-- **The set.** Opening `<stem>.h5` also opens `<stem>.geometry.h5`, and
-  `<stem>.results.h5` (or `<stem>.mpco`), when they exist beside it. Opening
-  the geometry or results file finds its model the same way.
+- **The set.** Opening `<stem>.h5` also opens `<stem>.geometry.h5` and
+  `<stem>.results.h5` when they exist beside it. Opening the geometry or
+  results file finds its model the same way.
 - **Watching.** Each run rewrites the files (ADR 0112 D1). The app reloads a
   file once its writer has stopped for 300 ms, and picks up a sibling that
   appears or vanishes.
@@ -64,11 +67,11 @@ through Node's type stripping; nothing is compiled for the tests).
 
 | Path | Holds |
 |---|---|
-| `src/reader/` | `read.ts` turns one file into a `ModelFile` through h5wasm; `node.ts` opens it from disk |
+| `src/reader/` | `read.ts` turns one file into a `ModelFile` through h5wasm; `node.ts` opens it from disk; `geometry.ts` reads the `/geometry` sibling and pairs it by `session_id`; `provenance.ts` reads `/provenance` and finds a declaration's source line |
 | `src/chain/` | `resolve.ts` builds the definition chain; `signatures.ts` is the only table of OpenSees syntax the app uses |
 | `src/mesh/build.ts` | flat render buffers coloured by physical group (pure, tested in Node) |
 | `src/state/store.ts` | the single state store and its reducer (ADR 0112 D6) |
-| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `watch.ts` (watch the set) and `source.ts` (go to source) |
+| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set) and `source.ts` (go to source) |
 | `src/renderer/` | the three.js viewport, the panels and the page; `navigation.ts` is the Z-up turntable camera, and `bindings.ts` is the only table of mouse and key bindings (left-click selects, right-drag orbits about the point under the cursor, middle-drag or shift + right-drag pans, the wheel zooms to the cursor, `F` fits) |
 | `scripts/` | `build.mjs` (esbuild bundles) and `launch.mjs` (starts Electron in a mode) |
 | `fixtures/` | a small committed `model.h5` with beams; its README names the command that made it |

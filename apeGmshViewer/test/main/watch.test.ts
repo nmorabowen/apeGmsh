@@ -109,3 +109,26 @@ test("a rewritten geometry of an unchanged set is a fileChanged, not a reopen", 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Fable, #1310 finding 1: the watcher compared the lower-case candidate with
+// the opened spelling, so a rewrite of a file opened as `M.RESULTS.H5` was
+// never reported.
+test("a file opened under an upper-case suffix is reported when rewritten", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-watch-"));
+  const model = join(dir, "M.h5");
+  const results = join(dir, "M.RESULTS.H5");
+  writeFileSync(model, "model");
+  writeFileSync(results, "r1");
+  const { heard, watcher } = harness(results);
+  try {
+    assert.deepEqual(watcher.set, { model, geometry: null, results });
+    await sleep(100);
+    writeFileSync(results, "r2, longer");
+    await until(() => heard.length > 0);
+    await sleep(500);
+    assert.deepEqual(heard.map((h) => h.changed ?? h), [results]);
+  } finally {
+    watcher.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

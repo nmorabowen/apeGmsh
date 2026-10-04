@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { candidates, classify, fileFromArgv, pairSet, sameSet } from "../../src/main/pairing.ts";
+import { candidates, classify, fileFromArgv, inSet, pairSet, samePath, sameSet } from "../../src/main/pairing.ts";
 
 const dir = resolve("/runs/frame 1");
 const p = (name: string) => join(dir, name);
@@ -17,17 +17,37 @@ test("classify: the longest suffix wins, case-insensitively", () => {
   assert.deepEqual(classify(p("m.h5")), { kind: "model", stem: p("m") });
   assert.deepEqual(classify(p("m.geometry.h5")), { kind: "geometry", stem: p("m") });
   assert.deepEqual(classify(p("m.results.h5")), { kind: "results", stem: p("m") });
-  assert.deepEqual(classify(p("m.mpco")), { kind: "results", stem: p("m") });
   assert.deepEqual(classify(p("M.Geometry.H5")), { kind: "geometry", stem: p("M") });
 });
 
-test("classify: a file the app does not open is refused by name", () => {
+test("classify: a file the app does not open is refused by name; .mpco is not a sibling", () => {
   assert.throws(() => classify(p("m.txt")), /opens <stem>\.h5.*got .*m\.txt/);
+  assert.throws(() => classify(p("m.mpco")), /<stem>\.results\.h5; got .*m\.mpco/);
   assert.throws(() => classify(".h5"), /got \.h5/);
 });
 
-test("candidates: the four names of a stem", () => {
-  assert.deepEqual(candidates(p("m")), [p("m.h5"), p("m.geometry.h5"), p("m.results.h5"), p("m.mpco")]);
+test("candidates: the conventional names, and the opened file's own spelling", () => {
+  assert.deepEqual(candidates(p("m.h5")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5") });
+  assert.deepEqual(candidates(p("M.Geometry.H5")), { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: p("M.results.h5") });
+});
+
+// Fable, #1310 finding 1: the set was built from lower-case names only, so a
+// file opened under another case dropped out of its own set on a
+// case-sensitive disk (and was not reported when rewritten on Windows).
+test("an opened file stays in its set whatever the case of its suffix", () => {
+  const set = pairSet(p("M.Geometry.H5"), disk("M.Geometry.H5", "M.h5"));
+  assert.deepEqual(set, { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: null });
+  assert.equal(pairSet(p("m.RESULTS.H5"), disk("m.RESULTS.H5")).results, p("m.RESULTS.H5"));
+});
+
+test("samePath folds case only where asked; sameSet and inSet follow it", () => {
+  assert.ok(samePath("C:/a/M.H5", "c:/a/m.h5", true));
+  assert.ok(!samePath("C:/a/M.H5", "c:/a/m.h5", false));
+  const a = { model: "C:/a/M.H5", geometry: null, results: null };
+  assert.ok(sameSet(a, { ...a, model: "c:/a/m.h5" }, true));
+  assert.ok(!sameSet(a, { ...a, model: "c:/a/m.h5" }, false));
+  assert.ok(inSet(a, "c:/A/m.H5", true));
+  assert.ok(!inSet(a, "c:/A/m.H5", false));
 });
 
 test("opening the model opens its geometry and results siblings", () => {
@@ -35,9 +55,9 @@ test("opening the model opens its geometry and results siblings", () => {
   assert.deepEqual(set, { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5") });
 });
 
-test("absent siblings are null; .mpco is the results when .results.h5 is absent", () => {
+test("absent siblings are null; an .mpco is not the results (maintainer, #1310)", () => {
   assert.deepEqual(pairSet(p("m.h5"), disk("m.h5")), { model: p("m.h5"), geometry: null, results: null });
-  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5", "m.mpco")).results, p("m.mpco"));
+  assert.equal(pairSet(p("m.h5"), disk("m.h5", "m.mpco")).results, null);
 });
 
 test("opening the geometry finds its model", () => {
@@ -54,10 +74,12 @@ test("opening the geometry finds its model", () => {
   });
 });
 
-test("an opened results file is the results, even when the other results name exists", () => {
-  const set = pairSet(p("m.mpco"), disk("m.h5", "m.mpco", "m.results.h5"));
-  assert.equal(set.results, p("m.mpco"));
-  assert.equal(set.model, p("m.h5"));
+test("opening the results finds its model and geometry", () => {
+  assert.deepEqual(pairSet(p("m.results.h5"), disk("m.h5", "m.geometry.h5", "m.results.h5")), {
+    model: p("m.h5"),
+    geometry: p("m.geometry.h5"),
+    results: p("m.results.h5"),
+  });
 });
 
 test("pairSet refuses a missing or relative path", () => {

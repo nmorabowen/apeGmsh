@@ -21,7 +21,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openModel } from "../reader/node.ts";
-import { fileFromArgv, pairSet, type OpenSet } from "./pairing.ts";
+import { fileFromArgv } from "./pairing.ts";
+import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 
@@ -57,13 +58,12 @@ if ((mode === "measure" || mode === "capture") && (!file || !out)) {
 if (mode === "view" && !app.requestSingleInstanceLock()) app.exit(0);
 
 let win: BrowserWindow | null = null;
-/** The open set and its watcher (view mode only). */
-let current: { set: OpenSet; watcher: SetWatcher } | null = null;
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();
 
 function fail(message: string): void {
-  process.stderr.write(`apeGmshViewer: ${message}\n`);
+  process.stderr.write(`apeGmshViewer: ${message}
+`);
   if (mode === "view") void app.whenReady().then(() => dialog.showErrorBox("apeGmshViewer", message));
 }
 
@@ -74,34 +74,16 @@ function deliver(channel: "open" | "fileChanged", payload: unknown): void {
   else win.webContents.reload();
 }
 
-/** Make `set` (opened from `opened`) the open set, and watch it. */
-function adopt(opened: string, set: OpenSet): void {
-  current?.watcher.close();
-  const watcher = new SetWatcher(opened, {
-    changed: (path) => deliver("fileChanged", path),
-    reopened: (next) => {
-      current = { set: next, watcher };
-      deliver("open", next);
-    },
-    error: fail,
-  });
-  current = { set, watcher: watcher.start() };
-}
-
-/** Open the set of `path`; false, after a loud error, when it cannot be paired. */
-function openPath(path: string, notify: boolean): boolean {
-  const abs = resolve(path);
-  let set: OpenSet;
-  try {
-    set = pairSet(abs, existsSync);
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err));
-    return false;
-  }
-  adopt(abs, set);
-  if (notify) deliver("open", set);
-  return true;
-}
+/** The open set and its watcher (view mode only). */
+const session = new OpenSession({
+  exists: existsSync,
+  watch: (opened, sink) => new SetWatcher(opened, sink).start(),
+  deliver,
+  fail,
+  note: (message) => process.stderr.write(`apeGmshViewer: ${message}
+`),
+});
+const openPath = (path: string, notify: boolean) => session.open(path, notify);
 
 if (mode === "view") {
   if (file) openPath(file, false);
@@ -123,7 +105,7 @@ if (mode === "view") {
 let appReadyAt = 0;
 ipcMain.handle("app:config", () => ({
   mode,
-  file: mode === "view" ? (current?.set.model ?? null) : file ? resolve(file) : null,
+  file: mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
   t0,
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
@@ -131,19 +113,9 @@ ipcMain.handle("app:config", () => ({
 }));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
-  // A model the renderer opened on its own (a drop on the P0 page) becomes
-  // the open set, so the watcher follows what is on screen. When it cannot be
-  // paired, the read below reports why.
-  if (mode === "view" && typeof path === "string" && path !== current?.set.model) {
-    const abs = resolve(path);
-    let set: OpenSet | null = null;
-    try {
-      set = pairSet(abs, existsSync);
-    } catch {
-      set = null;
-    }
-    if (set) adopt(abs, set);
-  }
+  // A model the renderer opened on its own (a drop on the P0 page): the open
+  // set follows what is on screen (./session.ts).
+  if (mode === "view" && typeof path === "string") session.rendererOpened(path);
   try {
     return { ok: true, model: await openModel(path) };
   } catch (err) {
@@ -163,7 +135,7 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 }
 
 // The set already open, for a new onOpen listener (the preload replays it).
-ipcMain.handle("viewer:currentSet", () => (mode === "view" ? (current?.set ?? null) : null));
+ipcMain.handle("viewer:currentSet", () => (mode === "view" ? session.set : null));
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
@@ -243,6 +215,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  current?.watcher.close();
+  session.close();
   app.quit();
 });

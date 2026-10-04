@@ -24,3 +24,25 @@ example and the writer are unchanged.
 The tests in `test/fixture.test.ts` check this file against closed forms of the
 example's parameters (span, column height, rise, element size, section
 dimensions, material constants), not against values copied from the app.
+
+## `zones.h5` and `zones.geometry.h5`
+
+The ADR 0112 zone fixtures, written by hand to `architecture/h5-schema.md`
+with h5py (the zone writers, V2b and V2c, are not on `main` yet):
+
+- `zones.h5` is `shoebuckle.h5` plus `/meta/session_id` and a `/provenance`
+  zone (1.0.0). Its records point at the lines of
+  `examples/shoebuckle_arch.py` that declare the beam chain, and its `sha256`
+  is that script's digest with LF line ends.
+- `zones.geometry.h5` is a `/geometry` zone (1.0.0) for a unit cube with the
+  same `session_id`: 8 points, 12 straight curves of 32 samples, and 6
+  two-triangle faces with outward normals, bounding 1 volume.
+
+```powershell
+& C:\Users\nmora\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_zone_fixtures.py
+```
+
+Re-run it when `examples/shoebuckle_arch.py` changes:
+`test/zones/provenance.test.ts` checks the recorded lines and digest against
+the script itself. The geometry tests check closed forms of the cube (face
+area 6, volume 1, edge length 12).
