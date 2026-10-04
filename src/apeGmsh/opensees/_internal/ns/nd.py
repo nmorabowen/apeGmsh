@@ -13,6 +13,7 @@ from typing import Any, Literal, TypeVar
 
 from ...material.nd import (
     ASDConcrete3D,
+    ASDConcrete3D as _ASDConcrete3DCls,
     ASDPlasticMaterial3D as _ASDPlasticMaterial3DCls,
     DruckerPrager,
     ElasticIsotropic,
@@ -489,7 +490,7 @@ class _NDMaterialNS(_BridgeNamespace):
         implex_alpha: float = 1.0,
         tangent: str = "secant",
         name: str | None = None,
-    ) -> ASDConcrete3D:
+    ) -> _ASDConcrete3DCls:
         """Register an :class:`ASDConcrete3D` from the STKO preset parameters.
 
         Same inputs as the STKO ``Concrete (9P)`` dialog; see
@@ -497,7 +498,7 @@ class _NDMaterialNS(_BridgeNamespace):
         For shell layers wrap the result in :meth:`PlateFromPlaneStress`.
         """
         return self._bridge._register(
-            ASDConcrete3D.from_stko(
+            _ASDConcrete3DCls.from_stko(
                 E=E, v=v, fcp=fcp, ft=ft, fc0=fc0, fcr=fcr, ecp=ecp,
                 Gt=Gt, Gc=Gc, pscale_t=pscale_t, pscale_c=pscale_c,
                 rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,

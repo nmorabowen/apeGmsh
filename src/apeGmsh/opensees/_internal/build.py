@@ -6200,6 +6200,7 @@ def emit_reinforce_ties(
     """
     from ..element.embedded_rebar import embedded_rebar_args
 
+    ties: Any
     if records is not None:
         ties = list(records)
     else:
@@ -7262,6 +7263,7 @@ def emit_rebar_elements(
     ``records`` restricts the pass to a subset (the partitioned emit hands
     each rank records holding only the bar cells it owns).
     """
+    recs: Any
     if records is not None:
         recs = list(records)
     else:
