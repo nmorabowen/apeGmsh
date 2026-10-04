@@ -65,25 +65,25 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0047](0047-pick-backend-and-export.md) | `PickBackend` Protocol + web picking + `ParaViewExportBackend` (Phase R-D) | Accepted |
 | [0048](0048-infer-per-node-ndf-from-elements.md) | Infer per-node `ndf` from declared element classes | Accepted |
 | [0049](0049-decoupled-nodes.md) | Decoupled nodes (analysis auxiliary nodes) | Accepted |
-| [0050](0050-dimension-indexed-loads-and-displacements.md) | Dimension-indexed loads + a `g.displacements` composite | Proposed |
-| [0051](0051-bridge-load-consumption.md) | Bridge load consumption: opt-in import, load cases, stage-scoped patterns | Proposed |
+| [0050](0050-dimension-indexed-loads-and-displacements.md) | Dimension-indexed loads + a `g.displacements` composite | Accepted |
+| [0051](0051-bridge-load-consumption.md) | Bridge load consumption: opt-in import, load cases, stage-scoped patterns | Accepted |
 | [0052](0052-staged-reference-position-contract.md) | Staged reference-position contract for constraints and elements | Accepted |
 | [0053](0053-damping-definition.md) | Damping definition on the apeSees bridge | Accepted |
 | [0054](0054-asd-absorbing-boundary.md) | ASDAbsorbingBoundary as an extruded skin + staged absorbing flip | Accepted |
 | [0055](0055-staged-h5-archival.md) | Staged-model H5 archival | Accepted |
 | [0056](0056-viewer-state-and-event-contract.md) | Viewer state & event contract: single owners, owner-fired events, reconciler-only artifact writes | Accepted |
-| [0057](0057-solution-strategy-ladder.md) | Solution-strategy ladder: emitted per-increment escalation with established profiles | Proposed |
+| [0057](0057-solution-strategy-ladder.md) | Solution-strategy ladder: emitted per-increment escalation with established profiles | Accepted |
 | [0058](0058-concurrent-geometries.md) | Concurrent geometries: a Geometry is a scene instance, deform-follow becomes universal | Accepted |
-| [0059](0059-mesh-recipes.md) | Mesh recipes: one-call unstructured / structured meshing (`g.mesh.recipe`) | Proposed |
+| [0059](0059-mesh-recipes.md) | Mesh recipes: one-call unstructured / structured meshing (`g.mesh.recipe`) | Accepted |
 | [0060](0060-remote-hpc-submission.md) | Remote HPC job submission (`apeGmsh.hpc`) | Accepted |
 | [0061](0061-per-rank-deck-emission.md) | Per-rank Tcl deck emission: driver + rank-local sourced fragments | Accepted |
 | [0062](0062-moment-tensor-equivalent-body-force-source.md) | Moment-tensor equivalent body-force source (embedded seismic source) | Proposed |
 | [0063](0063-split-node-kinematic-fault.md) | Split-node kinematic slip fault (meshed fault discontinuity) | Proposed |
 | [0064](0064-ladruno-recorder-region-filter.md) | Ladruno recorder region filter (`-R`) | Accepted |
 | [0065](0065-streaming-deck-emission.md) | Streaming deck emission: write-through sink to remove the author-side line buffer | Accepted |
-| [0066](0066-h5drm-drm-authoring.md) | H5DRM DRM-load authoring: typed pattern emit + DRMBox-from-`.h5drm` builder + buffer/boundary contract | Proposed |
-| [0067](0067-reinforcement-cage-authoring.md) | Reinforcement-cage authoring: a `g.rebar` geometry layer above `g.reinforce` | Proposed |
-| [0068](0068-equation-constraint-tied-interface.md) | Constraint-based non-matching tie via `equationConstraint` (EQ_Constraint) | Proposed |
+| [0066](0066-h5drm-drm-authoring.md) | H5DRM DRM-load authoring: typed pattern emit + DRMBox-from-`.h5drm` builder + buffer/boundary contract | Accepted |
+| [0067](0067-reinforcement-cage-authoring.md) | Reinforcement-cage authoring: a `g.rebar` geometry layer above `g.reinforce` | Accepted |
+| [0068](0068-equation-constraint-tied-interface.md) | Constraint-based non-matching tie via `equationConstraint` (EQ_Constraint) | Accepted |
 | [0069](0069-equaldof-mixed.md) | Mixed-DOF tie via `equalDOF_Mixed` | Accepted |
 | [0070](0070-embedded-node-control-pressure-tie.md) | `EmbeddedNodeControl` pressure tie (`-pressure` / `-kp`) | Accepted |
 | [0071](0071-ladruno-rigid-body-element.md) | `rigid_body(as_element=True)` → `element LadrunoRigidBody` | Accepted |
@@ -107,14 +107,14 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0089](0089-viewport-model-presentation.md) | Viewport model presentation: edge hierarchy, defaults, colors | Accepted |
 | [0090](0090-scalar-bar-design.md) | Scalar bar design: typography, container chip, per-theme color routing | Proposed |
 | [0091](0091-bernstein-consistent-load-basis.md) | Bernstein-aware consistent load reduction (`basis=` on field loads) | Accepted |
-| [0092](0092-partitioned-contact-emit.md) | Partitioned contact emit: one owner rank per interaction, the whole interface ghosted | Proposed |
-| [0093](0093-zerolength-interface-constraint.md) | `g.constraints.interface()`: oriented coincident-pair zeroLength interface | Proposed |
+| [0092](0092-partitioned-contact-emit.md) | Partitioned contact emit: one owner rank per interaction, the whole interface ghosted | Accepted |
+| [0093](0093-zerolength-interface-constraint.md) | `g.constraints.interface()`: oriented coincident-pair zeroLength interface | Accepted |
 | [0094](0094-agent-assess-and-viewer-render.md) | Agent assess/report + offscreen viewer render | Accepted |
 | [0095](0095-apegmsh-studio.md) | `apeGmsh.studio`: agent + script + viewer habitat | Accepted |
-| [0096](0096-agent-token-budget.md) | Agent token budget (lookup vs judgment) | Proposed |
-| [0097](0097-void-geometry-boolean-tools.md) | Void tools on the modeling composite: role, not type | Proposed |
+| [0096](0096-agent-token-budget.md) | Agent token budget (lookup vs judgment) | Accepted |
+| [0097](0097-void-geometry-boolean-tools.md) | Void tools on the modeling composite: role, not type | Accepted |
 | [0098](0098-results-session-presentation.md) | Results presentation is a `ResultsSession` of views, not geometries of diagrams | Accepted |
-| [0099](0099-builder-scoped-declaration-ordering.md) | Builder-scoped declarations must follow the last model re-issue | Proposed |
+| [0099](0099-builder-scoped-declaration-ordering.md) | Builder-scoped declarations must follow the last model re-issue | Accepted |
 | [0100](0100-partitioned-emit-resident-graph.md) | The partitioned-emit resident graph: closing the ledger term that ADR 0065 named and left | Accepted |
 | [0101](0101-sanisand-materials-and-material-stage.md) | SANISAND materials + `s.update_material_stage` | Accepted |
 | [0102](0102-warrant-the-snapshot.md) | Warrant the snapshot, kill the second product | Proposed |

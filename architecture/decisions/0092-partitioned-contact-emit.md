@@ -1,12 +1,14 @@
 # ADR 0092 — Partitioned contact emit: one owner rank per interaction, the whole interface ghosted
 
-**Status:** Proposed (2026-08-11) — the emit half of a cross-library effort.
+**Status:** Accepted (2026-08-11) — the emit half of a cross-library effort.
 The engine half is fork **ADR-78**
 (`OpenSees/Ladruno_implementation/78_ladruno_parallel_contact_adr.md`);
 neither half ships alone. **Adversarially reviewed same day** (see
 §Sign-off questions and ADR-78 §Adversarial review log): INV-1 corrected to
 master-side ownership, INV-4 sharpened, INV-6 found already satisfied, two of
 the three sign-off questions closed.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 **ADR-78 P0 ran and PASSED the same day** — a 2-rank contact model matched its
 serial twin to 1.6e−14 (implicit, `Mumps`) and **bit-identically** (explicit,

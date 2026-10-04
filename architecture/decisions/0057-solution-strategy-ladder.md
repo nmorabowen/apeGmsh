@@ -1,9 +1,11 @@
 # ADR 0057 — Solution-strategy ladder: emitted per-increment escalation with established profiles
 
-**Status:** Proposed (2026-06-10; evidence base = the Cerro Lindo zoned-twin
+**Status:** Accepted (2026-06-10; evidence base = the Cerro Lindo zoned-twin
 campaign of the same date — mesh-sensitivity, element-comparison and
 integrator-comparison runs, all archived in the model folder's
 `HANDOFF_tunnel_twin.md`)
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

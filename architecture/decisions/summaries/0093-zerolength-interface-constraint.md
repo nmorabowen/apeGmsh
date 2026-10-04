@@ -1,6 +1,6 @@
 # ADR 0093 — `g.constraints.interface()`: oriented coincident-pair zeroLength interface (summary)
 
-**Status:** Proposed (2026-08-12) — driven by the Cerro Lindo SSI program
+**Status:** Accepted (2026-08-12) — driven by the Cerro Lindo SSI program
 (`Informe No3/Project/ADR/ADR-0005-ssi-squeezing-interaction-model.md` D1.3 / D4 / D8.0): […]
 
 ## Decision

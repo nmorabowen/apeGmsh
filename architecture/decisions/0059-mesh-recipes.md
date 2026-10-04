@@ -1,9 +1,11 @@
 # ADR 0059 — Mesh recipes: one-call unstructured / structured meshing (`g.mesh.recipe`)
 
-**Status:** Proposed (2026-06-11). Adds a high-level orchestration tier
+**Status:** Accepted (2026-06-11). Adds a high-level orchestration tier
 over the existing `g.mesh.sizing` / `g.mesh.field` / `g.mesh.structured`
 / `g.mesh.generation` verbs. Session-side (mesh composite) — no bridge,
 no Emitter Protocol, no schema change.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

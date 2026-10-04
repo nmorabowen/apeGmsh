@@ -1,11 +1,13 @@
 # ADR 0050 — Dimension-indexed loads + a `g.displacements` composite
 
-**Status:** Proposed (2026-05-31). Restructures the `g.loads` authoring
+**Status:** Accepted, partly superseded by ADR 0051 (see Amendment 1, 2026-10-04) (2026-05-31). Restructures the `g.loads` authoring
 surface and splits prescribed motion into a new sibling composite. Sibling
 in spirit to [ADR 0049](0049-user-declared-nodes.md) (new `g.nodes`
 authoring composite) — same "authoring composite resolves into `fem`"
 pattern. Forces the bridge-side emit half tracked as **LOAD-1** /
 **DOC-1** in `internal_docs/todo_apesees.md`.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 
@@ -218,3 +220,9 @@ but is the user's explicit choice, not a silent alias for `bc`.
   implementation plan for this ADR.
 - `g.masses` (`core/MassesComposite.py`) — the dimension-indexed precedent
   this ADR aligns `g.loads` with.
+
+## Amendment 1 (2026-10-04): partly superseded by ADR 0051
+
+Accepted in the T week 1 status batch (#1202). [ADR 0051](0051-bridge-load-consumption.md) replaced two things here: the **LOAD-1 auto-emit** (the bridge emitting resolved `g.loads` records on its own; the auto-emit in `apesees.py` was removed, and `_emit_broker_loads` is gone) and the **§5 element-form / cross-dimension-gravity emit decisions**. Consumption is now opt-in, through `pattern.from_model` and `case()` on `DisplacementsComposite`.
+
+The authoring-surface decisions (dimension-indexed `g.loads`, the `g.displacements` composite, the rename, `surface.shear`) stand unchanged. The Decision above is left as written.

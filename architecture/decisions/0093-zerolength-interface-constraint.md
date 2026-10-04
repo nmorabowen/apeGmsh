@@ -1,6 +1,6 @@
 # ADR 0093 — `g.constraints.interface()`: oriented coincident-pair zeroLength interface
 
-**Status:** Proposed (2026-08-12) — driven by the Cerro Lindo SSI program
+**Status:** Accepted (2026-08-12) — driven by the Cerro Lindo SSI program
 (`Informe No3/Project/ADR/ADR-0005-ssi-squeezing-interaction-model.md` D1.3 /
 D4 / D8.0): a steel arch (`dispBeamColumn` wire) node-for-node coincident with
 a tunnel-face continuum boundary needs a **unilateral** (compression-only,
@@ -13,6 +13,8 @@ for that campaign, not a convenience. Three scope decisions were taken at
 sign-off of the plan: **declarative per-area laws** (not opensees primitives
 in the verb), **full partitioned support in v1**, and **2D line masters first**
 (3D surface masters refused loudly, deferred).
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 **Adversarially reviewed same day** (top-tier probe against the fork source
 and this repo). Three findings refuted the draft and are folded in below:
