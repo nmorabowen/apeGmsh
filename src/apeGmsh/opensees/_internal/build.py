@@ -4398,6 +4398,12 @@ class WarnBodyForceDoubleCount(UserWarning):
     nodal loads land on the same nodes **along the same axis**, that region
     carries its self-weight **twice**.  Fail-soft — both may be intentional,
     but it is almost always a mistake.
+
+    Only a nodal load reduced from a body definition (``g.loads.gravity`` /
+    ``g.loads.volume``) counts; a collinear line, surface, point or face
+    load is a boundary load, not a second self-weight (#1338). A record
+    whose source is unknown (a ``model.h5`` older than neutral 2.35.0)
+    still counts, because it may be either.
     """
 
 
@@ -4417,11 +4423,21 @@ def validate_body_force_double_count(
     — double self-weight, not an orthogonal push).  Fail-soft (one aggregated
     warning).
 
+    Collinearity alone cannot tell a reduced self-weight from a vertical
+    footing line load (#1338), so the overlap also reads each record's
+    ``source`` — the definition kind the resolver stamped
+    (:class:`~apeGmsh._kernel.records._kinds.NodalLoadSource`). A body
+    source (``gravity`` / ``body``) counts; a boundary source (``point``,
+    ``line``, ``surface``, ``face_load``, ...) never does; ``None`` (a
+    synthesized record, or a file older than neutral 2.35.0) counts because
+    it may be either; any other value is outside the vocabulary and raises.
+
     LadrunoUP names its always-on solid self-weight ``body`` (an
     ACCELERATION, not a force density) rather than ``body_force``; the
     collinearity test compares directions only, so the unit difference is
     irrelevant and the guard reads either attribute.
     """
+    from apeGmsh._kernel.records._kinds import NodalLoadSource
     # (pg, class_name, body_force_3d) — pg pulled via getattr so the loop
     # stays typed against the abstract ``Element`` (no ``.pg`` attribute).
     bf_specs: list[tuple[str, str, np.ndarray]] = []
@@ -4448,18 +4464,31 @@ def validate_body_force_double_count(
     if load_set is None:
         return
 
-    # case -> {node_id: force_xyz} (only loads carrying a real force).
-    case_loads: dict[str, dict[int, np.ndarray]] = {}
+    # case -> {node_id: (force_xyz, source)} — only loads carrying a real
+    # force from a source that can be a self-weight: a body reduction, or
+    # unknown.  A boundary-source record (#1338) is skipped here, and a
+    # source outside the vocabulary fails closed.
+    case_loads: dict[str, dict[int, tuple[np.ndarray, str | None]]] = {}
     for case in cases:
-        per_node: dict[int, np.ndarray] = {}
+        per_node: dict[int, tuple[np.ndarray, str | None]] = {}
         for rec in load_set.by_pattern(case):
             f = getattr(rec, "force_xyz", None)
             if f is None:
                 continue
+            source = rec.source
+            if source in NodalLoadSource.BOUNDARY_KINDS:
+                continue
+            if source is not None and source not in NodalLoadSource.BODY_KINDS:
+                raise BridgeError(
+                    f"nodal load on node {int(rec.node_id)} in case {case!r} "
+                    f"carries source {source!r}, which is not a "
+                    f"NodalLoadSource kind {sorted(NodalLoadSource.ALL)}; the "
+                    f"double-count guard cannot classify it."
+                )
             fv = np.asarray(f, dtype=float)
             if float(np.linalg.norm(fv)) == 0.0:
                 continue
-            per_node[int(rec.node_id)] = fv
+            per_node[int(rec.node_id)] = (fv, source)
         if per_node:
             case_loads[case] = per_node
 
@@ -4472,16 +4501,25 @@ def validate_body_force_double_count(
         spec_nodes = set(expand_pg_to_nodes(fem, pg))
         for case, per_node in case_loads.items():
             n_hit = 0
+            hit_sources: set[str | None] = set()
             for nid in spec_nodes & per_node.keys():
-                fv = per_node[nid]
+                fv, source = per_node[nid]
                 cos = float(abs(np.dot(fv / np.linalg.norm(fv), bf_dir)))
                 if cos > 0.999:        # collinear -> same line of action
                     n_hit += 1
+                    hit_sources.add(source)
             if n_hit:
+                named = ", ".join(sorted(s for s in hit_sources if s is not None))
+                if None in hit_sources:
+                    named = (
+                        (named + ", " if named else "")
+                        + "unknown: a record without a definition kind, "
+                        "such as a model.h5 older than neutral 2.35.0"
+                    )
                 collisions.append(
                     f"pg {pg!r} ({cls_name}, body_force) "
                     f"shares {n_hit} loaded node(s) with from_model case "
-                    f"{case!r}"
+                    f"{case!r} (source {named})"
                 )
 
     if collisions:

@@ -384,8 +384,13 @@ record class.
 Per-pattern, per-kind datasets sharing the symmetric outer compound.
 
 * `/loads/nodal/{pattern}` — `NodalLoadRecord` rows.  Payload:
-  `node_id`, `force_xyz` (3,)f64, `moment_xyz` (3,)f64.  Absent
-  force / moment components NaN-filled.
+  `node_id`, `force_xyz` (3,)f64, `moment_xyz` (3,)f64, `name`
+  (utf-8, 2.5.0), `basis` (utf-8, 2.28.0: `lagrange` / `bernstein`,
+  `""` = basis-insensitive), `source` (utf-8, 2.35.0: the definition
+  kind the record was reduced from — `gravity`, `body`, `line`,
+  `surface`, `point`, `point_closest`, `face_load`; `""` = unknown).
+  Absent force / moment components NaN-filled; the string columns are
+  presence-probed, so an older file decodes them as `None`.
 * `/loads/element/{pattern}` — `ElementLoadRecord` rows.  Payload:
   `element_id`, `load_type` (utf-8), `params_json` (utf-8 JSON
   blob — element-load `*args` shape is too freeform for a fixed
@@ -1202,7 +1207,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.34.0** | **2.10.0** |
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.22.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
@@ -1315,7 +1320,7 @@ our own output is held by
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
 [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py), current
-through **2.34.0**. The opensees zone's per-version history is
+through **2.35.0**. The opensees zone's per-version history is
 maintained inline in [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
@@ -1506,6 +1511,14 @@ full "why" and the exact affected dtype columns:
   that would drop a non-zero coordinate column refuses (#1358);
   `NativeWriter` forwards the salvaged value (not the raw stamp) onto a
   composed file's `/model/meta`.
+- `2.35.0` — #1338 nodal load `source`: adds the `source` column to
+  `nodal_load_payload_dtype`, the `kind` of the definition a nodal load
+  was reduced from (`NodalLoadSource`), so the bridge's
+  `WarnBodyForceDoubleCount` guard can tell a reduced self-weight from
+  a vertical footing line load after the definitions are gone. `""`
+  decodes to `None` (unknown), and an older file reads the same way;
+  the guard still warns on an unknown source. Additive, presence-probed
+  on read; the minor bumps per ADR 0113 D5.
 
 ### OpenSees-zone history (post-2.10)
 
