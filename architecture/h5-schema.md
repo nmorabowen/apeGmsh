@@ -28,7 +28,8 @@ snapshot in memory (geometry only) nor the STKO/MPCO results
    tools work.
 3. **Schema-versioned per zone.** Readers MUST check the per-zone
    key for each zone they read (`neutral_schema_version` /
-   `opensees_schema_version` / `results_schema_version`) and refuse
+   `opensees_schema_version` / `results_schema_version` /
+   `geometry_schema_version` / `provenance_schema_version`) and refuse
    incompatible files — not the legacy `/meta/schema_version`
    envelope. See [Schema versioning](#versioning).
 4. **Lazy and partial.** `model.h5` may be written at any point in
@@ -130,6 +131,12 @@ model.h5
 ├── /composed_from                        (optional, schema 2.9.0)
 │     └── /{label}                         one group per composed source module
 │
+├── ── own zones (ADR 0112 D2/D3, own version keys) ──
+├── /provenance                            (optional; see /provenance below)
+│     ├── /files                           one row per source file
+│     ├── /sites                           one row per (file, line, function)
+│     └── /records                         one row per declaration path
+│
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       ├── /materials
       │     ├── /uniaxial/{name}           one group per material
@@ -190,6 +197,9 @@ Attributes only.
 | `ndm` | int | the model's spatial dimension as declared by `ops.model(ndm=)`, never the mesh dimension: a line-only 2-D frame carries `2`. `0` on broker-only files (`fem.to_h5`), which declare none, and deck-building / capture readers refuse it (#1291, neutral 2.34.0; older composed files stamped the highest element dimension) |
 | `ndf` | int | DOFs per node as declared by `ops.model(ndf=)`; `0` on broker-only files |
 | `snapshot_id` | string | hash of FEMData snapshot the bridge was built from |
+| `session_id` | string | the writing session's uuid4, canonical 36-character form; pairs the file with its geometry sibling and is **never hashed** (see [`/meta/session_id`](#metasession_id-and-the-geometry-sibling)). Absent on files written before #1304 |
+| `geometry_schema_version` | string | per-zone version of `/geometry`; present only in a `<stem>.geometry.h5` sibling |
+| `provenance_schema_version` | string | per-zone version of `/provenance`; present only when the file carries `/provenance` |
 | `model_name` | string | user-provided model name |
 | `tag_span_max` | int | `max(max_node,max_elem) - min(min_node,min_elem) + 1`; sizes compose tag-offset reservations (ADR 0038) |
 
@@ -966,6 +976,128 @@ Present only if the user called the analysis primitives.
 Absent if `ops.h5(path)` was called before any analysis primitive.
 The viewer must tolerate this group being missing.
 
+## `/meta/session_id` and the geometry sibling
+
+ADR 0112 D1 makes geometry an artifact of its own, and the V0
+ratification (#1283, Q1) puts the `/geometry` zone in a **sibling file
+only**, never inside `model.h5`. For a model file `<stem>.h5` the
+sibling is `<stem>.geometry.h5`, in the same directory.
+
+`FEMData.session_id` is a uuid4, minted when the snapshot is built and
+read back by `FEMData.from_h5`. Every writer of the neutral zone
+stamps it as `/meta/session_id`: `fem.to_h5`, `apeSees(fem).h5` (through
+`_compose_model_h5`), the replay writers that rebuild a file from its own
+FEMData, and the `/model/meta` of a composed `results.h5`.
+
+**Pairing rule.** A reader pairs `<stem>.h5` with `<stem>.geometry.h5`
+only when both carry a `/meta/session_id` and the two strings are
+equal. A sibling whose `session_id` differs, or is missing, is stale or
+foreign: a reader must say so and must not draw it as this model's
+geometry. A model file without `session_id` (written before #1304)
+pairs with nothing.
+
+**Hash exclusion.** `session_id` is identity metadata, not model
+content. `snapshot_id`, `fem_hash` and `model_hash` are computed from
+allowlists (`mesh/_femdata_hash.py::compute_snapshot_id`,
+`opensees/_internal/lineage.py::compute_model_hash`) that never read
+it, so two writes of one model under different sessions hash the same.
+`tests/test_v2_zone_keys.py` holds this invariant, together with the
+same invariant for adding or deleting `/geometry` and `/provenance`.
+
+## Integer policy for the ADR 0112 zones
+
+`/geometry` and `/provenance` store **no int64**, so a browser reader
+(h5wasm) never receives BigInt for them:
+
+* ids, tags, row indices, offsets and counts are `int32`;
+* small enumerations and flags are `int8`;
+* coordinates and lengths are `float64`;
+* strings are variable-length UTF-8.
+
+A writer that meets a value outside `int32` (a tag, an offset or a count
+of 2³¹ or more) **refuses loudly**: it raises before writing anything
+and never truncates or wraps (V0 amendment 2). 2³¹ is the documented
+limit of these zones.
+
+## `/geometry` (sibling `<stem>.geometry.h5`)
+
+Version key: `/meta/geometry_schema_version` (current `1.0.0`). The
+sibling file also carries `/meta/session_id` (see the pairing rule
+above). Layout from V0 decision 5: concatenated arrays plus offsets per
+dimension (CSR), never one group per entity, because a browser would
+open about 10⁴ groups at STKO scale. There is no BRep, one level of
+detail, and no normals or UVs.
+
+```
+/geometry   @source {mesh|temp_mesh}  @gmsh_version str  @curve_samples i4
+            @lod_size f8  @bbox f8[6]  @status {ok|partial}
+  /entities      dim i1 (K,) · tag i4 (K,) · bbox f8 (K,6) · ok i1 (K,)
+  /points        entity i4 (P,) · xyz f8 (P,3)
+  /curves        entity i4 (C,) · vertex_offsets i4 (C+1,) · vertices f8 (Vc,3)
+  /surfaces      entity i4 (S,) · vertex_offsets i4 (S+1,) · vertices f8 (Vs,3)
+                 triangle_offsets i4 (S+1,) · triangles i4 (T,3)
+  /volumes       entity i4 (V,) · face_offsets i4 (V+1,) · faces i4 (F,)
+  /memberships   dim i1 · tag i4 · kind {label|physical_group} · name str · pg i4
+```
+
+* `entities` lists every model entity once. `ok` is 0 for an entity
+  whose tessellation failed; the file then carries `@status = partial`.
+* In `points`, `curves`, `surfaces` and `volumes`, `entity` is a row of
+  `entities`. Row `i`'s data is `[offsets[i], offsets[i+1])` of the
+  concatenated array. `surfaces/triangles` index that surface's own
+  slice of `vertices` (0-based, local to the surface).
+* `volumes/faces` are rows of `surfaces/entity`, so a volume is drawn
+  from its bounding surfaces.
+* `memberships` is a flat table, one row per (entity, label or physical
+  group). `pg` is the physical-group tag for `kind = physical_group`
+  and -1 for a label.
+* `@source` is `mesh` when surfaces come from the session's real mesh
+  (written at the exit of `g.mesh.generation.generate()`), and
+  `temp_mesh` when the session never meshed and a 2-D surface-only
+  mesh at `@lod_size` was generated at `end()` and then cleared (V0
+  decision 6 and amendment 3). Curves are sampled parametrically with
+  `@curve_samples` points (32 by default) at `@lod_size = 0.03 · bbox
+  diagonal` (Q9).
+* Sessions with no kernel (`from_h5`, STKO import, a hand-built FEM)
+  write no geometry file. A failed capture warns once and never raises.
+
+## `/provenance`
+
+Version key: `/meta/provenance_schema_version` (current `1.0.0`).
+Layout from V0 decisions 11 to 14: the source location of every user
+declaration, deduplicated into three tables. Each table is a group of
+equal-length column datasets.
+
+```
+/provenance   @base_dir str
+  /files      path str · sha256 str · kind str
+  /sites      file i4 · line i4 · function str
+  /records    path str (unique) · site i4 · script i4 · seq i4
+```
+
+* **Key.** `records/path` is the **declaration path**
+  `<zone>/<family>/<name|#k>`: the zone and family the declaration
+  belongs to, then the user's name for it. An unnamed declaration gets
+  `#k`, its 1-based order among the unnamed declarations of that family
+  in this run, so `#k` is stable within one run only. The key is never
+  an HDF5 group name or an OpenSees tag (Q3).
+* **Files.** `path` is POSIX. It is relative to `@base_dir` when the
+  file lies under it, and absolute otherwise (Q8). `sha256` is the hex
+  digest of the file when it was captured, so go-to-source can tell
+  that the file has been edited since. `kind` is `script` for the run's
+  `__main__` file and `module` for any other file.
+* **Sites.** `file` is a row of `files`; `line` is 1-based.
+* **Records.** `site` is a row of `sites`: the first frame outside
+  apeGmsh and the standard library. `script` is a row of `sites`: the
+  outermost `__main__` frame, which differs from `site` when the call
+  came through a user helper. Either is -1 when no such frame exists.
+  `seq` is the declaration's 0-based capture order in the run.
+* There is one record per user call: none per emitted row, none per
+  fanned-out element, and none for calls apeGmsh synthesises.
+* Every artifact the session writes carries its own `/provenance`
+  (decision 14). The replay writers copy it forward (Q7).
+* No hash reads `/provenance` (the same allowlists as above).
+
 ## Cross-references
 
 Every reference uses an HDF5 path string. Examples:
@@ -1013,6 +1145,14 @@ call `validate_zone_version(...)` for each zone before reading it.
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
+| geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** |
+| provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.0.0** |
+
+> The geometry and provenance keys never fall back to the legacy
+> envelope: they postdate it, so an absent key means the zone was not
+> written (`read_zone_version` returns `None`). Their writers import the
+> version constants from `schema_version.py` until they have modules of
+> their own.
 
 > The registry's *current* values are a snapshot — the writer
 > constants above are the authoritative source. The test

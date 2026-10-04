@@ -575,6 +575,11 @@ def write_meta(
     meta.attrs["ndm"] = int(ndm)
     meta.attrs["ndf"] = int(ndf)
     meta.attrs["snapshot_id"] = str(fem.snapshot_id)
+    # ADR 0112 D1 / V0 Q1 (#1304): the session's uuid4, which pairs this
+    # file with its sibling ``<stem>.geometry.h5``.  Not hashed: every
+    # hash reads an allowlist that excludes ``/meta``'s identity attrs.
+    from .FEMData import _validated_session_id
+    meta.attrs["session_id"] = _validated_session_id(fem.session_id)
     meta.attrs["model_name"] = str(model_name)
     # ADR 0038 §"Schema" — tag-span-max (max(max_node, max_elem) -
     # min(min_node, min_elem) + 1) used by Phase 3B's
@@ -2572,7 +2577,7 @@ def read_neutral_zone_from_group(
     from ._group_set import LabelSet, PhysicalGroupSet
     from .FEMData import (
         ElementComposite, FEMData, MeshInfo, NodeComposite,
-        _compute_bandwidth,
+        _compute_bandwidth, _validated_session_id,
     )
 
     # -- meta + schema check (ADR 0023 two-version window) --
@@ -2864,10 +2869,28 @@ def read_neutral_zone_from_group(
         bandwidth=_compute_bandwidth(element_groups),
         types=types_meta,
     )
+    # ADR 0112 D1 (#1304): carry the writer's session_id back.  A file
+    # written before the attr existed has none; the rebuilt snapshot
+    # then mints a fresh id (FEMData's default), so it pairs with no
+    # geometry sibling.  A present but malformed id is corruption.
+    session_id: str | None = None
+    if "session_id" in parent["meta"].attrs:
+        raw_sid = parent["meta"].attrs["session_id"]
+        session_id = (
+            raw_sid.decode("utf-8") if isinstance(raw_sid, bytes)
+            else str(raw_sid)
+        )
+        try:
+            _validated_session_id(session_id)
+        except ValueError as exc:
+            raise MalformedH5Error(
+                f"{label}: /meta/session_id is malformed: {exc}"
+            ) from exc
     rebuilt = FEMData(
         nodes=nodes, elements=elements, info=info,
         mesh_selection=mesh_selection,
         composed_from=composed_from,
+        session_id=session_id,
     )
 
     # B4 — verify /meta/snapshot_id matches the recomputed hash

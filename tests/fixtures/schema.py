@@ -12,3 +12,7 @@ OPENSEES_CURRENT     = "2.21.0"  # SSI-2.E (/opensees/stages/*/update_material_s
 OPENSEES_PRIOR_MINOR = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
 NEUTRAL_CURRENT      = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
 NEUTRAL_PRIOR_MINOR  = "2.33.0"  # fork #839: additive `cpl_al_update` column on the coupling-control lane
+# ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0, so neither has a
+# prior minor yet; add *_PRIOR_MINOR at their first minor bump.
+GEOMETRY_CURRENT     = "1.0.0"  # V2a: /geometry zone registered (sibling <stem>.geometry.h5)
+PROVENANCE_CURRENT   = "1.0.0"  # V2a: /provenance zone registered

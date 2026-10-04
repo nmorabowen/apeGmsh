@@ -19,12 +19,14 @@ Two-version reader window:
   warn-not-raise)
 - Different major -> SchemaVersionError (breaking change)
 
-Three per-zone version stamps + one envelope (ADR 0023):
+Per-zone version stamps + one envelope (ADR 0023):
 
-- ``/meta/neutral_schema_version``  -> :data:`NEUTRAL_KEY`
-- ``/meta/opensees_schema_version`` -> :data:`OPENSEES_KEY`
-- ``/meta/results_schema_version``  -> :data:`RESULTS_KEY`
-- ``/meta/schema_version``          -> :data:`ENVELOPE_KEY` (back-compat only)
+- ``/meta/neutral_schema_version``    -> :data:`NEUTRAL_KEY`
+- ``/meta/opensees_schema_version``   -> :data:`OPENSEES_KEY`
+- ``/meta/results_schema_version``    -> :data:`RESULTS_KEY`
+- ``/meta/geometry_schema_version``   -> :data:`GEOMETRY_KEY` (ADR 0112 D2)
+- ``/meta/provenance_schema_version`` -> :data:`PROVENANCE_KEY` (ADR 0112 D3)
+- ``/meta/schema_version``            -> :data:`ENVELOPE_KEY` (back-compat only)
 
 Files written before Phase 7a (envelope-only) read via the envelope-fallback
 path in :func:`read_zone_version`; that lookup returns the envelope value
@@ -39,10 +41,16 @@ from typing import Mapping, Optional
 
 __all__ = [
     "ENVELOPE_KEY",
+    "GEOMETRY",
+    "GEOMETRY_KEY",
+    "GEOMETRY_SCHEMA_VERSION",
     "NEUTRAL",
     "NEUTRAL_KEY",
     "OPENSEES",
     "OPENSEES_KEY",
+    "PROVENANCE",
+    "PROVENANCE_KEY",
+    "PROVENANCE_SCHEMA_VERSION",
     "RESULTS",
     "RESULTS_KEY",
     "SchemaVersion",
@@ -66,6 +74,13 @@ OPENSEES: str = "opensees"
 #: Results zone identifier (results-runtime ``/stages/`` group).
 RESULTS: str = "results"
 
+#: Geometry zone identifier (``/geometry`` root zone, ADR 0112 D2). It
+#: lives in the sibling ``<stem>.geometry.h5`` only (V0 ratification Q1).
+GEOMETRY: str = "geometry"
+
+#: Provenance zone identifier (``/provenance`` root zone, ADR 0112 D3).
+PROVENANCE: str = "provenance"
+
 
 # ---------------------------------------------------------------------------
 # /meta/ attribute keys
@@ -84,6 +99,26 @@ OPENSEES_KEY: str = "opensees_schema_version"
 #: Per-zone key for the results zone (introduced by Phase 4 / ADR 0020).
 RESULTS_KEY: str = "results_schema_version"
 
+#: Per-zone key for the geometry zone (ADR 0112 D2, #1304).
+GEOMETRY_KEY: str = "geometry_schema_version"
+
+#: Per-zone key for the provenance zone (ADR 0112 D3, #1304).
+PROVENANCE_KEY: str = "provenance_schema_version"
+
+
+# ---------------------------------------------------------------------------
+# Writer versions of the zones whose writers import them from here
+# ---------------------------------------------------------------------------
+
+#: Current version of the ``/geometry`` zone. Its writer (V2b) imports this
+#: constant, so reader and writer share one source (``architecture/h5-schema.md``,
+#: "/geometry").
+GEOMETRY_SCHEMA_VERSION: str = "1.0.0"
+
+#: Current version of the ``/provenance`` zone. Its writers (V2c, V2d)
+#: import this constant (``architecture/h5-schema.md``, "/provenance").
+PROVENANCE_SCHEMA_VERSION: str = "1.0.0"
+
 
 # Internal map zone -> per-zone key. Centralised so callers never spell the
 # key directly (ADR 0023 / surgical-change discipline).
@@ -91,7 +126,14 @@ _ZONE_KEY: dict[str, str] = {
     NEUTRAL: NEUTRAL_KEY,
     OPENSEES: OPENSEES_KEY,
     RESULTS: RESULTS_KEY,
+    GEOMETRY: GEOMETRY_KEY,
+    PROVENANCE: PROVENANCE_KEY,
 }
+
+# Zones born after the per-zone split. The legacy envelope predates them, so
+# it never stands in for their version: an absent key means the zone was not
+# written, never "use the envelope" (ADR 0023 INV-2).
+_NO_ENVELOPE_ZONES: frozenset[str] = frozenset({GEOMETRY, PROVENANCE})
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +215,8 @@ def reader_version(zone: str) -> SchemaVersion:
     Parameters
     ----------
     zone
-        One of :data:`NEUTRAL`, :data:`OPENSEES`, :data:`RESULTS`.
+        One of the keys of ``_ZONE_KEY``: :data:`NEUTRAL`, :data:`OPENSEES`,
+        :data:`RESULTS`, :data:`GEOMETRY` or :data:`PROVENANCE`.
 
     Raises
     ------
@@ -189,9 +232,13 @@ def reader_version(zone: str) -> SchemaVersion:
     if zone == RESULTS:
         from ...results.schema._versions import RESULTS_SCHEMA_VERSION
         return SchemaVersion.parse(RESULTS_SCHEMA_VERSION)
+    if zone == GEOMETRY:
+        return SchemaVersion.parse(GEOMETRY_SCHEMA_VERSION)
+    if zone == PROVENANCE:
+        return SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION)
     raise ValueError(
         f"reader_version: unknown zone {zone!r} "
-        f"(expected one of {NEUTRAL!r}, {OPENSEES!r}, {RESULTS!r})"
+        f"(expected one of {tuple(_ZONE_KEY)!r})"
     )
 
 
@@ -213,12 +260,14 @@ def read_zone_version(
     meta_attrs
         Mapping of attribute name to value (typically ``f["meta"].attrs``).
     zone
-        One of :data:`NEUTRAL`, :data:`OPENSEES`, :data:`RESULTS`.
+        One of the keys of ``_ZONE_KEY`` (see :func:`reader_version`).
     envelope_fallback
         When the per-zone key is absent and this is true (the default),
         return the value of :data:`ENVELOPE_KEY` instead. This is the
         back-compat path for pre-Phase-7a files (single-stamp legacy).
-        ADR 0023 §"Single-stamp legacy files".
+        ADR 0023 §"Single-stamp legacy files". It never applies to
+        :data:`GEOMETRY` or :data:`PROVENANCE`, which postdate the
+        envelope: for them an absent key returns ``None``.
 
     Returns
     -------
@@ -236,13 +285,17 @@ def read_zone_version(
     if zone not in _ZONE_KEY:
         raise ValueError(
             f"read_zone_version: unknown zone {zone!r} "
-            f"(expected one of {NEUTRAL!r}, {OPENSEES!r}, {RESULTS!r})"
+            f"(expected one of {tuple(_ZONE_KEY)!r})"
         )
     per_zone_key = _ZONE_KEY[zone]
     raw: object | None = None
     if per_zone_key in meta_attrs:
         raw = meta_attrs[per_zone_key]
-    elif envelope_fallback and ENVELOPE_KEY in meta_attrs:
+    elif (
+        envelope_fallback
+        and zone not in _NO_ENVELOPE_ZONES
+        and ENVELOPE_KEY in meta_attrs
+    ):
         raw = meta_attrs[ENVELOPE_KEY]
     if raw is None:
         return None

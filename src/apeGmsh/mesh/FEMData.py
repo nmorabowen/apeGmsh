@@ -48,6 +48,7 @@ Usage::
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -1699,6 +1700,31 @@ class InspectComposite:
 # FEMData — top-level broker
 # =====================================================================
 
+def _validated_session_id(value: object) -> str:
+    """Return ``value`` if it is a canonical uuid4 string; raise otherwise.
+
+    Canonical means the 36-character lowercase hyphenated form
+    ``str(uuid.uuid4())`` produces, so two files pair by plain string
+    equality (``architecture/h5-schema.md``, "/meta/session_id").
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"FEMData.session_id must be a uuid4 string, got "
+            f"{type(value).__name__}"
+        )
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"FEMData.session_id {value!r} is not a uuid") from exc
+    if parsed.version != 4 or str(parsed) != value:
+        raise ValueError(
+            f"FEMData.session_id {value!r} is not a canonical uuid4 "
+            f"string (expected the form {str(uuid.uuid4())!r})"
+        )
+    return value
+
+
 class FEMData:
     """Solver-ready FEM mesh broker.
 
@@ -1717,10 +1743,21 @@ class FEMData:
         info: MeshInfo,
         mesh_selection: "MeshSelectionStore | None" = None,
         composed_from: "ComposeSet | tuple[ComposeRecord, ...] | None" = None,
+        session_id: str | None = None,
     ) -> None:
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
+        # ── Session identity (ADR 0112 D1; V0 ratification Q1) ───
+        # A uuid4 that pairs this snapshot's model.h5 with its sibling
+        # ``<stem>.geometry.h5``.  It is identity metadata, not model
+        # content, so no hash reads it: snapshot_id, fem_hash and
+        # model_hash are allowlists.  ``None`` mints a fresh id; the
+        # H5 reader passes the stored ``/meta/session_id`` back.
+        self.session_id: str = (
+            str(uuid.uuid4()) if session_id is None
+            else _validated_session_id(session_id)
+        )
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
         # ── Compose provenance (Phase 3A.1 / ADR 0038) ───────────
