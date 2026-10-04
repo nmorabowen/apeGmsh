@@ -431,8 +431,8 @@ test("the reader's refusal message parses into a zone, a version, the accepted r
   assert.equal(old?.accepted, "2.10 and any later 2.x", "the floor through the major, never the 2.32-2.33 warn window");
   assert.doesNotMatch(old!.accepted, /2\.3[23]/);
   assert.equal(old?.newer, false);
-  // The opensees floor is 2.11, the 0-based rank flip (ADR 0113 D1).
-  assert.equal(parseRefusal("opensees_schema_version 3.1.0: this app reads major 2 only")?.accepted, "2.11 and any later 2.x");
+  // The opensees floor is 2.12, the first era whose files open (ADR 0113 D3, #1303).
+  assert.equal(parseRefusal("opensees_schema_version 3.1.0: this app reads major 2 only")?.accepted, "2.12 and any later 2.x");
   assert.equal(parseRefusal("/nodes is missing"), null);
 });
 
