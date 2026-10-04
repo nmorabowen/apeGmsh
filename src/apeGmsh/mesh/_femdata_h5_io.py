@@ -85,7 +85,16 @@ __all__ = [
 
 
 #: Schema version stamped by :func:`write_fem_h5` and the standalone
-#: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone
+#: ``FEMData.to_h5(path)`` flow.
+#:
+#: Reading the history below: the entries from 2.5.0 to 2.33.0 say "per
+#: ADR 0023's two-version reader window, readers tolerate N-1 and N".
+#: That was the rule when each minor shipped and the sentence is kept as
+#: the record. ADR 0113 retired the window: today a reader opens every
+#: minor from :data:`NEUTRAL_SCHEMA_FLOOR` (2.10.0) up to the current one,
+#: and refuses a newer minor (INV-4).
+#:
+#: Phase 8.5 added the neutral zone
 #: (`2.0.0 → 2.1.0`); Phase 8.6 added the ``fem_eids`` dataset under
 #: each ``/opensees/element_meta/{type_token}/`` group
 #: (`2.1.0 → 2.2.0`).  Phase 8.7 commit 2 added the
@@ -1017,8 +1026,7 @@ def _write_partitions(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.partitions`` / ``select(partition=k)`` survive the H5
-    round-trip.  Per ADR 0023's two-version window, readers in 2.4.x
-    silently lack this group.
+    round-trip.  Readers in 2.4.x silently lack this group.
     """
     parts = getattr(fem.nodes, "_partitions", None) or {}
     if not parts:
@@ -1123,8 +1131,8 @@ def _write_parts(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.nodes.select(target=part_label)`` / ``fem.elements.select
-    (target=part_label)`` survive the H5 round-trip.  Per ADR 0023's
-    two-version window, readers in 2.4.x silently lack this group.
+    (target=part_label)`` survive the H5 round-trip.  Readers in 2.4.x
+    silently lack this group.
     """
     node_map = getattr(fem.nodes, "_part_node_map", None) or {}
     elem_map = getattr(fem.elements, "_part_elem_map", None) or {}

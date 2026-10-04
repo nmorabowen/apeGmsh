@@ -88,7 +88,7 @@ through Node's type stripping; nothing is compiled for the tests).
 - Section → material links are read directly: a Fiber section's patches,
   fibers and layers name their material by HDF5 path (`material_ref`).
 - Schema versions follow ADR 0113, with one floor per zone (`ZONE_FLOOR` in
-  `src/reader/read.ts`: neutral 2.10, opensees 2.11, geometry 1.0, provenance
+  `src/reader/read.ts`: neutral 2.10, opensees 2.12, geometry 1.0, provenance
   1.0). A file from the floor to the app's version opens with no banner. A
   newer minor of the same major opens with one banner. A file below the floor,
   or of another major, is refused with a sentence naming the floor.

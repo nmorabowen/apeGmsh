@@ -29,7 +29,8 @@ order at every level, hashing:
 Two ``to_h5`` calls of the same model — possibly with different chunk
 layouts or write orderings — must produce identical canonical bytes.
 The tests in ``tests/test_lineage_chain.py`` enforce this across the
-two-version reader window of ADR 0023.
+compatibility range of ADR 0113 (floor to current; ADR 0023's
+two-version window before it).
 
 See also
 ========
@@ -37,7 +38,8 @@ See also
 - :doc:`/architecture/decisions/0021-lineage-chain-replaces-snapshot-id`
   — the full contract.
 - :doc:`/architecture/decisions/0023-per-zone-schema-versioning` — the
-  schema-version window within which canonical bytes are stable.
+  per-zone schema versioning within which canonical bytes are stable
+  (ADR 0113 replaced its window with a floor).
 - :mod:`apeGmsh.mesh._femdata_hash` — today's ``snapshot_id``;
   :func:`compute_fem_hash` is byte-identical (INV-1).
 """

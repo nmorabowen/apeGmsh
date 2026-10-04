@@ -34,8 +34,9 @@ https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d4
 
 The reshuffle is a breaking schema change — ``SCHEMA_VERSION`` jumps
 ``1.1.0 → 2.0.0``.  Phase 7a (ADR 0023) replaced the previous
-``EXPECTED_SCHEMA_MAJOR`` constant with per-zone two-version-window
-validation in :mod:`apeGmsh.opensees._internal.schema_version`.
+``EXPECTED_SCHEMA_MAJOR`` constant with per-zone version validation in
+:mod:`apeGmsh.opensees._internal.schema_version` (a two-version window
+then; a floor per zone since ADR 0113).
 
 **Schema deviation (documented).**  One place where the streaming
 Protocol cannot supply the spec-level grouping the schema asks for:
@@ -165,6 +166,12 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #: Protocol's ``beamIntegration`` method in Phase 4.5).
 #:
 #: History:
+#:   Reading the history: entries that say "per ADR 0023 two-version
+#:   reader window, both N-1 and N files are accepted" record the rule
+#:   in force when that minor shipped. ADR 0113 retired the window; a
+#:   reader now opens every minor from :data:`SCHEMA_FLOOR` (2.12.0) up
+#:   to the current one and refuses a newer minor (INV-4).
+#:
 #:   * 1.0.0 — Phase 6 initial release.
 #:   * 1.1.0 — added ``/beam_integration`` group + widened fiber-layer
 #:     ``line`` field from float[4] to float[6].

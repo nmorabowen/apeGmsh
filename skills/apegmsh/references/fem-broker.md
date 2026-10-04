@@ -393,16 +393,18 @@ sentinel (`stiffness_auto` + `sr_stiffness_auto` columns, `2.27.0`) — all
 round-trip through `FEMData.to_h5` / `from_h5`.
 
 ```python
-from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.27.0"
-from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION           # "2.19.0"
-# Both constants move with the source — confirm the exact number there before
-# relying on it; the two-version reader window below is the durable contract.
+from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION, NEUTRAL_SCHEMA_FLOOR
+from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION, SCHEMA_FLOOR
+# The constants move with the source — read the numbers there before relying
+# on them; the floor rule below is the durable contract.
 ```
 
-**Two-version reader window (ADR 0023):** a reader at `X.Y` accepts only
-`X.Y.*` and `X.(Y-1).*`. Older minors, newer minors, or a different
-major all raise `SchemaVersionError` — a newer-than-reader file is
-*refused*, never silently tolerated. New code reads the per-zone keys
+**Floor per zone (ADR 0113):** each zone has a floor, and a reader at `X.Y`
+accepts every `X.*` file from the floor up to `X.Y.*`. Minors below the floor,
+newer minors, or a different major all raise `SchemaVersionError` — a
+newer-than-reader file is *refused*, never silently tolerated. A file written
+since the floor keeps opening in newer releases; a results file whose embedded
+model zone is below its floor still opens its stages, read-only. New code reads the per-zone keys
 (`neutral_schema_version` / `opensees_schema_version` /
 `results_schema_version`); the single envelope `/meta/schema_version`
 key is back-compat only.

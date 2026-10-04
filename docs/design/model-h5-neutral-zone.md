@@ -122,7 +122,7 @@ mention is a newer apeGmsh being additive, not a corrupt file. Skip it.
 
 Two things sit outside "additive". A change to what an existing field
 *means* ships a reader shim in apeGmsh, keyed on the version that
-introduced it; in the neutral zone `/meta/ndm` is the spatial dimension
+introduced it; the `ndm` attribute in `/meta` is the spatial dimension
 from `2.34.0` and was the mesh dimension before, and loads saved before
 `2.26.1` sit in one `default` case. A change to a required structure's
 layout is a **major** bump from now on. It has happened once in the

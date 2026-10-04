@@ -145,7 +145,8 @@ def test_reader_accessors_return_attrs(tmp_path: Any) -> None:
 
 # ===========================================================================
 # Phase 7a — Per-zone schema versioning; the reader gate is a floor per
-# zone since ADR 0113 (it retired ADR 0023's two-version window). Tests below exercise the central helpers in
+# zone since ADR 0113 (it retired ADR 0023's two-version window).
+# Tests below exercise the central helpers in
 # :mod:`apeGmsh.opensees._internal.schema_version` plus the read/write
 # wiring across the three zones (neutral, opensees, results).
 # ===========================================================================

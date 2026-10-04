@@ -137,8 +137,8 @@ class NativeWriter:
         h5.attrs[_native.ATTR_SCHEMA_VERSION] = _versions.SCHEMA_VERSION
         # ADR 0023 — per-zone marker; the envelope above bumps only on
         # partition-shape changes, this one tracks the results-zone
-        # content shape independently. Phase 7a wires the two-version
-        # read window against this attr.
+        # content shape independently. The reader validates this attr
+        # against the results floor (ADR 0113).
         h5.attrs[_native.ATTR_RESULTS_SCHEMA_VERSION] = (
             _versions.RESULTS_SCHEMA_VERSION
         )
