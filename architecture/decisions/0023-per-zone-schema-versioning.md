@@ -347,7 +347,11 @@ unlikely; the discipline is stated here so it is not folklore.
 ## Amendment — 2026-10-03 — The window is retired; compatibility is a floor per zone (ADR 0113)
 
 Append-only. The per-zone keys, the envelope, the bump-cadence table,
-INV-1 to INV-4 and the three notes above are unchanged. This amendment
+INV-1, INV-2, INV-4 and the three notes above are unchanged. INV-3 is
+**restated**, not retired: where it read "the two-version window
+applies independently to each zone", it now reads **the floor applies
+independently to each zone**; the per-zone checks remain conjunctive
+but not coupled, exactly as INV-3's example describes. This amendment
 records what [ADR 0113](0113-compatibility-is-a-floor-per-zone.md)
 changes, ratified by the maintainer on #1303, so that a reader of this
 ADR is not sent to a rule that no longer applies.
@@ -363,7 +367,9 @@ and `floor.minor <= file.minor <= reader.minor`. The floors are
 writer-owned constants beside the version constants, evidence-gated by
 a committed corpus of real files from git's frozen writers, and move
 only with a major bump: neutral 2.10.0, opensees 2.11.0, results 1.0.0
-at ratification. The "Alternatives considered" rows that rejected the
+at ratification, and geometry and provenance 1.0.0 (their first
+version, #1311); a new zone joins the table at its first version. The
+"Alternatives considered" rows that rejected the
 open window and the three-version window are superseded by ADR 0113's
 rejected alternatives; "Strict version match" and "Refuse only newer
 majors; accept any older minor" stand.
@@ -400,4 +406,7 @@ neutral-zone bump still updates them.
 
 **Results files.** A results file whose embedded `/model` is below the
 neutral floor opens its `/stages` read-only and flagged, without its
-model (ADR 0113 D9); it no longer expires through `/model`.
+model (ADR 0113 D9); it no longer expires through `/model`. The same
+rule applies to the other embedded zone: an embedded `/opensees` below
+its floor opens `/stages` read-only and flagged. An embedded zone newer
+than the reader still refuses (INV-4).

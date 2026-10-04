@@ -13,8 +13,11 @@ briefs are attached in full on the issue.
 two-version reader window is retired for every zone, INV-5's migrator
 gets its trigger, and the G1 "same refuse rule" for external readers
 gains one app-only exception. The per-zone keys, the envelope, the
-bump cadence and INV-1 to INV-4 stand. ADR 0023 carries a dated
-amendment pointing here; its original text is unchanged.
+bump cadence, INV-1, INV-2 and INV-4 stand. INV-3 ("the two-version
+window applies independently to each zone") is **restated**: the floor
+applies independently to each zone; the per-zone checks stay
+conjunctive and uncoupled. ADR 0023 carries a dated amendment pointing
+here; its original text is unchanged.
 
 **Program slice:** #1303, the first of six PRs listed under
 [PR slices](#pr-slices).
@@ -37,9 +40,9 @@ minors is additive. The readers do not branch on them: they
 presence-probe the newer groups and columns (about sixteen `in parent`
 group checks and about twenty-five `in p.dtype.names` column checks).
 There are exactly two version branches in the Python readers: the
-`/nodes/ndf` fallback at `_femdata_h5_io.py` (`_fv < (2, 7, 0)`), and
-#1300's `h5_reader.py::read_spatial_ndm`, keyed on
-`META_NDM_IS_SPATIAL_FROM`. The opensees zone has one non-additive
+`/nodes/ndf` fallback at `_femdata_h5_io.py` (`_fv < (2, 7, 0)`, below
+the floor this ADR sets, so dead code once it lands), and #1300's
+`h5_reader.py::read_spatial_ndm`, keyed on `META_NDM_IS_SPATIAL_FROM`. The opensees zone has one non-additive
 minor, the 2.11.0 flip to 0-based runtime ranks. So the window check
 alone refuses a 2.12 file that the reader body would parse correctly.
 
@@ -112,9 +115,13 @@ The patch is ignored. The refusal names both ends: *"supports
 | neutral | **2.10.0** | the B2 layout split (ADR 0023, 2026-05-28 amendment); the app already hard-codes 10 |
 | opensees | **2.11.0** | the 0-based rank flip, the zone's last non-additive bump |
 | results | **1.0.0** | unchanged; the zone has never broken |
+| geometry | **1.0.0** | its first version; in `_ZONE_KEY` since #1311 |
+| provenance | **1.0.0** | its first version; in `_ZONE_KEY` since #1311 |
 
-New zones (ADR 0112 D2's `/geometry`, `/provenance`, `/sequence`) join
-the table at their first version. Files below a floor are pre-release
+A new zone joins the table at its first version, so its floor is
+`X.0.0` until its first major bump: `/geometry` and `/provenance`
+(ADR 0112 D2) already sit in `_ZONE_KEY` at 1.0.0 (#1311), and
+`/sequence` joins when it lands. Files below a floor are pre-release
 (2026-05-12 to 2026-05-28 for the neutral zone) and stay refused.
 
 ### D2 — Python readers keep INV-4
@@ -130,9 +137,11 @@ The floor constants sit beside the version constants they bound:
 `NEUTRAL_SCHEMA_FLOOR` next to `NEUTRAL_SCHEMA_VERSION` in
 `mesh/_femdata_h5_io.py`, `SCHEMA_FLOOR` next to `SCHEMA_VERSION` in
 `opensees/emitter/h5.py`, `RESULTS_SCHEMA_FLOOR` next to
-`RESULTS_SCHEMA_VERSION` in `results/schema/_versions.py`.
-`reader_floor(zone)` mirrors `reader_version(zone)`, so reader and
-writer cannot disagree.
+`RESULTS_SCHEMA_VERSION` in `results/schema/_versions.py`,
+`GEOMETRY_SCHEMA_FLOOR` and `PROVENANCE_SCHEMA_FLOOR` beside
+`GEOMETRY_SCHEMA_VERSION` and `PROVENANCE_SCHEMA_VERSION` in
+`opensees/_internal/schema_version.py`. `reader_floor(zone)` mirrors
+`reader_version(zone)`, so reader and writer cannot disagree.
 
 **The initial floors are evidence-gated.** A floor stands only where
 real corpus files (D8) prove every minor from it to the current one
@@ -151,19 +160,22 @@ ledger in `architecture/h5-schema.md`. Every ledger entry is above its
 zone's floor, so raising a floor deletes the shims beneath it.
 
 A quirk rule in `scripts/check_quirks.py` flags any bare
-`SchemaVersion` tuple compare in a reader; the existing `_fv < (2, 7,
-0)` branch is rewritten to a `NODES_NDF_FROM` constant to prove it. A
-**restructure** (renamed group, changed dtype, layout split) is a
+`SchemaVersion` tuple compare in a reader. Its proof site is #1300's
+`read_spatial_ndm`, keyed on `META_NDM_IS_SPATIAL_FROM` (2.34.0): the
+self-test passes the named constant and fails a bare-tuple rewrite of
+the same compare. The only other version branch, the `/nodes/ndf`
+fallback `_fv < (2, 7, 0)` in `_femdata_h5_io.py`, keys on a version
+**below** the neutral floor; by this ledger's own rule it is dead code
+once the floor lands, so slice 6 **deletes** it rather than naming it.
+A **restructure** (renamed group, changed dtype, layout split) is a
 **major** bump, never a shim. ADR 0023's 2026-05-28 amendment allowed
 a layout-perturbing minor by walking the window forward; with no
 window to walk, that path is closed.
 
-**Shim ledger at ratification** (`NODES_NDF_FROM` is the name slice 6
-gives the existing `_fv < (2, 7, 0)` branch; the other constant exists):
+**Shim ledger at ratification:**
 
 | Zone | Constant | Below it | At or above it |
 |---|---|---|---|
-| neutral | `NODES_NDF_FROM` (2.7.0) | `/nodes/ndf` absent; the reader derives ndf | the column is read |
 | neutral | `META_NDM_IS_SPATIAL_FROM` (2.34.0) | `/meta/ndm` is salvaged by `read_spatial_ndm` | the attribute is trusted |
 | neutral | SP loads before 2.26.1 | every SP record is read as one `default` case (Q5, accepted; the per-case split is not reconstructed) | one group per case |
 
@@ -237,12 +249,18 @@ lands the corpus records that failure in its PR body, as #1300 did.
 
 ### D9 — Results files whose `/model` is below the floor still open their `/stages`
 
-A results file carries its own zone at `/stages` and an embedded
-`/model` that expires on the neutral floor, not its own. When the
-embedded `/model` is below the floor (or above the reader), the results
+A results file carries its own zone at `/stages` and two embedded
+zones, `/model` (neutral) and `/opensees`, each validated against its
+own floor by `results/readers/_native.py::_validate_per_zone_versions`.
+When the embedded `/model` is **below the neutral floor**, the results
 reader opens `/stages` **read-only and flagged**: `Results.model` is
 unavailable, the reader says so, and nothing is rewritten (Q3). Results
-should outlive their model zone.
+should outlive their model zone. The same ratified rule applies to the
+other embedded zone: an embedded `/opensees` **below its floor**
+(2.11.0) also opens `/stages` read-only and flagged, with the bridge
+side of `Results.model` unavailable. An embedded zone *newer* than the
+reader is not covered by Q3 and refuses as INV-4 requires (D2); the
+results zone itself is validated as before.
 
 ### D10 — Stamp `/meta/apeGmsh_version`
 
@@ -258,9 +276,11 @@ Each is testable and is held by a test in the slice that lands it.
 1. **Edges.** For each zone in `_ZONE_KEY` and every `(file, reader)`
    pair, `validate_zone_version` accepts iff same major and
    `floor.minor <= file.minor <= reader.minor`; the patch is ignored.
-   Grid-tested at both edges: `floor.minor - 1` refuses as "too old",
-   naming the floor; `reader.minor + 1` refuses as "newer than this
-   reader" in Python.
+   Grid-tested at both edges: where `floor.minor > 0`,
+   `floor.minor - 1` refuses as "too old", naming the floor; where the
+   floor is `X.0.0` (results, geometry, provenance) the lower edge is
+   the previous major, `(X-1).*`, refused as a major mismatch;
+   `reader.minor + 1` refuses as "newer than this reader" in Python.
 2. **Writer-owned.** `reader_floor(zone) <= reader_version(zone)`, and
    both equal the writer constants.
 3. **Registry.** The `architecture/h5-schema.md` version registry has a
@@ -280,17 +300,27 @@ Each is testable and is held by a test in the slice that lands it.
    (sha256 before and after the session).
 8. **Shims named.** Every reader version branch compares against a
    named `*_FROM` constant at or above its zone's floor, has a test on
-   a corpus file below it, and is listed in the shim ledger. The quirk
-   rule fails a bare tuple compare.
+   a corpus file below it, and is listed in the shim ledger. A branch
+   keyed below the floor is dead code and is deleted (the `_fv < (2, 7,
+   0)` fallback, slice 6). The quirk rule fails a bare tuple compare,
+   proven on `read_spatial_ndm`.
 9. **No laundering.** No path forwards an old zone's value under a
    newer stamp without its shim (the class #1300 found: a restamped
-   file whose `/meta/ndm` still carried the old meaning).
+   file whose `/meta/ndm` still carried the old meaning). The one such
+   path today is the results twin: `results/writers/_native.py::
+   NativeWriter.write_model` restamps the embedded `/model/meta` with
+   the current neutral version and forwards the source's `ndm` through
+   `read_spatial_ndm(src_meta, src)`. Slice 4 tests it: a twin composed
+   from a pre-2.34.0 source whose `/meta/ndm` carries the mesh
+   dimension must read the spatial `ndm` the source's own reader
+   resolves; a raw forward of the attribute fails the test.
 10. **Tamper check kept.** The `snapshot_id` check still raises on a
     tampered corpus copy.
 11. **Results floor.** A `results.h5` whose `/model/meta` carries the
     floor stamp opens through `NativeReader` and `Results.model`
-    resolves; one whose `/model` is below the floor opens `/stages`
-    read-only and flagged (D9).
+    resolves; one whose embedded `/model` or `/opensees` is below its
+    floor opens `/stages` read-only and flagged (D9); one whose
+    embedded zone is newer than the reader refuses (D2).
 12. **Paper floor fails.** With a zone's floor constant set to its
     current minor, the corpus test fails.
 
@@ -304,9 +334,9 @@ fewer. Order: 1, 2, then 3 in parallel with 4, then 5, then 6.
 | 1 | **This ADR** and the ADR 0023 amendment | `architecture/decisions/` |
 | 2 | **The floor**: `reader_floor`, the new `validate_zone_version` and its message, the three floor constants, `tests/fixtures/schema.py` (`*_FLOOR`; `*_PRIOR_MINOR` kept for shim tests), boundary tests replacing `test_two_version_window_*` in `tests/opensees/h5/test_h5_schema_compat.py`, the `schema-literal` quirk text, a changelog fragment | `schema_version.py`, the three writer modules, the compat tests |
 | 3 | **The corpus**: the builder script, `tests/fixtures/schema_corpus/` (about 25 files, about 1 MB, plus manifest, dumps and decks), the corpus test (INV 5, 6, 7, 10, 12) | `scripts/`, the corpus fixtures, one test module |
-| 4 | **The app**: the floor table in `read.ts` with the banner text, `test/failclosed.test.ts`, the Python drift test (INV 4), and the results-path test (INV 11) | `apeGmshViewer/src/reader/`, its tests, `tests/results/` |
+| 4 | **The app**: the floor table in `read.ts` with the banner text, `test/failclosed.test.ts`, the Python drift test (INV 4), the results-path test (INV 11, both embedded zones) and the results-twin laundering test on `write_model`'s `ndm` forward (INV 9) | `apeGmshViewer/src/reader/`, its tests, `tests/results/` |
 | 5 | **Docs**: `architecture/h5-schema.md` "Versioning" with the Floor column and the shim ledger, `docs/design/model-h5-neutral-zone.md` "Version rule", the bridge-feature guide's bump checklist (add the outgoing minor's corpus file) | the three documents |
-| 6 | **The quirk rule** for bare version compares, with a self-test, proven by rewriting `_femdata_h5_io.py`'s `_fv < (2, 7, 0)` to `NODES_NDF_FROM` (INV 8) | `scripts/check_quirks.py`, its test, one reader line |
+| 6 | **The quirk rule** for bare version compares, with a self-test proven on `read_spatial_ndm` / `META_NDM_IS_SPATIAL_FROM` (the rule passes the constant and fails a bare-tuple rewrite of that compare); deletes the dead `_fv < (2, 7, 0)` fallback in `_femdata_h5_io.py`, keyed below the floor (INV 8) | `scripts/check_quirks.py`, its test, one reader branch |
 
 Slice 2 lands after #1300 (landed as 0d95c30b). D10, the
 `apeGmsh_version` stamp, rides with slice 2 (both writers are in its
