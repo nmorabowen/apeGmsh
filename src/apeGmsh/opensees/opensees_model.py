@@ -193,6 +193,11 @@ class OpenSeesModel:
     #: partition-blind (flat single-process degrade — the documented
     #: precedent).
     _partitions: "tuple[Any, ...]" = field(default_factory=tuple)
+    #: ``/opensees/bcs@mass_from_model`` (ADR 0112 amendment 5, #1304):
+    #: the bridge declared ``mass_from_model()``, so the archive holds no
+    #: ``/opensees/bcs/mass`` rows for the snapshot masses.  Replay streams
+    #: ``fem.nodes.masses`` instead; ``to_h5`` re-marks the file.
+    _mass_from_model: bool = False
 
     # ------------------------------------------------------------------
     # Construction
@@ -314,6 +319,7 @@ class OpenSeesModel:
 
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
+            mass_from_model = cls._load_mass_from_model(model)
             analysis_attrs, analyze_call = cls._load_analysis(model)
             # ADR 0048: capture the effective per-node ndf map persisted
             # at /opensees/nodes_ndf. This is the read-side ndf source for
@@ -369,6 +375,7 @@ class OpenSeesModel:
             _initial_stress=initial_stress,
             _stages=stages,
             _partitions=partitions,
+            _mass_from_model=mass_from_model,
         )
 
     @classmethod
@@ -468,6 +475,7 @@ class OpenSeesModel:
             _elements=tuple(emitter._elements),
             _fixes=tuple(emitter._fixes),
             _masses=tuple(emitter._masses),
+            _mass_from_model=emitter._mass_from_model,
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
@@ -995,6 +1003,61 @@ class OpenSeesModel:
         return tuple(fixes), tuple(masses)
 
     @staticmethod
+    def _load_mass_from_model(model: Any) -> bool:
+        """Read ``/opensees/bcs@mass_from_model`` (opensees 2.22.0).
+
+        Absent means the bridge streamed every mass into
+        ``/opensees/bcs/mass`` (every file before 2.22.0).  Any value
+        other than the integer scalar 1 (an array, a string, a float, 0)
+        is a corrupt marker and raises ``MalformedH5Error``.
+        """
+        import numpy as np
+
+        from .emitter.h5_reader import MalformedH5Error
+
+        f = model.handle
+        if "opensees" not in f or "bcs" not in f["opensees"]:
+            return False
+        attrs = f["opensees/bcs"].attrs
+        if "mass_from_model" not in attrs:
+            return False
+        raw = attrs["mass_from_model"]
+        arr = np.asarray(raw)
+        if (
+            arr.shape != ()
+            or not np.issubdtype(arr.dtype, np.integer)
+            or int(arr) != 1
+        ):
+            raise MalformedH5Error(
+                f"/opensees/bcs@mass_from_model is {raw!r}; the writer "
+                "only stamps 1."
+            )
+        return True
+
+    def _snapshot_mass_records(self) -> "tuple[MassRecord, ...]":
+        """The ``mass_from_model()`` masses, as the forward bridge emits them.
+
+        Mirrors ``BuiltModel._emit_masses``: each ``fem.nodes.masses`` entry
+        maps onto its node's effective ndf (``/opensees/nodes_ndf``, else
+        the envelope) through ``broker_mass_components``, in snapshot
+        order.  Empty unless the archive is marked.
+        """
+        if not self._mass_from_model:
+            return ()
+        from ._internal.build import broker_mass_components
+
+        out: list[MassRecord] = []
+        for m in self._fem.nodes.masses:
+            nid = int(m.node_id)
+            ndf = int(self._nodes_ndf.get(nid, self._ndf))
+            out.append(MassRecord(
+                tag=nid,
+                values=tuple(float(v) for v in broker_mass_components(
+                    m.mass, ndf, int(self._ndm), node=nid)),
+            ))
+        return tuple(out)
+
+    @staticmethod
     def _load_analysis(
         model: Any,
     ) -> "tuple[dict[str, Any], tuple[int, float | None] | None]":
@@ -1116,7 +1179,9 @@ class OpenSeesModel:
             dampings=self._dampings,
             elements=elements_with_conn,
             fixes=self._fixes,
-            masses=self._masses,
+            # ADR 0112 amendment 5: a marked archive re-streams the
+            # snapshot masses after the explicit ones, as the bridge did.
+            masses=self._masses + self._snapshot_mass_records(),
             patterns=self._patterns,
             recorders=self._recorders,
             fem=self._fem,
@@ -1259,6 +1324,10 @@ class OpenSeesModel:
         # ``_write_initial_stress`` re-emits the group on ``to_h5`` and the
         # round-trip stays byte-stable.
         emitter.set_initial_stress_records(self._initial_stress)
+        # ADR 0112 amendment 5: re-mark, never re-stream, so the rewrite
+        # keeps the archive (and model_hash) a fixed point.
+        if self._mass_from_model:
+            emitter.mark_mass_from_model()
 
     def _compose_h5(self, emitter: "H5Emitter", path: str) -> None:
         """Compose the H5 file at ``path`` using the shared composer.

@@ -44,6 +44,7 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
+from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
     _empty_element_slab,
     _empty_fiber_slab,
@@ -284,6 +285,39 @@ class LadrunoReader:
     def partitions(self, stage_id: str) -> list[str]:
         return ["partition_0"]
 
+    def is_empty_partition(self, stage_id: str) -> bool:
+        """``True`` when the stage is marked ``EMPTY_PARTITION = 1``.
+
+        Fork WP-165: a part file whose process held no node of the
+        recorded set writes zero-length ``MODEL/NODES`` and no node or
+        element results for that stage. It is a valid empty contribution
+        to a partitioned set, not a broken file.
+        """
+        grp = self._resolve_stage_group(stage_id)
+        return _attr_int(grp.attrs, "EMPTY_PARTITION", default=0) == 1
+
+    def partition_manifest(self) -> "dict[str, Any]":
+        """The ``INFO`` partition and run-identity attributes.
+
+        Keys ``PARTITIONED``, ``PARTITION_ID``, ``NUM_PARTITIONS`` (int or
+        ``None``) and ``RUN_ID``, ``RUN_ID_SCOPE`` (str or ``None``). A
+        missing attribute is ``None``: files written before the manifest
+        (or before fork WP-165, for the run identity) do not carry it.
+        """
+        info = self._h5["INFO"]
+        out: "dict[str, Any]" = {}
+        for name in ("PARTITIONED", "PARTITION_ID", "NUM_PARTITIONS"):
+            out[name] = (
+                _attr_int(info.attrs, name, default=-1)
+                if name in info.attrs else None
+            )
+        for name in ("RUN_ID", "RUN_ID_SCOPE"):
+            out[name] = (
+                _decode(info.attrs[name]).strip("\x00 ")
+                if name in info.attrs else None
+            )
+        return out
+
     # -- model / fem ---------------------------------------------------
 
     def fem(self) -> "Optional[FEMData]":
@@ -294,9 +328,18 @@ class LadrunoReader:
         if not self._stage_to_grp:
             self._fem_cache = None
             return None
-        # Use the last stage's MODEL (most up-to-date geometry).
-        last_id = f"stage_{len(self._stage_to_grp) - 1}"
-        grp = self._h5[self._stage_to_grp[last_id]]
+        # Use the last stage's MODEL (most up-to-date geometry), skipping
+        # stages marked EMPTY_PARTITION (zero-length NODES, fork WP-165):
+        # a part file that never held a node contributes no FEM.
+        grp = None
+        for i in reversed(range(len(self._stage_to_grp))):
+            cand = self._h5[self._stage_to_grp[f"stage_{i}"]]
+            if _attr_int(cand.attrs, "EMPTY_PARTITION", default=0) != 1:
+                grp = cand
+                break
+        if grp is None:
+            self._fem_cache = None
+            return None
         model_grp = (grp["MODEL"] if "MODEL" in grp else None)
         if model_grp is None:
             self._fem_cache = None
@@ -449,17 +492,17 @@ class LadrunoReader:
         res_name, col = loc
         res = on_nodes[res_name]
         ids = np.asarray(res["ID"][...], dtype=np.int64).flatten()
-        # DATA is chunked [T × nIds × nComp]; read the requested column,
-        # then the requested time steps + node mask in numpy (files are
-        # small and h5py fancy-indexing across axes is limited).
-        data = np.asarray(res["DATA"][...], dtype=np.float64)
+        # DATA is chunked [T × nIds × nComp]: read only the requested
+        # steps, nodes and column (a hyperslab), never the whole array.
+        rows: "Optional[ndarray]" = None
+        sel_ids = ids
         if node_ids is not None:
             want = np.asarray(node_ids, dtype=np.int64)
-            mask = np.isin(ids, want)
-        else:
-            mask = np.ones(ids.size, dtype=bool)
-        sel_ids = ids[mask]
-        vals = data[t_idx][:, :, col][:, mask]  # (T, N)
+            rows = np.flatnonzero(np.isin(ids, want))
+            sel_ids = ids[rows]
+        vals = read_hyperslab(
+            res["DATA"], t_idx, rows, np.array([col]),
+        )[:, :, 0]  # (T, N)
         return NodeSlab(
             component=component, values=vals, node_ids=sel_ids, time=time[t_idx],
         )
@@ -538,7 +581,6 @@ class LadrunoReader:
             )
         cols = [c.strip() for c in _decode(eg.attrs["COMPONENTS"]).split(",")]
         ids = np.asarray(eg["ID"][...], dtype=np.int64).flatten()
-        data = np.asarray(eg["DATA"][...], dtype=np.float64)  # (T, nIds, nComp)
         time = np.asarray(eg["TIME"][...], dtype=np.float64).flatten()
         if region is None:
             row = 0
@@ -551,7 +593,8 @@ class LadrunoReader:
                 )
             row = int(matches[0])
         t_idx = resolve_time_slice(time_slice, time)
-        values = data[t_idx][:, row, :]  # (T, nComp)
+        # (T, nComp): one region row of DATA[T × nIds × nComp].
+        values = read_hyperslab(eg["DATA"], t_idx, np.array([row]))[:, 0, :]
         return cols, values, time[t_idx]
 
     def available_energy_regions(self, stage_id: str) -> list[int]:

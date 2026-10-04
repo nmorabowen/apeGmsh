@@ -810,7 +810,19 @@ significant savings for ground motions.
 
 /opensees/bcs/mass        compound dataset, shape (n_mass_records,)
    fields: target_kind, target, values (float[ndf])
+
+/opensees/bcs@mass_from_model   int8 attr, value 1 (optional, opensees 2.22.0)
 ```
+
+`@mass_from_model` is written only when the bridge declared
+`mass_from_model()` and the snapshot carries masses (ADR 0112 amendment
+5, #1304). The archive then holds no `/opensees/bcs/mass` rows for those
+masses, because they already persist in the neutral zone's `/masses`.
+A reader that rebuilds the model (`OpenSeesModel.build`) must stream
+`/masses` onto each node's effective ndf (`/opensees/nodes_ndf`, else
+`/meta/ndf`), after the explicit `bcs/mass` rows; skipping the marker
+drops every model mass. Any value other than 1 is malformed. The group
+`bcs` exists whenever the marker does, even with no `fix` or `mass` rows.
 
 ## `/opensees/recorders`
 
@@ -1161,7 +1173,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
 |---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.34.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.21.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.22.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** |
@@ -1478,6 +1490,13 @@ detail lives in the `SCHEMA_VERSION` docstring in
   model state, not provenance → folds into `model_hash`. Standard
   additive-minor window semantics (a 2.21 reader opens 2.20 and 2.21
   files; a 2.20.x reader refuses a 2.21.x file).
+- `2.22.0` — ADR 0112 amendment 5 (#1304): additive — new optional
+  `/opensees/bcs@mass_from_model` marker (see [`/opensees/bcs`](#opensees-bcs)).
+  Under `mass_from_model()` the archive skips the mass stream and
+  replay streams the neutral zone's `/masses`. Authored model state →
+  folds into `model_hash`. Standard additive-minor window semantics (a
+  2.22 reader opens 2.21 and 2.22 files; a 2.21.x reader refuses a
+  2.22.x file).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

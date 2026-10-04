@@ -124,7 +124,22 @@ behind it, one more than the design started with.
   carrying its own geometry, so `model_h5=` is optional there: the
   broker can be synthesized from the file's own `MODEL` group. Adding
   this reader touched no composite code — the protocol working under a
-  fourth implementer is the design's proof point.
+  fourth implementer is the design's proof point. It reads each
+  `DATA[T × nIds × nComp]` as a hyperslab of the requested steps, ids and
+  components, so one entity's history never loads the whole array. The
+  merger refuses a part set mixed from different runs: every
+  `<stem>.part-N.ladruno` must report the same `NUM_PARTITIONS`, equal to
+  the file count, and the same `INFO/RUN_ID` unless `RUN_ID_SCOPE` is
+  `"process"` (files written before the fork added `RUN_ID` skip that
+  check). A stage marked `EMPTY_PARTITION = 1`, a part that held none of
+  the recorded nodes, joins the stitch as an empty contribution. Stages
+  pair across parts by name when every part names them alike. A
+  rank-local topology change can stamp ranks with different
+  `MODEL_STAGE[<n>]` numbers for one stage, so when the names differ but
+  the stage counts agree, stages pair by numeric stamp order with a
+  `StageOrderMatchWarning`, and callers see the first non-empty part's
+  names. Different stage counts are refused. The contract is the fork's
+  `ladruno_schema_v1.md` §2.
 - **`from_recorders`** is not a fourth on-disk format: it transcodes
   classic recorder output into a native file and opens *that* through
   `NativeReader`.

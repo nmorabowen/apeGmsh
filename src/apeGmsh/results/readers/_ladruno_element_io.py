@@ -35,6 +35,7 @@ import numpy as np
 from numpy import ndarray
 
 from ...opensees._response_catalog import RESPONSE_CATALOG
+from ._ladruno_hyperslab import read_hyperslab
 
 if TYPE_CHECKING:
     import h5py
@@ -930,13 +931,16 @@ def read_gauss_slab(
             if sel is None:
                 continue
             rows, sel_ids = sel
-            data = np.asarray(bucket["DATA"][...], dtype=np.float64)
+            # Hyperslab: only the requested steps, rows and hit columns.
+            hit_cols = np.array(sorted({col for _, _, col in hits}))
+            col_pos = {int(c): i for i, c in enumerate(hit_cols)}
+            data = read_hyperslab(bucket["DATA"], t_idx, rows, hit_cols)
             gp_param = _gp_param_for(model_elements, key)
 
             # One slab column per (element, matching GP). GP-major within
             # an element so natural_coords line up with element_index.
             for b, gp, col in hits:
-                vals = data[t_idx][:, rows, col]              # (T, E_sel)
+                vals = data[:, :, col_pos[col]]               # (T, E_sel)
                 values_parts.append(vals)
                 eidx_parts.append(sel_ids)
                 g_idx = b.gauss_index(gp)
@@ -1139,15 +1143,15 @@ def _read_element_stations(
     if sel is None:
         return None
     rows, sel_ids = sel
-    data = np.asarray(bucket["DATA"][...], dtype=np.float64)
-
     stations = sorted(station_to_col)
     n_st = len(stations)
     T = int(np.size(t_idx))
     E = sel_ids.size
-    out = np.empty((T, E, n_st), dtype=np.float64)
-    for s_i, st in enumerate(stations):
-        out[:, :, s_i] = data[t_idx][:, rows, station_to_col[st]]
+    # (T, E, n_st), read as a hyperslab of the station columns only.
+    out = read_hyperslab(
+        bucket["DATA"], t_idx, rows,
+        np.array([station_to_col[st] for st in stations]),
+    )
     # localForce end-force → internal-force sign continuity.
     if token == "localForce" and n_st == 2:
         out[:, :, 1] *= -1.0
@@ -1183,18 +1187,20 @@ def _read_section_stations(
     if sel is None:
         return None
     rows, sel_ids = sel
-    data = np.asarray(bucket["DATA"][...], dtype=np.float64)
     gp_param = _gp_param_for(model_elements, bucket_key)
 
     gauss_ids = sorted(gp_to_col)
     n_st = len(gauss_ids)
     T = int(np.size(t_idx))
     E = sel_ids.size
-    out = np.empty((T, E, n_st), dtype=np.float64)
+    # (T, E, n_st), read as a hyperslab of the station columns only.
+    out = read_hyperslab(
+        bucket["DATA"], t_idx, rows,
+        np.array([gp_to_col[gid] for gid in gauss_ids]),
+    )
     xi = np.empty(n_st, dtype=np.float64)
     fallback = _station_xi(n_st)
     for s_i, gid in enumerate(gauss_ids):
-        out[:, :, s_i] = data[t_idx][:, rows, gp_to_col[gid]]
         if gp_param is not None and 0 <= gid < gp_param.shape[0]:
             xi[s_i] = float(gp_param[gid, 0])
         else:
@@ -1312,14 +1318,15 @@ def read_element_slab(
         if sel is None:
             continue
         rows, sel_ids = sel
-        data = np.asarray(bucket["DATA"][...], dtype=np.float64)  # (T, E, ncol)
-        block = data[t_idx][:, rows, :]                           # (T, E_sel, ncol)
+        ncol = int(bucket["DATA"].shape[2])
         if ncol_ref is None:
-            ncol_ref = block.shape[2]
+            ncol_ref = ncol
             ncol_key = key
-        elif block.shape[2] != ncol_ref:
-            dropped.append((key, int(block.shape[2]), sel_ids))
+        elif ncol != ncol_ref:
+            dropped.append((key, ncol, sel_ids))
             continue
+        # (T, E_sel, ncol): only the requested steps and rows are read.
+        block = read_hyperslab(bucket["DATA"], t_idx, rows)
         values_parts.append(block)
         eid_parts.append(sel_ids)
 
@@ -1460,7 +1467,24 @@ def read_fiber_slab(
             if sel is None:
                 continue
             rows, sel_ids = sel
-            data = np.asarray(bucket["DATA"][...], dtype=np.float64)
+            # Hyperslab: the requested steps and rows, and only the
+            # columns of the fiber blocks this read keeps.
+            kept = [
+                b for b in fiber_blocks
+                if want_gp is None or b.gauss_id in want_gp
+            ]
+            if not kept:
+                continue
+            fib_cols = np.concatenate([
+                np.arange(b.col_start, b.col_start + b.multiplicity)
+                for b in kept
+            ])
+            data = read_hyperslab(bucket["DATA"], t_idx, rows, fib_cols)
+            col_base: dict[int, int] = {}
+            pos = 0
+            for b in kept:
+                col_base[id(b)] = pos
+                pos += b.multiplicity
             gp_param = (
                 _gp_param_for(model_elements, key) if is_beam_token
                 else None
@@ -1471,7 +1495,8 @@ def read_fiber_slab(
                     continue
                 nfib = b.multiplicity
                 # (T, E, nfib) — NUM_COMP==1, so the block is fiber-major.
-                block = data[t_idx][:, rows, b.col_start:b.col_start + nfib]
+                p0 = col_base[id(b)]
+                block = data[:, :, p0:p0 + nfib]
                 T = block.shape[0]
                 E = sel_ids.size
                 values_parts.append(block.reshape(T, E * nfib))
