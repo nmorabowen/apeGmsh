@@ -2971,10 +2971,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-two-version-window" class="md-nav__link">
+  <a href="#the-floor-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The two-version window
+        The floor rule
       
     </span>
   </a>
@@ -3779,10 +3779,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-two-version-window" class="md-nav__link">
+  <a href="#the-floor-rule" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The two-version window
+        The floor rule
       
     </span>
   </a>
@@ -4041,9 +4041,9 @@ the file predates the split.</p>
 <p>Note that a broker-only file still stamps <code>opensees_schema_version</code>,
 even though it has no <code>/opensees/</code> group. Its presence is not evidence
 that a solver zone exists; check for the group.</p>
-<h3 id="the-two-version-window">The two-version window<a class="headerlink" href="#the-two-version-window" title="Permanent link">&para;</a></h3>
-<p>A reader declares the version it was written against. Call that
-<code>R.major.R.minor</code>. Given a file at <code>F</code>:</p>
+<h3 id="the-floor-rule">The floor rule<a class="headerlink" href="#the-floor-rule" title="Permanent link">&para;</a></h3>
+<p>A reader declares the version it was written against, <code>R</code>, and the
+oldest version it still understands, its floor <code>L</code>. Given a file at <code>F</code>:</p>
 <table>
 <thead>
 <tr>
@@ -4057,16 +4057,12 @@ that a solver zone exists; check for the group.</p>
 <td><strong>refuse</strong></td>
 </tr>
 <tr>
-<td><code>F.minor == R.minor</code></td>
-<td>accept</td>
-</tr>
-<tr>
-<td><code>F.minor == R.minor - 1</code></td>
-<td>accept</td>
-</tr>
-<tr>
-<td><code>F.minor &lt; R.minor - 1</code></td>
+<td><code>F.minor &lt; L.minor</code></td>
 <td><strong>refuse</strong> — too old</td>
+</tr>
+<tr>
+<td><code>L.minor &lt;= F.minor &lt;= R.minor</code></td>
+<td>accept</td>
 </tr>
 <tr>
 <td><code>F.minor &gt; R.minor</code></td>
@@ -4075,22 +4071,31 @@ that a solver zone exists; check for the group.</p>
 </tbody>
 </table>
 <p>Patch differences are always ignored.</p>
-<p>The window runs <strong>backward only</strong>. A current reader opens the previous
-minor's files; a reader older than the file refuses it. There is no
+<p>The floor for the neutral zone is <strong><code>2.10.0</code></strong>: the layout split of the
+named-index groups into two sides, the last time required content moved.
+Every neutral minor from <code>2.10</code> up to the current one opens, so a
+<code>model.h5</code> written since then keeps working in a newer reader. The
+opensees zone's floor is <code>2.12.0</code> and the results zone's is <code>1.0.0</code>.
+The floor only moves up, and only with a major bump.</p>
+<p>The rule runs <strong>backward only</strong>. A current reader opens every file from
+its floor up; a reader older than the file refuses it. There is no
 forward tolerance, and that is deliberate: a newer minor may carry
 meaning the reader cannot see, and silently rendering a model wrong is
 worse than declining to render it.</p>
 <p>So: <strong>on an unknown version, refuse visibly.</strong> Show the user the file's
-version and the range you support. Never fall back to "parse what I
-recognise and hope" — the whole point of the window is that this
-failure mode is not available.</p>
+version and the range you support, floor to current. Never fall back to
+"parse what I recognise and hope". The one deviation is the apeGmsh
+viewer app, which only reads and opens a newer file of the same major
+with a single warning, because installed apps lag the library by
+design. A new reader of your own should refuse.</p>
 <p>This is the rule apeGmsh's own reader enforces, in
 <code>opensees/_internal/schema_version.py</code> (<code>validate_zone_version</code>). The
-same rule, with the same window, governs the <code>/opensees/</code> bridge zone
+same rule, with its own floor, governs the <code>/opensees/</code> bridge zone
 via <code>opensees_schema_version</code> and the <code>/stages/</code> results zone via
 <code>results_schema_version</code>; a consumer that later reads those zones
 applies this section unchanged, once per zone, against that zone's own
-key.</p>
+key and floor. The decision and its reasons are in
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0113-compatibility-is-a-floor-per-zone.md">ADR 0113</a>.</p>
 <h3 id="what-a-minor-bump-means-for-you">What a minor bump means for you<a class="headerlink" href="#what-a-minor-bump-means-for-you" title="Permanent link">&para;</a></h3>
 <p>A minor bump is <strong>additive</strong>: new datasets, new attributes, new
 optional groups. Existing required fields keep their name, dtype and
@@ -4098,11 +4103,14 @@ meaning.</p>
 <p>Which gives the compatibility promise: <strong>ignore fields you do not
 recognise.</strong> A dataset or attribute appearing that this page does not
 mention is a newer apeGmsh being additive, not a corrupt file. Skip it.</p>
-<p>The exception, and the reason the window exists at all: a minor bump
-that <em>restructures</em> required content walks the window forward and locks
-the prior minor out. That has happened once in the neutral zone (the
-<code>2.10.0</code> split of the named-index groups into two sides). Honour the
-window and you are safe from it.</p>
+<p>Two things sit outside "additive". A change to what an existing field
+<em>means</em> ships a reader shim in apeGmsh, keyed on the version that
+introduced it; the <code>ndm</code> attribute in <code>/meta</code> is the spatial dimension
+from <code>2.34.0</code> and was the mesh dimension before, and loads saved before
+<code>2.26.1</code> sit in one <code>default</code> case. A change to a required structure's
+layout is a <strong>major</strong> bump from now on. It has happened once in the
+neutral zone, as the <code>2.10.0</code> split, and that is why the floor sits
+there. A file below the floor is refused.</p>
 <h2 id="zone-map">Zone map<a class="headerlink" href="#zone-map" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>model.h5
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── /meta                    ← this page
@@ -4631,8 +4639,8 @@ attributes and groups. Encountering one this page does not describe
 means you are reading a newer file, not a broken one. Skip it and carry
 on.</p>
 <p><strong>Refuse what you cannot understand.</strong> The corollary. If
-<code>neutral_schema_version</code> falls outside your two-version window, stop and
-say so, showing the file's version and your supported range. Do not
+<code>neutral_schema_version</code> falls outside your supported range, stop and
+say so, showing the file's version and that range. Do not
 partially render.</p>
 <p><strong>Check yourself against the golden.</strong> The conformance artifact is
 <a href="https://github.com/nmorabowen/apeGmsh/blob/main/tests/fixtures/neutral_zone/box.h5"><code>tests/fixtures/neutral_zone/box.h5</code></a>
@@ -4647,8 +4655,8 @@ so the bytes are reproducible from the repo's own API rather than
 hand-rolled.</p>
 <p><strong>A checklist for a new reader</strong>, in the order the mistakes happen:</p>
 <ol>
-<li>Read <code>/meta</code>'s <code>neutral_schema_version</code>; validate the window; refuse
-   loudly if outside it.</li>
+<li>Read <code>/meta</code>'s <code>neutral_schema_version</code>; check it against your floor
+   and your own version; refuse loudly if outside them.</li>
 <li>Read <code>/nodes/ids</code> and <code>/nodes/coords</code>; build the id → row map.</li>
 <li>Read each <code>/elements/{type}</code>; resolve connectivity <strong>through the
    map</strong>, not by subtracting 1.</li>

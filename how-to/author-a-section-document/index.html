@@ -3877,9 +3877,11 @@ and neither is ever required headlessly.</p>
   a section two flange thicknesses too deep.</li>
 <li><strong><code>units</code> is a label.</strong> apeGmsh is unit-agnostic; the field documents your
   choice, it never converts.</li>
-<li><strong>Version window.</strong> A document is read by loaders at its own minor version
-  and the next one (<code>SECTION_DOC_VERSION</code>); an older apeGmsh refuses a newer
-  document loudly rather than dropping the keys it does not know.</li>
+<li><strong>Version floor.</strong> A document opens in any loader of the same major whose
+  version (<code>SECTION_DOC_VERSION</code>) is at or above the document's, down to the
+  floor (<code>SECTION_DOC_FLOOR</code>, 1.0). An older apeGmsh opens a newer minor of the
+  same major with one warning, keeps the keys it does not know, and refuses a
+  value it cannot interpret, such as an unknown shape kind.</li>
 <li><strong><code>build()</code> needs <code>set_mesh(lc=...)</code></strong> on a continuum document — it fails
   loud before opening any session rather than picking a size for you.</li>
 </ul>
