@@ -191,12 +191,13 @@ def _classify(filename: str) -> int:
 
 
 def _frame_class(f: FrameType) -> int:
-    """``_classify`` by file, except that a ``__main__`` frame outside
-    site-packages is always the user's: a script run in place under the
-    apeGmsh tree (or the stdlib directory) is still the user's script.
-    Launchers that run as ``__main__`` from site-packages stay third-party."""
+    """``_classify`` by file, except that a ``__main__`` frame under the
+    apeGmsh tree is the user's: a script run in place there is still the
+    user's script.  Launchers that run as ``__main__`` stay what they are:
+    stdlib (``python -m cProfile|pdb|trace|profile``) or site-packages
+    (``pytest``, ``ipykernel``)."""
     cls = _classify(f.f_code.co_filename)
-    if cls < _THIRD_PARTY and f.f_globals.get("__name__") == "__main__":
+    if cls == _APEGMSH and f.f_globals.get("__name__") == "__main__":
         return _USER
     return cls
 

@@ -338,6 +338,33 @@ def test_a_main_script_under_the_package_is_the_users(tmp_path, monkeypatch):
         assert (loc.path, loc.line) == want
 
 
+STDLIB_LAUNCHER = '''\
+import runpy
+
+TABLE = runpy.run_path(SCRIPT, run_name="__main__")["TABLE"]
+'''
+
+
+def test_a_stdlib_launcher_main_never_claims_script(tmp_path, monkeypatch):
+    """Fable round 2: ``python -m cProfile|pdb|trace script.py`` runs a stdlib
+    module as ``__main__`` below the user's script.  Simulated by a launcher
+    classified as stdlib that runs the script; ``script`` must stay the
+    user's ``with`` line, never the launcher."""
+    script = tmp_path / "cm_script.py"
+    script.write_text(CM_SCRIPT, encoding="utf-8")
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text(STDLIB_LAUNCHER, encoding="utf-8")
+    monkeypatch.setitem(prov._CLASS_CACHE, str(launcher), prov._STDLIB)
+    table = runpy.run_path(
+        str(launcher), init_globals={"SCRIPT": str(script)},
+        run_name="__main__")["TABLE"]
+    rec = table.record("geometry/box/cm")
+    top = table.location(rec.script)
+    assert (top.path, top.line, top.function) == (
+        Path(os.path.abspath(str(script))).as_posix(),
+        _marked(CM_SCRIPT, "cm_with"), "<module>")
+
+
 def test_parts_add_records_the_instance_label():
     """Finding 3: ``g.parts.add(part, label='b1')`` records ``b1`` itself,
     not the first synthesised sidecar label ``b1.core``.  Declarations
