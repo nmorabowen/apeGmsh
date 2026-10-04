@@ -126,6 +126,16 @@ def test_flagged_neutral_without_fem_opens_and_fem_refuses(
         assert "too old" in text and "ADR 0113 D9" in text and "fem=" in text
         with pytest.raises(SchemaVersionError, match="neutral_schema_version"):
             results.stage("s").fem
+        # Display still works: repr / str / the summary read the stored
+        # fields, not the raising property, and say why the FEM is absent.
+        for shown in (repr(results), str(results), results.inspect.summary()):
+            assert "FEM: unavailable" in shown and "fem=" in shown
+            assert "stage_0" in shown
+        # A composite that needs the FEM names the zone below its floor,
+        # not a bare "requires a bound FEMData".
+        with pytest.raises(SchemaVersionError, match="neutral_schema_version") as exc:
+            results.nodes.nearest_to((0.0, 0.0, 0.0), component="displacement_z")
+        assert "fem=" in str(exc.value)
         bound = results.bind(fem)
         assert bound.fem is fem
         assert bound.stage("s").fem is fem

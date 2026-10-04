@@ -134,7 +134,7 @@
     },
     "Results": {
       "doc": "Top-level results object. Returned by ``Results.from_*`` constructors.",
-      "signature": "Results(reader: 'ResultsReader', *, fem: \"'Optional[FEMData]'\" = None, stage_id: 'Optional[str]' = None, path: 'Optional[Path]' = None, model: \"'OpenSeesModel'\", model_path: 'Optional[Path]' = None, fem_unavailable: 'Optional[str]' = None) -> 'None'",
+      "signature": "Results(reader: 'ResultsReader', *, fem: \"'Optional[FEMData]'\" = None, stage_id: 'Optional[str]' = None, path: 'Optional[Path]' = None, model: \"'OpenSeesModel'\", model_path: 'Optional[Path]' = None) -> 'None'",
       "skill": "references/results.md",
       "symbol": "Results"
     },

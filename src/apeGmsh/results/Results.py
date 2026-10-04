@@ -231,15 +231,16 @@ class Results:
         path: Optional[Path] = None,
         model: "OpenSeesModel",
         model_path: Optional[Path] = None,
-        fem_unavailable: Optional[str] = None,
     ) -> None:
         self._reader = reader
         self._fem = fem
-        # ADR 0113 D9 — set by ``from_native`` when no ``fem=`` was
-        # supplied and the file's embedded ``/model`` is below its
-        # floor: the refusal text. ``/stages`` read; :attr:`fem` raises
-        # it until ``bind(fem)`` supplies a snapshot.
-        self._fem_unavailable = fem_unavailable
+        # ADR 0113 D9 — ``from_native`` sets this after construction
+        # when no ``fem=`` was supplied and the file's embedded
+        # ``/model`` is below its floor: the refusal text. ``/stages``
+        # read; :attr:`fem` raises it until ``bind(fem)`` supplies a
+        # snapshot. Not a constructor keyword: it stays off the public
+        # ``Results`` signature.
+        self._fem_unavailable: Optional[str] = None
         self._stage_id = stage_id
         self._path = path
         # ADR 0020 INV-1 (Phase 8 prune) — ``_model`` is required and
@@ -319,11 +320,12 @@ class Results:
         # we just asserted it is non-None, but route through the helper
         # to keep the resolution semantics in one place.
         assert bound_model is not None
-        return cls(
+        results = cls(
             reader, fem=bound_fem, path=Path(path), model=bound_model,
             model_path=Path(model_path) if model_path is not None else None,
-            fem_unavailable=fem_unavailable,
-        )._with_autoloaded_definitions()
+        )
+        results._fem_unavailable = fem_unavailable
+        return results._with_autoloaded_definitions()
 
     @classmethod
     def from_recorders(
