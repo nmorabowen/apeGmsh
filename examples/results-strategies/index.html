@@ -3882,8 +3882,10 @@ reads with <code>Results.from_mpco(path, fem=fem, model_h5=model_h5)</code>.</p>
 <ul>
 <li><strong><code>model_h5=</code></strong> — an MPCO file carries only a <em>partial</em> model (no
   physical-group regions), so <code>from_mpco</code> needs a sibling <code>model.h5</code>
-  (written by <code>ops.h5(...)</code>) to recover the structural side. Pass
-  <code>fem=</code> too so name-based queries (<code>pg="RoofL"</code>) resolve.</li>
+  (written by <code>ops.h5(...)</code>) to recover the structural side. Its
+  FEMData and <code>ops.stage()</code> names are bound too, so <code>pg="RoofL"</code> and
+  <code>results.stage("gravity")</code> resolve from files alone; <code>fem=</code> is
+  optional and wins when given.</li>
 <li><strong>Local disk</strong> — write the <code>.mpco</code> to local disk and <code>wipe()</code> in the
   same process before reading it. Pointing an MPCO recorder at a synced
   virtual drive (OneDrive / Dropbox / SeaDrive) can crash the kernel on
