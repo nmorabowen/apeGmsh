@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import warnings
 from typing import Any
 
 import h5py
@@ -529,23 +530,122 @@ def test_results_with_floor_stamped_zones_open_through_native_reader(
         results_path, neutral=NEUTRAL_FLOOR, opensees=OPENSEES_FLOOR,
         results=RESULTS_FLOOR,
     )
-    NativeReader(results_path).close()
+    # Warn-as-contract: a file inside every floor opens silently; the D9
+    # warning below fires only on a zone the reader cannot open.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        reader = NativeReader(results_path)
+    with reader:
+        assert reader.unavailable_zones == {}
+        assert reader.fem() is not None
+        assert reader.opensees_model() is not None
 
 
-@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
-def test_results_with_embedded_zone_below_floor_refuses(
-    tmp_path: Path, zone: str,
-) -> None:
-    from apeGmsh.results.readers._native import NativeReader
+# ADR 0113 D9 / INV-11: a results file outlives its embedded model zones.
+# An embedded /model (neutral) or /opensees below its floor no longer
+# expires the file: /stages opens read-only and flagged, model access
+# refuses. An embedded zone NEWER than the reader still refuses (INV-4, D2).
 
+
+def _flagged_results(tmp_path: Path, zone: str, stamp: str) -> Path:
     results_path, _ = _build_composed_results(tmp_path)
     stamps = {NEUTRAL: NEUTRAL_FLOOR, OPENSEES: OPENSEES_FLOOR}
-    stamps[zone] = _below(stamps[zone])
+    stamps[zone] = stamp
     _restamp_results(
         results_path, neutral=stamps[NEUTRAL], opensees=stamps[OPENSEES],
         results=RESULTS_FLOOR,
     )
-    with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+    return results_path
+
+
+@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
+def test_results_with_embedded_zone_below_floor_opens_stages_flagged(
+    tmp_path: Path, zone: str,
+) -> None:
+    """D9: the embedded zone below its floor is flagged, /stages reads."""
+    from apeGmsh.results.readers._native import NativeReader
+    from apeGmsh.results.readers._protocol import ResultLevel
+
+    floor = {NEUTRAL: NEUTRAL_FLOOR, OPENSEES: OPENSEES_FLOOR}[zone]
+    results_path = _flagged_results(tmp_path, zone, _below(floor))
+    with pytest.warns(UserWarning, match=f"{zone}_schema_version") as rec:
+        reader = NativeReader(results_path)
+    with reader:
+        assert len(rec) == 1
+        msg = str(rec[0].message)
+        assert "too old" in msg and str(results_path) in msg
+        # Flagged: the reader names the zone and why.
+        assert set(reader.unavailable_zones) == {zone}
+        assert "too old" in reader.unavailable_zones[zone]
+        # /stages opens read-only.
+        (stage,) = reader.stages()
+        assert stage.kind == "static" and stage.n_steps == 1
+        assert reader.time_vector(stage.id).tolist() == [0.0]
+        assert reader.available_components(stage.id, ResultLevel.NODES) == [
+            "displacement_z",
+        ]
+        slab = reader.read_nodes(stage.id, "displacement_z")
+        assert slab.values.shape[0] == 1
+        # Model access refuses, naming the zone.
+        with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+            reader.opensees_model()
+        if zone == NEUTRAL:
+            with pytest.raises(_PerZoneSchemaError, match="neutral_schema_version"):
+                reader.fem()
+        else:
+            # The neutral zone is inside its floor: the FEM still reads.
+            assert reader.fem() is not None
+
+
+def test_results_with_embedded_neutral_of_an_older_major_is_flagged(
+    tmp_path: Path,
+) -> None:
+    """Below the floor includes the previous major: the reader cannot open
+    that /model either, and /stages do not depend on it."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    floor = SchemaVersion.parse(NEUTRAL_FLOOR)
+    results_path = _flagged_results(
+        tmp_path, NEUTRAL, f"{floor.major - 1}.99.0",
+    )
+    with pytest.warns(UserWarning, match="different major"):
+        reader = NativeReader(results_path)
+    with reader:
+        assert set(reader.unavailable_zones) == {NEUTRAL}
+        assert len(reader.stages()) == 1
+        with pytest.raises(_PerZoneSchemaError, match="neutral_schema_version"):
+            reader.fem()
+
+
+@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
+def test_results_with_embedded_zone_newer_than_reader_refuses(
+    tmp_path: Path, zone: str,
+) -> None:
+    """D2 / INV-4: D9 covers old zones only; a newer embedded zone refuses."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    reader = reader_version(zone)
+    results_path = _flagged_results(
+        tmp_path, zone, f"{reader.major}.{reader.minor + 1}.0",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+            NativeReader(results_path)
+
+
+def test_results_zone_below_its_floor_still_refuses(tmp_path: Path) -> None:
+    """D9 is about the embedded zones; the results zone itself is validated
+    as before (its floor is 1.0.0, so the edge is the previous major)."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    results_path, _ = _build_composed_results(tmp_path)
+    floor = SchemaVersion.parse(RESULTS_FLOOR)
+    _restamp_results(
+        results_path, neutral=NEUTRAL_FLOOR, opensees=OPENSEES_FLOOR,
+        results=f"{floor.major - 1}.0.0",
+    )
+    with pytest.raises(_PerZoneSchemaError, match="results_schema_version"):
         NativeReader(results_path)
 
 
