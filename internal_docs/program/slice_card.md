@@ -34,6 +34,8 @@ Run exactly these commands, and paste a summary of the results in the PR body:
 
 If this is a fix, the regression test must fail with the fix reverted. Say so in the PR body.
 
+A ratchet or exception list pins a baseline (a count or a frozen set) and asserts current <= baseline; rejecting stale entries alone is not a ratchet. Raising the baseline is a maintainer gate (PROGRAM.md §4).
+
 ### Stop condition
 <!-- When to stop and report instead of widening scope. -->
 
