@@ -1033,14 +1033,19 @@ def test_it():
 '''
 
 
+# Built by concatenation so this file never holds the literal qt marker that
+# test_qt_lane_coverage scans for (#1241); the runtime strings are unchanged.
+_QT = "pytest.mark." + "qt"
+
+
 @pytest.mark.parametrize(
     ("mark", "flagged"),
     [
         ("", True),
         ("pytestmark = pytest.mark.slow", True),
-        ("pytestmark = pytest.mark.qt", False),
+        (f"pytestmark = {_QT}", False),
         ("pytestmark = [pytest.mark.subprocess]", False),
-        ("pytestmark: list = [pytest.mark.slow, pytest.mark.qt]", False),
+        (f"pytestmark: list = [pytest.mark.slow, {_QT}]", False),
     ],
 )
 def test_qt_process_isolation_needs_a_module_level_mark(tmp_path: Path, mark: str, flagged: bool) -> None:
