@@ -9,7 +9,7 @@
 //   shift + right drag         pan
 //   middle drag                pan
 //   wheel                      zoom toward the point under the cursor
-//   F                          fit the whole model
+//   F                          frame the selection, else fit the whole model
 
 export type Button = "left" | "middle" | "right";
 export type ClickAction = "select";

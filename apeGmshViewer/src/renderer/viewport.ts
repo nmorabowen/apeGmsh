@@ -4,10 +4,12 @@
 // visibility and selection records; it holds no model fact the store does
 // not.
 //
-// Selection (R1 on #1283): the selected element is drawn as a thick outline
-// in the selection colour over everything (no depth test), its faces filled
-// in that colour, and the rest of the model is dimmed. That reads at
-// full-model zoom for a beam and for a shell alike.
+// Selection (R1 on #1283, and its follow-up on #1308): the selected element
+// is drawn as a thick outline in the selection colour over everything (no
+// depth test), its faces filled in that colour, a screen-space halo of fixed
+// pixel width around all of it (selection.ts), and the rest of the model is
+// dimmed. That reads at full-model zoom for a beam and for a shell alike;
+// `F` frames the selection.
 
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
@@ -18,6 +20,7 @@ import { geometryPairing } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { DeclPath, GeometryInfo, MeshInfo, Pick } from "../state/types.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
+import { fitDistance, HALO_LAYER, SelectionHalo, selectionBounds } from "./selection.ts";
 import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** Inspector width plus its margins (style.css #inspector). */
@@ -64,6 +67,7 @@ export class Viewport {
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
+  private readonly halo: SelectionHalo;
   private pending = false;
   private readonly observer: ResizeObserver;
   private readonly unsubscribe: () => void;
@@ -91,6 +95,7 @@ export class Viewport {
     this.scene.add(this.content, this.highlight, this.geometryLayer);
 
     this.raycaster.params.Line2 = { threshold: 7 };
+    this.halo = new SelectionHalo(this.renderer);
     this.nav = new Navigator({
       camera: this.camera,
       element: this.renderer.domElement,
@@ -110,9 +115,9 @@ export class Viewport {
       },
       fit: () => {
         const s = this.store.get();
-        // On the geometry phase (or with no mesh), F fits the geometry.
+        // On the geometry phase (or with no mesh), F fits the geometry; else the selection, or the whole model.
         if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, this.nav.heading);
-        else if (s.mesh) this.frame(s.mesh, this.nav.heading);
+        else if (s.mesh) this.frame(s.mesh, this.nav.heading, this.selectionFocus());
       },
       changed: () => this.requestRender(),
     });
@@ -128,6 +133,7 @@ export class Viewport {
     this.unsubscribe();
     this.observer.disconnect();
     this.nav.dispose();
+    this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
     this.clear(this.geometryLayer);
@@ -211,6 +217,7 @@ export class Viewport {
     this.camera.setViewOffset(w + p, h, p, 0, w, h);
     this.camera.updateProjectionMatrix();
     for (const m of this.lineMaterials) m.resolution.set(w, h);
+    this.halo.resize(w, h, this.renderer.getPixelRatio());
     this.requestRender();
   }
 
@@ -381,13 +388,14 @@ export class Viewport {
   }
 
   /**
-   * Fit the camera to the model. With no heading (on load): plan view for a
-   * planar model, else isometric. `F` passes the current heading, so only the
-   * distance and the target change.
+   * Fit the camera to the model, or to `focus` (the selection's bounds) when
+   * given. With no heading (on load): plan view for a planar model, else
+   * isometric. `F` passes the current heading, so only the distance and the
+   * target change.
    */
-  frame(info: MeshInfo, heading: Heading | null = null): void {
+  frame(info: MeshInfo, heading: Heading | null = null, focus: { center: readonly [number, number, number]; radius: number } | null = null): void {
     const tri = this.blobs.f32(info.triPositions);
-    this.fit(info.center, info.radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
+    this.fit((focus ?? info).center, (focus ?? info).radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
   }
 
   /** Fit the camera to the geometry sibling, the same way (V2f). */
@@ -411,10 +419,7 @@ export class Viewport {
     }
     this.nav.setHeading(heading);
     // Fit the bounding sphere in the free area, vertically and horizontally.
-    const half = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const free = Math.max(1, (this.host.clientWidth || 1) - this.panelWidth());
-    const halfH = Math.atan(Math.tan(half) * (free / (this.host.clientHeight || 1)));
-    const dist = (r / Math.sin(Math.min(half, halfH))) * 1.08;
+    const dist = fitDistance(r, this.camera.fov, (this.host.clientWidth || 1) - this.panelWidth(), this.host.clientHeight || 1);
     const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
     this.camera.position.copy(c).addScaledVector(back, dist);
     this.nav.target.copy(c);
@@ -439,6 +444,23 @@ export class Viewport {
     if (!targets.length) return null;
     this.aim(clientX, clientY);
     return nearestHit(this.raycaster, targets);
+  }
+
+  /** The bounds `F` frames: the selected elements' drawn primitives, or null when nothing is selected. */
+  selectionFocus(): { center: [number, number, number]; radius: number } | null {
+    const s = this.store.get();
+    const info = s.mesh;
+    if (!info || s.selection.decls.length === 0) return null;
+    const idx = this.indexOf(info);
+    const lines: number[] = [], tris: number[] = [];
+    for (const path of s.selection.decls) {
+      const e = idx.byPath.get(path);
+      const prims = e === undefined ? undefined : idx.prims.get(e);
+      if (!prims) continue;
+      lines.push(...prims.lines);
+      tris.push(...prims.tris);
+    }
+    return selectionBounds(this.blobs.f32(info.linePositions), this.blobs.f32(info.triPositions), lines, tris, 1e-3 * info.radius);
   }
 
   /** The outline of an element's triangles: the edges that belong to one of them only. */
@@ -496,6 +518,8 @@ export class Viewport {
       fill.renderOrder = 9;
       this.highlight.add(fill);
     }
+    for (const o of this.highlight.children) o.layers.enable(HALO_LAYER);
+    this.halo.pulse();
     this.requestRender();
   }
 
@@ -584,7 +608,9 @@ export class Viewport {
   renderNow(): void {
     const t = performance.now();
     this.renderer.render(this.scene, this.camera);
+    if (this.highlight.children.length) this.halo.render(this.scene, this.camera);
     this.lastRenderMs = performance.now() - t;
+    if (this.halo.pulsing) this.requestRender();
   }
 
   gpuName(): string {
