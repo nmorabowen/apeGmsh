@@ -1008,8 +1008,11 @@ class OpenSeesModel:
 
         Absent means the bridge streamed every mass into
         ``/opensees/bcs/mass`` (every file before 2.22.0).  Any value
-        other than 1 is a corrupt marker and raises.
+        other than the integer scalar 1 (an array, a string, a float, 0)
+        is a corrupt marker and raises ``MalformedH5Error``.
         """
+        import numpy as np
+
         from .emitter.h5_reader import MalformedH5Error
 
         f = model.handle
@@ -1019,7 +1022,12 @@ class OpenSeesModel:
         if "mass_from_model" not in attrs:
             return False
         raw = attrs["mass_from_model"]
-        if int(raw) != 1:
+        arr = np.asarray(raw)
+        if (
+            arr.shape != ()
+            or not np.issubdtype(arr.dtype, np.integer)
+            or int(arr) != 1
+        ):
             raise MalformedH5Error(
                 f"/opensees/bcs@mass_from_model is {raw!r}; the writer "
                 "only stamps 1."

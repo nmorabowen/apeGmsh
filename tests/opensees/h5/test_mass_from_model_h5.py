@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import h5py
+import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
@@ -120,11 +121,18 @@ def test_overlap_with_explicit_mass_still_raises_on_h5(fem, tmp_path):
         ops.h5(str(tmp_path / "x.h5"))
 
 
-def test_corrupt_marker_is_refused(archived, tmp_path):
+@pytest.mark.parametrize(
+    "value",
+    [2, 0, np.array([1, 1], dtype=np.int8), "1", 1.0],
+    ids=["two", "zero", "array", "string", "float"],
+)
+def test_corrupt_marker_is_refused(archived, tmp_path, value):
+    """Anything but the integer scalar 1 is MalformedH5Error, never a
+    TypeError from coercing a non-scalar."""
     h5, _ = archived
     bad = tmp_path / "bad.h5"
     bad.write_bytes(Path(h5).read_bytes())
     with h5py.File(bad, "r+") as f:
-        f["opensees/bcs"].attrs["mass_from_model"] = 2
+        f["opensees/bcs"].attrs["mass_from_model"] = value
     with pytest.raises(MalformedH5Error, match="mass_from_model"):
         OpenSeesModel.from_h5(str(bad))

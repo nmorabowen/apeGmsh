@@ -10,4 +10,4 @@ effective ndf when the marker is set, so a replayed deck carries the same
 masses as the original, node by node and dof by dof, and `to_h5` keeps the
 archive a fixed point. The double-count guard against an explicit `ops.mass`
 on the same node still raises on every emitter. OpenSees zone 2.21.0 → 2.22.0
-(additive).
+(additive): opensees-zone 2.20.x files no longer open until the per-zone compatibility floor (#1303) lands.
