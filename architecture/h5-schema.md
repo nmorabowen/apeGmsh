@@ -1145,9 +1145,10 @@ equal-length column datasets.
   site-packages frame. A launcher that runs as `__main__` from
   site-packages (`pytest`, `ipykernel`) therefore never claims it, and
   a call with no user `__main__` frame around it (a test function) gets
-  none. A `__main__` frame outside site-packages is always user code,
-  even when its file lies under the apeGmsh tree. Either is -1 when no
-  such frame exists.
+  none. A `__main__` frame whose file lies under the apeGmsh tree is
+  user code. A stdlib launcher's `__main__` frame (`python -m cProfile`,
+  `pdb`, `trace`) is not, so the walk passes through it. Either is -1
+  when no such frame exists.
   `seq` is the declaration's 0-based capture order in the run.
 * There is one record per user call: none per emitted row, none per
   fanned-out element, and none for calls apeGmsh synthesises.
