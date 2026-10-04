@@ -21,7 +21,12 @@ from .._rc_c2_flags import warn_rc_c2_deck
 
 from typing import Any, Literal, Sequence
 
-from .base import StrategySpec, trim_coords_to_ndm
+from .base import (
+    NUMPY_VALUE_TYPES,
+    StrategySpec,
+    plain_scalar,
+    trim_coords_to_ndm,
+)
 
 
 __all__ = ["PyEmitter"]
@@ -56,7 +61,11 @@ def _fmt_value(v: Any) -> str:
 
     Strings are wrapped in single quotes (Python source). Booleans
     coerce to ``1`` / ``0`` (openseespy does not accept Python bools).
-    Integers and floats use their ``repr`` (round-trip-safe).
+    Integers and floats use their ``repr`` (round-trip-safe). A numpy
+    scalar or 0-d array renders as the plain Python number (see
+    :func:`~apeGmsh.opensees.emitter.base.plain_scalar`, #1336), and a
+    subclass of ``int`` / ``float`` renders as its base value, never
+    through its own ``repr``.
     """
     if isinstance(v, bool):
         return "1" if v else "0"
@@ -66,10 +75,12 @@ def _fmt_value(v: Any) -> str:
         # quotes, but defensively handle the case.
         escaped = v.replace("\\", "\\\\").replace("'", "\\'")
         return f"'{escaped}'"
+    if isinstance(v, NUMPY_VALUE_TYPES):
+        return _fmt_value(plain_scalar(v))
     if isinstance(v, int):
-        return str(v)
+        return str(int(v))
     if isinstance(v, float):
-        return repr(v)
+        return repr(float(v))
     return repr(v)
 
 
@@ -564,7 +575,7 @@ class PyEmitter:
             return 0
 
         rungs_literal = "[" + ", ".join(
-            "(" + ", ".join(repr(a) for a in rung) + ",)"
+            "(" + ", ".join(_fmt_value(a) for a in rung) + ",)"
             for rung in strategy.rungs
         ) + "]"
         sname = stage_marker_name(strategy.name)
