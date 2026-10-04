@@ -40,16 +40,6 @@ OMEGA2_TRANS = 2 * K_COL / M
 OMEGA2_TORSION = (2 * K_COL * D**2 + 2 * G * J / L) / I_RZ
 FIX_MASK = (0, 0, 1, 1, 1, 0)
 
-# The gate (``validate_diaphragm_master_stiffness``) is implemented and
-# unit-tested, but its call from ``apeSees.build()`` is not wired yet
-# (apesees.py was under a concurrent edit).  Strict: the marks come off
-# the moment the call lands, or these XPASS and fail.
-_AWAITING_BUILD_CALL = pytest.mark.xfail(
-    strict=True,
-    reason="#1333: validate_diaphragm_master_stiffness not yet called "
-           "from apeSees.build()",
-)
-
 
 def _frame_with_master() -> FEMStub:
     nodes = _NodesStub(
@@ -90,7 +80,6 @@ def _bridge(fem: FEMStub, *, fix_master: bool) -> apeSees:
     return ops
 
 
-@_AWAITING_BUILD_CALL
 def test_detached_master_warns_on_the_deck_route(tmp_path) -> None:
     ops = _bridge(_frame_with_master(), fix_master=False)
     with pytest.warns(DetachedDiaphragmMasterWarning, match=r"master node 5") as caught:
@@ -106,7 +95,6 @@ def test_fixed_master_is_silent_on_the_deck_route(tmp_path) -> None:
 
 
 @pytest.mark.live
-@_AWAITING_BUILD_CALL
 def test_fix_named_by_the_warning_restores_the_closed_form_modes() -> None:
     pytest.importorskip("openseespy.opensees")
     expected = np.sort([OMEGA2_TORSION, OMEGA2_TRANS, OMEGA2_TRANS])

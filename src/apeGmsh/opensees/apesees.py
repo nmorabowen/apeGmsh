@@ -119,6 +119,7 @@ from ._internal.build import (
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
+    validate_diaphragm_master_stiffness,
     validate_record_ndf_consistency,
     fit_dof_vector,
     fit_fix_mask,
@@ -1533,6 +1534,24 @@ class BuiltModel:
                     *(r for st in self.stage_records for r in st.mass_records),
                 ),
                 mass_from_model=self.mass_from_model,
+            )
+        # #1333 - a rigidDiaphragm master no element touches has its untied
+        # DOFs (uz, rx, ry on a floor) stiffened by nothing: K is singular
+        # there.  Warn, naming the fix; archival emits never solve, so skip.
+        if not _emitter_is_archival:
+            validate_diaphragm_master_stiffness(
+                self.fem, elements, self.ndm, self.ndf, effective_ndf,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records for r in st.fix_records),
+                    *(r for st in self.stage_records
+                      for r in st.support_records),
+                ),
+                sp_records=tuple(sp for p in _plains for sp in p.sps),
+                stage_constraint_records=tuple(
+                    r for st in self.stage_records
+                    for r in st.stage_constraint_records
+                ),
             )
         validate_record_ndf_consistency(
             self.fem, effective_ndf, self.ndm, self.ndf,
@@ -13985,8 +14004,10 @@ class _StageBuilder:
         """Request a ``reset`` command right before this stage's
         ``analyze`` (Phase SSI-2.E).
 
-        Emits the bare OpenSees ``reset`` command, which wipes the
-        Domain state back to the last ``setTime`` call.  Rarely
+        Emits the bare OpenSees ``reset`` command, which reverts the
+        Domain to its start state (``Domain::revertToStart``): the
+        committed and current times both return to 0, so the stage
+        clock restarts at 0, not at the last ``setTime``.  Rarely
         needed — kept for parity with the OpenSees surface so unusual
         workflows don't have to drop to raw Tcl.
 
