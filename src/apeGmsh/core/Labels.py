@@ -1395,6 +1395,9 @@ class Labels(_HasLogging):
                 + f". Available labels: {self.get_all()}"
             )
         self._log(f"rename({old_name!r} -> {new_name!r}, dim={dim})")
+        # ADR 0112 D3: the new name is declared here.
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "neutral", "labels", new_name)
 
     # ------------------------------------------------------------------
     # Promote to physical group
@@ -1460,6 +1463,10 @@ class Labels(_HasLogging):
             f"promote_to_physical({label_name!r}) -> "
             f"PG {out_name!r} (dim={resolved_dim}, {len(tags)} entities)"
         )
+        # ADR 0112 D3: this creates a physical group without passing
+        # through g.physical.add, so it captures the same path.
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "neutral", "physical_groups", out_name)
         return pg_tag
 
     def reverse_map(self, *, dim: int = -1) -> dict[DimTag, str]:

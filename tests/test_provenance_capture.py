@@ -248,3 +248,122 @@ def test_overhead_per_thousand_registrations(g):
         best = min(best, time.perf_counter() - t0)
     assert len(prov.store_for(g)) == 3000
     assert best <= 0.050, f"{best * 1e3:.1f} ms per 1,000 registrations"
+
+
+# ---------------------------------------------------------------------------
+# Fable review of b64272ce (#1319): each test fails on that head
+# ---------------------------------------------------------------------------
+
+
+def _run_script(path: Path, text: str) -> ProvenanceTable:
+    """Run ``text`` as ``__main__`` from ``path``; it leaves ``TABLE``."""
+    path.write_text(text, encoding="utf-8")
+    return runpy.run_path(str(path), run_name="__main__")["TABLE"]
+
+
+def _marked(text: str, marker: str) -> int:
+    for i, line in enumerate(text.splitlines(), start=1):
+        if f"# MARK:{marker}" in line:
+            return i
+    raise AssertionError(marker)
+
+
+def test_promote_to_physical_and_rename_record(g):
+    """Finding 1: both create a name without passing g.physical.add /
+    g.labels.add, so each captures its own path."""
+    v = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+    g.labels.add(3, [v], name="old")
+    g.labels.promote_to_physical("old", pg_name="P")
+    g.labels.rename("old", "new")
+    paths = [r.path for r in prov.table_for(g).records]
+    assert "neutral/physical_groups/P" in paths
+    assert "neutral/labels/new" in paths
+
+
+CM_SCRIPT = '''\
+from contextlib import contextmanager
+
+from apeGmsh import apeGmsh
+from apeGmsh._internal.provenance import table_for
+
+
+@contextmanager
+def building(g):
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cm")  # MARK:cm_site
+    yield
+
+
+with apeGmsh(model_name="cm", verbose=False) as g:
+    with building(g):  # MARK:cm_with
+        pass
+    TABLE = table_for(g)
+'''
+
+
+def test_contextmanager_helper_script_is_the_with_line(tmp_path):
+    """Finding 4: the script walk passes through stdlib ``contextlib``."""
+    script = tmp_path / "cm_script.py"
+    table = _run_script(script, CM_SCRIPT)
+    rec = table.record("geometry/box/cm")
+    site, top = table.location(rec.site), table.location(rec.script)
+    assert (site.line, site.function) == (
+        _marked(CM_SCRIPT, "cm_site"), "building")
+    assert (top.line, top.function) == (
+        _marked(CM_SCRIPT, "cm_with"), "<module>")
+
+
+IN_PACKAGE_SCRIPT = '''\
+from apeGmsh import apeGmsh
+from apeGmsh._internal.provenance import table_for
+
+with apeGmsh(model_name="inpkg", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="slab")  # MARK:call
+    TABLE = table_for(g)
+'''
+
+
+def test_a_main_script_under_the_package_is_the_users(tmp_path, monkeypatch):
+    """Finding 2: a ``__main__`` script that lives under the apeGmsh tree
+    (simulated by classifying its file as apeGmsh) still gets a real site
+    and script, and exactly one record for the call."""
+    script = tmp_path / "in_package.py"
+    monkeypatch.setitem(prov._CLASS_CACHE, str(script), prov._APEGMSH)
+    table = _run_script(script, IN_PACKAGE_SCRIPT)
+    assert [r.path for r in table.records] == ["geometry/box/slab"]
+    rec = table.records[0]
+    want = (Path(os.path.abspath(str(script))).as_posix(),
+            _marked(IN_PACKAGE_SCRIPT, "call"))
+    for row in (rec.site, rec.script):
+        loc = table.location(row)
+        assert (loc.path, loc.line) == want
+
+
+def test_parts_add_records_the_instance_label():
+    """Finding 3: ``g.parts.add(part, label='b1')`` records ``b1`` itself,
+    not the first synthesised sidecar label ``b1.core``.  Declarations
+    made inside the Part's own session stay in the Part's store."""
+    from apeGmsh import Part
+
+    part = Part("beam")
+    with part:
+        part.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="core")
+    try:
+        with apeGmsh(model_name="asm", verbose=False) as asm:
+            asm.parts.add(part, label="b1")
+            paths = [r.path for r in prov.table_for(asm).records]
+    finally:
+        part.cleanup()
+    assert paths == ["neutral/labels/b1"]
+
+
+def test_missing_base_dir_is_malformed(oracle, tmp_path):
+    """Finding 5: a missing ``@base_dir`` is MalformedH5Error, not KeyError."""
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    _, out = oracle
+    broken = tmp_path / "no_base.h5"
+    broken.write_bytes(out.read_bytes())
+    with h5py.File(broken, "r+") as f:
+        del f["provenance"].attrs["base_dir"]
+    with pytest.raises(MalformedH5Error, match="base_dir"):
+        FEMData.from_h5(str(broken))

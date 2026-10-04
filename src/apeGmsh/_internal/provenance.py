@@ -190,6 +190,17 @@ def _classify(filename: str) -> int:
     return cls
 
 
+def _frame_class(f: FrameType) -> int:
+    """``_classify`` by file, except that a ``__main__`` frame outside
+    site-packages is always the user's: a script run in place under the
+    apeGmsh tree (or the stdlib directory) is still the user's script.
+    Launchers that run as ``__main__`` from site-packages stay third-party."""
+    cls = _classify(f.f_code.co_filename)
+    if cls < _THIRD_PARTY and f.f_globals.get("__name__") == "__main__":
+        return _USER
+    return cls
+
+
 def _capture_frames(
     start: FrameType | None,
 ) -> tuple[FrameType | None, FrameType | None, FrameType | None]:
@@ -199,22 +210,25 @@ def _capture_frames(
     to two frames.  ``site`` is the first frame outside apeGmsh and the
     stdlib, and ``entry`` the frame it called (``None`` when ``start`` is
     already outside).  ``script`` is the outermost ``__main__`` frame of
-    the user code around ``site``: the walk out from ``site`` stops at the
-    first apeGmsh, stdlib or site-packages frame, so a launcher that runs
-    as ``__main__`` (``pytest``, ``ipykernel``, ``runpy``) never claims it.
+    the user code around ``site``.  The walk out from ``site`` passes
+    through stdlib frames (``contextlib``, ``functools``, ``runpy``) and
+    stops at the first apeGmsh or site-packages frame, so a launcher that
+    runs as ``__main__`` from site-packages (``pytest``, ``ipykernel``)
+    never claims it.
     """
     entry: FrameType | None = None
     f = start
-    while f is not None and _classify(f.f_code.co_filename) < _THIRD_PARTY:
+    while f is not None and _frame_class(f) < _THIRD_PARTY:
         entry = f
         f = f.f_back
     site = f
     script: FrameType | None = None
     while f is not None:
-        if _classify(f.f_code.co_filename) == _USER:
+        cls = _frame_class(f)
+        if cls == _USER:
             if f.f_globals.get("__name__") == "__main__":
                 script = f
-        elif f is not site:
+        elif cls != _STDLIB and f is not site:
             break
         f = f.f_back
     return site, entry, script

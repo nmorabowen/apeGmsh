@@ -600,6 +600,8 @@ def _read_provenance(parent: Any, label: str) -> Any:
             raise MalformedH5Error(
                 f"{label}: /provenance/{table} columns differ in length")
         columns[table] = cols
+    if "base_dir" not in grp.attrs:
+        raise MalformedH5Error(f"{label}: /provenance@base_dir is missing")
     raw_base = grp.attrs["base_dir"]
     base_dir = (raw_base.decode("utf-8") if isinstance(raw_base, bytes)
                 else str(raw_base))
