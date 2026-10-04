@@ -2,8 +2,10 @@
 
 Phase 1 of the session-save plan
 ([internal_docs/plan_session_save.md](../internal_docs/plan_session_save.md)):
-the session writes the neutral-zone HDF5 on ``end()`` when ``save_to``
-is configured at construction, and exposes a manual ``g.save()``.
+the session writes the neutral-zone HDF5 on ``end()``, at ``save_to``
+when configured at construction (else at the ADR 0112 D1 conventional
+path, see ``tests/test_geometry_artifact.py``), and exposes a manual
+``g.save()``.
 OpenSees enrichment is intentionally **not** invoked here — the session
 knows nothing about downstream solvers.
 """
@@ -49,11 +51,18 @@ def test_autosave_accepts_str_path(tmp_path: Path) -> None:
     assert out.exists()
 
 
-def test_no_save_to_means_no_file(tmp_path: Path) -> None:
-    out = tmp_path / "should_not_exist.h5"
+def test_no_save_to_writes_to_the_artifact_dir_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR 0112 D1 (#1305): with no ``save_to`` the model still lands,
+    at ``$APEGMSH_ARTIFACT_DIR/<model_name>.h5``, and nowhere else."""
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))
     with apeGmsh(model_name="quiet") as g:
         _build_small_mesh(g)
-    assert not out.exists()
+    assert (art / "quiet.h5").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["artifacts"]
 
 
 # ---------------------------------------------------------------------

@@ -75,10 +75,6 @@ class apeGmsh(_SessionBase):
         If True, composites print diagnostic messages.
     """
 
-    # ADR 0112 D1: this session *is* the model; ``end()`` writes
-    # ``model.h5`` and its geometry sibling unconditionally.
-    _WRITES_ARTIFACTS = True
-
     _COMPOSITES = (
         ("inspect",         ".viz.Inspect",                "Inspect",               False),
         ("model",           ".core.Model",                 "Model",                 False),
@@ -138,8 +134,15 @@ class apeGmsh(_SessionBase):
         verbose: bool = False,
         save_to: str | Path | None = None,
         overwrite: bool = True,
+        _artifacts: bool = True,
     ) -> None:
         super().__init__(name=model_name, verbose=verbose)
+        # ADR 0112 D1: this session *is* the model; ``end()`` writes
+        # ``model.h5`` and its geometry sibling unconditionally.  The
+        # private ``_artifacts=False`` is for library-internal sessions
+        # only (section mesh workers, solver cross-checks, the demo
+        # builder); it is not a user-facing opt-out.
+        self._writes_artifacts = bool(_artifacts)
         # Labels (Tier 1 naming) are auto-created from label= kwargs
         # on geometry methods in both Part and Assembly sessions.
         self._auto_pg_from_label = True

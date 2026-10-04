@@ -75,7 +75,8 @@ def solve_and_extract(
     dim = 2 if one_case.areas else 1
     from apeGmsh import apeGmsh
 
-    g = apeGmsh(model_name="xcheck", verbose=False)
+    # library-internal: no ADR 0112 D1 artifacts beside the caller
+    g = apeGmsh(model_name="xcheck", verbose=False, _artifacts=False)
     g.begin()
     try:
         result = import_structural_model(g, one_case)

@@ -308,22 +308,26 @@ def test_curves_are_sampled_parametrically() -> None:
 
 
 def test_snapshot_id_equal_with_geometry_write_on_and_off(monkeypatch, tmp_path: Path) -> None:
+    """The ``off`` arm disables the *capture* (the ``generate()`` hook and
+    the ``end()`` fallback both resolve ``gio.capture_geometry`` at call
+    time), not only the write: a capture that touched the mesh (a refine,
+    a re-generate) would change the ``on`` snapshot and fail here."""
+
     def run(name: str, off: bool) -> tuple[str, Path]:
         d = tmp_path / name
         d.mkdir()
         monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(d))
         if off:
-            monkeypatch.setattr(
-                gio, "write_geometry_h5",
-                lambda *a, **k: (_ for _ in ()).throw(OSError("disabled")),
-            )
+            def no_capture(**kwargs):
+                raise RuntimeError("capture disabled")
+            monkeypatch.setattr(gio, "capture_geometry", no_capture)
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             with apeGmsh(model_name="snap") as g:
                 _small_box(g)
                 sid = g.mesh.queries.get_fem_data().snapshot_id
-        if off:
-            assert [x for x in w if issubclass(x.category, GeometryArtifactWarning)]
+        geo_warnings = [x for x in w if issubclass(x.category, GeometryArtifactWarning)]
+        assert bool(geo_warnings) is off
         return sid, d
 
     on_id, on_dir = run("on", off=False)
@@ -386,7 +390,7 @@ def test_malformed_session_id_is_refused(tmp_path: Path) -> None:
 def test_capture_failure_warns_once_and_session_still_ends(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
 
-    def boom():
+    def boom(**kwargs):
         raise RuntimeError("kernel exploded")
 
     with warnings.catch_warnings(record=True) as w:
@@ -428,6 +432,232 @@ def test_unwritable_artifact_dir_warns_and_finalizes(monkeypatch, tmp_path: Path
             _small_box(g)
     assert not gmsh.isInitialized()
     assert any("autosave" in str(x.message) for x in w)
+
+
+# ---------------------------------------------------------------------------
+# Review findings on 97812b18 (#1331): foreign files, internal sessions,
+# atomic writes, an existing 2-D mesh, and the user's mesh left untouched
+# ---------------------------------------------------------------------------
+
+
+def _mesh_fingerprint() -> tuple[int, int, int]:
+    """Node count, element count and a hash of tags + coords + connectivity."""
+    import hashlib
+
+    tags, coords, _ = gmsh.model.mesh.getNodes()
+    h = hashlib.sha256()
+    h.update(np.asarray(tags, dtype=np.int64).tobytes())
+    h.update(np.asarray(coords, dtype=np.float64).tobytes())
+    n_elems = 0
+    for dim in (1, 2, 3):
+        etypes, etags, enodes = gmsh.model.mesh.getElements(dim)
+        for et, tg, nd in zip(etypes, etags, enodes):
+            n_elems += len(tg)
+            h.update(np.asarray([et], dtype=np.int64).tobytes())
+            h.update(np.asarray(tg, dtype=np.int64).tobytes())
+            h.update(np.asarray(nd, dtype=np.int64).tobytes())
+    return len(tags), n_elems, int.from_bytes(h.digest()[:8], "big")
+
+
+def test_foreign_files_are_never_overwritten(monkeypatch, tmp_path: Path) -> None:
+    """Finding 1: a non-apeGmsh ``data.h5`` / ``data.geometry.h5`` beside a
+    session named ``data`` is left byte-identical, with one warning each."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    model = tmp_path / "data.h5"
+    sibling = tmp_path / "data.geometry.h5"
+    model.write_bytes(b"not an hdf5 file, the user's own data")
+    with h5py.File(sibling, "w") as f:   # a real HDF5 file, but not ours
+        f.create_dataset("x", data=np.arange(3))
+    before = (model.read_bytes(), sibling.read_bytes())
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="data") as g:
+            _small_box(g)
+    assert (model.read_bytes(), sibling.read_bytes()) == before
+    msgs = [str(x.message) for x in w if "not an apeGmsh artifact" in str(x.message)]
+    assert len(msgs) == 2
+    assert not list(tmp_path.glob("*.tmp-*"))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data.geometry.h5", "data.h5"]
+
+
+def test_our_own_artifacts_are_replaced(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="again") as g:
+        _small_box(g)
+    first = _session_id(tmp_path / "again.h5")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with apeGmsh(model_name="again") as g:
+            _small_box(g)
+    second = _session_id(tmp_path / "again.h5")
+    assert first != second
+    assert _session_id(tmp_path / "again.geometry.h5") == second
+
+
+def test_overwrite_false_is_honoured_by_the_automatic_write(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="keep") as g:
+        _small_box(g)
+    model, sibling = tmp_path / "keep.h5", tmp_path / "keep.geometry.h5"
+    before = (model.read_bytes(), sibling.read_bytes())
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="keep", overwrite=False) as g:
+            _small_box(g)
+    assert (model.read_bytes(), sibling.read_bytes()) == before
+    assert len([x for x in w if "overwrite=False" in str(x.message)]) == 2
+
+
+def test_internal_sessions_opt_out(monkeypatch, tmp_path: Path) -> None:
+    """Finding 2: the private ``_artifacts=False`` flag writes nothing."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="internal", _artifacts=False) as g:
+        _small_box(g)
+        assert g._geometry_capture is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_mesh_document_writes_nothing(monkeypatch, tmp_path: Path) -> None:
+    """Finding 2: the section mesh worker (a child interpreter) and the
+    in-process ``build_fem`` leave no artifact anywhere."""
+    from apeGmsh.sections import SectionDocument
+    from apeGmsh.sections._mesh_proc import mesh_document
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    doc = SectionDocument.new(name="plate", kind="continuum")
+    doc.set_material("s", E=200e3, nu=0.3, fy=345.0)
+    doc.add_shape("rect_face", id="s", b=4.0, h=2.0, material="s")
+    doc.set_mesh(lc=0.5)
+    fem = mesh_document(doc.to_dict())
+    assert fem.info.n_elems > 0
+    doc.build()
+    assert list(tmp_path.iterdir()) == []
+    import apeGmsh as pkg
+    pkg_dir = Path(pkg.__file__).resolve().parent
+    assert not list(pkg_dir.rglob("plate*.h5"))
+
+
+def test_failed_model_write_leaves_previous_file_and_no_temp(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Finding 3: ``model.h5`` is written to a temp beside it and replaced."""
+    from apeGmsh.mesh.FEMData import FEMData
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="atomic") as g:
+        _small_box(g)
+    model = tmp_path / "atomic.h5"
+    before = model.read_bytes()
+    real_to_h5 = FEMData.to_h5
+
+    def torn(self, path, *a, **k):
+        Path(path).write_bytes(b"half a file")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(FEMData, "to_h5", torn)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="atomic") as g:
+            _small_box(g)
+    monkeypatch.setattr(FEMData, "to_h5", real_to_h5)
+    assert model.read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp-*"))
+    assert any("disk full" in str(x.message) for x in w)
+
+
+def test_failed_geometry_write_leaves_previous_file_and_no_temp(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Finding 3: a failure after ``/meta`` is written never leaves a torn
+    sibling that still pairs with the model."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="torn") as g:
+        _small_box(g)
+    sibling = tmp_path / "torn.geometry.h5"
+    before = sibling.read_bytes()
+    real_payload = gio._write_payload
+
+    def torn_payload(f, c, ints, floats, **kw):
+        f.create_group("meta").attrs["session_id"] = kw["session_id"]
+        raise OSError("disk full")
+
+    monkeypatch.setattr(gio, "_write_payload", torn_payload)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="torn") as g:
+            _small_box(g)
+    monkeypatch.setattr(gio, "_write_payload", real_payload)
+    assert sibling.read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp-*"))
+    assert any(issubclass(x.category, GeometryArtifactWarning) for x in w)
+
+
+def test_existing_2d_mesh_is_captured_as_mesh_without_generate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Finding 4: a ``from_msh`` import already has 2-D elements; ``end()``
+    captures them as ``source=mesh`` with the display ``lod_size`` and
+    never calls ``generate``."""
+    msh = tmp_path / "plate.msh"
+    with apeGmsh(model_name="writer", _artifacts=False) as g:
+        g.model.geometry.add_rectangle(0, 0, 0, 2, 1, label="plate")
+        g.mesh.sizing.set_global_size(0.25)
+        g.mesh.generation.generate(2)
+        gmsh.write(str(msh))
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    calls: list[int] = []
+    real = gmsh.model.mesh.generate
+    with apeGmsh(model_name="imported") as g:
+        g.loader.from_msh(msh, dim=2)
+        n_before = len(gmsh.model.mesh.getNodes()[0])
+        monkeypatch.setattr(gmsh.model.mesh, "generate",
+                            lambda dim=3: (calls.append(dim), real(dim)))
+        bbox = np.asarray(gmsh.model.getBoundingBox(-1, -1))
+    assert calls == []
+    with h5py.File(tmp_path / "imported.geometry.h5", "r") as f:
+        geo = f["geometry"]
+        assert geo.attrs["source"] == "mesh"
+        assert geo.attrs["status"] == "ok"
+        assert geo.attrs["lod_size"] == pytest.approx(
+            gio.LOD_FRACTION * np.linalg.norm(bbox[3:] - bbox[:3])
+        )
+        assert geo["surfaces/triangles"].shape[0] > 0
+    with h5py.File(tmp_path / "imported.h5", "r") as f:
+        assert f["nodes/ids"].shape[0] == n_before
+
+
+def test_capture_never_mutates_the_users_mesh(monkeypatch, tmp_path: Path) -> None:
+    """Finding 5: node and element counts and a hash of tags, coordinates
+    and connectivity are identical before and after every capture route,
+    and right before ``end()`` finalizes gmsh."""
+    from apeGmsh import _session as S
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    seen: dict[str, tuple] = {}
+    real_release = S._gmsh_release
+
+    def spy_release():
+        seen["at_release"] = _mesh_fingerprint()
+        real_release()
+
+    monkeypatch.setattr(S, "_gmsh_release", spy_release)
+    with apeGmsh(model_name="untouched") as g:
+        _hole_box(g)
+        g.mesh.sizing.set_global_size(0.15)
+        g.mesh.generation.generate(3)
+        fp = _mesh_fingerprint()
+        assert fp[1] > 0
+        capture_geometry(source="mesh")
+        assert _mesh_fingerprint() == fp
+        gio.capture_fallback()                 # reuses the 2-D elements
+        assert _mesh_fingerprint() == fp
+        g._geometry_capture = None             # force end() down the fallback
+    assert seen["at_release"] == fp
+    with h5py.File(tmp_path / "untouched.geometry.h5", "r") as f:
+        assert f["geometry"].attrs["source"] == "mesh"
 
 
 def test_suite_artifact_dir_is_pinned_to_tmp() -> None:

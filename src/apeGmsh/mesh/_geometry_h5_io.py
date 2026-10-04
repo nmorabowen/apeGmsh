@@ -45,9 +45,11 @@ __all__ = [
     "GeometryArtifactWarning",
     "GeometryCapture",
     "GeometryInt32Overflow",
+    "capture_fallback",
     "capture_geometry",
     "capture_temp_mesh",
     "geometry_sibling_path",
+    "is_apegmsh_artifact",
     "write_geometry_h5",
 ]
 
@@ -148,6 +150,27 @@ def geometry_sibling_path(model_path: "str | Path") -> Path:
     """``<dir>/<stem>.geometry.h5`` for a ``<dir>/<stem>.h5`` model file."""
     p = Path(model_path)
     return p.with_name(f"{p.stem}.geometry.h5")
+
+
+def is_apegmsh_artifact(path: "str | Path") -> bool:
+    """True when ``path`` is an HDF5 file whose ``/meta`` carries one of
+    apeGmsh's zone version keys (the envelope key included).
+
+    The automatic D1 write replaces only such files (or files that do
+    not exist): anything else is a foreign file and is left alone.  A
+    file h5py cannot open, or one without ``/meta``, is foreign.
+    """
+    from apeGmsh.opensees._internal.schema_version import ENVELOPE_KEY, _ZONE_KEY
+
+    keys = (ENVELOPE_KEY, *_ZONE_KEY.values())
+    try:
+        with h5py.File(str(path), "r") as f:
+            if "meta" not in f:
+                return False
+            attrs = f["meta"].attrs
+            return any(k in attrs for k in keys)
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +417,26 @@ _TEMP_MESH_FIXED_OPTIONS = {
 }
 
 
+def _has_surface_elements() -> bool:
+    _etypes, tags, _nodes = gmsh.model.mesh.getElements(2)
+    return any(len(t) for t in tags)
+
+
+def capture_fallback(*, curve_samples: int = CURVE_SAMPLES) -> GeometryCapture:
+    """The ``end()`` route for a session with no capture from ``generate()``.
+
+    If the model already carries 2-D elements (a ``from_msh`` import, a
+    mesh made with raw gmsh calls, a ``generate()`` whose capture
+    failed), they are captured as ``source = "mesh"`` and the user's mesh
+    is left exactly as it is: nothing is generated and nothing cleared.
+    Otherwise :func:`capture_temp_mesh` builds and clears a temporary 2-D
+    mesh.
+    """
+    if _has_surface_elements():
+        return capture_geometry(source="mesh", curve_samples=curve_samples)
+    return capture_temp_mesh(curve_samples=curve_samples)
+
+
 def capture_temp_mesh(*, curve_samples: int = CURVE_SAMPLES) -> GeometryCapture:
     """Capture a session that never meshed: a 2-D temporary mesh, then clear.
 
@@ -478,10 +521,15 @@ def write_geometry_h5(
     "/meta/session_id").  Every integer dataset is narrowed and checked
     **before** the file is opened; an overflow raises
     :class:`GeometryInt32Overflow` and leaves no file behind.
+
+    The write is atomic: the payload goes to ``<path>.tmp-<uuid>`` in the
+    same directory and is moved into place with ``os.replace`` only once
+    complete, so a failure mid-write leaves a previous sibling untouched
+    and never a torn file that still pairs with the model.
     """
-    from apeGmsh.opensees._internal.schema_version import (
-        GEOMETRY_KEY, GEOMETRY_SCHEMA_VERSION,
-    )
+    import uuid
+
+    from apeGmsh._atomic_io import replace_with_retry
     from .FEMData import _validated_session_id
 
     sid = _validated_session_id(session_id)
@@ -520,34 +568,59 @@ def write_geometry_h5(
     if len(c.memberships_kind) != len(c.memberships_name) or \
             len(c.memberships_kind) != ints["memberships/dim"].shape[0]:
         raise ValueError("memberships columns differ in length")
-    str_t = h5py.string_dtype(encoding="utf-8")
-
     out = Path(path)
-    with h5py.File(str(out), "w") as f:
-        meta = f.create_group("meta")
-        meta.attrs[GEOMETRY_KEY] = GEOMETRY_SCHEMA_VERSION
-        meta.attrs["session_id"] = sid
-        meta.attrs["model_name"] = str(model_name)
-        meta.attrs["apeGmsh_version"] = str(apegmsh_version)
-        meta.attrs["created_iso"] = datetime.now(tz=timezone.utc).isoformat()
-
-        geo = f.create_group("geometry")
-        geo.attrs["source"] = c.source
-        geo.attrs["gmsh_version"] = str(c.gmsh_version)
-        geo.attrs["curve_samples"] = np.int32(c.curve_samples)
-        geo.attrs["lod_size"] = np.float64(c.lod_size)
-        geo.attrs["bbox"] = np.asarray(c.bbox, dtype=np.float64).reshape(6)
-        geo.attrs["status"] = c.status
-        for grp in ("entities", "points", "curves", "surfaces", "volumes", "memberships"):
-            geo.create_group(grp)
-        for key, arr in ints.items():
-            geo.create_dataset(key, data=arr)
-        for key, arr in floats.items():
-            geo.create_dataset(key, data=arr)
-        geo.create_dataset(
-            "memberships/kind", data=np.asarray(c.memberships_kind, dtype=object), dtype=str_t
-        )
-        geo.create_dataset(
-            "memberships/name", data=np.asarray(c.memberships_name, dtype=object), dtype=str_t
-        )
+    tmp = out.with_name(f"{out.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        with h5py.File(str(tmp), "w") as f:
+            _write_payload(
+                f, c, ints, floats, session_id=sid, model_name=model_name,
+                apegmsh_version=apegmsh_version,
+            )
+        replace_with_retry(tmp, out)
+    finally:
+        tmp.unlink(missing_ok=True)
     return out
+
+
+def _write_payload(
+    f: "h5py.File",
+    c: GeometryCapture,
+    ints: dict[str, np.ndarray],
+    floats: dict[str, np.ndarray],
+    *,
+    session_id: str,
+    model_name: str,
+    apegmsh_version: str,
+) -> None:
+    """The file body, into an open (temporary) HDF5 file."""
+    from apeGmsh.opensees._internal.schema_version import (
+        GEOMETRY_KEY, GEOMETRY_SCHEMA_VERSION,
+    )
+
+    str_t = h5py.string_dtype(encoding="utf-8")
+    meta = f.create_group("meta")
+    meta.attrs[GEOMETRY_KEY] = GEOMETRY_SCHEMA_VERSION
+    meta.attrs["session_id"] = session_id
+    meta.attrs["model_name"] = str(model_name)
+    meta.attrs["apeGmsh_version"] = str(apegmsh_version)
+    meta.attrs["created_iso"] = datetime.now(tz=timezone.utc).isoformat()
+
+    geo = f.create_group("geometry")
+    geo.attrs["source"] = c.source
+    geo.attrs["gmsh_version"] = str(c.gmsh_version)
+    geo.attrs["curve_samples"] = np.int32(c.curve_samples)
+    geo.attrs["lod_size"] = np.float64(c.lod_size)
+    geo.attrs["bbox"] = np.asarray(c.bbox, dtype=np.float64).reshape(6)
+    geo.attrs["status"] = c.status
+    for grp in ("entities", "points", "curves", "surfaces", "volumes", "memberships"):
+        geo.create_group(grp)
+    for key, arr in ints.items():
+        geo.create_dataset(key, data=arr)
+    for key, arr in floats.items():
+        geo.create_dataset(key, data=arr)
+    geo.create_dataset(
+        "memberships/kind", data=np.asarray(c.memberships_kind, dtype=object), dtype=str_t
+    )
+    geo.create_dataset(
+        "memberships/name", data=np.asarray(c.memberships_name, dtype=object), dtype=str_t
+    )

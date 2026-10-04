@@ -47,7 +47,7 @@ class _Generation:
         session._geometry_capture = None
         gmsh.model.mesh.generate(dim)
         self._mesh._log(f"generate(dim={dim})")
-        if dim >= 2 and session._WRITES_ARTIFACTS:
+        if dim >= 2 and session._writes_artifacts:
             self._capture_geometry()
         return self
 
