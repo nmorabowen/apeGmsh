@@ -117,6 +117,11 @@ class Model(_HasLogging):
         if role is not None:
             meta['role'] = role
         self._metadata[(dim, tag)] = meta
+        # ADR 0112 D3: one provenance record per user call, captured
+        # before the label below so the call's record is the geometry's
+        # (the label it creates is the same user call and records none).
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "geometry", kind, label)
 
         # When the owning session has ``_auto_pg_from_label`` set
         # (both Part and apeGmsh sessions), automatically create a
