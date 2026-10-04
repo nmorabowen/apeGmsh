@@ -201,6 +201,18 @@ emit the line (NOTE: the fork wires ``-feast`` into the
 interpreter/openseespy parser only — classic ``OpenSees.exe`` decks
 do not parse it yet, so the deck target is openseespy decks); H5
 no-ops; recording captures.
+
+**Architecture event — ADR 0114 D2/D3 (K1-2, 2026-10-04): the last
+one.** The Protocol gains :meth:`command` as method 75, and the count
+is frozen there (``verbs.EMITTER_METHOD_COUNT``; the lock in
+``tests/opensees/contract/test_verbs_lock.py`` fails a 76th). A new
+OpenSees verb is a ``command()`` token with a ``via="command"`` row in
+``verbs.VERBS``, never a new method. The channel is fail-closed:
+:func:`command_row` raises ``ValueError`` for any token without such a
+row, on every emitter, and no row ships yet (K4 moves the typed fork
+verbs onto it). Only a registered primitive's ``_emit`` with a literal
+verb may call it (the lock scans the callers); there is no user-facing
+``ops.command(...)``.
 """
 from __future__ import annotations
 
@@ -209,6 +221,8 @@ from collections.abc import Sequence
 from typing import Literal, Protocol
 
 import numpy as np
+
+from .verbs import VERBS, Verb
 
 
 @dataclass(frozen=True, slots=True)
@@ -766,6 +780,46 @@ class Emitter(Protocol):
         """
         ...
 
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+    # Method 75, the last. Every later verb is a token here, with a
+    # ``via="command"`` row in ``verbs.VERBS``; the row is the allow-list
+    # (:func:`command_row`), so an unknown token raises on every emitter.
+    def command(self, verb: str, *args: int | float | str) -> None:
+        """Emit the OpenSees command ``verb a1 a2 ...``.
+
+        Tcl writes ``verb a1 a2``; py writes ``ops.verb(a1, a2)``; live
+        calls ``ops.verb(*args)`` and raises when the binding lacks the
+        attribute, naming the row's ``requires``; recording appends
+        ``("command", (verb, *args), {})``; H5 refuses until K1-4 adds
+        ``/opensees/commands``. Callers are a registered primitive's
+        ``_emit`` with a literal verb (and K2's replay), nothing else.
+        """
+        ...
+
+
+def command_row(verb: str) -> Verb:
+    """Return the ``VERBS`` row that allows ``verb`` on the command channel.
+
+    ADR 0114 D3: the channel is fail-closed. A token is allowed only when
+    ``VERBS`` has a row for it **and** that row is ``via="command"``; a
+    Protocol verb's name (``"fix"``) or a token with no row raises
+    ``ValueError``. Every emitter's :meth:`Emitter.command` calls this
+    first, so the five targets refuse the same tokens.
+    """
+    row = VERBS.get(verb)
+    if row is None:
+        raise ValueError(
+            f"command({verb!r}): no VERBS row. A command() token needs a "
+            "via='command' row in opensees/emitter/verbs.py (ADR 0114 D3); "
+            "the channel is fail-closed."
+        )
+    if row.via != "command":
+        raise ValueError(
+            f"command({verb!r}): the VERBS row is via={row.via!r}, not "
+            f"'command'. Call emitter.{verb}(...) directly (ADR 0114 D3)."
+        )
+    return row
+
 
 def trim_coords_to_ndm(
     coords: "tuple[float, ...]", ndm: "int | None",
@@ -799,6 +853,104 @@ def trim_coords_to_ndm(
     if ndm is None or len(coords) <= ndm:
         return coords
     return coords[:ndm]
+
+
+#: Relative tolerance on the spread of a dropped coordinate across nodes:
+#: two nodes share the plane when ``|d - d_ref| <= _PLANE_RTOL * scale``,
+#: with ``scale = max(1, every |coordinate| of both nodes)``.  Mesher
+#: round-off on a planar model sits near 1e-15 relative; a real
+#: out-of-plane offset, in any length unit, is orders above 1e-9.
+_PLANE_RTOL = 1e-9
+
+
+class DroppedAxisGuard:
+    """Trim nodes to ``ndm`` and refuse a trim that loses geometry (#1337).
+
+    The broker carries every node as ``(x, y, z)`` and the emitters trim
+    it to ``ndm`` (:func:`trim_coords_to_ndm`).  The trim is lossless only
+    when the dropped coordinates are the SAME on every node: a model in
+    the plane ``z = z0`` emits a correct 2-D deck whatever ``z0`` is
+    (``interop/strut_tie`` meshes at the STM's ``z`` and re-pads it on
+    readback).  When they differ, distinct nodes can collapse onto each
+    other: a portal frame drawn in x-z under ``ops.model(ndm=2)`` emitted
+    coincident column ends and died inside OpenSees with a
+    coordinate-transformation error.
+
+    One guard per ``model()`` call.  The first trimmed node fixes the
+    reference values of the dropped axes; every later node must match
+    them within :data:`_PLANE_RTOL`, or :meth:`trim` raises
+    :class:`~apeGmsh.opensees._internal.build.BridgeError` naming both
+    nodes, the axis and the two values.  The common case, an exact match
+    (``(0.0,) == (0.0,)``), is one tuple comparison per node.
+
+    ``ndm=None`` is the state before ``model()`` (direct emitter use in
+    tests): coordinates pass through untouched and nothing is recorded,
+    which is what makes the shared class-level :data:`BEFORE_MODEL`
+    instance safe.
+    """
+
+    __slots__ = ("_ndm", "_ref", "_ref_tag", "_ref_coords")
+
+    BEFORE_MODEL: "DroppedAxisGuard"
+
+    def __init__(self, ndm: "int | None") -> None:
+        self._ndm = ndm
+        self._ref: "tuple[float, ...] | None" = None
+        self._ref_tag = 0
+        self._ref_coords: "tuple[float, ...]" = ()
+
+    @property
+    def ndm(self) -> "int | None":
+        return self._ndm
+
+    def trim(self, coords: "tuple[float, ...]", tag: int) -> "tuple[float, ...]":
+        ndm = self._ndm
+        if ndm is None or len(coords) <= ndm:
+            return coords
+        dropped = coords[ndm:]
+        ref = self._ref
+        if ref is None:
+            self._ref = dropped
+            self._ref_tag = tag
+            self._ref_coords = coords
+        elif dropped != ref:
+            self._check(coords, tag, ndm)
+        return coords[:ndm]
+
+    def _check(
+        self, coords: "tuple[float, ...]", tag: int, ndm: int,
+    ) -> None:
+        ref = self._ref_coords
+        scale = max(1.0, *map(abs, coords), *map(abs, ref))
+        tol = _PLANE_RTOL * scale
+        for i in range(ndm, min(len(coords), len(ref))):
+            if abs(coords[i] - ref[i]) > tol:
+                _raise_off_plane(ndm, i, self._ref_tag, ref[i], tag, coords[i])
+
+
+DroppedAxisGuard.BEFORE_MODEL = DroppedAxisGuard(None)
+
+
+def _raise_off_plane(
+    ndm: int, axis: int, ref_tag: int, ref_val: float, tag: int, val: float,
+) -> None:
+    from .._internal.build import BridgeError
+
+    axes = ("x", "y", "z")
+    a = axes[axis]
+    kept = ", ".join(axes[:ndm])
+    where = (
+        "one plane of constant z (normally z = 0): build it in x-y (an x-z "
+        "frame rotated so its vertical axis is y)"
+        if ndm == 2 else "one line parallel to x (constant y and z)"
+    )
+    raise BridgeError(
+        f"ops.model(ndm={ndm}) keeps only {kept}, but the nodes do not share "
+        f"one {a}: node {ref_tag} has {a} = {ref_val!r} and node {tag} has "
+        f"{a} = {val!r}. Dropping {a} would silently move nodes, so distinct "
+        f"nodes can coincide and elements collapse to zero length. A "
+        f"{ndm}-D model must lie in {where}, or declare ops.model(ndm=3)."
+    )
 
 
 #: The numpy types :func:`plain_scalar` unwraps. The deck formatters

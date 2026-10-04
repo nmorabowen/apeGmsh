@@ -46,12 +46,23 @@ class NodalLoadRecord(LoadRecord):
     basis-insensitive record: point loads, tributary lumping,
     resultants, and the gravity/volume equal split (which is exact in
     both bases for constant fields).
+
+    ``source`` (#1338) is the ``kind`` of the pre-mesh definition the
+    record was reduced from, one of
+    :class:`~apeGmsh._kernel.records._kinds.NodalLoadSource` — so a
+    consumer can tell a reduced self-weight (``"gravity"`` /
+    ``"body"``) from a reduced line or surface load after the
+    definitions are gone. ``None`` means unknown: a record synthesized
+    without a definition (the bridge's moment-tensor pairs), or one
+    read from a file older than neutral schema 2.35.0. A consumer that
+    discriminates on it must treat ``None`` as "could be either".
     """
     kind: str = field(init=False, default="nodal")
     node_id: int = 0
     force_xyz: tuple[float, float, float] | None = None
     moment_xyz: tuple[float, float, float] | None = None
     basis: str | None = None
+    source: str | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
     # reference.  ``name`` is the optional caller label and gets

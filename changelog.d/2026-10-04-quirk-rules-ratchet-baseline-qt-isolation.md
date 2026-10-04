@@ -1,0 +1,3 @@
+### ADDED — quirk lint: `ratchet-baseline` and `qt-process-isolation` (slice T1-A, #1240, #1242)
+
+`scripts/check_quirks.py` gains two rules. `ratchet-baseline` flags a module-level `EXCEPTIONS`, `EXTRAS_ONLY`, `ALLOWLIST` or `GRANDFATHERED` literal in `tests/` whose module defines no `*BASELINE*` name, because a check that only rejects stale entries still lets the list grow. `qt-process-isolation` flags a test module that imports a Qt binding or `apeGmsh.sections._properties` and starts a thread without a module-level `pytestmark` of `pytest.mark.qt` or `subprocess`. Each is proven by a self-test against the file that had the bug.

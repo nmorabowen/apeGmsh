@@ -7,7 +7,8 @@
 // - an absent zone (no version key and no group) is ignored: `null`;
 // - a version key without its group, or a group without its key, is a broken
 //   file and raises;
-// - a known zone outside its version window is refused (ADR 0023 INV-2);
+// - a known zone of another major, or below its floor, is refused; a newer
+//   minor of the same major opens with one banner (ADR 0113 D1/D7);
 // - the zone stores no int64 (the integer policy), so an int64 column raises
 //   instead of arriving as BigInt;
 // - every offset, index and enumeration is checked; a bad one raises,

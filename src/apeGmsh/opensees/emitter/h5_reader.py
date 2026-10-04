@@ -511,7 +511,22 @@ class H5Model:
         if not tag_to_vecxz:
             return {}
 
-        ndm = int(self.meta().get("ndm", 3) or 3)
+        # The transf slot differs between the 2-D and 3-D vocabularies,
+        # and before neutral 2.34.0 ``/meta/ndm`` is the mesh dimension
+        # (a 3-D frame with a shell slab stamped 2), so resolve the
+        # ops.model ndm through the shim (#1291, #1358, #1368).
+        # A bridge-only file carries no /nodes, and its stamp needs none;
+        # the salvage of an older stamp does, so the loader refuses.
+        def _coords() -> Any:
+            if "nodes" not in self._neutral:
+                raise MalformedH5Error(
+                    "/meta/ndm predates neutral 2.34.0 and the file has no "
+                    "/nodes; salvaging the ndm needs the model's node "
+                    "coordinates (#1368)."
+                )
+            return self._neutral["nodes/coords"]
+
+        ndm = read_spatial_ndm(self.meta(), self._f, coords=_coords)
 
         # h5_reader lives in opensees.emitter, so it may consult the
         # element vocabulary directly (the viewer cannot — that's why
@@ -1988,22 +2003,45 @@ def read_spatial_ndm(
 
     ``meta`` is the attribute mapping (``H5Model.meta()`` or an h5py
     ``attrs``); ``f`` is the group holding ``opensees/``; ``coords`` is
-    the model's ``(N, 3)`` node coordinates (an array or an h5py
-    dataset), which the salvage never truncates.
+    the model's ``(N, 3)`` node coordinates (an array, an h5py dataset,
+    or a zero-argument callable returning one), which the salvage never
+    truncates.  Only the salvage reads them: a reader whose file may
+    carry no ``/nodes`` passes a loader that raises, so a trusted stamp
+    never needs coordinates and a salvage never runs without them.
+
+    A bridge-only file (``H5Emitter`` with no broker neutral zone) carries
+    a per-zone ``opensees_schema_version`` and no neutral stamp; its
+    ``/meta/ndm`` is the bridge's own ``ops.model`` ndm, so it is read
+    as-is too.  Its envelope ``schema_version`` repeats the opensees
+    version, and borrowing that as a neutral version would misfile it as
+    a pre-2.34.0 neutral file (#1389).  The envelope stands in for the
+    neutral version only on a true single-stamp legacy file, one with no
+    per-zone key at all (ADR 0023).
     """
+    if (
+        read_zone_version(meta, NEUTRAL, envelope_fallback=False) is None
+        and read_zone_version(meta, OPENSEES, envelope_fallback=False)
+        is not None
+    ):
+        return _trusted_meta_ndm(meta, "bridge-only file, no neutral zone")
     version = read_zone_version(meta, NEUTRAL)
     if version is not None and (
         (version.major, version.minor, version.patch)
         >= META_NDM_IS_SPATIAL_FROM
     ):
-        try:
-            return int(meta["ndm"])
-        except KeyError as exc:
-            raise MalformedH5Error(
-                f"/meta/ndm is missing (neutral_schema_version={version}); "
-                "the writer always stamps the ops.model ndm."
-            ) from exc
+        return _trusted_meta_ndm(meta, f"neutral_schema_version={version}")
     return _salvage_pre_spatial_ndm(int(meta.get("ndm", 0)), f, coords)
+
+
+def _trusted_meta_ndm(meta: "Mapping[str, Any]", why: str) -> int:
+    """``/meta/ndm`` of a file whose stamp is the ``ops.model`` ndm."""
+    try:
+        return int(meta["ndm"])
+    except KeyError as exc:
+        raise MalformedH5Error(
+            f"/meta/ndm is missing ({why}); the writer always stamps the "
+            "ops.model ndm."
+        ) from exc
 
 
 def _salvage_pre_spatial_ndm(stamp: int, f: Any, coords: Any) -> int:
@@ -2049,6 +2087,8 @@ def _salvage_pre_spatial_ndm(stamp: int, f: Any, coords: Any) -> int:
         ndm = max(stamp, 3)
     else:
         ndm = stamp
+    if callable(coords):
+        coords = coords()
     _refuse_dropped_coords(ndm, coords, stamp, widths)
     return ndm
 

@@ -43,7 +43,8 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
-from tests.fixtures.schema import NEUTRAL_CURRENT, NEUTRAL_PRIOR_MINOR
+from tests.fixtures.schema import NEUTRAL_CURRENT
+from tests.opensees.h5._opensees_model_fixtures import PRE_NDM_FIX_STAMP
 
 #: A portal in the x-y plane: two columns 3 m tall, a 4 m beam.
 NODE_IDS = np.array([1, 2, 3, 4], dtype=np.int64)
@@ -101,7 +102,7 @@ def _write_pre_fix_portal(tmp_path: Path, *, stamp: int = 1) -> Path:
     ops.h5(str(out))
     with h5py.File(out, "r+") as f:
         f["meta"].attrs["ndm"] = stamp
-        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = PRE_NDM_FIX_STAMP
     return out
 
 
@@ -232,7 +233,7 @@ def _bridge_file(
 
 
 def _legacy_meta(stamp: int) -> dict[str, Any]:
-    return {"ndm": stamp, "neutral_schema_version": NEUTRAL_PRIOR_MINOR}
+    return {"ndm": stamp, "neutral_schema_version": PRE_NDM_FIX_STAMP}
 
 
 @pytest.mark.parametrize(

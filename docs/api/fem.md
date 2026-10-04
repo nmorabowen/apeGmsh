@@ -23,10 +23,12 @@ mismatch between the written and re-derived content raises
 `MalformedH5Error`.
 
 The neutral zone is written at schema `NEUTRAL_SCHEMA_VERSION`
-(`"2.10.0"`, defined in `mesh/_femdata_h5_io.py`); the OpenSees
-zone written by the bridge carries its own `SCHEMA_VERSION`
-(`"2.12.0"`). Readers honour a two-version compatibility window
-([ADR 0023](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0023-per-zone-schema-versioning.md)).
+(defined in `mesh/_femdata_h5_io.py`); the OpenSees zone written by
+the bridge carries its own `SCHEMA_VERSION`. Each zone has a
+compatibility floor, `NEUTRAL_SCHEMA_FLOOR` and `SCHEMA_FLOOR`: a
+reader opens every file from the floor up to its own version and
+refuses anything older or newer
+([ADR 0113](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0113-compatibility-is-a-floor-per-zone.md)).
 
 This is the same neutral zone the session writes via
 `apeGmsh(save_to=...)` / `g.save()` — see the

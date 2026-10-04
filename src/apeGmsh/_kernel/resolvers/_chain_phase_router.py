@@ -266,6 +266,7 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
                 node_id=int(nid),
                 force_xyz=force_xyz,
                 moment_xyz=moment_xyz,
+                source=defn.kind,
             )
             new_fem = new_fem.with_load(rec)
         return new_fem

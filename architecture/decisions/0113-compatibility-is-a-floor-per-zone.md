@@ -535,3 +535,71 @@ the cheap form of D8. The first major bump decides the migrator.
 
 ADR 0080 carries a dated amendment pointing here; its original text is
 unchanged.
+
+## Amendment — 2026-10-04 — Erratum: D8, D9 and the opensees floor (#1303 PR-5)
+
+Append-only. This is an erratum, not a new decision: D1–D10 and INV 1–12
+stand as ratified, and the wording below replaces the three phrases it
+names. It records what the slices that landed (and the one in review)
+found when they met the code, and the maintainer's 2026-10-04 decision on
+#1303.
+
+### E1 — D8: the corpus file is the minor's last commit
+
+D8 says the builder checks out "each schema-bump commit of a zone". The
+builder (`scripts/build_schema_corpus.py`, #1329) writes each minor's
+file with **the minor's last first-parent commit**: the parent of the
+next minor's bump commit, or the base commit for the current minor. Read
+D8's phrase as "the minor's last commit". A patch bump therefore folds
+into its minor (the 2.26.1 writer is the 2.26 file), and each file is
+what that minor's writer looked like when it was last current. The
+manifest names that commit's SHA, so INV 6's "its commit SHA in the
+manifest" holds as written.
+
+### E2 — D9: what "unavailable" means in the shipped code
+
+D9 says that when an embedded zone is below its floor, "`Results.model`
+is unavailable, the reader says so". `Results.model` is not a property:
+`Results.from_native` requires the caller to pass `model=`, so the
+sentence is literally false. The rule's intent, that **results outlive a
+model zone the library can no longer read**, shipped in PR #1339 (merged
+as 2f529850, INV 11) through the accessors that would read the embedded
+zones:
+
+- `NativeReader` opens a file whose embedded `/model` (neutral) or
+  `/opensees` zone is below its floor, reads `/stages` read-only and
+  rewrites nothing. The zone is listed in `NativeReader.unavailable_zones`
+  (zone id to the refusal text), and one `UserWarning` per flagged zone is
+  emitted at open, so two when both zones are below their floors.
+- `Results.fem` raises `SchemaVersionError` with the reader's text plus a
+  hint to pass `fem=` or call `.bind(fem)`. A supplied `fem=` is returned
+  before the reader is asked, so the embedded zone is never read and the
+  file opens normally. `repr` and `summary` show "FEM: unavailable ..."
+  rather than raising.
+- `OpenSeesModel.from_h5(results_path)` refuses on a flagged file, so the
+  bridge model comes from a sidecar archive.
+- An embedded zone **newer** than the reader, and the results zone itself
+  in either direction, still refuse the whole file (D2).
+
+Read D9 as: the file opens and its stages read; the accessor that would
+read the flagged zone refuses with the floor text; the open itself is
+never refused for a flagged embedded zone. `model=` stays required.
+
+### E3 — The opensees floor is 2.12.0, and D9's example follows
+
+The maintainer decided on #1303, 2026-10-04, to raise the opensees floor
+from 2.11.0 to **2.12.0**. The evidence is the corpus (#1329): every
+2.11-era writer stamped a neutral zone below the neutral floor (2.6 or
+2.7, against 2.10), so no 2.11 file opens through `OpenSeesModel.from_h5`.
+This is D3's initial evidence gate working as written ("an era whose
+frozen writer will not run raises that zone's floor past it"), so it is
+not a major bump. #1353 landed it: `SCHEMA_FLOOR = "2.12.0"`, with the
+app's `ZONE_FLOOR` at `opensees: 12`.
+
+Read every "2.11.0" or "opensees 2.11" in D1's table, D7 and D9 as
+**2.12.0**; in particular D9's "(2.11.0)" example becomes "(2.12.0)", and
+the table row's reason becomes "the first era whose files open (2.11 is
+the 0-based rank flip, below the neutral floor in every writer)". The
+rank flip remains the zone's last non-additive bump. ADR 0023's
+amendment of 2026-10-03 states 2.11.0 "at ratification", which was true
+when it was written and is superseded by this erratum.

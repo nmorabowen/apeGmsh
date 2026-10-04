@@ -932,3 +932,150 @@ def test_doc_path_resolves_a_symbol_in_its_scope(tmp_path: Path) -> None:
     assert "has no class `Nope`" in found[1].message
     assert "defines no `missing` in class Cls" in found[2].message
     assert "cannot be checked for `a.b.c`" in found[3].message
+
+
+# --- ratchet-baseline: a shrink-only list that can still grow (#1240) --------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+PRE_FIX_EXCEPTIONS = '''\
+"""Gate configuration. ``EXCEPTIONS`` is a ratchet: it may only shrink."""
+EXCEPTIONS: dict[str, str] = {
+    "apeGmsh.opensees.integration:Lobatto": "no family",
+}
+'''
+
+
+def _real(rel: str) -> str:
+    return (REPO_ROOT / rel).read_text(encoding="utf-8")
+
+
+def test_ratchet_baseline_flags_the_pre_fix_exceptions_shape(tmp_path: Path) -> None:
+    # The shape of tests/families.py when #1232 shipped it (0877f388, before the baseline).
+    _write(tmp_path, "tests/families.py", PRE_FIX_EXCEPTIONS)
+    assert _found(tmp_path) == ["ratchet-baseline:families.py:2"]
+
+
+@pytest.mark.parametrize(
+    "assign",
+    [
+        "EXTRAS_ONLY = frozenset({'a'})",
+        "ALLOWLIST = ['a']",
+        "GRANDFATHERED = ('a',)",
+        "EXCEPTIONS = {'a'}",
+        "EXCEPTIONS: set[str] = {'a'}",
+    ],
+)
+def test_ratchet_baseline_flags_every_list_shape(tmp_path: Path, assign: str) -> None:
+    _write(tmp_path, "tests/a.py", assign + "\n")
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["ratchet-baseline"]
+
+
+@pytest.mark.parametrize("rel", ["tests/families.py", "tests/opensees/unit/test_element_capability_unknown.py"])
+def test_ratchet_baseline_passes_the_fixed_files_from_main(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _real(rel))
+    assert [f for f in quirks.scan(tmp_path) if f.rule == "ratchet-baseline"] == []
+
+
+def test_ratchet_baseline_passes_other_names_and_non_literals(tmp_path: Path) -> None:
+    _write(tmp_path, "tests/a.py", "EXCEPTIONS_BASELINE = 3\nOTHER = {'a'}\nEXCEPTIONS = build()\n")
+    assert _found(tmp_path) == []
+
+
+def test_ratchet_baseline_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/a.py", "EXCEPTIONS = {'a'}\n")
+    assert _found(tmp_path) == []
+
+
+def test_ratchet_baseline_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "tests/a.py",
+        "# apegmsh-lint: ratchet-baseline-ok a fixed table, not a ratchet.\nALLOWLIST = {'a'}\n",
+    )
+    assert _found(tmp_path) == []
+
+
+# --- qt-process-isolation: Qt + a thread in the shared process (#1242) -------
+
+B6_BUG_COMMIT = "8269206d"
+B6 = "tests/sections/test_builder_gui_b6.py"
+
+
+def _b6_at(commit: str) -> str:
+    import subprocess
+
+    done = subprocess.run(
+        ["git", "show", f"{commit}:{B6}"], cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8"
+    )
+    if done.returncode != 0:
+        pytest.skip(f"{commit} is not in this clone")
+    return done.stdout
+
+
+def test_qt_process_isolation_flags_b6_at_the_commit_that_had_the_bug(tmp_path: Path) -> None:
+    _write(tmp_path, B6, _b6_at(B6_BUG_COMMIT))
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["qt-process-isolation"]
+
+
+def test_qt_process_isolation_passes_b6_on_main(tmp_path: Path) -> None:
+    _write(tmp_path, B6, _real(B6))
+    assert quirks.scan(tmp_path) == []
+
+
+QT_THREAD = '''\
+import threading
+import pytest
+{mark}
+def test_it():
+    qt = pytest.importorskip("qtpy.QtWidgets")
+    threading.Thread(target=print).start()
+'''
+
+
+# Built by concatenation so this file never holds the literal qt marker that
+# test_qt_lane_coverage scans for (#1241); the runtime strings are unchanged.
+_QT = "pytest.mark." + "qt"
+
+
+@pytest.mark.parametrize(
+    ("mark", "flagged"),
+    [
+        ("", True),
+        ("pytestmark = pytest.mark.slow", True),
+        (f"pytestmark = {_QT}", False),
+        ("pytestmark = [pytest.mark.subprocess]", False),
+        (f"pytestmark: list = [pytest.mark.slow, {_QT}]", False),
+    ],
+)
+def test_qt_process_isolation_needs_a_module_level_mark(tmp_path: Path, mark: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", QT_THREAD.format(mark=mark))
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["qt-process-isolation"] if flagged else [])
+
+
+@pytest.mark.parametrize(
+    ("source", "flagged"),
+    [
+        ("import threading\ndef test_it():\n    threading.Thread(target=print)\n", False),  # a thread, no Qt
+        ("from qtpy import QtWidgets\ndef test_it():\n    pass\n", False),                  # Qt, no thread
+        (
+            "from apeGmsh.sections._properties import PropertiesController\n"
+            "def test_it():\n    PropertiesController()\n",
+            False,  # the _properties worker is a thread only: no Qt binding, not the #1242 class
+        ),
+    ],
+)
+def test_qt_process_isolation_needs_both_halves(tmp_path: Path, source: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", source)
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["qt-process-isolation"] if flagged else [])
+
+
+def test_qt_process_isolation_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/viewers/a.py", QT_THREAD.format(mark=""))
+    assert _found(tmp_path) == []
+
+
+def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -> None:
+    rel = "tests/sections/test_properties.py"
+    _write(tmp_path, rel, _real(rel))
+    assert quirks.scan(tmp_path) == []

@@ -410,7 +410,7 @@ neutral zone**; `apeSees(fem).h5(path)` writes **both** zones (neutral +
 `/opensees/`) — the canonical two-zone file the viewer and `Results`
 consume. Write traps (`save_to=` autosaves on `end()` not eagerly;
 `overwrite=` / `RuntimeError` cases) and the per-zone schema constants +
-reader window are all in **`fem-broker.md` Part B** — not repeated here.
+compatibility floor are all in **`fem-broker.md` Part B** — not repeated here.
 
 ---
 

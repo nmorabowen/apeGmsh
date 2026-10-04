@@ -213,10 +213,10 @@ def test_encode_rejects_empty_weights_array():
         _encode_reinforce_tie(_bad_tie(weights=np.empty(0)))
 
 
-def test_reads_prior_minor_file_without_ties_group_within_window(tmp_path):
-    # An in-window prior-minor file with the /reinforce_ties group stripped
-    # must still read → empty ties. (Versions older than the reader's
-    # two-version window are rejected; see tests.fixtures.schema.)
+def test_reads_prior_minor_file_without_ties_group_at_or_above_floor(tmp_path):
+    # A prior-minor file with the /reinforce_ties group stripped
+    # must still read → empty ties. (Versions below the neutral floor
+    # are rejected; see tests.fixtures.schema.)
     import h5py
 
     from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR

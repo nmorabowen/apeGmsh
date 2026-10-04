@@ -85,7 +85,16 @@ __all__ = [
 
 
 #: Schema version stamped by :func:`write_fem_h5` and the standalone
-#: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone
+#: ``FEMData.to_h5(path)`` flow.
+#:
+#: Reading the history below: the entries from 2.5.0 to 2.33.0 say "per
+#: ADR 0023's two-version reader window, readers tolerate N-1 and N".
+#: That was the rule when each minor shipped and the sentence is kept as
+#: the record. ADR 0113 retired the window: today a reader opens every
+#: minor from :data:`NEUTRAL_SCHEMA_FLOOR` (2.10.0) up to the current one,
+#: and refuses a newer minor (INV-4).
+#:
+#: Phase 8.5 added the neutral zone
 #: (`2.0.0 → 2.1.0`); Phase 8.6 added the ``fem_eids`` dataset under
 #: each ``/opensees/element_meta/{type_token}/`` group
 #: (`2.1.0 → 2.2.0`).  Phase 8.7 commit 2 added the
@@ -437,7 +446,20 @@ __all__ = [
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.34.0"
+#:
+#: v2.35.0 (October 2026, #1338 — nodal load ``source``): additive —
+#: adds the ``source`` (utf8) column to ``nodal_load_payload_dtype``.
+#: It carries the ``kind`` of the definition a nodal load was reduced
+#: from (``"gravity"``, ``"line"``, ``"surface"``, ... —
+#: ``NodalLoadSource``), so the bridge's ``WarnBodyForceDoubleCount``
+#: guard can tell a reduced self-weight from a vertical footing load
+#: after the definitions are gone; ``""`` decodes to ``None``
+#: (unknown).  Presence-probed on read (``"source" in p.dtype.names``);
+#: a 2.34.x file lacks the column and decodes ``source=None``, which
+#: the guard treats as a possible gravity case (it warns, as every
+#: reader before this minor did).  An additive column still bumps the
+#: minor (ADR 0113 D5).
+NEUTRAL_SCHEMA_VERSION: str = "2.35.0"
 
 #: Oldest neutral minor the reader opens (ADR 0113 (#1303)): the B2 layout
 #: split. Every later minor is additive and presence-probed, or carries a
@@ -1023,8 +1045,7 @@ def _write_partitions(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.partitions`` / ``select(partition=k)`` survive the H5
-    round-trip.  Per ADR 0023's two-version window, readers in 2.4.x
-    silently lack this group.
+    round-trip.  Readers in 2.4.x silently lack this group.
     """
     parts = getattr(fem.nodes, "_partitions", None) or {}
     if not parts:
@@ -1129,8 +1150,8 @@ def _write_parts(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.nodes.select(target=part_label)`` / ``fem.elements.select
-    (target=part_label)`` survive the H5 round-trip.  Per ADR 0023's
-    two-version window, readers in 2.4.x silently lack this group.
+    (target=part_label)`` survive the H5 round-trip.  Readers in 2.4.x
+    silently lack this group.
     """
     node_map = getattr(fem.nodes, "_part_node_map", None) or {}
     elem_map = getattr(fem.elements, "_part_elem_map", None) or {}
@@ -2497,7 +2518,8 @@ def _write_nodal_loads(parent: Any, load_set: Any) -> None:
                 "node", str(int(rec.node_id)), "nodal",
                 (int(rec.node_id), tuple(float(x) for x in force),
                  tuple(float(x) for x in moment), rec.name or "",
-                 getattr(rec, "basis", None) or ""),
+                 getattr(rec, "basis", None) or "",
+                 rec.source or ""),
             )
         safe = str(pattern).replace("/", "_") or "default"
         parent.create_dataset(safe, data=rows)
@@ -4225,6 +4247,15 @@ def _read_loads(
                     if "basis" in (p.dtype.names or ())
                     else None
                 )
+                # ``source`` added in neutral schema 2.35.0 (#1338) —
+                # presence-probed; older files decode ``None`` (unknown),
+                # which the bridge's double-count guard treats as a
+                # possible gravity case.
+                source = (
+                    (_str(p["source"]) or None)
+                    if "source" in (p.dtype.names or ())
+                    else None
+                )
                 nodal.append(NodalLoadRecord(
                     pattern=_str(pattern_safe),
                     name=_opt_name(p),
@@ -4232,6 +4263,7 @@ def _read_loads(
                     force_xyz=force if any(np.isfinite(force)) else None,
                     moment_xyz=moment if any(np.isfinite(moment)) else None,
                     basis=basis,
+                    source=source,
                 ))
 
     if "element" in parent:

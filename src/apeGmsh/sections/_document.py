@@ -40,6 +40,7 @@ non-overlapping compositions.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
 from dataclasses import dataclass
@@ -830,7 +831,16 @@ class SectionDocument:
         )
 
     def _resolve_uniaxial(self, ops: Any, names: "list[str]") -> dict[str, Any]:
-        """One bridge uniaxial material per document material name."""
+        """One bridge uniaxial material per document material name.
+
+        The spec's ``params`` are bound against the constructor's own
+        signature before the call, so a key the bridge does not take
+        (or a required one the document lacks) refuses as
+        :class:`SectionDocumentError` naming the material, the key and
+        the document version (#1354). Only that binding failure is
+        translated: a ``TypeError`` the constructor raises on its own
+        propagates untouched. No bridge signature lives here; the
+        factory the caller hands in is introspected."""
         table = self._data["materials"]
         mats: dict[str, Any] = {}
         for mname in names:
@@ -853,7 +863,17 @@ class SectionDocument:
                     f"material {mname!r}: ops.uniaxialMaterial has no "
                     f"constructor {spec['type']!r}."
                 )
-            mats[mname] = factory(**spec["params"])
+            params = spec["params"]
+            try:
+                inspect.signature(factory).bind(**params)
+            except TypeError as e:
+                raise SectionDocumentError(
+                    f"material {mname!r}: ops.uniaxialMaterial."
+                    f"{spec['type']}() rejects params "
+                    f"{sorted(params)} — {e} (section_doc_version "
+                    f"{self._data['section_doc_version']})."
+                ) from e
+            mats[mname] = factory(**params)
         return mats
 
     def _to_computed_fiber(self, ops: Any, *, name: str | None) -> Any:

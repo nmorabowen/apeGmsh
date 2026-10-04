@@ -177,9 +177,11 @@ and neither is ever required headlessly.
   a section two flange thicknesses too deep.
 * **`units` is a label.** apeGmsh is unit-agnostic; the field documents your
   choice, it never converts.
-* **Version window.** A document is read by loaders at its own minor version
-  and the next one (`SECTION_DOC_VERSION`); an older apeGmsh refuses a newer
-  document loudly rather than dropping the keys it does not know.
+* **Version floor.** A document opens in any loader of the same major whose
+  version (`SECTION_DOC_VERSION`) is at or above the document's, down to the
+  floor (`SECTION_DOC_FLOOR`, 1.0). An older apeGmsh opens a newer minor of the
+  same major with one warning, keeps the keys it does not know, and refuses a
+  value it cannot interpret, such as an unknown shape kind.
 * **`build()` needs `set_mesh(lc=...)`** on a continuum document — it fails
   loud before opening any session rather than picking a size for you.
 

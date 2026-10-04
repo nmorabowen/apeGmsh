@@ -629,6 +629,39 @@ ops.tcl("model.tcl", run=True)   # staged decks emit via Tcl/Py text ONLY
 ```
 <!-- verified: tests/opensees/unit/test_stages.py::test_stage_builder_records_complete_stage, tests/opensees/unit/test_stages.py::test_stage_builder_missing_analysis_raises -->
 
+**The stage clock restarts at 0.** Every stage closes with
+`loadConst -time 0.0`: its loads become the permanent baseline and the
+pseudo-time goes back to 0. The next stage's increments therefore land at
+`t0 + h, t0 + 2h, ..., t0 + n*h`. `t0` is 0 unless `s.set_time(t0)` sets it
+(and `s.reset()` before the loop puts it back at 0). `h` is `dt` under
+`Transient`, or the `LoadControl` `dlam` under `Static`. A series is read on
+this stage clock, not on a global one, so a load history that continues
+across stages needs `s.set_time`:
+
+```python
+with ops.stage(name="s2") as s:              # meant to run over t in [1, 2]
+    s.set_time(1.0)                          # without it: t in [0, 1]
+    with s.pattern(series=ops.timeSeries.Path(time=(1.0, 2.0),
+                                              values=(0.0, 2.0))) as p:
+        p.load(pg="Tip", forces=(1.0, 0.0))
+    s.analysis(test=..., algorithm=..., constraints=..., numberer=...,
+               system=..., analysis=ops.analysis.Static(),
+               integrator=ops.integrator.LoadControl(dlam=0.25))
+    s.run(n_increments=4, dt=0.25)          # increments at 1.25 .. 2.0
+```
+
+Without `s.set_time(1.0)` that `Path` reads 0 at all four increments, so the
+deck would exit 0 having applied nothing. The stage now raises
+`SeriesOutsideStageWindowWarning` (from `apeGmsh.opensees`) when it closes,
+naming the series' support, the stage's window, and the `s.set_time` that
+fixes it. It evaluates the series at every increment, as OpenSees does: a
+`time=` Path is 0 outside `[time[0], time[-1]]` and ignores `start_time`. A
+`dt=` Path is 0 before `start_time` and from its last sample on. A `file=`
+Path is not checked, and neither is a stage whose analysis solves for its
+advance (`DisplacementControl`, `ArcLength`, an adaptive `LoadControl` with
+`min_lam`/`max_lam`, `VariableTransient`).
+<!-- verified: tests/opensees/unit/test_stage_series_window.py -->
+
 ### Stage verbs — PUSH vs PULL vs CLAIM
 
 The three semantics are distinct (don't confuse them):

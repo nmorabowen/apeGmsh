@@ -17,6 +17,16 @@ import numpy as np
 
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
+from apeGmsh.opensees.emitter.h5_reader import META_NDM_IS_SPATIAL_FROM
+
+#: The last neutral minor before #1291's ``/meta/ndm`` fix: one below the
+#: salvage shim's own ``META_NDM_IS_SPATIAL_FROM``. The ndm salvage tests
+#: restamp a current file with it; ``NEUTRAL_PRIOR_MINOR`` cannot serve,
+#: because it became 2.34.0 itself at the 2.35.0 bump (#1338) and moves
+#: again at every later one.
+PRE_NDM_FIX_STAMP = "{}.{}.0".format(
+    META_NDM_IS_SPATIAL_FROM[0], META_NDM_IS_SPATIAL_FROM[1] - 1,
+)
 from apeGmsh.mesh.FEMData import (
     ElementComposite,
     FEMData,
@@ -32,11 +42,18 @@ __all__ = [
 ]
 
 
-def build_simple_frame_fem() -> FEMData:
-    """One-column FEMData with the ``"Cols"`` element PG populated."""
+def build_simple_frame_fem(*, ndm: int = 3) -> FEMData:
+    """One-column FEMData with the ``"Cols"`` element PG populated.
+
+    The column runs along z, or along y with ``ndm=2`` so a 2-D model
+    lies in the z = 0 plane (#1337).
+    """
+    if ndm not in (2, 3):
+        raise ValueError(f"fixture ndm must be 2 or 3, got {ndm!r}")
+    top = [0.0, 1.0, 0.0] if ndm == 2 else [0.0, 0.0, 1.0]
     node_ids = np.array([1, 2], dtype=np.int64)
     node_coords = np.array(
-        [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64,
+        [[0.0, 0.0, 0.0], top], dtype=np.float64,
     )
     line_info = make_type_info(
         code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=1,

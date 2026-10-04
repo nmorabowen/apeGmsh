@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
-from .base import trim_coords_to_ndm
+from .base import DroppedAxisGuard, command_row
 
 if TYPE_CHECKING:
     from .base import StrategySpec
@@ -33,15 +33,18 @@ class RecordingEmitter:
     #: Mirrors the concrete emitters so a parity sweep compares like
     #: with like — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self.calls.append(("model", (), {"ndm": ndm, "ndf": ndf}))
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = self._dropped_axes.trim(coords, tag)
         kwargs: dict[str, Any] = {}
         if ndf is not None:
             kwargs["ndf"] = ndf
@@ -377,6 +380,12 @@ class RecordingEmitter:
         self.calls.append(
             ("parallel_runtime_fallback_system", (primary, fallback), {}),
         )
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        command_row(verb)
+        self.calls.append(("command", (verb, *args), {}))
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) ----
 

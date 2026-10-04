@@ -59,8 +59,10 @@ export const PROVENANCE_TARGET = { major: 1, minor: 0 } as const;
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
  * reads; it equals the Python writer constants). Neutral 2.10 is the B2 layout
- * split (physical groups and labels side-partitioned); opensees 2.11 is the
- * 0-based rank flip; the ADR 0112 zones start at their first version.
+ * split (physical groups and labels side-partitioned); opensees 2.12 is the
+ * first era whose files open (2.11 is the 0-based rank flip, but every 2.11
+ * writer stamped a neutral zone below the neutral floor, so no 2.11 file
+ * opens); the ADR 0112 zones start at their first version.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
 export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0 } as const;

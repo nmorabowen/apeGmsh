@@ -1,0 +1,20 @@
+# The VERBS ledger (ADR 0114): verbs H5Emitter drops silently today.
+# Shrink-only. Remove a line in the PR that moves its row to archive or
+# refuse, and lower N_LEDGER with it. Never add a line or raise N_LEDGER.
+# Ratified end state: the contact, rebar and embed rows and
+# equationConstraint (#1341, comment 5981885789, Q3).
+N_LEDGER = 14
+contact
+contact_plane
+contact_surface
+eigen
+eigen_feast
+embedded_node
+embedded_rebar
+equationConstraint
+modal_damping
+modal_properties
+modal_response_history
+profiler
+rayleigh
+response_spectrum_analysis

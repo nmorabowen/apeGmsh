@@ -648,14 +648,30 @@ class DomainCapture:
 
         with h5_reader.open(str(model_path)) as model:
             meta = model.meta()
-            try:
-                ndm = int(meta["ndm"])
-                ndf = int(meta["ndf"])
-            except KeyError as exc:
+            if "ndm" not in meta or "ndf" not in meta:
                 raise RuntimeError(
                     f"DomainCapture.from_h5: {model_path!s} has no "
                     f"ndm/ndf attrs in /meta (got {sorted(meta)!r})."
-                ) from exc
+                )
+            def _coords() -> Any:
+                nodes = model.nodes()
+                if "coords" not in nodes:
+                    raise RuntimeError(
+                        f"DomainCapture.from_h5: {model_path!s} predates "
+                        "neutral 2.34.0 and has no /nodes/coords; "
+                        "salvaging its ndm needs the model's node "
+                        "coordinates (#1368)."
+                    )
+                return nodes["coords"]
+
+            # Before neutral 2.34.0 ``/meta/ndm`` is the mesh dimension:
+            # the shim salvages the ops.model one from the file's own
+            # transforms and node coordinates (loaded only then), or
+            # refuses (#1291, #1358, #1368).
+            ndm = h5_reader.read_spatial_ndm(
+                meta, model.handle, coords=_coords,
+            )
+            ndf = int(meta["ndf"])
             if ndm < 1:
                 # ``0`` is the broker-only "undeclared" sentinel (#1291);
                 # resolving a spec against it would expand components

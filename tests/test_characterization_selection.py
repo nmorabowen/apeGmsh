@@ -168,7 +168,7 @@ def _selection_mixin(fem):
     production resolver verbatim, with no results file / openseespy.
     """
     comp = NodeResultsComposite.__new__(NodeResultsComposite)
-    comp._r = types.SimpleNamespace(_fem=fem)
+    comp._r = types.SimpleNamespace(_fem=fem, _fem_unavailable=None)
     return comp
 
 
