@@ -614,6 +614,9 @@ class LiveOpsEmitter:
         self._before_step_hooks: list[Callable[[], None]] = []
         self._after_step_hooks: list[Callable[[], None]] = []
         self._step_hooks_registered: bool = False
+        # ADR 0113: the three persistent IMPL-EX parameter tags
+        # (dTime, dTimeCommit, dTimeInitial), set by implex_time_declare.
+        self._implex_tags: tuple[int, int, int] | None = None
         # Fork-only element gate (B3). Tracks which fork-only element TYPES
         # have been confirmed to actually build on the live ops — keyed by
         # type name, NOT a single flag: a build predating one element (e.g.
@@ -1673,6 +1676,36 @@ class LiveOpsEmitter:
             self._ops.addToParameter(int(pid), "element", int(et), *args)
         self._ops.updateParameter(int(pid), float(value))
         self._ops.remove("parameter", int(pid))
+
+    # -- IMPL-EX time driver (ADR 0113) -------------------------------------
+
+    def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
+        p_dt, p_commit, p_init = (int(t) for t in tags)
+        for t in (p_dt, p_commit, p_init):
+            self._ops.parameter(t)
+        self._implex_tags = (p_dt, p_commit, p_init)
+
+    def implex_time_targets(
+        self,
+        tags: tuple[int, int, int],
+        ele_tags: tuple[int, ...],
+    ) -> None:
+        names = ("dTime", "dTimeCommit", "dTimeInitial")
+        for et in ele_tags:
+            for t, name in zip(tags, names):
+                self._ops.addToParameter(int(t), "element", int(et), name)
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None:
+        if self._implex_tags is None:
+            raise RuntimeError(
+                "LiveOpsEmitter.implex_time_update before "
+                "implex_time_declare: the driver's parameters do not exist."
+            )
+        p_dt, p_commit, p_init = self._implex_tags
+        if first:
+            self._ops.updateParameter(p_commit, float(dt))
+            self._ops.updateParameter(p_init, float(dt))
+        self._ops.updateParameter(p_dt, float(dt))
 
     def step_hook_ramp(
         self,

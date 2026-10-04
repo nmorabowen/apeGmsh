@@ -736,6 +736,59 @@ class PyEmitter:
         )
         self._lines.append(_ops_call("remove", "parameter", int(pid)))
 
+    # -- IMPL-EX time driver (ADR 0113) -------------------------------------
+
+    def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
+        # Global, like the Tcl proc: every rank declares the parameters and
+        # the driver; each rank attaches only its own elements.
+        p_dt, p_commit, p_init = (int(t) for t in tags)
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            "# apeSees IMPL-EX time driver (ADR 0113): persistent dTime / "
+            "dTimeCommit / dTimeInitial parameters"
+        )
+        self._lines.append(_ops_call("parameter", p_dt))
+        self._lines.append(_ops_call("parameter", p_commit))
+        self._lines.append(_ops_call("parameter", p_init))
+        self._lines.append("def _apesees_implex_dt(dt, first):")
+        self._lines.append("    if first:")
+        self._lines.append(f"        ops.updateParameter({p_commit}, dt)")
+        self._lines.append(f"        ops.updateParameter({p_init}, dt)")
+        self._lines.append(f"    ops.updateParameter({p_dt}, dt)")
+        self._lines.indent = prev_indent
+
+    def implex_time_targets(
+        self,
+        tags: tuple[int, int, int],
+        ele_tags: tuple[int, ...],
+    ) -> None:
+        if not ele_tags:
+            return
+        p_dt, p_commit, p_init = (int(t) for t in tags)
+        ids = [str(int(e)) for e in ele_tags]
+        rows = [", ".join(ids[i:i + 20]) for i in range(0, len(ids), 20)]
+        self._lines.append("for _apesees_e in [")
+        for row in rows:
+            self._lines.append(f"    {row},")
+        self._lines.append("]:")
+        self._lines.append(
+            f"    ops.addToParameter({p_dt}, 'element', _apesees_e, 'dTime')"
+        )
+        self._lines.append(
+            f"    ops.addToParameter({p_commit}, 'element', _apesees_e, "
+            "'dTimeCommit')"
+        )
+        self._lines.append(
+            f"    ops.addToParameter({p_init}, 'element', _apesees_e, "
+            "'dTimeInitial')"
+        )
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None:
+        self._lines.append(
+            f"_apesees_implex_dt({float(dt)!r}, {bool(first)!r})"
+        )
+
     def step_hook_ramp(
         self,
         name: str,

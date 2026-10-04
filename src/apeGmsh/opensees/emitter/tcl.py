@@ -1344,6 +1344,56 @@ class TclEmitter:
         self._lines.append(_join("updateParameter", int(pid), float(value)))
         self._lines.append(_join("remove", "parameter", int(pid)))
 
+    # -- IMPL-EX time driver (ADR 0113) -------------------------------------
+
+    def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
+        # Global: every rank declares the three parameters and the proc;
+        # each rank then attaches only its own elements (targets below).
+        p_dt, p_commit, p_init = (int(t) for t in tags)
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(
+            "# apeSees IMPL-EX time driver (ADR 0113): persistent dTime / "
+            "dTimeCommit / dTimeInitial parameters"
+        )
+        self._lines.append(_join("parameter", p_dt))
+        self._lines.append(_join("parameter", p_commit))
+        self._lines.append(_join("parameter", p_init))
+        self._lines.append("proc _apesees_implex_dt {dt first} {")
+        self._lines.append("    if {$first} {")
+        self._lines.append(f"        updateParameter {p_commit} $dt")
+        self._lines.append(f"        updateParameter {p_init} $dt")
+        self._lines.append("    }")
+        self._lines.append(f"    updateParameter {p_dt} $dt")
+        self._lines.append("}")
+        self._lines.indent = prev_indent
+
+    def implex_time_targets(
+        self,
+        tags: tuple[int, int, int],
+        ele_tags: tuple[int, ...],
+    ) -> None:
+        if not ele_tags:
+            return
+        p_dt, p_commit, p_init = (int(t) for t in tags)
+        ids = [str(int(e)) for e in ele_tags]
+        rows = [" ".join(ids[i:i + 20]) for i in range(0, len(ids), 20)]
+        self._lines.append("foreach _apesees_e [list \\")
+        for row in rows[:-1]:
+            self._lines.append(f"    {row} \\")
+        self._lines.append(f"    {rows[-1]}] {{")
+        self._lines.append(f"    addToParameter {p_dt} element $_apesees_e dTime")
+        self._lines.append(
+            f"    addToParameter {p_commit} element $_apesees_e dTimeCommit"
+        )
+        self._lines.append(
+            f"    addToParameter {p_init} element $_apesees_e dTimeInitial"
+        )
+        self._lines.append("}")
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None:
+        self._lines.append(_join("_apesees_implex_dt", float(dt), bool(first)))
+
     def step_hook_ramp(
         self,
         name: str,

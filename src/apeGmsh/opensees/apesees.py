@@ -127,6 +127,13 @@ from ._internal.build import (
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
+from ._internal.implex import (
+    emit_implex_prelude,
+    implex_target_rows,
+    stage_increment,
+    validate_implex_time,
+)
+from .analysis.implex import ImplexMode, ImplexTime
 from ._element_capabilities import builder_scoped_kind, is_builder_scoped
 from ._internal.tag_resolution import (
     set_current_fem_element_id,
@@ -941,6 +948,9 @@ class BuiltModel:
     # declaration order) or ``"fem"`` (each physical-group element keeps
     # its FEM element id as its OpenSees tag; see ``emit``).
     element_tags:            ElementTagMode = "sequential"
+    # ADR 0113 — the IMPL-EX time driver declaration (``apeSees.implex_time``);
+    # None = undeclared.  Consumed by the staged emit paths.
+    implex_time:             ImplexTime | None = None
     # ADR 0062 — per-build cache of resolved moment-tensor ``(node, force)``
     # pairs, keyed by ``id(rec)``. The host search in
     # ``resolve_moment_tensor_pairs`` runs against the full FEM snapshot and is
@@ -1272,6 +1282,13 @@ class BuiltModel:
         # emit path (flat / split / partitioned) is covered before any
         # element is emitted.
         validate_node_ndf_element_compat(self.fem, elements)
+
+        # ADR 0113: the IMPL-EX time driver's refusals and the dTime trap
+        # (a stage that writes dTime* with no per-stage write after it).
+        # Every emit path, before anything is emitted.
+        validate_implex_time(
+            self.implex_time, self.stage_records, elements, self.fem,
+        )
 
         # ADR 0054 (AB-5): ASDAbsorbingBoundary2D has no source-side
         # distortion handling — a skewed quad runs with silently wrong
@@ -2065,6 +2082,15 @@ class BuiltModel:
                 )
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
+
+        # 8b. ADR 0113: the IMPL-EX time driver -- its persistent
+        # parameters over every target element, after every global
+        # element and before the first stage (validated in ``emit``:
+        # staged, no stage-activated target).
+        if staged and self.implex_time is not None and self.implex_time.drives:
+            emit_implex_prelude(
+                emitter, tags, implex_target_rows(element_plan, elements),
+            )
 
         # 9. Phase SSI-2.A / 2.B: per-stage emit block.  Each stage
         # emits its activated topology (Phase 2.B) + initial_stress
@@ -2975,6 +3001,13 @@ class BuiltModel:
                 if chain is not None:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
+
+            # 7a. ADR 0113: the IMPL-EX driver call with this stage's
+            # increment, right after its ``analysis`` line (where STKO's
+            # hook first runs): every step of the stage takes this
+            # increment, so one call equals STKO's call per increment.
+            if self.implex_time is not None and self.implex_time.drives:
+                emitter.implex_time_update(stage_increment(stage), first=True)
 
             # 7b. Stage-scoped patterns (ADR 0051 BL-3) — emit AFTER
             # the chain, BEFORE analyze so the pattern's loads / sps /
@@ -4018,6 +4051,20 @@ class BuiltModel:
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
+        # -- 3b. ADR 0113: the IMPL-EX time driver.  Parameters + proc
+        # globally; each rank attaches only the targets it owns (the
+        # ADR 0027 ownership map, so it equals a runtime getEleTags
+        # intersection on a bridge-partitioned deck).
+        if staged and self.implex_time is not None and self.implex_time.drives:
+            emit_implex_prelude(
+                emitter, tags, implex_target_rows(element_plan, elements),
+                ranks=[
+                    runtime_rank_from_partition_record(_p, _i)
+                    for _i, _p in enumerate(partitions)
+                ],
+                element_owner=element_owner,
+            )
+
         # -- 4. Per-stage emit blocks (Phase SSI-2.C). ----------------
         if staged:
             self._emit_stages_partitioned(
@@ -4718,6 +4765,11 @@ class BuiltModel:
                 if chain is not None:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
+
+            # 5a. ADR 0113: the IMPL-EX driver call -- global, like the
+            # chain: every rank updates its own persistent parameters.
+            if self.implex_time is not None and self.implex_time.drives:
+                emitter.implex_time_update(stage_increment(stage), first=True)
 
             # 5b. Stage-scoped patterns (ADR 0051 BL-3) — per-rank
             # fan-out.  Unlike recorders (which write to disk and emit
@@ -8224,6 +8276,9 @@ class apeSees:
         # at emit instead of one bridge MassRecord per node. Set by
         # ``mass_from_model()``; threaded into the BuiltModel.
         self._mass_from_model: bool = False
+        # ADR 0113 — the model-wide IMPL-EX time driver declaration
+        # (``implex_time()``); None = undeclared (the dTime-trap check runs).
+        self._implex_time: ImplexTime | None = None
         # ADR 0051 §4 — opt-in: fix every homogeneous SP on the snapshot.
         # Set by ``fix_from_model()``; materialized into FixRecords at build.
         self._fix_from_model: bool = False
@@ -8684,6 +8739,31 @@ class apeSees:
         ``model.h5`` via ``fem.nodes.masses``).
         """
         self._mass_from_model = True
+
+    def implex_time(self, mode: ImplexMode = "stko") -> ImplexTime:
+        """Declare the model-wide IMPL-EX ``dTime`` driver (ADR 0113).
+
+        ASDConcrete3D / ASDConcrete1D follow OpenSees' own increment
+        until a ``dTime`` / ``dTimeCommit`` / ``dTimeInitial`` write
+        reaches them; after that they keep the last value written.
+        ``mode="stko"`` writes them as STKO's ``STKO_DT_UTIL_OnBeforeAnalyze``
+        does: three persistent parameters over every element whose
+        material closure reaches an ASDConcrete with ``implex=True`` or
+        ``eta > 0`` (never a hand list of ids; per rank on a partitioned
+        deck), and each stage's increment written right after the stage's
+        ``analysis`` line (``dTimeCommit`` / ``dTimeInitial`` too, so the
+        IMPL-EX ratio restarts at 1 at every stage).  ``mode="off"``
+        declares that nothing writes ``dTime*``; ``"follow"`` is reserved.
+
+        Staged decks only; each stage must step with one known increment
+        (``LoadControl(dlam)`` or a fixed-``dt`` ``Transient``) until the
+        adaptive transient loop lands (ADR 0113 D5).  Calling it again
+        replaces the declaration.  The H5 archive refuses a model that
+        drives (no store for the driver yet).
+        """
+        spec = ImplexTime(mode=mode)
+        self._implex_time = spec
+        return spec
 
     def fix_from_model(self) -> None:
         """Fix every homogeneous SP on the model snapshot (ADR 0051 §4).
@@ -12084,6 +12164,7 @@ class apeSees:
             },
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
+            implex_time=self._implex_time,
         )
 
     # -- Internal helpers ------------------------------------------------

@@ -2299,6 +2299,31 @@ class H5Emitter:
             "deferred.  Use ops.tcl(path) / ops.py(path)."
         )
 
+    def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
+        """Deferred (ADR 0113): the archive has no store for the IMPL-EX
+        driver, so a replay would run the stages without it -- the
+        materials would follow OpenSees' increment instead of STKO's
+        ``dTime``.  Refuse rather than write that archive."""
+        del tags
+        raise NotImplementedError(
+            "H5Emitter: the model declares ops.implex_time(mode='stko') "
+            "(ADR 0113).  The archive has no store for the IMPL-EX driver, "
+            "so a replay would run without it -- H5 archival of the driver "
+            "is deferred.  Use ops.tcl(path) / ops.py(path)."
+        )
+
+    def implex_time_targets(
+        self,
+        tags: tuple[int, int, int],
+        ele_tags: tuple[int, ...],
+    ) -> None:
+        """Unreachable: :meth:`implex_time_declare` refuses first."""
+        del tags, ele_tags
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None:
+        """Unreachable: :meth:`implex_time_declare` refuses first."""
+        del dt, first
+
     def step_hook_ramp(
         self,
         name: str,

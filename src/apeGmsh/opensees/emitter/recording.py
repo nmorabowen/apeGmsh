@@ -407,6 +407,27 @@ class RecordingEmitter:
             {},
         ))
 
+    def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
+        self.calls.append((
+            "implex_time_declare", (tuple(int(t) for t in tags),), {},
+        ))
+
+    def implex_time_targets(
+        self,
+        tags: tuple[int, int, int],
+        ele_tags: tuple[int, ...],
+    ) -> None:
+        self.calls.append((
+            "implex_time_targets",
+            (tuple(int(t) for t in tags), tuple(int(e) for e in ele_tags)),
+            {},
+        ))
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None:
+        self.calls.append((
+            "implex_time_update", (float(dt),), {"first": bool(first)},
+        ))
+
     def step_hook_ramp(
         self,
         name: str,

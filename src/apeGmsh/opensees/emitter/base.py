@@ -201,6 +201,17 @@ emit the line (NOTE: the fork wires ``-feast`` into the
 interpreter/openseespy parser only — classic ``OpenSees.exe`` decks
 do not parse it yet, so the deck target is openseespy decks); H5
 no-ops; recording captures.
+
+**Architecture event — ADR 0113 slice 1 (IMPL-EX time driver,
+2026-10-03).** The Protocol was widened with three verbs,
+:meth:`implex_time_declare`, :meth:`implex_time_targets` and
+:meth:`implex_time_update`, that materialize ``ops.implex_time(
+mode="stko")``: three persistent ``parameter`` tags over the elements
+whose material closure reaches an IMPL-EX ASDConcrete, and the
+``_apesees_implex_dt`` driver called with each stage's increment.
+Tcl / py emit; live executes in-process; H5 refuses (no store, an
+archive replay would silently run without the driver); recording
+captures.  No schema bump.
 """
 from __future__ import annotations
 
@@ -518,6 +529,37 @@ class Emitter(Protocol):
         args: "tuple[str | int, ...]",
         value: float,
     ) -> None: ...
+
+    # -- IMPL-EX time driver (ADR 0113) ------------------------------------
+    # Three verbs materialize ``ops.implex_time(mode="stko")``:
+    #
+    # * ``implex_time_declare(tags)`` -- global (outer indent, never inside
+    #   a per-rank block): ``parameter`` for the three persistent tags
+    #   (``dTime``, ``dTimeCommit``, ``dTimeInitial``, in that order) and
+    #   the driver ``proc _apesees_implex_dt {dt first}`` /
+    #   ``def _apesees_implex_dt(dt, first)``: ``updateParameter`` of
+    #   ``dTimeCommit`` and ``dTimeInitial`` when ``first``, then of
+    #   ``dTime``.  Once per deck, after the elements.
+    # * ``implex_time_targets(tags, ele_tags)`` -- ``addToParameter $tag
+    #   element $e <name>`` for the three names over ``ele_tags``.  Called
+    #   inside ``partition_open`` with each rank's OWN targets on a
+    #   partitioned deck (``addToParameter`` on an element the rank does
+    #   not hold warns "no objects were able to identify parameter").
+    # * ``implex_time_update(dt, first)`` -- one driver call; the staged
+    #   emit issues it right after each stage's ``analysis`` line with the
+    #   stage's increment and ``first=True``.
+    #
+    # Live executes the same calls in-process; H5 refuses (the archive has
+    # no store for a driver, so a replay would run without it).
+    def implex_time_declare(self, tags: "tuple[int, int, int]") -> None: ...
+
+    def implex_time_targets(
+        self,
+        tags: "tuple[int, int, int]",
+        ele_tags: "tuple[int, ...]",
+    ) -> None: ...
+
+    def implex_time_update(self, dt: float, *, first: bool) -> None: ...
 
     # ``step_hook_ramp`` emits the multi-line bundle that materializes
     # one ``InitialStress`` composite into the deck:
