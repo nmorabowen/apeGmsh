@@ -11,7 +11,7 @@ import type { ModelFile } from "../model/types.ts";
  * Each pair once, `a < b`, sorted.
  */
 export function groupAdjacency(model: ModelFile, byElement: ReadonlyMap<number, number>, groupCount: number): [number, number][] {
-  // The groups touching each node, as a bit set per node (groups beyond 32 spill to a Set).
+  // The groups touching each node.
   const touching = new Map<number, Set<number>>();
   for (const b of model.blocks) {
     for (let row = 0; row < b.ids.length; row++) {

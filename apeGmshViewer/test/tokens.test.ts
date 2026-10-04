@@ -152,7 +152,7 @@ test("the sixteen slots are the two rings in office order; the second ring carri
 function contrasts(a: number, b: number): boolean {
   const dL = Math.abs(srgbToOklch(SLOTS[a]!).L - srgbToOklch(SLOTS[b]!).L);
   const hueGap = hueOf(a) !== hueOf(b) && !NEVER_ADJACENT.some(([x, y]) => (hueOf(a) === x && hueOf(b) === y) || (hueOf(a) === y && hueOf(b) === x));
-  const ok = cvdDistance(a, b) >= SAFE && (dL >= STEP - 0.012 || hueGap);
+  const ok = cvdDistance(a, b) >= SAFE && (dL >= STEP || hueGap);
   assert.equal(slotsContrast(a, b), ok, `slotsContrast(${a}, ${b}) agrees with the spelled-out rule`);
   return ok;
 }
@@ -167,6 +167,12 @@ test("adjacent groups contrast: the fixture's arch touches both columns, which d
   const legend = s.mesh!.legend;
   assert.deepEqual(s.mesh!.adjacency, [[0, 1], [0, 2]], "legend rows: Arch (0) touches LeftColumn (1) and RightColumn (2)");
   for (const [a, b] of s.mesh!.adjacency) assert.ok(contrasts(legend[a]!.slot!, legend[b]!.slot!), `${legend[a]!.name} vs ${legend[b]!.name}`);
+  // The wiring: the legend carries what `assignSlots` returns for this adjacency, not legend order
+  // ([0, 1, 2], which would also contrast here). The arch's first neighbour takes the office orange,
+  // its second the purple: the office colour farthest from both as a protanope and a deuteranope see
+  // them. (`Frame` is in `order` but colours no drawn cell, so it has no legend row.)
+  assert.deepEqual(legend.map((e) => e.slot), [0, 1, 5]);
+  assert.deepEqual(assignSlots(legend.length, s.mesh!.adjacency), [0, 1, 5]);
   // The legend shows the assigned slots' colours.
   for (const e of legend) if (e.slot !== null) assert.deepEqual(e.color, slotColour(e.slot).color);
   // Deterministic: the same file gives the same colours.
@@ -188,7 +194,18 @@ test("assignSlots: a chain and a dense graph keep every adjacent pair apart, wit
   const s2 = assignSlots(n, star);
   assert.equal(new Set(s2).size, n, "all distinct");
   assert.ok(s2.some((x) => slotColour(x).ring === 1), "a second-ring slot is in use");
+  // The maintainer's ruling on #1330: a striped slot only once every office colour is in use,
+  // so exactly n - 8 of the thirteen are striped.
+  assert.equal(s2.filter((x) => slotColour(x).ring === 1).length, n - RING_SIZE, "stripes only for the repeated hues");
   for (const [a, b] of star) assert.ok(contrasts(s2[a]!, s2[b]!), `${a}-${b}`);
+  // Below eight groups no hue repeats, so no second-ring slot is taken while a contrasting office colour is free.
+  const v3 = assignSlots(3, [[0, 1], [0, 2]]);
+  assert.deepEqual(v3, [0, 1, 5]);
+  assert.ok(v3.every((x) => slotColour(x).ring === 0), "first ring only");
+  const v5 = assignSlots(5, [[1, 4]]);
+  assert.deepEqual(v5, [2, 0, 3, 4, 1]);
+  assert.ok(v5.every((x) => slotColour(x).ring === 0), "first ring only");
+  assert.ok(contrasts(v3[0]!, v3[1]!) && contrasts(v3[0]!, v3[2]!) && contrasts(v5[1]!, v5[4]!), "every adjacent pair still contrasts");
   // Orange and dark gold: never adjacent, in a complete graph of 6 either.
   const k6: [number, number][] = [];
   for (let i = 0; i < 6; i++) for (let j = i + 1; j < 6; j++) k6.push([i, j]);
