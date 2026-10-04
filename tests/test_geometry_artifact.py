@@ -849,6 +849,39 @@ def test_apesees_file_at_the_model_path_is_not_replaced(monkeypatch, tmp_path: P
     assert not list(tmp_path.glob("*.tmp-*"))
 
 
+def test_rerun_without_a_provenance_table_never_drops_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Opus on 15e3b5ef: ``write_fem_h5`` writes ``/provenance`` only when the
+    snapshot carries a table, so a re-run whose snapshot has none must not
+    replace an earlier ``model.h5`` that has the zone: one warning, the file
+    byte-identical with ``/provenance`` intact, the sibling still written."""
+    from apeGmsh._internal import provenance as prov
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="prov") as g:
+        _small_box(g)
+    model = tmp_path / "prov.h5"
+    with h5py.File(model, "r") as f:
+        assert "provenance" in f
+    before = model.read_bytes()
+    (tmp_path / "prov.geometry.h5").unlink()
+
+    monkeypatch.setattr(prov, "table_for", lambda session: None)  # no table
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="prov") as g:
+            _small_box(g)
+            assert g.mesh.queries.get_fem_data().provenance is None
+    assert model.read_bytes() == before
+    msgs = [str(x.message) for x in w if "would drop" in str(x.message)]
+    assert len(msgs) == 1 and "provenance" in msgs[0]
+    with h5py.File(model, "r") as f:
+        assert "provenance" in f
+    assert (tmp_path / "prov.geometry.h5").is_file()
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
 def test_suite_artifact_dir_is_pinned_to_tmp() -> None:
     """The conftest fixture keeps the suite from littering the repo."""
     env = os.environ.get("APEGMSH_ARTIFACT_DIR", "")

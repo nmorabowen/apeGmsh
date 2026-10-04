@@ -32,6 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from pathlib import Path
 
     from .mesh._geometry_h5_io import GeometryCapture
+    from .mesh.FEMData import FEMData
 
 from ._optional import MissingOptionalDependency
 
@@ -379,13 +380,18 @@ class _SessionBase:
         target: "Path | None" = None
         try:
             target = self._resolve_save_target(None)
-            # ``write_fem_h5`` writes the neutral zone and, for a snapshot
-            # a session extracted (V2c, ADR 0112 D3), ``/provenance``.
-            model_zones = frozenset({NEUTRAL, PROVENANCE})
+            fem = self._snapshot_to_save()
+            # ``write_fem_h5`` writes the neutral zone and, only when the
+            # snapshot carries a provenance table (V2c, ADR 0112 D3),
+            # ``/provenance``: a target holding ``/provenance`` that this
+            # snapshot would drop is refused like any other zone.
+            model_zones = frozenset({NEUTRAL}) | (
+                frozenset({PROVENANCE}) if fem.provenance is not None else frozenset()
+            )
             if self._artifact_target_is_ours(target, writes=model_zones):
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
-                    self._do_save(tmp)
+                    self._do_save(tmp, fem=fem)
                     replace_with_retry(tmp, target)
                 finally:
                     tmp.unlink(missing_ok=True)
@@ -429,7 +435,13 @@ class _SessionBase:
             f"{type(self).__name__} writes no artifacts (_writes_artifacts is False)"
         )
 
-    def _do_save(self, path: "Path") -> None:
+    def _snapshot_to_save(self) -> "FEMData":
+        """The snapshot a save writes; defined by the artifact-writing subclass."""
+        raise NotImplementedError(
+            f"{type(self).__name__} writes no artifacts (_writes_artifacts is False)"
+        )
+
+    def _do_save(self, path: "Path", fem: "FEMData | None" = None) -> None:
         """Write the broker snapshot; defined by the artifact-writing subclass."""
         raise NotImplementedError(
             f"{type(self).__name__} writes no artifacts (_writes_artifacts is False)"

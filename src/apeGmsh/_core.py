@@ -513,22 +513,27 @@ class apeGmsh(_SessionBase):
         self._do_save(target)
         return target
 
-    def _do_save(self, path: Path) -> None:
-        """Extract the broker snapshot and write it to ``path``.
+    def _snapshot_to_save(self) -> "FEMData":
+        """The broker snapshot a save writes.
 
         Chain-phase sessions (built via :meth:`from_h5`) save the
         cached ``_fem`` directly — they have no gmsh state to
         re-extract from.
         """
-        from . import __version__ as _ver
-
         if (
             getattr(self, "_fem_from_h5", False)
             and getattr(self, "_fem", None) is not None
         ):
-            fem = self._fem
-        else:
-            fem = self.mesh.queries.get_fem_data()
+            return self._fem
+        return self.mesh.queries.get_fem_data()
+
+    def _do_save(self, path: Path, fem: "FEMData | None" = None) -> None:
+        """Write the broker snapshot (``fem``, else :meth:`_snapshot_to_save`)
+        to ``path``."""
+        from . import __version__ as _ver
+
+        if fem is None:
+            fem = self._snapshot_to_save()
         fem.to_h5(
             str(path),
             model_name=self.name,
