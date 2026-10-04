@@ -3,7 +3,8 @@
 `ops.mass_from_model()` emits one `mass` line per `fem.nodes.masses` entry
 without building a bridge MassRecord per node. These tests pin that it is
 BYTE-IDENTICAL to the explicit per-node `ops.mass` loop it replaces, plus the
-two fail-loud guards (overlap with explicit mass; H5 archival emitter).
+the overlap fail-loud guard, and the H5 archival emitter's skip-and-mark
+contract (ADR 0112 amendment 5).
 """
 from __future__ import annotations
 
@@ -105,7 +106,12 @@ def test_mass_from_model_overlap_with_explicit_raises(fem_with_masses):
         _emit_mass_lines(fem, declare)
 
 
-def test_mass_from_model_rejects_h5_emitter(fem_with_masses):
+def test_mass_from_model_h5_emitter_skips_stream_and_marks(fem_with_masses):
+    """The H5 archival emitter skips the redundant mass stream and marks the
+    archive instead of raising (ADR 0112 amendment 5, #1304). The deck and
+    replay equality oracle lives in tests/opensees/h5/test_mass_from_model_h5.py."""
+    import h5py
+
     fem = fem_with_masses
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
@@ -115,7 +121,9 @@ def test_mass_from_model_rejects_h5_emitter(fem_with_masses):
     fd, path = tempfile.mkstemp(suffix=".h5")
     os.close(fd)
     try:
-        with pytest.raises(BridgeError, match="deck/live-only"):
-            ops.h5(path)
+        ops.h5(path)
+        with h5py.File(path, "r") as f:
+            assert int(f["opensees/bcs"].attrs["mass_from_model"]) == 1
+            assert "mass" not in f["opensees/bcs"]
     finally:
         os.remove(path)

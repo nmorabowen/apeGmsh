@@ -5763,23 +5763,22 @@ class BuiltModel:
     def _guard_mass_from_model(self, emitter: Emitter) -> bool:
         """Validate a ``mass_from_model`` emit (ADR 0065 Tier 2).
 
-        Returns True when there are snapshot masses to stream, False when
-        none (a no-op declaration). Raises ``BridgeError`` if the emitter is
-        the H5 archival emitter (masses already persist in ``model.h5`` via
-        ``fem.nodes.masses`` — re-streaming would rebuild the 7M-object
-        materialization the feature exists to avoid), or if any node carries
-        both a snapshot mass and an explicit ``ops.mass`` (additive under MP
-        assembly → silent double-count).
+        Returns True when the caller should stream the snapshot masses,
+        False when it should not: there are none (a no-op declaration), or
+        the emitter is the H5 archival emitter. The masses already persist
+        in ``model.h5``'s neutral zone (``/masses``), so the archive skips
+        the redundant stream, which would rebuild the 7M-object
+        materialization the feature exists to avoid, and instead marks
+        ``/opensees/bcs@mass_from_model`` so replay re-streams them (ADR
+        0112 amendment 5, #1304).
+
+        Raises ``BridgeError`` on every emitter, the H5 one included, if any
+        node carries both a snapshot mass and an explicit ``ops.mass``
+        (additive under MP assembly, so a silent double-count).
         """
         masses = getattr(self.fem.nodes, "masses", None)
         if not masses:
             return False
-        if hasattr(emitter, "write_opensees_into"):
-            raise BridgeError(
-                "mass_from_model() is deck/live-only — nodal masses already "
-                "persist in model.h5 via fem.nodes.masses; do not re-stream "
-                "them through the H5 emitter."
-            )
         if self.mass_records:
             explicit = {
                 int(n)
@@ -5796,6 +5795,11 @@ class BuiltModel:
                     "— nodal mass is additive under MP assembly, so emitting "
                     "both would double-count. Use exactly one mass channel."
                 )
+        from .emitter.h5 import H5Emitter
+        if isinstance(emitter, H5Emitter):
+            # Checked after the overlap guard, which holds on every emitter.
+            emitter.mark_mass_from_model()
+            return False
         return True
 
     def _emit_masses(

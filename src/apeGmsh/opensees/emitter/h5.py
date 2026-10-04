@@ -432,7 +432,18 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     → folds into ``model_hash``.  Standard additive-minor window
 #:     semantics: a 2.21 reader opens 2.20 and 2.21 files; a 2.20.x
 #:     reader REFUSES a 2.21.x file (INV-4 — no forward tolerance).
-SCHEMA_VERSION: str = "2.21.0"
+#:   * 2.22.0 — ADR 0112 amendment 5 (#1304, ``mass_from_model()``
+#:     archival): additive — new optional ``/opensees/bcs@mass_from_model``
+#:     attr (int8, value 1), written only when the bridge declared
+#:     ``mass_from_model()`` and the snapshot carries masses.  The H5
+#:     emit then skips the mass stream (the masses already persist in the
+#:     neutral zone's ``/masses``), and the marker tells replay
+#:     (``OpenSeesModel.build``) to stream ``fem.nodes.masses`` instead
+#:     of silently dropping them.  Every other file stays byte-identical
+#:     to 2.21.x.  Authored model state → folds into ``model_hash``.
+#:     Standard additive-minor window semantics: a 2.22 reader opens
+#:     2.21 and 2.22 files; a 2.21.x reader REFUSES a 2.22.x file.
+SCHEMA_VERSION: str = "2.22.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -1037,6 +1048,11 @@ class H5Emitter:
         # BCs (model-level).
         self._fixes: list[_FixRecord] = []
         self._masses: list[_MassRecord] = []
+        # ADR 0112 amendment 5 (#1304): the bridge declared
+        # ``mass_from_model()``, so the nodal masses live in the neutral
+        # zone and are not streamed here.  Persisted as
+        # ``/opensees/bcs@mass_from_model`` so replay re-streams them.
+        self._mass_from_model: bool = False
 
         # Regions (emitted from the recorder fan-out; persisted so MPCO
         # ``-R $tag`` round-trips through ``OpenSeesModel.from_h5``).
@@ -1259,6 +1275,25 @@ class H5Emitter:
         if self._partition_dup(("fix", rec.tag, rec.dofs)):
             return
         self._fixes.append(rec)
+
+    def mark_mass_from_model(self) -> None:
+        """Record that the model's nodal masses come from the snapshot.
+
+        Called by the bridge instead of streaming one ``mass`` per node
+        under ``mass_from_model()`` (ADR 0112 amendment 5): the masses
+        already persist in the neutral zone (``/masses``).  Written as
+        ``/opensees/bcs@mass_from_model = 1`` so
+        :meth:`OpenSeesModel.build` streams ``fem.nodes.masses`` on
+        replay.  A staged bracket cannot carry it: the declaration is
+        model-level.
+        """
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter.mark_mass_from_model: called inside stage "
+                f"{self._stage_current.name!r}; mass_from_model() is "
+                "model-level."
+            )
+        self._mass_from_model = True
 
     def mass(self, tag: int, *values: float) -> None:
         rec = _MassRecord(
@@ -2643,9 +2678,12 @@ class H5Emitter:
         is ``"node"`` and ``target`` is the integer tag rendered as a
         string (per the schema's compound-dataset convention).
         """
-        if not self._fixes and not self._masses:
+        if not self._fixes and not self._masses and not self._mass_from_model:
             return
         bcs = self._ops_group(f).create_group("bcs")
+        if self._mass_from_model:
+            import numpy as np
+            bcs.attrs["mass_from_model"] = np.int8(1)
         if self._fixes:
             self._write_bcs_fix(bcs)
         if self._masses:
