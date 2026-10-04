@@ -270,13 +270,35 @@ class ProvenanceStore:
     def __len__(self) -> int:
         return len(self._records)
 
-    def capture(self, zone: str, family: str, name: str | None) -> str | None:
+    def has(self, zone: str, family: str, key: str) -> bool:
+        """True iff ``<zone>/<family>/<key>`` already has a record.  The
+        pre-allocation check of a writer that must fail loud on a
+        collision before it creates anything (``apeSees._register``)."""
+        return f"{zone}/{family}/{key}" in self._records
+
+    def next_unnamed_key(self, zone: str, family: str) -> str:
+        """The ``#k`` key the next unnamed capture in ``family`` takes."""
+        return f"#{self._unnamed.get((zone, family), 0) + 1}"
+
+    def capture(self, zone: str, family: str, name: str | None, *,
+                on_existing: str = "keep") -> str | None:
         """Record one declaration made by the current user call.
 
         ``name`` is the user's name for it; ``None`` or ``""`` gives the
         unnamed key ``#k`` (1-based order among the family's unnamed
         records).  Returns the declaration path recorded, or ``None``
-        when the call already has a record, or the named path does.
+        when the call already has a record.
+
+        A named path that already has a record is, for a session,
+        the same declaration touched again (a label merged into, a
+        physical group appended to): with ``on_existing="keep"`` the
+        first record stays and ``None`` is returned (V2c,
+        ``h5-schema.md`` "/provenance").  For a writer whose names share
+        one key space with synthesised keys (the bridge), the same path
+        is a collision: ``on_existing="raise"`` raises ``ValueError``
+        instead.  An unnamed key is never an append, so a ``#k`` that
+        already has a record (a user named something ``#k``) always
+        raises: a record is never overwritten.
         """
         global _LAST_ENTRY
         for part, what in ((zone, "zone"), (family, "family")):
@@ -284,6 +306,10 @@ class ProvenanceStore:
                 raise ValueError(
                     f"provenance {what} must be a non-empty segment "
                     f"without '/', got {part!r}")
+        if on_existing not in ("keep", "raise"):
+            raise ValueError(
+                f"provenance on_existing must be 'keep' or 'raise', "
+                f"got {on_existing!r}")
         site, entry, script = _capture_frames(sys._getframe(1))
         if site is not None and entry is not None:
             if entry is _LAST_ENTRY:
@@ -292,11 +318,20 @@ class ProvenanceStore:
         if name:
             path = f"{zone}/{family}/{name}"
             if path in self._records:
-                return None
+                if on_existing == "keep":
+                    return None
+                raise ValueError(
+                    f"provenance: declaration path {path!r} already has a "
+                    "record; the name collides with an existing key")
         else:
             k = self._unnamed.get((zone, family), 0) + 1
-            self._unnamed[(zone, family)] = k
             path = f"{zone}/{family}/#{k}"
+            if path in self._records:
+                raise ValueError(
+                    f"provenance: the unnamed key {path!r} already has a "
+                    "record (a declaration was named like an ordinal key); "
+                    "a record is never overwritten")
+            self._unnamed[(zone, family)] = k
         self._records[path] = RecordRow(
             path,
             self._site_row(site) if site is not None else -1,

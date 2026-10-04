@@ -9044,11 +9044,23 @@ class apeSees:
 
         # Provenance key of this call's synthesised objects
         # (``<verb>:<name>`` or ``<verb>:#<k>``; see ``name`` above).
-        self._imposed_displacement_calls += 1
+        # Both prospective keys are checked before either object is
+        # registered: user names share the key space, and a refusal
+        # must leave no series, pattern or record behind.
         _key = (
             f"imposed_displacement:"
-            f"{name if name is not None else f'#{self._imposed_displacement_calls}'}"
+            f"{name if name is not None else f'#{self._imposed_displacement_calls + 1}'}"
         )
+        for _family, _needed in (("timeSeries", series is None),
+                                 ("pattern", True)):
+            if _needed and self._provenance.has("opensees", _family, _key):
+                raise ValueError(
+                    "apeSees.imposed_displacement: the provenance key "
+                    f"'opensees/{_family}/{_key}' of the {_family} it would "
+                    "create already has a record (a declaration was named "
+                    "like it); pass another name=.  Nothing was registered."
+                )
+        self._imposed_displacement_calls += 1
 
         # Default time series: Linear scaled by pattern_factor.
         # Folds STKO's ``-fact F`` semantics into the time-series
@@ -12020,8 +12032,12 @@ class apeSees:
         ruling on #1378).
         """
         kind = _kind_of(prim)
-        self._tags.allocate_for(prim, kind)
-        self._primitives.append(prim)
+        # Every refusal runs before the tag is allocated and the
+        # primitive appended, so a refused call leaves no primitive, no
+        # tag and no record.  A primitive registered before (P11:
+        # ``allocate_for`` is idempotent on the object) keeps its record
+        # and is not checked again.
+        already = self._tags.tag_for(prim) is not None
         if name is not None:
             existing = self._names.get(name)
             if existing is not None and existing is not prim:
@@ -12031,11 +12047,35 @@ class apeSees:
                     "bridge.  Pick a different name= (or pass the object "
                     "handle directly)."
                 )
+        if not already:
+            # User names and synthesised keys share one key space per
+            # family; a collision on either side fails here.
+            if synthesised is not None:
+                key, what = synthesised, "synthesised key"
+            elif name is not None:
+                key, what = name, "name"
+            else:
+                key = self._provenance.next_unnamed_key("opensees", kind)
+                what = "unnamed key"
+            if self._provenance.has("opensees", kind, key):
+                raise ValueError(
+                    f"apeSees: the {what} {key!r} of this "
+                    f"{type(prim).__name__} collides with the existing "
+                    f"provenance record 'opensees/{kind}/{key}' (user names "
+                    "and synthesised keys share one key space per family); "
+                    "rename one of them.  Nothing was registered."
+                )
+        self._tags.allocate_for(prim, kind)
+        self._primitives.append(prim)
+        if name is not None:
             self._names[name] = prim
-        if synthesised is not None:
-            self._provenance.capture_synthesised("opensees", kind, synthesised)
-        else:
-            self._provenance.capture("opensees", kind, name)
+        if not already:
+            if synthesised is not None:
+                self._provenance.capture_synthesised(
+                    "opensees", kind, synthesised)
+            else:
+                self._provenance.capture(
+                    "opensees", kind, name, on_existing="raise")
         return prim
 
     def register(self, prim: _P) -> _P:
@@ -13434,30 +13474,45 @@ class _StageBuilder:
         # post-element pattern pass nor the 7b stage-load-pattern pass
         # double-emits it — the dedicated HOLD block drives its emit.
         # Registered directly (not through the namespaces) so each gets
-        # its own provenance record, keyed ``support:<stage>[/hold]``,
+        # its own provenance record, keyed ``support:<owner>[/hold]``,
         # pointing at this ``s.support`` call, ``origin = "synthesised"``
-        # (ADR 0112 D3, #1378).  The shared HOLD series is keyed by the
-        # stage whose first ``support`` created it.  The bridge allows a
-        # repeated stage name, so the n-th stage of that name (n >= 2,
-        # counted over the stages already closed) keys ``<stage>@<n>``:
-        # a key never collides and a record is never dropped.
+        # (ADR 0112 D3, #1378).  The bridge allows a repeated stage
+        # name, so ``<owner>`` is the stage name when its pattern key is
+        # free, else ``<stage>@<n>`` with the smallest n >= 2 whose key
+        # is free (stages ``s``, ``s``, ``s@2`` give ``s``, ``s@2``,
+        # ``s@2@2``).  The shared HOLD series is keyed by the owner of
+        # the stage whose first ``support`` creates it; user names share
+        # this key space, so a taken HOLD key raises here, before any
+        # tag is allocated, and leaves nothing behind.
         if self._support_pattern is None:
             from .pattern.pattern import Plain as _Plain
             from .time_series.time_series import Constant as _Constant
 
-            same_name = sum(
-                1 for rec in self._bridge._stage_records
-                if rec.name == self._name
-            )
-            owner = (self._name if same_name == 0
-                     else f"{self._name}@{same_name + 1}")
-            if self._bridge._hold_series is None:
-                self._bridge._hold_series = self._bridge._register(
+            prov = self._bridge._provenance
+            owner = self._name
+            n = 2
+            while prov.has("opensees", "pattern", f"support:{owner}"):
+                owner = f"{self._name}@{n}"
+                n += 1
+            need_hold = self._bridge._hold_series is None
+            if need_hold and prov.has(
+                    "opensees", "timeSeries", f"support:{owner}/hold"):
+                raise ValueError(
+                    f"Stage {self._name!r}.support: the provenance key "
+                    f"'opensees/timeSeries/support:{owner}/hold' of the "
+                    "HOLD series it would create already has a record "
+                    "(a declaration was named like it); rename that "
+                    "declaration or the stage.  Nothing was registered."
+                )
+            hold = self._bridge._hold_series
+            if hold is None:
+                hold = self._bridge._register(
                     _Constant(factor=1.0),
                     synthesised=f"support:{owner}/hold",
                 )
+                self._bridge._hold_series = hold
             self._support_pattern = self._bridge._register(
-                _Plain(series=self._bridge._hold_series),
+                _Plain(series=hold),
                 synthesised=f"support:{owner}",
             )
             self._bridge._stage_claimed_pattern_ids.add(

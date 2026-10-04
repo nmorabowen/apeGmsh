@@ -1151,12 +1151,21 @@ equal-length column datasets.
     `opensees/pattern/imposed_displacement:<name>` from
     `imposed_displacement` (`<name>` is its `name=`, else `#<k>`, the
     call's 1-based ordinal on the bridge; a `name=` starting with `#`
-    is refused). The bridge allows a repeated stage name, so the n-th
-    stage of a name (n >= 2) keys its support objects `<stage>@<n>`
-    (`support:s@2`). These keys never use the family's `#k` counter,
-    so the user's first unnamed `Linear()` stays `#1`; they never
-    collide, and a collision is a writer error that raises rather than
-    dropping a record.
+    is refused). The bridge allows a repeated stage name, so a stage
+    whose pattern key `support:<stage>` is taken keys its support
+    objects `<stage>@<n>` with the smallest `n >= 2` whose key is free
+    (stages `s`, `s`, `s@2` give `support:s`, `support:s@2`,
+    `support:s@2@2`). These keys never use the family's `#k` counter,
+    so the user's first unnamed `Linear()` stays `#1`.
+
+  User names and synthesised keys share one key space per family, and
+  no name is restricted. A collision, whichever side comes second (a
+  user `Linear(name="imposed_displacement:foo")` after
+  `imposed_displacement(name="foo")`, a stage `x` whose HOLD key a user
+  `Linear(name="support:x/hold")` took, a user name `#1` followed by an
+  unnamed declaration), fails loud **before** the bridge allocates a
+  tag: the refused call leaves no primitive, no tag and no record. A
+  record is never overwritten and never dropped.
 
   In a file the bridge writes, the `opensees/` records are the bridge's
   own: a snapshot loaded from an earlier bridge-written file drops that

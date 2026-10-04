@@ -472,6 +472,82 @@ def test_imposed_displacement_refused_name_leaves_nothing_behind(fem):
         r.path for r in ops._provenance.snapshot().records}
 
 
+def _state(ops):
+    return (len(ops._primitives), len(ops._provenance), dict(ops._names),
+            ops._hold_series, len(ops._stage_records))
+
+
+# ---------------------------------------------------------------------------
+# Review round 3 (#1378 at c314e1c7): one key space, collisions fail
+# loud before allocation
+# ---------------------------------------------------------------------------
+
+
+def test_user_name_equal_to_a_synthesised_key_is_refused(fem):
+    """Round 3, item 1: the user's Linear was silently unrecorded."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.imposed_displacement(nodes=[1], ux=0.01, name="foo")
+    before = _state(ops)
+    with pytest.raises(ValueError, match="collides with the existing provenance"):
+        ops.timeSeries.Linear(name="imposed_displacement:foo")
+    assert _state(ops) == before
+    assert before[0] == before[1] == 2
+    # The other way round: a user name the verb would synthesise refuses
+    # the verb before it registers its series.
+    ts = ops.timeSeries.Linear()
+    ops.pattern.Plain(series=ts, name="imposed_displacement:bar")
+    before = _state(ops)
+    with pytest.raises(ValueError, match="already has a record"):
+        ops.imposed_displacement(nodes=[1], ux=0.01, name="bar")
+    assert _state(ops) == before
+
+
+def test_taken_hold_key_refuses_support_before_allocation(fem):
+    """Round 3, item 2: the refusal left an orphan tagged Constant."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.timeSeries.Linear(name="support:x/hold")
+    before = _state(ops)
+    with pytest.raises(ValueError, match="support:x/hold"):
+        with ops.stage(name="x") as s:
+            s.support(pg="B", dofs=(1, 1, 1))
+    assert _state(ops) == before
+    assert before[0] == before[1] == 1 and before[3] is None
+    assert ops._open_stage_builder is None
+
+
+def test_stage_names_s_s_s2_all_get_distinct_keys(fem):
+    """Round 3, item 3: ``@<n>`` is the smallest free ordinal."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    for stage_name in ("s", "s", "s@2"):
+        with ops.stage(name=stage_name) as s:
+            s.support(pg="B", dofs=(1, 1, 1))
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    keys = [r.path for r in ops._provenance.snapshot().records
+            if r.path.startswith("opensees/pattern/support:")]
+    assert keys == ["opensees/pattern/support:s", "opensees/pattern/support:s@2",
+                    "opensees/pattern/support:s@2@2"]
+    assert [r.name for r in ops._stage_records] == ["s", "s", "s@2"]
+    assert len({ops.tag_for(r.support_pattern) for r in ops._stage_records}) == 3
+
+
+def test_unnamed_key_taken_by_a_user_name_is_refused(fem):
+    """Round 3, the same seam on the ``#k`` side: a user name ``#1`` and
+    an unnamed declaration used to overwrite the record silently."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.timeSeries.Linear(name="#1")
+    before = _state(ops)
+    with pytest.raises(ValueError, match="unnamed key '#1'"):
+        ops.timeSeries.Linear()
+    assert _state(ops) == before
+    assert [r.path for r in ops._provenance.snapshot().records] == [
+        "opensees/timeSeries/#1"]
+
+
 def test_a_1_1_file_without_origin_is_malformed(fem, tmp_path):
     """Round 2, finding 4: the column may be absent only below 1.1.0."""
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
