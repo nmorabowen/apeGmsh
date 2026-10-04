@@ -1,12 +1,12 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "3ae7ba314115f808dc4b30944984e844b0a2362e",
+ "base": "cc458590fd82a986c9a69434d23007ce865c185b",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
  },
  "current": {
-  "neutral": "2.34.0",
+  "neutral": "2.35.0",
   "opensees": "2.22.0"
  },
  "entries": [
@@ -648,6 +648,32 @@
    },
    "stamps": {
     "neutral": "2.34.0",
+    "opensees": "2.22.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.35",
+   "sha": "cc458590fd82a986c9a69434d23007ce865c185b",
+   "date": "2026-10-04",
+   "version": "2.35.0",
+   "bump_commits": [
+    "5a76b750e8fb921cd38d74267351be8fc06546de"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.35.h5",
+     "sha256": "5dd90aaa7c1a7960fd2b7834b1a35e4af8f52c91377b749202e31dc6674286a8"
+    },
+    "dump": {
+     "name": "neutral_2.35.dump.json",
+     "sha256": "17625823acb3c8e1ffcaad7eecee977582a0241aa6f61118d561a6979cc3be39"
+    }
+   },
+   "stamps": {
+    "neutral": "2.35.0",
     "opensees": "2.22.0"
    }
   },

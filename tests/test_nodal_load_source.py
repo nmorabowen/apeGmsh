@@ -82,3 +82,44 @@ def test_resolver_stamps_source_with_the_definition_kind(defn, call):
     assert recs, "the path must produce records for the stamp to be tested"
     assert {r.source for r in recs} == {defn.kind}
     assert defn.kind in NodalLoadSource.ALL
+
+
+_LINE3 = {1: (0, 0, 0), 2: (2, 0, 0), 3: (1, 0, 0)}
+_Q = np.array([0.0, 0.0, -1.0])
+
+
+@pytest.mark.parametrize("call", [
+    pytest.param(
+        lambda r, d: r.resolve_line_per_edge_tributary(d, [(1, 2, _Q)]),
+        id="per_edge_tributary"),
+    pytest.param(
+        lambda r, d: r.resolve_line_per_edge_consistent(d, [([1, 2, 3], _Q)]),
+        id="per_edge_consistent"),
+    pytest.param(
+        lambda r, d: r.resolve_line_per_edge_consistent_varying(
+            d, [([1, 2, 3], _Q, lambda xyz: 1.0)]),
+        id="per_edge_consistent_varying"),
+])
+def test_per_edge_line_paths_stamp_line(call):
+    """The three per-edge line reductions (the ``normal=True`` / callable
+    magnitude routes) stamp ``line`` like the plain ones."""
+    defn = defs.LineLoadDef(target="x", magnitude=1.0, reduction="consistent")
+    recs = call(_resolver(_LINE3), defn)
+    assert recs
+    assert {r.source for r in recs} == {NodalLoadSource.LINE}
+
+
+def test_chain_phase_router_stamps_point():
+    """``route_def_to_fem`` builds point-load records itself, outside the
+    resolver: it must stamp the same ``point`` source."""
+    from apeGmsh._kernel.resolvers._chain_phase_router import route_def_to_fem
+    from tests.test_chain_phase_fail_loud import _quad_face_fem
+
+    fem = _quad_face_fem()
+    defn = defs.PointLoadDef(target=[1, 2], force_xyz=(0.0, 0.0, -5.0),
+                             pattern="live")
+    new_fem = route_def_to_fem(fem, defn)
+    assert new_fem is not None
+    recs = new_fem.nodes.loads.by_pattern("live")
+    assert {r.node_id for r in recs} == {1, 2}
+    assert {r.source for r in recs} == {NodalLoadSource.POINT}
