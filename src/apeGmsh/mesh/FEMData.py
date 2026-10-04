@@ -1753,7 +1753,11 @@ class FEMData:
         # ``<stem>.geometry.h5``.  It is identity metadata, not model
         # content, so no hash reads it: snapshot_id, fem_hash and
         # model_hash are allowlists.  ``None`` mints a fresh id; the
-        # H5 reader passes the stored ``/meta/session_id`` back.
+        # H5 reader passes the stored ``/meta/session_id`` back.  The
+        # with_* transforms and _replaced copy the snapshot, so derived
+        # snapshots inherit the id; only a new construction (compose's
+        # merge, MPCO/.ladruno imports, from_gmsh until V2b gives the
+        # session one id) mints (architecture/h5-schema.md, "Who mints it").
         self.session_id: str = (
             str(uuid.uuid4()) if session_id is None
             else _validated_session_id(session_id)

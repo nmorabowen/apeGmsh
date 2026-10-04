@@ -163,6 +163,19 @@ def test_writers_stamp_and_reader_restores_session_id(fem, tmp_path, writer):
     assert FEMData.from_h5(str(path)).session_id == fem.session_id
 
 
+def test_derived_snapshots_inherit_session_id(fem):
+    """The id belongs to the session: record transforms and copies keep it."""
+    from apeGmsh._kernel.records._masses import MassRecord
+
+    nid = int(fem.nodes.ids[0])
+    derived = fem.with_mass(MassRecord(node_id=nid, mass=(1.0, 1.0, 1.0)))
+    assert derived is not fem
+    assert len(derived.nodes.masses) == len(fem.nodes.masses) + 1
+    assert derived.session_id == fem.session_id
+    assert copy.copy(fem).session_id == fem.session_id
+    assert fem._replaced().session_id == fem.session_id
+
+
 def test_old_pickle_without_session_id_keeps_its_neutral_zone(fem, tmp_path):
     """A FEMData pickled before #1304 has no session_id: it gets a fresh one,
     and the bridge still writes its neutral zone (it is not read as a stub)."""

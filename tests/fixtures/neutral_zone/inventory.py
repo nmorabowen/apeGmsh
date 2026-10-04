@@ -123,6 +123,11 @@ GROUPS: dict[str, GroupSpec] = {
             "model_name": ATTR_STR,
             "tag_span_max": ATTR_INT,
         },
+        optional_attrs={
+            # #1304: the writing session's uuid4 (ADR 0112 D1). Optional:
+            # absent in files at neutral <= 2.34.0, read without a gate.
+            "session_id": ATTR_STR,
+        },
         note="attrs only; no datasets",
     ),
     "/meta/lineage": GroupSpec(

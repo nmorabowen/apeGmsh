@@ -578,8 +578,13 @@ def write_meta(
     # ADR 0112 D1 / V0 Q1 (#1304): the session's uuid4, which pairs this
     # file with its sibling ``<stem>.geometry.h5``.  Not hashed: every
     # hash reads an allowlist that excludes ``/meta``'s identity attrs.
-    from .FEMData import _validated_session_id
-    meta.attrs["session_id"] = _validated_session_id(fem.session_id)
+    # The id belongs to a real FEMData, which must carry a valid one (a
+    # missing attr raises).  A duck-typed snapshot (the broker's test
+    # doubles) has no session, and the attr is optional: it writes none
+    # and pairs with nothing (architecture/h5-schema.md, "/meta/session_id").
+    from .FEMData import FEMData, _validated_session_id
+    if isinstance(fem, FEMData):
+        meta.attrs["session_id"] = _validated_session_id(fem.session_id)
     meta.attrs["model_name"] = str(model_name)
     # ADR 0038 §"Schema" — tag-span-max (max(max_node, max_elem) -
     # min(min_node, min_elem) + 1) used by Phase 3B's

@@ -174,6 +174,7 @@ Attributes only — no datasets, no children except the optional
 | `ndm` | int64 | the model's spatial dimension as declared by `ops.model(ndm=)` — never the mesh dimension: a frame of line elements declared in 2-D carries `2`. **`0` means "not declared"** — broker-only writes (`fem.to_h5`) always pass 0, and a reader that needs a dimension must refuse it rather than guess. Files older than neutral `2.34.0` stamped the maximum element dimension instead (#1291). Note this does **not** change the width of `/nodes/coords`. |
 | `ndf` | int64 | DOFs per node as declared by `ops.model(ndf=)`. **`0` means "not declared"**, not "zero DOFs" — broker-only writes always pass 0. |
 | `snapshot_id` | string | hash of the `FEMData` snapshot; 32 lowercase hex characters. |
+| `session_id` | string | **optional**. The writing session's uuid4, in canonical 36-character form. It pairs a `model.h5` with its `<stem>.geometry.h5` sibling and is never hashed. Absent in files at neutral 2.34.0 or older; read it without a version gate, and treat a missing one as "pairs with nothing" (#1304). |
 | `model_name` | string | user-supplied name. May be the empty string. |
 | `tag_span_max` | int64 | `max(max_node, max_elem) - min(min_node, min_elem) + 1` over nodes and elements together. Sizes tag reservations when composing. `0` for an empty mesh. |
 

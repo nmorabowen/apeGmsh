@@ -114,9 +114,6 @@ def test_staged_phantom_constraint_capture_degrades_sidecar_less(
             ),
             elements=[],
             snapshot_id="stub",
-            # write_meta stamps /meta/session_id and refuses a FEM without
-            # one (#1304); any canonical uuid4 serves this stub.
-            session_id="00000000-0000-4000-8000-000000000000",
         )
         write_neutral_zone_into_group(mini, group, ndf=2)
 

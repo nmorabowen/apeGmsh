@@ -983,11 +983,30 @@ ratification (#1283, Q1) puts the `/geometry` zone in a **sibling file
 only**, never inside `model.h5`. For a model file `<stem>.h5` the
 sibling is `<stem>.geometry.h5`, in the same directory.
 
-`FEMData.session_id` is a uuid4, minted when the snapshot is built and
-read back by `FEMData.from_h5`. Every writer of the neutral zone
+`FEMData.session_id` is a uuid4. Every writer of the neutral zone
 stamps it as `/meta/session_id`: `fem.to_h5`, `apeSees(fem).h5` (through
 `_compose_model_h5`), the replay writers that rebuild a file from its own
 FEMData, and the `/model/meta` of a composed `results.h5`.
+
+**Who mints it.** The id belongs to the session, and derived snapshots
+inherit it:
+
+* **Inherited, never re-minted:** the record transforms (`with_constraint`,
+  `with_load`, `with_mass`) and every copy or replace of a snapshot.
+  `FEMData.from_h5` restores the stored id, so a replay writer
+  (`OpenSeesModel.to_h5`, `ModelData.write`) re-stamps the source's id.
+* **Freshly minted:** a newly constructed snapshot. That covers `compose()`,
+  whose result merges several sources and so belongs to none of their
+  sessions; `from_mpco` and `.ladruno` imports, which have no session; a
+  pre-#1304 pickle; and `from_h5` of a file without the attr.
+* **Pending (V2b):** today `from_gmsh` mints a fresh id per extraction,
+  so two `get_fem_data()` calls in one session differ. V2b makes the
+  session own one id from `generate()` and hands it to every snapshot it
+  extracts and to its geometry sibling.
+
+Pairing by equality therefore holds only for the artifacts of one
+session: the snapshot that wrote `model.h5`, the snapshots derived from
+it, and (from V2b) the geometry that session captured.
 
 **Pairing rule.** A reader pairs `<stem>.h5` with `<stem>.geometry.h5`
 only when both carry a `/meta/session_id` and the two strings are
