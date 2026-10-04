@@ -6,15 +6,21 @@ An ``.mpco`` carries only ``MODEL_STAGE[<k>]`` groups and a bare
 (``/opensees/stages/stage_NNN@name``) and the neutral FEMData with
 ``/physical_groups``.  These tests pin that ``from_mpco`` uses them:
 
-* #1324 — program stage names map onto the capture stages when the
-  counts agree (``MODEL_STAGE[k]`` stays reachable as an alias); a
-  count mismatch warns and keeps the raw names; a vanilla model is
-  silent.
+* #1324 — program stage names map onto the capture stages in order
+  (``MODEL_STAGE[k]`` stays reachable as an alias); a partial run
+  (fewer capture stages) names the prefix and warns; more capture
+  stages than program stages warns and keeps the raw names; a vanilla
+  model is silent; duplicate program names warn.
 * #1325 — without ``fem=``, the FEMData stored in ``model_h5`` is the
-  bound fem when it covers the capture's node ids, so ``pg=`` queries
-  work from files alone.  An explicit ``fem=`` keeps priority.  A
-  ``model_h5`` whose fem does not cover the capture's nodes (the test
-  suite's stub model) warns and falls back to the MPCO synthesis.
+  bound fem when it covers the capture's node ids at the capture's
+  coordinates, so ``pg=`` queries work from files alone.  An explicit
+  ``fem=`` keeps priority.  A ``model_h5`` whose fem does not cover the
+  capture's nodes (the test suite's stub model), or covers the ids at
+  other coordinates (a finer mesh of the same part, #1393), warns and
+  falls back to the MPCO synthesis.
+* #1393 — ``results.stage(x)`` resolves by exact id before name before
+  alias, so the ids the viewers hand back (``stage_<k>``) never land on
+  a program stage that happens to be *named* ``stage_<k>``.
 
 The ``.mpco`` here is synthetic (h5py); the ``model.h5`` is written by
 the real bridge (``apeSees(...).h5``) from a real :class:`FEMData`.
@@ -54,52 +60,96 @@ COORDS = np.array(
 # ---------------------------------------------------------------------------
 
 
-def _plate_fem() -> FEMData:
+def _quad_plate(
+    node_ids: np.ndarray, coords: np.ndarray, connectivity: np.ndarray,
+    left: np.ndarray, right: np.ndarray,
+) -> FEMData:
+    """A quad mesh of the 2 x 1 plate with ``Plate`` / ``Left`` / ``Right``."""
+    n_elems = int(connectivity.shape[0])
     quad_info = make_type_info(
-        code=3, gmsh_name="Quadrangle 4", dim=2, order=1, npe=4, count=1,
+        code=3, gmsh_name="Quadrangle 4", dim=2, order=1, npe=4,
+        count=n_elems,
     )
     quad_group = ElementGroup(
         element_type=quad_info,
-        ids=np.array([1], dtype=np.int64),
-        connectivity=np.array([[1, 2, 3, 4]], dtype=np.int64),
+        ids=np.arange(1, n_elems + 1, dtype=np.int64),
+        connectivity=connectivity,
     )
+    index = {int(n): i for i, n in enumerate(node_ids)}
+
+    def _at(ids: np.ndarray) -> np.ndarray:
+        return coords[[index[int(n)] for n in ids]]
+
     pg = {
         (2, 1): {
             "name": "Plate",
-            "node_ids": NODE_IDS,
-            "node_coords": COORDS,
-            "element_ids": np.array([1], dtype=np.int64),
+            "node_ids": node_ids,
+            "node_coords": coords,
+            "element_ids": quad_group.ids,
         },
-        (1, 2): {
-            "name": "Left",
-            "node_ids": np.array([1, 4], dtype=np.int64),
-            "node_coords": COORDS[[0, 3]],
-        },
+        (1, 2): {"name": "Left", "node_ids": left, "node_coords": _at(left)},
         (1, 3): {
-            "name": "Right",
-            "node_ids": np.array([2, 3], dtype=np.int64),
-            "node_coords": COORDS[[1, 2]],
+            "name": "Right", "node_ids": right, "node_coords": _at(right),
         },
     }
     nodes = NodeComposite(
-        node_ids=NODE_IDS, node_coords=COORDS,
+        node_ids=node_ids, node_coords=coords,
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
     )
     elements = ElementComposite(
         groups={3: quad_group},
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
     )
-    info = MeshInfo(n_nodes=4, n_elems=1, bandwidth=3, types=[quad_info])
+    info = MeshInfo(
+        n_nodes=int(node_ids.size), n_elems=n_elems, bandwidth=3,
+        types=[quad_info],
+    )
     return FEMData(nodes=nodes, elements=elements, info=info)
+
+
+def _plate_fem() -> FEMData:
+    """One quad: the mesh the synthetic ``.mpco`` was recorded from."""
+    return _quad_plate(
+        NODE_IDS, COORDS, np.array([[1, 2, 3, 4]], dtype=np.int64),
+        left=np.array([1, 4], dtype=np.int64),
+        right=np.array([2, 3], dtype=np.int64),
+    )
+
+
+def _refined_plate_fem() -> FEMData:
+    """The same plate meshed 2 x 2: nine nodes numbered 1..9 row by row.
+
+    Its ids are a superset of the capture's ``1..4``, but ids 2 and 3
+    sit at ``(1, 0)`` / ``(2, 0)`` instead of ``(2, 0)`` / ``(2, 1)``:
+    an id-only coverage check pairs it, and ``Right`` would then be
+    ``{3, 6, 9}`` (#1393).
+    """
+    ids = np.arange(1, 10, dtype=np.int64)
+    xs = np.array([0.0, 1.0, 2.0])
+    ys = np.array([0.0, 0.5, 1.0])
+    coords = np.array(
+        [[x, y, 0.0] for y in ys for x in xs], dtype=np.float64,
+    )
+    connectivity = np.array(
+        [[1, 2, 5, 4], [2, 3, 6, 5], [4, 5, 8, 7], [5, 6, 9, 8]],
+        dtype=np.int64,
+    )
+    return _quad_plate(
+        ids, coords, connectivity,
+        left=np.array([1, 4, 7], dtype=np.int64),
+        right=np.array([3, 6, 9], dtype=np.int64),
+    )
 
 
 def _write_model_h5(
     path: Path, *, stage_names: "tuple[str, ...]" = STAGE_NAMES,
+    fem: "FEMData | None" = None,
 ) -> "tuple[Path, FEMData]":
     """Bridge-written ``model.h5``; ``stage_names=()`` gives a vanilla model."""
     from apeGmsh.opensees import apeSees
 
-    fem = _plate_fem()
+    if fem is None:
+        fem = _plate_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3)
@@ -228,20 +278,141 @@ def test_model_stage_name_stays_an_alias(
             r.stage("MODEL_STAGE[3]")
 
 
-def test_stage_count_mismatch_warns_and_keeps_raw_names(
+def test_more_capture_stages_than_program_warns_and_keeps_raw_names(
     tmp_path: Path, staged_model_h5: Path,
 ) -> None:
     """Three capture stages, two program stages: no positional guess."""
     from apeGmsh.results._bind import StageCountMismatchWarning
 
     mpco = _write_mpco(tmp_path / "three.mpco", n_stages=3)
-    with pytest.warns(StageCountMismatchWarning, match="2 .* 3 "):
+    with pytest.warns(
+        StageCountMismatchWarning, match=r"2 .* 3 .*by id .*stage_<k>",
+    ):
         r = Results.from_mpco(mpco, model_h5=staged_model_h5)
     with r:
         assert [s.name for s in r.stages] == [
             "MODEL_STAGE[1]", "MODEL_STAGE[2]", "MODEL_STAGE[3]",
         ]
         assert all(s.aliases == () for s in r.stages)
+
+
+def test_partial_run_pairs_the_prefix_and_warns(
+    tmp_path: Path, staged_model_h5: Path,
+) -> None:
+    """One capture stage, two program stages: the first name is paired.
+
+    The bridge emits one ``domainChange`` per stage, so a run that
+    stopped after stage one holds exactly ``MODEL_STAGE[1]``; its name
+    is known, and the rest of the program has no capture (#1393).
+    """
+    from apeGmsh.results._bind import StageCountMismatchWarning
+
+    mpco = _write_mpco(tmp_path / "one.mpco", n_stages=1)
+    with pytest.warns(
+        StageCountMismatchWarning,
+        match=r"partial run.*\['plastic_100pct'\] have no capture",
+    ):
+        r = Results.from_mpco(mpco, model_h5=staged_model_h5)
+    with r:
+        assert [(s.id, s.name, s.aliases) for s in r.stages] == [
+            ("stage_0", "elastic_50pct", ("MODEL_STAGE[1]",)),
+        ]
+        slab = r.stage("elastic_50pct").nodes.get(
+            component="displacement_x", ids=NODE_IDS,
+        )
+        expected = np.array(
+            [[_ux(1, step, int(n)) for n in slab.node_ids] for step in (0, 1)],
+        )
+        np.testing.assert_allclose(slab.values, expected)
+        with pytest.raises(KeyError, match="No stage matches"):
+            r.stage("plastic_100pct")
+
+
+def test_duplicate_program_names_warn_and_ids_stay_unique(
+    tmp_path: Path, mpco_two_stages: Path,
+) -> None:
+    """``ops.stage(name="load")`` twice: named lookup is ambiguous, ids are not."""
+    from apeGmsh.results._bind import DuplicateStageNameWarning
+
+    model_h5, _fem = _write_model_h5(
+        tmp_path / "dup.h5", stage_names=("load", "load"),
+    )
+    with pytest.warns(DuplicateStageNameWarning, match=r"\['load'\]"):
+        r = Results.from_mpco(mpco_two_stages, model_h5=model_h5)
+    with r:
+        assert [s.name for s in r.stages] == ["load", "load"]
+        assert r.stage("load")._stage_id == "stage_0"
+        assert r.stage("stage_1")._stage_id == "stage_1"
+        assert r.stage("MODEL_STAGE[2]")._stage_id == "stage_1"
+
+
+# ---------------------------------------------------------------------------
+# #1393 — stage lookup order: exact id, then name, then alias
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def id_like_names_model_h5(tmp_path: Path) -> Path:
+    """A program whose stage *names* collide with the reader's *ids*."""
+    path, _fem = _write_model_h5(
+        tmp_path / "idlike.h5", stage_names=("stage_1", "stage_2"),
+    )
+    return path
+
+
+def test_stage_lookup_prefers_the_exact_id_over_a_name(
+    mpco_two_stages: Path, id_like_names_model_h5: Path,
+) -> None:
+    """``stage("stage_1")`` is the stage with id ``stage_1`` (MODEL_STAGE[2]).
+
+    Before #1393 the first match on id *or* name won, and the program
+    stage named ``stage_1`` (id ``stage_0``) answered instead.
+    """
+    with Results.from_mpco(
+        mpco_two_stages, model_h5=id_like_names_model_h5,
+    ) as r:
+        assert [(s.id, s.name) for s in r.stages] == [
+            ("stage_0", "stage_1"), ("stage_1", "stage_2"),
+        ]
+        by_id = r.stage("stage_1")
+        assert by_id._stage_id == "stage_1"
+        assert by_id.name == "stage_2"
+        slab = by_id.nodes.get(component="displacement_x", ids=NODE_IDS)
+        expected = np.array(
+            [[_ux(2, step, int(n)) for n in slab.node_ids] for step in (0, 1)],
+        )
+        np.testing.assert_allclose(slab.values, expected)
+        # The name still resolves when no id claims it, and the alias too.
+        assert r.stage("stage_2")._stage_id == "stage_1"
+        assert r.stage("MODEL_STAGE[1]")._stage_id == "stage_0"
+
+
+def test_viewer_id_lookup_reads_the_stage_it_names(
+    mpco_two_stages: Path, id_like_names_model_h5: Path,
+) -> None:
+    """The viewers scope by ``StageInfo.id`` and must land on that stage.
+
+    ``viewers/session/_realize.py`` scopes ``results.stage(stages[-1].id)``,
+    ``viewers/diagrams/_director.py`` and ``viewers/session/_scrubber.py``
+    scope ``results.stage(stage_id)`` with the id they stored: every
+    ``StageInfo`` must round-trip through its own id, whatever the
+    program named its stages.
+    """
+    with Results.from_mpco(
+        mpco_two_stages, model_h5=id_like_names_model_h5,
+    ) as r:
+        for info in r.stages:
+            scoped = r.stage(info.id)
+            assert scoped._stage_id == info.id
+            assert scoped.name == info.name
+            assert scoped.n_steps == info.n_steps == 2
+        last = r.stages[-1]
+        slab = r.stage(last.id).nodes.get(
+            component="displacement_x", ids=NODE_IDS,
+        )
+        np.testing.assert_allclose(
+            slab.values[-1], [_ux(2, 1, int(n)) for n in slab.node_ids],
+        )
 
 
 def test_vanilla_model_h5_keeps_raw_names_silently(
@@ -303,6 +474,35 @@ def test_unrelated_model_h5_warns_and_falls_back_to_mpco_synthesis(
     with r:
         assert sorted(int(n) for n in r.fem.nodes.ids) == [1, 2, 3, 4]
         assert r.fem.nodes.physical.names() == []
+
+
+def test_superset_mesh_model_h5_warns_and_falls_back_to_mpco_synthesis(
+    tmp_path: Path, mpco_two_stages: Path,
+) -> None:
+    """A finer mesh of the same part covers the ids at other coordinates.
+
+    Ids alone would pair it (1..4 is inside 1..9) and ``Right`` would
+    come back as nodes ``{3, 6, 9}`` over geometry off by up to 1.0
+    (#1393, the reviewer's 86-node run beside a 272-node archive).
+    The coordinates at the capture's ids decide: warn, bind the MPCO
+    synthesis (ADR 0021: warn, do not raise).
+    """
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    refined, _fem = _write_model_h5(
+        tmp_path / "refined.h5", fem=_refined_plate_fem(),
+    )
+    with pytest.warns(
+        ModelFemMismatchWarning, match=r"different mesh.*differ by up to 1",
+    ):
+        r = Results.from_mpco(mpco_two_stages, model_h5=refined)
+    with r:
+        assert sorted(int(n) for n in r.fem.nodes.ids) == [1, 2, 3, 4]
+        np.testing.assert_allclose(r.fem.nodes.coords, COORDS)
+        assert r.fem.nodes.physical.names() == []
+        # The archive's stage names still apply: the program ran this
+        # capture even though its archived mesh is not this mesh.
+        assert [s.name for s in r.stages] == list(STAGE_NAMES)
 
 
 def test_unrelated_model_h5_with_explicit_fem_is_silent(

@@ -5,12 +5,20 @@ no physical groups, so `results.stage("elastic_50pct")` raised and every
 `pg=` query failed with `"No group named ... Available: []"` unless the
 in-memory `fem=` was passed too. The sibling `model.h5` that `from_mpco`
 requires carries both. It now uses them: the `ops.stage(name=...)` names
-from `/opensees/stages` replace the `MODEL_STAGE[<k>]` names when the counts
-agree (`MODEL_STAGE[<k>]` stays resolvable as an alias, `StageInfo.aliases`),
-and the neutral FEMData archived in `model_h5` is the bound `results.fem`
-whenever its node ids cover the capture's. An explicit `fem=` keeps priority.
-Two new warnings mark a wrong pairing instead of guessing:
-`StageCountMismatchWarning` (the archive declares a different number of
-stages; the file's names are kept) and `ModelFemMismatchWarning` (the
-archive's FEMData does not cover the capture's nodes; the MPCO `MODEL/`
-synthesis is bound, as before). Both live in `apeGmsh.results._bind`.
+from `/opensees/stages` replace the `MODEL_STAGE[<k>]` names in order
+(`MODEL_STAGE[<k>]` stays resolvable as an alias, `StageInfo.aliases`), and
+the neutral FEMData archived in `model_h5` is the bound `results.fem`
+whenever its node ids cover the capture's at the capture's coordinates. An
+explicit `fem=` keeps priority. Three warnings in `apeGmsh.results._bind`
+mark a doubtful pairing instead of guessing: `ModelFemMismatchWarning` (the
+archive's FEMData misses a capture node, or is another mesh of the same part
+whose ids cover the capture's at other coordinates; the MPCO `MODEL/`
+synthesis is bound, as before), `StageCountMismatchWarning` (a partial run
+holds fewer `MODEL_STAGE` groups than the program declares: the names are
+paired onto the prefix; more groups than program stages keeps the file's
+names), and `DuplicateStageNameWarning` (two `ops.stage` blocks share a
+name; `stage(name)` picks the first, the `stage_<k>` ids stay unique).
+
+`results.stage(x)` now resolves by exact id, then by name, then by alias,
+so the `stage_<k>` ids the viewers scope by never land on a program stage
+that happens to be *named* `stage_<k>`.

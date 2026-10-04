@@ -24,6 +24,7 @@ carries both.  :func:`_resolve_fem_via_model` and
 from __future__ import annotations
 
 import warnings
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -36,21 +37,65 @@ if TYPE_CHECKING:
 
 
 class ModelFemMismatchWarning(UserWarning):
-    """``model_h5=`` holds a FEMData that does not cover the capture's nodes.
+    """``model_h5=`` holds a FEMData that does not match the capture's nodes.
 
-    The results were bound to the capture's own synthesized FEMData
-    instead (no physical groups, no labels).  Either the ``model_h5``
-    belongs to another model, or the run added nodes the archive does
-    not know; pass ``fem=`` to bind a FEMData regardless.
+    Either a capture node id is absent from the archive, or a shared id
+    sits at different coordinates (a different mesh of the same part:
+    #1393).  The results were bound to the capture's own synthesized
+    FEMData instead (no physical groups, no labels).  Either the
+    ``model_h5`` belongs to another model, or the run added nodes the
+    archive does not know; pass ``fem=`` to bind a FEMData regardless.
     """
 
 
 class StageCountMismatchWarning(UserWarning):
     """``model_h5=`` declares a different number of stages than the capture.
 
-    The program's stage names cannot be paired positionally, so the
-    capture keeps its own ``MODEL_STAGE[<k>]`` names.
+    Fewer capture stages than program stages is a partial run: the
+    program names are paired onto the prefix and the rest have no
+    capture.  More capture stages than program stages cannot be paired
+    positionally, so the capture keeps its own ``MODEL_STAGE[<k>]``
+    names.
     """
+
+
+class DuplicateStageNameWarning(UserWarning):
+    """``model_h5=`` declares the same ``ops.stage(name=...)`` twice.
+
+    The names are still attached, but ``results.stage(<name>)`` resolves
+    to the first stage so named; select the others by id (``stage_<k>``)
+    or by their ``MODEL_STAGE[<k>]`` alias.
+    """
+
+
+# Coordinates agree when every component differs by less than this
+# fraction of the model's bounding-box diagonal.  The deck round-trips
+# float64 through ``repr`` (exact) and STKO stores float64, so a real
+# pairing agrees to the last bit; a different mesh of the same part
+# differs at element-size scale, orders of magnitude above this.
+_COORD_RTOL = 1e-6
+
+
+def _coords_mismatch(
+    capture_ids: np.ndarray, capture_xyz: np.ndarray,
+    archive_ids: np.ndarray, archive_xyz: np.ndarray,
+) -> "tuple[float, float]":
+    """``(max |dx|, tolerance)`` over the capture's ids, both in the archive.
+
+    The caller has already proved every capture id is in the archive.
+    Coordinates are ``(N, 3)`` on both sides (``FEMData`` pads 2-D to
+    three columns), so the comparison is per component.
+    """
+    order = np.argsort(archive_ids, kind="stable")
+    pos = order[np.searchsorted(archive_ids[order], capture_ids)]
+    archive_at = np.asarray(archive_xyz, dtype=np.float64)[pos]
+    capture_at = np.asarray(capture_xyz, dtype=np.float64)
+    ncol = min(archive_at.shape[1], capture_at.shape[1])
+    diff = np.abs(archive_at[:, :ncol] - capture_at[:, :ncol])
+    max_diff = float(diff.max()) if diff.size else 0.0
+    extent = archive_at.max(axis=0) - archive_at.min(axis=0)
+    diag = float(np.sqrt(np.sum(extent * extent)))
+    return max_diff, _COORD_RTOL * max(diag, 1.0)
 
 
 def _resolve_fem_via_model(
@@ -69,10 +114,16 @@ def _resolve_fem_via_model(
     2. Otherwise the neutral FEMData archived in ``model_h5`` — the one
        the bridge emitted the run from, with its physical groups and
        labels — provided its node ids cover every node id the capture
-       reports.  Node tags are fem node ids on the bridge's emit path,
-       so a capture node the archive does not know means the pairing is
-       wrong (or the run grew the domain); that case warns
-       :class:`ModelFemMismatchWarning` and falls through.
+       reports **and** the shared ids sit at the same coordinates.
+       Node tags are fem node ids on the bridge's emit path, so a
+       capture node the archive does not know means the pairing is
+       wrong (or the run grew the domain).  Ids alone do not prove it:
+       a finer mesh of the same part numbers its nodes ``1..N`` too, so
+       an 86-node run beside a 272-node archive passes the id check and
+       binds the wrong geometry and physical groups (#1393); the
+       coordinates at the capture's ids are compared against the MPCO
+       ``MODEL/`` ones, relative to the bounding box.  Either failure
+       warns :class:`ModelFemMismatchWarning` and falls through.
     3. The reader's own synthesized FEMData (may be ``None``).
     """
     if candidate is not None:
@@ -84,15 +135,30 @@ def _resolve_fem_via_model(
     capture_ids = np.asarray(embedded.nodes.ids, dtype=np.int64)
     archive_ids = np.asarray(model_fem.nodes.ids, dtype=np.int64)
     missing = np.setdiff1d(capture_ids, archive_ids)
-    if missing.size == 0:
-        return model_fem
-    shown = ", ".join(str(int(n)) for n in missing[:5])
-    more = f", ... ({missing.size} in all)" if missing.size > 5 else ""
+    if missing.size:
+        shown = ", ".join(str(int(n)) for n in missing[:5])
+        more = f", ... ({missing.size} in all)" if missing.size > 5 else ""
+        reason = (
+            f"does not cover the capture's nodes: {missing.size} of "
+            f"{capture_ids.size} node ids are absent from its FEMData "
+            f"(e.g. {shown}{more})"
+        )
+    else:
+        max_diff, tol = _coords_mismatch(
+            capture_ids, embedded.nodes.coords,
+            archive_ids, model_fem.nodes.coords,
+        )
+        if max_diff <= tol:
+            return model_fem
+        reason = (
+            f"holds a different mesh: its {archive_ids.size} nodes cover "
+            f"the capture's {capture_ids.size} ids, but the coordinates "
+            f"at those ids differ by up to {max_diff:.6g} (tolerance "
+            f"{tol:.3g}, from the bounding box)"
+        )
     warnings.warn(
         ModelFemMismatchWarning(
-            f"model_h5={str(model_path)!r} does not cover the capture's "
-            f"nodes: {missing.size} of {capture_ids.size} node ids are "
-            f"absent from its FEMData (e.g. {shown}{more}). Binding the "
+            f"model_h5={str(model_path)!r} {reason}. Binding the "
             f"capture's own MODEL group instead, which has no physical "
             f"groups; pass fem= to bind a FEMData explicitly."
         ),
@@ -111,30 +177,62 @@ def _bind_stage_names(
 
     ``model.stages()`` lists the ``ops.stage(name=...)`` blocks in
     registration order; the bridge emits one ``domainChange`` per
-    stage, so the recorder opens one ``MODEL_STAGE[<k>]`` per program
-    stage and the pairing is positional.  When the counts differ
-    (extra hand-written stages, a stage with no recorded step, a
-    foreign archive) nothing is renamed and
-    :class:`StageCountMismatchWarning` says so.  A vanilla archive (no
-    stages) is silent: there is nothing to map.
+    stage (``apesees.py``, flat and partitioned emit), so the recorder
+    opens one ``MODEL_STAGE[<k>]`` per program stage that ran and the
+    pairing is positional.  Fewer capture stages than program stages
+    is a partial run (the analysis stopped, or the deck was cut
+    short): the program names go onto the prefix and
+    :class:`StageCountMismatchWarning` names the stages that have no
+    capture.  More capture stages than program stages (hand-written
+    stages, a foreign archive) cannot be paired; nothing is renamed
+    and the same warning says so.  A vanilla archive (no stages) is
+    silent: there is nothing to map.  A program that names two stages
+    alike warns :class:`DuplicateStageNameWarning`: ``stage(<name>)``
+    then resolves to the first, and the ids stay unique.
     """
     program = [str(s.name) for s in model.stages()]
     if not program:
         return
     capture = reader.stages()
-    if len(program) != len(capture):
+    if len(capture) > len(program):
         warnings.warn(
             StageCountMismatchWarning(
                 f"model_h5={str(model_path)!r} declares {len(program)} "
                 f"stages ({program}) but the capture holds "
                 f"{len(capture)} MODEL_STAGE groups "
                 f"({[s.name for s in capture]}); keeping the capture's "
-                f"names. Select stages by MODEL_STAGE name or by index."
+                f"names. Select stages by MODEL_STAGE name or by id "
+                f"(results.stage('stage_<k>'))."
             ),
             stacklevel=3,
         )
         return
-    reader.attach_stage_names(program)
+    if len(capture) < len(program):
+        unrun = program[len(capture):]
+        warnings.warn(
+            StageCountMismatchWarning(
+                f"model_h5={str(model_path)!r} declares {len(program)} "
+                f"stages ({program}) but the capture holds only "
+                f"{len(capture)} MODEL_STAGE groups: a partial run. The "
+                f"first {len(capture)} program names are paired onto "
+                f"the capture in order; {unrun} have no capture."
+            ),
+            stacklevel=3,
+        )
+    paired = program[:len(capture)]
+    repeated = sorted(n for n, k in Counter(paired).items() if k > 1)
+    if repeated:
+        warnings.warn(
+            DuplicateStageNameWarning(
+                f"model_h5={str(model_path)!r} names more than one stage "
+                f"{repeated}; results.stage(<name>) resolves to the first "
+                f"of each. Select the others by id "
+                f"(results.stage('stage_<k>')) or by their MODEL_STAGE "
+                f"alias."
+            ),
+            stacklevel=3,
+        )
+    reader.attach_stage_names(paired)
 
 
 def _resolve_fem(

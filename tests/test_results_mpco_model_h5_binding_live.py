@@ -40,11 +40,14 @@ def _openseespy_has_mpco() -> bool:
 STAGE_NAMES = ("elastic_50pct", "plastic_100pct")
 
 
-def _run_staged_plate(tmp_path: Path) -> "tuple[Path, Path]":
+def _run_staged_plate(
+    tmp_path: Path, *, size: float = 0.25, tag: str = "", run: bool = True,
+) -> "tuple[Path, Path]":
+    """Mesh the plate at ``size``, write ``model{tag}.h5``; run the deck if asked."""
     from apeGmsh import apeGmsh
     from apeGmsh.opensees import apeSees
 
-    with apeGmsh(model_name="plate_1324", verbose=False) as g:
+    with apeGmsh(model_name=f"plate_1324{tag}", verbose=False) as g:
         g.model.geometry.add_rectangle(0, 0, 0, 2.0, 1.0, label="plate")
         g.physical.add_surface("plate", name="Plate")
         e = 1e-6
@@ -56,13 +59,13 @@ def _run_staged_plate(tmp_path: Path) -> "tuple[Path, Path]":
         ).to_physical("Right")
         with g.loads.case("tension"):
             g.loads.line("Right", magnitude=1e5, direction=(1.0, 0, 0))
-        g.mesh.sizing.set_global_size(0.25)
+        g.mesh.sizing.set_global_size(size)
         g.mesh.structured.set_recombine("plate")
         g.mesh.generation.generate(dim=2)
         fem = g.mesh.queries.get_fem_data(dim=2)
 
-    mpco = tmp_path / "r.mpco"
-    model_h5 = tmp_path / "model.h5"
+    mpco = tmp_path / f"r{tag}.mpco"
+    model_h5 = tmp_path / f"model{tag}.h5"
     ops = apeSees(fem)
     ops.model(ndm=2, ndf=2)
     m = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3)
@@ -89,7 +92,8 @@ def _run_staged_plate(tmp_path: Path) -> "tuple[Path, Path]":
             )
             s.run(n_increments=2, dt=0.5)
     ops.h5(str(model_h5))
-    ops.py(str(tmp_path / "deck.py"), run=True)
+    if run:
+        ops.py(str(tmp_path / f"deck{tag}.py"), run=True)
     return mpco, model_h5
 
 
@@ -130,3 +134,32 @@ def test_from_mpco_binds_archive_stage_names_and_pgs(tmp_path: Path) -> None:
         np.testing.assert_allclose(by_name.values, by_alias.values)
         # Tension on the free edge: the whole edge moves +x.
         assert np.all(by_name.values[-1] > 0.0)
+
+
+def test_from_mpco_refuses_a_finer_mesh_archive(tmp_path: Path) -> None:
+    """The reviewer's reproducer for #1393: a run beside a finer mesh's archive.
+
+    Both meshes number their nodes from 1, so the finer archive's ids
+    cover the run's; only the coordinates tell them apart.  The bind
+    must warn and fall back to the MPCO ``MODEL/`` geometry instead of
+    answering ``pg="Right"`` with the finer mesh's edge.
+    """
+    if not _openseespy_has_mpco():
+        pytest.skip("active openseespy build has no MPCO recorder")
+    from apeGmsh.results import Results
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+    from apeGmsh.results.readers._mpco import MPCOReader
+
+    mpco, _coarse_h5 = _run_staged_plate(tmp_path, size=0.25, tag="A")
+    _unused, fine_h5 = _run_staged_plate(
+        tmp_path, size=0.1, tag="B", run=False,
+    )
+    with pytest.warns(ModelFemMismatchWarning, match="different mesh"):
+        r = Results.from_mpco(mpco, model_h5=fine_h5)
+    with r, MPCOReader(mpco) as raw:
+        captured = raw.fem()
+        assert captured is not None
+        np.testing.assert_array_equal(r.fem.nodes.ids, captured.nodes.ids)
+        np.testing.assert_allclose(r.fem.nodes.coords, captured.nodes.coords)
+        assert r.fem.nodes.physical.names() == []
+        assert [s.name for s in r.stages] == list(STAGE_NAMES)

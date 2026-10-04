@@ -451,17 +451,22 @@ class Results:
 
         - **FEMData.** ``fem=`` wins when given. Otherwise the neutral
           FEMData stored in ``model_h5`` (physical groups, labels) is
-          bound whenever its node ids cover the capture's, so ``pg=``
-          queries work from files alone; a ``model_h5`` that does not
-          cover them warns (``ModelFemMismatchWarning``) and the partial
-          FEMData synthesized from the MPCO ``MODEL/`` group is bound
-          instead.
+          bound whenever its node ids cover the capture's and sit at
+          the capture's coordinates, so ``pg=`` queries work from files
+          alone; a ``model_h5`` from another model or another mesh of
+          the same part warns (``ModelFemMismatchWarning``) and the
+          partial FEMData synthesized from the MPCO ``MODEL/`` group is
+          bound instead.
         - **Stage names.** ``ops.stage(name=...)`` names from
           ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
-          names when the counts agree (``results.stage("gravity")``);
-          ``MODEL_STAGE[<k>]`` stays resolvable as an alias. A count
-          mismatch warns (``StageCountMismatchWarning``) and keeps the
-          file's names.
+          names in order (``results.stage("gravity")``);
+          ``MODEL_STAGE[<k>]`` stays resolvable as an alias. A partial
+          run (fewer capture stages than program stages) names the
+          prefix and warns (``StageCountMismatchWarning``); more capture
+          stages than program stages warns and keeps the file's names.
+          Two program stages with one name warn
+          (``DuplicateStageNameWarning``); ``stage(name)`` picks the
+          first, and the ids ``stage_<k>`` stay unique.
 
         Single-file mode (default for non-partitioned analyses): pass
         the path of one ``.mpco`` file.
@@ -1931,16 +1936,25 @@ class Results:
         return self._stages_cache
 
     def _lookup_stage(self, name_or_id: str) -> StageInfo:
-        for s in self._all_stages():
-            if (
-                s.id == name_or_id
-                or s.name == name_or_id
-                or name_or_id in s.aliases
-            ):
-                return s
-        names = sorted({s.name for s in self._all_stages()} |
-                        {s.id for s in self._all_stages()} |
-                        {a for s in self._all_stages() for a in s.aliases})
+        """Resolve a stage by exact id, then by name, then by alias.
+
+        Three passes, not one first-match: the viewers hand back
+        ``StageInfo.id`` (``stage_<k>``), and a program whose stages
+        are named ``stage_1`` / ``stage_2`` would otherwise send
+        ``stage("stage_1")`` to ``stage_0`` by name (#1393).
+        """
+        stages = self._all_stages()
+        for pick in (
+            lambda s: s.id == name_or_id,
+            lambda s: s.name == name_or_id,
+            lambda s: name_or_id in s.aliases,
+        ):
+            for s in stages:
+                if pick(s):
+                    return s
+        names = sorted({s.name for s in stages} |
+                        {s.id for s in stages} |
+                        {a for s in stages for a in s.aliases})
         raise KeyError(
             f"No stage matches {name_or_id!r}. Available: {names}"
         )
