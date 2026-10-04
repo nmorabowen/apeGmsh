@@ -409,7 +409,9 @@ add(dim, tags, name) -> int                  entities(name, *, dim=None) -> list
 get_all(*, dim=-1) -> list[str]              has(name, *, dim=None) -> bool
 labels_for_entity(dim, tag) -> list[str]     reverse_map(*, dim=-1) -> dict[DimTag, str]
 remove(name, *, dim=None)   rename(old, new, *, dim=None)
-promote_to_physical(name, *, dim=None, ...)  # label -> solver-visible PG
+promote_to_physical(name, *, pg_name=None, dim=None) -> Tag  # label -> solver-visible PG;
+    # an existing pg_name at the same dim merges (union, like physical.add);
+    # at another dim it raises ValueError (#1332)
 ```
 
 ## Per-node DOF count — inferred + `ops.ndf` (ADR 0048/0049)

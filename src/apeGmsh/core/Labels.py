@@ -1409,13 +1409,24 @@ class Labels(_HasLogging):
         The new PG is visible to ``g.physical``, ``fem.physical``,
         and the OpenSees exporter.
 
+        The write goes through :meth:`g.physical.add
+        <apeGmsh.mesh.PhysicalGroups.PhysicalGroups.add>`, so it carries
+        the same upsert contract: when a PG named *pg_name* already
+        exists at the label's dimension, the label's entities are
+        **merged** into it (union) and its tag is returned; promoting
+        several labels into one name builds one group.  A *pg_name*
+        held by a PG at another dimension raises ``ValueError``.
+        Before #1332 a second promotion into an existing name created
+        a new PG whose name gmsh refused to duplicate, so the entities
+        landed in an unnamed group that no ``pg=`` consumer could see.
+
         Parameters
         ----------
         label_name : str
             Label to promote.
         pg_name : str, optional
-            Name for the new physical group.  Defaults to the
-            label name (without prefix).
+            Name for the physical group.  Defaults to the label name
+            (without prefix).
         dim : int, optional
             Dimension to promote.  Required when the label exists
             at multiple dimensions.
@@ -1423,7 +1434,13 @@ class Labels(_HasLogging):
         Returns
         -------
         int
-            Physical-group tag of the new PG.
+            Physical-group tag: the existing PG's when merged, else
+            the new one's.
+
+        Raises
+        ------
+        ValueError
+            If *pg_name* already names a PG at a different dimension.
         """
         # Creates a solver-facing PG, so it is a PG mutation and frozen
         # on the same terms as g.physical.add().  Guarded ahead of the
@@ -1450,8 +1467,12 @@ class Labels(_HasLogging):
         if resolved_dim is None:
             raise KeyError(f"label {label_name!r} not found")
 
-        pg_tag = gmsh.model.addPhysicalGroup(resolved_dim, tags)
-        gmsh.model.setPhysicalName(resolved_dim, pg_tag, out_name)
+        # Through g.physical.add, never a raw addPhysicalGroup: add()
+        # upserts an existing name at this dim, and gmsh silently
+        # leaves a second PG of the same name unnamed (#1332).
+        # ``_parent.physical`` is in the Composite Parent Contract
+        # (apeGmsh/_session.py).
+        pg_tag = self._parent.physical.add(resolved_dim, tags, name=out_name)
         self._log(
             f"promote_to_physical({label_name!r}) -> "
             f"PG {out_name!r} (dim={resolved_dim}, {len(tags)} entities)"
