@@ -7,6 +7,8 @@ branch `feat/implex-time-driver`: `ops.implex_time(mode=...)` in
 three Emitter verbs, and the staged flat and partitioned emit paths. D5 and
 D7 are decided here and not implemented. No schema bump: the declaration
 does not round-trip H5, and the H5 emitter refuses a model that drives.
+It stays Proposed until the 2-rank OpenSeesMP smoke in
+`repros/adr0113_implex_mpi_smoke/` passes (D3, "Per-rank attachment").
 
 **Completes:** [ADR 0104](0104-substep-run-to-criterion-controller.md) D6 for
 the *transient* case (D5 below): STKO's adaptive time step as a typed spec
@@ -63,9 +65,9 @@ stages (constant increment) and wrong for whatever runs next unless that
 writes `dTime` too. The translator says so in prose ("the time-history
 driver must set `dTime` before every transient step"); nothing enforces it.
 
-### What the port measured (G20)
+### What the port measured (G20, serial)
 
-`validation/driver_equivalence_1D.md`, one 1D wall panel (ASDShellQ4 →
+`validation/driver_equivalence_1D.md` (a **serial** run), one 1D wall panel (ASDShellQ4 →
 LayeredShell → PlateFromPlaneStress → ASDConcrete3D) plus one fiber column
 (forceBeamColumn → FiberSection3d → ASDConcrete1D), gravity, hold, and 1600
 adaptive transient steps with five failed attempts:
@@ -82,11 +84,16 @@ adaptive transient steps with five failed attempts:
 3. Switching the driver off moves the response (column 3.7e-5 at the hold
    stage start, O(1) in the shells' drilling moments because of
    `-drillingNL`, F2 below).
-4. MPI: `addToParameter` on an element the rank does not hold prints "no
-   objects were able to identify parameter"; a persistent parameter keeps
-   raw pointers to the materials collected at `addToParameter` time, so it
-   must be built after the elements and breaks if they are removed; under
-   OpenSeesSP the master copies are not the analysed materials.
+4. MPI: these points come from **reading the source**, not from G20, which
+   ran serially. `addToParameter` on an element the rank does not hold
+   prints "no objects were able to identify parameter"
+   (`Parameter::addComponent`, a warning, not a Tcl error). A persistent
+   parameter keeps raw pointers to the materials collected at
+   `addToParameter` time, so it must be built after the elements and
+   breaks if they are removed. Under OpenSeesSP the master copies are not
+   the analysed materials. The only MPI run so far is the port's G21
+   esmeralda smoke, which exercised its runtime `getEleTags` form, not the
+   bridge's static per-rank form (D3).
 
 ### What else the port had to patch
 
@@ -126,11 +133,14 @@ element per attempt; the persistent route builds the graph once.
 
 A target is an element spec whose `dependencies()` closure (charter P5, the
 same edges the emit order uses) reaches a material that reads `dTime`:
-ASDConcrete3D / ASDConcrete1D with `implex=True` **or** `eta > 0` (STKO's
-C13 predicate restricted to the types the bridge has; `DamageTC1D/3D`,
-`ASDSteel1D`, `ASDBondSlip` join `reads_dtime` when typed). Every row of a
-target spec is a target. A driver with no target is refused (it would update
-nothing). The propagation chains G20 verified are the shell and fiber chains
+ASDConcrete3D / ASDConcrete1D with `implex=True` **or** `eta > 0`, and
+ASDSteel1D with `implex=True` (same `dtime_is_user_defined` switch:
+`ASDSteel1DMaterial.cpp` l. 2152, `setParameter` l. 2590–2598,
+`updateParameter` l. 2614–2622; it has no `eta`). That is STKO's C13
+predicate restricted to the types the bridge has; `DamageTC1D/3D` and
+`ASDBondSlip` join `reads_dtime` when typed. Every row of a target spec is a
+target. A driver with no target is refused (it would update nothing), and so
+is a target spec whose physical group has no elements. The propagation chains G20 verified are the shell and fiber chains
 above; an element type whose `setParameter` does not forward to its
 materials would print OpenSees' "no objects" warning (follow-up: a `live`
 read-back test per chain).
@@ -161,15 +171,23 @@ foreach _apesees_e [list \
 ```
 
 Parameter tags come from the bridge's allocator (P4). Then in every stage,
-right after its `analysis` line: `_apesees_implex_dt <increment> 1`. The
-`py` deck has the same `def _apesees_implex_dt(dt, first)` and calls; the
-live emitter executes the same calls in-process (staged live runs are still
-refused at `stage_open`); the H5 emitter **refuses** (no store; a replay
-would run without the driver), as it already does for `s.update_parameter`.
+immediately before its analyze loop (after the chain, the stage patterns,
+the recorders, `reset` and the velocity zeroing, where STKO's
+`OnBeforeAnalyze` hook sits): `_apesees_implex_dt <increment> 1`. It must
+follow `reset`, because `reset` reverts the materials to their start state
+and clears `dtime_is_user_defined` (ASDConcrete3D l. 1809). The `py` deck
+has the same `def _apesees_implex_dt(dt, first)` and calls. The live emitter
+**refuses** in its prelude verb: staged live runs are refused at
+`stage_open` anyway, and the prelude comes first, so without its own refusal
+it would already have created parameters in the live domain. The H5 emitter
+**refuses** (no store; a replay would run without the driver), as it already
+does for `s.update_parameter`.
 
 *Why one call per stage is enough in slice 1.* Each stage steps with one
-known increment: `Static` + `LoadControl(dlam)` (no `num_iter` adaptivity:
-`ops_Dt = dlam`), or `Transient` + `run(dt=)`. With `dTime` constant within
+known increment: `Static` + `LoadControl(dlam)` (`ops_Dt = dlam`; with
+`num_iter` only when `min_lam == max_lam == dlam`, since
+`LoadControl::newStep` clamps every increment to `[min, max]`), or
+`Transient` + `run(dt=)`. With `dTime` constant within
 the stage, `commitState` / `revertToLastCommit` keep `dtime_n` equal to it,
 so a write per increment changes nothing (G20 point 1). Any other stage
 (`VariableTransient`, `DisplacementControl`, arc length, adaptive
@@ -181,16 +199,33 @@ already that per-attempt form.
 are global and each rank's `addToParameter` loop sits in its
 `if {[getPID] == K}` block with the targets it owns, from the ADR 0027
 ownership map every other per-rank emit uses. The port intersected with
-`getEleTags` at run time instead; on a bridge-partitioned deck the two are
-the same set (the golden test replays both, per rank). The static form was
-chosen because it follows ADR 0027, carries only each rank's ids into its
-block (and into its fragment with `per_rank=True`), and extends to
-stage-activated elements, which a prelude-time `getEleTags` cannot see.
+`getEleTags` at run time instead. On a bridge-partitioned deck the two
+should be the same set, because the same map decides which `element` lines
+go into each rank's block. The golden test checks this without trusting the
+map: it reads each rank's elements from the `element` lines in that rank's
+`getPID` blocks, feeds them to the port's prelude as `getEleTags`, and
+requires the same command log. The static form was chosen because it follows
+ADR 0027, carries only each rank's ids into its block (and into its fragment
+with `per_rank=True`), and extends to stage-activated elements, which a
+prelude-time `getEleTags` cannot see.
 
-### D4 — MPI and topology limits, refused rather than documented
+**Evidence still owed:** the static form has not run under OpenSeesMP. A
+2-rank smoke deck emitted by the bridge, with a read-back of each target's
+`dTime dTimeCommit dTimeInitial` (response 4000) after every stage and a
+checker, is in `repros/adr0113_implex_mpi_smoke/`. Its serial half passed
+locally, and so did a driver-off negative control. This ADR moves to
+Accepted only after the 2-rank run passes.
 
-- **OpenSeesSP is not supported.** The bridge emits OpenSeesMP decks; under
-  SP the parameters would bind master copies (G20 point 4). Documented.
+### D4 — MPI and topology limits
+
+- **OpenSeesSP is not supported, and not refused.** The bridge emits
+  OpenSeesMP decks; under SP the parameters would bind master copies
+  (context point 4). Whether a deck will run under SP cannot be known at
+  emit, and the emitted Tcl has no reliable SP test, so this limit is
+  **documented** (here, in the `ops.implex_time` docstring and in the
+  changelog), not refused.
+The other two limits are refused at emit:
+
 - **Stage-activated targets are refused** in slice 1 (the parameters are
   built once, from the elements in the domain before the first stage).
   Follow-up: attach them inside their stage, after the stage's elements.
@@ -209,7 +244,8 @@ loop is STKO's `template_trans_rev.tcl` logic in apeSees names (the port's
 duration; before every attempt the before-attempt hooks
 (`_apesees_implex_dt $dt [expr {$inc == 1}]`, D7's error control);
 after a converged step one row `increment dt time iterations norm` in an
-optional `step_log=` file on rank 0 (brace-quoted path) and
+optional `step_log=` file on rank 0 (brace-quoted path; **opt-in**,
+default `None`, so decks stay byte-stable unless a log is asked for) and
 `factor *= min(max_factor_increment, desired / max(iters, 1))`, capped;
 after a failure `factor *= max(min_factor_increment, desired / max_iter)`;
 below `min_factor` the deck **errors** (the #587 fail-loud contract, never a
@@ -220,9 +256,14 @@ partial run). Decisions inside it:
   `desired_iter`). A mismatch is refused.
 - `Ladder` + `AdaptiveTime` is refused in v1 (one owner of the retry);
   composition is a follow-up.
-- STKO's template sets `min_factor_increment` to `__min_factor__`, not to
-  its own field (a template slip; 1D's values are equal). The spec keeps
-  them separate.
+- STKO's `template_trans_rev.tcl` l. 17 reads
+  `set min_factor_increment __min_factor__`, while `AnalysesCommand.py`
+  substitutes a separate `__min_factor_incr__` placeholder (l. 215–217).
+  So the exported loop appears to use `min_factor` as its minimum factor
+  increment. This is read from the installed STKO 2026 template, not
+  observed in a deck: the San Ramon decks set both to 1e-6, so they cannot
+  tell. The spec keeps the two fields separate and documents the STKO
+  reading.
 - A static adaptive variant must re-issue `integrator LoadControl $dt`
   before each attempt (ADR 0104 D1's lesson); it comes after the transient.
 - H5: refused until ADR 0057 Phase C.
@@ -248,7 +289,7 @@ Run on every emit path before anything is written
 - `mode="off"`: no `s.update_parameter` may write `dTime*`.
 - undeclared: from the first stage that writes any `dTime*`, that stage and
   every later one must write `dTime`, equal (to 1e-12 relative) to its own
-  increment; a later stage whose increment is not one known number is
+  increment, on every element switched so far; a later stage whose increment is not one known number is
   refused. A partial write (only `dTimeCommit`) counts as a writer: it
   already switched the material off `ops_Dt`.
 
@@ -257,6 +298,17 @@ static stage) passes; a translated deck with a later stage that does not
 reset is now refused instead of running on a stale `dTime`. The check is by
 parameter name, so any element parameter named `dTime*` is held to it;
 nothing else in the bridge uses those names.
+
+The check also tracks **which elements** each write reaches. An element is
+switched off `ops_Dt` by any `dTime*` write to its `pg` or `elements`; the
+`material=` form addresses elements too. Every later stage's `dTime` writes
+must cover the union of switched elements so far, and the refusal names the
+uncovered ones. Without this, a stage that rewrites `dTime` on the column
+only would pass while the wall, switched earlier, steps on a stale value.
+That was the review's counterexample, now a test.
+
+If a deliberate `dTime` different from the increment is ever needed, add an
+explicit `mode="manual"` rather than a waiver.
 
 ### D7 — Typed IMPL-EX options and the error control (decided, not implemented)
 
@@ -317,6 +369,41 @@ OpenSees fork work that would simplify D1–D3 (not apeGmsh work):
   round-off-level perturbation (rank count, solver, binary) can separate two
   runs by more than round-off.
 
+## Decisions on the slice-1 open questions (2026-10-03)
+
+- **Non-staged models.** `mode="stko"` stays refused on a flat deck. One
+  analysis with one increment already gives ratio 1 through `ops_Dt`, so the
+  driver would add nothing. `mode="off"` is allowed anywhere.
+- **Step log (D5).** Opt-in (`step_log=None` by default).
+- **Translator migration.** `build_conditions` keeps its C13 per-stage
+  `s.update_parameter` reset, which passes D6, until three things land:
+  D5, the in-stage excitation, and `reads_dtime` parity with C13's
+  `_DTIME_TYPES` (ASDSteel1D is in; DamageTC1D/3D and ASDBondSlip are not
+  typed). Then it moves to `ops.implex_time()`. The move is gated by a test
+  that the translator's `implex_dt_targets` equal the bridge's targets on the
+  1A–1D documents.
+
+## PR breakdown
+
+Every PR targets `main` (`gh pr create --base main`); none is stacked on
+another PR's branch. Each one lands before the next is opened or rebased.
+
+1. **This ADR and slice 1:** D1–D4 and D6, the review fixes, the skill docs,
+   and the MPI smoke deck (`feat/implex-time-driver`). It merges only after
+   the 2-rank smoke passes; the status line moves to Accepted in that PR.
+2. **D5a, stage excitation:** `s.uniform_excitation` with removal at its
+   stage's close.
+3. **D5b, adaptive transient:** `ops.strategy.AdaptiveTime`, the emitted
+   loop, the per-attempt IMPL-EX call and the opt-in step log.
+4. **D7a, typed IMPL-EX options:** `implex_alpha` and `implex_control` on
+   ASDConcrete3D/1D; the translator maps `implexAlpha`.
+5. **D7b, error control:** `ImplexErrorControl` as an after-attempt hook;
+   the translator maps `ImplexAutoErrorControlActivate`.
+6. **Translator migration:** emit its time-history stage on 2–5 and replace
+   the C13 resets with `ops.implex_time()`, gated by the target-set parity
+   test.
+7. **The D8 bridge gaps:** one PR each.
+
 ## Consequences
 
 **Positive**
@@ -339,16 +426,28 @@ OpenSees fork work that would simplify D1–D3 (not apeGmsh work):
 
 ## Tests (slice 1)
 
-`tests/opensees/unit/test_implex_time_driver.py`: modes; targets from the
-graph (wall and column in, elastic slab out; `eta` alone counts); the Tcl
-prelude and proc, line for line; one call per stage right after `analysis`;
-20-id wrapping; the py deck (compiled); emit order; per-rank targets on a
-partitioned stub; the H5 refusal; every D4/D6 refusal; and a **golden
-replay**: the port's `prelude_lines` output and our prelude are executed in a
+`tests/opensees/unit/test_implex_time_driver.py` covers:
+
+- the modes;
+- targets from the graph: the wall and column are in, the elastic slab is
+  out, `eta` alone counts, and a steel-only ASDSteel1D column counts;
+- the Tcl prelude and proc, line for line;
+- one call per stage, immediately before the analyze loop and after `reset`;
+- 20-id wrapping;
+- both tag modes, `fem` and the default `sequential`;
+- the py deck, serial and partitioned (compiled);
+- the emit order;
+- per-rank targets, with a global `first` call, on a partitioned stub;
+- the H5 refusal and the live refusal;
+- every D4 and D6 refusal, including the subset-coverage counterexample and
+  the unknown-increment branch;
+- a **golden replay**: the port's `prelude_lines` output and our prelude are executed in a
 plain Tcl interpreter (`tkinter.Tcl`, no OpenSees) with `parameter` /
 `addToParameter` / `updateParameter` stubbed to a log, and must issue the same
 command sequence for the same driver calls, serially and per rank (our
-`getPID` block vs their `getEleTags` intersection).
+`getPID` block vs their `getEleTags` intersection, where each rank's
+`getEleTags` is read from the deck's own `element` lines in that rank's
+blocks).
 
 ## Cross-references
 
