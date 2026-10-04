@@ -582,8 +582,8 @@ def test_tag_rewrite_spec_coverage() -> None:
 def test_pre_2_8_0_schema_rejected(tmp_path: Path) -> None:
     """Pre-2.8.0 source raises :class:`SchemaVersionError`.
 
-    The reader's two-version window accepts 2.8.x and 2.9.x; the
-    2.7.0 marker is outside the supported range.  Surfacing
+    The 2.7.0 marker is below the neutral floor (2.10.0, ADR 0113), so
+    it is outside the supported range.  Surfacing
     SchemaVersionError matches the contract from
     ``apeGmsh.opensees._internal.schema_version``.
     """
@@ -591,7 +591,7 @@ def test_pre_2_8_0_schema_rejected(tmp_path: Path) -> None:
 
     fem = _make_fem()
     src = _write_fem_h5(fem, tmp_path / "src.h5")
-    # Force the schema marker to 2.7.0 — outside the reader window.
+    # Force the schema marker to 2.7.0 — below the neutral floor.
     with h5py.File(src, "a") as f:
         f["meta"].attrs["neutral_schema_version"] = "2.7.0"
         f["meta"].attrs["schema_version"] = "2.7.0"

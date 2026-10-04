@@ -215,10 +215,9 @@ class TestRecordersReader:
     ) -> None:
         """Pre-2.3.0 archives wrote no ``kind`` attr.  The reader
         synthesizes ``kind="typed"`` so callers can branch uniformly on
-        the field.  Per ADR 0023 the two-version window only accepts
-        the previous minor and the current minor — the test pins the
-        version one minor below the current writer (the previous-minor
-        slot of the two-version window)."""
+        the field.  The test pins the version one minor below the current
+        writer (``OPENSEES_PRIOR_MINOR``), which the floor admits
+        (ADR 0113)."""
         out = tmp_path / "legacy.h5"
         with h5py.File(out, "w") as f:
             meta = f.create_group("meta")

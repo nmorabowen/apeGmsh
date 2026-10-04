@@ -68,7 +68,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_zone_registered_with_own_key(zone, key, current):
     assert _ZONE_KEY[zone] == key == f"{zone}_schema_version"
     assert reader_version(zone) == SchemaVersion.parse(current)
-    # Present key: read and accepted by the two-version window.
+    # Present key: read and accepted (it sits at the current version).
     got = read_zone_version({key: current}, zone)
     assert got == SchemaVersion.parse(current)
     validate_zone_version(got, reader_version(zone), zone=zone)

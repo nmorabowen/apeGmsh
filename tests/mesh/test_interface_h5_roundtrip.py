@@ -188,7 +188,7 @@ def test_writer_stamps_current_neutral_version():
 
 
 def test_reads_prior_minor_file_without_interfaces_group(tmp_path):
-    # ADR 0023's two-version window: an in-window 2.28.x file has no
+    # The floor admits every minor from 2.10: a 2.28.x file has no
     # /interfaces group at all and must still read → no interfaces.
     import h5py
 

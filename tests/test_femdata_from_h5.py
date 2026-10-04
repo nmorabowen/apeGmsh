@@ -1118,9 +1118,9 @@ def _make_legacy_2_4_0_h5(path: Path) -> None:
 
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
-        # Per ADR 0023 fixture must be inside the two-version reader
-        # window (2.6.x / 2.7.x); the test exercises legacy
-        # empty-snapshot_id semantics, not pre-window file handling.
+        # The fixture stamps the current neutral version; the test
+        # exercises legacy empty-snapshot_id semantics, not
+        # below-the-floor file handling.
         meta.attrs["schema_version"] = NEUTRAL_CURRENT
         meta.attrs["apeGmsh_version"] = ""
         meta.attrs["created_iso"] = "2025-01-01T00:00:00+00:00"
@@ -1152,8 +1152,8 @@ def _make_legacy_2_4_0_h5(path: Path) -> None:
 def test_legacy_2_4_0_file_reads_without_name(tmp_path: Path) -> None:
     """A 2.4.0 file with the OLD payload dtype still reads.
 
-    Per ADR 0023's two-version window, the 2.5.0 reader accepts
-    2.4.x files: missing ``name`` field → decoded as ``None``;
+    The fixture's payload dtype is the 2.4-era one: missing ``name``
+    field → decoded as ``None``;
     absent ``/partitions/`` / ``/parts/`` groups → unpartitioned
     FEM with no part maps.
     """

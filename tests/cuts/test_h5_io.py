@@ -40,8 +40,8 @@ def _make_h5_with_meta(
 
     Mirrors the convention in ``test_tag_map.py``: only what the
     reference reader requires, nothing more. The schema version
-    defaults to ``2.7.0`` (within the two-version window for the
-    current 2.8.0 reader); tests can pass other in-window values.
+    defaults to ``2.7.0``; tests pass the current opensees stamp, or a
+    stamp below ``SCHEMA_FLOOR`` to exercise the refusal.
     """
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
@@ -225,9 +225,8 @@ def test_read_missing_returns_empty(tmp_path: Path) -> None:
     """Pre-v4 file with no /opensees/cuts/ + no /opensees/sweeps/ → ((), ())."""
     path = tmp_path / "model.h5"
     # Pre-v4 file is one that lacks /opensees/cuts/ — its schema must
-    # still be inside the ADR 0023 two-version reader window
-    # (2.7.x / 2.8.x).  Reader-window-old fixtures are out of scope
-    # (INV-5 migration tooling).
+    # still be at or above the opensees floor (ADR 0113).  Files below
+    # the floor are refused and are out of scope here.
     _make_h5_with_meta(path, schema_version=OPENSEES_CURRENT)  # pre-v4 schema
 
     cuts, sweeps = read_cuts_and_sweeps(path)
@@ -413,10 +412,9 @@ def test_persist_to_h5_appends_to_in_window_file_keeps_version(
 ) -> None:
     """In-window file → /opensees/cuts/ written; envelope unchanged.
 
-    Per ADR 0023 the reader window is 2.7.x / 2.8.x; files below the
-    window are refused at open time (INV-5 migration tooling).  The
-    starting fixture is at 2.7.0 — within the current two-version
-    window — so the version stays unchanged after append.
+    Files below the opensees floor are refused at open time (ADR 0113).
+    The starting fixture carries the current stamp, which is inside the
+    supported range, so the version stays unchanged after append.
     """
     cut = SectionCutDef(
         plane_point=(0.0, 0.0, 1.0),
@@ -438,10 +436,10 @@ def test_persist_to_h5_appends_to_in_window_file_keeps_version(
 
 
 def test_persist_to_h5_refuses_out_of_window_file(tmp_path: Path) -> None:
-    """File below the reader window (e.g. 2.6.0) → SchemaVersionError.
+    """File below the opensees floor (e.g. 2.6.0) → SchemaVersionError.
 
-    Per ADR 0023 INV-5, archived files outside the two-version reader
-    window need migration tooling.  ``persist_to_h5`` validates via
+    Per ADR 0113, files below a zone's floor are refused (the files are
+    pre-release).  ``persist_to_h5`` validates via
     :func:`h5_reader.open` and so refuses with a SchemaVersionError
     rather than silently appending and bumping the version.
     """
