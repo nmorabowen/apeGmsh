@@ -197,7 +197,7 @@ Attributes only.
 | `ndm` | int | the model's spatial dimension as declared by `ops.model(ndm=)`, never the mesh dimension: a line-only 2-D frame carries `2`. `0` on broker-only files (`fem.to_h5`), which declare none, and deck-building / capture readers refuse it (#1291, neutral 2.34.0; older composed files stamped the highest element dimension) |
 | `ndf` | int | DOFs per node as declared by `ops.model(ndf=)`; `0` on broker-only files |
 | `snapshot_id` | string | hash of FEMData snapshot the bridge was built from |
-| `session_id` | string | the writing session's uuid4, canonical 36-character form; pairs the file with its geometry sibling and is **never hashed** (see [`/meta/session_id`](#metasession_id-and-the-geometry-sibling)). Absent on files written before #1304 |
+| `session_id` | string | the writing session's uuid4, canonical 36-character form; pairs the file with its geometry sibling and is **never hashed** (see [`/meta/session_id`](#metasession_id-and-the-geometry-sibling)). **Optional**: absent in files at neutral ≤ 2.34.0, and read **without a version gate**: an additive `/meta` attr bumps no zone, older readers ignore it (ADR 0023 INV-2), and a reader that finds none mints a fresh id |
 | `geometry_schema_version` | string | per-zone version of `/geometry`; present only in a `<stem>.geometry.h5` sibling |
 | `provenance_schema_version` | string | per-zone version of `/provenance`; present only when the file carries `/provenance` |
 | `model_name` | string | user-provided model name |
