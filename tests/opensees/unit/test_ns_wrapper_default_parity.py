@@ -139,6 +139,17 @@ def _delegate(meth: object, mod: object, cls: type) -> object | None:
         if dataclasses.is_dataclass(found):
             return found
         if getattr(found, "__name__", "").startswith(("_build", "_Ladder")):
+            # A builder that forwards ``**kw`` to ``<cls>.from_fc`` (the
+            # ``_build_rc`` shape: ``self._build_rc(LadrunoRCConcrete, ...)``)
+            # exposes no keyword defaults of its own, so comparing against it
+            # compares nothing.  The real target is the ``from_fc`` of the
+            # class passed first.
+            cls_arg = (_resolve(node.args[0], mod, cls)
+                       if node.args and isinstance(node.args[0], ast.Name)
+                       else None)
+            from_fc = getattr(cls_arg, "from_fc", None)
+            if inspect.isclass(cls_arg) and callable(from_fc):
+                return from_fc
             return found
     return None
 
@@ -223,6 +234,16 @@ def test_the_audit_actually_compared_something(audit) -> None:
         "the adapter rule has regressed and this file is no longer testing "
         "what it claims."
     )
+
+
+def test_from_fc_delegates_through_build_rc_are_compared(audit) -> None:
+    """``LadrunoRC*`` go through ``_build_rc(cls, **kw)``; they must resolve
+    to ``cls.from_fc`` and land in the compared set, not vanish into ``**kw``.
+    """
+    compared = set(audit["compared"])
+    for wrapper in ("LadrunoRCConcrete", "LadrunoRCFiniteStrain"):
+        for param in ("regularize", "rho"):
+            assert f"nd._NDMaterialNS.{wrapper}.{param}" in compared
 
 
 def test_the_2026_09_05_regression_is_in_scope(audit) -> None:
