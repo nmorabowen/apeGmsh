@@ -1,17 +1,29 @@
 // Electron main process. It reads files and nothing else (ADR 0112 D4):
-// no child processes, no network, no writes except the measurement /
-// capture outputs a script asked for.
+// no network, no writes except the measurement / capture outputs a script
+// asked for, and no child process except the user's editor for go-to-source
+// (D3, ./source.ts).
 //
 // Modes (argv, set by scripts/launch.mjs):
-//   --mode=view     open a window on --file (or an empty drop target)
+//   --mode=view     open a window on --file, or on the first positional
+//                   argument (a double-clicked file), or an empty drop target
 //   --mode=measure  open, orbit, pick, write a JSON measurement to --out
 //   --mode=capture  open hidden, select a beam, write a PNG still to --out
+//
+// In view mode the app is single-instance: a second launch forwards its file
+// here. Opening a file opens its set (./pairing.ts), and the set is watched
+// (./watch.ts). The renderer hears of a new set or a rewritten file through
+// `onOpen` / `onFileChanged` once it subscribes; a renderer that has not
+// subscribed (the P0 page) is reloaded instead, and reads the new model from
+// `app:config`.
 
-import { app, BrowserWindow, ipcMain } from "electron";
-import { writeFileSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openModel } from "../reader/node.ts";
+import { fileFromArgv, pairSet, type OpenSet } from "./pairing.ts";
+import { goToSource } from "./source.ts";
+import { SetWatcher } from "./watch.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -24,7 +36,9 @@ const mode = arg("mode") ?? "view";
 if (mode !== "view" && mode !== "measure" && mode !== "capture") {
   throw new Error(`unknown --mode=${mode}; expected view, measure or capture`);
 }
-const file = arg("file");
+// Unpackaged, argv[1] is the app path; packaged, the file follows the exe.
+const argvSkip = process.defaultApp ? 2 : 1;
+const file = mode === "view" ? fileFromArgv(process.argv, argvSkip, process.cwd()) : arg("file");
 const out = arg("out");
 const t0 = Number(arg("t0") ?? Date.now());
 
@@ -38,10 +52,78 @@ if ((mode === "measure" || mode === "capture") && (!file || !out)) {
   throw new Error(`--mode=${mode} needs --file and --out`);
 }
 
+// View mode is single-instance: a second launch hands its argv to the first
+// (the "second-instance" handler below) and exits.
+if (mode === "view" && !app.requestSingleInstanceLock()) app.exit(0);
+
+let win: BrowserWindow | null = null;
+/** The open set and its watcher (view mode only). */
+let current: { set: OpenSet; watcher: SetWatcher } | null = null;
+/** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
+const subscribed = new Set<string>();
+
+function fail(message: string): void {
+  process.stderr.write(`apeGmshViewer: ${message}\n`);
+  if (mode === "view") void app.whenReady().then(() => dialog.showErrorBox("apeGmshViewer", message));
+}
+
+/** The renderer hears `channel`; not subscribed, it reloads and re-reads config. */
+function deliver(channel: "open" | "fileChanged", payload: unknown): void {
+  if (!win) return;
+  if (subscribed.has(channel)) win.webContents.send(`viewer:${channel}`, payload);
+  else win.webContents.reload();
+}
+
+/** Make `set` (opened from `opened`) the open set, and watch it. */
+function adopt(opened: string, set: OpenSet): void {
+  current?.watcher.close();
+  const watcher = new SetWatcher(opened, {
+    changed: (path) => deliver("fileChanged", path),
+    reopened: (next) => {
+      current = { set: next, watcher };
+      deliver("open", next);
+    },
+    error: fail,
+  });
+  current = { set, watcher: watcher.start() };
+}
+
+/** Open the set of `path`; false, after a loud error, when it cannot be paired. */
+function openPath(path: string, notify: boolean): boolean {
+  const abs = resolve(path);
+  let set: OpenSet;
+  try {
+    set = pairSet(abs, existsSync);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+  adopt(abs, set);
+  if (notify) deliver("open", set);
+  return true;
+}
+
+if (mode === "view") {
+  if (file) openPath(file, false);
+  app.on("second-instance", (_e, argv, cwd) => {
+    const next = fileFromArgv(argv, argvSkip, cwd);
+    if (next) openPath(next, true);
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+  // macOS delivers a double-clicked file as an event, not in argv.
+  app.on("open-file", (e, path) => {
+    e.preventDefault();
+    openPath(path, app.isReady());
+  });
+}
+
 let appReadyAt = 0;
 ipcMain.handle("app:config", () => ({
   mode,
-  file: file ? resolve(file) : null,
+  file: mode === "view" ? (current?.set.model ?? null) : file ? resolve(file) : null,
   t0,
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
@@ -49,12 +131,46 @@ ipcMain.handle("app:config", () => ({
 }));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
+  // A model the renderer opened on its own (a drop on the P0 page) becomes
+  // the open set, so the watcher follows what is on screen. When it cannot be
+  // paired, the read below reports why.
+  if (mode === "view" && typeof path === "string" && path !== current?.set.model) {
+    const abs = resolve(path);
+    let set: OpenSet | null = null;
+    try {
+      set = pairSet(abs, existsSync);
+    } catch {
+      set = null;
+    }
+    if (set) adopt(abs, set);
+  }
   try {
     return { ok: true, model: await openModel(path) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
+
+for (const verb of ["subscribe", "unsubscribe"] as const) {
+  ipcMain.on(`viewer:${verb}`, (_e, channel: unknown) => {
+    if (channel !== "open" && channel !== "fileChanged") {
+      fail(`viewer:${verb}: unknown channel ${JSON.stringify(channel)}`);
+      return;
+    }
+    if (verb === "subscribe") subscribed.add(channel);
+    else subscribed.delete(channel);
+  });
+}
+
+// The set already open, for a new onOpen listener (the preload replays it).
+ipcMain.handle("viewer:currentSet", () => (mode === "view" ? (current?.set ?? null) : null));
+
+ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
+  return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
+});
+
+ipcMain.handle("source:goto", (_e, path: unknown, line: unknown) => goToSource(path, line));
 
 ipcMain.handle("measure:metrics", async () => {
   const metrics = app.getAppMetrics();
@@ -101,7 +217,7 @@ ipcMain.handle("app:fail", (_e, message: string) => {
 
 app.whenReady().then(() => {
   appReadyAt = Date.now();
-  const win = new BrowserWindow({
+  const w = new BrowserWindow({
     width: 1600,
     // A tall hidden window lets one still show the whole definition chain.
     height: mode === "capture" ? 1900 : 1000,
@@ -116,8 +232,17 @@ app.whenReady().then(() => {
       backgroundThrottling: false,
     },
   });
-  win.setMenuBarVisibility(false);
-  void win.loadFile(join(here, "index.html"));
+  win = w;
+  w.setMenuBarVisibility(false);
+  // A page load drops the old page's subscriptions.
+  w.webContents.on("did-start-loading", () => subscribed.clear());
+  w.on("closed", () => {
+    win = null;
+  });
+  void w.loadFile(join(here, "index.html"));
 });
 
-app.on("window-all-closed", () => app.quit());
+app.on("window-all-closed", () => {
+  current?.watcher.close();
+  app.quit();
+});
