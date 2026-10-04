@@ -132,3 +132,51 @@ def test_element_local_axes_vecxz_reads_every_3d_beam(
 def test_element_local_axes_vecxz_of_the_2d_frame_is_empty() -> None:
     """A 2-D ``geomTransf`` carries no vecxz, so there is nothing to join."""
     assert _vecxz(FRAME2D) == {}
+
+
+# ---------------------------------------------------------------------------
+# A bridge-only file carries a per-zone opensees stamp and no neutral zone
+# ---------------------------------------------------------------------------
+
+
+def _bridge_only_frame(path: Path) -> None:
+    """A real ``apeSees.h5`` write with no broker: ``H5Emitter._meta_attrs``
+    stamps ``opensees_schema_version`` plus the envelope, no neutral key,
+    no ``/nodes``, and ``/meta/ndm`` from the bridge's ``ops.model``."""
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.section.fiber import FiberPoint
+    from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+    ops = apeSees(cast("object", make_two_node_beam()))
+    ops.model(ndm=3, ndf=6)
+    steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    sec = ops.section.Fiber(
+        fibers=(FiberPoint(material=steel, y=0.0, z=0.0, area=0.01),),
+    )
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+    ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=integ)
+    ops.h5(str(path))
+
+
+def test_a_bridge_only_file_is_read_as_stamped(tmp_path: Path) -> None:
+    """The envelope repeats the opensees version; borrowing it as a neutral
+    version misfiled the file as pre-2.34.0 and demanded coordinates it
+    does not carry (#1389)."""
+    path = tmp_path / "bridge_only.h5"
+    _bridge_only_frame(path)
+    with h5py.File(path, "r") as f:
+        attrs = f["meta"].attrs
+        assert "opensees_schema_version" in attrs
+        assert "neutral_schema_version" not in attrs
+        assert "nodes" not in f
+
+        def _no_coords() -> Any:
+            raise AssertionError("a bridge-only stamp needs no coordinates")
+
+        assert h5_reader.read_spatial_ndm(attrs, f, coords=_no_coords) == 3
+    vecxz = _vecxz(path)
+    assert set(vecxz) == {1}
+    np.testing.assert_allclose(vecxz[1], [1.0, 0.0, 0.0])
