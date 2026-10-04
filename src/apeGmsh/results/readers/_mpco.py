@@ -260,6 +260,25 @@ class MPCOReader:
     # FEM access
     # ------------------------------------------------------------------
 
+    def spatial_dim(self) -> int:
+        """Column count of the capture's ``MODEL/NODES/COORDINATES`` (2 or 3).
+
+        The recorder stores ``ndm`` columns; :meth:`fem` pads two to
+        three (``FEMData`` is always ``(N, 3)``), so the padded ``z``
+        is not the model's.  :func:`results._bind._resolve_fem_via_model`
+        compares coordinates over this many columns when the archive
+        declares no ``ndm`` (#1393).  ``3`` when the file has no stage
+        or no ``MODEL`` group (nothing to compare then).
+        """
+        self._ensure_stages()
+        if not self._stage_cache:
+            return 3
+        mpco_name = self._stage_to_mpco[self._stage_cache[-1].id]
+        coords = _child(self._h5[mpco_name], "MODEL/NODES/COORDINATES")
+        if coords is None or coords.ndim != 2 or coords.shape[1] not in (2, 3):
+            return 3
+        return int(coords.shape[1])
+
     def fem(self) -> "Optional[FEMData]":
         if not isinstance(self._fem_cache, _Sentinel):
             return self._fem_cache

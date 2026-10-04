@@ -195,8 +195,14 @@ def _write_mpco(
     path: Path, *, n_stages: int,
     node_ids: np.ndarray = NODE_IDS, coords: np.ndarray = COORDS,
     n_steps: int = 2, ndm: int = 3,
+    elements: "list[tuple[int, list[int]]] | None" = None,
 ) -> Path:
-    """``ndm=2`` stores two COORDINATES columns, as a 2-D deck's recorder does."""
+    """``ndm=2`` stores two COORDINATES columns, as a 2-D deck's recorder does.
+
+    ``elements`` are ``(ops_tag, node_tags)`` rows of one FourNodeQuad
+    bucket, in the recorder's ``<class_tag>-<Class>[<rule>:<custom>]``
+    layout; ``None`` leaves ``MODEL/ELEMENTS`` empty.
+    """
     coords = np.asarray(coords, dtype=np.float64)[:, :ndm]
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
@@ -213,7 +219,15 @@ def _write_mpco(
                 "ID", data=node_ids.reshape(-1, 1).astype(np.int32),
             )
             nodes.create_dataset("COORDINATES", data=coords)
-            model.create_group("ELEMENTS")
+            elements_grp = model.create_group("ELEMENTS")
+            if elements:
+                elements_grp.create_dataset(
+                    "3-FourNodeQuad[1:0]",
+                    data=np.array(
+                        [[tag, *conn] for tag, conn in elements],
+                        dtype=np.int32,
+                    ),
+                )
             results = stage.create_group("RESULTS")
             disp = results.create_group("ON_NODES").create_group(
                 "DISPLACEMENT",
@@ -395,6 +409,19 @@ def test_program_name_that_matches_another_stage_id_warns(
         warnings.simplefilter("error", ShadowedStageNameWarning)
         with Results.from_mpco(mpco_two_stages, model_h5=own) as r:
             assert [s.name for s in r.stages] == ["stage_0", "stage_1"]
+    # A name like ANOTHER stage's MODEL_STAGE alias shadows that alias.
+    alias, _fem = _write_model_h5(
+        tmp_path / "alias.h5", stage_names=("MODEL_STAGE[2]", "second"),
+    )
+    with pytest.warns(
+        ShadowedStageNameWarning,
+        match=r"'MODEL_STAGE\[2\]' \(id 'stage_0'\) by the alias of stage 1",
+    ):
+        r = Results.from_mpco(mpco_two_stages, model_h5=alias)
+    with r:
+        # Names resolve before aliases: the name wins, as the warning says.
+        assert r.stage("MODEL_STAGE[2]")._stage_id == "stage_0"
+        assert r.stage("stage_1")._stage_id == "stage_1"
 
 
 @pytest.mark.filterwarnings(
@@ -590,6 +617,90 @@ def test_offset_plane_2d_model_still_refuses_an_in_plane_mismatch(
     wrong, _fem = _write_model_h5(tmp_path / "shifted.h5", fem=shifted)
     with pytest.warns(ModelFemMismatchWarning, match="differ by up to 0.5"):
         r = Results.from_mpco(mpco, model_h5=wrong)
+    with r:
+        assert r.fem.nodes.physical.names() == []
+
+
+# ---------------------------------------------------------------------------
+# #1393 — the broker-only route (``fem.to_h5``: /meta/ndm = 0, no element_meta)
+# ---------------------------------------------------------------------------
+
+
+def test_broker_archive_with_renumbered_elements_warns_and_falls_back(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's b0: ops tags are read as fem element ids on this route.
+
+    ``fem.to_h5`` carries no element tag map, and the bridge renumbers
+    elements densely, so the capture's tag 7 is not the archive's
+    element 1.  Binding the archive would answer ``gauss.get(pg=...)``
+    with the wrong elements and no error; the bind must refuse it.
+    """
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    broker = tmp_path / "broker.h5"
+    _plate_fem().to_h5(str(broker))
+    mpco = _write_mpco(
+        tmp_path / "r.mpco", n_stages=1, elements=[(7, [1, 2, 3, 4])],
+    )
+    with pytest.warns(
+        ModelFemMismatchWarning,
+        match=r"no element tag map.*1 absent from its elements \(e\.g\. 7\)",
+    ):
+        r = Results.from_mpco(mpco, model_h5=broker)
+    with r:
+        assert r.model.ndm == 0
+        assert r.fem.nodes.physical.names() == []
+        assert [int(e) for e in r.fem.elements.ids] == [7]
+        with pytest.raises(KeyError, match="No group named"):
+            r.stage("stage_0").elements.gauss.get(
+                pg="Plate", component="stress_xx",
+            )
+
+
+def test_broker_archive_with_matching_elements_binds_on_an_offset_plane(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's b5 with consistent elements: silent, PGs bound.
+
+    ``/meta/ndm`` is 0 on a broker archive, so the capture's own column
+    count (two) decides how many coordinates are compared; the padded
+    ``z = 0`` against the archive's ``z = 5`` is not a mismatch.  The
+    capture's element 1 on nodes 1-4 is the archive's element 1.
+    """
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    broker = tmp_path / "broker.h5"
+    _plate_fem(z=5.0).to_h5(str(broker))
+    mpco = _write_mpco(
+        tmp_path / "r.mpco", n_stages=1, ndm=2,
+        elements=[(1, [1, 2, 3, 4])],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelFemMismatchWarning)
+        r = Results.from_mpco(mpco, model_h5=broker)
+    with r:
+        assert r.model.ndm == 0
+        assert r.fem is r.model.fem
+        assert sorted(r.fem.nodes.physical.names()) == [
+            "Left", "Plate", "Right",
+        ]
+        assert [int(e) for e in r.fem.elements.physical.element_ids("Plate")] == [1]
+
+
+def test_broker_archive_element_on_other_nodes_warns(tmp_path: Path) -> None:
+    """Same element id, other nodes: still not the archive's element."""
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    broker = tmp_path / "broker.h5"
+    _plate_fem().to_h5(str(broker))
+    mpco = _write_mpco(
+        tmp_path / "r.mpco", n_stages=1, elements=[(1, [1, 2, 3, 1])],
+    )
+    with pytest.warns(
+        ModelFemMismatchWarning, match=r"1 on other nodes \(e\.g\. 1\)",
+    ):
+        r = Results.from_mpco(mpco, model_h5=broker)
     with r:
         assert r.fem.nodes.physical.names() == []
 

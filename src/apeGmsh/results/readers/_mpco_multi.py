@@ -147,6 +147,10 @@ class MPCOMultiPartitionReader:
         for r in self._readers:
             r.attach_tag_map(tag_map)
 
+    def spatial_dim(self) -> int:
+        """Coordinate column count of the capture; partition 0 answers (#1393)."""
+        return self._readers[0].spatial_dim()
+
     def attach_stage_names(self, names: "Sequence[str]") -> None:
         """Forward the program's stage names to every child reader (#1324).
 

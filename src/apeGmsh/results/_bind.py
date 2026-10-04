@@ -116,6 +116,72 @@ def _coords_mismatch(
     return max_diff, _COORD_RTOL * max(diag, 1.0)
 
 
+def _elements_reason(
+    embedded: "FEMData", model_fem: "FEMData", model: "OpenSeesModel",
+) -> "Optional[str]":
+    """Why the archive's elements cannot drive the capture's element reads.
+
+    ``None`` when they can.  An MPCO keys element results by ops tag.
+    A bridge archive (``ops.h5``) carries ``element_meta``, the ops
+    tag <-> fem element id pairing, and the reader relabels through it
+    (ADR 0043).  A broker-only archive (``fem.to_h5``) carries none, so
+    ops tags are read as fem element ids: that is right only when the
+    capture's elements ARE the archive's, same id and same nodes.  The
+    bridge renumbers elements densely (gmsh numbers the lower-dimension
+    elements first), so a broker archive beside a bridge-run capture
+    usually disagrees: ``gauss.get(pg="Plate")`` would then answer with
+    the wrong elements and no error (#1393).  A capture that holds a
+    consistent subset of the archive's elements passes.
+    """
+    from .readers._tag_translation import ElementTagTranslator
+
+    if not ElementTagTranslator.from_model(model).is_empty:
+        return None
+    archive: dict[int, tuple[int, ...]] = {}
+    for group in model_fem.elements:
+        ids = np.asarray(group.ids, dtype=np.int64)
+        conn = np.asarray(group.connectivity, dtype=np.int64)
+        for eid, row in zip(ids, conn):
+            archive[int(eid)] = tuple(sorted(int(n) for n in row))
+    n_capture = 0
+    missing: list[int] = []
+    differing: list[int] = []
+    for group in embedded.elements:
+        ids = np.asarray(group.ids, dtype=np.int64)
+        conn = np.asarray(group.connectivity, dtype=np.int64)
+        for eid, row in zip(ids, conn):
+            n_capture += 1
+            known = archive.get(int(eid))
+            if known is None:
+                missing.append(int(eid))
+            elif known != tuple(sorted(int(n) for n in row)):
+                differing.append(int(eid))
+    if not missing and not differing:
+        return None
+
+    def _some(ids: list[int]) -> str:
+        shown = ", ".join(str(i) for i in ids[:5])
+        more = f", ... ({len(ids)} in all)" if len(ids) > 5 else ""
+        return f"{shown}{more}"
+
+    parts = []
+    if missing:
+        parts.append(
+            f"{len(missing)} absent from its elements (e.g. {_some(missing)})",
+        )
+    if differing:
+        parts.append(
+            f"{len(differing)} on other nodes (e.g. {_some(differing)})",
+        )
+    return (
+        "declares no element tag map (/opensees/element_meta: written by "
+        "fem.to_h5, not ops.h5), so the capture's element ids must be its "
+        f"own, and of the capture's {n_capture} elements {'; '.join(parts)}"
+        ". Write the archive with ops.h5(...) so ops tags pair with fem "
+        "element ids"
+    )
+
+
 def _resolve_fem_via_model(
     reader: "ResultsReader",
     candidate: "Optional[FEMData]",
@@ -162,21 +228,27 @@ def _resolve_fem_via_model(
             f"(e.g. {shown}{more})"
         )
     else:
-        # ``/meta/ndm`` is 0 on a broker-only archive (no ``ops.model``
-        # call, so no deck ran from it); compare every column then.
-        ndm = int(model.ndm) if int(model.ndm) >= 1 else 3
+        # ``/meta/ndm`` is 0 on a broker-only archive (``fem.to_h5``,
+        # no ``ops.model`` call): the capture's own column count is the
+        # model's ndm then (a 2-D recorder stores two columns; the
+        # synthesis pads the third with 0, which is not the mesh's z).
+        ndm = int(model.ndm) if int(model.ndm) >= 1 else int(reader.spatial_dim())
         max_diff, tol = _coords_mismatch(
             capture_ids, embedded.nodes.coords,
             archive_ids, model_fem.nodes.coords, ndm=ndm,
         )
-        if max_diff <= tol:
-            return model_fem
-        reason = (
-            f"holds a different mesh: its {archive_ids.size} nodes cover "
-            f"the capture's {capture_ids.size} ids, but the coordinates "
-            f"at those ids differ by up to {max_diff:.6g} (tolerance "
-            f"{tol:.3g}, from the bounding box)"
-        )
+        if max_diff > tol:
+            reason = (
+                f"holds a different mesh: its {archive_ids.size} nodes "
+                f"cover the capture's {capture_ids.size} ids, but the "
+                f"coordinates at those ids differ by up to {max_diff:.6g} "
+                f"(tolerance {tol:.3g}, from the bounding box)"
+            )
+        else:
+            element_reason = _elements_reason(embedded, model_fem, model)
+            if element_reason is None:
+                return model_fem
+            reason = element_reason
     warnings.warn(
         ModelFemMismatchWarning(
             f"model_h5={str(model_path)!r} {reason}. Binding the "
@@ -254,19 +326,21 @@ def _bind_stage_names(
             stacklevel=3,
         )
     ids = [s.id for s in capture]
-    shadowed = [
-        f"{name!r} (id {ids[i]!r}, shadowed by id {name!r})"
-        for i, name in enumerate(paired)
-        if name in ids and ids.index(name) != i
-    ]
+    raw = [s.name for s in capture]          # the MODEL_STAGE[<k>] aliases
+    shadowed = []
+    for i, name in enumerate(paired):
+        if name in ids and ids.index(name) != i:
+            shadowed.append(f"{name!r} (id {ids[i]!r}) by the id of stage {ids.index(name)}")
+        elif name in raw and raw.index(name) != i:
+            shadowed.append(f"{name!r} (id {ids[i]!r}) by the alias of stage {raw.index(name)}")
     if shadowed:
         warnings.warn(
             ShadowedStageNameWarning(
                 f"model_h5={str(model_path)!r} names a stage like another "
-                f"stage's id: {', '.join(shadowed)}. results.stage(x) "
-                f"resolves the exact id first, so that name reaches the "
-                f"other stage; select the shadowed stage by its id or its "
-                f"MODEL_STAGE alias, or rename it in the program."
+                f"stage's id or MODEL_STAGE alias: {', '.join(shadowed)}. "
+                f"results.stage(x) resolves ids first and names before "
+                f"aliases, so select each stage by its own id, or rename "
+                f"it in the program."
             ),
             stacklevel=3,
         )

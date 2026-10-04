@@ -454,7 +454,10 @@ class Results:
           bound whenever its node ids cover the capture's and sit at
           the capture's coordinates (the model's ``ndm`` columns: a 2-D
           model on an offset plane compares in ``x, y``), so ``pg=``
-          queries work from files alone; a ``model_h5`` from another model or another mesh of
+          queries work from files alone. An archive written by
+          ``fem.to_h5`` carries no element tag map, so it is bound
+          only when the capture's element ids and nodes are its own
+          (ops tags are read as fem element ids on that route); a ``model_h5`` from another model or another mesh of
           the same part warns (``ModelFemMismatchWarning``) and the
           partial FEMData synthesized from the MPCO ``MODEL/`` group is
           bound instead.
