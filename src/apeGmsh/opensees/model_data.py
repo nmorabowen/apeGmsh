@@ -481,9 +481,14 @@ class ModelData:
         # we still carry the source value opaque below.
         fem = FEMData.from_h5(path)
 
+        from .emitter.h5_reader import read_spatial_ndm
+
         with h5py.File(path, "r") as f:
             meta = f["meta"]
-            ndm = int(meta.attrs.get("ndm", 3))
+            # Before neutral 2.34.0 ``/meta/ndm`` is the mesh dimension,
+            # not the ops.model one: the shim salvages it or refuses
+            # (#1291, #1358, #1368).
+            ndm = read_spatial_ndm(meta.attrs, f, coords=fem.nodes.coords)
             ndf = int(meta.attrs.get("ndf", 0))
             model_name_raw = meta.attrs.get("model_name", "")
             snapshot_id_raw = meta.attrs.get("snapshot_id", "")

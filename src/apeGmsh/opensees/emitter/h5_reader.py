@@ -511,7 +511,19 @@ class H5Model:
         if not tag_to_vecxz:
             return {}
 
-        ndm = int(self.meta().get("ndm", 3) or 3)
+        # The transf slot differs between the 2-D and 3-D vocabularies,
+        # and before neutral 2.34.0 ``/meta/ndm`` is the mesh dimension
+        # (a 3-D frame with a shell slab stamped 2), so resolve the
+        # ops.model ndm through the shim (#1291, #1358, #1368).
+        if "nodes" not in self._neutral:
+            raise MalformedH5Error(
+                "/opensees/transforms and /opensees/element_meta are "
+                "present but /nodes is not; resolving the ndm needs the "
+                "model's node coordinates (#1368)."
+            )
+        ndm = read_spatial_ndm(
+            self.meta(), self._f, coords=self._neutral["nodes/coords"],
+        )
 
         # h5_reader lives in opensees.emitter, so it may consult the
         # element vocabulary directly (the viewer cannot — that's why
