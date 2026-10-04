@@ -1236,7 +1236,12 @@ def test_emitted_tcl_has_the_masses_fix_loads_diaphragm_and_stage(g, tmp_path: P
         selection_set_pgs={}, condition_pgs={}, diaphragms=mesh.diaphragms, carrier_ids=range(0))
     build_conditions(ops, plan, mesh_for_build)
     path = tmp_path / "slab.tcl"
-    ops.tcl(str(path), progress=False)
+    # The STKO fixture fixes node 3 only; diaphragm master 8 is a lone
+    # point, so the bridge warns that its uz, rx, ry are free (#1333).
+    # The deck under test is the translator's, unchanged.
+    from apeGmsh.opensees import DetachedDiaphragmMasterWarning
+    with pytest.warns(DetachedDiaphragmMasterWarning, match="master node 8"):
+        ops.tcl(str(path), progress=False)
     text = path.read_text(encoding="utf-8")
 
     masses = {int(m.group(1)): [float(v) for v in m.group(2).split()]

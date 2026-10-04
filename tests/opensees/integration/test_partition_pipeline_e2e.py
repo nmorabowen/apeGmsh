@@ -209,6 +209,11 @@ def _wire_apesees(fem, *, with_recorders: bool = True):
 
     # Base SP: pin every base node.
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    # Each floor master is a lone centre-of-mass node: the diaphragm ties
+    # its ux, uy, rz, nothing stiffens its uz, rx, ry.  Hold them, or the
+    # build warns and K is singular there (#1333).
+    for s in (1, 2, 3):
+        ops.fix(pg=f"Master{s}", dofs=(0, 0, 1, 1, 1, 0))
 
     # Top-floor mass + load + plain analysis chain.
     ops.mass(pg="Master1", values=(1.0, 1.0, 0.0, 0.0, 0.0, 0.0))

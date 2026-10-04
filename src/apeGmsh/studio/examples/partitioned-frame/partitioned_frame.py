@@ -114,6 +114,11 @@ def emit_deck(fem, out_path: Path) -> None:
     ops.element.elasticBeamColumn(pg="Columns", transf=t_col, **common)
     ops.element.elasticBeamColumn(pg="Beams", transf=t_beam, **common)
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    # Each master is a lone point at the floor's centre: the diaphragm
+    # ties its ux, uy, rz to the floor, but nothing stiffens its uz, rx,
+    # ry.  Hold them, or K is singular there (#1333).
+    for s in range(1, N_STORIES + 1):
+        ops.fix(pg=f"Master{s}", dofs=(0, 0, 1, 1, 1, 0))
     ops.mass(pg=f"Master{N_STORIES}", values=(1.0, 1.0, 0.0, 0.0, 0.0, 0.0))
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as p:

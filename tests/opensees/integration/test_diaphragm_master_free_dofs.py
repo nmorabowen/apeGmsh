@@ -95,7 +95,7 @@ def test_detached_master_warns_on_the_deck_route(tmp_path) -> None:
     ops = _bridge(_frame_with_master(), fix_master=False)
     with pytest.warns(DetachedDiaphragmMasterWarning, match=r"master node 5") as caught:
         ops.tcl(tmp_path / "free.tcl")
-    assert f"ops.fix(nodes=(5,), dofs={FIX_MASK})" in str(caught[0].message)
+    assert f"ops.fix(pg='Master', dofs={FIX_MASK})" in str(caught[0].message)
 
 
 def test_fixed_master_is_silent_on_the_deck_route(tmp_path) -> None:

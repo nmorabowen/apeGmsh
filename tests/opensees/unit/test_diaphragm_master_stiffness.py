@@ -103,8 +103,17 @@ def test_detached_master_warns_naming_the_free_dofs_and_the_fix() -> None:
     msg = str(caught[0].message)
     assert "rigid_diaphragm 'floor': master node 5 is attached to no element" in msg
     assert "uz, rx, ry (3, 4, 5)" in msg
-    assert "ops.fix(nodes=(5,), dofs=(0, 0, 1, 1, 1, 0))" in msg
+    # Master 5 is the only node of point PG "Master": suggest that form.
+    assert "ops.fix(pg='Master', dofs=(0, 0, 1, 1, 1, 0))" in msg
     assert "#1333" in msg
+    assert msg.isascii(), "cp1252 consoles garble non-ASCII"
+
+
+def test_master_in_no_single_node_pg_gets_the_nodes_form() -> None:
+    fem = _frame_with_master()
+    fem.nodes._pgs["Master"].append(2)  # no longer a single-node group
+    with pytest.warns(DetachedDiaphragmMasterWarning, match=r"ops\.fix\(nodes=\(5,\), dofs=\(0, 0, 1, 1, 1, 0\)\)"):
+        _run(fem)
 
 
 def test_partial_fix_warns_on_the_remaining_dofs() -> None:
@@ -229,3 +238,116 @@ def test_no_diaphragm_is_a_no_op() -> None:
     fem = _frame_with_master()
     fem.add_node_constraints([])
     _assert_silent(fem)
+
+
+def test_node_pair_element_touching_the_master_counts_as_attached() -> None:
+    # A zeroLength wired to the master by nodes= (ADR 0049 node-pair form,
+    # no mesh cell) is an element touching it: out of the gate's scope
+    # whatever it stiffens.
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    fem = _frame_with_master()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
+    spring = ops.element.ZeroLength(
+        nodes=(5, 2), mat_dirs=(ZeroLengthMatDir(material=k, dof=3),),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DetachedDiaphragmMasterWarning)
+        validate_diaphragm_master_stiffness(
+            cast("object", fem), [*_column_specs(fem), spring], 3, 6,
+            {1: 6, 2: 6, 3: 6, 4: 6},
+        )
+
+
+def test_equal_dof_mixed_retained_master_counts_its_master_dofs() -> None:
+    # Master 5 is the RETAINED node of an equal_dof_mixed pairing the
+    # slave's (1, 2, 3) with the master's (3, 4, 5): the master's own
+    # DOFs are master_dofs, not dofs.
+    fem = _frame_with_master()
+    fem.add_node_constraints([
+        _diaphragm(5),
+        NodePairRecord(
+            kind=ConstraintKind.EQUAL_DOF_MIXED, master_node=5, slave_node=2,
+            dofs=[1, 2, 3], master_dofs=[3, 4, 5],
+        ),
+    ])
+    _assert_silent(fem)
+    fem.add_node_constraints([
+        _diaphragm(5),
+        NodePairRecord(
+            kind=ConstraintKind.EQUAL_DOF_MIXED, master_node=5, slave_node=2,
+            dofs=[1, 2], master_dofs=[3, 4],
+        ),
+    ])
+    with pytest.warns(DetachedDiaphragmMasterWarning, match=r"ry \(5\)"):
+        _run(fem)
+
+
+def test_sp_targeted_by_pg_holds_the_dof() -> None:
+    _assert_silent(
+        _frame_with_master(),
+        fix_records=[FixRecord(pg=None, nodes=(5,), dofs=(0, 0, 0, 1, 1, 0))],
+        sp_records=[_SPRecord(target_kind="pg", target="Master", dof=3, value=0.0)],
+    )
+
+
+def test_kinematic_coupling_with_empty_dofs_holds_every_dof() -> None:
+    # dofs=[] is the fork's count-based default: every DOF the slave
+    # carries is tied, so the master is treated as fully stiffened.
+    fem = _frame_with_master()
+    fem.add_node_constraints([
+        _diaphragm(5),
+        NodeGroupRecord(
+            kind=ConstraintKind.KINEMATIC_COUPLING, master_node=2,
+            slave_nodes=[5], dofs=[],
+        ),
+    ])
+    _assert_silent(fem)
+
+
+# ---------------------------------------------------------------------------
+# The perpDirn table (RigidDiaphragm.cpp:142-212)
+# ---------------------------------------------------------------------------
+
+
+def _normal_diaphragm(normal) -> NodeGroupRecord:
+    return NodeGroupRecord(
+        kind=ConstraintKind.RIGID_DIAPHRAGM, master_node=5, slave_nodes=[2, 4],
+        dofs=[], plane_normal=np.array(normal, dtype=float), name="d",
+    )
+
+
+def test_3d_perp_dirn_1_ties_uy_uz_rx() -> None:
+    fem = _frame_with_master()
+    fem.add_node_constraints([_normal_diaphragm((1.0, 0.0, 0.0))])
+    with pytest.warns(DetachedDiaphragmMasterWarning, match=r"ux, ry, rz \(1, 5, 6\)"):
+        _run(fem)
+
+
+def _run_2d(fem: FEMStub) -> None:
+    # ndm=2, ndf=3 envelope, no declared element: the master is detached.
+    validate_diaphragm_master_stiffness(cast("object", fem), [], 2, 3, {})
+
+
+def test_2d_perp_dirn_3_ties_every_planar_dof() -> None:
+    fem = _frame_with_master()
+    fem.add_node_constraints([_normal_diaphragm((0.0, 0.0, 1.0))])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DetachedDiaphragmMasterWarning)
+        _run_2d(fem)
+
+
+def test_2d_perp_dirn_2_ties_uy_only() -> None:
+    fem = _frame_with_master()
+    fem.add_node_constraints([_normal_diaphragm((0.0, 1.0, 0.0))])
+    with pytest.warns(DetachedDiaphragmMasterWarning, match=r"ux, rz \(1, 3\)"):
+        _run_2d(fem)
+
+
+def test_2d_perp_dirn_1_ties_ux_only() -> None:
+    fem = _frame_with_master()
+    fem.add_node_constraints([_normal_diaphragm((1.0, 0.0, 0.0))])
+    with pytest.warns(DetachedDiaphragmMasterWarning, match=r"uy, rz \(2, 3\)"):
+        _run_2d(fem)

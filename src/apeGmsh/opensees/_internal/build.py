@@ -833,7 +833,7 @@ class DetachedDiaphragmMasterWarning(UserWarning):
 
     ``rigidDiaphragm`` ties only the in-plane DOFs of the slaves to the
     master (``ux, uy, rz`` for a horizontal floor).  A master standing
-    alone at the floor's centre of mass — the documented pattern — then
+    alone at the floor's centre of mass - the documented pattern - then
     carries ``uz, rx, ry`` that no element, constraint or ``fix``
     stiffens.  The stiffness matrix is singular there: OpenSees prints
     "matrix singular", a static ``analyze`` can still return 0 with
@@ -857,6 +857,20 @@ _DIAPHRAGM_TIED_DOFS: "dict[tuple[int, int], frozenset[int]]" = {
 }
 
 _SPATIAL_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def _single_node_pg(fem: "FEMData", node: int) -> "str | None":
+    """Name of a physical group whose only node is ``node``, so a warning
+    can suggest the ``ops.fix(pg=...)`` form the user wrote the model in;
+    ``None`` when no such group exists (the ``nodes=`` form is always
+    valid, so that is a result, not a skipped lookup).  Every dim is
+    walked: only a point group can hold exactly one node, and the public
+    :meth:`PhysicalGroupSet.names` is the one surface the FEM stub mirrors."""
+    for name in fem.nodes.physical.names():
+        ids = expand_pg_to_nodes(fem, name)
+        if len(ids) == 1 and int(ids[0]) == int(node):
+            return str(name)
+    return None
 
 
 def _constraint_record_node_tags(rec: object) -> "set[int]":
@@ -886,7 +900,7 @@ def validate_diaphragm_master_stiffness(
     sp_records: "Iterable[_SPRecord]" = (),
     stage_constraint_records: "Iterable[ConstraintRecord]" = (),
 ) -> None:
-    """#1333 — warn when a ``rigid_diaphragm`` master that no element
+    """#1333 - warn when a ``rigid_diaphragm`` master that no element
     touches has DOFs nothing stiffens.
 
     For each diaphragm master absent from every declared element's
@@ -902,7 +916,7 @@ def validate_diaphragm_master_stiffness(
     alone: those records carry no per-DOF set the bridge can read, and a
     false warning on a legitimately coupled master would teach users to
     filter the category.  A master an element touches is out of scope
-    whatever it stiffens — this gate is about the element-less master
+    whatever it stiffens - this gate is about the element-less master
     the ``rigid_diaphragm`` docstring recommends.
 
     One aggregated :class:`DetachedDiaphragmMasterWarning` names every
@@ -954,7 +968,7 @@ def validate_diaphragm_master_stiffness(
 
     held: dict[int, set[int]] = {m: set() for m in detached}
 
-    # The diaphragms themselves — the DOFs OpenSees ties for the
+    # The diaphragms themselves - the DOFs OpenSees ties for the
     # emitted perpDirn.
     for rec in diaphragms:
         m = int(rec.master_node)
@@ -990,7 +1004,7 @@ def validate_diaphragm_master_stiffness(
                     held[m] |= dofs
         else:
             # Surface coupling / embedment / contact: no per-DOF set the
-            # bridge can read — assume the master is stiffened.
+            # bridge can read - assume the master is stiffened.
             for m in touched:
                 held[m] |= set(range(1, ndf_of(m) + 1))
 
@@ -1028,11 +1042,13 @@ def validate_diaphragm_master_stiffness(
         )
         mask = tuple(1 if d in free else 0 for d in range(1, ndf + 1))
         label = f" {rec.name!r}" if rec.name else ""
+        pg = _single_node_pg(fem, m)
+        target = f"pg={pg!r}" if pg is not None else f"nodes=({m},)"
         issues.append(
             f"rigid_diaphragm{label}: master node {m} is attached to no "
             f"element, and its DOFs {names} ({', '.join(map(str, free))}) "
-            f"are stiffened by nothing — not the diaphragm, not another "
-            f"constraint, not a fix. Fix them with ops.fix(nodes=({m},), "
+            f"are stiffened by nothing - not the diaphragm, not another "
+            f"constraint, not a fix. Fix them with ops.fix({target}, "
             f"dofs={mask}) or attach the master to an element"
         )
     if issues:
