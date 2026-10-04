@@ -309,7 +309,8 @@ Each is testable and is held by a test in the slice that lands it.
    file whose `/meta/ndm` still carried the old meaning). The one such
    path today is the results twin: `results/writers/_native.py::
    NativeWriter.write_model` restamps the embedded `/model/meta` with
-   the current neutral version and forwards the source's `ndm` through
+   the current neutral version, and `NativeWriter.write_opensees_from`
+   forwards the source's `ndm` onto it through
    `read_spatial_ndm(src_meta, src)`. Slice 4 tests it: a twin composed
    from a pre-2.34.0 source whose `/meta/ndm` carries the mesh
    dimension must read the spatial `ndm` the source's own reader
@@ -332,9 +333,9 @@ fewer. Order: 1, 2, then 3 in parallel with 4, then 5, then 6.
 | # | Slice | Owns |
 |---|---|---|
 | 1 | **This ADR** and the ADR 0023 amendment | `architecture/decisions/` |
-| 2 | **The floor**: `reader_floor`, the new `validate_zone_version` and its message, the three floor constants, `tests/fixtures/schema.py` (`*_FLOOR`; `*_PRIOR_MINOR` kept for shim tests), boundary tests replacing `test_two_version_window_*` in `tests/opensees/h5/test_h5_schema_compat.py`, the `schema-literal` quirk text, a changelog fragment | `schema_version.py`, the three writer modules, the compat tests |
+| 2 | **The floor**: `reader_floor`, the new `validate_zone_version` and its message, the five floor constants (`NEUTRAL_SCHEMA_FLOOR`, `SCHEMA_FLOOR`, `RESULTS_SCHEMA_FLOOR`, `GEOMETRY_SCHEMA_FLOOR`, `PROVENANCE_SCHEMA_FLOOR`), `tests/fixtures/schema.py` (`*_FLOOR`; `*_PRIOR_MINOR` kept for shim tests), boundary tests replacing `test_two_version_window_*` in `tests/opensees/h5/test_h5_schema_compat.py`, the `schema-literal` quirk text, a changelog fragment | `schema_version.py`, the three writer modules, the compat tests |
 | 3 | **The corpus**: the builder script, `tests/fixtures/schema_corpus/` (about 25 files, about 1 MB, plus manifest, dumps and decks), the corpus test (INV 5, 6, 7, 10, 12) | `scripts/`, the corpus fixtures, one test module |
-| 4 | **The app**: the floor table in `read.ts` with the banner text, `test/failclosed.test.ts`, the Python drift test (INV 4), the results-path test (INV 11, both embedded zones) and the results-twin laundering test on `write_model`'s `ndm` forward (INV 9) | `apeGmshViewer/src/reader/`, its tests, `tests/results/` |
+| 4 | **The app**: the floor table in `read.ts` with the banner text, `test/failclosed.test.ts`, the Python drift test (INV 4), the results-path test (INV 11, both embedded zones) and the results-twin laundering test on `write_opensees_from`'s `ndm` forward (INV 9) | `apeGmshViewer/src/reader/`, its tests, `tests/results/` |
 | 5 | **Docs**: `architecture/h5-schema.md` "Versioning" with the Floor column and the shim ledger, `docs/design/model-h5-neutral-zone.md` "Version rule", the bridge-feature guide's bump checklist (add the outgoing minor's corpus file) | the three documents |
 | 6 | **The quirk rule** for bare version compares, with a self-test proven on `read_spatial_ndm` / `META_NDM_IS_SPATIAL_FROM` (the rule passes the constant and fails a bare-tuple rewrite of that compare); deletes the dead `_fv < (2, 7, 0)` fallback in `_femdata_h5_io.py`, keyed below the floor (INV 8) | `scripts/check_quirks.py`, its test, one reader branch |
 
