@@ -3832,8 +3832,12 @@ analysis chain, and its own run:</p>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Loads from a finished stage are frozen (<code>loadConst</code>) before the next begins,
-stages can bring element groups online with <code>s.activate(pgs=[...])</code>, and an
+<p>Loads from a finished stage are frozen (<code>loadConst -time 0.0</code>) before the next
+begins, and the pseudo-time restarts at 0. A stage's series is read on that
+clock, so a load history that continues from an earlier stage needs
+<code>s.set_time(t)</code>; a <code>Path</code> series that would read 0 at every increment of the
+stage raises <code>SeriesOutsideStageWindowWarning</code> when the stage closes. Stages
+can bring element groups online with <code>s.activate(pgs=[...])</code>, and an
 MP constraint whose nodes only exist from a later stage onward is claimed by
 name inside that stage (<code>s.tie(name=...)</code>) instead of emitting globally. A
 model is either staged or not — a global pattern alongside stage blocks
