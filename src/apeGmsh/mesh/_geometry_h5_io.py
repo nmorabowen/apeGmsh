@@ -382,14 +382,24 @@ def capture_geometry(*, source: str, curve_samples: int = CURVE_SAMPLES) -> Geom
     )
 
 
-_TEMP_MESH_OPTIONS = ("Mesh.MeshSizeMin", "Mesh.MeshSizeMax")
+_TEMP_MESH_SIZE_OPTIONS = ("Mesh.MeshSizeMin", "Mesh.MeshSizeMax")
+#: A display tessellation needs no element quality: plain Delaunay with
+#: optimisation and smoothing off meshes a unit box in 29 ms against 66 ms
+#: for the default Frontal-Delaunay (measured on #1305), and this runs at
+#: the end of every session that never meshed.
+_TEMP_MESH_FIXED_OPTIONS = {
+    "Mesh.Algorithm": 5,
+    "Mesh.Optimize": 0,
+    "Mesh.Smoothing": 0,
+}
 
 
 def capture_temp_mesh(*, curve_samples: int = CURVE_SAMPLES) -> GeometryCapture:
     """Capture a session that never meshed: a 2-D temporary mesh, then clear.
 
-    The surfaces are meshed at ``lod_size`` (both ``Mesh.MeshSizeMin`` and
-    ``Mesh.MeshSizeMax`` are pinned to it for the call and restored
+    The surfaces are meshed at ``lod_size`` (``Mesh.MeshSizeMin`` and
+    ``Mesh.MeshSizeMax`` are pinned to it, and the algorithm set to plain
+    Delaunay without optimisation, for the call; every option is restored
     after), **never in 3-D** (V0 amendment 3).  Whatever the mesher
     leaves is cleared before returning, so the model carries no mesh
     afterwards.  A mesher failure is folded into the capture (the
@@ -402,11 +412,16 @@ def capture_temp_mesh(*, curve_samples: int = CURVE_SAMPLES) -> GeometryCapture:
         return capture_geometry(source="temp_mesh", curve_samples=curve_samples)
 
     lod = _lod_size(_model_bbox())
-    saved = {k: gmsh.option.getNumber(k) for k in _TEMP_MESH_OPTIONS}
+    saved = {
+        k: gmsh.option.getNumber(k)
+        for k in (*_TEMP_MESH_SIZE_OPTIONS, *_TEMP_MESH_FIXED_OPTIONS)
+    }
     try:
         if lod > 0.0:
-            for k in _TEMP_MESH_OPTIONS:
+            for k in _TEMP_MESH_SIZE_OPTIONS:
                 gmsh.option.setNumber(k, lod)
+        for k, v in _TEMP_MESH_FIXED_OPTIONS.items():
+            gmsh.option.setNumber(k, v)
         try:
             gmsh.model.mesh.generate(2)
         except Exception as exc:  # noqa: BLE001 - captured as partial
