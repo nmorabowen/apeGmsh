@@ -28,7 +28,7 @@ from typing import (
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
-from .base import StrategySpec, trim_coords_to_ndm
+from .base import StrategySpec, command_row, trim_coords_to_ndm
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -1572,6 +1572,25 @@ class LiveOpsEmitter:
                 stacklevel=2,
             )
             self._ops.system(fallback)
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        row = command_row(verb)
+        # The token's binding is looked up by its own name, the way the
+        # typed fork verbs probe theirs (``profiler``,
+        # ``modal_response_history``); a missing attribute means this
+        # build lacks the command, so name what the row requires.
+        fn = getattr(self._ops, verb, None)
+        if fn is None:
+            needs = ", ".join(sorted(row.requires)) or "a stock build"
+            raise RuntimeError(
+                f"LiveOpsEmitter.command({verb!r}): the bound openseespy "
+                f"module has no ops.{verb}; the verb requires {needs} "
+                "(VERBS row, ADR 0114). Emit a deck with ops.tcl(path) / "
+                "ops.py(path) for a build that has it."
+            )
+        fn(*args)
 
     # -- Staged analysis (Phase SSI-2.A) ------------------------------------
     #

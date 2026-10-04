@@ -9,8 +9,10 @@ and the lock pins the moves:
 
 ``via``
     ``"protocol"``: a method on ``base.py::Emitter``. ``"command"``: a
-    token routed through ``Emitter.command()`` (none yet; K1-2 adds the
-    method, and K4 moves typed fork verbs onto it).
+    token routed through ``Emitter.command()``, which is itself the
+    last Protocol method (K1-2). The ``command`` rows are the channel's
+    allow-list (``base.command_row``): a token without one raises on
+    every emitter. None ships yet; K4 moves typed fork verbs onto it.
 ``family``
     The kind of model fact the verb states; one of :data:`FAMILIES`.
 ``scope``
@@ -63,6 +65,8 @@ FAMILIES: Final[frozenset[str]] = frozenset({
     "time_series", "pattern", "load", "region", "damping", "recorder",
     "analysis", "parameter", "stage", "domain", "modal", "profiler",
     "partition",
+    # The command channel itself; the fact a token states is its own row's.
+    "channel",
 })
 
 #: The ``op`` and ``what`` vocabularies of ``/sequence.changes``.
@@ -271,15 +275,20 @@ _ROWS: Final[tuple[Verb, ...]] = (
        "{scope}/analysis@numberer_runtime_fallback"),
     _p("parallel_runtime_fallback_system", "analysis", "both", "archive",
        "{scope}/analysis@system_runtime_fallback"),
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+    # Method 75, the last. H5 refuses every token until K1-4 adds
+    # ``/opensees/commands``; the token's own row then says where it goes.
+    _p("command", "channel", "both", "refuse", ""),
 )
 
 #: One row per verb, keyed by verb name.
 VERBS: Final[Mapping[str, Verb]] = MappingProxyType(
     {row.verb: row for row in _ROWS})
 
-#: The number of methods on ``base.py::Emitter``. ADR 0114 freezes it:
-#: K1-2 raises it once, to 75, for ``command``, the last method.
-EMITTER_METHOD_COUNT: Final[int] = 74
+#: The number of methods on ``base.py::Emitter``. ADR 0114 D2 freezes it
+#: at 75: ``command`` (K1-2) is the last method, and a new verb is a
+#: ``command()`` token with a row here.
+EMITTER_METHOD_COUNT: Final[int] = 75
 
 #: Public names an emitter may define beyond the Protocol, per emitter
 #: module: emitter-specific side channels, not verbs. The class-level

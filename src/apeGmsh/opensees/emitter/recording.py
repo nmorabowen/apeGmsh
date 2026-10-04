@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
-from .base import trim_coords_to_ndm
+from .base import command_row, trim_coords_to_ndm
 
 if TYPE_CHECKING:
     from .base import StrategySpec
@@ -377,6 +377,12 @@ class RecordingEmitter:
         self.calls.append(
             ("parallel_runtime_fallback_system", (primary, fallback), {}),
         )
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        command_row(verb)
+        self.calls.append(("command", (verb, *args), {}))
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) ----
 

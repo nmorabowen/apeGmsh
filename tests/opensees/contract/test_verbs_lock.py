@@ -11,14 +11,21 @@ apeGmsh package is imported. What it pins:
 (d) the ``ledger`` rows are exactly the ones listed in
     ``verbs_ledger.txt``, whose ``N_LEDGER`` may only go down;
 (e) each emitter defines every Protocol verb, and every other public
-    name (method or class attribute) it defines is in ``SIDE_CHANNELS``.
+    name (method or class attribute) it defines is in ``SIDE_CHANNELS``;
+(f) the ``h5`` column against ``H5Emitter``'s source (K1-2): a
+    ``refuse`` row's method reaches ``self._refuse(`` (directly or
+    through any ``self._helper`` it calls), a ``ledger`` row's method
+    reaches ``self._ledger(``, no other row's method reaches either or
+    raises ``NotImplementedError`` / ``H5RefusedVerb`` itself, and an
+    ``archive`` row's method does more than discard its arguments;
+(g) the command channel's callers (ADR 0114 D3): every ``x.command(...)``
+    call under ``src/apeGmsh/opensees/`` passes a literal verb that is a
+    ``via == "command"`` row, from a ``_emit`` method of a class (or from
+    ``_internal/compose.py``, K2's replay). A non-literal verb, a token
+    without such a row, or any other caller fails.
 
-It also checks the ``h5`` column against ``H5Emitter``'s source: a
-``refuse`` row's method raises ``NotImplementedError`` (directly or
-through any ``self._helper`` it reaches) and no other row's method
-does, and an ``archive`` row's method does more than discard its
-arguments. It reads source, not behaviour: an archive body that stores
-the wrong thing is K2's round-trip oracle.
+It reads source, not behaviour: an archive body that stores the wrong
+thing is K2's round-trip oracle.
 """
 from __future__ import annotations
 
@@ -31,8 +38,13 @@ from types import ModuleType
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[3]
-_EMITTER_DIR = _ROOT / "src" / "apeGmsh" / "opensees" / "emitter"
+_OPENSEES_DIR = _ROOT / "src" / "apeGmsh" / "opensees"
+_EMITTER_DIR = _OPENSEES_DIR / "emitter"
 _LEDGER_FILE = Path(__file__).with_name("verbs_ledger.txt")
+
+#: The one module besides a primitive's ``_emit`` that may call
+#: ``command()``: K2's replay (ADR 0114 D3).
+_COMMAND_REPLAY_MODULE = _OPENSEES_DIR / "_internal" / "compose.py"
 
 #: Emitter module stem -> its concrete class.
 _EMITTERS = {
@@ -148,6 +160,10 @@ def test_a_protocol_method_count_is_frozen() -> None:
         f"freezes it at {VERBS_MOD.EMITTER_METHOD_COUNT}. A new verb goes "
         "through command(), not a new Protocol method."
     )
+    assert PROTOCOL_NAMES[-1] == "command", (
+        f"base.py::Emitter ends with {PROTOCOL_NAMES[-1]!r}; ADR 0114 D2 "
+        "makes command() the last method"
+    )
 
 
 def test_b_protocol_rows_match_the_protocol() -> None:
@@ -210,25 +226,47 @@ _ARCHIVED_BY_SIDE_CHANNEL = frozenset(
     {"addToParameter", "flip_element_stage", "step_hook_ramp"})
 
 
-def _raises_not_implemented(method: _FuncDef, helpers: dict[str, _FuncDef]) -> bool:
-    """True when the body, or any ``self._helper(...)`` it reaches
-    transitively, raises ``NotImplementedError`` (the H5 deferral refusal)."""
+#: The exception classes an H5 refusal raises by name. ``H5RefusedVerb``
+#: is the ``_refuse`` helper's class; ``test_f_refused_verb_is_a_not_implemented_error``
+#: pins its base.
+_REFUSAL_EXCEPTIONS = frozenset({"NotImplementedError", "H5RefusedVerb"})
+
+
+def _self_calls(fn: _FuncDef) -> set[str]:
+    """Attribute names of every ``self.<name>(...)`` call in ``fn``."""
+    return {
+        node.func.attr for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
+    }
+
+
+def _reaches(method: _FuncDef, helpers: dict[str, _FuncDef], target: str) -> bool:
+    """True when ``method``, or any ``self._helper(...)`` it calls
+    transitively, calls ``self.<target>(...)``. The walk stops at
+    ``target`` itself, so a helper's own body is not inspected."""
     seen: set[str] = set()
     stack: list[_FuncDef] = [method]
     while stack:
         fn = stack.pop()
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Raise) and node.exc is not None:
-                exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-                if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-                    return True
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "self"
-                    and node.func.attr in helpers
-                    and node.func.attr not in seen):
-                seen.add(node.func.attr)
-                stack.append(helpers[node.func.attr])
+        calls = _self_calls(fn)
+        if target in calls:
+            return True
+        for name in calls:
+            if name in helpers and name not in seen:
+                seen.add(name)
+                stack.append(helpers[name])
+    return False
+
+
+def _raises_refusal_itself(method: _FuncDef) -> bool:
+    """True when ``method``'s own body has ``raise NotImplementedError(...)``
+    or ``raise H5RefusedVerb(...)``: a refusal that bypasses ``_refuse``."""
+    for node in ast.walk(method):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+            if isinstance(exc, ast.Name) and exc.id in _REFUSAL_EXCEPTIONS:
+                return True
     return False
 
 
@@ -254,17 +292,39 @@ def _h5_methods() -> dict[str, _FuncDef]:
     return {m.name: m for m in _methods(_class_node("h5", "H5Emitter"))}
 
 
-def test_h5_column_agrees_with_the_h5_emitter_source() -> None:
-    """``refuse`` rows raise ``NotImplementedError`` in ``H5Emitter``;
-    ``archive`` and ``ledger`` rows never do."""
+def test_f_h5_column_agrees_with_the_h5_emitter_source() -> None:
+    """A ``refuse`` row's ``H5Emitter`` method reaches ``self._refuse(``, a
+    ``ledger`` row's reaches ``self._ledger(``, and no method reaches the
+    helper its row does not name or raises a refusal itself (K1-2)."""
     methods = _h5_methods()
+    for helper in ("_refuse", "_ledger"):
+        assert helper in methods, f"H5Emitter.{helper} is gone; every row body routes through it"
     for verb, row in PROTOCOL_ROWS.items():
         assert verb in methods, f"H5Emitter.{verb} is not a def; the lock cannot read it"
-        raises = _raises_not_implemented(methods[verb], methods)
-        if row.h5 == "refuse":
-            assert raises, f"{verb} is 'refuse' but H5Emitter.{verb} never refuses"
-        else:
-            assert not raises, f"{verb} is {row.h5!r} but H5Emitter.{verb} refuses"
+        method = methods[verb]
+        refuses = _reaches(method, methods, "_refuse")
+        ledgers = _reaches(method, methods, "_ledger")
+        assert not _raises_refusal_itself(method), (
+            f"H5Emitter.{verb} raises a refusal itself; call self._refuse(verb, detail)"
+        )
+        assert refuses == (row.h5 == "refuse"), (
+            f"{verb} is {row.h5!r} but H5Emitter.{verb} "
+            f"{'reaches' if refuses else 'never reaches'} self._refuse("
+        )
+        assert ledgers == (row.h5 == "ledger"), (
+            f"{verb} is {row.h5!r} but H5Emitter.{verb} "
+            f"{'reaches' if ledgers else 'never reaches'} self._ledger("
+        )
+
+
+def test_f_refused_verb_is_a_not_implemented_error() -> None:
+    """``H5RefusedVerb`` subclasses ``NotImplementedError``, so the sites
+    that already catch the H5 deferral keep catching it."""
+    tree = ast.parse((_EMITTER_DIR / "h5.py").read_text(encoding="utf-8"))
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    assert "H5RefusedVerb" in classes, "h5.py defines no H5RefusedVerb"
+    bases = {ast.unparse(b) for b in classes["H5RefusedVerb"].bases}
+    assert "NotImplementedError" in bases, bases
 
 
 def test_archive_rows_have_a_body_that_stores() -> None:
@@ -307,3 +367,104 @@ def test_e_emitters_define_protocol_and_declare_side_channels(stem: str) -> None
 
 def test_e_side_channels_cover_exactly_the_five_emitters() -> None:
     assert set(VERBS_MOD.SIDE_CHANNELS) == set(_EMITTERS)
+
+
+# -- (g) the command channel's callers (ADR 0114 D3) -------------------------
+
+COMMAND_VERBS = frozenset(k for k, v in VERBS.items() if v.via == "command")
+
+
+def _command_call_violations(
+    tree: ast.AST, label: str, allowed: frozenset[str], *, replay: bool,
+) -> list[str]:
+    """Every ``x.command(...)`` call in ``tree`` that breaks ADR 0114 D3.
+
+    ``allowed`` is the set of ``via == "command"`` verbs; ``replay`` is
+    True for ``_internal/compose.py``, where any function may call it.
+    Elsewhere the caller must be a method named ``_emit`` on a class.
+    """
+    out: list[str] = []
+
+    def visit(node: ast.AST, func: _FuncDef | None, cls: ast.ClassDef | None) -> None:
+        if isinstance(node, ast.ClassDef):
+            cls, func = node, None
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func = node
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "command"):
+            where = f"{label}:{node.lineno}"
+            caller = func.name if func is not None else "<module>"
+            if not replay and not (caller == "_emit" and cls is not None):
+                out.append(f"{where}: command() called from {caller!r}, not a Primitive._emit")
+            verb = node.args[0] if node.args else None
+            if not (isinstance(verb, ast.Constant) and isinstance(verb.value, str)):
+                out.append(f"{where}: command() verb is not a string literal")
+            elif verb.value not in allowed:
+                out.append(f"{where}: command({verb.value!r}) has no via='command' VERBS row")
+        for child in ast.iter_child_nodes(node):
+            visit(child, func, cls)
+
+    visit(tree, None, None)
+    return out
+
+
+def test_g_command_callers_pass_an_allowed_literal_from_an_emit() -> None:
+    violations: list[str] = []
+    for path in sorted(_OPENSEES_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        violations += _command_call_violations(
+            tree, str(path.relative_to(_ROOT)), COMMAND_VERBS,
+            replay=path == _COMMAND_REPLAY_MODULE,
+        )
+    assert not violations, "\n".join(violations)
+
+
+_OK_CALL = """
+class P:
+    def _emit(self, emitter, tag):
+        emitter.command("probe", tag, 1.5)
+"""
+_NON_LITERAL = """
+class P:
+    def _emit(self, emitter, tag):
+        verb = "probe"
+        emitter.command(verb, tag)
+"""
+_NO_ROW = """
+class P:
+    def _emit(self, emitter, tag):
+        emitter.command("fix", tag, 1)
+"""
+_WRONG_CALLER = """
+def helper(emitter):
+    emitter.command("probe", 1)
+"""
+_METHOD_NOT_EMIT = """
+class P:
+    def emit_extra(self, emitter):
+        self._emitter.command("probe", 1)
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "replay", "n_violations"),
+    [
+        (_OK_CALL, False, 0),
+        (_NON_LITERAL, False, 1),
+        (_NO_ROW, False, 1),
+        (_WRONG_CALLER, False, 1),
+        (_METHOD_NOT_EMIT, False, 1),
+        (_WRONG_CALLER, True, 0),
+        (_NON_LITERAL, True, 1),
+    ],
+    ids=["ok", "non-literal", "no-row", "module-function", "other-method",
+         "replay-module", "replay-non-literal"],
+)
+def test_g_scanner_catches_each_planted_violation(
+    source: str, replay: bool, n_violations: int,
+) -> None:
+    """The (g) scanner on planted sources: ``"probe"`` stands for a verb
+    with a ``via='command'`` row, ``"fix"`` for one without."""
+    found = _command_call_violations(
+        ast.parse(source), "<planted>", frozenset({"probe"}), replay=replay)
+    assert len(found) == n_violations, found

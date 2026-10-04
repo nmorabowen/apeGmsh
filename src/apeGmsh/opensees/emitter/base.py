@@ -201,6 +201,18 @@ emit the line (NOTE: the fork wires ``-feast`` into the
 interpreter/openseespy parser only — classic ``OpenSees.exe`` decks
 do not parse it yet, so the deck target is openseespy decks); H5
 no-ops; recording captures.
+
+**Architecture event — ADR 0114 D2/D3 (K1-2, 2026-10-04): the last
+one.** The Protocol gains :meth:`command` as method 75, and the count
+is frozen there (``verbs.EMITTER_METHOD_COUNT``; the lock in
+``tests/opensees/contract/test_verbs_lock.py`` fails a 76th). A new
+OpenSees verb is a ``command()`` token with a ``via="command"`` row in
+``verbs.VERBS``, never a new method. The channel is fail-closed:
+:func:`command_row` raises ``ValueError`` for any token without such a
+row, on every emitter, and no row ships yet (K4 moves the typed fork
+verbs onto it). Only a registered primitive's ``_emit`` with a literal
+verb may call it (the lock scans the callers); there is no user-facing
+``ops.command(...)``.
 """
 from __future__ import annotations
 
@@ -209,6 +221,8 @@ from collections.abc import Sequence
 from typing import Literal, Protocol
 
 import numpy as np
+
+from .verbs import VERBS, Verb
 
 
 @dataclass(frozen=True, slots=True)
@@ -765,6 +779,46 @@ class Emitter(Protocol):
         the fallback system is used instead.
         """
         ...
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+    # Method 75, the last. Every later verb is a token here, with a
+    # ``via="command"`` row in ``verbs.VERBS``; the row is the allow-list
+    # (:func:`command_row`), so an unknown token raises on every emitter.
+    def command(self, verb: str, *args: int | float | str) -> None:
+        """Emit the OpenSees command ``verb a1 a2 ...``.
+
+        Tcl writes ``verb a1 a2``; py writes ``ops.verb(a1, a2)``; live
+        calls ``ops.verb(*args)`` and raises when the binding lacks the
+        attribute, naming the row's ``requires``; recording appends
+        ``("command", (verb, *args), {})``; H5 refuses until K1-4 adds
+        ``/opensees/commands``. Callers are a registered primitive's
+        ``_emit`` with a literal verb (and K2's replay), nothing else.
+        """
+        ...
+
+
+def command_row(verb: str) -> Verb:
+    """Return the ``VERBS`` row that allows ``verb`` on the command channel.
+
+    ADR 0114 D3: the channel is fail-closed. A token is allowed only when
+    ``VERBS`` has a row for it **and** that row is ``via="command"``; a
+    Protocol verb's name (``"fix"``) or a token with no row raises
+    ``ValueError``. Every emitter's :meth:`Emitter.command` calls this
+    first, so the five targets refuse the same tokens.
+    """
+    row = VERBS.get(verb)
+    if row is None:
+        raise ValueError(
+            f"command({verb!r}): no VERBS row. A command() token needs a "
+            "via='command' row in opensees/emitter/verbs.py (ADR 0114 D3); "
+            "the channel is fail-closed."
+        )
+    if row.via != "command":
+        raise ValueError(
+            f"command({verb!r}): the VERBS row is via={row.via!r}, not "
+            f"'command'. Call emitter.{verb}(...) directly (ADR 0114 D3)."
+        )
+    return row
 
 
 def trim_coords_to_ndm(
