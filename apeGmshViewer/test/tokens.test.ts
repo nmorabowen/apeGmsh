@@ -194,10 +194,21 @@ test("assignSlots: a chain and a dense graph keep every adjacent pair apart, wit
   const s2 = assignSlots(n, star);
   assert.equal(new Set(s2).size, n, "all distinct");
   assert.ok(s2.some((x) => slotColour(x).ring === 1), "a second-ring slot is in use");
-  // The maintainer's ruling on #1330: a striped slot only once every office colour is in use,
-  // so exactly n - 8 of the thirteen are striped.
+  // The maintainer's ruling on #1330: a free office colour that contrasts comes before a striped
+  // slot. Here every office colour contrasts with the hub's, so the eight are used first and exactly
+  // n - 8 of the thirteen are striped.
   assert.equal(s2.filter((x) => slotColour(x).ring === 1).length, n - RING_SIZE, "stripes only for the repeated hues");
   for (const [a, b] of star) assert.ok(contrasts(s2[a]!, s2[b]!), `${a}-${b}`);
+  // The complete graph of 15: more neighbours than any sixteen slots can separate, so the fallback
+  // path (no slot contrasts with them all) decides most of them; even there, orange and dark gold
+  // never both appear, since the two are adjacent to everything.
+  const k15: [number, number][] = [];
+  for (let i = 0; i < 15; i++) for (let j = i + 1; j < 15; j++) k15.push([i, j]);
+  const s15 = assignSlots(15, k15);
+  const hues15 = new Set(s15.map(hueOf));
+  assert.ok(!(hues15.has(1) && hues15.has(4)), `K15 puts orange beside gold: ${JSON.stringify(s15)}`);
+  // Keeping gold out leaves fourteen usable slots for fifteen groups: one slot repeats, by design.
+  assert.equal(new Set(s15).size, 14, "fourteen distinct slots; the gold family is excluded");
   // Below eight groups no hue repeats, so no second-ring slot is taken while a contrasting office colour is free.
   const v3 = assignSlots(3, [[0, 1], [0, 2]]);
   assert.deepEqual(v3, [0, 1, 5]);

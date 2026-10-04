@@ -137,7 +137,7 @@ export interface LegendEntry {
   name: string;
   color: readonly [number, number, number];
   elements: number;
-  /** a second cue beside the colour (a repeated hue past the eight office colours): stripes on the chip */
+  /** a second cue beside the colour: stripes on the chip of a group whose slot is in the second ring (the same hue as an office colour, one lightness step away; taken when no free office colour contrasts with the group's neighbours) */
   cue: "stripe" | "stripe2" | null;
   /** the palette slot the group was assigned (state/palette.ts); null for the synthetic rows */
   slot: number | null;

@@ -12,10 +12,11 @@
 //
 // The app's default theme is dark (ADR 0112 D7 stills). The office colours
 // are made for white paper, so `DARK` carries dark-adapted variants: the
-// same hue order, the same protanopia rule, lightened in OKLCH to two
-// alternating lightness levels so that every group colour clears WCAG
-// 3:1 against the viewport background (test/tokens.test.ts reports the
-// ratios). A light theme with the palette as-is comes later.
+// same hue order, the same protanopia rule, each relit in OKLCH to a
+// lightness found by search (DARK_L1, DARK_L2 below) so that every group
+// colour clears WCAG 3:1 against the viewport background and the rules
+// under DARK_L1 hold (test/tokens.test.ts reports the ratios). A light
+// theme with the palette as-is comes later.
 
 export type Hex = `#${string}`;
 export type RGB = readonly [number, number, number];
@@ -174,8 +175,10 @@ export function oklabDistance(a: RGB, b: RGB): number {
  * found by a constrained search (levels 0.50 to 0.92 in steps of 0.02)
  * against the rules test/tokens.test.ts holds: every level clears WCAG
  * 3:1 on the background; legend neighbours step by at least 0.10; a
- * repeated hue (the second ring, groups 9 to 16) is at least 0.10 from its
- * first appearance; every pair of the sixteen is at least 0.05 OKLab apart
+ * repeated hue (the second ring, slots 8 to 15, taken when no free office
+ * colour contrasts with a group's neighbours; state/palette.ts assigns the
+ * slots from the view's adjacency) is at least 0.10 from its first
+ * appearance; every pair of the sixteen is at least 0.05 OKLab apart
  * as a protanope and as a deuteranope sees it (both lose red/green, and
  * blue, sky, teal, slate and purple then fall into one family, so
  * lightness is what tells them apart); and within the office eight a pair
@@ -188,7 +191,7 @@ export const DARK_L2: readonly number[] = [0.52, 0.7, 0.86, 0.58, 0.88, 0.76, 0.
 
 /** The office `main_colors` adapted to the dark background: same hue order, alternating lightness. */
 export const DARK_MAIN: readonly Hex[] = OFFICE_MAIN.map((hex, i) => relight(hex, DARK_L1[i]!));
-/** The second ring (groups 9 to 16): the same hues one lightness step away (found by search against the rules above; the legend adds a striped chip). */
+/** The second ring (slots 8 to 15): the same hues one lightness step away (found by search against the rules above; the legend adds a striped chip to a group that takes one). */
 export const DARK_MAIN_RING2: readonly Hex[] = OFFICE_MAIN.map((hex, i) => relight(hex, DARK_L2[i]!));
 
 /** The role colours adapted to the dark background. */
