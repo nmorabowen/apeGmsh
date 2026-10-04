@@ -3818,8 +3818,8 @@ Don't reach for nonlocal/gradient (descoped, fork ADR 59).</p>
 </tr>
 <tr>
 <td>solid, stock</td>
-<td><code>stdBrick</code>, <code>bbarBrick</code>, <code>SSPbrick</code></td>
-<td><code>bbarBrick</code> reduces volumetric locking</td>
+<td><code>stdBrick</code></td>
+<td><code>bbarBrick</code> / <code>SSPbrick</code> are deferred on the bridge; for anti-locking use fork <code>LadrunoBrick(formulation="bbar")</code></td>
 </tr>
 <tr>
 <td><strong>RC shell / wall</strong></td>
