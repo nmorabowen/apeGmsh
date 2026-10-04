@@ -13,7 +13,13 @@ import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadModel } from "./state/load.ts";
 import type { Store } from "./state/store.ts";
+import { focusOf, type Focus } from "./renderer/selection.ts";
 import type { ArtifactKind, BlobRef, State } from "./state/types.ts";
+
+/** What the frame effect moves: the viewport (or a test double). `null` frames the whole model. */
+export interface FrameTarget {
+  frameTo(focus: Focus | null): void;
+}
 
 export interface OpenSet {
   model: string | null;
@@ -87,6 +93,7 @@ export class Effects {
   /** Failed re-reads of the current path after a mid-read change; reset by a successful read or a new path. */
   private retries = 0;
   private retryPath: string | null = null;
+  private frameTarget: FrameTarget | null = null;
   private readonly off: (() => void)[] = [];
 
   constructor(store: Store, blobs: BlobStore, bridge: Bridge) {
@@ -104,6 +111,20 @@ export class Effects {
         void this.open(m.path);
       }),
     );
+    // frameSelection: the camera frames the selection's bounds (from the
+    // mesh blobs), or the whole model when nothing is selected.
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        if (s.view.frameSeq === prev.view.frameSeq) return;
+        if (!this.frameTarget) throw new Error("frameSelection: no frame target is attached");
+        this.frameTarget.frameTo(focusOf(s, this.blobs));
+      }),
+    );
+  }
+
+  /** Attach what `frameSelection` moves (the viewport). */
+  setFrameTarget(target: FrameTarget | null): void {
+    this.frameTarget = target;
   }
 
   /** Open a model artifact; resolves true when it loaded and is still the latest open. */

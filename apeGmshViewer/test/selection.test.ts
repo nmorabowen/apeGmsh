@@ -3,7 +3,34 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fitDistance, HALO_PX, pulseAt, PULSE_MS, PULSE_SCALE, selectionBounds } from "../src/renderer/selection.ts";
+import * as THREE from "three";
+import { fitDistance, HALO_LAYER, HALO_PX, highlightObjects, maskBytes, outlineOf, pulseAt, PULSE_MS, PULSE_SCALE, selectionBounds } from "../src/renderer/selection.ts";
+
+test("every highlight object sits on HALO_LAYER (the mask pass) and on the default layer (the frame), without depth test", () => {
+  // One segment and one quad (two triangles, fanned from the first corner).
+  const lp = new Float32Array([0, 0, 0, 1, 0, 0]);
+  const tp = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const made: number[] = [];
+  const objs = highlightObjects(lp, tp, [{ lines: [0], tris: [0, 1] }], (pos, width) => {
+    made.push(width);
+    return new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(pos, 3)), new THREE.LineBasicMaterial());
+  });
+  assert.equal(objs.length, 3, "segments, outline, fill");
+  assert.deepEqual(made, [9, 6], "thick segments, thinner outline");
+  for (const o of objs) {
+    assert.ok(o.layers.isEnabled(HALO_LAYER), `${o.type} on the halo layer`);
+    assert.ok(o.layers.isEnabled(0), `${o.type} still on the default layer`);
+    assert.equal(((o as THREE.Mesh).material as THREE.Material).depthTest, false, `${o.type} draws over everything`);
+  }
+  // The quad's outline is its four sides, not its diagonal.
+  assert.equal(outlineOf(tp, [0, 1]).length / 6, 4);
+  assert.deepEqual(highlightObjects(lp, tp, [], () => new THREE.Object3D()), []);
+});
+
+test("the mask target is one RGBA8 texel per device pixel", () => {
+  assert.equal(maskBytes(1584, 961, 1), 1584 * 961 * 4);
+  assert.equal(maskBytes(1584, 961, 2), 4 * 1584 * 961 * 4);
+});
 
 const close = (a: number, b: number, tol: number, what: string) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 

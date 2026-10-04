@@ -21,6 +21,7 @@ const store = new Store();
 const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
+effects.setFrameTarget(viewport);
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
