@@ -15,7 +15,7 @@
 <!-- One paragraph: what changes and why. Link the report section that motivates it. -->
 
 ### Owned files
-<!-- The only files the worker may edit. -->
+<!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`. -->
 - `path::symbol`
 
 ### Append-only

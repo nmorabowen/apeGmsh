@@ -184,20 +184,21 @@ All `prog-*` agents follow this protocol.
 2. **Stay in scope.** Edit only the files the card says you own. Never read a file over 2,000 lines whole: use `python scripts/nav.py map|at|where|refs|family` once it exists, otherwise grep an outline and read ranges.
 3. **Python.** Use `C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`. Probes need `PYTHONPATH=<your worktree>/src`, because the editable install points at another checkout. Running `pytest` from the worktree root is fine. Never import openseespy or opensees inside the shared pytest process unless the card calls for a live test.
 4. **Verify.** Run the card's commands exactly. A fix must prove its regression test fails with the fix reverted, and the PR body must say so. Warn-as-contract changes are verified with `pytest -W error::<Category>`.
-5. **Land-ready PR.**
+5. **Survive the watchdog.** Tool calls die at 600 s and sessions at the account or rate limit; work has survived only when it was pushed. Push the branch before any long step (an empty skeleton commit is fine), commit WIP after each verified step, and `git push` before every long run (suite, build, review wait). Open the PR when verification is done. Keep scratch files (for example `pr_body.md`) inside your own worktree, never in a shared scratchpad. Run long commands in the background with a pid file and poll; never pipe the primary command.
+6. **Land-ready PR.**
    - Commit with the attribution trailer your harness specifies.
    - Open the PR with `gh pr create --base main --body-file -`.
    - The body lists `Slice: #<n>`, `Author-model: <model>`, `Class: mechanical|semantic`, and a verification summary.
    - Add the CHANGELOG entry as `internal_docs/changelog_workflow.md` currently specifies.
-6. **Never:**
+7. **Never:**
    - merge;
    - push to `main`;
    - use `--auto`;
    - touch `C:\Users\nmora\Github\OpenSees_Compile\OpenSees`;
    - edit outside your owned files;
    - raise a ratchet baseline.
-7. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
-8. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
+8. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
+9. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
 
 ## 8. Kill criteria and KPIs
 

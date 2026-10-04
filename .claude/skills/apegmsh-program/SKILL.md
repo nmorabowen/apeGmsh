@@ -55,6 +55,12 @@ never implement.
   - body: `internal_docs/program/slice_card.md`, filled in;
   - labels: `program slice chain:<X>`, plus `mechanical` or `semantic`, plus
     `lock:<file>` when the slice touches a hub.
+- **Derive owned files, never write them.** For a move, rename or deletion, run
+  the card's own verification grep against `origin/main` untruncated (no
+  `head`) and paste its file list into the card; if the grep and the Owned list
+  disagree, the card is not ready. For every path or symbol a card cites, run
+  `git ls-tree origin/main <path>` or `python scripts/nav.py where <symbol>`
+  first.
 - **Choose an agent per slice** (PROGRAM.md §2):
   - mechanical → `prog-mechanic`;
   - semantic → `prog-builder-opus` or `prog-builder-fable`, alternating the

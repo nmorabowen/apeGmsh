@@ -57,6 +57,7 @@ has no hit **and** you are changing apeGmsh itself.
 | Task | Read only |
 |---|---|
 | First script / session skeleton | `references/workflows.md` |
+| Writing a model script (shape, naming, checks) | `references/model-scripts.md` (rules + the one nearest reference script) |
 | Public composite signature | MCP `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL` |
 | Public API map (headings) | `references/api-cheatsheet.md` (matching heading) |
 | FEMData / `model.h5` | `references/fem-broker.md` |
@@ -84,6 +85,7 @@ What each file contains (do not read them all):
 - `interop.md` — ETABS / analytical import
 - `section-properties.md` — `SectionProperties`, fiber handoff
 - `workflows.md` — end-to-end patterns (not a forced pipeline)
+- `model-scripts.md` — Script English rules + reference scripts (truss, 3-D frame, staged footing)
 - `gotchas.md` — anti-patterns
 - `ladruno.md` — fork-only emit/read
 
