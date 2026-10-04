@@ -83,9 +83,12 @@ with apeGmsh(model_name="frame") as g:
     # Tier 1 — co-located nodes share x/y/z
     g.constraints.equal_dof("col", "beam", dofs=[1, 2, 3])
 
-    # Tier 2 — slab nodes follow a centre-of-mass node
+    # Tier 2 — slab nodes follow a centre-of-mass node (master first).
+    # The master is in no element: fix its uz, rx, ry on the bridge,
+    # ops.fix(pg="slab_master", dofs=(0, 0, 1, 1, 1, 0)), or the build
+    # warns (DetachedDiaphragmMasterWarning, #1333).
     g.constraints.rigid_diaphragm(
-        "slab", "slab_master",
+        "slab_master", "slab",
         master_point=(2.5, 2.5, 3.0),
         plane_normal=(0, 0, 1),
     )

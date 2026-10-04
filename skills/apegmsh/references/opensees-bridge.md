@@ -461,6 +461,17 @@ deck. The `Emitter` protocol now defines the verbs
 
 <!-- verified: tests/opensees/unit/test_emitter_protocol.py::test_equalDOF_records_master_slave_dofs, ::test_rigidLink_records_kind_master_slave, ::test_rigidDiaphragm_records_perp_master_slaves, ::test_embeddedNode_records_ele_tag_cnode_args -->
 
+**A detached diaphragm master needs its out-of-plane DOFs fixed.**
+`rigidDiaphragm` ties only `ux, uy, rz` (horizontal floor), so a master
+that is a lone labelled point at the centre of mass has `uz, rx, ry`
+stiffened by nothing: K is singular there, `analyze` can still return 0
+with garbage displacements, and `eigen` gives periods of ~1e4 s. Restate
+them — `ops.fix(pg="master", dofs=(0, 0, 1, 1, 1, 0))` — or attach the
+master to an element. The build warns (`DetachedDiaphragmMasterWarning`,
+from `apeGmsh.opensees`) on a detached master with free DOFs and names
+the mask; a master held by a `fix` / `s.support` / `sp` / another
+constraint stays silent (#1333).
+
 Emission order (INV-3/INV-5, `build.emit_mp_constraints`): phantom
 nodes (synthesized by `NodeToSurfaceRecord` ties, `node(..., ndf=6)`)
 emit first, then MP constraints, **after** element emission and

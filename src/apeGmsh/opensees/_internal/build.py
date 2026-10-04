@@ -141,6 +141,7 @@ __all__ = [
     "make_auto_stiffness_resolver",
     "AUTO_STIFFNESS_ALPHA",
     "UnconsumedModelDefinitionWarning",
+    "DetachedDiaphragmMasterWarning",
     "WarnBodyForceDoubleCount",
     "WarnLoadBasisMismatch",
     "infer_node_ndf",
@@ -148,6 +149,7 @@ __all__ = [
     "validate_adaptive_element_endpoints",
     "resolve_ndf_overlay",
     "validate_constraint_master_ndf",
+    "validate_diaphragm_master_stiffness",
     "validate_record_ndf_consistency",
     "fit_dof_vector",
     "broker_mass_components",
@@ -823,6 +825,225 @@ def validate_constraint_master_ndf(
     if nc is not None:
         _walk(nc)  # NodeConstraintSet is iterable over its raw records.
     _walk(stage_constraint_records)
+
+
+class DetachedDiaphragmMasterWarning(UserWarning):
+    """A ``rigid_diaphragm`` master that no element touches has DOFs
+    nothing stiffens (#1333).
+
+    ``rigidDiaphragm`` ties only the in-plane DOFs of the slaves to the
+    master (``ux, uy, rz`` for a horizontal floor).  A master standing
+    alone at the floor's centre of mass — the documented pattern — then
+    carries ``uz, rx, ry`` that no element, constraint or ``fix``
+    stiffens.  The stiffness matrix is singular there: OpenSees prints
+    "matrix singular", a static ``analyze`` can still return 0 with
+    garbage displacements, and ``eigen`` reports modes with periods of
+    ~1e4 s or ~1e-154 s.  The warning names the ``ops.fix`` mask that
+    closes the hole; attaching the master to an element also silences it.
+    """
+
+
+#: 1-based DOFs ``rigidDiaphragm`` ties on a slave, per ``(ndm, perpDirn)``
+#: (``RigidDiaphragm.cpp:142-212``; ``perpPlaneConstrained = perpDirn - 1``).
+#: The master is the retained node, so these are the master DOFs the
+#: slaves' stiffness reaches.
+_DIAPHRAGM_TIED_DOFS: "dict[tuple[int, int], frozenset[int]]" = {
+    (3, 3): frozenset({1, 2, 6}),
+    (3, 2): frozenset({1, 3, 5}),
+    (3, 1): frozenset({2, 3, 4}),
+    (2, 3): frozenset({1, 2, 3}),
+    (2, 2): frozenset({2}),
+    (2, 1): frozenset({1}),
+}
+
+_SPATIAL_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def _constraint_record_node_tags(rec: object) -> "set[int]":
+    """Every node tag a constraint record references, from its
+    ADR 0038 ``tag_rewrite_spec`` cover set."""
+    spec = type(rec).tag_rewrite_spec  # type: ignore[attr-defined]
+    out: set[int] = set()
+    for f in spec["tag_fields_scalar"]:
+        v = getattr(rec, f)
+        if v is not None:
+            out.add(int(v))
+    for f in spec["tag_fields_array"]:
+        v = getattr(rec, f)
+        if v is not None:
+            out.update(int(n) for n in np.asarray(v).reshape(-1))
+    return out
+
+
+def validate_diaphragm_master_stiffness(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    envelope_ndf: int,
+    effective_ndf: "Mapping[int, int]",
+    *,
+    fix_records: "Iterable[FixRecord | SupportRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    stage_constraint_records: "Iterable[ConstraintRecord]" = (),
+) -> None:
+    """#1333 — warn when a ``rigid_diaphragm`` master that no element
+    touches has DOFs nothing stiffens.
+
+    For each diaphragm master absent from every declared element's
+    connectivity, the DOFs ``1..ndf`` are reduced by what reaches them:
+    the DOFs the diaphragm ties (:data:`_DIAPHRAGM_TIED_DOFS`, from the
+    emitted ``perpDirn``, not the record's ``dofs``), the DOFs of any
+    other node-pair / node-group constraint the master takes part in
+    (``master_dofs`` when it is the retained node of an
+    ``equal_dof_mixed``; every DOF when the record names none, which is
+    the fork couplings' count-based default), and the DOFs a ``fix`` /
+    ``s.support`` / pattern ``sp`` holds.  A master any other record kind
+    references (a surface coupling, an embedment, a contact) is left
+    alone: those records carry no per-DOF set the bridge can read, and a
+    false warning on a legitimately coupled master would teach users to
+    filter the category.  A master an element touches is out of scope
+    whatever it stiffens — this gate is about the element-less master
+    the ``rigid_diaphragm`` docstring recommends.
+
+    One aggregated :class:`DetachedDiaphragmMasterWarning` names every
+    detached master, its free DOFs and the ``ops.fix`` mask that closes
+    them; a model whose masters are all attached or fully held stays
+    silent.  Covers broker constraints and stage-claimed ones.
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind as _CK
+    from apeGmsh._kernel.records._constraints import (
+        NodeGroupRecord,
+        NodePairRecord,
+    )
+
+    nodes = getattr(fem, "nodes", None)
+    nc = getattr(nodes, "constraints", None) if nodes is not None else None
+    node_records: list[object] = [
+        *(nc if nc is not None else ()), *stage_constraint_records,
+    ]
+    diaphragms = [
+        r for r in node_records
+        if isinstance(r, NodeGroupRecord) and r.kind == _CK.RIGID_DIAPHRAGM
+    ]
+    if not diaphragms:
+        return
+    masters = {int(r.master_node) for r in diaphragms}
+
+    # Attached masters: any declared element's connectivity holds the tag.
+    master_arr = np.fromiter(masters, dtype=np.int64)
+    attached: set[int] = set()
+    for spec in elements:
+        fan = expand_spec_to_elements(fem, spec)
+        if not fan:
+            continue
+        conn = fan.conn
+        if conn.ndim == 2:
+            hit = conn[np.isin(conn, master_arr)]
+        else:
+            hit = np.concatenate([
+                np.asarray(row, dtype=np.int64) for row in conn
+            ])
+            hit = hit[np.isin(hit, master_arr)]
+        attached.update(int(n) for n in hit)
+        if attached >= masters:
+            return
+    detached = masters - attached
+
+    def ndf_of(n: int) -> int:
+        return int(effective_ndf.get(int(n), int(envelope_ndf)))
+
+    held: dict[int, set[int]] = {m: set() for m in detached}
+
+    # The diaphragms themselves — the DOFs OpenSees ties for the
+    # emitted perpDirn.
+    for rec in diaphragms:
+        m = int(rec.master_node)
+        if m in held:
+            perp = _perp_dirn_from_normal(rec.plane_normal)
+            held[m] |= _DIAPHRAGM_TIED_DOFS[(3 if int(ndm) == 3 else 2, perp)]
+
+    # Every other node-side constraint the master takes part in.
+    elements_c = getattr(fem, "elements", None)
+    ec = (
+        getattr(elements_c, "constraints", None)
+        if elements_c is not None else None
+    )
+    diaphragm_ids = {id(r) for r in diaphragms}
+    for rec in (*node_records, *(ec if ec is not None else ())):
+        if id(rec) in diaphragm_ids:  # by identity: records hold arrays
+            continue
+        touched = _constraint_record_node_tags(rec) & detached
+        if not touched:
+            continue
+        if isinstance(rec, (NodePairRecord, NodeGroupRecord)):
+            dofs = {int(d) for d in rec.dofs} if rec.dofs else None
+            for m in touched:
+                if (
+                    isinstance(rec, NodePairRecord)
+                    and rec.master_dofs is not None
+                    and int(rec.master_node) == m
+                ):
+                    held[m] |= {int(d) for d in rec.master_dofs}
+                elif dofs is None:
+                    held[m] |= set(range(1, ndf_of(m) + 1))
+                else:
+                    held[m] |= dofs
+        else:
+            # Surface coupling / embedment / contact: no per-DOF set the
+            # bridge can read — assume the master is stiffened.
+            for m in touched:
+                held[m] |= set(range(1, ndf_of(m) + 1))
+
+    # fix / support masks and pattern sps on the master.
+    for frec in fix_records:
+        for n in _record_node_ids(fem, frec):
+            if int(n) in held:
+                held[int(n)] |= {
+                    d for d, flag in enumerate(frec.dofs, start=1) if flag
+                }
+    for srec in sp_records:
+        targets = (
+            expand_pg_to_nodes(fem, srec.target)
+            if srec.target_kind == "pg" else (int(srec.target),)
+        )
+        for n in targets:
+            if int(n) in held:
+                held[int(n)].add(int(srec.dof))
+
+    issues: list[str] = []
+    for rec in diaphragms:
+        m = int(rec.master_node)
+        if m not in held:
+            continue
+        ndf = ndf_of(m)
+        free = sorted(set(range(1, ndf + 1)) - held[m])
+        if not free:
+            continue
+        del held[m]  # one entry per master, whatever the diaphragm count
+        layout = _load_dof_layout(ndf, int(ndm))
+        names = ", ".join(
+            _SPATIAL_DOF_NAMES[layout[d - 1]] if d - 1 < len(layout)
+            else f"DOF {d}"
+            for d in free
+        )
+        mask = tuple(1 if d in free else 0 for d in range(1, ndf + 1))
+        label = f" {rec.name!r}" if rec.name else ""
+        issues.append(
+            f"rigid_diaphragm{label}: master node {m} is attached to no "
+            f"element, and its DOFs {names} ({', '.join(map(str, free))}) "
+            f"are stiffened by nothing — not the diaphragm, not another "
+            f"constraint, not a fix. Fix them with ops.fix(nodes=({m},), "
+            f"dofs={mask}) or attach the master to an element"
+        )
+    if issues:
+        warnings.warn(
+            "; ".join(issues) + ". The stiffness matrix is singular on "
+            "those DOFs: OpenSees prints 'matrix singular', a static "
+            "analyze can still return 0 with garbage displacements, and "
+            "eigen reports periods of ~1e4 s or ~1e-154 s (#1333).",
+            DetachedDiaphragmMasterWarning,
+            stacklevel=_stacklevel_outside_package(),
+        )
 
 
 def fit_dof_vector(
