@@ -1114,9 +1114,10 @@ equal-length column datasets.
   an HDF5 group name or an OpenSees tag (Q3).
 * **Families.** The session writes these paths (V2c,
   `src/apeGmsh/_internal/provenance.py`):
-  * `neutral/labels/<name>` from `g.labels.add`;
+  * `neutral/labels/<name>` from `g.labels.add`, `g.labels.rename` (the
+    new name) and `g.parts.add` (the instance label);
   * `neutral/physical_groups/<name|#k>` from `g.physical.add` and its
-    shorthands;
+    shorthands, and from `g.labels.promote_to_physical`;
   * `geometry/<kind>/<label|#k>` from every geometry registration, where
     `<kind>` is the registering primitive (`box`, `line`, `polyline`, ...);
   * `neutral/<family>/<name|#k>` from the declaration verbs, where
@@ -1139,11 +1140,14 @@ equal-length column datasets.
   apeGmsh and the standard library. `script` is a row of `sites`: the
   outermost `__main__` frame of the user code around `site`, which
   differs from `site` when the call came through a user helper. The
-  walk for `script` starts at `site` and stops at the first apeGmsh,
-  standard-library or site-packages frame. A launcher that also runs as
-  `__main__` (`pytest`, `ipykernel_launcher`, `runpy`) therefore never
-  claims it, and a call with no user `__main__` frame around it (a test
-  function) gets none. Either is -1 when no such frame exists.
+  walk for `script` starts at `site`, passes through standard-library
+  frames (`contextlib`, `runpy`), and stops at the first apeGmsh or
+  site-packages frame. A launcher that runs as `__main__` from
+  site-packages (`pytest`, `ipykernel`) therefore never claims it, and
+  a call with no user `__main__` frame around it (a test function) gets
+  none. A `__main__` frame outside site-packages is always user code,
+  even when its file lies under the apeGmsh tree. Either is -1 when no
+  such frame exists.
   `seq` is the declaration's 0-based capture order in the run.
 * There is one record per user call: none per emitted row, none per
   fanned-out element, and none for calls apeGmsh synthesises.
