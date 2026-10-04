@@ -72,7 +72,7 @@ class NativeReader:
             raise
 
     def _validate_per_zone_versions(self) -> None:
-        """Apply the two-version window to every zone present in the file.
+        """Apply the floor check (ADR 0113 (#1303)) to every zone present.
 
         Per ADR 0023 §"Per-zone read validation":
 

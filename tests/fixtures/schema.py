@@ -2,17 +2,25 @@
 
 Tests stamping ``/meta/schema_version`` or ``/meta/opensees_schema_version``
 in synthetic h5 fixtures must import from here so the next minor bump
-is a one-file edit.  Per ADR 0023's two-version reader window,
-``*_PRIOR_MINOR`` is the oldest version the current reader accepts.
+is a one-file edit.  Each zone's reader accepts every minor from its
+``*_FLOOR`` up to ``*_CURRENT`` on the same major (ADR 0113 (#1303)); the
+floors move only with a major bump.  ``*_PRIOR_MINOR`` is the previous
+minor, kept for the tests of reader shims keyed on the newest minor.
 Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
 OPENSEES_CURRENT     = "2.21.0"  # SSI-2.E (/opensees/stages/*/update_material_stage)
 OPENSEES_PRIOR_MINOR = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
+OPENSEES_FLOOR       = "2.11.0"  # 0-based partition ranks: the zone's last non-additive minor
 NEUTRAL_CURRENT      = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
 NEUTRAL_PRIOR_MINOR  = "2.33.0"  # fork #839: additive `cpl_al_update` column on the coupling-control lane
+NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
+RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
 # ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0, so neither has a
-# prior minor yet; add *_PRIOR_MINOR at their first minor bump.
+# prior minor yet; add *_PRIOR_MINOR at their first minor bump. A zone's
+# floor is its first version.
 GEOMETRY_CURRENT     = "1.0.0"  # V2a: /geometry zone registered (sibling <stem>.geometry.h5)
 PROVENANCE_CURRENT   = "1.0.0"  # V2a: /provenance zone registered
+GEOMETRY_FLOOR       = "1.0.0"
+PROVENANCE_FLOOR     = "1.0.0"

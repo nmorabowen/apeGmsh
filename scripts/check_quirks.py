@@ -129,8 +129,9 @@ RULES: dict[str, str] = {
     ),
     "schema-literal": (
         "a schema version compared against a hard-coded literal goes stale at the next "
-        "bump and turns main red. Import NEUTRAL_CURRENT / OPENSEES_CURRENT (or the "
-        "*_PRIOR_MINOR pair) from tests/fixtures/schema.py. Incidents: stale at the "
+        "bump and turns main red. Import NEUTRAL_CURRENT / OPENSEES_CURRENT, the "
+        "*_FLOOR constants (the oldest minor each reader opens, ADR 0113) or "
+        "*_PRIOR_MINOR from tests/fixtures/schema.py. Incidents: stale at the "
         "2.12.0 and 2.13.0 bumps (fixed 60252205, #642), and at 2.16.0 (fixed #738)"
     ),
     "compose-streams": (
@@ -483,7 +484,7 @@ def check_schema_literal(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[
     """`<something naming schema_version> ==/!= "N.N.N"`, in tests only.
 
     Stamping an old or wrong version into a fixture (`attrs[...] = "2.6.0"`)
-    is how the window and major-refusal tests work, so assignments pass;
+    is how the floor and major-refusal tests work, so assignments pass;
     only a comparison asserts what the *current* version is.
     """
     if not rel.startswith("tests/") or rel == SCHEMA_FIXTURE.as_posix():

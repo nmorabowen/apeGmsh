@@ -722,8 +722,8 @@ def _compute_source_span(
     Raises
     ------
     SchemaVersionError
-        When the source's neutral schema is outside the reader's two-
-        version window (e.g. pre-2.8.x).
+        When the source's neutral schema is below the reader's floor
+        (ADR 0113 (#1303); e.g. pre-2.10.x) or newer than the reader.
     """
     import h5py
 
@@ -742,7 +742,7 @@ def _compute_source_span(
                 f"{p}: missing /meta group; not an apeGmsh model.h5"
             )
         meta_attrs = f["meta"].attrs
-        # Schema gate — pre-2.8.x is outside the reader window and
+        # Schema gate — pre-2.10.x is below the reader's floor and
         # surfaces a typed SchemaVersionError (the same surface
         # ``read_fem_h5`` raises on stale sources).
         file_version = read_zone_version(meta_attrs, NEUTRAL)

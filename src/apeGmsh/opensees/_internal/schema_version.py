@@ -1,19 +1,25 @@
-"""Per-zone schema versioning + two-version reader window (ADR 0023).
+"""Per-zone schema versioning + a compatibility floor per zone (ADR 0023,
+ADR 0113 (#1303)).
 
 Bump cadence (locked per ADR 0023):
 
 - Patch (Z): fix-only; no schema-shape change. Old readers parse identically.
 - Minor (Y): additive changes (new dataset/attr/field; old required fields
-  remain). The two-version window means the CURRENT reader still opens the
-  previous minor's files; a reader older than the file refuses it loudly
-  (INV-4 below — there is no forward tolerance).
+  remain), or a semantic change that ships a reader shim keyed on a named
+  ``*_FROM`` constant. The current reader opens every minor from the zone's
+  floor on; a reader older than the file refuses it loudly (INV-4 below —
+  there is no forward tolerance).
 - Major (X): breaking changes (removed field, renamed dataset, changed dtype).
   Old readers refuse with SchemaVersionError.
 
-Two-version reader window:
+Compatibility floor (ADR 0113 (#1303); it retired ADR 0023's two-version
+window, which expired files the readers could still parse):
 
-- Reader at X.Y.Z accepts X.Y.* and X.(Y-1).*
-- Older minors  -> SchemaVersionError (too old; outside window)
+- Reader at X.Z.* with floor X.F.* accepts X.F.* through X.Z.*; the patch
+  is ignored. Each writer owns its floor constant beside its version
+  constant; :func:`reader_floor` reads it, as :func:`reader_version` reads
+  the version. A floor moves only with a major bump.
+- Older minors  -> SchemaVersionError (too old: below the floor)
 - Newer minors  -> SchemaVersionError (newer than reader understands; refusing
   is safer than silent tolerance -- INV-4, dual of ADR 0021's lineage
   warn-not-raise)
@@ -43,6 +49,7 @@ __all__ = [
     "ENVELOPE_KEY",
     "GEOMETRY",
     "GEOMETRY_KEY",
+    "GEOMETRY_SCHEMA_FLOOR",
     "GEOMETRY_SCHEMA_VERSION",
     "NEUTRAL",
     "NEUTRAL_KEY",
@@ -50,12 +57,14 @@ __all__ = [
     "OPENSEES_KEY",
     "PROVENANCE",
     "PROVENANCE_KEY",
+    "PROVENANCE_SCHEMA_FLOOR",
     "PROVENANCE_SCHEMA_VERSION",
     "RESULTS",
     "RESULTS_KEY",
     "SchemaVersion",
     "SchemaVersionError",
     "read_zone_version",
+    "reader_floor",
     "reader_version",
     "validate_zone_version",
 ]
@@ -118,6 +127,11 @@ GEOMETRY_SCHEMA_VERSION: str = "1.0.0"
 #: Current version of the ``/provenance`` zone. Its writers (V2c, V2d)
 #: import this constant (``architecture/h5-schema.md``, "/provenance").
 PROVENANCE_SCHEMA_VERSION: str = "1.0.0"
+
+#: Floors of the two zones above (ADR 0113 (#1303)). A zone registered in
+#: ``_ZONE_KEY`` gets a floor equal to its first version.
+GEOMETRY_SCHEMA_FLOOR: str = "1.0.0"
+PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
 
 
 # Internal map zone -> per-zone key. Centralised so callers never spell the
@@ -192,10 +206,10 @@ class SchemaVersion:
 
 
 class SchemaVersionError(ValueError):
-    """Raised when an HDF5 file's zone schema is outside the reader's window.
+    """Raised when an HDF5 file's zone schema is outside the reader's range.
 
-    Carries an explicit upgrade-path message (file version + supported range)
-    per ADR 0023 §"Per-zone read validation."
+    Carries the file version, the supported range (floor to current) and
+    what to do, per ADR 0023 §"Per-zone read validation" and ADR 0113 (#1303).
     """
 
 
@@ -238,6 +252,36 @@ def reader_version(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION)
     raise ValueError(
         f"reader_version: unknown zone {zone!r} "
+        f"(expected one of {tuple(_ZONE_KEY)!r})"
+    )
+
+
+def reader_floor(zone: str) -> SchemaVersion:
+    """Return the oldest version of ``zone`` the current reader opens.
+
+    Mirrors :func:`reader_version`: the floor is a constant the zone's
+    writer owns beside its version constant (ADR 0113 (#1303)).
+
+    Raises
+    ------
+    ValueError
+        If ``zone`` is not a known zone identifier.
+    """
+    if zone == NEUTRAL:
+        from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_FLOOR
+        return SchemaVersion.parse(NEUTRAL_SCHEMA_FLOOR)
+    if zone == OPENSEES:
+        from ..emitter.h5 import SCHEMA_FLOOR
+        return SchemaVersion.parse(SCHEMA_FLOOR)
+    if zone == RESULTS:
+        from ...results.schema._versions import RESULTS_SCHEMA_FLOOR
+        return SchemaVersion.parse(RESULTS_SCHEMA_FLOOR)
+    if zone == GEOMETRY:
+        return SchemaVersion.parse(GEOMETRY_SCHEMA_FLOOR)
+    if zone == PROVENANCE:
+        return SchemaVersion.parse(PROVENANCE_SCHEMA_FLOOR)
+    raise ValueError(
+        f"reader_floor: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
     )
 
@@ -311,19 +355,20 @@ def validate_zone_version(
     *,
     zone: str,
 ) -> None:
-    """Two-version-window check (ADR 0023 INV-3 / INV-4).
+    """Floor check (ADR 0113 (#1303); ADR 0023 INV-3 / INV-4).
 
-    Accepts:
+    With ``floor = reader_floor(zone)``, accepts iff:
 
-    - ``file.major == reader.major``
-    - ``file.minor in {reader.minor, reader.minor - 1}``
+    - ``file.major == reader.major``, and
+    - ``floor.minor <= file.minor <= reader.minor`` (the patch is ignored).
 
-    Refuses (with explicit upgrade-path text) on:
+    Refuses with :class:`SchemaVersionError`, naming both ends of the
+    supported range, on:
 
-    - Different major (any direction).
-    - ``file.minor < reader.minor - 1`` (too old; outside the window).
-    - ``file.minor > reader.minor`` (newer than reader understands;
-      INV-4 — silent tolerance is worse than refusing).
+    - a different major (either direction);
+    - ``file.minor < floor.minor`` (too old: below the floor);
+    - ``file.minor > reader.minor`` (newer than this reader; INV-4 —
+      silent tolerance is worse than refusing).
 
     Parameters
     ----------
@@ -333,29 +378,39 @@ def validate_zone_version(
         The reader code's current version for the same zone (from
         :func:`reader_version`).
     zone
-        Zone identifier for error-message context.
+        Zone identifier; selects the floor and labels the message.
 
     Raises
     ------
     SchemaVersionError
-        Whenever the file is outside the reader's two-version window.
+        Whenever the file is outside the reader's supported range.
+    ValueError
+        If ``zone`` is unknown, or ``reader`` is not at or above the zone's
+        floor on the same major (a caller passing an impossible reader).
     """
-    supported_low = reader.minor - 1
-    supported_high = reader.minor
+    floor = reader_floor(zone)
+    if floor.major != reader.major or floor.minor > reader.minor:
+        raise ValueError(
+            f"validate_zone_version: reader {reader} is not at or above "
+            f"the {zone} floor {floor} on the same major"
+        )
     if file_version.major != reader.major:
-        raise SchemaVersionError(
-            _window_msg(zone, file_version, reader, supported_low,
-                        supported_high, cause="different major")
+        advice = (
+            _UPGRADE if file_version.major > reader.major else _REGENERATE
         )
-    if file_version.minor < supported_low:
         raise SchemaVersionError(
-            _window_msg(zone, file_version, reader, supported_low,
-                        supported_high, cause="too old; outside window")
+            _range_msg(zone, file_version, floor, reader,
+                       cause="different major", advice=advice)
         )
-    if file_version.minor > supported_high:
+    if file_version.minor < floor.minor:
         raise SchemaVersionError(
-            _window_msg(zone, file_version, reader, supported_low,
-                        supported_high, cause="newer than this reader")
+            _range_msg(zone, file_version, floor, reader,
+                       cause="too old", advice=_REGENERATE)
+        )
+    if file_version.minor > reader.minor:
+        raise SchemaVersionError(
+            _range_msg(zone, file_version, floor, reader,
+                       cause="newer than this reader", advice=_UPGRADE)
         )
 
 
@@ -389,26 +444,28 @@ def _decode(raw: object) -> str:
     return str(raw)
 
 
-def _window_msg(
+_UPGRADE = "Upgrade apeGmsh to read this archive."
+_REGENERATE = (
+    "Regenerate the file from its script with the current apeGmsh."
+)
+
+
+def _range_msg(
     zone: str,
     file_version: SchemaVersion,
+    floor: SchemaVersion,
     reader: SchemaVersion,
-    low: int,
-    high: int,
     *,
     cause: str,
+    advice: str,
 ) -> str:
     """Build the SchemaVersionError text.
 
-    Includes the file's version, the reader's supported range, and a
-    concise cause. Tests assert that both the file version and the
-    supported range appear in the message.
+    Names the file's version, the cause, the supported range from the
+    floor to the reader ("supports 2.10.x\u20132.34.x") and what to do.
     """
-    low_clamped = max(low, 0)
     return (
-        f"{zone}_schema_version={file_version}: {cause}. "
-        f"This reader supports {reader.major}.{low_clamped}.x-"
-        f"{reader.major}.{high}.x. "
-        f"Upgrade apeGmsh to read this archive, or re-emit the file "
-        f"with the current version."
+        f"{zone}_schema_version={file_version}: {cause}: this reader "
+        f"supports {floor.major}.{floor.minor}.x\u2013"
+        f"{reader.major}.{reader.minor}.x. {advice}"
     )

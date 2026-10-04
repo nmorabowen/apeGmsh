@@ -155,18 +155,30 @@ from pathlib import Path
 import numpy as np
 
 from apeGmsh.opensees._internal.schema_version import (
+    _ZONE_KEY,
     ENVELOPE_KEY,
+    GEOMETRY,
     NEUTRAL,
     NEUTRAL_KEY,
     OPENSEES,
     OPENSEES_KEY,
+    PROVENANCE,
     RESULTS,
     RESULTS_KEY,
     SchemaVersion,
     SchemaVersionError as _PerZoneSchemaError,
     read_zone_version,
+    reader_floor,
     reader_version,
     validate_zone_version,
+)
+from tests.fixtures.schema import (
+    GEOMETRY_FLOOR,
+    NEUTRAL_FLOOR,
+    OPENSEES_FLOOR,
+    OPENSEES_PRIOR_MINOR,
+    PROVENANCE_FLOOR,
+    RESULTS_FLOOR,
 )
 
 
@@ -229,97 +241,312 @@ def test_legacy_envelope_only_file_reads_via_fallback(tmp_path: Any) -> None:
         assert v_no_fallback is None
 
 
-def test_two_version_window_accepts_current_minor() -> None:
-    """Reader at X.Y.Z accepts X.Y.* — any patch within the current minor."""
-    reader = SchemaVersion(2, 6, 0)
-    for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 6, patch), reader, zone=NEUTRAL,
-        )
+# ---------------------------------------------------------------------------
+# The floor (ADR 0113 (#1303)): accept iff same major and
+# floor.minor <= file.minor <= reader.minor, patch ignored. Grid-tested at
+# both edges for every registered zone, so a zone added to _ZONE_KEY is
+# covered (and must have a floor) the day it lands.
+# ---------------------------------------------------------------------------
+
+_PATCHES = (0, 1, 99)
 
 
-def test_two_version_window_accepts_previous_minor() -> None:
-    """Reader at X.Y.Z accepts X.(Y-1).* — any patch within the prior minor."""
-    reader = SchemaVersion(2, 6, 0)
-    for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 5, patch), reader, zone=NEUTRAL,
-        )
+def _accepted_minors(zone: str) -> list[int]:
+    floor, reader = reader_floor(zone), reader_version(zone)
+    edges = {floor.minor, floor.minor + 1, reader.minor - 1, reader.minor}
+    return sorted(m for m in edges if floor.minor <= m <= reader.minor)
 
 
-def test_two_version_window_refuses_too_old_minor() -> None:
-    """Reader at 2.7.0 refuses 2.5.0 (outside the two-version window)."""
+@pytest.mark.parametrize("zone", tuple(_ZONE_KEY))
+def test_floor_accepts_every_edge_minor_and_patch(zone: str) -> None:
+    reader = reader_version(zone)
+    for minor in _accepted_minors(zone):
+        for patch in _PATCHES:
+            validate_zone_version(
+                SchemaVersion(reader.major, minor, patch), reader, zone=zone,
+            )
+
+
+@pytest.mark.parametrize("zone", tuple(_ZONE_KEY))
+def test_floor_refuses_one_minor_below(zone: str) -> None:
+    floor, reader = reader_floor(zone), reader_version(zone)
+    if floor.minor == 0:
+        # Nothing lies below X.0 on this major: the newest file of the
+        # previous major is the edge, and it is refused as another major.
+        with pytest.raises(_PerZoneSchemaError, match="different major"):
+            validate_zone_version(
+                SchemaVersion(floor.major - 1, 99, 99), reader, zone=zone,
+            )
+        return
+    for patch in _PATCHES:
+        with pytest.raises(_PerZoneSchemaError) as exc:
+            validate_zone_version(
+                SchemaVersion(floor.major, floor.minor - 1, patch), reader,
+                zone=zone,
+            )
+        assert "too old" in str(exc.value)
+
+
+@pytest.mark.parametrize("zone", tuple(_ZONE_KEY))
+def test_floor_refuses_newer_minor(zone: str) -> None:
+    """INV-4: refusing a newer minor is safer than silent tolerance."""
+    reader = reader_version(zone)
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 5, 0), SchemaVersion(2, 7, 0), zone=NEUTRAL,
+            SchemaVersion(reader.major, reader.minor + 1, 0), reader, zone=zone,
         )
-    assert "too old" in str(exc.value)
+    assert "newer than this reader" in str(exc.value)
 
 
-def test_two_version_window_refuses_newer_minor() -> None:
-    """Reader at 2.6.0 refuses 2.7.0 (newer than this reader knows).
-    INV-4 — refusing is safer than silent tolerance."""
+@pytest.mark.parametrize("zone", tuple(_ZONE_KEY))
+def test_floor_refuses_other_majors(zone: str) -> None:
+    floor, reader = reader_floor(zone), reader_version(zone)
+    others = [
+        SchemaVersion(reader.major + 1, floor.minor, 0),
+        SchemaVersion(reader.major - 1, reader.minor, 0),
+    ]
+    for file_version in others:
+        with pytest.raises(_PerZoneSchemaError) as exc:
+            validate_zone_version(file_version, reader, zone=zone)
+        assert "different major" in str(exc.value)
+
+
+@pytest.mark.parametrize("zone", tuple(_ZONE_KEY))
+def test_refusal_names_both_ends_of_the_range(zone: str) -> None:
+    floor, reader = reader_floor(zone), reader_version(zone)
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 7, 0), SchemaVersion(2, 6, 0), zone=NEUTRAL,
-        )
-    assert "newer" in str(exc.value)
-
-
-def test_two_version_window_refuses_different_major() -> None:
-    """Reader at 2.6.0 refuses 3.0.0 AND 1.x — any major mismatch."""
-    reader = SchemaVersion(2, 6, 0)
-    with pytest.raises(_PerZoneSchemaError) as exc:
-        validate_zone_version(
-            SchemaVersion(3, 0, 0), reader, zone=NEUTRAL,
-        )
-    assert "different major" in str(exc.value)
-    with pytest.raises(_PerZoneSchemaError) as exc:
-        validate_zone_version(
-            SchemaVersion(1, 9, 0), reader, zone=NEUTRAL,
-        )
-    assert "different major" in str(exc.value)
-
-
-def test_schema_version_error_message_includes_upgrade_path() -> None:
-    """SchemaVersionError text mentions the file's version AND the
-    reader's supported range, per ADR 0023 §"Per-zone read validation"."""
-    reader = SchemaVersion(2, 6, 0)
-    with pytest.raises(_PerZoneSchemaError) as exc:
-        validate_zone_version(
-            SchemaVersion(2, 4, 0), reader, zone=OPENSEES,
+            SchemaVersion(reader.major, reader.minor + 1, 0), reader, zone=zone,
         )
     msg = str(exc.value)
-    assert "2.4.0" in msg
-    assert "2.5.x" in msg or "2.5" in msg
-    assert "2.6.x" in msg or "2.6" in msg
-    assert "Upgrade" in msg
+    assert f"{zone}_schema_version={reader.major}.{reader.minor + 1}.0" in msg
+    assert (
+        f"supports {floor.major}.{floor.minor}.x\u2013"
+        f"{reader.major}.{reader.minor}.x" in msg
+    )
+    assert "Upgrade apeGmsh" in msg
+
+
+def test_too_old_refusal_says_regenerate() -> None:
+    floor, reader = reader_floor(NEUTRAL), reader_version(NEUTRAL)
+    with pytest.raises(_PerZoneSchemaError) as exc:
+        validate_zone_version(
+            SchemaVersion(floor.major, floor.minor - 1, 0), reader, zone=NEUTRAL,
+        )
+    assert "too old" in str(exc.value)
+    assert "Regenerate" in str(exc.value)
+
+
+def test_reader_below_its_floor_is_a_caller_error() -> None:
+    """A reader below the zone's floor is impossible: fail loud, not refuse."""
+    floor = reader_floor(OPENSEES)
+    with pytest.raises(ValueError) as exc:
+        validate_zone_version(
+            floor, SchemaVersion(floor.major, floor.minor - 1, 0), zone=OPENSEES,
+        )
+    assert not isinstance(exc.value, _PerZoneSchemaError)
+
+
+def test_floor_unknown_zone_refused() -> None:
+    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
+        reader_floor("sequence")
+    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
+        validate_zone_version(
+            SchemaVersion(1, 0, 0), SchemaVersion(1, 0, 0), zone="sequence",
+        )
 
 
 def test_validate_per_zone_independently() -> None:
-    """INV-3 — windows are conjunctive but NOT coupled.
-
-    opensees at 2.6.0 + neutral at 2.5.0 should both validate
-    independently when the reader is at 2.6.0 for each zone.
-    """
-    reader = SchemaVersion(2, 6, 0)
-    validate_zone_version(SchemaVersion(2, 6, 0), reader, zone=OPENSEES)
-    validate_zone_version(SchemaVersion(2, 5, 0), reader, zone=NEUTRAL)
+    """INV-3 — the zones' ranges are conjunctive but NOT coupled: each
+    zone's floor stamp validates against its own reader."""
+    validate_zone_version(
+        reader_floor(OPENSEES), reader_version(OPENSEES), zone=OPENSEES,
+    )
+    validate_zone_version(
+        reader_floor(NEUTRAL), reader_version(NEUTRAL), zone=NEUTRAL,
+    )
+    with pytest.raises(_PerZoneSchemaError):
+        # The neutral floor is below the opensees floor.
+        validate_zone_version(
+            reader_floor(NEUTRAL), reader_version(OPENSEES), zone=OPENSEES,
+        )
 
 
 def test_reader_version_reflects_writer_constants() -> None:
-    """``reader_version(NEUTRAL)`` matches ``NEUTRAL_SCHEMA_VERSION`` exactly.
+    """``reader_version`` / ``reader_floor`` match the writer constants exactly.
 
-    Single source of truth — the reader's per-zone version is sourced
-    from the writer module's constant; they cannot drift.
+    Single source of truth — the reader's per-zone version and floor are
+    sourced from the writer module's constants; they cannot drift. The
+    floors are pinned to ``tests/fixtures/schema.py`` too, and sit at or
+    below their versions on the same major.
     """
-    from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
+    from apeGmsh.mesh._femdata_h5_io import (
+        NEUTRAL_SCHEMA_FLOOR,
+        NEUTRAL_SCHEMA_VERSION,
+    )
+    from apeGmsh.opensees._internal.schema_version import (
+        GEOMETRY_SCHEMA_FLOOR,
+        GEOMETRY_SCHEMA_VERSION,
+        PROVENANCE_SCHEMA_FLOOR,
+        PROVENANCE_SCHEMA_VERSION,
+    )
+    from apeGmsh.opensees.emitter.h5 import SCHEMA_FLOOR as OPENSEES_SCHEMA_FLOOR
     from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
-    from apeGmsh.results.schema._versions import RESULTS_SCHEMA_VERSION
+    from apeGmsh.results.schema._versions import (
+        RESULTS_SCHEMA_FLOOR,
+        RESULTS_SCHEMA_VERSION,
+    )
 
     assert reader_version(NEUTRAL) == SchemaVersion.parse(NEUTRAL_SCHEMA_VERSION)
     assert reader_version(OPENSEES) == SchemaVersion.parse(OPENSEES_VERSION)
     assert reader_version(RESULTS) == SchemaVersion.parse(RESULTS_SCHEMA_VERSION)
+
+    writer_floors = {
+        NEUTRAL: (NEUTRAL_SCHEMA_FLOOR, NEUTRAL_FLOOR),
+        OPENSEES: (OPENSEES_SCHEMA_FLOOR, OPENSEES_FLOOR),
+        RESULTS: (RESULTS_SCHEMA_FLOOR, RESULTS_FLOOR),
+        GEOMETRY: (GEOMETRY_SCHEMA_FLOOR, GEOMETRY_FLOOR),
+        PROVENANCE: (PROVENANCE_SCHEMA_FLOOR, PROVENANCE_FLOOR),
+    }
+    assert set(writer_floors) == set(_ZONE_KEY)
+    for zone, (writer_floor, fixture_floor) in writer_floors.items():
+        floor = reader_floor(zone)
+        assert floor == SchemaVersion.parse(writer_floor) == SchemaVersion.parse(
+            fixture_floor
+        ), zone
+        reader = reader_version(zone)
+        assert floor.major == reader.major and floor.minor <= reader.minor, zone
+    # The new zones' floor is their first (and, so far, only) version.
+    assert GEOMETRY_SCHEMA_FLOOR == GEOMETRY_SCHEMA_VERSION
+    assert PROVENANCE_SCHEMA_FLOOR == PROVENANCE_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# The floor through every reader (ADR 0113 (#1303)). A file stamped anywhere
+# from the zone's floor to the current minor opens; one minor below refuses.
+# The stamps are restamps of a current file: the gate is under test here,
+# the real old files are the corpus's job (#1303 PR-3).
+# ---------------------------------------------------------------------------
+
+#: Neutral stamps the old two-version window refused: the floor itself, a
+#: mid-history minor, and the minor #1300 (2.34.0) expired.
+_OLD_NEUTRAL_STAMPS = (NEUTRAL_FLOOR, "2.12.0", "2.32.0")
+
+
+def _below(floor: str) -> str:
+    v = SchemaVersion.parse(floor)
+    return f"{v.major}.{v.minor - 1}.0"
+
+
+def _restamp_neutral(meta: Any, stamp: str) -> None:
+    meta.attrs[ENVELOPE_KEY] = stamp
+    meta.attrs[NEUTRAL_KEY] = stamp
+
+
+def _neutral_file(tmp_path: Path, stamp: str) -> Path:
+    from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
+
+    out = tmp_path / f"neutral_{stamp}.h5"
+    build_simple_frame_fem().to_h5(str(out))
+    with h5py.File(out, "r+") as f:
+        _restamp_neutral(f["meta"], stamp)
+    return out
+
+
+@pytest.mark.parametrize("stamp", _OLD_NEUTRAL_STAMPS)
+def test_old_neutral_stamp_opens_through_from_h5(tmp_path: Path, stamp: str) -> None:
+    """A neutral file stamped 2.12.0 refused under the window; it opens now."""
+    from apeGmsh.mesh.FEMData import FEMData
+
+    fem = FEMData.from_h5(str(_neutral_file(tmp_path, stamp)))
+    assert len(fem.nodes.ids) > 0
+
+
+def test_neutral_stamp_below_floor_refuses_through_from_h5(tmp_path: Path) -> None:
+    from apeGmsh.mesh.FEMData import FEMData
+
+    path = _neutral_file(tmp_path, _below(NEUTRAL_FLOOR))
+    with pytest.raises(_PerZoneSchemaError, match="too old"):
+        FEMData.from_h5(str(path))
+
+
+@pytest.mark.parametrize("stamp", _OLD_NEUTRAL_STAMPS)
+def test_old_neutral_stamp_passes_compose_span(tmp_path: Path, stamp: str) -> None:
+    from apeGmsh.mesh._compose import _compute_source_span
+
+    _compute_source_span(_neutral_file(tmp_path, stamp))
+
+
+def test_neutral_stamp_below_floor_refuses_compose_span(tmp_path: Path) -> None:
+    from apeGmsh.mesh._compose import _compute_source_span
+
+    path = _neutral_file(tmp_path, _below(NEUTRAL_FLOOR))
+    with pytest.raises(_PerZoneSchemaError, match="too old"):
+        _compute_source_span(path)
+
+
+@pytest.mark.parametrize("stamp", [OPENSEES_FLOOR, OPENSEES_PRIOR_MINOR])
+def test_opensees_stamp_at_floor_opens_through_h5_reader(
+    tmp_path: Path, stamp: str,
+) -> None:
+    out = tmp_path / "bridge.h5"
+    e = H5Emitter(schema_version=stamp)
+    e.model(ndm=3, ndf=6)
+    e.write(str(out))
+    with h5_reader.open(str(out)) as m:
+        assert m.schema_version == stamp
+
+
+def test_opensees_stamp_below_floor_refuses_through_h5_reader(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "bridge_old.h5"
+    e = H5Emitter(schema_version=_below(OPENSEES_FLOOR))
+    e.model(ndm=3, ndf=6)
+    e.write(str(out))
+    with pytest.raises(SchemaVersionError, match="too old"):
+        h5_reader.open(str(out))
+
+
+def _restamp_results(path: Path, *, neutral: str, opensees: str, results: str) -> None:
+    with h5py.File(path, "r+") as f:
+        f.attrs[RESULTS_KEY] = results
+        f.attrs[NEUTRAL_KEY] = neutral
+        f.attrs[OPENSEES_KEY] = opensees
+        _restamp_neutral(f["model/meta"], neutral)
+        f["model/meta"].attrs[OPENSEES_KEY] = opensees
+
+
+def test_results_with_floor_stamped_zones_open_through_native_reader(
+    tmp_path: Path,
+) -> None:
+    """The embedded /model and /opensees at their floors no longer expire a
+    results file (RS6)."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    results_path, _ = _build_composed_results(tmp_path)
+    _restamp_results(
+        results_path, neutral=NEUTRAL_FLOOR, opensees=OPENSEES_FLOOR,
+        results=RESULTS_FLOOR,
+    )
+    NativeReader(results_path).close()
+
+
+@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
+def test_results_with_embedded_zone_below_floor_refuses(
+    tmp_path: Path, zone: str,
+) -> None:
+    from apeGmsh.results.readers._native import NativeReader
+
+    results_path, _ = _build_composed_results(tmp_path)
+    stamps = {NEUTRAL: NEUTRAL_FLOOR, OPENSEES: OPENSEES_FLOOR}
+    stamps[zone] = _below(stamps[zone])
+    _restamp_results(
+        results_path, neutral=stamps[NEUTRAL], opensees=stamps[OPENSEES],
+        results=RESULTS_FLOOR,
+    )
+    with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+        NativeReader(results_path)
 
 
 def test_envelope_back_compat_preserves_existing_files(tmp_path: Any) -> None:
@@ -419,28 +646,6 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 def test_opensees_reader_version_is_2_21_0() -> None:
     """Schema 2.21.0 — stage-bound updateMaterialStage (Phase SSI-2.E)."""
     assert reader_version(OPENSEES) == SchemaVersion(2, 21, 0)
-
-
-def test_two_version_window_at_2_16_accepts_2_15_and_2_16() -> None:
-    """Reader at 2.16.0 accepts 2.15.x and 2.16.x (window: prev minor + current)."""
-    reader = SchemaVersion(2, 16, 0)
-    for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 15, patch), reader, zone=OPENSEES,
-        )
-        validate_zone_version(
-            SchemaVersion(2, 16, patch), reader, zone=OPENSEES,
-        )
-
-
-def test_two_version_window_at_2_16_refuses_2_14() -> None:
-    """Reader at 2.16.0 refuses 2.14.x (outside window — the hard floor a
-    minor bump imposes; a 2.14 file is now too old to open)."""
-    with pytest.raises(_PerZoneSchemaError) as exc:
-        validate_zone_version(
-            SchemaVersion(2, 14, 0), SchemaVersion(2, 16, 0), zone=OPENSEES,
-        )
-    assert "too old" in str(exc.value)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

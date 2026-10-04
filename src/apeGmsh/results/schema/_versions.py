@@ -30,10 +30,10 @@ results file ALSO writes the per-zone marker:
   Bumps only when the *results-zone* content shape changes (stage
   layout, slab dtypes, ...); independent of the envelope.
 
-Phase 7a (ADR 0023 §"Per-zone read validation") will land the
-two-version reader window for results consumers; Phase 4 only writes
-the new attribute key so old files reach Phase 7a with the marker
-already in place.
+Phase 7a (ADR 0023 §"Per-zone read validation") landed the reader
+gate; ADR 0113 (#1303) replaced its two-version window with a floor,
+:data:`RESULTS_SCHEMA_FLOOR`, so every version from the floor to the
+current one opens.
 
 Phase 6 (ADR 0021) — ``RESULTS_SCHEMA_VERSION`` bumps 1.0.0 → 1.1.0
 for the additive ``/meta/lineage/`` sub-group stamped by
@@ -45,6 +45,9 @@ from __future__ import annotations
 
 SCHEMA_VERSION = "1.1.0"
 RESULTS_SCHEMA_VERSION = "1.1.0"
+#: Oldest results-zone version the reader opens (ADR 0113 (#1303)). It moves
+#: only with a major bump; ``schema_version.reader_floor`` reads it here.
+RESULTS_SCHEMA_FLOOR = "1.0.0"
 PARSER_VERSION = "1.0"
 
 # Ladruno recorder on-disk format — the integer ``INFO/FORMAT_VERSION``

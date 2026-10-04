@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COMPOSED_FROM_SCHEMA_VERSION",
+    "NEUTRAL_SCHEMA_FLOOR",
     "NEUTRAL_SCHEMA_VERSION",
     "read_fem_h5",
     "read_neutral_zone_from_group",
@@ -431,13 +432,18 @@ __all__ = [
 #: ``0`` — undeclared, the same sentinel ``ndf`` has always used, which
 #: deck-building and capture readers refuse.  ``h5_reader.
 #: read_spatial_ndm`` trusts ``/meta/ndm`` from this minor on and keeps
-#: the transform-based salvage for 2.33.x files, which the two-version
-#: window still admits.
+#: the transform-based salvage for every older file the floor admits.
 #:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
 NEUTRAL_SCHEMA_VERSION: str = "2.34.0"
+
+#: Oldest neutral minor the reader opens (ADR 0113 (#1303)): the B2 layout
+#: split. Every later minor is additive and presence-probed, or carries a
+#: shim keyed on a named ``*_FROM`` constant. The floor moves only with a
+#: major bump; :func:`schema_version.reader_floor` reads it from here.
+NEUTRAL_SCHEMA_FLOOR: str = "2.10.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -2585,7 +2591,7 @@ def read_neutral_zone_from_group(
         _compute_bandwidth, _validated_session_id,
     )
 
-    # -- meta + schema check (ADR 0023 two-version window) --
+    # -- meta + schema check (ADR 0113 (#1303) floor) --
     if "meta" not in parent:
         raise MalformedH5Error(
             f"{label}: missing /meta group; not an apeGmsh model.h5"

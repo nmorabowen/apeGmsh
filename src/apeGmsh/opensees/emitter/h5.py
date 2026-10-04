@@ -113,7 +113,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "H5Emitter", "SCHEMA_VERSION",
+    "H5Emitter", "SCHEMA_FLOOR", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
     "H5FeatureDeferredWarning",
     "H5ReinforceDeviationWarning",
@@ -433,6 +433,12 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     semantics: a 2.21 reader opens 2.20 and 2.21 files; a 2.20.x
 #:     reader REFUSES a 2.21.x file (INV-4 — no forward tolerance).
 SCHEMA_VERSION: str = "2.21.0"
+
+#: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)): 2.11.0,
+#: the 0-based rank flip, is the zone's last non-additive minor. The
+#: floor moves only with a major bump; :func:`schema_version.reader_floor`
+#: reads it from here.
+SCHEMA_FLOOR: str = "2.11.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

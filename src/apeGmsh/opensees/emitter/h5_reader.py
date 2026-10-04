@@ -19,9 +19,9 @@ Schema-version compatibility (ADR 0023):
 
 * Per-zone schema versioning is the authoritative validation rule.
   The bridge zone is validated against
-  :func:`schema_version.reader_version(OPENSEES)` via the two-version
-  window: any file whose ``opensees_schema_version`` falls inside
-  ``[X.(Y-1).*, X.Y.*]`` is accepted; everything else raises
+  :func:`schema_version.reader_version(OPENSEES)` and its floor
+  (ADR 0113 (#1303)): any file whose ``opensees_schema_version`` falls
+  inside ``[X.F.*, X.Y.*]`` is accepted; everything else raises
   :class:`SchemaVersionError`.
 * Legacy single-stamp files (only ``/meta/schema_version``, no per-zone
   keys) are accepted via the envelope fallback in
@@ -145,9 +145,9 @@ def open(path: str, *, meta_path: str = "meta") -> H5Model:
     ------
     SchemaVersionError
         If the file's opensees-zone version falls outside the
-        two-version window (ADR 0023).  Includes legacy single-stamp
-        files whose envelope ``schema_version`` resolves to an
-        unsupported version via the envelope-fallback rule.
+        reader's floor-to-current range (ADR 0113 (#1303)).  Includes
+        legacy single-stamp files whose envelope ``schema_version``
+        resolves to an unsupported version via the envelope-fallback rule.
     MalformedH5Error
         If the meta group at ``meta_path`` is missing entirely, the
         ``schema_version`` attr is empty, or the version string is not
@@ -201,15 +201,15 @@ def open(path: str, *, meta_path: str = "meta") -> H5Model:
             raise MalformedH5Error(
                 f"{path}: /{meta_key} carries no opensees zone version"
             )
-        # ADR 0023 two-version window — refuses too-old / too-new /
-        # wrong-major with explicit upgrade-path text.
+        # ADR 0113 (#1303) floor check — refuses below-floor / too-new /
+        # wrong-major with text naming the supported range.
         #
         # Exception (broker-only neutral files): when the file
         # carries an explicit ``neutral_schema_version`` (the
         # broker-emit marker stamped by ``FEMData.to_h5``) AND no
         # ``/opensees/`` zone is present, treat it as a neutral-only
         # file: every ``/opensees/`` accessor returns an empty list,
-        # and the opensees-zone window check is skipped.  Without
+        # and the opensees-zone version check is skipped.  Without
         # this carve-out, neutral-only broker output gets refused as
         # "opensees version too old" whenever the neutral and opensees
         # reader minors drift apart — but those files are perfectly
@@ -218,7 +218,7 @@ def open(path: str, *, meta_path: str = "meta") -> H5Model:
         # The tolerance is intentionally narrow: foreign / hand-rolled
         # files that carry only the envelope ``schema_version`` (no
         # ``neutral_schema_version``, no ``/opensees/`` group) still
-        # go through the normal window check, so a 2.5.0 stub gets
+        # go through the normal version check, so a 2.5.0 stub gets
         # rejected as before.
         opensees_group_key = "opensees"
         has_opensees_zone = opensees_group_key in f
