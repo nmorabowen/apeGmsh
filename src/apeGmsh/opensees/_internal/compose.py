@@ -14,6 +14,8 @@ reimplements any of it (ADR 0018 INV-1/3, scope C1).
 from __future__ import annotations
 
 import os
+import warnings
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
@@ -21,12 +23,26 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "ReplaySkippedStreamWarning",
     "_compose_model_h5",
     "_replay_into",
     "_try_write_broker_zone",
     "_override_schema_version",
     "_path_stem",
 ]
+
+
+class ReplaySkippedStreamWarning(UserWarning):
+    """Deck replay left out a stream the source model carries (D8, #1412).
+
+    :func:`_replay_into` re-emits the ``/opensees`` deck records plus the
+    ``g.reinforce`` ties.  It has no deck record for the neutral-zone
+    streams that the forward bridge fans out at emit time: equalDOF /
+    rigidLink / rigidDiaphragm / node-to-surface couplings, penalty and
+    equation ties, ``g.embed`` ties, contacts, and phantom-bridged
+    interfaces.  A replayed deck that carries any of them differs from the
+    forward ``apeSees`` deck, so the replay warns and names each one.
+    """
 
 
 def _write_opensees_nodes_ndf(
@@ -266,6 +282,117 @@ def _path_stem(path: str) -> str:
     return stem or "model"
 
 
+def _constraint_replays_as_element(rec: Any, kind_cls: Any) -> bool:
+    """True iff the forward emit writes ``rec`` as an ``element`` line.
+
+    Those lines are archived in ``/opensees/element_meta``, and replay
+    re-emits them with the other elements, so the record is not skipped:
+    an RBE2 ``kinematic_coupling`` (``LadrunoKinematicCoupling``), a
+    ``rigid_body`` with ``as_element`` (``LadrunoRigidBody``), an
+    interpolation on the ``penalty_al`` route (``LadrunoEmbeddedNode``)
+    and a ``distributing`` RBE3 off the equation route
+    (``LadrunoDistributingCoupling``).  This mirrors the branches of
+    ``build.emit_mp_constraints`` and ``build._emit_one_interpolation``.
+    Every other kind goes out through a verb the deck zone has no replay
+    for, so it counts as skipped; an unknown kind counts as skipped too.
+    """
+    kind = rec.kind
+    if kind == kind_cls.KINEMATIC_COUPLING:
+        return True
+    if kind == kind_cls.RIGID_BODY:
+        return bool(rec.as_element)
+    return False
+
+
+def _interpolation_replays_as_element(rec: Any, kind_cls: Any) -> bool:
+    """:func:`_constraint_replays_as_element` for one interpolation row."""
+    if rec.enforce == "penalty_al":
+        return True
+    return rec.kind == kind_cls.DISTRIBUTING and rec.enforce != "equation"
+
+
+def _skipped_replay_streams(
+    fem: Any, *, stage_mp_names: "frozenset[str]",
+) -> "dict[str, Counter[str]]":
+    """Return ``{stream: Counter(kind -> count)}`` for every non-empty
+    neutral-zone stream that :func:`_replay_into` does not re-emit.
+
+    ``stage_mp_names`` holds the declaration names that a staged archive's
+    stage blocks re-emit as MP constraints.  A stage claims constraints by
+    name (``_StageBuilder._claim_constraints_by_name``), so a named record
+    found there was replayed inside its stage block and is not skipped.
+
+    The streams are read without defaults: a ``fem`` that lacks one fails
+    here rather than passing for empty.
+    """
+    out: "dict[str, Counter[str]]" = {}
+
+    def _claimed(rec: Any) -> bool:
+        return bool(rec.name) and rec.name in stage_mp_names
+
+    node_set = fem.nodes.constraints
+    kind_cls = node_set.Kind
+    nodes_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in node_set
+        if not _constraint_replays_as_element(rec, kind_cls)
+        and not _claimed(rec)
+    )
+    if nodes_skipped:
+        out["fem.nodes.constraints"] = nodes_skipped
+
+    surface_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in fem.elements.constraints.interpolations()
+        if not _interpolation_replays_as_element(rec, kind_cls)
+        and not _claimed(rec)
+    )
+    if surface_skipped:
+        out["fem.elements.constraints"] = surface_skipped
+
+    # An interface on an equal-ndf pair is a zeroLength plus its materials,
+    # all replayed; a mixed-ndf pair also needs a phantom node and its
+    # equalDOF, which replay has no record for.
+    interfaces_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in fem.elements.interfaces
+        if rec.phantom_node is not None and not _claimed(rec)
+    )
+    if interfaces_skipped:
+        out["fem.elements.interfaces"] = interfaces_skipped
+
+    # The H5 emitter keeps no deck record for these at all (ledger verbs).
+    for stream, recs in (
+        ("fem.elements.embed_ties", fem.elements.embed_ties),
+        ("fem.elements.contacts", fem.elements.contacts),
+        ("fem.elements.contact_planes", fem.elements.contact_planes),
+    ):
+        if recs:
+            out[stream] = Counter({"record": len(recs)})
+    return out
+
+
+def _warn_skipped_replay_streams(
+    fem: Any, *, stage_mp_names: "frozenset[str]",
+) -> None:
+    """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
+    stream that replay does not re-emit, naming each stream and count."""
+    skipped = _skipped_replay_streams(fem, stage_mp_names=stage_mp_names)
+    if not skipped:
+        return
+    parts = []
+    for stream, kinds in skipped.items():
+        detail = ", ".join(f"{k}: {n}" for k, n in sorted(kinds.items()))
+        parts.append(f"{stream} ({detail})")
+    warnings.warn(
+        "Deck replay does not re-emit "
+        f"{len(skipped)} stream(s) the model carries: "
+        + "; ".join(parts)
+        + ". The replayed deck leaves these constraints and ties out, so "
+        "it differs from the forward apeSees deck. For a faithful deck, "
+        "load FEMData.from_h5(path) and emit it through apeSees(fem).",
+        ReplaySkippedStreamWarning,
+        stacklevel=3,
+    )
+
+
 def _replay_elements_bracketed(
     emitter: Any,
     recs: "list[Any]",
@@ -333,6 +460,7 @@ def _replay_into(
     initial_stress_tags: Any = None,
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     deck_ordering: bool = True,
+    stage_mp_names: "frozenset[str]" = frozenset(),
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -420,11 +548,23 @@ def _replay_into(
         :class:`BuiltModel` from :meth:`apeSees.build` directly and
         not round-trip through H5.
 
+        **Skipped streams warn (D8, #1412).**  When ``fem`` is given (the
+        tcl / py / live deck targets), every neutral-zone stream this
+        helper has no replay for is named, with its count, in one
+        :class:`ReplaySkippedStreamWarning` before anything is emitted.
+        ``stage_mp_names`` is passed by :func:`_replay_staged_into`: the
+        names its stage blocks re-emit, which are therefore not skipped.
+        The H5 re-emit path passes no ``fem``; its archive keeps those
+        streams in the neutral zone that ``_compose_model_h5`` rewrites.
+
     Parameters mirror :class:`apeGmsh.opensees._internal.typed_records`
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
     from .build import node_coords_as_floats
+
+    if fem is not None:
+        _warn_skipped_replay_streams(fem, stage_mp_names=stage_mp_names)
 
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
@@ -952,11 +1092,24 @@ def _replay_staged_into(
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.
+    # The stage blocks below re-emit their claimed MP constraints by name,
+    # so the skipped-stream warning must not count those (D8, #1412).
+    stage_mp_names = frozenset(
+        r.name
+        for s in stages
+        for recs in (
+            s.equal_dofs, s.rigid_links, s.rigid_diaphragms,
+            s.embedded_nodes,
+        )
+        for r in recs
+        if r.name
+    )
     _replay_into(
         emitter,
         skip_node_tags=owned_node_tags,
         skip_element_tags=owned_element_tags,
         initial_stress_tags=tags,
+        stage_mp_names=stage_mp_names,
         **replay_kwargs,
     )
 
