@@ -248,7 +248,7 @@ def _add_dummy_zones(path: Path) -> None:
             ("files", {"path": str, "sha256": str, "kind": str}),
             ("sites", {"file": int, "line": int, "function": str}),
             ("records", {"path": str, "site": int, "script": int,
-                         "seq": int}),
+                         "seq": int, "origin": str}),  # origin: 1.1.0
         ):
             grp = prov.create_group(table)
             for name, kind in cols.items():

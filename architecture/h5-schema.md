@@ -1148,9 +1148,14 @@ equal-length column datasets.
     and `opensees/pattern/support:<stage>` from `s.support`,
     `opensees/timeSeries/imposed_displacement:<name>` and
     `opensees/pattern/imposed_displacement:<name>` from
-    `imposed_displacement` (`<name>` is its `name=`, else the call's
-    1-based ordinal on the bridge). These keys never use the `#k`
-    counter, so the user's first unnamed `Linear()` stays `#1`.
+    `imposed_displacement` (`<name>` is its `name=`, else `#<k>`, the
+    call's 1-based ordinal on the bridge; a `name=` starting with `#`
+    is refused). The bridge allows a repeated stage name, so the n-th
+    stage of a name (n >= 2) keys its support objects `<stage>@<n>`
+    (`support:s@2`). These keys never use the family's `#k` counter,
+    so the user's first unnamed `Linear()` stays `#1`; they never
+    collide, and a collision is a writer error that raises rather than
+    dropping a record.
 
   In a file the bridge writes, the `opensees/` records are the bridge's
   own: a snapshot loaded from an earlier bridge-written file drops that
@@ -1185,7 +1190,9 @@ equal-length column datasets.
   `origin` (1.1.0) is `user` for a declaration the user made and
   `synthesised` for an object apeGmsh created inside a verb the user
   called (the keys above); a viewer shows synthesised objects by
-  default. Absent in a `1.0.0` file, where every record is `user`.
+  default. Absent in a file below `1.1.0`, where every record reads as
+  `user`; from `1.1.0` on the column is required and a file without it
+  is malformed (`schema_version.py::PROVENANCE_ORIGIN_FROM`).
 * There is one record per user call: none per emitted row, none per
   fanned-out element. A call that synthesises deck objects (series,
   patterns) gets one record per synthesised object, each pointing at

@@ -317,7 +317,10 @@ class ProvenanceStore:
         capture, but the one-record-per-call rule does not apply: every
         synthesised object of the call gets its record, and none of them
         claims the call's entry frame.  ``origin`` is ``"synthesised"``.
-        Returns the path, or ``None`` when it already has a record.
+        Returns the path.  A key that already has a record is a caller
+        bug (the keys are built to be unique: an ordinal ``#k`` for an
+        unnamed verb call, a ``@n`` suffix for a repeated owner) and
+        raises ``ValueError`` rather than dropping either record.
         """
         for part, what in ((zone, "zone"), (family, "family")):
             if not part or "/" in part:
@@ -330,7 +333,9 @@ class ProvenanceStore:
                 f"got {key!r}")
         path = f"{zone}/{family}/{key}"
         if path in self._records:
-            return None
+            raise ValueError(
+                f"provenance: synthesised key {path!r} already has a record; "
+                "the caller must give each synthesised object a unique key")
         site, _entry, script = _capture_frames(sys._getframe(1))
         self._records[path] = RecordRow(
             path,

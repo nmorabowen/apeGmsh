@@ -57,6 +57,7 @@ __all__ = [
     "OPENSEES_KEY",
     "PROVENANCE",
     "PROVENANCE_KEY",
+    "PROVENANCE_ORIGIN_FROM",
     "PROVENANCE_SCHEMA_FLOOR",
     "PROVENANCE_SCHEMA_VERSION",
     "RESULTS",
@@ -132,6 +133,12 @@ PROVENANCE_SCHEMA_VERSION: str = "1.1.0"  # V2d #1378: additive records/origin
 #: ``_ZONE_KEY`` gets a floor equal to its first version.
 GEOMETRY_SCHEMA_FLOOR: str = "1.0.0"
 PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
+
+#: First ``/provenance`` version whose ``records`` table carries the
+#: ``origin`` column (#1378), as a ``(major, minor, patch)`` triple.  The
+#: reader requires the column from this version on and fills ``"user"``
+#: below it.
+PROVENANCE_ORIGIN_FROM: tuple[int, int, int] = (1, 1, 0)
 
 
 # Internal map zone -> per-zone key. Centralised so callers never spell the

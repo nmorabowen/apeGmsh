@@ -353,20 +353,139 @@ def test_imposed_displacement_synthesises_series_and_pattern(fem):
     table = ops._provenance.snapshot()
     by_path = {r.path: r for r in table.records}
     assert [p for p in by_path if "imposed_displacement" in p] == [
-        "opensees/timeSeries/imposed_displacement:1",
-        "opensees/pattern/imposed_displacement:1",
+        "opensees/timeSeries/imposed_displacement:#1",
+        "opensees/pattern/imposed_displacement:#1",
         "opensees/timeSeries/imposed_displacement:push",
         "opensees/pattern/imposed_displacement:push",
-        "opensees/pattern/imposed_displacement:3",
+        "opensees/pattern/imposed_displacement:#3",
     ]
     assert {by_path[p].origin for p in by_path if "imposed" in p} == {
         "synthesised"}
     assert table.location(
-        by_path["opensees/timeSeries/imposed_displacement:1"].site).line == here + 1
+        by_path["opensees/timeSeries/imposed_displacement:#1"].site).line == here + 1
     assert table.location(
         by_path["opensees/pattern/imposed_displacement:push"].site).line == here + 2
     assert by_path["opensees/timeSeries/#1"].origin == "user"
     assert ops._resolve("push") is named
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (#1378 at 6a323db8)
+# ---------------------------------------------------------------------------
+
+
+def test_imposed_displacement_with_a_named_series_emits(fem, tmp_path):
+    """Round 2, finding 1: ``series="<name>"`` resolves through the alias
+    table (it was passed to Plain as a string and the emit raised)."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    ramp = ops.timeSeries.Linear(factor=2.0, name="ramp")
+    plain = ops.imposed_displacement(nodes=[1], ux=0.01, series="ramp",
+                                     name="pat")
+    deck = tmp_path / "named_series.tcl"
+    ops.tcl(str(deck))
+    text = deck.read_text(encoding="utf-8")
+    assert f"pattern Plain {ops.tag_for(plain)} {ops.tag_for(ramp)}" in text
+    assert "sp 1 1 0.01" in text
+    # Only the pattern was synthesised; the series is the user's.
+    paths = [r.path for r in ops._provenance.snapshot().records]
+    assert paths == ["opensees/nDMaterial/#1", "opensees/element/#1",
+                     "opensees/timeSeries/ramp",
+                     "opensees/pattern/imposed_displacement:pat"]
+    with pytest.raises(KeyError, match="no primitive registered"):
+        ops.imposed_displacement(nodes=[1], ux=0.01, series="nope")
+    with pytest.raises(TypeError, match="TimeSeries is required"):
+        ops.imposed_displacement(nodes=[1], ux=0.01, series="pat")
+    # Neither refusal registered anything.
+    assert [r.path for r in ops._provenance.snapshot().records] == paths
+    assert len(ops._primitives) == 4
+
+
+def test_imposed_displacement_ordinal_key_cannot_collide_with_a_name(fem):
+    """Round 2, finding 2a: an unnamed call keys ``#<k>``; a user name may
+    not start with ``#``; four objects give four records."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.imposed_displacement(nodes=[1], ux=0.01)
+    ops.imposed_displacement(nodes=[2], ux=0.01, name="1")
+    paths = [r.path for r in ops._provenance.snapshot().records]
+    assert paths == [
+        "opensees/timeSeries/imposed_displacement:#1",
+        "opensees/pattern/imposed_displacement:#1",
+        "opensees/timeSeries/imposed_displacement:1",
+        "opensees/pattern/imposed_displacement:1",
+    ]
+    assert len(ops._primitives) == 4
+    before = (len(ops._primitives), len(ops._provenance), dict(ops._names))
+    with pytest.raises(ValueError, match="may not start with '#'"):
+        ops.imposed_displacement(nodes=[3], ux=0.01, name="#2")
+    assert (len(ops._primitives), len(ops._provenance), dict(ops._names)) == before
+
+
+def test_support_in_two_stages_of_the_same_name_keys_the_second_at_2(fem):
+    """Round 2, finding 2b: the bridge allows a repeated stage name, so
+    the second stage keys ``support:s@2``; both records exist."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    for _ in range(2):
+        with ops.stage(name="s") as s:
+            s.support(pg="B", dofs=(1, 1, 1))
+            s.analysis(**_chain(ops))
+            s.run(n_increments=1)
+    by_path = {r.path: r for r in ops._provenance.snapshot().records}
+    assert "opensees/timeSeries/support:s/hold" in by_path
+    assert "opensees/pattern/support:s" in by_path
+    assert "opensees/pattern/support:s@2" in by_path
+    assert "opensees/timeSeries/support:s@2/hold" not in by_path  # shared HOLD
+    assert [r.name for r in ops._stage_records] == ["s", "s"]
+
+
+def test_capture_synthesised_refuses_a_collision():
+    """Round 2, finding 2c: a repeated key raises; no record is dropped."""
+    from apeGmsh._internal.provenance import ProvenanceStore
+
+    store = ProvenanceStore()
+    assert store.capture_synthesised("opensees", "pattern", "support:s") == (
+        "opensees/pattern/support:s")
+    with pytest.raises(ValueError, match="already has a record"):
+        store.capture_synthesised("opensees", "pattern", "support:s")
+    assert len(store) == 1
+
+
+def test_imposed_displacement_refused_name_leaves_nothing_behind(fem):
+    """Round 2, finding 3: a taken ``name=`` raises before any
+    registration, so no Linear, Plain, alias or record remains."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.timeSeries.Linear(name="push")
+    before = (len(ops._primitives), len(ops._provenance), dict(ops._names),
+              ops._imposed_displacement_calls)
+    with pytest.raises(ValueError, match="already registered"):
+        ops.imposed_displacement(nodes=[1], ux=0.01, name="push")
+    assert (len(ops._primitives), len(ops._provenance), dict(ops._names),
+            ops._imposed_displacement_calls) == before
+    # The next unnamed call is still #1: the refused call took no ordinal.
+    ops.imposed_displacement(nodes=[1], ux=0.01)
+    assert "opensees/pattern/imposed_displacement:#1" in {
+        r.path for r in ops._provenance.snapshot().records}
+
+
+def test_a_1_1_file_without_origin_is_malformed(fem, tmp_path):
+    """Round 2, finding 4: the column may be absent only below 1.1.0."""
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, name="conc")
+    out = tmp_path / "no_origin.h5"
+    ops.h5(str(out))
+    with h5py.File(out, "a") as f:
+        assert f["meta"].attrs[PROVENANCE_KEY] == PROVENANCE_CURRENT
+        del f["provenance/records/origin"]
+    with pytest.raises(MalformedH5Error, match="records/origin is missing"):
+        FEMData.from_h5(str(out))
 
 
 def test_origin_column_round_trips_and_a_1_0_file_reads_as_user(fem, tmp_path):

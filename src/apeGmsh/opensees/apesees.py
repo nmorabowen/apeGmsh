@@ -8958,9 +8958,11 @@ class apeSees:
             ``opensees/pattern/imposed_displacement:<name>`` and, for the
             auto-created series,
             ``opensees/timeSeries/imposed_displacement:<name>``; without
-            it ``<name>`` is the call's 1-based ordinal on this bridge.
-            Both records carry ``origin = "synthesised"`` and point at
-            this call (ADR 0112 D3, #1378).
+            it ``<name>`` is ``#<k>``, the call's 1-based ordinal on this
+            bridge, so a name may not start with ``#``.  A refused or
+            taken name raises before anything is registered.  Both
+            records carry ``origin = "synthesised"`` and point at this
+            call (ADR 0112 D3, #1378).
 
         Returns
         -------
@@ -9017,12 +9019,35 @@ class apeSees:
         from .pattern.pattern import Plain as _Plain
         from .time_series.time_series import Linear as _Linear
 
+        # Every refusal happens here, before anything is registered, so
+        # a bad call leaves no series, pattern, alias or record behind.
+        if name is not None:
+            if name.startswith("#"):
+                raise ValueError(
+                    f"apeSees.imposed_displacement: name={name!r} may not "
+                    "start with '#': that prefix marks the ordinal key of "
+                    "an unnamed call (imposed_displacement:#<k>)."
+                )
+            existing = self._names.get(name)
+            if existing is not None:
+                raise ValueError(
+                    f"apeSees: name {name!r} is already registered to a "
+                    f"{type(existing).__name__}; names must be unique per "
+                    "bridge.  Pick a different name= (or pass the object "
+                    "handle directly)."
+                )
+        if series is not None:
+            # A name string resolves through the alias table like every
+            # other reference kwarg (an unknown name or a non-series
+            # fails loud).
+            series = self._resolve(series, base=TimeSeries)
+
         # Provenance key of this call's synthesised objects
-        # (``<verb>:<name>``; see ``name`` above).
+        # (``<verb>:<name>`` or ``<verb>:#<k>``; see ``name`` above).
         self._imposed_displacement_calls += 1
         _key = (
             f"imposed_displacement:"
-            f"{name if name is not None else self._imposed_displacement_calls}"
+            f"{name if name is not None else f'#{self._imposed_displacement_calls}'}"
         )
 
         # Default time series: Linear scaled by pattern_factor.
@@ -13412,19 +13437,28 @@ class _StageBuilder:
         # its own provenance record, keyed ``support:<stage>[/hold]``,
         # pointing at this ``s.support`` call, ``origin = "synthesised"``
         # (ADR 0112 D3, #1378).  The shared HOLD series is keyed by the
-        # stage whose first ``support`` created it.
+        # stage whose first ``support`` created it.  The bridge allows a
+        # repeated stage name, so the n-th stage of that name (n >= 2,
+        # counted over the stages already closed) keys ``<stage>@<n>``:
+        # a key never collides and a record is never dropped.
         if self._support_pattern is None:
             from .pattern.pattern import Plain as _Plain
             from .time_series.time_series import Constant as _Constant
 
+            same_name = sum(
+                1 for rec in self._bridge._stage_records
+                if rec.name == self._name
+            )
+            owner = (self._name if same_name == 0
+                     else f"{self._name}@{same_name + 1}")
             if self._bridge._hold_series is None:
                 self._bridge._hold_series = self._bridge._register(
                     _Constant(factor=1.0),
-                    synthesised=f"support:{self._name}/hold",
+                    synthesised=f"support:{owner}/hold",
                 )
             self._support_pattern = self._bridge._register(
                 _Plain(series=self._bridge._hold_series),
-                synthesised=f"support:{self._name}",
+                synthesised=f"support:{owner}",
             )
             self._bridge._stage_claimed_pattern_ids.add(
                 id(self._support_pattern),
