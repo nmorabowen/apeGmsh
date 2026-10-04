@@ -554,6 +554,13 @@ g.labels.promote_to_physical("col.web")
 The bridge accepts label names directly (via the `_label:` prefix), so
 promotion is only needed for external `.msh` consumers.
 
+Promoting several labels into one `pg_name=` unions them into a single PG,
+the same upsert as `g.physical.add` (so `promote_to_physical("left_half",
+pg_name="Footing")` then `promote_to_physical("right_half", pg_name="Footing")`
+gives one `Footing` holding both halves). A `pg_name` already held by a PG at
+another dimension raises `ValueError`. Before #1332 the second call silently
+created an unnamed PG, and `pg="Footing"` consumers saw half the strip.
+
 ### Selection sets for post-mesh queries
 
 Build a named set **after meshing** with the fluent

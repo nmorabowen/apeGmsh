@@ -20,6 +20,7 @@ from apeGmsh.core.Labels import (
     reconcile_label_pgs,
     LABEL_PREFIX,
 )
+from apeGmsh.mesh.PhysicalGroups import PhysicalGroups
 
 
 # ------------------------------------------------------------------
@@ -27,8 +28,14 @@ from apeGmsh.core.Labels import (
 # ------------------------------------------------------------------
 
 def _make_labels() -> Labels:
-    """Create a Labels instance with a minimal stub parent."""
+    """Create a Labels instance with a minimal stub parent.
+
+    The stub carries the Composite Parent Contract items Labels reads:
+    ``_verbose`` and ``physical`` (``promote_to_physical`` writes its
+    PG through ``physical.add``, #1332).
+    """
     stub = type("_Stub", (), {"_verbose": False})()
+    stub.physical = PhysicalGroups(stub)
     return Labels(stub)
 
 
@@ -312,6 +319,62 @@ def test_promote_to_physical_custom_name(gmsh_session):
     pg_tag = labels.promote_to_physical("col", pg_name="column_concrete")
     pg_name = gmsh.model.getPhysicalName(3, pg_tag)
     assert pg_name == "column_concrete"
+
+
+# ------------------------------------------------------------------
+# promote_to_physical into an existing PG name (#1332)
+# ------------------------------------------------------------------
+
+
+def _two_half_lines(g) -> None:
+    """Two collinear unit lines ``left_half`` (x in 0..1) and
+    ``right_half`` (x in 1..2), the footing strip from the workshop."""
+    geo = g.model.geometry
+    geo.add_point(0, 0, 0, label="a")
+    geo.add_point(1, 0, 0, label="b")
+    geo.add_point(2, 0, 0, label="c")
+    geo.add_line("a", "b", label="left_half")
+    geo.add_line("b", "c", label="right_half")
+
+
+def test_promote_to_physical_same_name_merges(g):
+    """#1332: a second promotion into an existing PG name unions the
+    entities into that PG; it never leaves an orphaned unnamed PG."""
+    _two_half_lines(g)
+    t1 = g.labels.promote_to_physical("left_half", pg_name="Footing")
+    t2 = g.labels.promote_to_physical("right_half", pg_name="Footing")
+
+    assert t2 == t1
+    expected = g.labels.entities("left_half") + g.labels.entities("right_half")
+    assert sorted(g.physical.entities("Footing")) == sorted(expected)
+    # One user PG in the model, and nothing unnamed at dim 1.
+    assert g.physical.get_all() == [(1, t1)]
+    for d, t in gmsh.model.getPhysicalGroups(1):
+        assert gmsh.model.getPhysicalName(d, t) != ""
+
+
+def test_promote_to_physical_same_name_reaches_the_mesh(g):
+    """The workshop symptom: nodes selected by ``pg="Footing"`` span
+    both halves (x from 0 to 2), not only the first one."""
+    _two_half_lines(g)
+    g.labels.promote_to_physical("left_half", pg_name="Footing")
+    g.labels.promote_to_physical("right_half", pg_name="Footing")
+    g.mesh.generation.generate(dim=1)
+    fem = g.mesh.queries.get_fem_data(dim=1)
+
+    xs = fem.nodes.select(pg="Footing").coords[:, 0]
+    assert xs.min() == pytest.approx(0.0)
+    assert xs.max() == pytest.approx(2.0)
+
+
+def test_promote_to_physical_same_name_other_dim_raises(g):
+    """A PG name maps to one dimension: promoting a point label into a
+    name held by a curve PG refuses, and leaves the model untouched."""
+    _two_half_lines(g)
+    t1 = g.labels.promote_to_physical("left_half", pg_name="Footing")
+    with pytest.raises(ValueError, match="Footing"):
+        g.labels.promote_to_physical("a", pg_name="Footing")
+    assert g.physical.get_all() == [(1, t1)]
 
 
 # ==================================================================

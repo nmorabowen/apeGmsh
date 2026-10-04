@@ -41,7 +41,12 @@ from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
 )
 
-from .base import StrategySpec, trim_coords_to_ndm
+from .base import (
+    NUMPY_VALUE_TYPES,
+    StrategySpec,
+    plain_scalar,
+    trim_coords_to_ndm,
+)
 
 
 __all__ = ["PartitionSpan", "TclEmitter", "TCL_COUPLING_TOKENS_MIN_BUILD"]
@@ -248,7 +253,11 @@ def _fmt_value(v: Any) -> str:
 
     Booleans are coerced to ``1`` / ``0`` (OpenSees doesn't speak Python
     ``True``). Integers and floats use their ``repr`` (which preserves
-    enough digits for floats to round-trip).
+    enough digits for floats to round-trip). A numpy scalar or 0-d
+    array renders as the plain Python number (see
+    :func:`~apeGmsh.opensees.emitter.base.plain_scalar`, #1336), and a
+    subclass of ``int`` / ``float`` renders as its base value, never
+    through its own ``repr``.
     """
     if isinstance(v, bool):
         return "1" if v else "0"
@@ -256,10 +265,12 @@ def _fmt_value(v: Any) -> str:
         if "\\" in v or any(c.isspace() for c in v):
             return "{" + v + "}"
         return v
+    if isinstance(v, NUMPY_VALUE_TYPES):
+        return _fmt_value(plain_scalar(v))
     if isinstance(v, int):
-        return str(v)
+        return str(int(v))
     if isinstance(v, float):
-        return repr(v)
+        return repr(float(v))
     # Fallback — should not happen for the typed-emit boundary.
     return str(v)
 

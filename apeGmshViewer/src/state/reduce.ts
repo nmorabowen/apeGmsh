@@ -25,6 +25,7 @@ export const initialState: State = {
   overrides: {},
   geometry: null,
   source: { seq: 0, request: null, last: null },
+  view: { frameSeq: 0 },
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -224,6 +225,9 @@ export function reduce(s: State, e: Event): State {
     }
     case "sourceResult":
       return { ...s, source: { ...s.source, last: { decl: e.decl, ok: e.ok, reason: e.reason } } };
+    case "frameSelection":
+      if (!s.mesh) return s;
+      return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

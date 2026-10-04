@@ -22,6 +22,7 @@ const store = new Store();
 const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
+effects.setFrameTarget(viewport);
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
@@ -126,6 +127,27 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
   const tgt = demoTarget();
   const click = tgt ? await scriptedClick(tgt) : null;
   const chain = click ? chainOf(store.get(), click.decl) : null;
+  // A second, shorter orbit with the selection (and its halo pass) active.
+  const SELECTED_ORBIT_MS = 2000;
+  const selDeltas: number[] = [];
+  let orbitSelected: { durationMs: number; frames: number; medianFps: number } | null = null;
+  if (click) {
+    viewport.continuous = true;
+    const s0 = await nextFrame();
+    let prev = s0, done = 0;
+    for (;;) {
+      const now = await nextFrame();
+      selDeltas.push(now - prev);
+      prev = now;
+      const ang = Math.min(1, (now - s0) / SELECTED_ORBIT_MS) * Math.PI * 2;
+      viewport.nav.orbit(target, ang - done, 0);
+      done = ang;
+      viewport.renderNow();
+      if (now - s0 >= SELECTED_ORBIT_MS) break;
+    }
+    viewport.continuous = false;
+    orbitSelected = { durationMs: prev - s0, frames: selDeltas.length, medianFps: 1000 / median(selDeltas) };
+  }
   const metrics = await bridge.metrics();
   return {
     file: model.path,
@@ -143,6 +165,7 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
       medianFps: 1000 / median(deltas),
       medianRenderCpuMs: median(renderMs),
     },
+    orbitSelected,
     memory: metrics,
     inspector: click
       ? {
@@ -185,13 +208,15 @@ async function main() {
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
-  // chain is taller than the window, a second still shows its end.
-  const settle = () => new Promise((r) => setTimeout(r, 300));
+  // chain is taller than the window, a second still shows its end; a third,
+  // `<out>.framed.png`, shows the view after `F` framed the selection.
+  const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
   viewport.renderNow();
   const tgt = demoTarget(cfg.pick);
   if (tgt) store.dispatch({ type: "select", pick: viewport.pickOf(tgt, null) });
   viewport.renderNow();
-  await settle();
+  // Past the selection pulse, so the still shows the halo at rest.
+  await settle(900);
   viewport.renderNow();
   await bridge.captureStill("");
   const insp = document.getElementById("inspector")!;
@@ -200,6 +225,13 @@ async function main() {
     await settle();
     viewport.renderNow();
     await bridge.captureStill("chain-end");
+    insp.scrollTop = 0;
+  }
+  if (tgt) {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f" }));
+    await settle();
+    viewport.renderNow();
+    await bridge.captureStill("framed");
   }
   await bridge.captureDone();
 }

@@ -13,6 +13,7 @@ reference document.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -72,6 +73,62 @@ def test_coerce_document_paths(tmp_path):
     p = tmp_path / "s.section.json"
     doc.save(p)
     assert _coerce_document(str(p)).kind == "fiber"
+
+
+def _newer_doc_path(tmp_path):
+    data = SectionDocument.new(name="n", kind="continuum").to_dict()
+    data["section_doc_version"] = "1.99.0"   # a newer minor of this major
+    p = tmp_path / "newer.section.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def test_open_with_notice_captures_only_the_newer_warning(
+    tmp_path, monkeypatch,
+):
+    """Headless (no Qt): the GUI's open helper turns the newer-minor
+    warning into a notice string and lets every other warning through
+    (ADR 0113 2026-10-04 amendment S2)."""
+    import warnings
+
+    from apeGmsh.sections import SectionDocumentNewerWarning
+    from apeGmsh.sections import _builder_gui
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SectionDocumentNewerWarning)
+        doc, notice = _builder_gui._open_with_notice(_newer_doc_path(tmp_path))
+    assert doc.to_dict()["section_doc_version"] == "1.99.0"
+    assert notice is not None and "1.99.0" in notice
+
+    p = tmp_path / "current.section.json"
+    SectionDocument.new(name="c").save(p)
+    _doc, notice = _builder_gui._open_with_notice(p)
+    assert notice is None
+
+    real_open = SectionDocument.open
+
+    def _open_and_warn(path):
+        warnings.warn("unrelated", DeprecationWarning, stacklevel=2)
+        return real_open(path)
+
+    monkeypatch.setattr(SectionDocument, "open", staticmethod(_open_and_warn))
+    with pytest.warns(DeprecationWarning, match="unrelated"):
+        _doc, notice = _builder_gui._open_with_notice(p)
+    assert notice is None
+
+
+def test_open_document_shows_the_newer_warning_on_the_status_bar(tmp_path):
+    import warnings
+
+    from apeGmsh.sections import SectionDocumentNewerWarning
+
+    _qapp()
+    win = _win()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SectionDocumentNewerWarning)
+        win.open_document(_newer_doc_path(tmp_path))
+    msg = win._status.currentMessage()
+    assert "1.99.0" in msg and "newer" in msg
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -284,7 +284,9 @@ set_transfinite_curve(tag, num_nodes, *, mesh_type="Progression", coef=1.0)
 set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
-set_recombine(dim, tag, *, angle=45)   recombine()   set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
+set_recombine(tag, *, dim=2, angle=45)   # BEFORE generate(): request quads
+recombine()                              # AFTER generate() only; warns on an empty 2-D mesh
+set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
 
 build_graded_box(*, extent=(bx,ly,hz), footprint=(B,L), h, l_mech, d_mech, r,
                  orientation=0.0) -> list[int]   # 18 sub-volume tags
@@ -409,7 +411,9 @@ add(dim, tags, name) -> int                  entities(name, *, dim=None) -> list
 get_all(*, dim=-1) -> list[str]              has(name, *, dim=None) -> bool
 labels_for_entity(dim, tag) -> list[str]     reverse_map(*, dim=-1) -> dict[DimTag, str]
 remove(name, *, dim=None)   rename(old, new, *, dim=None)
-promote_to_physical(name, *, dim=None, ...)  # label -> solver-visible PG
+promote_to_physical(name, *, pg_name=None, dim=None) -> Tag  # label -> solver-visible PG;
+    # an existing pg_name at the same dim merges (union, like physical.add);
+    # at another dim it raises ValueError (#1332)
 ```
 
 ## Per-node DOF count — inferred + `ops.ndf` (ADR 0048/0049)

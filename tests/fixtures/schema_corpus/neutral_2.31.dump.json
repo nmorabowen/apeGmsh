@@ -4,7 +4,7 @@
    "element": 0,
    "node": 0
   },
-  "dump_format": 1,
+  "dump_format": 2,
   "element_counts": {
    "hex8": 8
   },
@@ -25,7 +25,17 @@
    "sp_patterns": []
   },
   "masses": 0,
+  "mesh_selections": {
+   "0:base_nodes": {
+    "elements": -1,
+    "nodes": 9
+   }
+  },
   "n_nodes": 27,
+  "ndf": {
+   "declared": {},
+   "undeclared": 27
+  },
   "physical_groups": {
    "element_side": {
     "2:Base": 4,
@@ -38,5 +48,9 @@
   },
   "snapshot_id": "cf440e5563dbf732a988ef198073acd0"
  },
- "generator_notes": {}
+ "generator_notes": {},
+ "meta": {
+  "ndf": 0,
+  "ndm": 3
+ }
 }
