@@ -8,21 +8,26 @@
 // at least floor(n / 2) - 1 steps apart. Hues 30 degrees apart still read
 // as one family side by side (two pinks on the V1 gate), so lightness
 // alternates between neighbouring hue slots: two slots less than 45 degrees
-// apart never share a tone. Beyond 12 groups a hue family has to repeat;
-// the repeat takes the next tone. Colours are built in OKLCH, so no hue
-// reads darker or duller than its tone says, and clipped to sRGB by
-// reducing chroma only.
+// apart never share a tone. Beyond 12 groups a hue family has to repeat (a
+// second ring of the 12 hues); a hue, its repeat and both their neighbours
+// are then all within 45 degrees, which takes four tones: tone = 2 * (hue
+// parity) + ring. That holds up to 24 groups; a third ring (25 or more)
+// repeats a tone. Colours are built in OKLCH, so no hue reads darker or
+// duller than its tone says, and clipped to sRGB by reducing chroma only.
 
 /** Hue families: the wheel in 30-degree sectors. */
 export const HUE_FAMILIES = 12;
 /** The first hue (a blue, as the old fixed palette started). */
 const HUE0 = 250;
-/** Tones: mid, deep, pale. Neighbouring hue slots take different tones. */
+/** Tones: mid, deep, pale, dark; any two differ in lightness by at least 0.14. Neighbouring hue slots take different tones. */
 export const TONES: readonly { L: number; C: number }[] = [
   { L: 0.74, C: 0.15 },
   { L: 0.52, C: 0.13 },
   { L: 0.88, C: 0.11 },
+  { L: 0.36, C: 0.1 },
 ];
+/** The most groups for which no two hues under SAME_FAMILY_DEG apart share a tone. */
+export const TONE_GUARANTEE = 2 * HUE_FAMILIES;
 /** Two hues closer than this read as one family and must differ in tone. */
 export const SAME_FAMILY_DEG = 45;
 
@@ -57,18 +62,21 @@ export function hueOrder(n: number): number[] {
 }
 
 /**
- * Hue in degrees and tone of legend entry `i` of `n`. The tone cycles over
- * the hue slots with a period of 2 (even n) or 3 (odd n), so that slot k and
- * slot k + 1, and the last slot and slot 0, never share one; a repeated
- * family (n > 12) moves one tone on.
+ * Hue in degrees and tone of legend entry `i` of `n`. Up to 12 groups the
+ * tone cycles over the hue slots with a period of 2 (even n) or 3 (odd n), so
+ * that slot k and slot k + 1, and the last slot and slot 0, never share one.
+ * Beyond 12 the 12 hues repeat in rings and the tone is 2 * (hue parity) +
+ * ring: the four hues within 45 degrees of each other (a hue, its neighbour,
+ * and both repeats) get four tones. A third ring (n > 24) wraps.
  */
 export function hueOf(i: number, n: number): { hue: number; tone: number } {
   const slot = hueOrder(n)[i];
   if (slot === undefined) throw new RangeError(`hueOf: entry ${i} of ${n}`);
   const families = Math.min(n, HUE_FAMILIES);
-  const period = families % 2 === 0 ? 2 : 3;
-  const ring = Math.floor(slot / families);
-  return { hue: (HUE0 + (slot % families) * (360 / families)) % 360, tone: ((slot % families) % period + ring) % TONES.length };
+  const family = slot % families, ring = Math.floor(slot / families);
+  const hue = (HUE0 + family * (360 / families)) % 360;
+  if (n <= HUE_FAMILIES) return { hue, tone: family % (families % 2 === 0 ? 2 : 3) };
+  return { hue, tone: (2 * (family % 2) + ring) % TONES.length };
 }
 
 /** OKLCH (L in 0..1, C, h in degrees) to sRGB in 0..1, reducing chroma until it fits the gamut. */

@@ -55,3 +55,26 @@ test("dependency-cruiser fails on each planted import outside the panel allow-li
   assert.doesNotMatch(r.out, /src\/state\/store\.ts|src\/ui\/dom\.ts/, "allowed imports are not reported");
   assert.match(r.out, new RegExp(`${PLANTED.length} dependency violations`));
 });
+
+test("dependency-cruiser fails on a ui/ module that re-exports what a panel may not reach", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-lint-ui-"));
+  cpSync(join(app, "src"), join(dir, "src"), { recursive: true });
+  cpSync(join(app, "tsconfig.json"), join(dir, "tsconfig.json"));
+  writeFileSync(
+    join(dir, "src", "ui", "leak.ts"),
+    [
+      'export { Effects } from "../effects.ts";',
+      'export { BlobStore } from "../state/blobs.ts";',
+      'export type { State } from "../state/types.ts";',
+      'export { el } from "./dom.ts";',
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "src", "panels", "launder.ts"), 'import { Effects, BlobStore } from "../ui/leak.ts";\nexport const x = [Effects, BlobStore];\n');
+  const r = cruise(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /ui-allow-list: src\/ui\/leak\.ts → src\/effects\.ts/);
+  assert.match(r.out, /ui-allow-list: src\/ui\/leak\.ts → src\/state\/blobs\.ts/);
+  assert.doesNotMatch(r.out, /leak\.ts → src\/state\/types\.ts|leak\.ts → src\/ui\/dom\.ts/);
+  assert.match(r.out, /2 dependency violations/);
+});

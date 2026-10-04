@@ -304,6 +304,36 @@ test("effects: a fileChanged that arrives during a read is read once more afterw
   assert.equal(store.get().artifacts.model?.stale, false);
 });
 
+test("effects: a fileChanged during a read that fails is retried, at most MAX_RETRIES times in a row", async () => {
+  const { reads, store, effects, modelAt } = harness();
+  const fail = { ok: false as const, error: "/nodes is missing" };
+  const p = effects.open("A.h5");
+  store.dispatch({ type: "fileChanged", path: "A.h5" });
+  reads[0]!.d.resolve(fail);
+  assert.equal(await p, false);
+  await tick();
+  assert.equal(reads.length, 2, "the failed read is retried once, since the file changed under it");
+  // A broken file that keeps changing: the retries stop after MAX_RETRIES.
+  for (let k = 2; k <= Effects.MAX_RETRIES + 1; k++) {
+    store.dispatch({ type: "fileChanged", path: "A.h5" });
+    reads[k - 1]!.d.resolve(fail);
+    await tick();
+    await tick();
+  }
+  assert.equal(reads.length, Effects.MAX_RETRIES + 1, "MAX_RETRIES re-reads after the first, then no more");
+  assert.equal(store.get().artifacts.model?.status, "failed");
+  // A change after the retries ran out starts a fresh count; a success resets it.
+  store.dispatch({ type: "fileChanged", path: "A.h5" });
+  await tick();
+  assert.equal(reads.length, Effects.MAX_RETRIES + 2);
+  reads[reads.length - 1]!.d.resolve({ ok: true, model: modelAt("A.h5") });
+  await tick();
+  await tick();
+  assert.equal(store.get().artifacts.model?.status, "ready");
+  assert.equal(store.get().artifacts.model?.stale, false);
+  assert.equal(reads.length, Effects.MAX_RETRIES + 2, "a landed read ends the sequence");
+});
+
 test("effects: an open set with results: null closes the results artifact", async () => {
   const { reads, store, effects, modelAt } = harness();
   store.dispatch({ type: "fileOpened", artifact: "results", path: "old.results.h5" });

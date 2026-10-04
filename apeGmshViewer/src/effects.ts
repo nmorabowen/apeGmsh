@@ -84,18 +84,36 @@ export class Effects {
   /** The latest open wins: a read that finishes after a newer open started is dropped. */
   private openToken = 0;
   private reading = false;
+  /** Failed re-reads of the current path after a mid-read change; reset by a successful read or a new path. */
+  private retries = 0;
+  private retryPath: string | null = null;
   private readonly off: (() => void)[] = [];
 
   constructor(store: Store, blobs: BlobStore, bridge: Bridge) {
     this.store = store;
     this.blobs = blobs;
     this.bridge = bridge;
+    // A file rewritten on disk (D1 rewrites on every run) is read again; one
+    // that changes mid-read is re-read when that read ends (see `open`).
+    this.off.push(
+      this.store.subscribe((s) => {
+        const m = s.artifacts.model;
+        if (!m || !m.stale || this.reading) return;
+        // A change after the retries ran out starts a fresh count.
+        if (m.status === "failed" && m.path === this.retryPath && this.retries >= Effects.MAX_RETRIES) this.retries = 0;
+        void this.open(m.path);
+      }),
+    );
   }
 
   /** Open a model artifact; resolves true when it loaded and is still the latest open. */
   async open(path: string): Promise<boolean> {
     const token = ++this.openToken;
     this.reading = true;
+    if (this.retryPath !== path) {
+      this.retryPath = path;
+      this.retries = 0;
+    }
     this.store.dispatch({ type: "fileOpened", artifact: "model", path });
     let loaded = false;
     try {
@@ -123,12 +141,24 @@ export class Effects {
     } finally {
       if (token === this.openToken) {
         this.reading = false;
-        // A fileChanged that arrived during this read: read once more.
+        if (loaded) this.retries = 0;
+        // A fileChanged that arrived during this read: read once more. After
+        // a failed read too (it may have hit a half-written file), but at
+        // most MAX_RETRIES times in a row, so a broken file does not loop.
         const m = this.store.get().artifacts.model;
-        if (loaded && m && m.path === path && m.stale) void this.open(path);
+        if (m && m.path === path && m.stale) {
+          if (loaded) void this.open(path);
+          else if (this.retries < Effects.MAX_RETRIES) {
+            this.retries++;
+            void this.open(path);
+          } else console.warn(`apeGmshViewer: ${path} changed during ${Effects.MAX_RETRIES} failed reads; not read again until it changes`);
+        }
       }
     }
   }
+
+  /** Failed re-reads allowed in a row after a mid-read change. */
+  static readonly MAX_RETRIES = 3;
 
   /**
    * The files a V2f `onOpen` names: the model is read; the siblings are
@@ -189,14 +219,6 @@ export class Effects {
     if (typeof this.bridge.onFileChanged === "function") {
       keep(this.bridge.onFileChanged((path) => this.store.dispatch({ type: "fileChanged", path })));
     }
-    // A file rewritten on disk (D1 rewrites on every run) is read again; one
-    // that changes mid-read is re-read when that read ends (see `open`).
-    this.off.push(
-      this.store.subscribe((s) => {
-        const m = s.artifacts.model;
-        if (m && m.stale && !this.reading) void this.open(m.path);
-      }),
-    );
     return () => this.dispose();
   }
 

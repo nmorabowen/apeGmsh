@@ -21,8 +21,15 @@ output are never read; comment-only lines are skipped):
                         `src/panels/<a>/*` (an allow-list; `import type` counts). Any
                         other specifier, relative or bare, fails: another panel, the
                         viewport, the reader, the BlobStore, effects, the loader, a
-                        package. Panels dispatch events and read selectors. `npm run
-                        lint` (dependency-cruiser) holds the same rule over the same graph.
+                        package. A module under `src/ui/` may import only `src/ui/*`
+                        and `src/state/types`, so ui/ cannot re-export what a panel
+                        may not reach. Panels dispatch events and read selectors.
+                        `npm run lint` (dependency-cruiser) holds the same rules over
+                        the same graph.
+
+Specifiers are read from the source with comments stripped by a scanner that
+knows strings and block comments (an `import\n * as x from '...'` spanning lines
+is one import; an import inside a comment is none).
 
     python scripts/check_app_wall.py              # this checkout
     python scripts/check_app_wall.py --root DIR   # another git tree
@@ -58,9 +65,12 @@ SPAWN = re.compile(
 MENTIONS = re.compile(r"python|\bpy\b|\.py\b|apegmsh(?!viewer)", re.IGNORECASE)
 
 PANELS = f"{APP}/src/panels/"
+UI = f"{APP}/src/ui/"
 # The resolved import targets a panel may reach (W4): exact modules and prefixes.
 PANEL_ALLOW_MODULES = {f"{APP}/src/state/store", f"{APP}/src/state/selectors", f"{APP}/src/state/types"}
-PANEL_ALLOW_PREFIXES = (f"{APP}/src/ui/",)
+PANEL_ALLOW_PREFIXES = (UI,)
+# What a ui/ module may reach: ui/ itself and the state types.
+UI_ALLOW_MODULES = {f"{APP}/src/state/types"}
 
 
 def _panel_of(path: str) -> str | None:
@@ -71,15 +81,24 @@ def _panel_of(path: str) -> str | None:
     return first.rsplit(".", 1)[0] if "." in first else first
 
 
+def _stem(target: str) -> str:
+    return target.rsplit(".", 1)[0] if Path(target).suffix in JS_EXTS else target
+
+
 def _panel_violation(rel: str, spec: str, target: str | None) -> str | None:
-    """Why a panel module may not import `spec` (resolved to `target` when relative), or None."""
+    """Why a panel or ui module may not import `spec` (resolved to `target` when relative), or None."""
+    if rel.startswith(UI):
+        if target is None:
+            return f"ui module imports the package '{spec}'; ui/ imports ui/ and the state types only"
+        if target.startswith(UI) or _stem(target) in UI_ALLOW_MODULES:
+            return None
+        return f"ui module imports '{target[len(APP) + 1:]}'; ui/ imports ui/ and the state types only"
     me = _panel_of(rel)
     if me is None:
         return None
     if target is None:
         return f"panel '{me}' imports the package '{spec}'; panels import the store, selectors, types and ui/ only"
-    stem = target.rsplit(".", 1)[0] if Path(target).suffix in JS_EXTS else target
-    if stem in PANEL_ALLOW_MODULES or target.startswith(PANEL_ALLOW_PREFIXES):
+    if _stem(target) in PANEL_ALLOW_MODULES or target.startswith(PANEL_ALLOW_PREFIXES):
         return None
     if target.startswith(f"{PANELS}{me}/"):
         return None
@@ -96,11 +115,52 @@ def _tracked(root: Path) -> list[str]:
     return [p for p in out.split("\0") if p]
 
 
-def _is_comment(line: str, is_py: bool) -> bool:
-    s = line.strip()
-    if is_py:
-        return s.startswith("#")
-    return s.startswith(("//", "/*", "*"))
+def _is_comment(line: str) -> bool:
+    return line.strip().startswith("#")
+
+
+_SPECIFIER_CONTEXT = re.compile(r"(?:\bfrom|\bimport|\b(?:require|import)\s*\()\s*$")
+
+
+def _strip_js_comments(text: str, blank_strings: bool = False) -> str:
+    """Blank `//` and `/* */` comments (newlines kept, so offsets map to lines).
+
+    With `blank_strings`, every string that is not a module specifier is
+    blanked too (for the specifier rules); without it, strings stay whole (the
+    subprocess rule reads the command names in them).
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif c == "/" and nxt == "*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join("\n" if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+        elif c in "'\"`":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            # A specifier keeps its text (`from '...'`, `import '...'`,
+            # `require('...')`, `import('...')`); any other string is blanked,
+            # so an import written inside a string is not an import.
+            if not blank_strings or _SPECIFIER_CONTEXT.search("".join(out)[-40:]):
+                out.append(text[i:j])
+            else:
+                out.append(c + "".join("\n" if ch == "\n" else " " for ch in text[i + 1:j - 1]) + (text[j - 1] if j - 1 > i else ""))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def _statement(lines: list[str], i: int) -> str:
@@ -125,8 +185,12 @@ def scan(root: Path) -> list[str]:
             text = (root / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        lines = text.splitlines()
-        blanked = [("" if _is_comment(ln, is_py) else ln) for ln in lines]
+        if is_py:
+            blanked = [("" if _is_comment(ln) else ln) for ln in text.splitlines()]
+            specs = blanked
+        else:
+            blanked = _strip_js_comments(text).splitlines()
+            specs = _strip_js_comments(text, blank_strings=True).splitlines()
 
         def add(n: int, rule: str, name: str, why: str) -> None:
             findings.append(f"{rel}:{n}: {rule} {name} — {why.strip()[:120]}")
@@ -136,7 +200,7 @@ def scan(root: Path) -> list[str]:
                 if PY_IMPORT.match(ln):
                     add(n, "W1", "py-import", ln)
         else:
-            body = "\n".join(blanked)
+            body = "\n".join(specs)
             for pat in SPEC_PATTERNS:
                 for m in pat.finditer(body):
                     spec = m.group(1)

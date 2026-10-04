@@ -164,22 +164,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A paths filter per job: `on.paths` would gate the whole workflow.
+      # A paths filter per job: `on.paths` would gate the whole workflow. It
+      # fails closed: the checks run unless a successful diff against the PR
+      # base (merge-base) or the pushed-from commit shows no change; a manual
+      # run and any error in here run them (set -e makes an error a red step).
       - name: Did apeGmshViewer/ change?
         id: changes
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="origin/${{ github.base_ref }}"
-            git fetch -q origin "${{ github.base_ref }}"
-            range="$base...HEAD"
-          else
-            range="HEAD~1..HEAD"
-          fi
-          if git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml | grep -q .; then
-            echo "app=true" >> "$GITHUB_OUTPUT"
-          else
+          set -euo pipefail
+          echo "app=true" >> "$GITHUB_OUTPUT"
+          case "${{ github.event_name }}" in
+            pull_request)
+              git fetch -q origin "${{ github.base_ref }}"
+              range="origin/${{ github.base_ref }}...HEAD" ;;
+            push)
+              before="${{ github.event.before }}"
+              if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+                echo "no pushed-from commit; running the app checks"; exit 0
+              fi
+              range="$before..HEAD" ;;
+            *)
+              echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
+          esac
+          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml)
+          if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
             echo "apeGmshViewer/ unchanged in $range; nothing to check"
+          else
+            echo "changed in $range:"; echo "$changed"
           fi
 
       - uses: actions/setup-node@v4

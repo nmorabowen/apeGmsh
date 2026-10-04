@@ -115,6 +115,45 @@ def test_w4_flags_panel_import(repo, src):
     assert _rules(repo) == ["W4"]
 
 
+def test_w4_flags_a_multi_line_import_in_a_panel(repo):
+    # `import\n * as R from` spans lines; the ` * as` line is not a comment.
+    _put(repo, "apeGmshViewer/src/panels/header.ts", "import\n * as R\n from '../reader/read.ts';\nexport const r = R;\n")
+    found = wall.scan(repo)
+    assert [f.split(": ")[1].split(" ")[0] for f in found] == ["W4"]
+    assert found[0].startswith("apeGmshViewer/src/panels/header.ts:3: W4 ")
+
+
+@pytest.mark.parametrize("src", [
+    "export { Effects } from '../effects.ts';\n",             # the laundering route
+    "export { BlobStore } from '../state/blobs.ts';\n",
+    "import { Store } from '../state/store.ts';\n",            # ui/ gets the types only
+    "import { modelSummary } from '../state/selectors.ts';\n",
+    "import * as THREE from 'three';\n",
+])
+def test_w4_flags_ui_leak(repo, src):
+    _put(repo, "apeGmshViewer/src/ui/leak.ts", src)
+    assert _rules(repo) == ["W4"]
+    assert "ui module imports" in wall.scan(repo)[0]
+
+
+def test_w4_allows_ui_to_import_ui_and_the_state_types(repo):
+    _put(repo, "apeGmshViewer/src/ui/dom.ts", "import type { State } from '../state/types.ts';\nimport { x } from './icons.ts';\n")
+    assert wall.scan(repo) == []
+
+
+def test_comments_are_stripped_but_a_block_comment_line_starting_with_star_is_not_code(repo):
+    _put(repo, "apeGmshViewer/src/panels/header.ts", """\
+        /* a block comment
+         * import { Viewport } from '../renderer/viewport.ts'
+         */
+        // import { readModel } from '../reader/read.ts'
+        const s = "import { a } from '../effects.ts'"; // a string, not an import
+        const t = `require('apegmsh')`;
+        import { el } from '../ui/dom.ts';
+        """)
+    assert wall.scan(repo) == []
+
+
 def test_w4_flags_from_a_panel_subdirectory(repo):
     _put(repo, "apeGmshViewer/src/panels/header/index.ts", "import { legend } from '../legend.ts';\n")
     assert _rules(repo) == ["W4"]

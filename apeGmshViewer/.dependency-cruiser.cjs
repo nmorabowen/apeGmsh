@@ -23,6 +23,13 @@ module.exports = {
       to: { pathNot: [...PANEL_ALLOW, "^src/panels/$1/"] },
     },
     {
+      name: "ui-allow-list",
+      severity: "error",
+      comment: "D6: ui/ imports ui/ and the state types only, so it cannot re-export what a panel may not reach",
+      from: { path: "^src/ui/" },
+      to: { pathNot: ["^src/ui/", "^src/state/types\\.ts$"] },
+    },
+    {
       name: "no-circular",
       severity: "error",
       from: {},

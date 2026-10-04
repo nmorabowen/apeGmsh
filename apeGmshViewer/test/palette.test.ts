@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HUE_FAMILIES, hueOf, hueOrder, oklchToSrgb, paletteFor, SAME_FAMILY_DEG, TONES } from "../src/state/palette.ts";
+import { HUE_FAMILIES, hueOf, hueOrder, oklchToSrgb, paletteFor, SAME_FAMILY_DEG, TONE_GUARANTEE, TONES } from "../src/state/palette.ts";
 
 const circ = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
 
@@ -32,9 +32,11 @@ test("up to 12 groups: no two share a hue family (>= 30 degrees apart), neighbou
   }
 });
 
-test("up to 12 groups: two hues that read as one family (< 45 degrees apart) never share a tone", () => {
+test("up to 24 groups: two hues that read as one family (< 45 degrees apart) never share a tone", () => {
   // The V1 gate on San Ramon (11 groups): two pinks, orange vs salmon, cyan vs teal.
-  for (let n = 2; n <= HUE_FAMILIES; n++) {
+  assert.equal(TONE_GUARANTEE, 24);
+  for (let i = 0; i < TONES.length; i++) for (let j = i + 1; j < TONES.length; j++) assert.ok(Math.abs(TONES[i]!.L - TONES[j]!.L) >= 0.14, `tones ${i},${j}`);
+  for (let n = 2; n <= TONE_GUARANTEE; n++) {
     const e = [...Array(n).keys()].map((i) => hueOf(i, n));
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
       if (circ(e[i]!.hue, e[j]!.hue) < SAME_FAMILY_DEG) {
@@ -45,14 +47,18 @@ test("up to 12 groups: two hues that read as one family (< 45 degrees apart) nev
   }
 });
 
-test("beyond 12 groups a family repeats in another tone, never the same tone", () => {
-  const seen = new Set<string>();
-  for (let i = 0; i < 20; i++) {
-    const { hue, tone } = hueOf(i, 20);
-    const key = `${Math.round(hue)}:${tone}`;
-    assert.ok(!seen.has(key), key);
-    seen.add(key);
+test("beyond 12 groups a family repeats in another tone, never the same tone (up to 24)", () => {
+  for (const n of [13, 20, 24]) {
+    const seen = new Set<string>();
+    for (let i = 0; i < n; i++) {
+      const { hue, tone } = hueOf(i, n);
+      const key = `${Math.round(hue)}:${tone}`;
+      assert.ok(!seen.has(key), `n=${n}: ${key}`);
+      seen.add(key);
+    }
   }
+  // Up to 12, the family is unique by itself.
+  assert.equal(new Set([...Array(12).keys()].map((i) => Math.round(hueOf(i, 12).hue))).size, 12);
 });
 
 test("every colour is inside sRGB, and two groups never get the same colour", () => {

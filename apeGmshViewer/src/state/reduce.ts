@@ -89,7 +89,10 @@ export function reduce(s: State, e: Event): State {
     }
     case "fileFailed": {
       const prev = s.artifacts[e.artifact];
-      const info: ArtifactInfo = { ...(prev && prev.path === e.path ? prev : opened(e.path)), status: "failed", error: e.error, stale: false };
+      // A fileChanged that arrived during the failed read keeps the artifact
+      // stale (the read may have hit a half-written file); the effects retry.
+      const stale = prev !== null && prev.path === e.path && prev.stale;
+      const info: ArtifactInfo = { ...(prev && prev.path === e.path ? prev : opened(e.path)), status: "failed", error: e.error, stale };
       if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: info } };
       // The model is gone with its derivations; the failure is shown instead.
       return {
