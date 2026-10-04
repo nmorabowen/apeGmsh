@@ -111,9 +111,11 @@ Tcl + Py text emit are the supported execution paths for staged
 decks today. Live execution (``ops.analyze`` / ``ops.eigen``)
 refuses staged models with ``NotImplementedError`` — emit via
 ``ops.tcl(p, run=True)`` / ``ops.py(p, run=True)`` for the
-OpenSees subprocess. H5 archival of staged structure is also
-deferred (``apeSees.h5(path)`` is fail-loud on a staged build per
-PR [#313](https://github.com/nmorabowen/apeGmsh/pull/313)).
+OpenSees subprocess. H5 archival supports staged builds:
+``apeSees.h5(path)`` archives flat and partitioned staged models into
+``/opensees/stages`` (ADR 0055). The remaining staged refusals are a
+stage-claimed interface (phantom nodes / ``node_to_surface``) and
+``split='parts'``.
 
 The full lifecycle table, builder verbs, validator surface, MP
 partitioned + staged emit (Phase SSI-2.C), and the SSI-1
