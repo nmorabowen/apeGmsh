@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +30,38 @@ if TYPE_CHECKING:
     from .mesh._compose import Compose, ComposedModule
     from .mesh.FEMData import FEMData
     from .viz.Plot import Plot
+
+
+#: Environment variable that overrides the conventional artifact directory.
+ARTIFACT_DIR_ENV = "APEGMSH_ARTIFACT_DIR"
+
+
+def default_artifact_dir() -> Path:
+    """The directory a session writes its artifacts to when ``save_to`` is None.
+
+    ADR 0112 D1: the artifacts live "at a conventional path next to the
+    script".  Resolution order:
+
+    1. ``$APEGMSH_ARTIFACT_DIR`` when set and non-empty (the test suite
+       points it at a temporary directory so nothing lands in the repo);
+    2. the directory of the ``__main__`` script, when Python is running
+       one (``python model.py`` writes beside ``model.py``);
+    3. the current working directory (a REPL or a notebook).
+
+    Resolved at call time, not at construction, so a ``chdir`` before
+    ``end()`` is honoured the way a relative ``save_to`` would be.
+    """
+    env = os.environ.get(ARTIFACT_DIR_ENV, "")
+    if env:
+        return Path(env)
+    main = sys.modules.get("__main__")
+    try:
+        main_file = main.__file__ if main is not None else None
+    except AttributeError:  # a REPL or notebook __main__ has no file
+        main_file = None
+    if main_file:
+        return Path(main_file).resolve().parent
+    return Path.cwd()
 
 
 class apeGmsh(_SessionBase):
@@ -100,14 +134,24 @@ class apeGmsh(_SessionBase):
         verbose: bool = False,
         save_to: str | Path | None = None,
         overwrite: bool = True,
+        _artifacts: bool = True,
     ) -> None:
         super().__init__(name=model_name, verbose=verbose)
+        # ADR 0112 D1: this session *is* the model; ``end()`` writes
+        # ``model.h5`` and its geometry sibling unconditionally.  The
+        # private ``_artifacts=False`` is for library-internal sessions
+        # only (section mesh workers, solver cross-checks, the demo
+        # builder); it is not a user-facing opt-out.
+        self._writes_artifacts = bool(_artifacts)
         # Labels (Tier 1 naming) are auto-created from label= kwargs
         # on geometry methods in both Part and Assembly sessions.
         self._auto_pg_from_label = True
-        # Autosave configuration. ``save_to=None`` disables autosave;
-        # otherwise ``end()`` writes the neutral-zone HDF5 to this path
-        # before finalizing gmsh.  Manual ``g.save()`` uses the same path.
+        # Artifact path override (ADR 0112 D1).  ``end()`` always writes
+        # the neutral-zone HDF5 and its geometry sibling before
+        # finalizing gmsh: at ``save_to`` when given, else at the
+        # conventional path ``default_artifact_dir() / <model_name>.h5``
+        # (see :meth:`_resolve_save_target`).  Manual ``g.save()`` with
+        # no argument still requires ``save_to``.
         self._save_to: Path | None = Path(save_to) if save_to else None
         self._overwrite: bool = overwrite
         # ── FEMData cache (Phase 3B.2b-prep / ADR 0038) ──────────
@@ -419,6 +463,10 @@ class apeGmsh(_SessionBase):
     def _resolve_save_target(self, path: "str | Path | None") -> Path:
         """Normalize a save destination to a concrete ``.h5`` file path.
 
+        ``path`` wins; else ``save_to``; else (ADR 0112 D1, the
+        unconditional write) the conventional path
+        ``default_artifact_dir() / <model_name>.h5``.
+
         A directory target (an existing directory, or a path with no
         suffix) means "drop the model file in here" — it is resolved to
         ``<dir>/<model_name>.h5``.  Passing a directory straight to h5py
@@ -426,7 +474,12 @@ class apeGmsh(_SessionBase):
         ``PermissionError`` on Windows; this gives both :meth:`save` and
         the :meth:`end` autosave a usable file path instead.
         """
-        target = Path(path) if path is not None else self._save_to
+        if path is not None:
+            target = Path(path)
+        elif self._save_to is not None:
+            target = self._save_to
+        else:
+            target = default_artifact_dir()
         if target.is_dir() or target.suffix == "":
             target = target / f"{self.name}.h5"
         return target
@@ -460,22 +513,27 @@ class apeGmsh(_SessionBase):
         self._do_save(target)
         return target
 
-    def _do_save(self, path: Path) -> None:
-        """Extract the broker snapshot and write it to ``path``.
+    def _snapshot_to_save(self) -> "FEMData":
+        """The broker snapshot a save writes.
 
         Chain-phase sessions (built via :meth:`from_h5`) save the
         cached ``_fem`` directly — they have no gmsh state to
         re-extract from.
         """
-        from . import __version__ as _ver
-
         if (
             getattr(self, "_fem_from_h5", False)
             and getattr(self, "_fem", None) is not None
         ):
-            fem = self._fem
-        else:
-            fem = self.mesh.queries.get_fem_data()
+            return self._fem
+        return self.mesh.queries.get_fem_data()
+
+    def _do_save(self, path: Path, fem: "FEMData | None" = None) -> None:
+        """Write the broker snapshot (``fem``, else :meth:`_snapshot_to_save`)
+        to ``path``."""
+        from . import __version__ as _ver
+
+        if fem is None:
+            fem = self._snapshot_to_save()
         fem.to_h5(
             str(path),
             model_name=self.name,

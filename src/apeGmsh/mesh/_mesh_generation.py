@@ -41,9 +41,40 @@ class _Generation:
         from apeGmsh.core._compose_errors import chain_phase_guard
         chain_phase_guard(self._mesh._parent, "g.mesh.generation.generate")
         self._validate_pre_mesh()
+        session = self._mesh._parent
+        # ADR 0112 D2a: a failed generate leaves no stale capture behind;
+        # ``end()`` then falls back to the temporary 2-D mesh.
+        session._geometry_capture = None
         gmsh.model.mesh.generate(dim)
         self._mesh._log(f"generate(dim={dim})")
+        if dim >= 2 and session._writes_artifacts:
+            self._capture_geometry()
         return self
+
+    def _capture_geometry(self) -> None:
+        """Tessellate the real mesh for the ``<stem>.geometry.h5`` sibling.
+
+        Runs at the exit of :meth:`generate` (V0 decision 6): surfaces
+        come from the mesh just built, curves are sampled parametrically.
+        A failure is a :class:`GeometryArtifactWarning`, never an
+        exception, and leaves ``_geometry_capture`` at ``None`` so
+        ``end()`` tries the temporary-mesh route.
+        """
+        import warnings
+
+        from ._geometry_h5_io import GeometryArtifactWarning, capture_geometry
+
+        session = self._mesh._parent
+        try:
+            session._geometry_capture = capture_geometry(source="mesh")
+        except Exception as exc:  # noqa: BLE001
+            session._geometry_capture = None
+            warnings.warn(
+                f"geometry capture after generate() failed: {exc!r}; "
+                f"end() will retry with a temporary 2-D mesh",
+                GeometryArtifactWarning,
+                stacklevel=3,
+            )
 
     def _validate_pre_mesh(self) -> None:
         """Invoke ``validate_pre_mesh`` on every subsystem that has it.

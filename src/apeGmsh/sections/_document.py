@@ -956,7 +956,9 @@ class SectionDocument:
 
         sacrificial = self._sacrificial_ids()
 
-        g = apeGmsh(model_name=self.name or "section_doc", verbose=False)
+        # library-internal: no ADR 0112 D1 artifacts beside the caller
+        g = apeGmsh(model_name=self.name or "section_doc", verbose=False,
+                    _artifacts=False)
         g.begin()
         try:
             instances: dict[str, Any] = {}

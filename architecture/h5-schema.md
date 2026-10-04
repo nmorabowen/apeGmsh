@@ -1015,10 +1015,11 @@ inherit it:
   whose result merges several sources and so belongs to none of their
   sessions; `from_mpco` and `.ladruno` imports, which have no session; a
   pre-#1304 pickle; and `from_h5` of a file without the attr.
-* **Pending (V2b):** today `from_gmsh` mints a fresh id per extraction,
-  so two `get_fem_data()` calls in one session differ. V2b makes the
-  session own one id from `generate()` and hands it to every snapshot it
-  extracts and to its geometry sibling.
+* **Owned by the session (V2b, #1305):** `apeGmsh.begin()` mints one
+  uuid4 (`_SessionBase._session_id`), `FEMData.from_gmsh(session=...)`
+  stamps it on every snapshot the session extracts, and the session
+  stamps its geometry sibling with the id of the snapshot `model.h5`
+  carries. Two `get_fem_data()` calls in one session share the id.
 
 Pairing by equality therefore holds only for the artifacts of one
 session: the snapshot that wrote `model.h5`, the snapshots derived from

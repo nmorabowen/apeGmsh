@@ -94,7 +94,9 @@ def make_demo_results(
 
     # ── Mesh: a vertical cantilever column, one PG "Cols" ──────────────
     lc = length / n_elements
-    g = apeGmsh(model_name="apeGmsh_demo", verbose=False)
+    # library-internal: the demo writes its own files under ``path``;
+    # no ADR 0112 D1 artifacts beside the caller
+    g = apeGmsh(model_name="apeGmsh_demo", verbose=False, _artifacts=False)
     g.begin()
     p0 = g.model.geometry.add_point(0.0, 0.0, 0.0, lc=lc)
     p1 = g.model.geometry.add_point(0.0, 0.0, length, lc=lc)
