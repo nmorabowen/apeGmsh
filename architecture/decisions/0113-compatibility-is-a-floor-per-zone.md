@@ -560,36 +560,30 @@ manifest" holds as written.
 
 D9 says that when an embedded zone is below its floor, "`Results.model`
 is unavailable, the reader says so". `Results.model` is not a property:
-`Results.from_native` requires the caller to pass `model=`, so there is
-no `Results.model` to be unavailable. The rule's intent, that **results
-outlive a model zone the library can no longer read**, is implemented
-through the two accessors that would read the embedded zones (PR #1339,
-INV 11):
+`Results.from_native` requires the caller to pass `model=`, so the
+sentence is literally false. The rule's intent, that **results outlive a
+model zone the library can no longer read**, shipped in PR #1339 (merged
+as 2f529850, INV 11) through the accessors that would read the embedded
+zones:
 
 - `NativeReader` opens a file whose embedded `/model` (neutral) or
-  `/opensees` zone is below its floor, reads `/stages`, rewrites nothing,
-  and lists the zone in `NativeReader.unavailable_zones` (zone id to the
-  refusal text). It emits one `UserWarning` per flagged zone, so two when
-  both zones are below their floors.
-- `Results.fem` refuses on a neutral-below file, with the reader's floor
-  text and a hint to pass `fem=` to `Results.from_native` or call
-  `results.bind(fem)`. A supplied `fem=` is never validated against the
-  embedded zone, so it opens the file's stages normally.
-- `OpenSeesModel.from_h5(results)` refuses on a file whose embedded
-  `/opensees` zone (or `/model`) is below its floor, with the same text,
-  so the bridge model comes from a sidecar archive.
+  `/opensees` zone is below its floor, reads `/stages` read-only and
+  rewrites nothing. The zone is listed in `NativeReader.unavailable_zones`
+  (zone id to the refusal text), and one `UserWarning` per flagged zone is
+  emitted at open, so two when both zones are below their floors.
+- `Results.fem` raises `SchemaVersionError` with the reader's text plus a
+  hint to pass `fem=` or call `.bind(fem)`. A supplied `fem=` is returned
+  before the reader is asked, so the embedded zone is never read and the
+  file opens normally. `repr` and `summary` show "FEM: unavailable ..."
+  rather than raising.
+- `OpenSeesModel.from_h5(results_path)` refuses on a flagged file, so the
+  bridge model comes from a sidecar archive.
 - An embedded zone **newer** than the reader, and the results zone itself
   in either direction, still refuse the whole file (D2).
 
 Read D9 as: the file opens and its stages read; the accessor that would
 read the flagged zone refuses with the floor text; the open itself is
-never refused for a flagged embedded zone. The other reading (refuse the
-open unless `fem=` is passed) would make D9 unreachable without a sidecar
-`FEMData`, against "results should outlive their model zone". This
-wording follows the PR #1339 body and its fix-map comment (head
-66d26091), and #1339 was still open when this erratum was written; if
-review there changes the behaviour, #1339's text governs and this
-paragraph is corrected by a further erratum.
+never refused for a flagged embedded zone. `model=` stays required.
 
 ### E3 — The opensees floor is 2.12.0, and D9's example follows
 
