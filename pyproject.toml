@@ -221,9 +221,16 @@ markers = [
 # without signalling real bugs. Use a tagged UserWarning subclass +
 # ignore filter so users still see them and tests that explicitly
 # assert them via pytest.warns(UserWarning, ...) keep working.
+# ModelFemMismatchWarning fires whenever an MPCO test pairs a fixture with
+# the deliberately unrelated stub model.h5 (tests/conftest.py
+# ``_stub_model_h5_path``), which is most of the mock/real MPCO tests. The
+# warning is a user-facing nudge (a wrong ``model_h5=`` pairing, #1325);
+# tests/test_results_mpco_model_h5_binding.py asserts it with
+# ``pytest.warns``, which overrides this filter.
 filterwarnings = [
     "ignore::apeGmsh.opensees.apesees.OpenSeesAutoEmitWarning",
     "ignore::apeGmsh.core._parts_fragmentation.UnregisteredPartEntityWarning",
+    "ignore::apeGmsh.results._bind.ModelFemMismatchWarning",
 ]
 
 [tool.pyright]

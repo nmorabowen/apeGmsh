@@ -9,8 +9,9 @@ slabs) until their catalog entries land.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -148,6 +149,29 @@ class MPCOReader:
     # ------------------------------------------------------------------
     # Stage discovery
     # ------------------------------------------------------------------
+
+    def attach_stage_names(self, names: "Sequence[str]") -> None:
+        """Rename the capture stages after the program's stages (#1324).
+
+        An ``.mpco`` names its stages ``MODEL_STAGE[<k>]``; the user's
+        ``ops.stage(name=...)`` names live only in the sibling
+        ``model.h5``.  :meth:`Results.from_mpco` calls this with the
+        program names, in registration order, once it has checked that
+        the counts agree — the pairing is positional, so a count
+        mismatch is the caller's decision, not a guess made here.  Stage
+        ids are untouched (reads key on them); the ``MODEL_STAGE[<k>]``
+        name moves to :attr:`StageInfo.aliases`.
+        """
+        current = self.stages()
+        if len(names) != len(current):
+            raise ValueError(
+                f"attach_stage_names: {len(names)} names for "
+                f"{len(current)} MODEL_STAGE groups in {self._path.name}."
+            )
+        self._stage_cache = [
+            replace(s, name=str(n), aliases=(s.name, *s.aliases))
+            for s, n in zip(current, names)
+        ]
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:

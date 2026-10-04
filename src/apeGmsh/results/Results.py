@@ -77,7 +77,12 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from numpy import ndarray
 
-from ._bind import _resolve_fem, resolve_bound_model
+from ._bind import (
+    _bind_stage_names,
+    _resolve_fem,
+    _resolve_fem_via_model,
+    resolve_bound_model,
+)
 from ._composites import (
     ElementResultsComposite,
     NodeResultsComposite,
@@ -442,9 +447,24 @@ class Results:
         (no derived ``results.h5`` is written copying the
         ``/opensees/`` zone in).
 
+        What the archive carries, the results use (#1324, #1325):
+
+        - **FEMData.** ``fem=`` wins when given. Otherwise the neutral
+          FEMData stored in ``model_h5`` (physical groups, labels) is
+          bound whenever its node ids cover the capture's, so ``pg=``
+          queries work from files alone; a ``model_h5`` that does not
+          cover them warns (``ModelFemMismatchWarning``) and the partial
+          FEMData synthesized from the MPCO ``MODEL/`` group is bound
+          instead.
+        - **Stage names.** ``ops.stage(name=...)`` names from
+          ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
+          names when the counts agree (``results.stage("gravity")``);
+          ``MODEL_STAGE[<k>]`` stays resolvable as an alias. A count
+          mismatch warns (``StageCountMismatchWarning``) and keeps the
+          file's names.
+
         Single-file mode (default for non-partitioned analyses): pass
-        the path of one ``.mpco`` file. Synthesizes a partial FEMData
-        from the MPCO ``MODEL/`` group if ``fem`` is omitted.
+        the path of one ``.mpco`` file.
 
         Multi-partition mode (parallel OpenSees runs): pass either
 
@@ -487,11 +507,17 @@ class Results:
                 reader = MPCOMultiPartitionReader(discovered)
             else:
                 reader = MPCOReader(discovered[0])
-        bound_fem = _resolve_fem(reader, fem)
         # Per INV-3, this is an in-memory rehydrate from the sibling
         # file; we never copy the zone into a derived h5.
         from ..opensees.opensees_model import OpenSeesModel
         bound_model = OpenSeesModel.from_h5(model_h5)
+        # #1325 — the archive's neutral FEMData carries the physical
+        # groups the MPCO MODEL/ group lacks; #1324 — its /opensees/stages
+        # carry the names the MODEL_STAGE[<k>] groups lack.
+        bound_fem = _resolve_fem_via_model(
+            reader, fem, bound_model, model_path=model_h5,
+        )
+        _bind_stage_names(reader, bound_model, model_path=model_h5)
         # ADR 0043 slice 1.3 — MPCO buckets key element results by the
         # OpenSees ops tag; the results API speaks fem_eid. Whenever the
         # bound model carries a real element_meta pairing, the reader must
@@ -1047,7 +1073,7 @@ class Results:
         return list(self._all_stages())
 
     def stage(self, name_or_id: str) -> "Results":
-        """Return a Results scoped to a stage (matched by id or name)."""
+        """Return a Results scoped to a stage (matched by id, name or alias)."""
         info = self._lookup_stage(name_or_id)
         return self._derive(stage_id=info.id)
 
@@ -1906,10 +1932,15 @@ class Results:
 
     def _lookup_stage(self, name_or_id: str) -> StageInfo:
         for s in self._all_stages():
-            if s.id == name_or_id or s.name == name_or_id:
+            if (
+                s.id == name_or_id
+                or s.name == name_or_id
+                or name_or_id in s.aliases
+            ):
                 return s
         names = sorted({s.name for s in self._all_stages()} |
-                        {s.id for s in self._all_stages()})
+                        {s.id for s in self._all_stages()} |
+                        {a for s in self._all_stages() for a in s.aliases})
         raise KeyError(
             f"No stage matches {name_or_id!r}. Available: {names}"
         )
