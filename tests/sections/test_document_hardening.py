@@ -14,7 +14,11 @@ import math
 
 import pytest
 
-from apeGmsh.sections import SectionDocument, SectionDocumentError
+from apeGmsh.sections import (
+    SECTION_DOC_VERSION,
+    SectionDocument,
+    SectionDocumentError,
+)
 
 
 def _write(tmp_path, data):
@@ -224,3 +228,64 @@ def test_mutation_value_gates_match_loader():
     with pytest.raises(SectionDocumentError, match="int_rad"):
         fib.add_patch_circ(material="m", n_circ=8, n_rad=2,
                            int_rad=2.0, ext_rad=1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# uniaxial params refuse at to_section, never a raw TypeError (#1354)
+# ─────────────────────────────────────────────────────────────────────
+
+def _bridge():
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+
+    from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+    ops = apeSees(cast("object", make_two_node_beam()))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    return ops
+
+
+@pytest.mark.parametrize("params,key", [
+    ({"E": 1.0, "fillet": 2.0}, "fillet"),   # a key ElasticMaterial lacks
+    ({}, "E"),                                # its required key missing
+])
+def test_uniaxial_params_refuse_at_to_section(tmp_path, params, key):
+    """The loader keeps no bridge signatures, so the document opens;
+    ``to_section`` binds the params against the real constructor and
+    refuses with the material, the key and the version named."""
+    f = _fib_doc()
+    f["materials"]["m"]["uniaxial"]["params"] = params
+    doc = SectionDocument.open(_write(tmp_path, f))
+    with pytest.raises(SectionDocumentError) as ei:
+        doc.to_section(_bridge())
+    msg = str(ei.value)
+    assert "material 'm'" in msg
+    assert "ElasticMaterial" in msg
+    assert f"'{key}'" in msg
+    assert f"section_doc_version {SECTION_DOC_VERSION}" in msg
+    # the mutation path lands on the same splat
+    doc2 = SectionDocument.new(name="h", kind="fiber")
+    doc2.set_material("m", uniaxial=("ElasticMaterial", params))
+    doc2.add_point(material="m", y=0.0, z=0.0, area=1.0)
+    with pytest.raises(SectionDocumentError, match=f"'{key}'"):
+        doc2.to_section(_bridge())
+
+
+def test_uniaxial_constructor_typeerror_not_swallowed(tmp_path):
+    """Only the keyword-splat failure is translated. A ``TypeError``
+    the constructor raises for its own reasons, with the keys accepted,
+    propagates untouched (a stub bridge pins the two cases apart)."""
+    class _Boom:
+        def __init__(self, *, E: float) -> None:
+            raise TypeError("inside the constructor")
+
+    class _NS:
+        ElasticMaterial = _Boom
+
+    class _Ops:
+        uniaxialMaterial = _NS()
+
+    doc = SectionDocument.open(_write(tmp_path, _fib_doc()))
+    with pytest.raises(TypeError, match="inside the constructor"):
+        doc.to_section(_Ops())
