@@ -134,6 +134,7 @@ from ._internal.tag_resolution import (
     set_stage_owned_node_tags,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
+from .._internal.provenance import ProvenanceStore
 from ._internal.ns import (
     _AlgorithmNS,
     _AnalysisNS,
@@ -8218,6 +8219,12 @@ class apeSees:
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ADR 0112 D3 (V2d): where in the user's source each primitive
+        # was declared.  Filled by ``_register`` through the shared
+        # capture helper, one record per user call, keyed
+        # ``opensees/<kind>/<name|#k>``; ``h5()`` appends the table to
+        # the snapshot's own ``/provenance``.  Never hashed.
+        self._provenance = ProvenanceStore()
         self._tags = TagAllocator()
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -11915,6 +11922,8 @@ class apeSees:
         # 0018 / _internal.compose).  apeSees passes snapshot_id=None:
         # the broker / bridge meta write is authoritative here, so
         # this stays byte-invariant with the pre-extraction code.
+        # ADR 0112 D3: the bridge's declaration provenance rides along
+        # and is appended to the snapshot's own table in /provenance.
         _compose_model_h5(
             self._fem, emitter, path,
             model_name=name,
@@ -11925,6 +11934,7 @@ class apeSees:
             names=self._name_records(),
             computed_sections=self._computed_section_records(bm.primitives),
             nodes_ndf=_nodes_ndf,
+            provenance=self._provenance.snapshot(),
         )
 
     # -- Registration -----------------------------------------------------
@@ -11938,6 +11948,15 @@ class apeSees:
         the returned handle.  Names are unique per bridge instance; a
         duplicate raises ``ValueError`` (fail-loud — no silent
         last-wins).
+
+        ADR 0112 D3: the registration records its declaration
+        provenance as ``opensees/<kind>/<name|#k>``, where ``<kind>``
+        is the tag-allocator kind (the OpenSees command: ``element``,
+        ``uniaxialMaterial``, ``pattern``, ...).  The helper keeps one
+        record per user call, so a primitive the bridge synthesises
+        inside a verb the user called (the HOLD series of
+        ``s.support``, the series and pattern of
+        ``imposed_displacement``) adds no record of its own.
         """
         kind = _kind_of(prim)
         self._tags.allocate_for(prim, kind)
@@ -11952,6 +11971,7 @@ class apeSees:
                     "handle directly)."
                 )
             self._names[name] = prim
+        self._provenance.capture("opensees", kind, name)
         return prim
 
     def register(self, prim: _P) -> _P:

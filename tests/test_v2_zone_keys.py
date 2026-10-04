@@ -238,6 +238,10 @@ def _add_dummy_zones(path: Path) -> None:
         ent.create_dataset("tag", data=np.array([1], dtype=np.int32))
         # A complete, empty /provenance (h5-schema.md, "/provenance"): the
         # reader refuses a partial zone, so every table and column exists.
+        # Since V2d (#1307) the bridge write already carries the real
+        # zone (``base`` above hashed with it); the dummy replaces it.
+        if "provenance" in f:
+            del f["provenance"]
         prov = f.create_group("provenance")
         prov.attrs["base_dir"] = path.parent.as_posix()
         for table, cols in (

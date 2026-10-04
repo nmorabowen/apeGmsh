@@ -1,0 +1,392 @@
+"""Bridge provenance: ``apeSees._register`` capture, the ``/provenance``
+composer and the replay writers (ADR 0112 D3, program slice V2d, #1307).
+
+Oracles, each naming the right answer:
+
+* **The helper-call oracle.**  A user script declares its bridge
+  primitives inside a helper function.  Each record's ``site`` is the
+  helper's line and ``script`` the script line that called it, read
+  off ``# MARK:`` comments in the script itself.  The session's own
+  records (V2c) sit in the same table, before the bridge's, and the
+  one script file is one ``files`` row (the merge deduplicates).
+* **Hash invariance.**  ``model_hash`` and ``fem_hash`` recomputed on
+  a copy of the file with ``/provenance`` deleted equal the stamped
+  ones: no hash reads the zone.
+* **Replay (V0 Q7).**  ``OpenSeesModel.from_h5(...).to_h5(...)`` and
+  ``ModelData.from_h5(...).write(...)`` into the source's directory
+  carry ``/provenance`` byte-equal and the same ``session_id``.  Into
+  another directory the decoded table is equal and ``@base_dir`` is
+  the new file's own directory (the schema's definition of it).
+* **The mass skip (V2a).**  A ``mass_from_model()`` model writes the
+  file with the zone, and the neutral-zone masses equal the deck's,
+  node by node (the ``test_mass_from_model_h5`` oracle).
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import runpy
+import shutil
+from pathlib import Path
+
+import h5py
+import pytest
+
+from apeGmsh import apeGmsh
+from apeGmsh._internal.provenance import (
+    FileRow,
+    ProvenanceOverflowError,
+    ProvenanceTable,
+    RecordRow,
+    SiteRow,
+)
+from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import ModelData, OpenSeesModel, apeSees
+from apeGmsh.opensees._internal.compose import _merge_provenance
+from apeGmsh.opensees._internal.lineage import (
+    compute_fem_hash,
+    compute_model_hash,
+    read_stored_lineage,
+)
+from apeGmsh.opensees._internal.schema_version import PROVENANCE_KEY
+from tests.fixtures.schema import PROVENANCE_CURRENT
+from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+USER_SCRIPT = '''\
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+
+def declare_bridge(ops):
+    ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01, name="steel")  # MARK:helper_mat
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)  # MARK:helper_nd
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)  # MARK:helper_elem
+
+
+with apeGmsh(model_name="prov_bridge", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+    g.physical.add_volume("b", name="B")  # MARK:session_pg
+    g.masses.volume("B", density=2400.0)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+declare_bridge(ops)  # MARK:script_call
+ops.mass_from_model()
+ops.h5(OUT)
+ops.tcl(TCL)
+'''
+
+BRIDGE_PATHS = (
+    "opensees/uniaxialMaterial/steel",
+    "opensees/nDMaterial/#1",
+    "opensees/element/#1",
+)
+
+
+def _line(marker: str) -> int:
+    for i, text in enumerate(USER_SCRIPT.splitlines(), start=1):
+        if f"# MARK:{marker}" in text:
+            return i
+    raise AssertionError(marker)
+
+
+def _deck_masses(text: str) -> dict[int, tuple[float, ...]]:
+    out: dict[int, tuple[float, ...]] = {}
+    for line in text.splitlines():
+        tok = line.split()
+        if tok and tok[0] == "mass":
+            out[int(tok[1])] = tuple(float(v) for v in tok[2:])
+    return out
+
+
+def _zone(path: Path) -> dict[str, object]:
+    """Every dataset of ``/provenance`` plus ``@base_dir``, as raw arrays."""
+    out: dict[str, object] = {}
+    with h5py.File(path, "r") as f:
+        grp = f["provenance"]
+        out["@base_dir"] = grp.attrs["base_dir"]
+        for table in grp:
+            for col in grp[table]:
+                ds = grp[table][col]
+                out[f"{table}/{col}"] = (str(ds.dtype), ds[()].tolist())
+        out["@key"] = f["meta"].attrs[PROVENANCE_KEY]
+        out["@session_id"] = f["meta"].attrs["session_id"]
+    return out
+
+
+@pytest.fixture(scope="module")
+def oracle(tmp_path_factory):
+    d = tmp_path_factory.mktemp("prov_bridge")
+    script = d / "user_script.py"
+    script.write_text(USER_SCRIPT, encoding="utf-8")
+    out, tcl = d / "model.h5", d / "model.tcl"
+    runpy.run_path(str(script),
+                   init_globals={"OUT": str(out), "TCL": str(tcl)},
+                   run_name="__main__")
+    return script, out, tcl
+
+
+# ---------------------------------------------------------------------------
+# The helper-call oracle
+# ---------------------------------------------------------------------------
+
+
+def test_bridge_declaration_points_at_the_helper_line(oracle):
+    script, out, _ = oracle
+    table = FEMData.from_h5(str(out)).provenance
+    assert table is not None
+    want_path = Path(os.path.abspath(str(script))).as_posix()
+    want_sha = hashlib.sha256(script.read_bytes()).hexdigest()
+    for path, marker in zip(BRIDGE_PATHS,
+                            ("helper_mat", "helper_nd", "helper_elem")):
+        rec = table.record(path)
+        site, top = table.location(rec.site), table.location(rec.script)
+        assert (site.path, site.line, site.function) == (
+            want_path, _line(marker), "declare_bridge"), path
+        assert (top.path, top.line, top.function) == (
+            want_path, _line("script_call"), "<module>"), path
+        assert site.sha256 == top.sha256 == want_sha
+
+
+def test_session_and_bridge_records_share_one_table(oracle):
+    script, out, _ = oracle
+    table = FEMData.from_h5(str(out)).provenance
+    assert table is not None
+    paths = [r.path for r in table.records]
+    assert len(paths) == len(set(paths))
+    # The session's records come first, the bridge's after, in
+    # declaration order, with ``seq`` the row index of the merged table.
+    assert "neutral/physical_groups/B" in paths
+    assert paths[-3:] == list(BRIDGE_PATHS)
+    assert [r.seq for r in table.records] == list(range(len(paths)))
+    pg = table.location(table.record("neutral/physical_groups/B").site)
+    assert pg.line == _line("session_pg")
+    # Both stores saw the same script, so the merge keeps one file row.
+    assert [f.kind for f in table.files] == ["script"]
+    assert table.files[0].path == Path(os.path.abspath(str(script))).as_posix()
+
+
+def test_zone_layout_and_key(oracle):
+    script, out, _ = oracle
+    with h5py.File(out, "r") as f:
+        assert f["meta"].attrs[PROVENANCE_KEY] == PROVENANCE_CURRENT
+        grp = f["provenance"]
+        assert grp.attrs["base_dir"] == Path(
+            os.path.abspath(str(out.parent))).as_posix()
+        assert [p.decode() for p in grp["files/path"][()]] == [script.name]
+        for table, col in (("sites", "file"), ("sites", "line"),
+                           ("records", "site"), ("records", "script"),
+                           ("records", "seq")):
+            assert grp[table][col].dtype == "int32", (table, col)
+        # Written after /opensees: the bridge zone is complete beside it.
+        assert "opensees" in f and int(
+            f["opensees/bcs"].attrs["mass_from_model"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Hash invariance
+# ---------------------------------------------------------------------------
+
+
+def test_model_hash_is_equal_with_and_without_provenance(oracle, tmp_path):
+    _, out, _ = oracle
+    stripped = tmp_path / "stripped.h5"
+    shutil.copyfile(out, stripped)
+    with h5py.File(stripped, "a") as f:
+        del f["provenance"]
+        del f["meta"].attrs[PROVENANCE_KEY]
+    with h5py.File(out, "r") as f:
+        stamped_fem, stamped_model, _ = read_stored_lineage(f["meta"])
+        assert stamped_fem and stamped_model
+    with h5py.File(stripped, "r") as f:
+        fem_hash = compute_fem_hash(f)
+        model_hash = compute_model_hash(fem_hash, f["opensees"])
+    assert (fem_hash, model_hash) == (stamped_fem, stamped_model)
+
+
+# ---------------------------------------------------------------------------
+# Replay writers (V0 Q7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("replay", ["opensees_model", "model_data"])
+def test_replay_into_the_same_directory_is_byte_equal(oracle, replay):
+    _, out, _ = oracle
+    again = out.parent / f"again_{replay}.h5"
+    if replay == "opensees_model":
+        OpenSeesModel.from_h5(str(out)).to_h5(str(again))
+    else:
+        ModelData.from_h5(str(out)).write(str(again))
+    assert _zone(again) == _zone(out)
+
+
+def test_replay_elsewhere_rebases_paths_and_keeps_the_table(oracle, tmp_path):
+    _, out, _ = oracle
+    elsewhere = tmp_path / "elsewhere" / "again.h5"
+    elsewhere.parent.mkdir()
+    OpenSeesModel.from_h5(str(out)).to_h5(str(elsewhere))
+    src, dst = FEMData.from_h5(str(out)), FEMData.from_h5(str(elsewhere))
+    assert dst.provenance == src.provenance
+    assert dst.session_id == src.session_id
+    with h5py.File(elsewhere, "r") as f:
+        grp = f["provenance"]
+        assert grp.attrs["base_dir"] == Path(
+            os.path.abspath(str(elsewhere.parent))).as_posix()
+        # The script is not under the new base_dir, so it is absolute.
+        [p] = [p.decode() for p in grp["files/path"][()]]
+    assert p == src.provenance.files[0].path and os.path.isabs(p)
+
+
+# ---------------------------------------------------------------------------
+# The mass skip (V2a): a mass_from_model() model passes this path
+# ---------------------------------------------------------------------------
+
+
+def test_mass_from_model_file_masses_equal_the_deck(oracle):
+    _, out, tcl = oracle
+    deck = _deck_masses(tcl.read_text(encoding="utf-8"))
+    assert deck
+    fem = FEMData.from_h5(str(out))
+    assert fem.provenance is not None
+    neutral = {int(m.node_id): tuple(float(v) for v in m.mass)
+               for m in fem.nodes.masses}
+    assert set(neutral) == set(deck)
+    for nid, vec in neutral.items():
+        assert deck[nid] == vec[:3], nid
+
+
+# ---------------------------------------------------------------------------
+# Capture rules at _register
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def fem():
+    with apeGmsh(model_name="prov_bridge_unit", verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+        g.physical.add_volume("b", name="B")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(dim=3)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def test_one_record_per_user_call_and_unnamed_order_keys(fem):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ts = ops.timeSeries.Linear()
+    ops.timeSeries.Linear(name="ramp")
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=1, forces=(1.0, 0.0, 0.0))
+    paths = [r.path for r in ops._provenance.snapshot().records]
+    assert paths == ["opensees/timeSeries/#1", "opensees/timeSeries/ramp",
+                     "opensees/pattern/#1"]
+    # imposed_displacement synthesises a series and a pattern: one user
+    # call, one record, none for the synthesised partner.
+    before = len(ops._provenance)
+    ops.imposed_displacement(nodes=[1], ux=0.01)
+    assert len(ops._provenance) == before + 1
+
+
+def test_register_of_a_standalone_primitive_records_it(fem):
+    from apeGmsh.opensees.material.uniaxial import ElasticMaterial
+
+    ops = apeSees(fem)
+    ops.register(ElasticMaterial(E=1.0))
+    assert [r.path for r in ops._provenance.snapshot().records] == [
+        "opensees/uniaxialMaterial/#1"]
+
+
+def test_stub_fem_file_carries_no_zone(tmp_path):
+    """The bridge-only fallback (a hand-rolled stub, no neutral zone)
+    belongs to no run: its records would hold test paths, and the
+    golden corpus h5dumps would never be stable.  The bridge still
+    captured them."""
+    ops = apeSees(make_two_node_beam())  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0), name="cols")
+    assert [r.path for r in ops._provenance.snapshot().records] == [
+        "opensees/geomTransf/cols"]
+    out = tmp_path / "stub.h5"
+    ops.h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "provenance" not in f
+        assert PROVENANCE_KEY not in f["meta"].attrs
+        assert "opensees" in f
+
+
+def test_int32_overflow_refuses_before_writing(fem, tmp_path):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.nDMaterial.ElasticIsotropic(E=1.0, nu=0.2)
+    fem.provenance = ProvenanceTable(sites=(SiteRow(0, 2**31, "f"),))
+    try:
+        target = tmp_path / "overflow.h5"
+        with pytest.raises(ProvenanceOverflowError, match="int32"):
+            ops.h5(str(target))
+        assert not target.exists()
+    finally:
+        fem.provenance = None
+
+
+# ---------------------------------------------------------------------------
+# _merge_provenance
+# ---------------------------------------------------------------------------
+
+_F = FileRow("/u/a.py", "aa", "script")
+_G = FileRow("/u/lib.py", "bb", "module")
+
+
+def test_merge_dedupes_files_and_sites_and_continues_seq():
+    base = ProvenanceTable(
+        files=(_F,), sites=(SiteRow(0, 3, "<module>"),),
+        records=(RecordRow("neutral/labels/x", 0, 0, 0),))
+    extra = ProvenanceTable(
+        files=(_G, _F),
+        sites=(SiteRow(0, 7, "helper"), SiteRow(1, 3, "<module>")),
+        records=(RecordRow("opensees/element/#1", 0, 1, 0),
+                 RecordRow("opensees/element/#2", -1, -1, 1)))
+    merged = _merge_provenance(base, extra)
+    assert merged is not None
+    assert merged.files == (_F, _G)
+    assert merged.sites == (SiteRow(0, 3, "<module>"), SiteRow(1, 7, "helper"))
+    assert merged.records == (
+        RecordRow("neutral/labels/x", 0, 0, 0),
+        RecordRow("opensees/element/#1", 1, 0, 1),
+        RecordRow("opensees/element/#2", -1, -1, 2))
+
+
+def test_merge_passes_through_when_one_side_is_missing():
+    t = ProvenanceTable(records=(RecordRow("opensees/element/#1", -1, -1, 0),))
+    assert _merge_provenance(None, None) is None
+    assert _merge_provenance(None, t) is t
+    assert _merge_provenance(t, None) is t
+    assert _merge_provenance(t, ProvenanceTable()) is t
+
+
+def test_merge_refuses_a_path_recorded_on_both_sides():
+    t = ProvenanceTable(records=(RecordRow("opensees/element/#1", -1, -1, 0),))
+    with pytest.raises(ValueError, match="both the snapshot and the bridge"):
+        _merge_provenance(t, t)
+
+
+def test_merge_is_what_the_file_carries(oracle):
+    """The merged table round-trips: re-encoding the decoded table
+    against the file's own base_dir reproduces the stored columns."""
+    _, out, _ = oracle
+    from apeGmsh._internal.provenance import encode_columns
+
+    table = FEMData.from_h5(str(out)).provenance
+    assert table is not None
+    with h5py.File(out, "r") as f:
+        base_dir = f["provenance"].attrs["base_dir"]
+        stored = {
+            f"{t}/{c}": f["provenance"][t][c][()].tolist()
+            for t in f["provenance"] for c in f["provenance"][t]}
+    for t, cols in encode_columns(table, base_dir).items():
+        for c, values in cols.items():
+            got = stored[f"{t}/{c}"]
+            got = [v.decode() if isinstance(v, bytes) else int(v) for v in got]
+            assert got == values, (t, c)
