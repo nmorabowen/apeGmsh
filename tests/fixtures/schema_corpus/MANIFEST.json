@@ -1,0 +1,989 @@
+{
+ "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
+ "base": "ae81ce7909ede34b00dd6889116616269c93c82b",
+ "floors": {
+  "neutral": "2.10.0",
+  "opensees": "2.11.0"
+ },
+ "current": {
+  "neutral": "2.34.0",
+  "opensees": "2.22.0"
+ },
+ "entries": [
+  {
+   "zone": "neutral",
+   "minor": "2.10",
+   "sha": "fec4cad42b7d058d65d7fc89d93981ed6544a70f",
+   "date": "2026-05-31",
+   "version": "2.10.0",
+   "bump_commits": [
+    "07c2318aec2bc23615653844b4773b53a9150a61"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.10.h5",
+     "sha256": "ad6b39a2bafb9d04940629cdb33a2859d27660233da058755c5f85d83ab27ba4"
+    },
+    "dump": {
+     "name": "neutral_2.10.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.10.0",
+    "opensees": "2.14.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.11",
+   "sha": "298723c5286e58aecf897e75181f84b57d87998e",
+   "date": "2026-06-11",
+   "version": "2.11.0",
+   "bump_commits": [
+    "71c2d6d676ed3e083a2b7f40e66c0116663ee7fd"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.11.h5",
+     "sha256": "123e1dc8ca2d9a84f59585f85f2c46bb42b90e54597c1c3f6771bf1e8613a7e5"
+    },
+    "dump": {
+     "name": "neutral_2.11.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.11.0",
+    "opensees": "2.18.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.12",
+   "sha": "520944072413d0f30ccd710bd13423a18f24d9de",
+   "date": "2026-06-11",
+   "version": "2.12.0",
+   "bump_commits": [
+    "5f6f60282a77540205406fdd07158fa26274d934"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.12.h5",
+     "sha256": "bfc9d7c311e45841a13687ab9d3136326d91e8b1b8579b38b3fbe3531e06e89b"
+    },
+    "dump": {
+     "name": "neutral_2.12.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.12.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.13",
+   "sha": "abc6f4b6af1bd0976df663caea8df9881383bd02",
+   "date": "2026-06-20",
+   "version": "2.13.0",
+   "bump_commits": [
+    "4c0887e12fcb03f5b99f6bb9d8aa5ca3096eab10"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.13.h5",
+     "sha256": "c5549d61df12bfb84d6cc80f320e0a3d2674957c8f5f087d28296644543c9d5c"
+    },
+    "dump": {
+     "name": "neutral_2.13.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.13.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.14",
+   "sha": "53b4b58a4b18d57c833e26cb01d5c86311e2811a",
+   "date": "2026-06-20",
+   "version": "2.14.0",
+   "bump_commits": [
+    "e1b9b5ff4f49ab8ead1457da414b9cc0d23a89e8"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.14.h5",
+     "sha256": "8e4f7a37386543c2918a80b2525a586f107226b87004aa7ad77cd5d86dad77e2"
+    },
+    "dump": {
+     "name": "neutral_2.14.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.14.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.15",
+   "sha": "bf2f125309d1a6d3957add8c7b38f174b934e7ae",
+   "date": "2026-06-21",
+   "version": "2.15.0",
+   "bump_commits": [
+    "23acf4a440d8b9164dd9b74bf5f7cbc7b1b38a3c"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.15.h5",
+     "sha256": "d541e36f2d81152080e8eb4ac315433cc4e72dc42201acfacbefe73cf750fbe7"
+    },
+    "dump": {
+     "name": "neutral_2.15.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.15.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.16",
+   "sha": "8415fd757be2cba5069c693e4b43ad642646cbde",
+   "date": "2026-06-24",
+   "version": "2.16.0",
+   "bump_commits": [
+    "587f2e30037d059f6cdbf0ff3df1267a6edaedb9"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.16.h5",
+     "sha256": "207da1c2987a6dd231cdea07b65368c8b488fb6014b132cbe79d372b6c5446bb"
+    },
+    "dump": {
+     "name": "neutral_2.16.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.16.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.17",
+   "status": "gap",
+   "reason": "no first-parent commit on main ever stamped 2.17.x (1b46edecdb bumped 2.16.0 -> 2.19.0), so no writer of this minor exists to run",
+   "gap_kind": "unwritten"
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.18",
+   "status": "gap",
+   "reason": "no first-parent commit on main ever stamped 2.18.x (1b46edecdb bumped 2.16.0 -> 2.19.0), so no writer of this minor exists to run",
+   "gap_kind": "unwritten"
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.19",
+   "sha": "9c5cdf8a6ddd41c4fc403e80e5805a410483b39e",
+   "date": "2026-06-25",
+   "version": "2.19.0",
+   "bump_commits": [
+    "1b46edecdbce44bb6da99890a3c1cf672d5694ed"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.19.h5",
+     "sha256": "96692dd76ac6f5afbbe246badc0ae7b5bf7697eb9e8e73ca5b1a3eb413a80217"
+    },
+    "dump": {
+     "name": "neutral_2.19.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.19.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.20",
+   "sha": "fbf173ff278e3a6c3f268163e7c9e000704b4107",
+   "date": "2026-06-25",
+   "version": "2.20.0",
+   "bump_commits": [
+    "e38cad1e32ecb6d423ca19f819240762aa1cd642"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.20.h5",
+     "sha256": "8f36edf8bc2da3a12399e5222833dd51fdce949aef6eefa1277723b3bb6093bd"
+    },
+    "dump": {
+     "name": "neutral_2.20.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.20.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.21",
+   "sha": "f97a1a9c0561eb31e715d830da073455680712ff",
+   "date": "2026-06-25",
+   "version": "2.21.0",
+   "bump_commits": [
+    "2777ba23613c8ddc9765d77030995e48b2da1b96"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.21.h5",
+     "sha256": "1b1b86e16fe68dc13d49af7029737fb4a5b03d35914321c9a8f9969ddfcffb4f"
+    },
+    "dump": {
+     "name": "neutral_2.21.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.21.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.22",
+   "sha": "25af6cd90e7683be00f1b3ca729b03d78adf1e0e",
+   "date": "2026-06-29",
+   "version": "2.22.0",
+   "bump_commits": [
+    "9b3750e171de20a6deb09419c40b7f9fe1b09306"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.22.h5",
+     "sha256": "bbb50d72b86850bab9a2234c7a65c5e1bda5f58176c4b82ade8244d89a334e6b"
+    },
+    "dump": {
+     "name": "neutral_2.22.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.22.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.23",
+   "sha": "b74aa7673b9d2e8aac399ce4bf90978666ee3025",
+   "date": "2026-06-29",
+   "version": "2.23.0",
+   "bump_commits": [
+    "b74aa7673b9d2e8aac399ce4bf90978666ee3025"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.23.h5",
+     "sha256": "35425aed6d3f5fcc8911fa0a3b9c4df6e3bb1b5918bd7225ab4a3402eb30fee2"
+    },
+    "dump": {
+     "name": "neutral_2.23.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.23.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.24",
+   "sha": "064e9286bc0340435c27434e2bcc628e8ea0afa3",
+   "date": "2026-06-29",
+   "version": "2.24.0",
+   "bump_commits": [
+    "544480ab2c30f18d09fe2ca96c7951333ea14348"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.24.h5",
+     "sha256": "82364f6c1c039319a457d6bf1f611683c8988c89f2762bc459b33d3fd4e0cbb1"
+    },
+    "dump": {
+     "name": "neutral_2.24.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.24.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.25",
+   "sha": "69df0ef847421db003ae2102152a1e320e342ae1",
+   "date": "2026-06-29",
+   "version": "2.25.0",
+   "bump_commits": [
+    "ba65e75ce71cce09ba2d230a2783efac9e42ff00"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.25.h5",
+     "sha256": "e6267fbd558ee61e1f7cb9c4eb5fe679f233b246dbed28989ab06c597ba86210"
+    },
+    "dump": {
+     "name": "neutral_2.25.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.25.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.26",
+   "sha": "46be696d20de0b2301a8cd41e9b6cee00a756a33",
+   "date": "2026-08-04",
+   "version": "2.26.1",
+   "bump_commits": [
+    "6dd75e6e62a3b38e77a4d903af95829073581d81",
+    "46be696d20de0b2301a8cd41e9b6cee00a756a33"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.26.h5",
+     "sha256": "e435146f172129098f21f3480c6d28cb51eebb8e4c1708f5c4bf56a937f3b70c"
+    },
+    "dump": {
+     "name": "neutral_2.26.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.26.1",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.27",
+   "sha": "fbea98b895592588e605ec32904ac8ae254a3d25",
+   "date": "2026-08-10",
+   "version": "2.27.0",
+   "bump_commits": [
+    "1d542ff62a7d95b4faadb299f86cbd7cf8c202bd"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.27.h5",
+     "sha256": "4dc09567e0f92ec3bd969ac256e1614ba736616511d50d9d49cacd4962b5c106"
+    },
+    "dump": {
+     "name": "neutral_2.27.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.27.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.28",
+   "sha": "e59c42751d27698f2eeb89375c175cb1fec2bbc1",
+   "date": "2026-08-12",
+   "version": "2.28.0",
+   "bump_commits": [
+    "337d0ccb727cac44797fca13f62707836df54771"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.28.h5",
+     "sha256": "633e42e2b15916ab5c0d2076320c3179088a09c273d23f163d57b86cbd55618e"
+    },
+    "dump": {
+     "name": "neutral_2.28.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.28.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.29",
+   "sha": "b70421e49d20d3c06a38213d1f89afb6a5a4736c",
+   "date": "2026-08-19",
+   "version": "2.29.0",
+   "bump_commits": [
+    "5ac4f0d910ea5852e6b40c96a6aa2f2340a9b109"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.29.h5",
+     "sha256": "d8014a1b4c01eb837f0497674eda8f9f0ae41ec25f2558e00aac7e65781c59d1"
+    },
+    "dump": {
+     "name": "neutral_2.29.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.29.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.30",
+   "sha": "2b9915bfc7af5cfc642893aec9a2a86e4810e772",
+   "date": "2026-08-19",
+   "version": "2.30.0",
+   "bump_commits": [
+    "25dd03f915d90fe224a717406d6cd21eefb72785"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.30.h5",
+     "sha256": "371ce627f32f7e313ab4208bdf4f394ea7e6a68a187d83ba191bd34846247fa2"
+    },
+    "dump": {
+     "name": "neutral_2.30.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.30.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.31",
+   "sha": "0cabe1a5c6f5649e4a600920186f8cd9fc54a1a4",
+   "date": "2026-09-08",
+   "version": "2.31.0",
+   "bump_commits": [
+    "22b554036d7d1b54131a61a59ff85f223dfe5164"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.31.h5",
+     "sha256": "7300d86d2ec1ca7443df2b69052c79c14eab9a2431812c32156dd35d62685825"
+    },
+    "dump": {
+     "name": "neutral_2.31.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.31.0",
+    "opensees": "2.21.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.32",
+   "sha": "84710579b6d94bd82bdb59f6021a8dc678fc18a6",
+   "date": "2026-09-15",
+   "version": "2.32.0",
+   "bump_commits": [
+    "c9087b1e7d5f4fb2bd17740be4a4bce8cca2bd8b"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.32.h5",
+     "sha256": "e725e1cbde8e080e66e3d38aa7020a2e43b2623dbe329e7fce5a3235de324ad4"
+    },
+    "dump": {
+     "name": "neutral_2.32.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.32.0",
+    "opensees": "2.21.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.33",
+   "sha": "9f32526bf55b12557f71cf6f8aca072cba70960c",
+   "date": "2026-10-03",
+   "version": "2.33.0",
+   "bump_commits": [
+    "1df2d0dc542d0096ff5a66da971c5b9680684801"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.33.h5",
+     "sha256": "7cf1d9b81ddf62f5b3a1ec6014f6bb80c32375ef5c311c96293ff48bcd96623a"
+    },
+    "dump": {
+     "name": "neutral_2.33.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.33.0",
+    "opensees": "2.21.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.34",
+   "sha": "ae81ce7909ede34b00dd6889116616269c93c82b",
+   "date": "2026-10-03",
+   "version": "2.34.0",
+   "bump_commits": [
+    "0d95c30b128e1e5c67e03fb8803223d740c87570"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.34.h5",
+     "sha256": "931b0834a1952e6199730f44186e349dc77f70bda8de940882b002f0553ff2bc"
+    },
+    "dump": {
+     "name": "neutral_2.34.dump.json",
+     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+    }
+   },
+   "stamps": {
+    "neutral": "2.34.0",
+    "opensees": "2.22.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.11",
+   "sha": "6580497554b68879ff0952a18c7f235d00c830b8",
+   "date": "2026-05-24",
+   "version": "2.11.0",
+   "bump_commits": [
+    "4c8e969680214e874c6cc62b584d00a93878f43e"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "gap",
+   "files": {
+    "h5": {
+     "name": "opensees_2.11.h5",
+     "sha256": "5d90599cdc47d9621be86d942bda4196493748e28acec0cd459d1ddd4bb8b6e1"
+    },
+    "dump": {
+     "name": "opensees_2.11.dump.json",
+     "sha256": "309c5ad375d7851dac743ebd6301d93d54f8980842a197317088d0f0dd74774e"
+    },
+    "tcl": {
+     "name": "opensees_2.11.tcl",
+     "sha256": "0dce3ceea6497c9e57b3b476e5ba74b084c2a9f83ba5a31a13446e1eb92db36c"
+    }
+   },
+   "stamps": {
+    "neutral": "2.7.0",
+    "opensees": "2.11.0"
+   },
+   "gap_kind": "below_floor",
+   "reason": "the era's writer ran, but neutral 2.7.0 is below the neutral floor 2.10.0: today's readers refuse every file this era wrote"
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.12",
+   "sha": "38b192502e98125bc402f27bc281d0f8f49328be",
+   "date": "2026-05-31",
+   "version": "2.12.0",
+   "bump_commits": [
+    "f9d486aa28a17b1a40f4ab72a7b1cac5a9223d29"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.12.h5",
+     "sha256": "d7dcc4c62d31db217a7e2b332121cb453549fed3508722be91f67763551eac1f"
+    },
+    "dump": {
+     "name": "opensees_2.12.dump.json",
+     "sha256": "9d9618990161574bf0753dbebe118dafb98ffc587a1d0b3a8b4bea5a22b7e323"
+    },
+    "tcl": {
+     "name": "opensees_2.12.tcl",
+     "sha256": "0dce3ceea6497c9e57b3b476e5ba74b084c2a9f83ba5a31a13446e1eb92db36c"
+    }
+   },
+   "stamps": {
+    "neutral": "2.10.0",
+    "opensees": "2.12.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.13",
+   "sha": "4144a1fbdd4749c431532aec10273b6c6844ef5a",
+   "date": "2026-05-31",
+   "version": "2.13.0",
+   "bump_commits": [
+    "4144a1fbdd4749c431532aec10273b6c6844ef5a"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.13.h5",
+     "sha256": "d4bb5d66548bef4a8242ed20eaa1092bdb0825f84ed5092ce1b19f69af1a6dd6"
+    },
+    "dump": {
+     "name": "opensees_2.13.dump.json",
+     "sha256": "3b51c82ec153cd0111312226b2a6d048f742fa25e1787ba3978d4964ede2593c"
+    },
+    "tcl": {
+     "name": "opensees_2.13.tcl",
+     "sha256": "0dce3ceea6497c9e57b3b476e5ba74b084c2a9f83ba5a31a13446e1eb92db36c"
+    }
+   },
+   "stamps": {
+    "neutral": "2.10.0",
+    "opensees": "2.13.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.14",
+   "sha": "dd1327685efa6644807239a4c4bee1ba140e11ce",
+   "date": "2026-06-02",
+   "version": "2.14.0",
+   "bump_commits": [
+    "bda67b88ebf1a4b43d54792e06bb8b8f5a7c4a52"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.14.h5",
+     "sha256": "3273ccbf679c370b6d51f883255941f8748ab471073aa47cf86909466ba8d191"
+    },
+    "dump": {
+     "name": "opensees_2.14.dump.json",
+     "sha256": "1be0cbaeec4d2ca518b9bf6b5b1f7d7ea9652856e3b8fc6c7336ae3181058feb"
+    },
+    "tcl": {
+     "name": "opensees_2.14.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.11.0",
+    "opensees": "2.14.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.15",
+   "sha": "7eab8a2c19e0fbb6b37afbbcce27671615a238b6",
+   "date": "2026-06-07",
+   "version": "2.15.0",
+   "bump_commits": [
+    "e0e51e0d9cb8eeb878652c623cfeaf1c30b95009"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.15.h5",
+     "sha256": "d3c482bccd4bd0c021f59e4893f4f40431ac44adef0826eb7905e5405e2727b1"
+    },
+    "dump": {
+     "name": "opensees_2.15.dump.json",
+     "sha256": "b3070d4a7c2c4edec2cc1627f2b458c651f5c948cc4ac564450a3b45a3fd292b"
+    },
+    "tcl": {
+     "name": "opensees_2.15.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.11.0",
+    "opensees": "2.15.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.16",
+   "sha": "c0884dc98121bf57cff8f2e2b9c3472d09fe5e87",
+   "date": "2026-06-08",
+   "version": "2.16.0",
+   "bump_commits": [
+    "c0884dc98121bf57cff8f2e2b9c3472d09fe5e87"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.16.h5",
+     "sha256": "fa59f13ba084ed6afec0d68996e7325b967df3ca96af5bf3c4de9c92e6ddce87"
+    },
+    "dump": {
+     "name": "opensees_2.16.dump.json",
+     "sha256": "e37ea8da666ef56ea27d8c5d16f165c44924fff7847f4a03303a7bc59ef9e22e"
+    },
+    "tcl": {
+     "name": "opensees_2.16.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.11.0",
+    "opensees": "2.16.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.17",
+   "sha": "23fb04d872b16e5024d89fca4ea1c33478478732",
+   "date": "2026-06-09",
+   "version": "2.17.0",
+   "bump_commits": [
+    "03769f1b6f5c543894fcd3ede9cf18b4beca703e"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.17.h5",
+     "sha256": "8c60c7378f22829593c40d4897e8030798f5fe631b1ae3cc1d743e36bae2c399"
+    },
+    "dump": {
+     "name": "opensees_2.17.dump.json",
+     "sha256": "3f21167cc7d5854705e12b45917507d23e9797df1570444e5353d4a2c71854b2"
+    },
+    "tcl": {
+     "name": "opensees_2.17.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.11.0",
+    "opensees": "2.17.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.18",
+   "sha": "1ed8cd6791a7ca0071128d0854683bb251af3a3b",
+   "date": "2026-06-11",
+   "version": "2.18.0",
+   "bump_commits": [
+    "bb74ba3f8691bb74a2427a1175df587fd2d16c90"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.18.h5",
+     "sha256": "0f5866c67506bf56013cf51ffbce6acac787e76eee941140154a90c9d08e70f1"
+    },
+    "dump": {
+     "name": "opensees_2.18.dump.json",
+     "sha256": "84d3e7eb2612bdfeca73bb431d29521d628ca844491f83586583bf6da4860b01"
+    },
+    "tcl": {
+     "name": "opensees_2.18.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.12.0",
+    "opensees": "2.18.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.19",
+   "sha": "89f48fbd866039538e0a2a0aa631e17076dd1935",
+   "date": "2026-07-19",
+   "version": "2.19.0",
+   "bump_commits": [
+    "5991d90301e02e7b26d8d28eeef9f5e7502c31ad"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.19.h5",
+     "sha256": "0ae20b2703a886af6284d74468898abd0cd5cb13194e1c7a563667b37570664b"
+    },
+    "dump": {
+     "name": "opensees_2.19.dump.json",
+     "sha256": "b83abd7646808bbe3dee34967989c42f10244efecb8f92b93dbd81c19ffc5d1d"
+    },
+    "tcl": {
+     "name": "opensees_2.19.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.26.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.20",
+   "sha": "099ad637f5e9d57f889565d6aeda11f07b1e03bd",
+   "date": "2026-08-26",
+   "version": "2.20.0",
+   "bump_commits": [
+    "0cc25dc54587dc4e5deeb86d15104cb5a9c01990"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.20.h5",
+     "sha256": "aa89472cb4a64b850840d26c698dd1318ecb4e53b7971e7a1037774529f96741"
+    },
+    "dump": {
+     "name": "opensees_2.20.dump.json",
+     "sha256": "16e10ca6c5575e854b5196e2bc8f1ee21e91529620e9a155d84ebc0776cf4ea7"
+    },
+    "tcl": {
+     "name": "opensees_2.20.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.31.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.21",
+   "sha": "776a2cf7acfb16e44c5eabfa26828e57d06a5ff4",
+   "date": "2026-10-03",
+   "version": "2.21.0",
+   "bump_commits": [
+    "bd08629ea45cdf770beeb8460815e7197298e8bd"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.21.h5",
+     "sha256": "dc0e74b60a079e84ed1955d7cfcfa927502df75303c368c3aa54a113005d6066"
+    },
+    "dump": {
+     "name": "opensees_2.21.dump.json",
+     "sha256": "dc19854454f09c35f2caffaa3cc7af2f9db3c137026a527da9f8f13763fec1a6"
+    },
+    "tcl": {
+     "name": "opensees_2.21.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.34.0",
+    "opensees": "2.21.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.22",
+   "sha": "ae81ce7909ede34b00dd6889116616269c93c82b",
+   "date": "2026-10-03",
+   "version": "2.22.0",
+   "bump_commits": [
+    "b16efda0aacf7ecb84c3815c41bd8399e746cb16"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.22.h5",
+     "sha256": "2f766c7455a7833296aaf90ab495dd9863c8d83e996e105565efb3a461457ec6"
+    },
+    "dump": {
+     "name": "opensees_2.22.dump.json",
+     "sha256": "1fb94bc8eb741757777732c522827e31e662fdfb5362c140b2eff5a6a44e22f8"
+    },
+    "tcl": {
+     "name": "opensees_2.22.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.34.0",
+    "opensees": "2.22.0"
+   }
+  }
+ ]
+}
