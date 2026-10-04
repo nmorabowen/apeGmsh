@@ -154,21 +154,26 @@ def geometry_sibling_path(model_path: "str | Path") -> Path:
 
 def is_apegmsh_artifact(path: "str | Path") -> bool:
     """True when ``path`` is an HDF5 file whose ``/meta`` carries one of
-    apeGmsh's zone version keys (the envelope key included).
+    apeGmsh's per-zone version keys, or (a file from before the per-zone
+    split) the envelope key together with ``apeGmsh_version``.
 
     The automatic D1 write replaces only such files (or files that do
     not exist): anything else is a foreign file and is left alone.  A
-    file h5py cannot open, or one without ``/meta``, is foreign.
+    file h5py cannot open, or one without ``/meta``, is foreign.  The
+    generic envelope key ``schema_version`` alone is not proof: a
+    third-party file may well carry one.
     """
     from apeGmsh.opensees._internal.schema_version import ENVELOPE_KEY, _ZONE_KEY
 
-    keys = (ENVELOPE_KEY, *_ZONE_KEY.values())
+    zone_keys = tuple(_ZONE_KEY.values())
     try:
         with h5py.File(str(path), "r") as f:
             if "meta" not in f:
                 return False
             attrs = f["meta"].attrs
-            return any(k in attrs for k in keys)
+            if any(k in attrs for k in zone_keys):
+                return True
+            return ENVELOPE_KEY in attrs and "apeGmsh_version" in attrs
     except OSError:
         return False
 

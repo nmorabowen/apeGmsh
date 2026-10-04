@@ -17,6 +17,7 @@ Oracles (ADR 0112 D1 / D2a, V0 decisions 4-6 with amendments 2-4):
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import uuid
 import warnings
@@ -658,6 +659,143 @@ def test_capture_never_mutates_the_users_mesh(monkeypatch, tmp_path: Path) -> No
     assert seen["at_release"] == fp
     with h5py.File(tmp_path / "untouched.geometry.h5", "r") as f:
         assert f["geometry"].attrs["source"] == "mesh"
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 on 89f00932 (#1331): the generic envelope key is not proof
+# of ownership, and the three remaining library-internal sessions are pinned
+# ---------------------------------------------------------------------------
+
+
+def test_generic_schema_version_attr_is_not_ours(monkeypatch, tmp_path: Path) -> None:
+    """A third-party ``data.h5`` with ``/meta@schema_version="3.1"`` (the
+    generic envelope name) and its own datasets is foreign: byte-identical
+    after a session named ``data``, one warning; only the free sibling
+    target is written."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    foreign = tmp_path / "data.h5"
+    with h5py.File(foreign, "w") as f:
+        f.create_group("meta").attrs["schema_version"] = "3.1"
+        f.create_dataset("my/experiment", data=np.arange(5))
+    before = foreign.read_bytes()
+    assert not gio.is_apegmsh_artifact(foreign)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="data") as g:
+            _small_box(g)
+    assert foreign.read_bytes() == before
+    assert len([x for x in w if "not an apeGmsh artifact" in str(x.message)]) == 1
+    assert (tmp_path / "data.geometry.h5").is_file()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data.geometry.h5", "data.h5"]
+
+
+def test_is_apegmsh_artifact_ownership_rules(tmp_path: Path) -> None:
+    """Ours: any per-zone key, or (a file from before the per-zone split)
+    the envelope key together with ``apeGmsh_version``. Not ours: the
+    envelope key alone, ``apeGmsh_version`` alone, no ``/meta``, not HDF5."""
+    from apeGmsh.opensees._internal.schema_version import _ZONE_KEY
+
+    def make(name: str, attrs: dict, meta: bool = True) -> Path:
+        p = tmp_path / name
+        with h5py.File(p, "w") as f:
+            if meta:
+                f.create_group("meta").attrs.update(attrs)
+        return p
+
+    for zone, key in _ZONE_KEY.items():
+        assert gio.is_apegmsh_artifact(make(f"{zone}.h5", {key: "1.0.0"}))
+    assert gio.is_apegmsh_artifact(
+        make("legacy.h5", {"schema_version": "2.4.0", "apeGmsh_version": "1.9.0"})
+    )
+    assert not gio.is_apegmsh_artifact(make("envelope_only.h5", {"schema_version": "3.1"}))
+    assert not gio.is_apegmsh_artifact(make("version_only.h5", {"apeGmsh_version": "2.0.0"}))
+    assert not gio.is_apegmsh_artifact(make("no_meta.h5", {}, meta=False))
+    raw = tmp_path / "raw.h5"
+    raw.write_bytes(b"not hdf5")
+    assert not gio.is_apegmsh_artifact(raw)
+
+
+class _Stop(Exception):
+    """Stops a library entry point right after its session is constructed."""
+
+
+def _spy_session_class(monkeypatch) -> list[dict]:
+    """Replace the ``apeGmsh`` class an entry point imports lazily
+    (``from apeGmsh import apeGmsh`` inside the function) with a spy that
+    records the constructor kwargs and stops the entry point there."""
+    import apeGmsh as pkg
+
+    seen: list[dict] = []
+
+    def spy(*args, **kwargs):
+        seen.append(dict(kwargs))
+        raise _Stop
+
+    monkeypatch.setattr(pkg, "apeGmsh", spy)
+    return seen
+
+
+_SLAB_SM = {
+    "schema_version": "0.1",
+    "units": {"length": "m", "force": "kN"},
+    "nodes": [
+        {"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+        {"id": "2", "x": 4.0, "y": 0.0, "z": 0.0},
+        {"id": "3", "x": 4.0, "y": 4.0, "z": 0.0},
+        {"id": "4", "x": 0.0, "y": 4.0, "z": 0.0},
+    ],
+    "frames": [],
+    "areas": [{"id": "S1", "nodes": ["1", "2", "3", "4"], "section": "SLAB", "kind": "slab"}],
+    "sections": [{"name": "SLAB", "kind": "shell", "material": "C", "thickness": 0.30}],
+    "materials": [{"name": "C", "E": 2.5e7, "nu": 0.2}],
+    "restraints": [{"node": n, "dofs": [1, 1, 1, 1, 1, 1]} for n in ("1", "2", "3", "4")],
+    "loads": {"Dead": {"area": [{"area": "S1", "direction": "Z", "value": -5.0}]}},
+}
+
+
+def test_solve_and_extract_session_writes_no_artifacts(monkeypatch, tmp_path: Path) -> None:
+    """``interop.solve.solve_and_extract``: the real session meshes and
+    ends (its ``finally``) before ``build_opensees`` runs, which is stubbed
+    to stop the solve (it needs openseespy); nothing lands in the artifact
+    directory. Without ``_artifacts=False`` ``xcheck.h5`` and its sibling
+    would be here."""
+    from apeGmsh.interop import StructuralModel
+    from apeGmsh.interop import solve as solve_mod
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+
+    def stop(*a, **k):
+        raise _Stop
+
+    monkeypatch.setattr(solve_mod, "build_opensees", stop)
+    with pytest.raises(_Stop):
+        solve_mod.solve_and_extract(StructuralModel.from_dict(_SLAB_SM), case="Dead")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_strut_tie_build_session_writes_no_artifacts(monkeypatch, tmp_path: Path) -> None:
+    """``interop.strut_tie._build`` meshes the corbel for real (gmsh only)
+    and leaves nothing in the artifact directory."""
+    from apeGmsh.interop.strut_tie import _build
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    fixture = Path(__file__).parent / "interop" / "fixtures" / "cook_mitchell_corbel.stm.json"
+    model = json.loads(fixture.read_text(encoding="utf-8"))
+    fe = _build(model, case=None, mesh_size=60.0, extra_fixed_planes=(), verbose=False)
+    assert fe.applied is not None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_results_demo_session_opts_out(monkeypatch, tmp_path: Path) -> None:
+    """``results.demo.make_demo_results`` constructs its session with the
+    private flag (spied: the demo never calls ``end()``, so a file-based
+    oracle cannot pin it)."""
+    from apeGmsh.results.demo import make_demo_results
+
+    seen = _spy_session_class(monkeypatch)
+    with pytest.raises(_Stop):
+        make_demo_results(path=tmp_path)
+    assert [kw.get("_artifacts") for kw in seen] == [False]
 
 
 def test_suite_artifact_dir_is_pinned_to_tmp() -> None:
