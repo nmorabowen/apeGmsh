@@ -1235,13 +1235,12 @@ def test_emitted_tcl_has_the_masses_fix_loads_diaphragm_and_stage(g, tmp_path: P
         node_ids=tuple(int(n) for n in fem.nodes.ids), element_groups=(), subshape_entities={},
         selection_set_pgs={}, condition_pgs={}, diaphragms=mesh.diaphragms, carrier_ids=range(0))
     build_conditions(ops, plan, mesh_for_build)
-    path = tmp_path / "slab.tcl"
     # The STKO fixture fixes node 3 only; diaphragm master 8 is a lone
-    # point, so the bridge warns that its uz, rx, ry are free (#1333).
-    # The deck under test is the translator's, unchanged.
-    from apeGmsh.opensees import DetachedDiaphragmMasterWarning
-    with pytest.warns(DetachedDiaphragmMasterWarning, match="master node 8"):
-        ops.tcl(str(path), progress=False)
+    # point whose uz, rx, ry nothing stiffens (#1333).  Hold them here, as
+    # a model author would; the translator's own output is unchanged.
+    ops.fix(nodes=(8,), dofs=(0, 0, 1, 1, 1, 0))
+    path = tmp_path / "slab.tcl"
+    ops.tcl(str(path), progress=False)
     text = path.read_text(encoding="utf-8")
 
     masses = {int(m.group(1)): [float(v) for v in m.group(2).split()]
@@ -1249,7 +1248,7 @@ def test_emitted_tcl_has_the_masses_fix_loads_diaphragm_and_stage(g, tmp_path: P
     assert set(masses) == set(plan.masses) == {1, 2, 3, 4, 5, 6}
     assert all(v[3:] == [0.0] * 3 for v in masses.values())
     assert sum(v[0] for v in masses.values()) == pytest.approx(4.0)       # unit areal mass x area 4
-    assert re.findall(r"^fix (\d+) 0 0 1 1 1 0$", text, re.M) == ["3"]
+    assert re.findall(r"^fix (\d+) 0 0 1 1 1 0$", text, re.M) == ["3", "8"]  # 3: STKO; 8: the master hold above
     pairs = {(int(m.group(1)), int(m.group(2)), int(s)) for m in
              re.finditer(r"^rigidDiaphragm (\d+) (\d+) (.*)$", text, re.M) for s in m.group(3).split()}
     assert pairs == set(plan.diaphragm_pairs)
