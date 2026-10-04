@@ -9,4 +9,6 @@ these keys. `FEMData` now carries a uuid4 `session_id`, which every
 neutral-zone writer stamps as `/meta/session_id` and `FEMData.from_h5` reads
 back, so a `model.h5` pairs with its sibling `<stem>.geometry.h5`. No hash
 reads it: adding or deleting the new zones, or changing `session_id`, leaves
-`snapshot_id`, `fem_hash` and `model_hash` unchanged. No zone version is bumped.
+`snapshot_id`, `fem_hash` and `model_hash` unchanged. An unpickled snapshot
+from before this change gets a fresh id instead of silently losing its neutral
+zone on `apeSees.h5()`. The two new zones start at their own 1.0.0.
