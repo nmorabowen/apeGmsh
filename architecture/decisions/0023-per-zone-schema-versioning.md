@@ -343,3 +343,61 @@ also updates the inventory, regenerates the golden if the published
 groups moved, and updates `docs/design/model-h5-neutral-zone.md`. The
 drift test makes forgetting the first two impossible and the third
 unlikely; the discipline is stated here so it is not folklore.
+
+## Amendment — 2026-10-03 — The window is retired; compatibility is a floor per zone (ADR 0113)
+
+Append-only. The per-zone keys, the envelope, the bump-cadence table,
+INV-1 to INV-4 and the three notes above are unchanged. This amendment
+records what [ADR 0113](0113-compatibility-is-a-floor-per-zone.md)
+changes, ratified by the maintainer on #1303, so that a reader of this
+ADR is not sent to a rule that no longer applies.
+
+**The two-version window is retired for every zone.** The window's two
+reasons no longer hold: INV-4 (refuse newer minors) already delivers the
+forcing function to upgrade, and the lower edge only forced users to
+regenerate files, which ADR 0112 D1 ("the files are the model") rules
+out; the bounded read surface is already paid, because the readers
+presence-probe every additive minor since 2.10 rather than branching on
+it. `validate_zone_version` now accepts a file iff it is the same major
+and `floor.minor <= file.minor <= reader.minor`. The floors are
+writer-owned constants beside the version constants, evidence-gated by
+a committed corpus of real files from git's frozen writers, and move
+only with a major bump: neutral 2.10.0, opensees 2.11.0, results 1.0.0
+at ratification. The "Alternatives considered" rows that rejected the
+open window and the three-version window are superseded by ADR 0113's
+rejected alternatives; "Strict version match" and "Refuse only newer
+majors; accept any older minor" stand.
+
+**INV-5's migrator has a named trigger.** The migrator this ADR owed
+"before any zone reaches a third minor cycle" never shipped, and the
+floor removes its reason until a zone bumps its major. ADR 0113 D6 fixes
+the trigger: **the first major bump of any zone**. It ships with that
+bump as `from_h5 → to_h5` by the old major's last reader, into a new
+file beside the old one, stamping `/meta/migrated_from`. Never in
+place, never on open. Files below a floor are pre-release and stay
+refused, with no migration path.
+
+**The 2026-05-28 note's layout-perturbing minor is closed.** With no
+window to walk forward, a change that restructures required content is
+a major bump; a change that alters the meaning of an existing field
+stays a minor and ships a reader shim keyed on a named `*_FROM`
+constant (#1300's `META_NDM_IS_SPATIAL_FROM` is the precedent), listed
+in one ledger. Additive changes still bump the minor; the stamp remains
+INV-4's gate.
+
+**G1's "same refuse rule" carries one app-only exception.** The
+2026-08-24 amendment above holds external readers to the Python refuse
+rule on newer minors. ADR 0113 D7 ratifies one deviation, for
+apeGmshViewer only: the app carries the same floors as Python, held by
+a drift test, and opens a same-major *newer* file **with one banner**
+instead of refusing it. Installed apps lag the library by design, the
+app only reads (ADR 0095 INV-2, ADR 0112), and ADR 0112 D2 puts new
+data in its own zone, so a newer neutral minor adds what the app does
+not show rather than changing what it shows. Python readers keep INV-4
+unchanged. Every other sentence of the G1 amendment stands: no second
+version number, the inventory and the golden remain the contract, and a
+neutral-zone bump still updates them.
+
+**Results files.** A results file whose embedded `/model` is below the
+neutral floor opens its `/stages` read-only and flagged, without its
+model (ADR 0113 D9); it no longer expires through `/model`.

@@ -128,3 +128,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0110](0110-ladruno-threads-run-option.md) | `ladruno_threads`, a fork-only run option with a client-side refusal roster | Proposed |
 | [0111](0111-stko-translator.md) | STKO translator: a mesh-faithful `.scd` → session + apeSees deck, driven by an `XOBJ_META` registry | Proposed |
 | [0112](0112-files-are-the-model-and-a-read-only-app.md) | The files are the model; apeGmshViewer, a read-only TypeScript app, replaces the Qt viewers | Accepted |
+| [0113](0113-compatibility-is-a-floor-per-zone.md) | Compatibility is a floor per zone | Accepted |
