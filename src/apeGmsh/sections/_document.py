@@ -869,7 +869,7 @@ class SectionDocument:
             except TypeError as e:
                 raise SectionDocumentError(
                     f"material {mname!r}: ops.uniaxialMaterial."
-                    f"{spec['type']}() does not take params "
+                    f"{spec['type']}() rejects params "
                     f"{sorted(params)} — {e} (section_doc_version "
                     f"{self._data['section_doc_version']})."
                 ) from e
