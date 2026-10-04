@@ -729,6 +729,43 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   `ops.tcl(path)` / `ops.py(path)`.
   <!-- verified: tests/opensees/unit/test_stage_profiler.py -->
 
+### IMPL-EX `dTime` driver — `ops.implex_time()` (ADR 0113)
+
+ASDConcrete3D / ASDConcrete1D (with `implex=True` or `eta > 0`) and
+ASDSteel1D (with `implex=True`) read a time increment. They follow OpenSees'
+own increment until the first `dTime` / `dTimeCommit` / `dTimeInitial` write
+reaches them; after that they keep the last value written. STKO writes all
+three before every increment. Declare the same driver once, model-wide:
+
+```python
+ops.implex_time()            # mode="stko"; "off" = nothing may write dTime*
+with ops.stage("gravity") as s:
+    ...                      # LoadControl(dlam) or Transient + s.run(dt=)
+```
+
+- **Targets come from the material graph.** The targets are every element
+  whose section and material chain reaches one of those materials. Never pass
+  ids. On a partitioned deck each rank attaches only its own elements.
+- **What the deck carries.** Three persistent parameters, a
+  `_apesees_implex_dt` proc, and one call with the stage's increment
+  immediately before each stage's analyze loop. The Tcl and py decks emit it.
+- **Where it runs.** OpenSeesMP for partitioned decks; **OpenSeesSP is not
+  supported**, and the bridge cannot detect it. Live emit and H5 archival
+  refuse a model that drives.
+- **Refused at emit:**
+  - an unstaged model;
+  - no target;
+  - a target group with no elements;
+  - a stage without one known increment (`VariableTransient`, or a
+    `LoadControl` with `min_lam < max_lam`; the adaptive loop is ADR 0113 D5);
+  - a stage that activates or removes a target;
+  - `s.update_parameter("dTime*", ...)` alongside the driver.
+- **The dTime trap is refused even without the driver.** Once
+  `s.update_parameter` writes any `dTime*` on some elements, every later
+  stage must write `dTime`, equal to its own increment, on all of them, or
+  emit raises `BridgeError`.
+  <!-- verified: tests/opensees/unit/test_implex_time_driver.py -->
+
 ## Solution-algorithm & stock-integrator options (PR #786)
 
 The typed `ops.algorithm.*` / `ops.integrator.*` primitives mirror the full

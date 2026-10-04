@@ -244,6 +244,15 @@ result.mesh.element_groups                      # PG per (element prop, physical
   each transient step set `dTime` on those elements (and `dTimeCommit` /
   `dTimeInitial` at the first step), as STKO's deck does.
   `build_conditions(..., implex_dtime=False)` writes no reset.
+  **The bridge enforces this (ADR 0113 D6).** A stage you add on the same
+  bridge after the reset (a transient, say) that does not write `dTime`,
+  equal to its increment, on every reset element is refused at emit. A
+  hand-written driver that patches the deck after emission is not checked.
+  `ops.implex_time()` is the typed driver, but it refuses `dTime*` writes
+  through `s.update_parameter`, so it cannot be combined with the reset.
+  The translator moves to it after the adaptive transient loop and the
+  in-stage excitation land (ADR 0113 "Decisions on the slice-1 open
+  questions").
 - **Rigid diaphragms are STKO's links, checked.** One
   `g.constraints.rigid_diaphragm` per master, on carriers that hold only that
   master and its slaves, with a tolerance that keeps an off-plane slave.
