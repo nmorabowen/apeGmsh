@@ -355,6 +355,28 @@ def _require_dim(sel: "Selection", expected_dim: int, *, method: str) -> None:
         )
 
 
+def _require_nonempty(n_items: int, *, owner: str, method: str,
+                      name: str) -> None:
+    """Raise if a registering terminal is called on an empty selection.
+
+    Registering zero entities creates no group at all, so the missing
+    name only surfaces later and far from the cause (#1335). Fail at
+    the call site instead, naming the group.
+    """
+    if n_items:
+        return
+    kind = "label" if method == "to_label" else "physical group"
+    raise ValueError(
+        f"{owner}.{method}({name!r}): the selection is empty, so no "
+        f"{kind} {name!r} would be created. The filter chain matched "
+        f"no entity. Note that .in_box(lo, hi) uses BRep containment: "
+        f"the box must enclose each whole entity (its full bounding "
+        f"box), not merely touch it, so widen the box or use "
+        f".on_plane(...) / .crossing_plane(...) for a geometric "
+        f"predicate."
+    )
+
+
 def _cluster_edge_directions(
     curve_dimtags: list[DimTag],
     *,
@@ -528,7 +550,7 @@ class Selection(list):
 
         Groups by dimension before calling ``session.labels.add`` so a
         mixed-dim Selection is handled correctly.  Returns ``self`` for
-        chaining.
+        chaining. Raises ``ValueError`` on an empty selection (#1335).
 
         Example
         -------
@@ -550,6 +572,8 @@ class Selection(list):
                 "_queries=None (constructed standalone), so it has no "
                 "session to register the label/physical-group on."
             )
+        _require_nonempty(len(self), owner="Selection", method="to_label",
+                          name=name)
         session = self._queries._model._parent
         dims    = sorted({d for d, _ in self})
         with warnings.catch_warnings():
@@ -571,7 +595,7 @@ class Selection(list):
 
         Groups by dimension before calling ``session.physical.add`` so a
         mixed-dim Selection is handled correctly.  Returns ``self`` for
-        chaining.
+        chaining. Raises ``ValueError`` on an empty selection (#1335).
 
         Example
         -------
@@ -591,6 +615,8 @@ class Selection(list):
                 "_queries=None (constructed standalone), so it has no "
                 "session to register the label/physical-group on."
             )
+        _require_nonempty(len(self), owner="Selection",
+                          method="to_physical", name=name)
         session = self._queries._model._parent
         for d in sorted({d for d, _ in self}):
             tags = [t for dim, t in self if dim == d]
@@ -1083,9 +1109,11 @@ class EntitySelection(SelectionChain):
         identically to ``Selection.to_label``, including its multi-dim
         warning suppression (re-using one name across dims is the
         documented intent here, not a mistake).  Returns ``self`` for
-        chaining.
+        chaining. Raises ``ValueError`` on an empty selection (#1335).
         """
         import warnings
+        _require_nonempty(len(self._items), owner="EntitySelection",
+                          method="to_label", name=name)
         session = self._session()
         dims = sorted({d for d, _ in self._items})
         with warnings.catch_warnings():
@@ -1106,8 +1134,11 @@ class EntitySelection(SelectionChain):
         gmsh-PG registry (ADR 0015, distinct from :meth:`to_label`'s
         Tier-1 ``_label:`` registry; the two are never merged).
         Behaves identically to ``Selection.to_physical``.  Returns
-        ``self`` for chaining.
+        ``self`` for chaining. Raises ``ValueError`` on an empty
+        selection (#1335).
         """
+        _require_nonempty(len(self._items), owner="EntitySelection",
+                          method="to_physical", name=name)
         session = self._session()
         for d in sorted({d for d, _ in self._items}):
             tags = [t for dim, t in self._items if dim == d]
