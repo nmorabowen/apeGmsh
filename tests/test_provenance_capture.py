@@ -365,6 +365,45 @@ def test_a_stdlib_launcher_main_never_claims_script(tmp_path, monkeypatch):
         _marked(CM_SCRIPT, "cm_with"), "<module>")
 
 
+PDB_LAUNCHER = '''\
+G = {"__name__": "__main__", "__builtins__": __builtins__, "SCRIPT": SCRIPT}
+exec(compile(
+    "exec(compile(open(SCRIPT).read(), SCRIPT, 'exec'))", "<string>", "exec"),
+    G)
+TABLE = G["TABLE"]
+'''
+
+
+def test_a_pdb_trampoline_never_claims_script(tmp_path, monkeypatch):
+    """Fable round 3: ``python -m pdb script.py`` runs the script through a
+    ``<string>`` trampoline that ``Pdb.run`` execs in the script's own
+    ``__main__`` globals.  Simulated by a stdlib launcher that does the same;
+    the pseudo-file frame is outside the script's real-file ``__main__``
+    frame and must not override it."""
+    script = tmp_path / "cm_script.py"
+    script.write_text(CM_SCRIPT, encoding="utf-8")
+    launcher = tmp_path / "pdb_launcher.py"
+    launcher.write_text(PDB_LAUNCHER, encoding="utf-8")
+    monkeypatch.setitem(prov._CLASS_CACHE, str(launcher), prov._STDLIB)
+    table = runpy.run_path(
+        str(launcher), init_globals={"SCRIPT": str(script)},
+        run_name="__main__")["TABLE"]
+    top = table.location(table.record("geometry/box/cm").script)
+    assert (top.path, top.line, top.function) == (
+        Path(os.path.abspath(str(script))).as_posix(),
+        _marked(CM_SCRIPT, "cm_with"), "<module>")
+
+
+def test_dash_c_still_records_string():
+    """``python -c`` has no real file: its ``<string>`` ``__main__`` frame
+    is the script."""
+    glb = {"__name__": "__main__"}
+    exec(compile(CM_SCRIPT, "<string>", "exec"), glb)
+    top = glb["TABLE"].location(glb["TABLE"].record("geometry/box/cm").script)
+    assert (top.path, top.line, top.function) == (
+        "<string>", _marked(CM_SCRIPT, "cm_with"), "<module>")
+
+
 def test_parts_add_records_the_instance_label():
     """Finding 3: ``g.parts.add(part, label='b1')`` records ``b1`` itself,
     not the first synthesised sidecar label ``b1.core``.  Declarations

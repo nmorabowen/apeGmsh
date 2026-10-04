@@ -215,7 +215,11 @@ def _capture_frames(
     through stdlib frames (``contextlib``, ``functools``, ``runpy``) and
     stops at the first apeGmsh or site-packages frame, so a launcher that
     runs as ``__main__`` from site-packages (``pytest``, ``ipykernel``)
-    never claims it.
+    never claims it.  A pseudo-file (``<string>``) ``__main__`` frame
+    never overrides a real-file one already found: ``python -m pdb``
+    runs the script through a ``<string>`` trampoline in its own
+    ``__main__`` globals.  With no real file around it (``-c``,
+    ``<stdin>``, a notebook cell) the pseudo-file frame is the script.
     """
     entry: FrameType | None = None
     f = start
@@ -227,7 +231,10 @@ def _capture_frames(
     while f is not None:
         cls = _frame_class(f)
         if cls == _USER:
-            if f.f_globals.get("__name__") == "__main__":
+            if f.f_globals.get("__name__") == "__main__" and not (
+                    script is not None
+                    and f.f_code.co_filename.startswith("<")
+                    and not script.f_code.co_filename.startswith("<")):
                 script = f
         elif cls != _STDLIB and f is not site:
             break

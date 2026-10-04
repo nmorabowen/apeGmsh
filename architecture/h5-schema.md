@@ -1147,8 +1147,12 @@ equal-length column datasets.
   a call with no user `__main__` frame around it (a test function) gets
   none. A `__main__` frame whose file lies under the apeGmsh tree is
   user code. A stdlib launcher's `__main__` frame (`python -m cProfile`,
-  `pdb`, `trace`) is not, so the walk passes through it. Either is -1
-  when no such frame exists.
+  `pdb`, `trace`) is not, so the walk passes through it. A pseudo-file
+  `__main__` frame (`<string>`) never overrides a real-file one the
+  walk already found, so the `<string>` trampoline of `python -m pdb`
+  does not claim it; with no real file around it (`-c`, `<stdin>`, a
+  notebook cell) it is the script. Either is -1 when no such frame
+  exists.
   `seq` is the declaration's 0-based capture order in the run.
 * There is one record per user call: none per emitted row, none per
   fanned-out element, and none for calls apeGmsh synthesises.
