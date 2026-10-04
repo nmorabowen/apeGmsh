@@ -308,7 +308,9 @@ def _interpolation_replays_as_element(rec: Any, kind_cls: Any) -> bool:
     """:func:`_constraint_replays_as_element` for one interpolation row."""
     if rec.enforce == "penalty_al":
         return True
-    return rec.kind == kind_cls.DISTRIBUTING and rec.enforce != "equation"
+    return bool(
+        rec.kind == kind_cls.DISTRIBUTING and rec.enforce != "equation"
+    )
 
 
 def _skipped_replay_streams(
