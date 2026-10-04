@@ -9021,6 +9021,9 @@ class apeSees:
 
         # Every refusal happens here, before anything is registered, so
         # a bad call leaves no series, pattern, alias or record behind.
+        # An empty name is no name (as ``_register`` and ``capture``
+        # read it): the call takes its ordinal key.
+        name = name or None
         if name is not None:
             if name.startswith("#"):
                 raise ValueError(
@@ -12032,6 +12035,10 @@ class apeSees:
         ruling on #1378).
         """
         kind = _kind_of(prim)
+        # An empty name is no name, exactly as ``capture`` reads it: the
+        # primitive is unnamed for the key, the alias table and the
+        # record alike (#1378 round 4).
+        name = name or None
         # Every refusal runs before the tag is allocated and the
         # primitive appended, so a refused call leaves no primitive, no
         # tag and no record.  A primitive registered before (P11:

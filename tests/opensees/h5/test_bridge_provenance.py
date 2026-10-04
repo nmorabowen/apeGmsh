@@ -548,6 +548,31 @@ def test_unnamed_key_taken_by_a_user_name_is_refused(fem):
         "opensees/timeSeries/#1"]
 
 
+def test_an_empty_name_is_unnamed_and_leaves_no_orphan(fem):
+    """Round 4: ``_register`` read ``name=""`` as named (alias ``""``)
+    while ``capture`` read it as unnamed, so the ``#1`` collision raised
+    after the primitive was registered."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.timeSeries.Linear(name="#1")
+    before = _state(ops)
+    with pytest.raises(ValueError, match="unnamed key '#1'"):
+        ops.timeSeries.Linear(name="")
+    assert _state(ops) == before
+    assert "" not in ops._names
+    # On its own an empty name is simply unnamed: the key is #k, no alias.
+    other = apeSees(fem)
+    other.model(ndm=3, ndf=3)
+    other.timeSeries.Linear(name="")
+    other.imposed_displacement(nodes=[1], ux=0.01, name="")
+    assert [r.path for r in other._provenance.snapshot().records] == [
+        "opensees/timeSeries/#1",
+        "opensees/timeSeries/imposed_displacement:#1",
+        "opensees/pattern/imposed_displacement:#1",
+    ]
+    assert "" not in other._names
+
+
 def test_a_1_1_file_without_origin_is_malformed(fem, tmp_path):
     """Round 2, finding 4: the column may be absent only below 1.1.0."""
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
