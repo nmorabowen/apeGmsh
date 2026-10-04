@@ -1,0 +1,28 @@
+# The apeGmshViewer installer (ADR 0112 P1: open a model by double-click).
+# `npm run dist` bundles the app (scripts/build.mjs) and builds it here.
+#
+# Windows: a per-user NSIS installer. It installs under %LOCALAPPDATA% and
+# registers the .h5 association under HKCU, so it needs no admin rights. It
+# is not code-signed: SmartScreen may ask once ("More info" -> "Run anyway").
+
+appId: com.apegmsh.viewer
+productName: apeGmshViewer
+directories:
+  output: out/installer
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+  - package.json
+  # three.js is bundled into dist/renderer.js; only h5wasm is loaded from
+  # node_modules at run time (by the main process).
+  - "!node_modules/three/**"
+fileAssociations:
+  - ext: h5
+    name: apeGmsh.h5
+    description: apeGmsh model, geometry or results (HDF5)
+    role: Viewer
+win:
+  target: nsis
+nsis:
+  oneClick: true
+  perMachine: false
