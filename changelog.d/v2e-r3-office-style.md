@@ -18,5 +18,6 @@ the file records and from nothing else; a file without one (every file
 today) is said so in the legend and drawn as unassigned. Archivo Narrow
 (SIL OFL 1.1, licence bundled) is the app's type. Every colour clears WCAG
 3:1 (graphics) or 4.5:1 (text) on the background; the test prints the
-ratios. The selection core takes the office accent in a later slice
-(after #1318).
+ratios. The selection core (the picked element's outline and fill,
+`src/renderer/selection.ts`) is the office accent #E69F00; the white
+fixed-width halo and the pulse from round 2 are unchanged.

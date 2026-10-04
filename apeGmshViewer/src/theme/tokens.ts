@@ -244,11 +244,10 @@ export const DARK = {
   groundLight: "#30343C",
   keyLight: "#FFFFFF",
   /**
-   * selection core and halo. The core becomes the office accent (#E69F00)
-   * in round 3 item 3, after #1318 (selection.ts) lands; until then the V1
-   * yellow stays so the stills compare.
+   * selection core and halo (round 3 item 3, on #1318's selection.ts): the
+   * core is the office accent, the halo stays white at its fixed pixel width.
    */
-  selection: "#FFD400",
+  selection: OFFICE.accent,
   halo: "#FFFFFF",
 } as const;
 
