@@ -4002,7 +4002,7 @@ neutral zone; ignore what else is in the file.</p>
 <h2 id="version-rule">Version rule<a class="headerlink" href="#version-rule" title="Permanent link">&para;</a></h2>
 <p><strong>Read this before reading any data.</strong> Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.</p>
-<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.33.0"</code>, stored as
+<p>Versions are <strong>semver strings</strong>, not integers — <code>"2.34.0"</code>, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.</p>
 <table>
@@ -4032,7 +4032,7 @@ independent version; they do not share a number.</p>
 </tbody>
 </table>
 <p>The neutral zone is gated by <strong><code>neutral_schema_version</code> alone</strong>. At the
-time of writing the writer stamps <code>2.33.0</code>.</p>
+time of writing the writer stamps <code>2.34.0</code>.</p>
 <p><code>schema_version</code> is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
 composer may overwrite it. <strong>Do not branch on it.</strong> Use it only as a
@@ -4176,12 +4176,12 @@ no filter pipeline, so a reader can slice without a decompressor.</p>
 <tr>
 <td><code>ndm</code></td>
 <td>int64</td>
-<td>spatial dimension, derived as the maximum element dimension present (<code>3</code> when there are no elements to derive it from). Note this does <strong>not</strong> change the width of <code>/nodes/coords</code>.</td>
+<td>the model's spatial dimension as declared by <code>ops.model(ndm=)</code> — never the mesh dimension: a frame of line elements declared in 2-D carries <code>2</code>. <strong><code>0</code> means "not declared"</strong> — broker-only writes (<code>fem.to_h5</code>) always pass 0, and a reader that needs a dimension must refuse it rather than guess. Files older than neutral <code>2.34.0</code> stamped the maximum element dimension instead (#1291). Note this does <strong>not</strong> change the width of <code>/nodes/coords</code>.</td>
 </tr>
 <tr>
 <td><code>ndf</code></td>
 <td>int64</td>
-<td>DOFs per node. <strong><code>0</code> means "not declared"</strong>, not "zero DOFs" — broker-only writes always pass 0.</td>
+<td>DOFs per node as declared by <code>ops.model(ndf=)</code>. <strong><code>0</code> means "not declared"</strong>, not "zero DOFs" — broker-only writes always pass 0.</td>
 </tr>
 <tr>
 <td><code>snapshot_id</code></td>
