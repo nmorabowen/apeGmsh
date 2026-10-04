@@ -17,6 +17,7 @@ import { chainOf, inspected, refusalsOf } from "../src/state/selectors.ts";
 import { initialState, reduce, Store, type Event, type State } from "../src/state/store.ts";
 import type { EventType, ModelLoad, Pick } from "../src/state/types.ts";
 import { blobRefsOf, Effects, parseRefusal, type Bridge, type OpenSet } from "../src/effects.ts";
+import type { Focus } from "../src/renderer/selection.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/shoebuckle.h5", import.meta.url));
 
@@ -135,6 +136,7 @@ const EVERY: Record<EventType, Event> = {
   closeWindow: { type: "closeWindow", window: "stages" },
   requestSource: { type: "requestSource", decl: archPath },
   sourceResult: { type: "sourceResult", decl: archPath, ok: false, reason: "missing: x.py" },
+  frameSelection: { type: "frameSelection" },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -150,7 +152,44 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 24, "decision 17's 20 events plus fileClosed, requestSource, sourceResult and setLoaded (V2f)");
+  assert.equal(Object.keys(EVERY).length, 25, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f) and frameSelection");
+});
+
+test("frameSelection counts a view request; without a mesh it is a no-op", () => {
+  assert.equal(reduce(initialState, EVERY.frameSelection), initialState);
+  const s = reduce(loaded, EVERY.frameSelection);
+  assert.equal(s.view.frameSeq, loaded.view.frameSeq + 1);
+  assert.equal(reduce(s, EVERY.frameSelection).view.frameSeq, s.view.frameSeq + 1);
+});
+
+test("the frame effect hands the viewport the selection's bounds, or null for the whole model", async () => {
+  const { store, effects } = harness(blobs);
+  const framed: (Focus | null)[] = [];
+  effects.setFrameTarget({ frameTo: (f) => framed.push(f) });
+  store.dispatch({ type: "fileLoaded", artifact: "model", load });
+  store.dispatch({ type: "frameSelection" });
+  assert.deepEqual([...framed], [null], "nothing selected: the whole model");
+  store.dispatch({ type: "select", pick: pick(archPath) });
+  store.dispatch({ type: "frameSelection" });
+  assert.equal(framed.length, 2);
+  // The arch element is one segment: its bounds are the segment's box, with the model-relative floor.
+  const r = archRef();
+  const nodes = nodesOf(model, r)!;
+  const xyz = (id: number) => {
+    const i = Array.from(model.nodeIds).indexOf(id);
+    return [model.nodeCoords[3 * i]!, model.nodeCoords[3 * i + 1]!, model.nodeCoords[3 * i + 2]!];
+  };
+  const a = xyz(nodes[0]!), b = xyz(nodes[1]!);
+  const f = framed[1]!;
+  for (let k = 0; k < 3; k++) assert.ok(Math.abs(f.center[k]! - (a[k]! + b[k]!) / 2) < 1e-5, `center[${k}]`);
+  assert.ok(Math.abs(f.radius - Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!) / 2) < 1e-5, "radius");
+  assert.notDeepEqual(f.center, loaded.mesh!.center, "not the model's centre");
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
+  assert.equal(framed[2], null);
+  // No target attached: loud, never silent.
+  effects.setFrameTarget(null);
+  assert.throws(() => store.dispatch({ type: "frameSelection" }), /no frame target/);
 });
 
 test("an event the union does not know raises at run time", () => {
@@ -258,7 +297,7 @@ function deferred<T>() {
 }
 
 /** A bridge whose reads resolve when the test says; `window` is stubbed for attach(). */
-function harness() {
+function harness(blobStore = new BlobStore()) {
   const reads: { path: string; d: ReturnType<typeof deferred<{ ok: true; model: ModelFile } | { ok: false; error: string }>> }[] = [];
   const bridge = {
     openModel: (path: string) => {
@@ -268,7 +307,7 @@ function harness() {
     },
   } as unknown as Bridge;
   const store = new Store();
-  const effects = new Effects(store, new BlobStore(), bridge);
+  const effects = new Effects(store, blobStore, bridge);
   const modelAt = (path: string): ModelFile => ({ ...model, path });
   return { reads, store, effects, modelAt };
 }

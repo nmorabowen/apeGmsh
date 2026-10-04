@@ -233,6 +233,8 @@ export interface State {
     request: { decl: DeclPath; seq: number } | null;
     last: { decl: DeclPath; ok: boolean; reason: string | null } | null;
   };
+  /** view requests: `frameSeq` counts `frameSelection` events; the frame effect acts on each change */
+  view: { frameSeq: number };
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -283,6 +285,8 @@ export type Event =
   | { type: "openWindow"; window: WindowKind }
   | { type: "closeWindow"; window: WindowKind }
   | { type: "requestSource"; decl: DeclPath }
-  | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null };
+  | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null }
+  /** frame the selection, or the whole model when nothing is selected (`F`, or any panel); the frame effect moves the camera */
+  | { type: "frameSelection" };
 
 export type EventType = Event["type"];

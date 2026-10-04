@@ -20,13 +20,13 @@ import { geometryPairing } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { DeclPath, GeometryInfo, MeshInfo, Pick } from "../state/types.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
-import { fitDistance, HALO_LAYER, SelectionHalo, selectionBounds } from "./selection.ts";
+import { fitDistance, type Focus, highlightObjects, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** Inspector width plus its margins (style.css #inspector). */
 const INSPECTOR_PX = 470 + 28;
 
-export const SELECTION_COLOUR = 0xffd400;
+export { SELECTION_COLOUR } from "./selection.ts";
 /**
  * What the unselected model's colours are multiplied by while something is
  * selected. Material colours are linear; the renderer writes sRGB, so 0.07
@@ -115,9 +115,10 @@ export class Viewport {
       },
       fit: () => {
         const s = this.store.get();
-        // On the geometry phase (or with no mesh), F fits the geometry; else the selection, or the whole model.
+        // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect
+        // frames the selection, or the whole model (the frameSelection store event).
         if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, this.nav.heading);
-        else if (s.mesh) this.frame(s.mesh, this.nav.heading, this.selectionFocus());
+        else this.store.dispatch({ type: "frameSelection" });
       },
       changed: () => this.requestRender(),
     });
@@ -393,7 +394,7 @@ export class Viewport {
    * isometric. `F` passes the current heading, so only the distance and the
    * target change.
    */
-  frame(info: MeshInfo, heading: Heading | null = null, focus: { center: readonly [number, number, number]; radius: number } | null = null): void {
+  frame(info: MeshInfo, heading: Heading | null = null, focus: Focus | null = null): void {
     const tri = this.blobs.f32(info.triPositions);
     this.fit((focus ?? info).center, (focus ?? info).radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
   }
@@ -446,40 +447,10 @@ export class Viewport {
     return nearestHit(this.raycaster, targets);
   }
 
-  /** The bounds `F` frames: the selected elements' drawn primitives, or null when nothing is selected. */
-  selectionFocus(): { center: [number, number, number]; radius: number } | null {
-    const s = this.store.get();
-    const info = s.mesh;
-    if (!info || s.selection.decls.length === 0) return null;
-    const idx = this.indexOf(info);
-    const lines: number[] = [], tris: number[] = [];
-    for (const path of s.selection.decls) {
-      const e = idx.byPath.get(path);
-      const prims = e === undefined ? undefined : idx.prims.get(e);
-      if (!prims) continue;
-      lines.push(...prims.lines);
-      tris.push(...prims.tris);
-    }
-    return selectionBounds(this.blobs.f32(info.linePositions), this.blobs.f32(info.triPositions), lines, tris, 1e-3 * info.radius);
-  }
-
-  /** The outline of an element's triangles: the edges that belong to one of them only. */
-  private static outline(tp: Float32Array, tris: number[]): Float32Array {
-    const count = new Map<string, [number, number, number, number, number, number]>();
-    const seen = new Map<string, number>();
-    for (const t of tris) {
-      for (let k = 0; k < 3; k++) {
-        const a = 9 * t + 3 * k, b = 9 * t + 3 * ((k + 1) % 3);
-        const pa = [tp[a]!, tp[a + 1]!, tp[a + 2]!], pb = [tp[b]!, tp[b + 1]!, tp[b + 2]!];
-        const ka = pa.join(","), kb = pb.join(",");
-        const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
-        seen.set(key, (seen.get(key) ?? 0) + 1);
-        count.set(key, [...pa, ...pb] as [number, number, number, number, number, number]);
-      }
-    }
-    const out: number[] = [];
-    for (const [key, n] of seen) if (n === 1) out.push(...count.get(key)!);
-    return new Float32Array(out);
+  /** The frame effect's target: frame `focus` (the selection's bounds), or the whole model, keeping the heading. */
+  frameTo(focus: Focus | null): void {
+    const info = this.store.get().mesh;
+    if (info) this.frame(info, this.nav.heading, focus);
   }
 
   private setHighlight(s: State): void {
@@ -488,37 +459,18 @@ export class Viewport {
     const info = s.mesh;
     const selected = s.selection.decls;
     this.applyDim(selected.length > 0);
-    if (!info || selected.length === 0) return this.requestRender();
+    if (!info || selected.length === 0) {
+      this.halo.release();
+      return this.requestRender();
+    }
     const idx = this.indexOf(info);
-    const lp = this.blobs.f32(info.linePositions), tp = this.blobs.f32(info.triPositions);
-    const seg: number[] = [], tri: number[] = [], outline: number[] = [];
-    for (const path of selected) {
+    const prims = selected.flatMap((path) => {
       const e = idx.byPath.get(path);
-      const prims = e === undefined ? undefined : idx.prims.get(e);
-      if (!prims) continue;
-      for (const i of prims.lines) for (let k = 0; k < 6; k++) seg.push(lp[6 * i + k]!);
-      for (const i of prims.tris) for (let k = 0; k < 9; k++) tri.push(tp[9 * i + k]!);
-      outline.push(...Viewport.outline(tp, prims.tris));
-    }
-    const thick = (pos: Float32Array, width: number) => {
-      const hl = this.makeLines(pos, null, width, SELECTION_COLOUR);
-      hl.renderOrder = 10;
-      (hl.material as LineMaterial).depthTest = false;
-      return hl;
-    };
-    if (seg.length) this.highlight.add(thick(new Float32Array(seg), 9));
-    if (outline.length) this.highlight.add(thick(new Float32Array(outline), 6));
-    if (tri.length) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(tri), 3));
-      const m = new THREE.MeshBasicMaterial({
-        color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthTest: false,
-      });
-      const fill = new THREE.Mesh(g, m);
-      fill.renderOrder = 9;
-      this.highlight.add(fill);
-    }
-    for (const o of this.highlight.children) o.layers.enable(HALO_LAYER);
+      const p = e === undefined ? undefined : idx.prims.get(e);
+      return p ? [p] : [];
+    });
+    const lp = this.blobs.f32(info.linePositions), tp = this.blobs.f32(info.triPositions);
+    for (const o of highlightObjects(lp, tp, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
     this.halo.pulse();
     this.requestRender();
   }
