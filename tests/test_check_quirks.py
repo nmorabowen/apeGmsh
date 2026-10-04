@@ -588,6 +588,119 @@ def test_the_checkout_getattr_baseline_is_a_ratchet_within_bounds() -> None:
     assert 0 < len(quirks._baseline_keys(quirks.REPO)) <= 250
 
 
+# --- bare-version-compare: the dead `_fv < (2, 7, 0)` branch (#1303 PR-6, ADR 0113 INV-8) ---
+
+#: Verbatim from `src/apeGmsh/mesh/_femdata_h5_io.py` at 1691d389, the last commit before this rule.
+PRE_CHANGE_FEMDATA_H5_IO = """\
+        node_ndf = None
+    else:
+        # Tuple-compare the dataclass fields (SchemaVersion isn't
+        # ordering-enabled, but its fields are comparable).
+        _fv = (file_version.major, file_version.minor, file_version.patch)
+        if _fv < (2, 7, 0):
+            node_ndf = np.zeros(node_ids.shape, dtype=np.int8)
+        else:
+            node_ndf = None
+"""
+H5_IO = "src/apeGmsh/mesh/_femdata_h5_io.py"
+H5_READER = "src/apeGmsh/opensees/emitter/h5_reader.py"
+
+
+def test_bare_version_compare_flags_the_pre_change_femdata_h5_io_branch(tmp_path: Path) -> None:
+    _write(tmp_path, H5_IO, "def load(file_version, node_ids, np):\n    if True:\n" + PRE_CHANGE_FEMDATA_H5_IO)
+    assert _found(tmp_path) == ["bare-version-compare:_femdata_h5_io.py:8"]
+
+
+def test_bare_version_compare_flags_the_real_pre_change_file(tmp_path: Path) -> None:
+    import subprocess
+
+    shown = subprocess.run(
+        ["git", "-C", str(quirks.REPO), "show", f"1691d389:{H5_IO}"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    if shown.returncode != 0:
+        pytest.skip("commit 1691d389 is not in this clone")
+    _write(tmp_path, H5_IO, shown.stdout)
+    found = [f for f in quirks.scan(tmp_path) if f.rule == "bare-version-compare"]
+    assert [shown.stdout.splitlines()[f.line - 1].strip() for f in found] == ["if _fv < (2, 7, 0):"]
+
+
+def _read_spatial_ndm() -> str:
+    import ast
+
+    source = (quirks.REPO / H5_READER).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "read_spatial_ndm")
+    return "from x import META_NDM_IS_SPATIAL_FROM, read_zone_version, NEUTRAL\n\n" + (
+        ast.get_source_segment(source, node) or ""
+    )
+
+
+def test_bare_version_compare_passes_read_spatial_ndm_on_its_named_constant(tmp_path: Path) -> None:
+    function = _read_spatial_ndm()
+    assert ">= META_NDM_IS_SPATIAL_FROM" in function
+    _write(tmp_path, H5_READER, function)
+    assert _found(tmp_path) == []
+
+
+def test_bare_version_compare_flags_read_spatial_ndm_with_the_constant_inlined(tmp_path: Path) -> None:
+    function = _read_spatial_ndm().replace(">= META_NDM_IS_SPATIAL_FROM", ">= (2, 34, 0)")
+    assert ">= (2, 34, 0)" in function
+    _write(tmp_path, H5_READER, function)
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["bare-version-compare"]
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        "ver >= (2, 26, 1)",
+        "(2, 7, 0) > ver",
+        "(v.major, v.minor) < (2, 7)",
+        "file_version >= SchemaVersion(2, 7, 0)",
+        'file_version >= SchemaVersion.parse("2.7.0")',
+        "schema_version < parse_version('2.7.0')",
+    ],
+)
+def test_bare_version_compare_flags_every_literal_shape(tmp_path: Path, compare: str) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/a.py", f"def f(ver, v, file_version, schema_version):\n    return {compare}\n")
+    assert _found(tmp_path) == ["bare-version-compare:a.py:2"]
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        "ver >= SOME_FEATURE_FROM",
+        "(v.major, v.minor, v.patch) >= ADR_FLOOR",
+        "ver < module.COMPAT_FLOOR",
+        "arr.shape == (3, 3)",
+        "sys.version_info >= (3, 11)",
+        "(a, b) == (1, 2)",
+        "ver == other_ver",
+    ],
+)
+def test_bare_version_compare_passes_named_constants_and_non_versions(tmp_path: Path, compare: str) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/a.py", f"def f(ver, v, arr, a, b):\n    return {compare}\n")
+    assert _found(tmp_path) == []
+
+
+def test_bare_version_compare_is_scoped_to_the_package(tmp_path: Path) -> None:
+    _write(tmp_path, "tests/test_a.py", "def test_it(ver):\n    assert ver < (2, 7, 0)\n")
+    assert _found(tmp_path) == []
+
+
+def test_bare_version_compare_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/a.py", """\
+        def f(ver):
+            # apegmsh-lint: bare-version-compare-ok the third-party library's own version.
+            return ver < (2, 7, 0)
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_the_checkout_has_no_bare_version_compare() -> None:
+    assert [f for f in quirks.scan(quirks.REPO) if f.rule == "bare-version-compare"] == []
+
+
 # --- waivers -------------------------------------------------------------------
 
 
