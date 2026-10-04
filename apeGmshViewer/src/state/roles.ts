@@ -62,9 +62,10 @@ export function roleColouring(s: State): { byElement: Int32Array; legend: Legend
     color: hexToRgb(DARK_ROLE[r]),
     elements: roles.filter((x) => x === r).length,
     cue: null,
+    slot: null,
   }));
   const unassigned = roles.filter((x) => x === null).length;
-  if (unassigned) legend.push({ decl: null, name: UNASSIGNED_ROW, color: UNASSIGNED_COLOUR, elements: unassigned, cue: null });
+  if (unassigned) legend.push({ decl: null, name: UNASSIGNED_ROW, color: UNASSIGNED_COLOUR, elements: unassigned, cue: null, slot: null });
   const index = new Map<string, number>(legend.map((e, i) => [e.name, i]));
   const byElement = Int32Array.from(roles, (r) => index.get(r ?? UNASSIGNED_ROW)!);
   return { byElement, legend, fileHasRoles: present.size > 0 };

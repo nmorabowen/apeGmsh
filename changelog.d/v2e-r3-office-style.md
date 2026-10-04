@@ -3,12 +3,16 @@
 One theme-token module, `apeGmshViewer/src/theme/tokens.ts` (citing
 apeGraphStyle `__init__.py` v0.1.0, 2026-10-03), is the only source of
 colour and type in the app: a test greps the rest of `src/` for colour
-literals. Group colours (R2, revised) follow the office `main_colors` order,
-adapted to the dark theme in OKLCH with alternating lightness: legend
-neighbours step by at least 0.10 L, no pair of the sixteen colours is told
-apart by a red/green difference alone under a Machado 2009 protanopia
-simulation, and past eight groups the hue repeats one lightness step away
-with a striped legend chip as the second cue. A colour-by-role mode draws
+literals. Group colours (R2, revised) are the office `main_colors`, adapted to the
+dark theme in OKLCH: sixteen slots (the eight colours and the same hues one
+lightness step away, the latter with a striped legend chip as the second
+cue), no pair of which is told apart by a red/green difference alone under
+Machado 2009 protanopia and deuteranopia simulations. Groups that are
+neighbours in the view (an element of each shares a node; the adjacency is
+computed at load and kept in the state) are assigned slots greedily so that
+every adjacent pair is apart under both deficiencies by a lightness step or a
+hue gap, and the office orange never sits beside the dark gold; the same
+file always gets the same colours. A colour-by-role mode draws
 column, wall, beam, concrete and void in the office colours from a `role`
 the file records and from nothing else; a file without one (every file
 today) is said so in the legend and drawn as unassigned. Archivo Narrow

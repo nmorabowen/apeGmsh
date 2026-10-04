@@ -10,7 +10,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { NO_GROUP, OPS_ONLY, paletteEntry, paletteFor, RING_SIZE } from "../src/state/palette.ts";
+import { groupAdjacency } from "../src/state/adjacency.ts";
+import { assignSlots, cvdDistance, hueOf, NEVER_ADJACENT, NO_GROUP, OPS_ONLY, RING_SIZE, slotColour, SLOTS, slotsContrast } from "../src/state/palette.ts";
+import { colourGroups } from "../src/mesh/build.ts";
 import { roleColouring, UNASSIGNED_ROW } from "../src/state/roles.ts";
 import {
   contrastRatio, DARK, DARK_L1, DARK_L2, DARK_MAIN, DARK_MAIN_RING2, DARK_ROLE, FONT_FILES, hexToRgb, oklabDistance, OFFICE, OFFICE_MAIN, protanopia, relight, rgbToHex,
@@ -136,17 +138,68 @@ test("the roles take the office colours; no two roles are told apart by red/gree
 
 // ---- the palette the legend uses ---------------------------------------------
 
-test("legend entries cycle the office order; the ninth repeats the first hue one step away with a stripe cue", () => {
-  const p = paletteFor(11);
-  assert.equal(p.length, 11);
-  assert.deepEqual(p[0], hexToRgb(DARK_MAIN[0]!));
-  assert.deepEqual(p[8], hexToRgb(DARK_MAIN_RING2[0]!));
-  assert.equal(paletteEntry(0).ring, 0);
-  assert.equal(paletteEntry(8).ring, 1);
-  assert.equal(paletteEntry(16).ring, 2);
-  assert.throws(() => paletteEntry(-1), RangeError);
+test("the sixteen slots are the two rings in office order; the second ring carries the stripe cue", () => {
+  assert.equal(SLOTS.length, 2 * RING_SIZE);
+  assert.deepEqual(slotColour(0).color, hexToRgb(DARK_MAIN[0]!));
+  assert.deepEqual(slotColour(8), { color: hexToRgb(DARK_MAIN_RING2[0]!), ring: 1 });
+  assert.equal(hueOf(13), 5);
+  assert.throws(() => slotColour(16), RangeError);
   assert.deepEqual(NO_GROUP, hexToRgb(DARK.noGroup));
   assert.deepEqual(OPS_ONLY, hexToRgb(DARK.opsOnly));
+});
+
+/** The maintainer's rule for two adjacent groups, spelled out here beside the palette's own `slotsContrast`. */
+function contrasts(a: number, b: number): boolean {
+  const dL = Math.abs(srgbToOklch(SLOTS[a]!).L - srgbToOklch(SLOTS[b]!).L);
+  const hueGap = hueOf(a) !== hueOf(b) && !NEVER_ADJACENT.some(([x, y]) => (hueOf(a) === x && hueOf(b) === y) || (hueOf(a) === y && hueOf(b) === x));
+  const ok = cvdDistance(a, b) >= SAFE && (dL >= STEP - 0.012 || hueGap);
+  assert.equal(slotsContrast(a, b), ok, `slotsContrast(${a}, ${b}) agrees with the spelled-out rule`);
+  return ok;
+}
+
+test("adjacent groups contrast: the fixture's arch touches both columns, which do not touch each other", async () => {
+  const model = await openModel(fileURLToPath(new URL("../fixtures/shoebuckle.h5", import.meta.url)));
+  const { byElement, order } = colourGroups(model);
+  const adj = groupAdjacency(model, byElement, order.length);
+  const name = (i: number) => order[i]!;
+  assert.deepEqual(adj.map(([a, b]) => [name(a), name(b)].sort()), [["Arch", "LeftColumn"], ["Arch", "RightColumn"]]);
+  const s = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(model, new BlobStore()) });
+  const legend = s.mesh!.legend;
+  assert.deepEqual(s.mesh!.adjacency, [[0, 1], [0, 2]], "legend rows: Arch (0) touches LeftColumn (1) and RightColumn (2)");
+  for (const [a, b] of s.mesh!.adjacency) assert.ok(contrasts(legend[a]!.slot!, legend[b]!.slot!), `${legend[a]!.name} vs ${legend[b]!.name}`);
+  // The legend shows the assigned slots' colours.
+  for (const e of legend) if (e.slot !== null) assert.deepEqual(e.color, slotColour(e.slot).color);
+  // Deterministic: the same file gives the same colours.
+  const again = loadModel(model, new BlobStore()).mesh.legend.map((e) => e.slot);
+  assert.deepEqual(legend.map((e) => e.slot), again);
+});
+
+test("assignSlots: a chain and a dense graph keep every adjacent pair apart, with the office rule and the stripe cue past eight", () => {
+  // A path of 6 groups: each neighbour pair contrasts; the assignment is a pure function of the adjacency.
+  const path: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]];
+  const slots = assignSlots(6, path);
+  for (const [a, b] of path) assert.ok(contrasts(slots[a]!, slots[b]!), `${a}-${b}: slots ${slots[a]} ${slots[b]}`);
+  assert.deepEqual(assignSlots(6, path), slots, "deterministic");
+  assert.deepEqual(assignSlots(6, [...path].reverse()), slots, "and independent of the pair order");
+  // A hub with 12 neighbours: more than the eight office colours, so the second ring (stripe cue) is used,
+  // every hub-neighbour pair contrasts, and orange never sits beside dark gold.
+  const n = 13;
+  const star: [number, number][] = Array.from({ length: n - 1 }, (_, i) => [0, i + 1]);
+  const s2 = assignSlots(n, star);
+  assert.equal(new Set(s2).size, n, "all distinct");
+  assert.ok(s2.some((x) => slotColour(x).ring === 1), "a second-ring slot is in use");
+  for (const [a, b] of star) assert.ok(contrasts(s2[a]!, s2[b]!), `${a}-${b}`);
+  // Orange and dark gold: never adjacent, in a complete graph of 6 either.
+  const k6: [number, number][] = [];
+  for (let i = 0; i < 6; i++) for (let j = i + 1; j < 6; j++) k6.push([i, j]);
+  const s3 = assignSlots(6, k6);
+  for (const [a, b] of k6) {
+    assert.ok(!NEVER_ADJACENT.some(([x, y]) => (hueOf(s3[a]!) === x && hueOf(s3[b]!) === y) || (hueOf(s3[a]!) === y && hueOf(s3[b]!) === x)), `${a}-${b}`);
+    assert.ok(cvdDistance(s3[a]!, s3[b]!) >= SAFE);
+  }
+  // Groups with no neighbour take the lowest free slots, in order.
+  assert.deepEqual(assignSlots(3, []), [0, 1, 2]);
+  assert.throws(() => assignSlots(2, [[0, 2]]), RangeError);
 });
 
 // ---- colour by role: from the file only ---------------------------------------

@@ -139,6 +139,8 @@ export interface LegendEntry {
   elements: number;
   /** a second cue beside the colour (a repeated hue past the eight office colours): stripes on the chip */
   cue: "stripe" | "stripe2" | null;
+  /** the palette slot the group was assigned (state/palette.ts); null for the synthetic rows */
+  slot: number | null;
 }
 
 /** What colours the model: its physical groups, or the structural role each element's file records. */
@@ -159,6 +161,8 @@ export interface MeshInfo {
   /** the decl path of every drawn element, in first-drawn order */
   elements: DeclPath[];
   legend: LegendEntry[];
+  /** legend rows whose elements share a node (each pair once, a < b): what the slot assignment keeps apart */
+  adjacency: [number, number][];
   center: readonly [number, number, number];
   radius: number;
   counts: { lineCells: number; faceCells: number; solidCells: number; opsOnly: number; points: number };
