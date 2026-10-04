@@ -309,16 +309,21 @@ class _SessionBase:
                 _gmsh_release()
                 self._active = False
 
-    def _artifact_target_is_ours(self, target: "Path") -> bool:
+    def _artifact_target_is_ours(
+        self, target: "Path", *, writes: frozenset[str]
+    ) -> bool:
         """May the automatic write replace ``target``?
 
         Yes when it does not exist, or when it is an apeGmsh artifact (a
-        ``/meta`` zone version key is present) and ``overwrite`` is on.
-        A foreign file, or an existing one under ``overwrite=False``, is
-        never replaced: one warning, and that file is skipped (never
+        ``/meta`` zone version key is present), ``overwrite`` is on, and
+        every zone it holds is in ``writes`` (the zones the write
+        produces). A foreign file, an existing one under
+        ``overwrite=False``, or one holding a zone the write would drop
+        (an ``apeSees(fem).h5()`` at the model path, with ``/opensees``)
+        is never replaced: one warning, and that file is skipped (never
         written elsewhere).
         """
-        from .mesh._geometry_h5_io import is_apegmsh_artifact
+        from .mesh._geometry_h5_io import artifact_zones, is_apegmsh_artifact
 
         if not target.exists():
             return True
@@ -328,15 +333,24 @@ class _SessionBase:
                 stacklevel=4,
             )
             return False
-        if is_apegmsh_artifact(target):
-            return True
-        warnings.warn(
-            f"{target} exists and is not an apeGmsh artifact (no /meta "
-            f"schema key); not overwritten. Pass save_to= to write the "
-            f"model elsewhere.",
-            stacklevel=4,
-        )
-        return False
+        if not is_apegmsh_artifact(target):
+            warnings.warn(
+                f"{target} exists and is not an apeGmsh artifact (no /meta "
+                f"schema key); not overwritten. Pass save_to= to write the "
+                f"model elsewhere.",
+                stacklevel=4,
+            )
+            return False
+        dropped = sorted(artifact_zones(target) - writes)
+        if dropped:
+            warnings.warn(
+                f"{target} holds the {', '.join(dropped)} zone(s) that the "
+                f"end-of-session write would drop; not overwritten. Write "
+                f"that file under another name, or pass save_to=.",
+                stacklevel=4,
+            )
+            return False
+        return True
 
     def _write_artifacts(self) -> None:
         """Write ``model.h5`` and ``<stem>.geometry.h5`` before finalize.
@@ -360,11 +374,12 @@ class _SessionBase:
             geometry_sibling_path,
             write_geometry_h5,
         )
+        from .opensees._internal.schema_version import GEOMETRY, NEUTRAL
 
         target: "Path | None" = None
         try:
             target = self._resolve_save_target(None)
-            if self._artifact_target_is_ours(target):
+            if self._artifact_target_is_ours(target, writes=frozenset({NEUTRAL})):
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
                     self._do_save(tmp)
@@ -381,7 +396,7 @@ class _SessionBase:
             return
         sibling = geometry_sibling_path(target)
         try:
-            if not self._artifact_target_is_ours(sibling):
+            if not self._artifact_target_is_ours(sibling, writes=frozenset({GEOMETRY})):
                 return
             fem = getattr(self, "_fem", None)
             session_id = (

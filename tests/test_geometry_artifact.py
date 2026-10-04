@@ -798,6 +798,57 @@ def test_results_demo_session_opts_out(monkeypatch, tmp_path: Path) -> None:
     assert [kw.get("_artifacts") for kw in seen] == [False]
 
 
+def test_artifact_zones_by_root_group(tmp_path: Path) -> None:
+    def make(name: str, groups: tuple[str, ...]) -> Path:
+        p = tmp_path / name
+        with h5py.File(p, "w") as f:
+            f.create_group("meta")
+            for g_ in groups:
+                f.create_group(g_)
+        return p
+
+    assert gio.artifact_zones(make("n.h5", ("nodes", "elements"))) == {"neutral"}
+    assert gio.artifact_zones(make("b.h5", ("nodes", "opensees"))) == {"neutral", "opensees"}
+    assert gio.artifact_zones(make("r.h5", ("nodes", "opensees", "stages"))) == {
+        "neutral", "opensees", "results",
+    }
+    assert gio.artifact_zones(make("g.h5", ("geometry",))) == {"geometry"}
+    assert gio.artifact_zones(make("p.h5", ("provenance",))) == {"provenance"}
+    assert gio.artifact_zones(make("m.h5", ())) == frozenset()
+
+
+def test_apesees_file_at_the_model_path_is_not_replaced(monkeypatch, tmp_path: Path) -> None:
+    """Finding 3 (maintainer ruling: skip and warn). An ``apeSees(fem).h5``
+    written at the session's own model path inside the ``with`` block
+    holds ``/opensees``, which the end-of-session neutral write would
+    drop: ``end()`` warns, leaves the file byte-identical with its
+    ``/opensees`` zone, and still writes the geometry sibling, paired."""
+    from apeGmsh.opensees import apeSees
+
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    target = tmp_path / "bridge.h5"
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="bridge") as g:
+            _small_box(g)
+            fem = g.mesh.queries.get_fem_data()
+            ops = apeSees(fem)
+            ops.model(ndm=3, ndf=3)
+            mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
+            ops.element.FourNodeTetrahedron(pg="body", material=mat)
+            ops.h5(str(target))
+            before = target.read_bytes()
+    assert target.read_bytes() == before
+    msgs = [str(x.message) for x in w if "would drop" in str(x.message)]
+    assert len(msgs) == 1 and "opensees" in msgs[0]
+    with h5py.File(target, "r") as f:
+        assert "opensees" in f
+    sibling = tmp_path / "bridge.geometry.h5"
+    assert sibling.is_file()
+    assert _session_id(sibling) == _session_id(target)
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
 def test_suite_artifact_dir_is_pinned_to_tmp() -> None:
     """The conftest fixture keeps the suite from littering the repo."""
     env = os.environ.get("APEGMSH_ARTIFACT_DIR", "")

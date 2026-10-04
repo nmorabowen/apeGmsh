@@ -45,6 +45,7 @@ __all__ = [
     "GeometryArtifactWarning",
     "GeometryCapture",
     "GeometryInt32Overflow",
+    "artifact_zones",
     "capture_fallback",
     "capture_geometry",
     "capture_temp_mesh",
@@ -176,6 +177,33 @@ def is_apegmsh_artifact(path: "str | Path") -> bool:
             return ENVELOPE_KEY in attrs and "apeGmsh_version" in attrs
     except OSError:
         return False
+
+
+def artifact_zones(path: "str | Path") -> frozenset[str]:
+    """The zones an apeGmsh artifact holds, judged by root group.
+
+    ``opensees`` is ``/opensees``, ``results`` is ``/stages``, ``geometry``
+    is ``/geometry``, ``provenance`` is ``/provenance`` (h5-schema.md,
+    "Zone registry"); ``neutral`` is any other root group than ``/meta``.
+    Root groups, not ``/meta`` keys: the neutral writer stamps
+    ``opensees_schema_version`` on a file with no ``/opensees`` zone.
+
+    The automatic D1 write never replaces a target that holds a zone it
+    would drop: an ``apeSees(fem).h5("<model_name>.h5")`` written inside
+    the ``with`` block keeps its ``/opensees`` zone.
+    """
+    from apeGmsh.opensees._internal.schema_version import (
+        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS,
+    )
+
+    root_of = {OPENSEES: "opensees", RESULTS: "stages",
+               GEOMETRY: "geometry", PROVENANCE: "provenance"}
+    with h5py.File(str(path), "r") as f:
+        roots = set(f.keys()) - {"meta"}
+    zones = {zone for zone, root in root_of.items() if root in roots}
+    if roots - set(root_of.values()):
+        zones.add(NEUTRAL)
+    return frozenset(zones)
 
 
 # ---------------------------------------------------------------------------

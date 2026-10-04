@@ -17,9 +17,12 @@ extracts and the geometry sibling carry it, so a reader pairs the two
 files by equality. A model that already carries 2-D elements (a `from_msh`
 import) is captured as it is, with nothing generated or cleared. The
 automatic write never clobbers a foreign file: it replaces a target only
-when it does not exist or is an apeGmsh artifact (a `/meta` zone version
-key), honours `overwrite=False`, and otherwise warns once and skips that
-file; both files go through a `<target>.tmp-<uuid>` beside the target and
+when it does not exist or is an apeGmsh artifact (a per-zone `/meta`
+version key; the generic `schema_version` attribute alone is not proof)
+that holds no zone the write would drop (an `apeSees(fem).h5()` at the
+model path keeps its `/opensees`), honours `overwrite=False`, and
+otherwise warns once and skips that file, the explicit `save_to=` target
+included; both files go through a `<target>.tmp-<uuid>` beside the target and
 `os.replace`, so a failed write leaves the previous file untouched. A
 failed write or capture is a warning (`GeometryArtifactWarning` for the
 sibling), never an exception, and an id or count outside int32 is refused
