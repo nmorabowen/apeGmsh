@@ -289,7 +289,9 @@ class SectionDocument:
     """
 
     def __init__(self, data: dict[str, Any]) -> None:
-        _validate(data)
+        # stacklevel 4: warn <- _check_version <- _validate <- __init__
+        # <- the caller of SectionDocument(...)
+        _validate(data, stacklevel=4)
         self._data = data
 
     # ── construction ─────────────────────────────────────────────────
@@ -334,7 +336,13 @@ class SectionDocument:
             raise SectionDocumentError(
                 f"SectionDocument.open: cannot read {path!s}: {e}"
             ) from e
-        return cls(data)
+        # validated here rather than through cls(data), so a
+        # SectionDocumentNewerWarning names the caller of open():
+        # warn <- _check_version <- _validate <- open <- caller
+        doc = cls.__new__(cls)
+        _validate(data, stacklevel=4)
+        doc._data = data
+        return doc
 
     def export_script(self, path: "str | Path | None" = None) -> str:
         """Render the document as a readable, runnable apeGmsh script
@@ -1073,7 +1081,9 @@ def typed_fiber_items(
     return tuple(patches), layers, points
 
 
-def _validate(data: dict[str, Any]) -> None:
+def _validate(data: dict[str, Any], *, stacklevel: int) -> None:
+    """Validate a document dict. ``stacklevel`` is handed to the
+    newer-minor warning so it names the public caller."""
     if not isinstance(data, dict):
         raise SectionDocumentError("section document must be a JSON object.")
     version = data.get("section_doc_version")
@@ -1082,7 +1092,7 @@ def _validate(data: dict[str, Any]) -> None:
             "missing/invalid 'section_doc_version' — not a section "
             "document."
         )
-    _check_version(version)
+    _check_version(version, stacklevel=stacklevel)
     kind = data.get("kind")
     if kind not in ("continuum", "fiber"):
         raise SectionDocumentError(
@@ -1149,6 +1159,16 @@ def _validate(data: dict[str, Any]) -> None:
             if missing:
                 raise SectionDocumentError(
                     f"shape {sid!r} ({kind_}): missing params {missing}."
+                )
+            # mirror add_shape: a parameter this loader does not know
+            # (e.g. one a newer minor added) would reach the builder as
+            # an unexpected keyword at build time
+            extra = [k for k in params if k not in _SHAPE_PARAMS[kind_]]
+            if extra:
+                raise SectionDocumentError(
+                    f"shape {sid!r} ({kind_}): unknown params {extra} "
+                    f"(section_doc_version {version}; this loader "
+                    f"reads {SECTION_DOC_VERSION})."
                 )
             for k in _SHAPE_PARAMS[kind_]:
                 _num(params[k], f"shape {sid!r} param {k}")
@@ -1291,7 +1311,7 @@ def _validate_fiber(data: dict[str, Any]) -> None:
             )
 
 
-def _check_version(version: str) -> None:
+def _check_version(version: str, *, stacklevel: int) -> None:
     """The ADR 0113 floor rule for section documents (2026-10-04
     amendment): same major and ``floor.minor <= minor``; the patch is
     ignored. A newer minor opens with a warning, never silently."""
@@ -1324,7 +1344,7 @@ def _check_version(version: str) -> None:
                 f"added after {cur_major}.{cur_minor} are ignored. "
                 f"Upgrade apeGmsh to read them."
             ),
-            stacklevel=4,
+            stacklevel=stacklevel,
         )
 
 
