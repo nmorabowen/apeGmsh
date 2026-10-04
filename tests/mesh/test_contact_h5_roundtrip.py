@@ -380,7 +380,7 @@ def test_writer_stamps_current_neutral_version():
     assert NEUTRAL_SCHEMA_VERSION == NEUTRAL_CURRENT
 
 
-def test_reads_prior_minor_file_without_contacts_group_within_window(tmp_path):
+def test_reads_prior_minor_file_without_contacts_group_at_or_above_floor(tmp_path):
     # A prior-minor file with the /contacts group stripped must
     # still read → empty contacts (absence ⇒ no contacts).
     import h5py

@@ -865,10 +865,32 @@ def _zone_registry_current(text: str, zone_label: str) -> str:
     return version.group(1)
 
 
+def _zone_registry_floor(text: str, zone_label: str) -> str:
+    """The Floor-column ``**X.Y.Z**`` value (the row's last cell) for the
+    zone-registry row whose leading cell starts with ``zone_label``."""
+    row = re.search(
+        rf"^\|\s*{re.escape(zone_label)}[^|]*\|.*\|\s*$", text, re.M,
+    )
+    assert row is not None, (
+        f"h5-schema.md: no zone-registry row found starting with "
+        f"`| {zone_label}` — table reformatted or row renamed, update "
+        "the scan (or the doc)."
+    )
+    cells = [c.strip() for c in row.group(0).strip().strip("|").split("|")]
+    floor = re.fullmatch(r"\*\*(\d+\.\d+\.\d+)\*\*", cells[-1])
+    assert floor is not None, (
+        f"h5-schema.md: zone-registry row for {zone_label!r} has no "
+        "bolded **X.Y.Z** Floor cell in its last column — table format "
+        "drifted."
+    )
+    return floor.group(1)
+
+
 def test_h5_schema_doc_registry_matches_writer_constants() -> None:
     """The zone-registry's "Current" column must equal the live writer
-    constants for the neutral and opensees zones — not a hand-typed
-    snapshot that can silently go stale."""
+    constants for the neutral and opensees zones, and its "Floor" column
+    must equal every zone's reader floor (ADR 0113 INV-3) — not a
+    hand-typed snapshot that can silently go stale."""
     from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
     from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
 
@@ -885,6 +907,26 @@ def test_h5_schema_doc_registry_matches_writer_constants() -> None:
         f"but SCHEMA_VERSION={OPENSEES_VERSION!r} — the doc has drifted "
         "from opensees/emitter/h5.py; update the table."
     )
+
+    from apeGmsh.opensees._internal.schema_version import (
+        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS, reader_floor,
+    )
+
+    for zone, label in (
+        (NEUTRAL, "neutral (broker)"),
+        (OPENSEES, "opensees (bridge)"),
+        (RESULTS, "results"),
+        (GEOMETRY, "geometry"),
+        (PROVENANCE, "provenance"),
+    ):
+        floor_doc = _zone_registry_floor(text, label)
+        floor_live = str(reader_floor(zone))
+        assert floor_doc == floor_live, (
+            f"h5-schema.md zone registry says {label} Floor={floor_doc!r} "
+            f"but reader_floor({zone!r})={floor_live!r} — the doc has "
+            "drifted from the zone's *_SCHEMA_FLOOR constant; update the "
+            "table."
+        )
 
 
 def _write_neutral_zone_group_names() -> list[str]:

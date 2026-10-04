@@ -67,7 +67,7 @@ Notes on the rows:
   The clicked element was a `CorotTruss`, whose chain is element →
   `uniaxialMaterial Steel02` (named `rebar_long` in `/opensees/names`).
 - `footing_analysis_composed.h5` (`C:\Users\nmora\Github\apeGmsh\`) is schema
-  2.26.0 / 2.19.0, outside the reader window: it opens with a warning banner.
+  2.26.0 / 2.19.0, older than that day's reader window (ADR 0113 has since replaced the window with a floor): it opened with a warning banner.
   Its elements are `BezierTri6`, which the syntax table does not know, so the
   inspector reports the chain as not decoded, by type name.
 - `sanramon_1A` `model.h5` is the maintainer's San Ramon building. Source:

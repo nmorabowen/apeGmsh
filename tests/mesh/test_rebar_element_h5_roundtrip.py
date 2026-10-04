@@ -100,7 +100,7 @@ def test_encode_rejects_empty_connectivity():
         _encode_rebar_element(_rec(connectivity=()))
 
 
-def test_reads_pre_2_16_0_file_within_window(tmp_path):
+def test_reads_pre_2_16_0_file_at_or_above_floor(tmp_path):
     # A prior-minor file with no /rebar_elements group. The reader
     # must still read it → empty rebar_elements.
     import h5py

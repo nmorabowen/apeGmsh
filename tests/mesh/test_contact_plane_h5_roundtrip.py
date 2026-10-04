@@ -150,7 +150,7 @@ def test_writer_stamps_current_neutral_version():
     assert NEUTRAL_SCHEMA_VERSION == NEUTRAL_CURRENT
 
 
-def test_reads_prior_minor_file_without_group_within_window(tmp_path):
+def test_reads_prior_minor_file_without_group_at_or_above_floor(tmp_path):
     import h5py
 
     from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
