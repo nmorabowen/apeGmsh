@@ -52,8 +52,12 @@ export interface H5File extends H5Group {
 /** The schema versions this reader was written against (ADR 0023). */
 export const NEUTRAL_TARGET = { major: 2, minor: 33 } as const;
 export const OPENSEES_TARGET = { major: 2, minor: 21 } as const;
-/** Physical groups and labels are side-partitioned from neutral 2.10. */
-const NEUTRAL_MIN_MINOR = 10;
+/**
+ * The lowest minor of each zone this reader opens (#1303: one floor table,
+ * the only place the version check reads). Physical groups and labels are
+ * side-partitioned from neutral 2.10.
+ */
+export const ZONE_FLOOR = { neutral: 10, opensees: 0 } as const;
 
 export class SchemaError extends Error {}
 
@@ -92,7 +96,7 @@ class Reader {
       metaAttrs,
       "neutral_schema_version",
       NEUTRAL_TARGET,
-      NEUTRAL_MIN_MINOR,
+      ZONE_FLOOR.neutral,
     );
 
     const nodes = this.group(root, "nodes");
@@ -125,7 +129,7 @@ class Reader {
         metaAttrs,
         "opensees_schema_version",
         OPENSEES_TARGET,
-        0,
+        ZONE_FLOOR.opensees,
       );
       opensees = this.readOpenSees(this.group(root, "opensees"), v);
     }

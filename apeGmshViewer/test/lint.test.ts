@@ -22,24 +22,36 @@ test("dependency-cruiser passes the tree as committed", () => {
   assert.equal(r.status, 0, r.out);
 });
 
-test("dependency-cruiser fails on a planted violation of each panel rule", () => {
+const PLANTED = [
+  ["./legend.ts", "mountLegend"],
+  ["../renderer/viewport.ts", "Viewport"],
+  ["../reader/read.ts", "readModel"],
+  ["../state/blobs.ts", "BlobStore"],
+  ["../effects.ts", "Effects"],
+  ["../state/load.ts", "loadModel"],
+  ["../state/reduce.ts", "reduce"],
+] as const;
+
+test("dependency-cruiser fails on each planted import outside the panel allow-list, and passes an allowed one", () => {
   const dir = mkdtempSync(join(tmpdir(), "agv-lint-"));
   cpSync(join(app, "src"), join(dir, "src"), { recursive: true });
   cpSync(join(app, "tsconfig.json"), join(dir, "tsconfig.json"));
   writeFileSync(
     join(dir, "src", "panels", "planted.ts"),
     [
-      'import { mountLegend } from "./legend.ts";',
-      'import { Viewport } from "../renderer/viewport.ts";',
-      'import { readModel } from "../reader/read.ts";',
-      'import { BlobStore } from "../state/blobs.ts";',
-      "export const planted = [mountLegend, Viewport, readModel, BlobStore];",
+      ...PLANTED.map(([spec, name]) => `import { ${name} } from "${spec}";`),
+      'import type { State } from "../state/store.ts";',
+      'import { el } from "../ui/dom.ts";',
+      `export const planted: unknown[] = [${PLANTED.map(([, name]) => name).join(", ")}, el, null as unknown as State];`,
       "",
     ].join("\n"),
   );
   const r = cruise(dir);
   assert.notEqual(r.status, 0, "a planted violation must fail the run");
-  for (const rule of ["no-panel-to-panel", "no-panel-to-render", "no-panel-to-reader", "no-panel-to-blobs"]) {
-    assert.match(r.out, new RegExp(`${rule}: src/panels/planted.ts`), rule);
+  for (const [spec] of PLANTED) {
+    const target = spec.replace(/^\.\.\//, "src/").replace(/^\.\//, "src/panels/");
+    assert.match(r.out, new RegExp(`panel-allow-list: src/panels/planted.ts → ${target.replace(/[.]/g, "\\.")}`), spec);
   }
+  assert.doesNotMatch(r.out, /src\/state\/store\.ts|src\/ui\/dom\.ts/, "allowed imports are not reported");
+  assert.match(r.out, new RegExp(`${PLANTED.length} dependency violations`));
 });

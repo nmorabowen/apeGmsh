@@ -154,6 +154,61 @@ jobs:
   # Tool versions are pinned because both tools add rules/checks across
   # releases, which would move the measured count under our feet; bump
   # the pins and re-measure the baseline together, in one PR.
+  # apeGmshViewer (ADR 0112): the app's own checks, run when the PR or push
+  # touches apeGmshViewer/ (or this workflow). Not a required check yet: it
+  # joins the land_pr.py list once the maintainer promotes it.
+  app-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A paths filter per job: `on.paths` would gate the whole workflow.
+      - name: Did apeGmshViewer/ change?
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+            git fetch -q origin "${{ github.base_ref }}"
+            range="$base...HEAD"
+          else
+            range="HEAD~1..HEAD"
+          fi
+          if git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml | grep -q .; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "apeGmshViewer/ unchanged in $range; nothing to check"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.app == 'true'
+        with:
+          node-version: '22.18'
+          cache: npm
+          cache-dependency-path: apeGmshViewer/package-lock.json
+
+      - name: npm ci
+        if: steps.changes.outputs.app == 'true'
+        working-directory: apeGmshViewer
+        run: npm ci --no-audit --no-fund
+
+      - name: typecheck
+        if: steps.changes.outputs.app == 'true'
+        working-directory: apeGmshViewer
+        run: npm run typecheck
+
+      - name: test
+        if: steps.changes.outputs.app == 'true'
+        working-directory: apeGmshViewer
+        run: npm test
+
+      - name: lint (dependency-cruiser)
+        if: steps.changes.outputs.app == 'true'
+        working-directory: apeGmshViewer
+        run: npm run lint
+
   static-gates:
     runs-on: ubuntu-latest
     env:

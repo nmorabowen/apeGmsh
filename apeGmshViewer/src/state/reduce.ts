@@ -6,10 +6,14 @@
 
 import type { ArtifactInfo, ArtifactKind, DeclPath, Event, PhaseKey, State } from "./types.ts";
 
+/** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
+export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
-  decls: {},
-  names: {},
+  decls: emptyRecord(),
+  names: emptyRecord(),
+  blocks: [],
   mesh: null,
   phase: { axis: [], at: null },
   selection: { decls: [], picks: [] },
@@ -64,12 +68,17 @@ export function reduce(s: State, e: Event): State {
       return { ...s, artifacts: { ...s.artifacts, [e.artifact]: info } };
     }
     case "fileLoaded": {
-      const { info, decls, names, mesh } = e.load;
+      const { decls, names, blocks, mesh } = e.load;
+      // A fileChanged that arrived while this read ran keeps the artifact
+      // stale, so the effects read it once more.
+      const prev = s.artifacts.model;
+      const info: ArtifactInfo = { ...e.load.info, stale: prev !== null && prev.path === e.load.info.path && prev.stale };
       return {
         ...s,
         artifacts: { ...s.artifacts, model: info },
         decls,
         names,
+        blocks,
         mesh,
         phase: { axis: [{ kind: "mesh" }], at: { kind: "mesh" } },
         selection: NO_SELECTION,
@@ -90,6 +99,11 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
       };
     }
+    case "fileClosed": {
+      if (!s.artifacts[e.artifact]) return s;
+      if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: null } };
+      return { ...initialState, artifacts: { ...s.artifacts, model: null }, visibility: s.visibility, windows: s.windows };
+    }
     case "fileChanged": {
       const k = artifactAt(s, e.path);
       if (!k) return s;
@@ -98,7 +112,10 @@ export function reduce(s: State, e: Event): State {
     case "zoneRefused": {
       const prev = s.artifacts[e.artifact];
       if (!prev) throw new Error(`zoneRefused for ${e.artifact} before fileOpened`);
-      const zones = { ...prev.zones, [e.zone]: { status: "refused" as const, version: e.version, window: e.window, reason: e.reason } };
+      const zones = {
+        ...prev.zones,
+        [e.zone]: { status: "refused" as const, version: e.version, accepted: e.accepted, newer: e.newer, reason: e.reason },
+      };
       return { ...s, artifacts: { ...s.artifacts, [e.artifact]: { ...prev, zones } } };
     }
     case "select":

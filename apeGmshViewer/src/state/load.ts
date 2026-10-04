@@ -5,11 +5,12 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
-import type { Group, ModelFile, OpsFamily } from "../model/types.ts";
+import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
 import { NO_GROUP, OPS_ONLY, paletteFor } from "./palette.ts";
-import type { ArtifactInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad } from "./types.ts";
+import { emptyRecord } from "./reduce.ts";
+import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad } from "./types.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -23,8 +24,9 @@ function addName(names: Record<string, DeclPath[]>, name: string, path: DeclPath
 
 /** Build the declarations and the name index of a model. Exported for the tests; `loadModel` calls it. */
 export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: string[]): { decls: Record<DeclPath, Decl>; names: Record<string, DeclPath[]> } {
-  const decls: Record<DeclPath, Decl> = {};
-  const names: Record<string, DeclPath[]> = {};
+  // Null-prototype records: a group or alias named `constructor` is a key, not Object.prototype's.
+  const decls = emptyRecord<Decl>();
+  const names = emptyRecord<DeclPath[]>();
 
   // Groups and labels: one decl each, their element ids as a blob.
   for (const [kind, list] of [["physical_group", model.physicalGroups], ["label", model.labels]] as const) {
@@ -75,7 +77,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
   // Elements: the element_meta rows joined to each cell by fem_eids, and the
   // physical groups that contain it.
   const hasOpensees = model.opensees !== null;
-  const metaByFem = new Map<number, ElementFacts["metas"]>();
+  const metaByFem = new Map<number, { type: string; tag: number; h5: string; row: number; args: readonly Param[] }[]>();
   for (const meta of model.opensees?.elementMeta ?? []) {
     meta.femEids.forEach((fe, row) => {
       if (fe < 0) return;
@@ -94,21 +96,21 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
       else groupsByFem.set(e, [path]);
     }
   }
-  const NONE: DeclPath[] = [];
-  const NO_METAS: ElementFacts["metas"] = [];
   model.blocks.forEach((b, block) => {
+    const h5 = `/elements/${b.alias}`;
     for (let row = 0; row < b.ids.length; row++) {
       const femId = b.ids[row]!;
       const path = cellPath(femId);
-      if (path in decls) throw new Error(`/elements/${b.alias}/ids[${row}]: FEM id ${femId} is declared twice`);
+      if (path in decls) throw new Error(`${h5}/ids[${row}]: FEM id ${femId} is declared twice`);
+      // No node copy: the cell's tags are a range of State.blocks[block].connectivity (decision 15).
       const facts: ElementFacts = {
         femId,
         cell: { alias: b.alias, block, row },
-        nodes: Array.from(b.connectivity.subarray(row * b.npe, (row + 1) * b.npe)),
+        inlineNodes: NONE,
         groups: groupsByFem.get(femId) ?? NONE,
-        metas: metaByFem.get(femId) ?? NO_METAS,
+        metas: metaByFem.get(femId) ?? NONE,
       };
-      decls[path] = elementDecl(path, `/elements/${b.alias}`, `element ${femId}`, facts, hasOpensees, lookup);
+      decls[path] = elementDecl(path, h5, `element ${femId}`, facts, hasOpensees, lookup);
     }
   });
   model.opensees?.elementMeta.forEach((meta) => {
@@ -118,9 +120,9 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
       const facts: ElementFacts = {
         femId: null,
         cell: null,
-        nodes: meta.inlineConnectivity?.[row] ?? [],
+        inlineNodes: meta.inlineConnectivity?.[row] ?? NONE,
         groups: NONE,
-        metas: [{ type: meta.type, tag: meta.ids[row]!, h5: meta.path, row, args: meta.args[row] ?? [] }],
+        metas: [{ type: meta.type, tag: meta.ids[row]!, h5: meta.path, row, args: meta.args[row] ?? NONE }],
       };
       decls[path] = elementDecl(path, meta.path, `element ${meta.ids[row]}`, facts, hasOpensees, lookup);
     });
@@ -128,25 +130,39 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
   return { decls, names };
 }
 
+/** Shared frozen empties: an element decl carries no per-element copy of them. */
+const NONE: readonly never[] = Object.freeze([]);
+const NO_REFS: Readonly<Record<string, never>> = Object.freeze(Object.create(null) as Record<string, never>);
+
 function elementDecl(path: DeclPath, h5: string, name: string, facts: ElementFacts, hasOpensees: boolean, lookup: Lookup): Decl {
   // Only the refs are kept per element; the chain selector re-derives the
   // link fields and the problems from the facts when the element is shown.
-  const { refs } = elementLinks(facts, hasOpensees, lookup);
+  const { refs } = elementLinks(facts, hasOpensees, lookup, true);
+  const first = facts.metas[0];
   return {
     path,
     kind: "element",
-    type: facts.metas[0]?.type ?? "(no OpenSees type)",
+    type: first?.type ?? "(no OpenSees type)",
     name,
     nameSource: h5,
     h5,
     tag: null,
-    params: facts.metas[0]?.args ?? [],
-    refs,
-    links: {},
-    problems: [],
-    fields: [],
+    params: first?.args ?? NONE,
+    refs: Object.keys(refs).length ? refs : NO_REFS,
+    links: NO_REFS,
+    problems: NONE,
+    fields: NONE,
     element: facts,
   };
+}
+
+/** The neutral-zone blocks with their connectivity as blobs. */
+export function blocksOf(model: ModelFile, blobs: BlobStore): BlockInfo[] {
+  return model.blocks.map((b) => ({
+    alias: b.alias,
+    npe: b.npe,
+    connectivity: blobs.put(`model/elements/${b.alias}/connectivity`, b.connectivity, [b.ids.length, b.npe]),
+  }));
 }
 
 /** The decl path a mesh ref (a drawn primitive's element) points at. */
@@ -237,5 +253,5 @@ export function loadModel(model: ModelFile, blobs: BlobStore): ModelLoad {
       opsOnly: mesh.counts.opsOnly,
     },
   };
-  return { info, decls, names, mesh: meshInfoOf(model, mesh, blobs) };
+  return { info, decls, names, blocks: blocksOf(model, blobs), mesh: meshInfoOf(model, mesh, blobs) };
 }

@@ -4,40 +4,23 @@
 //   npm run lint          (depcruise --config .dependency-cruiser.cjs src)
 //
 // A panel (src/panels/<a>) reads the store and the selectors and dispatches
-// events. It never imports another panel, the renderer, the HDF5 reader or
-// the BlobStore. test/lint.test.ts plants one violation of each rule and
+// events. Its imports are an allow-list: src/state/store, src/state/selectors,
+// src/state/types, src/ui/ and its own panel directory. Everything else
+// (another panel, the renderer, the reader, the BlobStore, effects, the
+// loader, a package) is a violation. test/lint.test.ts plants violations and
 // proves the run fails.
+
+const PANEL_ALLOW = ["^src/state/(store|selectors|types)\\.ts$", "^src/ui/"];
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
     {
-      name: "no-panel-to-panel",
+      name: "panel-allow-list",
       severity: "error",
-      comment: "D6: no panel talks to another panel; they share the store only",
+      comment: "D6: a panel imports the store, the selectors, the state types, ui/ and its own directory only",
       from: { path: "^src/panels/([^/.]+)" },
-      to: { path: "^src/panels/", pathNot: "^src/panels/$1(\\.ts|/)" },
-    },
-    {
-      name: "no-panel-to-render",
-      severity: "error",
-      comment: "D6: a panel never reaches the three.js viewport or the renderer entry",
-      from: { path: "^src/panels/" },
-      to: { path: "^src/render(er)?/" },
-    },
-    {
-      name: "no-panel-to-reader",
-      severity: "error",
-      comment: "D6: a panel reads the state, never the file",
-      from: { path: "^src/panels/" },
-      to: { path: "^src/reader/" },
-    },
-    {
-      name: "no-panel-to-blobs",
-      severity: "error",
-      comment: "D6: the BlobStore is the viewport's; a panel sees BlobRefs in the state only",
-      from: { path: "^src/panels/" },
-      to: { path: "^src/state/blobs" },
+      to: { pathNot: [...PANEL_ALLOW, "^src/panels/$1/"] },
     },
     {
       name: "no-circular",

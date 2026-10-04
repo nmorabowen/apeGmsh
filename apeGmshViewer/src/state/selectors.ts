@@ -4,7 +4,7 @@
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
-import type { ArtifactInfo, Decl, DeclPath, LegendEntry, State, ZoneStatus } from "./types.ts";
+import type { ArtifactInfo, Decl, DeclPath, LegendEntry, Pick, State, ZoneStatus } from "./types.ts";
 
 function lookupOf(s: State): Lookup {
   // Tags are not keys of the state; an element's links are followed by the
@@ -34,12 +34,13 @@ function lookupOf(s: State): Lookup {
 }
 
 /** A declaration as a chain node, with the links that could be followed as children. */
-function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: Set<DeclPath>): ChainNode {
-  let fields = d.fields, links = d.links, refs = d.refs;
+function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: Set<DeclPath>, nodes: readonly number[] | null): ChainNode {
+  let fields: readonly Field[] = d.fields, links = d.links, refs = d.refs;
   if (d.element) {
     const hasOpensees = s.artifacts.model?.zones["opensees"]?.status === "ready";
     const l = elementLinks(d.element, hasOpensees, lookupOf(s));
-    fields = elementFields(d.element, d.element.groups.map((g) => s.decls[g]?.name ?? g));
+    const npe = d.element.cell ? (s.blocks[d.element.cell.block]?.npe ?? null) : null;
+    fields = elementFields(d.element, d.element.groups.map((g) => s.decls[g]?.name ?? g), nodes, npe);
     links = l.links;
     refs = l.refs;
     problems.push(...l.problems);
@@ -56,7 +57,7 @@ function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: 
       problems.push(`${d.path}: ${key} -> ${to} closes a cycle`);
       continue;
     }
-    children.push(nodeOf(s, child, link, problems, new Set([...seen, to])));
+    children.push(nodeOf(s, child, link, problems, new Set([...seen, to]), null));
   }
   if (d.kind === "physical_group" || d.kind === "label") throw new Error(`${d.path}: a ${d.kind} has no definition chain`);
   return {
@@ -66,7 +67,7 @@ function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: 
     type: d.type,
     path: d.h5,
     via,
-    fields,
+    fields: [...fields],
     children,
   };
 }
@@ -75,24 +76,27 @@ function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: 
  * The definition chain of an element or an OpenSees object, or null when the
  * path is not declared or is a group (a group has members, not a chain).
  */
-export function chainOf(s: State, path: DeclPath): Chain | null {
+export function chainOf(s: State, path: DeclPath, nodes: readonly number[] | null = null): Chain | null {
   const d = s.decls[path];
   if (!d || d.kind === "physical_group" || d.kind === "label") return null;
   const problems: string[] = [];
-  const root = nodeOf(s, d, null, problems, new Set([path]));
+  const root = nodeOf(s, d, null, problems, new Set([path]), nodes);
   return { root, problems };
 }
+
+/** The pick of a selected declaration, if it is selected (its node tags come from it). */
+const pickOf = (s: State, decl: DeclPath): Pick | undefined => s.selection.picks.find((p) => p.decl === decl);
 
 /** What the inspector shows: the pinned declarations, then the selection. */
 export function inspected(s: State): { decl: DeclPath; pinned: boolean; chain: Chain }[] {
   const out: { decl: DeclPath; pinned: boolean; chain: Chain }[] = [];
   for (const p of s.inspector.pinned) {
-    const chain = chainOf(s, p);
+    const chain = chainOf(s, p, pickOf(s, p)?.nodes ?? null);
     if (chain) out.push({ decl: p, pinned: true, chain });
   }
   for (const p of s.selection.decls) {
     if (s.inspector.pinned.includes(p)) continue;
-    const chain = chainOf(s, p);
+    const chain = chainOf(s, p, pickOf(s, p)?.nodes ?? null);
     if (chain) out.push({ decl: p, pinned: false, chain });
   }
   return out;
@@ -137,8 +141,8 @@ export function refusalsOf(s: State): string[] {
     for (const [zone, st] of Object.entries(a.zones) as [string, ZoneStatus][]) {
       if (st.status !== "refused") continue;
       out.push(
-        `${kind} file written by an older apeGmsh: its ${zone} zone is version ${st.version}, ` +
-          `this app reads ${st.window} (${st.reason})`,
+        `${kind} file written by ${st.newer ? "a newer" : "an older"} apeGmsh: its ${zone} zone is version ${st.version}, ` +
+          `this app reads ${st.accepted} (${st.reason})`,
       );
     }
   }

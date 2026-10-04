@@ -10,6 +10,10 @@
 import type { Field } from "../chain/resolve.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
 
+// Panels import their chain types from here, never from src/chain (the
+// panel allow-list: state/store, state/selectors, state/types, ui/).
+export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
+
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
  * `decls`, of provenance (V2c/V2d) and of a selection. Never an HDF5 group
@@ -39,14 +43,19 @@ export interface BlobRef {
 export interface ElementFacts {
   /** FEM id of the cell; null for an OpenSees-only row */
   femId: number | null;
-  /** `/elements/{alias}` block and row of the cell; null for an OpenSees-only row */
+  /**
+   * `/elements/{alias}` block and row of the cell; null for an OpenSees-only
+   * row. The cell's node tags are the range `row * npe .. (row + 1) * npe` of
+   * `State.blocks[block].connectivity` (decision 15: no copy per element);
+   * a `Pick` carries them when the viewport reads them for the inspector.
+   */
   cell: { alias: string; block: number; row: number } | null;
-  /** node tags, from the cell's connectivity or the row's inline_connectivity */
-  nodes: number[];
+  /** node tags of an OpenSees-only row (`inline_connectivity`, the reader's array, not a copy); [] for a cell */
+  inlineNodes: readonly number[];
   /** element-side physical groups that contain the cell, as decl paths */
-  groups: DeclPath[];
+  groups: readonly DeclPath[];
   /** every `/opensees/element_meta/{type}` row joined to the cell by fem_eids (one for an OpenSees-only row) */
-  metas: { type: string; tag: number; h5: string; row: number; args: Param[] }[];
+  metas: readonly { type: string; tag: number; h5: string; row: number; args: readonly Param[] }[];
 }
 
 export interface Decl {
@@ -61,9 +70,9 @@ export interface Decl {
   h5: string;
   /** the OpenSees tag of an object (`@tag`); elements and groups have none here */
   tag: number | null;
-  params: Param[];
+  params: readonly Param[];
   /** declarations this one references, by field (`transfTag`, `secTag`, `material_ref#0`, ...) */
-  refs: Record<string, DeclPath>;
+  refs: Readonly<Record<string, DeclPath>>;
   /**
    * How each ref was followed (label, value, source, interpreted, note), keyed
    * like `refs`, and the links that could not be followed. For an element
@@ -71,10 +80,10 @@ export interface Decl {
    * snapshot: one entry per element would be most of the state's weight), so
    * an element decl carries `links: {}` and `problems: []`.
    */
-  links: Record<string, Field>;
-  problems: string[];
+  links: Readonly<Record<string, Field>>;
+  problems: readonly string[];
   /** display-ready read facts of an object: type, tag, params, attrs, tables (elements derive theirs) */
-  fields: Field[];
+  fields: readonly Field[];
   element?: ElementFacts;
   group?: { dim: number; tag: number; count: number; ids: BlobRef };
   /** reserved for /provenance (V2c, V2d) */
@@ -87,7 +96,8 @@ export type ZoneStatus =
   | { status: "absent" }
   | { status: "loading" }
   | { status: "ready"; version: string }
-  | { status: "refused"; version: string; window: string; reason: string };
+  /** `accepted` is the version range the reader opens; `newer` says the file is ahead of this app, not behind it */
+  | { status: "refused"; version: string; accepted: string; newer: boolean; reason: string };
 
 export interface ArtifactInfo {
   path: string;
@@ -140,10 +150,19 @@ export type PhaseKey =
   | { kind: "stage"; index: number }
   | { kind: "results"; step: number };
 
-/** What the user clicked: the declaration and the hit point. */
+/** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
   at: readonly [number, number, number] | null;
+  nodes: readonly number[] | null;
+}
+
+/** One `/elements/{alias}` block of the neutral zone, its connectivity as a blob. */
+export interface BlockInfo {
+  alias: string;
+  npe: number;
+  /** row-major (count, npe) node tags */
+  connectivity: BlobRef;
 }
 
 export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials";
@@ -154,9 +173,12 @@ export interface Layout {
 
 export interface State {
   artifacts: Record<ArtifactKind, ArtifactInfo | null>;
+  /** keyed by declaration path; a null-prototype record, so no path collides with `Object.prototype` */
   decls: Record<DeclPath, Decl>;
-  /** user names (/opensees/names, /labels, /physical_groups) to the declarations that carry them */
+  /** user names (/opensees/names, /labels, /physical_groups) to the declarations that carry them; null-prototype */
   names: Record<string, DeclPath[]>;
+  /** the neutral-zone element blocks, in file order (`ElementFacts.cell.block` indexes it) */
+  blocks: BlockInfo[];
   mesh: MeshInfo | null;
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
   selection: { decls: DeclPath[]; picks: Pick[] };
@@ -173,15 +195,21 @@ export interface ModelLoad {
   info: ArtifactInfo;
   decls: Record<DeclPath, Decl>;
   names: Record<string, DeclPath[]>;
+  blocks: BlockInfo[];
   mesh: MeshInfo;
 }
 
+/**
+ * Decision 17's twenty events, plus `fileClosed` (added by V2e review: an
+ * `onOpen` set that names no results file closes the results artifact).
+ */
 export type Event =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
   | { type: "fileLoaded"; artifact: "model"; load: ModelLoad }
   | { type: "fileFailed"; artifact: ArtifactKind; path: string; error: string }
+  | { type: "fileClosed"; artifact: ArtifactKind }
   | { type: "fileChanged"; path: string }
-  | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; window: string; reason: string }
+  | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; accepted: string; newer: boolean; reason: string }
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }
   | { type: "clearSelection" }

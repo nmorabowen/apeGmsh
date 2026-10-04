@@ -5,17 +5,26 @@
 // `n` groups take `n` hues evenly spaced on the wheel (for n <= 12 that is
 // at least 30 degrees apart, one hue family each). The legend order is a
 // greedy farthest-first walk over those hues, so consecutive entries are
-// at least floor(n / 2) - 1 steps apart. Beyond 12 groups a hue family has
-// to repeat; the repeat takes a lighter tone. Colours are built in OKLCH at
-// one lightness and chroma, so no hue reads darker or duller than another,
-// and clipped to sRGB by reducing chroma only.
+// at least floor(n / 2) - 1 steps apart. Hues 30 degrees apart still read
+// as one family side by side (two pinks on the V1 gate), so lightness
+// alternates between neighbouring hue slots: two slots less than 45 degrees
+// apart never share a tone. Beyond 12 groups a hue family has to repeat;
+// the repeat takes the next tone. Colours are built in OKLCH, so no hue
+// reads darker or duller than its tone says, and clipped to sRGB by
+// reducing chroma only.
 
 /** Hue families: the wheel in 30-degree sectors. */
 export const HUE_FAMILIES = 12;
 /** The first hue (a blue, as the old fixed palette started). */
 const HUE0 = 250;
-const LIGHTNESS = [0.72, 0.86, 0.58];
-const CHROMA = 0.14;
+/** Tones: mid, deep, pale. Neighbouring hue slots take different tones. */
+export const TONES: readonly { L: number; C: number }[] = [
+  { L: 0.74, C: 0.15 },
+  { L: 0.52, C: 0.13 },
+  { L: 0.88, C: 0.11 },
+];
+/** Two hues closer than this read as one family and must differ in tone. */
+export const SAME_FAMILY_DEG = 45;
 
 export const NO_GROUP: readonly [number, number, number] = [0.62, 0.64, 0.68];
 export const OPS_ONLY: readonly [number, number, number] = [0.93, 0.93, 0.93];
@@ -47,12 +56,19 @@ export function hueOrder(n: number): number[] {
   return out;
 }
 
-/** Hue in degrees and tone ring of legend entry `i` of `n`. */
-export function hueOf(i: number, n: number): { hue: number; ring: number } {
+/**
+ * Hue in degrees and tone of legend entry `i` of `n`. The tone cycles over
+ * the hue slots with a period of 2 (even n) or 3 (odd n), so that slot k and
+ * slot k + 1, and the last slot and slot 0, never share one; a repeated
+ * family (n > 12) moves one tone on.
+ */
+export function hueOf(i: number, n: number): { hue: number; tone: number } {
   const slot = hueOrder(n)[i];
   if (slot === undefined) throw new RangeError(`hueOf: entry ${i} of ${n}`);
   const families = Math.min(n, HUE_FAMILIES);
-  return { hue: (HUE0 + (slot % families) * (360 / families)) % 360, ring: Math.floor(slot / families) };
+  const period = families % 2 === 0 ? 2 : 3;
+  const ring = Math.floor(slot / families);
+  return { hue: (HUE0 + (slot % families) * (360 / families)) % 360, tone: ((slot % families) % period + ring) % TONES.length };
 }
 
 /** OKLCH (L in 0..1, C, h in degrees) to sRGB in 0..1, reducing chroma until it fits the gamut. */
@@ -83,8 +99,9 @@ const gamma = (c: number) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4
 export function paletteFor(n: number): (readonly [number, number, number])[] {
   const out: (readonly [number, number, number])[] = [];
   for (let i = 0; i < n; i++) {
-    const { hue, ring } = hueOf(i, n);
-    out.push(oklchToSrgb(LIGHTNESS[ring % LIGHTNESS.length]!, CHROMA, hue));
+    const { hue, tone } = hueOf(i, n);
+    const t = TONES[tone]!;
+    out.push(oklchToSrgb(t.L, t.C, hue));
   }
   return out;
 }

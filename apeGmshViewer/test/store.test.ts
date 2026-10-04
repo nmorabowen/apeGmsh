@@ -16,7 +16,7 @@ import { loadModel } from "../src/state/load.ts";
 import { chainOf, inspected, refusalsOf } from "../src/state/selectors.ts";
 import { initialState, reduce, Store, type Event, type State } from "../src/state/store.ts";
 import type { EventType, ModelLoad, Pick } from "../src/state/types.ts";
-import { blobRefsOf, parseRefusal } from "../src/effects.ts";
+import { blobRefsOf, Effects, parseRefusal, type Bridge, type OpenSet } from "../src/effects.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/shoebuckle.h5", import.meta.url));
 
@@ -75,7 +75,13 @@ const archRef = (): { kind: "fem"; blockIndex: number; row: number } => {
   return { kind: "fem", blockIndex, row };
 };
 const archPath = cellPath(model.blocks[archRef().blockIndex]!.ids[archRef().row]!);
-const pick = (decl: string): Pick => ({ decl, at: null });
+const pick = (decl: string): Pick => ({ decl, at: null, nodes: null });
+/** The node tags of a cell, as the viewport reads them from the connectivity blob. */
+function nodesOf(m: ModelFile, r: ElementRef): number[] | null {
+  if (r.kind !== "fem") return null;
+  const b = m.blocks[r.blockIndex]!;
+  return Array.from(b.connectivity.subarray(r.row * b.npe, (r.row + 1) * b.npe));
+}
 
 test("the loaded state is plain data, and every array of the file is a blob the store holds", () => {
   assertPlain(loaded);
@@ -86,13 +92,31 @@ test("the loaded state is plain data, and every array of the file is a blob the 
   assert.equal(loaded.mesh!.elements.length, 2 * 22 + 79, "one segment per beam element");
 });
 
+test("decision 15: an element holds a range into the connectivity blob, never a node copy", () => {
+  const d = loaded.decls[archPath]!;
+  assert.ok(!("nodes" in d.element!), "no per-element node array");
+  assert.deepEqual(d.element!.inlineNodes, []);
+  const block = loaded.blocks[d.element!.cell!.block]!;
+  assert.equal(block.alias, "line2");
+  assert.ok(blobs.has(block.connectivity));
+  const conn = blobs.get(block.connectivity);
+  const r = archRef();
+  assert.deepEqual(Array.from(conn.subarray(r.row * block.npe, (r.row + 1) * block.npe)), nodesOf(model, r));
+  // The shared empties are one object each, not one per element.
+  const other = loaded.decls[loaded.mesh!.elements[0]!]!;
+  assert.equal(d.links, other.links);
+  assert.equal(d.problems, other.problems);
+  assert.equal(d.fields, other.fields);
+});
+
 /** One sample of every event type; the Record type makes a missing type a compile error. */
 const EVERY: Record<EventType, Event> = {
   fileOpened: { type: "fileOpened", artifact: "geometry", path: "x.geometry.h5" },
   fileLoaded: { type: "fileLoaded", artifact: "model", load },
   fileFailed: { type: "fileFailed", artifact: "results", path: "x.results.h5", error: "no reader" },
+  fileClosed: { type: "fileClosed", artifact: "results" },
   fileChanged: { type: "fileChanged", path: model.path },
-  zoneRefused: { type: "zoneRefused", artifact: "model", zone: "neutral", version: "1.9.0", window: "2.32-2.33", reason: "major 2 only" },
+  zoneRefused: { type: "zoneRefused", artifact: "model", zone: "neutral", version: "1.9.0", accepted: "2.10 and any later 2.x", newer: false, reason: "major 2 only" },
   select: { type: "select", pick: pick(archPath) },
   selectAdd: { type: "selectAdd", pick: pick(loaded.mesh!.elements[0]!) },
   clearSelection: { type: "clearSelection" },
@@ -123,7 +147,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 20, "decision 17 lists 20 events");
+  assert.equal(Object.keys(EVERY).length, 21, "decision 17's 20 events plus fileClosed");
 });
 
 test("an event the union does not know raises at run time", () => {
@@ -177,15 +201,130 @@ test("files: opened siblings, a stale model after fileChanged, a refused zone, a
   assert.equal(s.mesh, loaded.mesh);
   s = reduce(s, EVERY.zoneRefused);
   assert.deepEqual(refusalsOf(s), [
-    "model file written by an older apeGmsh: its neutral zone is version 1.9.0, this app reads 2.32-2.33 (major 2 only)",
+    "model file written by an older apeGmsh: its neutral zone is version 1.9.0, this app reads 2.10 and any later 2.x (major 2 only)",
   ]);
+  const newer = reduce(s, { ...EVERY.zoneRefused, version: "3.0.0", newer: true } as Event);
+  assert.match(refusalsOf(newer)[0]!, /^model file written by a newer apeGmsh: its neutral zone is version 3.0.0, this app reads 2.10 and any later 2.x/);
   assert.throws(() => reduce(initialState, EVERY.zoneRefused), /before fileOpened/);
   const failed = reduce(s, { type: "fileFailed", artifact: "model", path: model.path, error: "boom" });
   assert.equal(failed.mesh, null);
-  assert.deepEqual(failed.decls, {});
+  assert.deepEqual(Object.keys(failed.decls), []);
   assert.equal(failed.artifacts.model?.status, "failed");
   assert.equal(failed.artifacts.geometry?.status, "opened", "the siblings survive the model's failure");
   assert.equal(reduce(loaded, EVERY.fileFailed).artifacts.results?.error, "no reader");
+});
+
+test("fileClosed drops a sibling, or the model with its derivations; a mid-read fileChanged survives fileLoaded", () => {
+  let s = reduce(loaded, { type: "fileOpened", artifact: "results", path: "x.results.h5" });
+  s = reduce(s, EVERY.fileClosed);
+  assert.equal(s.artifacts.results, null);
+  assert.equal(reduce(s, EVERY.fileClosed), s, "closing nothing is a no-op");
+  const closed = reduce(s, { type: "fileClosed", artifact: "model" });
+  assert.equal(closed.artifacts.model, null);
+  assert.equal(closed.mesh, null);
+  assert.deepEqual(closed.blocks, []);
+  // fileOpened, then fileChanged while the read runs, then fileLoaded: still stale.
+  let t = reduce(initialState, { type: "fileOpened", artifact: "model", path: model.path });
+  t = reduce(t, EVERY.fileChanged);
+  t = reduce(t, EVERY.fileLoaded);
+  assert.equal(t.artifacts.model?.stale, true);
+  assert.equal(reduce(initialState, EVERY.fileLoaded).artifacts.model?.stale, false);
+});
+
+test("a group or alias named like an Object.prototype member is just a name", () => {
+  const m = structuredClone(model);
+  m.physicalGroups.push({ name: "constructor", dim: 1, tag: 99, path: "/physical_groups/element_side/constructor", elementIds: new Float64Array([m.blocks[0]!.ids[0]!]) });
+  m.labels.push({ name: "__proto__", dim: 1, tag: 98, path: "/labels/__proto__", elementIds: new Float64Array([]) });
+  m.opensees!.names.push({ name: "toString", kind: "geomTransf", tag: 1 });
+  const s = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(m, new BlobStore()) });
+  assert.deepEqual(s.names["constructor"], ["mesh/physical_group/constructor"]);
+  assert.deepEqual(s.names["__proto__"], ["mesh/label/__proto__"]);
+  assert.deepEqual(s.names["toString"], ["opensees/geomTransf/toString"]);
+  assert.equal(s.names["hasOwnProperty"], undefined);
+  assert.equal(s.decls["constructor"], undefined);
+  assert.equal(Object.getPrototypeOf(s.names), null);
+  assert.equal(Object.getPrototypeOf(s.decls), null);
+});
+
+// ---- effects sequencing ------------------------------------------------------
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+/** A bridge whose reads resolve when the test says; `window` is stubbed for attach(). */
+function harness() {
+  const reads: { path: string; d: ReturnType<typeof deferred<{ ok: true; model: ModelFile } | { ok: false; error: string }>> }[] = [];
+  const bridge = {
+    openModel: (path: string) => {
+      const d = deferred<{ ok: true; model: ModelFile } | { ok: false; error: string }>();
+      reads.push({ path, d });
+      return d.promise;
+    },
+  } as unknown as Bridge;
+  const store = new Store();
+  const effects = new Effects(store, new BlobStore(), bridge);
+  const modelAt = (path: string): ModelFile => ({ ...model, path });
+  return { reads, store, effects, modelAt };
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test("effects: open(A) then open(B); A resolving last does not replace B (latest wins)", async () => {
+  const { reads, store, effects, modelAt } = harness();
+  const pa = effects.open("A.h5");
+  const pb = effects.open("B.h5");
+  assert.equal(reads.length, 2);
+  reads[1]!.d.resolve({ ok: true, model: modelAt("B.h5") });
+  assert.equal(await pb, true);
+  assert.equal(store.get().artifacts.model?.path, "B.h5");
+  const meshB = store.get().mesh;
+  reads[0]!.d.resolve({ ok: true, model: modelAt("A.h5") });
+  assert.equal(await pa, false, "a stale read reports that it did not land");
+  assert.equal(store.get().artifacts.model?.path, "B.h5");
+  assert.equal(store.get().mesh, meshB);
+});
+
+test("effects: a fileChanged that arrives during a read is read once more afterwards", async () => {
+  const { reads, store, effects, modelAt } = harness();
+  const p = effects.open("A.h5");
+  store.dispatch({ type: "fileChanged", path: "A.h5" });
+  assert.equal(reads.length, 1, "the change is queued, not read while a read runs");
+  reads[0]!.d.resolve({ ok: true, model: modelAt("A.h5") });
+  assert.equal(await p, true);
+  await tick();
+  assert.equal(reads.length, 2, "one re-read after the first lands");
+  assert.equal(store.get().artifacts.model?.status, "ready");
+  reads[1]!.d.resolve({ ok: true, model: modelAt("A.h5") });
+  await tick();
+  await tick();
+  assert.equal(reads.length, 2, "and only one");
+  assert.equal(store.get().artifacts.model?.stale, false);
+});
+
+test("effects: an open set with results: null closes the results artifact", async () => {
+  const { reads, store, effects, modelAt } = harness();
+  store.dispatch({ type: "fileOpened", artifact: "results", path: "old.results.h5" });
+  effects.openSet({ model: "A.h5", geometry: "A.geometry.h5", results: null } satisfies OpenSet);
+  assert.equal(store.get().artifacts.results, null);
+  assert.equal(store.get().artifacts.geometry?.path, "A.geometry.h5");
+  reads[0]!.d.resolve({ ok: true, model: modelAt("A.h5") });
+  await tick();
+  assert.equal(store.get().artifacts.model?.status, "ready");
+  effects.openSet({ model: null, geometry: null, results: null });
+  assert.equal(store.get().artifacts.model, null);
+  assert.equal(store.get().mesh, null);
+});
+
+test("effects: a refused read records the zone and the failure; the failure is never silent", async () => {
+  const { reads, store, effects } = harness();
+  const p = effects.open("old.h5");
+  reads[0]!.d.resolve({ ok: false, error: "neutral_schema_version 3.0.0: this app reads major 2 only" });
+  assert.equal(await p, false);
+  assert.match(refusalsOf(store.get())[0]!, /a newer apeGmsh.*3\.0\.0.*2\.10 and any later 2\.x/);
+  assert.equal(store.get().artifacts.model?.status, "failed");
 });
 
 test("windows open once and close", () => {
@@ -209,12 +348,25 @@ test("the Store notifies on a change only, and unsubscribe stops it", () => {
   assert.equal(seen.length, 1);
 });
 
-test("the reader's refusal message parses into a zone, a version and the window; anything else does not", () => {
+test("the reader's refusal message parses into a zone, a version, the accepted range (floor through the major) and older/newer", () => {
   assert.deepEqual(parseRefusal("neutral_schema_version 3.0.0: this app reads major 2 only"), {
-    zone: "neutral", version: "3.0.0", window: "2.32-2.33", reason: "this app reads major 2 only",
+    zone: "neutral", version: "3.0.0", accepted: "2.10 and any later 2.x", newer: true, reason: "this app reads major 2 only",
   });
-  assert.equal(parseRefusal("opensees_schema_version 2.9.0: layouts before 2.10 are not supported")?.window, "2.20-2.21");
+  assert.deepEqual(parseRefusal("neutral_schema_version 1.4.0: this app reads major 2 only"), {
+    zone: "neutral", version: "1.4.0", accepted: "2.10 and any later 2.x", newer: false, reason: "this app reads major 2 only",
+  });
+  const old = parseRefusal("neutral_schema_version 2.9.0: layouts before 2.10 are not supported");
+  assert.equal(old?.accepted, "2.10 and any later 2.x", "the floor through the major, never the 2.32-2.33 warn window");
+  assert.doesNotMatch(old!.accepted, /2\.3[23]/);
+  assert.equal(old?.newer, false);
+  assert.equal(parseRefusal("opensees_schema_version 3.1.0: this app reads major 2 only")?.accepted, "2.0 and any later 2.x");
   assert.equal(parseRefusal("/nodes is missing"), null);
+});
+
+test("the accepted range comes from the reader's one floor table", async () => {
+  const { ZONE_FLOOR, NEUTRAL_TARGET } = await import("../src/reader/read.ts");
+  const r = parseRefusal("neutral_schema_version 1.0.0: this app reads major 2 only")!;
+  assert.equal(r.accepted, `${NEUTRAL_TARGET.major}.${ZONE_FLOOR.neutral} and any later ${NEUTRAL_TARGET.major}.x`);
 });
 
 // ---- declaration paths and names -------------------------------------------
@@ -264,9 +416,18 @@ test("oracle: on the fixture, every drawn element's chain from the state equals 
   assert.ok(refs.length > 100);
   for (const r of refs) {
     const expected = flat(resolveChain(model, r));
-    const got = flat(chainOf(loaded, pathOf(model, r))!);
+    const got = flat(chainOf(loaded, pathOf(model, r), nodesOf(model, r))!);
     assert.deepEqual(got, expected, JSON.stringify(r));
   }
+});
+
+test("without a pick (a pinned element) the nodes row names the source and the count", () => {
+  const c = chainOf(loaded, archPath)!;
+  const nodes = c.root.fields.find((f) => f.label === "nodes")!;
+  assert.equal(nodes.value, "2 node tags (select the element to list them)");
+  assert.match(nodes.source, /^\/elements\/line2\/connectivity\[\d+\]$/);
+  const s = reduce(loaded, { type: "select", pick: { decl: archPath, at: null, nodes: nodesOf(model, archRef()) } });
+  assert.equal(inspected(s)[0]!.chain.root.fields.find((f) => f.label === "nodes")!.value, nodesOf(model, archRef())!.join(", "));
 });
 
 // Synthetic models (the failclosed and decoders test helpers), including the
@@ -314,7 +475,7 @@ for (const [name, m, ref] of CASES) {
   test(`oracle (synthetic): ${name}`, () => {
     const s = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(m, new BlobStore()) });
     const expected = flat(resolveChain(m, ref));
-    const got = flat(chainOf(s, pathOf(m, ref))!);
+    const got = flat(chainOf(s, pathOf(m, ref), nodesOf(m, ref))!);
     assert.deepEqual(got, expected);
   });
 }

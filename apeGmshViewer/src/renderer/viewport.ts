@@ -17,6 +17,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { State, Store } from "../state/store.ts";
 import type { DeclPath, MeshInfo, Pick } from "../state/types.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
+import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** Inspector width plus its margins (style.css #inspector). */
 const INSPECTOR_PX = 470 + 28;
@@ -40,13 +41,6 @@ interface MeshIndex {
   info: MeshInfo;
   byPath: Map<DeclPath, number>;
   prims: Map<number, Prims>;
-}
-
-/** Which original segments / triangles / outline edges are drawn, and the drawn-to-original maps. */
-interface Drawn {
-  lineMap: Int32Array;
-  triMap: Int32Array;
-  edgeMask: Uint8Array | null;
 }
 
 export class Viewport {
@@ -213,50 +207,12 @@ export class Viewport {
     return out;
   }
 
-  /** Which original primitives the hidden set leaves visible. */
+  /** Which original primitives the hidden set leaves visible (visible.ts). */
   private visible(s: State, info: MeshInfo): Drawn {
-    const hidden = new Set(s.visibility.hidden);
-    const rowHidden = info.legend.map((e) => e.decl !== null && hidden.has(e.decl));
-    const keep = (group: Int32Array): Int32Array => {
-      if (!rowHidden.some(Boolean)) return Int32Array.from(group.keys());
-      const out: number[] = [];
-      group.forEach((g, i) => {
-        if (!rowHidden[g]) out.push(i);
-      });
-      return Int32Array.from(out);
-    };
-    const lineMap = keep(this.blobs.i32(info.lineGroup));
-    const triMap = keep(this.blobs.i32(info.triGroup));
+    const { lineMap, triMap } = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup));
     const nTri = info.triPositions.shape[0]!;
-    return { lineMap, triMap, edgeMask: triMap.length === nTri ? null : this.edgeMask(info, triMap) };
-  }
-
-  /**
-   * Which outline edges to keep when faces are hidden: an outline edge is a
-   * side of some polygon, and a polygon's sides are sides of its fan
-   * triangles, so an edge stays iff it is a side of a visible triangle.
-   * Vertices are matched by their float32 coordinates, which both buffers
-   * share.
-   */
-  private edgeMask(info: MeshInfo, triMap: Int32Array): Uint8Array {
-    const tp = this.blobs.f32(info.triPositions), ep = this.blobs.f32(info.edgePositions);
-    const vid = new Map<string, number>();
-    const id = (a: Float32Array, o: number) => {
-      const k = `${a[o]},${a[o + 1]},${a[o + 2]}`;
-      let v = vid.get(k);
-      if (v === undefined) vid.set(k, (v = vid.size));
-      return v;
-    };
-    const sides = new Set<number>();
-    const key = (a: number, b: number) => (a < b ? a * 4294967296 + b : b * 4294967296 + a);
-    for (const t of triMap) {
-      const v0 = id(tp, 9 * t), v1 = id(tp, 9 * t + 3), v2 = id(tp, 9 * t + 6);
-      sides.add(key(v0, v1)).add(key(v1, v2)).add(key(v2, v0));
-    }
-    const n = ep.length / 6;
-    const mask = new Uint8Array(n);
-    for (let e = 0; e < n; e++) mask[e] = sides.has(key(id(ep, 6 * e), id(ep, 6 * e + 3))) ? 1 : 0;
-    return mask;
+    const mask = triMap.length === nTri ? null : edgeMask(this.blobs.f32(info.triPositions), this.blobs.f32(info.edgePositions), triMap);
+    return { lineMap, triMap, edgeMask: mask };
   }
 
   private static gather(src: Float32Array, map: Int32Array, stride: number): Float32Array {
@@ -337,11 +293,10 @@ export class Viewport {
     const info = s.mesh;
     if (!info || !this.drawn) return;
     if (rebuild) {
-      const hidden = new Set(s.visibility.hidden);
-      const rowHidden = info.legend.map((e) => e.decl !== null && hidden.has(e.decl));
-      const want = this.visible(s, info);
-      const same = want.lineMap.length === this.drawn.lineMap.length && want.triMap.length === this.drawn.triMap.length;
-      if (!same || rowHidden.length !== info.legend.length) {
+      // Compare what would be drawn with what is drawn, element by element:
+      // isolating one 22-element group after another changes no count.
+      const want = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup));
+      if (!sameDrawn(want, this.drawn)) {
         this.rebuild(s, info);
         return;
       }
@@ -488,7 +443,7 @@ export class Viewport {
     const pick = (e: number, p: THREE.Vector3): Pick => {
       const decl = info.elements[e];
       if (decl === undefined) throw new Error(`viewport: element index ${e} is not in the mesh`);
-      return { decl, at: [p.x, p.y, p.z] };
+      return this.pickOf(decl, [p.x, p.y, p.z]);
     };
     if (this.lines) {
       const hits = this.raycaster
@@ -509,6 +464,21 @@ export class Viewport {
       if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null) return pick(triElement[drawn.triMap[hit.faceIndex]!]!, hit.point);
     }
     return null;
+  }
+
+  /**
+   * The pick of a declaration: the hit point and, for a cell, its node tags
+   * read from the block's connectivity blob (the state holds the range, not
+   * a copy per element).
+   */
+  pickOf(decl: DeclPath, at: readonly [number, number, number] | null): Pick {
+    const s = this.store.get();
+    const cell = s.decls[decl]?.element?.cell;
+    if (!cell) return { decl, at, nodes: null };
+    const block = s.blocks[cell.block];
+    if (!block) throw new Error(`viewport: ${decl} names block ${cell.block}, which the state does not hold`);
+    const conn = this.blobs.get(block.connectivity);
+    return { decl, at, nodes: Array.from(conn.subarray(cell.row * block.npe, (cell.row + 1) * block.npe)) };
   }
 
   /** Client-space point at the middle of a declaration's first drawn primitive. */

@@ -24,6 +24,7 @@ const viewport = new Viewport(document.getElementById("viewport")!, store, blobs
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
+  effects.dispose();
   viewport.dispose();
 });
 
@@ -187,7 +188,7 @@ async function main() {
   const settle = () => new Promise((r) => setTimeout(r, 300));
   viewport.renderNow();
   const tgt = demoTarget(cfg.pick);
-  if (tgt) store.dispatch({ type: "select", pick: { decl: tgt, at: null } });
+  if (tgt) store.dispatch({ type: "select", pick: viewport.pickOf(tgt, null) });
   viewport.renderNow();
   await settle();
   viewport.renderNow();

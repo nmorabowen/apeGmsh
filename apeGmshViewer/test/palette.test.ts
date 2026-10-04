@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HUE_FAMILIES, hueOf, hueOrder, oklchToSrgb, paletteFor } from "../src/state/palette.ts";
+import { HUE_FAMILIES, hueOf, hueOrder, oklchToSrgb, paletteFor, SAME_FAMILY_DEG, TONES } from "../src/state/palette.ts";
 
 const circ = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
 
@@ -32,15 +32,27 @@ test("up to 12 groups: no two share a hue family (>= 30 degrees apart), neighbou
   }
 });
 
+test("up to 12 groups: two hues that read as one family (< 45 degrees apart) never share a tone", () => {
+  // The V1 gate on San Ramon (11 groups): two pinks, orange vs salmon, cyan vs teal.
+  for (let n = 2; n <= HUE_FAMILIES; n++) {
+    const e = [...Array(n).keys()].map((i) => hueOf(i, n));
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      if (circ(e[i]!.hue, e[j]!.hue) < SAME_FAMILY_DEG) {
+        assert.notEqual(e[i]!.tone, e[j]!.tone, `n=${n}: entries ${i} (${e[i]!.hue}) and ${j} (${e[j]!.hue}) share tone ${e[i]!.tone}`);
+        assert.ok(Math.abs(TONES[e[i]!.tone]!.L - TONES[e[j]!.tone]!.L) >= 0.14, `n=${n}: lightness gap`);
+      }
+    }
+  }
+});
+
 test("beyond 12 groups a family repeats in another tone, never the same tone", () => {
   const seen = new Set<string>();
   for (let i = 0; i < 20; i++) {
-    const { hue, ring } = hueOf(i, 20);
-    const key = `${Math.round(hue)}:${ring}`;
+    const { hue, tone } = hueOf(i, 20);
+    const key = `${Math.round(hue)}:${tone}`;
     assert.ok(!seen.has(key), key);
     seen.add(key);
   }
-  assert.ok([...Array(20).keys()].some((i) => hueOf(i, 20).ring === 1));
 });
 
 test("every colour is inside sRGB, and two groups never get the same colour", () => {

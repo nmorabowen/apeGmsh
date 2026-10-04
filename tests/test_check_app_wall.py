@@ -103,6 +103,12 @@ def test_w3_flags_subprocess_py(repo, src):
     "import { readModel } from '../reader/read.ts';\n",        # the HDF5 reader
     "import { BlobStore } from '../state/blobs.ts';\n",        # the BlobStore
     "const b = await import('../state/blobs.ts');\n",          # dynamic import, same target
+    "import { Effects } from '../effects.ts';\n",              # the bypass through effects
+    "import { loadModel } from '../state/load.ts';\n",         # the bypass through the loader
+    "import { reduce } from '../state/reduce.ts';\n",          # not on the allow-list either
+    "import type { ChainNode } from '../chain/resolve.ts';\n", # a type import counts
+    "import * as THREE from 'three';\n",                       # a package
+    "import { thing } from '../ui';\n",                        # ui itself, not a module under ui/
 ])
 def test_w4_flags_panel_import(repo, src):
     _put(repo, "apeGmshViewer/src/panels/header.ts", src)
@@ -115,12 +121,12 @@ def test_w4_flags_from_a_panel_subdirectory(repo):
     assert "panel 'header' imports panel 'legend'" in wall.scan(repo)[0]
 
 
-def test_w4_allows_the_store_selectors_and_own_modules(repo):
+def test_w4_allows_the_store_selectors_types_ui_and_own_modules(repo):
     _put(repo, "apeGmshViewer/src/panels/header.ts", """\
         import { byId, el } from '../ui/dom.ts';
         import { modelSummary } from '../state/selectors.ts';
         import type { State, Store } from '../state/store.ts';
-        import type { BlobRef } from '../state/types.ts';
+        import type { BlobRef, ChainNode } from '../state/types.ts';
         import { rows } from './header/rows.ts';
         // import { Viewport } from '../renderer/viewport.ts' in a comment
         """)
@@ -128,6 +134,7 @@ def test_w4_allows_the_store_selectors_and_own_modules(repo):
         import { mountHeader } from '../panels/header.ts';
         import { mountLegend } from '../panels/legend.ts';
         import { BlobStore } from '../state/blobs.ts';
+        import { Effects } from '../effects.ts';
         """)
     assert wall.scan(repo) == []
 

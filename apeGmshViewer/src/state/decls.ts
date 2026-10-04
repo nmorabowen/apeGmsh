@@ -47,25 +47,31 @@ function uniqueKey(refs: Record<string, unknown>, label: string): string {
   for (let i = 1; ; i++) if (!(`${label}#${i}` in refs)) return `${label}#${i}`;
 }
 
-/** Follow the decoded tag slots of `args` (read from `source`) to their declarations. */
-function followSlots(out: Links, lookup: Lookup, owner: string, decoded: Decoded, args: Param[], source: string, ownerType: string): void {
+/**
+ * Follow the decoded tag slots of `args` (read from `source`) to their
+ * declarations. With `refsOnly`, the link fields and problem texts are not
+ * built (the loader keeps refs alone for every element; the selector builds
+ * the texts for the one shown).
+ */
+function followSlots(out: Links, lookup: Lookup, owner: string, decoded: Decoded, args: readonly Param[], source: string, ownerType: string, refsOnly = false): void {
   if ("reason" in decoded) {
-    out.problems.push(`${owner}: ${ownerType} args not decoded: ${decoded.reason}`);
+    if (!refsOnly) out.problems.push(`${owner}: ${ownerType} args not decoded: ${decoded.reason}`);
     return;
   }
   for (const s of decoded.slots) {
     const tag = args[s.slot];
     if (typeof tag !== "number" || Number.isNaN(tag)) {
-      out.problems.push(`${owner}: ${s.label} (slot ${s.slot}) is missing`);
+      if (!refsOnly) out.problems.push(`${owner}: ${s.label} (slot ${s.slot}) is missing`);
       continue;
     }
     const hits = lookup.byTag(s.family, tag);
     if (hits.length !== 1) {
-      out.problems.push(`${owner}: ${s.label} ${tag} matches ${hits.length} objects in ${FAMILY_DIR[s.family]}`);
+      if (!refsOnly) out.problems.push(`${owner}: ${s.label} ${tag} matches ${hits.length} objects in ${FAMILY_DIR[s.family]}`);
       continue;
     }
     const key = uniqueKey(out.refs, s.label);
     out.refs[key] = hits[0]!;
+    if (refsOnly) continue;
     out.links[key] = {
       label: s.label,
       value: `${tag} in ${FAMILY_DIR[s.family]}`,
@@ -130,15 +136,15 @@ export function objectLinks(obj: OpsObject, lookup: Lookup): Links {
  * The links of an element: one decode per joined element_meta row. `hasOpensees`
  * is whether the file has an /opensees zone at all.
  */
-export function elementLinks(facts: ElementFacts, hasOpensees: boolean, lookup: Lookup): Links {
+export function elementLinks(facts: ElementFacts, hasOpensees: boolean, lookup: Lookup, refsOnly = false): Links {
   const out: Links = { refs: {}, links: {}, problems: [] };
-  if (facts.cell) {
+  if (facts.cell && !refsOnly) {
     if (!hasOpensees) out.problems.push("the file has no /opensees zone: there is no definition chain");
     else if (facts.metas.length === 0) out.problems.push(`FEM element ${facts.femId} has no row in /opensees/element_meta/*/fem_eids`);
   }
   for (const m of facts.metas) {
-    const dec: Decoded = ELEMENT_SYNTAX[m.type]?.(m.args) ?? { reason: `element type ${m.type} is not in the syntax table` };
-    followSlots(out, lookup, `${m.h5}[${m.row}]`, dec, m.args, `${m.h5}/args[${m.row}]`, m.type);
+    const dec: Decoded = ELEMENT_SYNTAX[m.type]?.(m.args as Param[]) ?? { reason: `element type ${m.type} is not in the syntax table` };
+    followSlots(out, lookup, refsOnly ? "" : `${m.h5}[${m.row}]`, dec, m.args, refsOnly ? "" : `${m.h5}/args[${m.row}]`, m.type, refsOnly);
   }
   return out;
 }
@@ -167,15 +173,25 @@ export function objectFields(obj: OpsObject): Field[] {
   return fields;
 }
 
-/** The read fields of an element, derived from its facts (the chain selector calls this on demand). */
-export function elementFields(facts: ElementFacts, groupNames: string[]): Field[] {
+/**
+ * The read fields of an element, derived from its facts (the chain selector
+ * calls this on demand). `nodes` is the cell's node tags as the pick read
+ * them from the connectivity blob; without them (a pinned element with no
+ * pick) the row names the source and the count only.
+ */
+export function elementFields(facts: ElementFacts, groupNames: string[], nodes: readonly number[] | null, npe: number | null): Field[] {
   const fields: Field[] = [];
   if (facts.cell) {
     const path = `/elements/${facts.cell.alias}`;
     fields.push(
       { label: "FEM id", value: String(facts.femId), source: `${path}/ids[${facts.cell.row}]`, interpreted: false },
       { label: "cell type", value: facts.cell.alias, source: `${path} (group name)`, interpreted: false },
-      { label: "nodes", value: facts.nodes.join(", "), source: `${path}/connectivity[${facts.cell.row}]`, interpreted: false },
+      {
+        label: "nodes",
+        value: nodes ? nodes.join(", ") : `${npe ?? "?"} node tags (select the element to list them)`,
+        source: `${path}/connectivity[${facts.cell.row}]`,
+        interpreted: false,
+      },
       {
         label: "physical groups",
         value: groupNames.join(", ") || "(none)",
@@ -187,7 +203,7 @@ export function elementFields(facts: ElementFacts, groupNames: string[]): Field[
     const m = facts.metas[0];
     fields.push({
       label: "nodes",
-      value: facts.nodes.length ? facts.nodes.join(", ") : "(none)",
+      value: facts.inlineNodes.length ? facts.inlineNodes.join(", ") : "(none)",
       source: `${m?.h5 ?? "?"}/inline_connectivity[${m?.row ?? "?"}]`,
       interpreted: false,
       note: "OpenSees-only element: no neutral-zone cell",

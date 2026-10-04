@@ -15,13 +15,14 @@ output are never read; comment-only lines are skipped):
 - W3 subprocess:        a statement calling spawn/exec/fork/subprocess.*/os.system that
                         also mentions python, `py`, a `.py` path or apeGmsh (not
                         `apeGmshViewer` alone).
-- W4 panel-import:      ADR 0112 D6. A module under `apeGmshViewer/src/panels/<a>` whose
-                        relative specifier resolves to `src/panels/<b>` (b != a), to
-                        `src/render/` or `src/renderer/`, to the HDF5 reader
-                        (`src/reader/`) or to the BlobStore (`src/state/blobs`). Panels
-                        dispatch events and read selectors; they never reach each other,
-                        the viewport, the file or the arrays. `npm run lint`
-                        (dependency-cruiser) holds the same rules over the same graph.
+- W4 panel-import:      ADR 0112 D6. A module under `apeGmshViewer/src/panels/<a>` may
+                        import only `src/state/store`, `src/state/selectors`,
+                        `src/state/types`, `src/ui/*` and its own directory
+                        `src/panels/<a>/*` (an allow-list; `import type` counts). Any
+                        other specifier, relative or bare, fails: another panel, the
+                        viewport, the reader, the BlobStore, effects, the loader, a
+                        package. Panels dispatch events and read selectors. `npm run
+                        lint` (dependency-cruiser) holds the same rule over the same graph.
 
     python scripts/check_app_wall.py              # this checkout
     python scripts/check_app_wall.py --root DIR   # another git tree
@@ -57,13 +58,9 @@ SPAWN = re.compile(
 MENTIONS = re.compile(r"python|\bpy\b|\.py\b|apegmsh(?!viewer)", re.IGNORECASE)
 
 PANELS = f"{APP}/src/panels/"
-# Resolved import targets a panel may not reach (W4), as (prefix-or-exact, why).
-PANEL_FORBIDDEN = [
-    (f"{APP}/src/render/", "the viewport (src/render/)"),
-    (f"{APP}/src/renderer/", "the viewport (src/renderer/)"),
-    (f"{APP}/src/reader/", "the HDF5 reader (src/reader/)"),
-    (f"{APP}/src/state/blobs", "the BlobStore (src/state/blobs)"),
-]
+# The resolved import targets a panel may reach (W4): exact modules and prefixes.
+PANEL_ALLOW_MODULES = {f"{APP}/src/state/store", f"{APP}/src/state/selectors", f"{APP}/src/state/types"}
+PANEL_ALLOW_PREFIXES = (f"{APP}/src/ui/",)
 
 
 def _panel_of(path: str) -> str | None:
@@ -74,18 +71,21 @@ def _panel_of(path: str) -> str | None:
     return first.rsplit(".", 1)[0] if "." in first else first
 
 
-def _panel_violation(rel: str, target: str) -> str | None:
-    """Why a panel module may not import `target` (a resolved repo path), or None."""
+def _panel_violation(rel: str, spec: str, target: str | None) -> str | None:
+    """Why a panel module may not import `spec` (resolved to `target` when relative), or None."""
     me = _panel_of(rel)
     if me is None:
         return None
+    if target is None:
+        return f"panel '{me}' imports the package '{spec}'; panels import the store, selectors, types and ui/ only"
+    stem = target.rsplit(".", 1)[0] if Path(target).suffix in JS_EXTS else target
+    if stem in PANEL_ALLOW_MODULES or target.startswith(PANEL_ALLOW_PREFIXES):
+        return None
+    if target.startswith(f"{PANELS}{me}/"):
+        return None
     other = _panel_of(target)
-    if other is not None and other != me:
-        return f"panel '{me}' imports panel '{other}'"
-    for prefix, why in PANEL_FORBIDDEN:
-        if target == prefix or target.startswith(prefix):
-            return f"panel '{me}' imports {why}"
-    return None
+    what = f"panel '{other}'" if other is not None else f"'{target[len(APP) + 1:]}'"
+    return f"panel '{me}' imports {what}; panels import the store, selectors, types and ui/ only"
 
 
 def _tracked(root: Path) -> list[str]:
@@ -142,15 +142,16 @@ def scan(root: Path) -> list[str]:
                     spec = m.group(1)
                     n = body.count("\n", 0, m.start(1)) + 1
                     low = spec.lower()
+                    target = None
                     if low == "apegmsh" or low.startswith("apegmsh/"):
                         add(n, "W2", "module-specifier", f"bare specifier '{spec}'")
                     elif spec.startswith("."):
                         target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), spec))
                         if target != APP and not target.startswith(APP + "/"):
                             add(n, "W2", "module-specifier", f"'{spec}' resolves outside {APP}/")
-                        why = _panel_violation(rel, target)
-                        if why:
-                            add(n, "W4", "panel-import", f"{why}: '{spec}'")
+                    why = _panel_violation(rel, spec, target)
+                    if why:
+                        add(n, "W4", "panel-import", f"{why}: '{spec}'")
         for i, ln in enumerate(blanked):
             if ln and SPAWN.search(ln) and MENTIONS.search(_statement(blanked, i)):
                 add(i + 1, "W3", "subprocess", ln)

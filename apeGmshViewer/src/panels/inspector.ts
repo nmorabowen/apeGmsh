@@ -2,9 +2,9 @@
 // of the selection, from the `inspected` selector. A pin button dispatches
 // `inspectorPin` / `inspectorUnpin`.
 
-import type { ChainNode, Field } from "../chain/resolve.ts";
 import { inspected } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
+import type { ChainNode, Field } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const ROLE_LABEL: Record<ChainNode["role"], string> = {

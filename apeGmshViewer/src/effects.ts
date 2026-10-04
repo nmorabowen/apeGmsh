@@ -9,7 +9,7 @@
 // works before and after that PR.
 
 import type { ModelFile } from "./model/types.ts";
-import { NEUTRAL_TARGET, OPENSEES_TARGET } from "./reader/read.ts";
+import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadModel } from "./state/load.ts";
 import type { Store } from "./state/store.ts";
@@ -38,9 +38,9 @@ export interface Bridge {
   captureStill(suffix: string): Promise<string | null>;
   captureDone(): Promise<void>;
   fail(message: string): Promise<void>;
-  /** V2f: replays the set already open at subscription, then every later open; the page must not also load `config().file` */
-  onOpen?(cb: (set: OpenSet) => void): void;
-  onFileChanged?(cb: (path: string) => void): void;
+  /** V2f: replays the set already open at subscription, then every later open; the page must not also load `config().file`. Returns the unsubscribe. */
+  onOpen?(cb: (set: OpenSet) => void): (() => void) | void;
+  onFileChanged?(cb: (path: string) => void): (() => void) | void;
   /** V2f: ask main to open a dropped file; main answers through `onOpen` */
   requestOpen?(path: string): Promise<unknown>;
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
@@ -48,15 +48,21 @@ export interface Bridge {
 
 /**
  * A reader refusal, from the message the reader throws (`<zone>_schema_version
- * <version>: <reason>`): the zone, its version and the window this app reads.
+ * <version>: <reason>`): the zone, its version, the range this app accepts
+ * (the zone's floor through the current major, from the reader's one floor
+ * table; a later minor is read with a banner, so it is not a refusal) and
+ * whether the file is ahead of this app (a newer major) or below the floor.
  * Any other message is a plain load failure. (#1303 owns the reader's policy;
  * a structured refusal across the bridge would retire this parse.)
  */
-export function parseRefusal(error: string): { zone: string; version: string; window: string; reason: string } | null {
-  const m = /^(neutral|opensees)_schema_version (\d+\.\d+\.\d+): (.+)$/.exec(error);
+export function parseRefusal(error: string): { zone: string; version: string; accepted: string; newer: boolean; reason: string } | null {
+  const m = /^(neutral|opensees)_schema_version (\d+)\.(\d+)\.(\d+): (.+)$/.exec(error);
   if (!m) return null;
-  const t = m[1] === "neutral" ? NEUTRAL_TARGET : OPENSEES_TARGET;
-  return { zone: m[1]!, version: m[2]!, window: `${t.major}.${t.minor - 1}-${t.major}.${t.minor}`, reason: m[3]! };
+  const zone = m[1] as keyof typeof ZONE_FLOOR;
+  const major = Number(m[2]);
+  const t = zone === "neutral" ? NEUTRAL_TARGET : OPENSEES_TARGET;
+  const accepted = `${t.major}.${ZONE_FLOOR[zone]} and any later ${t.major}.x`;
+  return { zone, version: `${major}.${m[3]}.${m[4]}`, accepted, newer: major > t.major, reason: m[5]! };
 }
 
 /** Every BlobRef the state holds (what the BlobStore keeps after a load). */
@@ -67,6 +73,7 @@ export function blobRefsOf(s: State): BlobRef[] {
     out.push(m.linePositions, m.triPositions, m.edgePositions, m.lineElement, m.triElement, m.lineGroup, m.triGroup);
   }
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
+  for (const b of s.blocks) out.push(b.connectivity);
   return out;
 }
 
@@ -74,7 +81,10 @@ export class Effects {
   private readonly store: Store;
   private readonly blobs: BlobStore;
   private readonly bridge: Bridge;
-  private loading: string | null = null;
+  /** The latest open wins: a read that finishes after a newer open started is dropped. */
+  private openToken = 0;
+  private reading = false;
+  private readonly off: (() => void)[] = [];
 
   constructor(store: Store, blobs: BlobStore, bridge: Bridge) {
     this.store = store;
@@ -82,13 +92,15 @@ export class Effects {
     this.bridge = bridge;
   }
 
-  /** Open a model artifact; resolves true when it loaded. */
+  /** Open a model artifact; resolves true when it loaded and is still the latest open. */
   async open(path: string): Promise<boolean> {
-    if (this.loading === path) return false;
-    this.loading = path;
+    const token = ++this.openToken;
+    this.reading = true;
+    this.store.dispatch({ type: "fileOpened", artifact: "model", path });
+    let loaded = false;
     try {
-      this.store.dispatch({ type: "fileOpened", artifact: "model", path });
       const res = await this.bridge.openModel(path);
+      if (token !== this.openToken) return false;
       if (!res.ok) {
         const refusal = parseRefusal(res.error);
         if (refusal) this.store.dispatch({ type: "zoneRefused", artifact: "model", ...refusal });
@@ -99,22 +111,40 @@ export class Effects {
       for (const w of load.info.warnings) console.warn(w);
       this.store.dispatch({ type: "fileLoaded", artifact: "model", load });
       this.blobs.retain(blobRefsOf(this.store.get()));
+      loaded = true;
       return true;
     } catch (err) {
+      if (token !== this.openToken) return false;
       const error = err instanceof Error ? err.message : String(err);
       this.store.dispatch({ type: "fileFailed", artifact: "model", path, error });
       return false;
     } finally {
-      this.loading = null;
+      if (token === this.openToken) {
+        this.reading = false;
+        // A fileChanged that arrived during this read: read once more.
+        const m = this.store.get().artifacts.model;
+        if (loaded && m && m.path === path && m.stale) void this.open(path);
+      }
     }
   }
 
-  /** The files a V2f `onOpen` names: the model is read; the siblings are recorded until their readers exist (V2f phase 2). */
+  /**
+   * The files a V2f `onOpen` names: the model is read; the siblings are
+   * recorded until their readers exist (V2f phase 2); a kind the set does not
+   * name is closed.
+   */
   openSet(set: OpenSet): void {
     for (const k of ["geometry", "results"] as const) {
       if (set[k]) this.store.dispatch({ type: "fileOpened", artifact: k, path: set[k]! });
+      else this.store.dispatch({ type: "fileClosed", artifact: k });
     }
     if (set.model) void this.open(set.model);
+    else this.store.dispatch({ type: "fileClosed", artifact: "model" });
+  }
+
+  /** Detach everything `attach` and the bridge subscriptions registered. */
+  dispose(): void {
+    for (const f of this.off.splice(0)) f();
   }
 
   /** Jump to the user code that declared something; without V2f it says so. */
@@ -146,20 +176,26 @@ export class Effects {
     };
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);
-    if (typeof this.bridge.onOpen === "function") this.bridge.onOpen((set) => this.openSet(set));
-    if (typeof this.bridge.onFileChanged === "function") {
-      this.bridge.onFileChanged((path) => this.store.dispatch({ type: "fileChanged", path }));
-    }
-    // A file rewritten on disk (D1 rewrites on every run) is read again.
-    const unsubscribe = this.store.subscribe((s) => {
-      const m = s.artifacts.model;
-      if (m && m.stale && this.loading === null) void this.open(m.path);
-    });
-    return () => {
+    this.off.push(() => {
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("drop", onDrop);
-      unsubscribe();
+    });
+    const keep = (u: (() => void) | void) => {
+      if (typeof u === "function") this.off.push(u);
     };
+    if (typeof this.bridge.onOpen === "function") keep(this.bridge.onOpen((set) => this.openSet(set)));
+    if (typeof this.bridge.onFileChanged === "function") {
+      keep(this.bridge.onFileChanged((path) => this.store.dispatch({ type: "fileChanged", path })));
+    }
+    // A file rewritten on disk (D1 rewrites on every run) is read again; one
+    // that changes mid-read is re-read when that read ends (see `open`).
+    this.off.push(
+      this.store.subscribe((s) => {
+        const m = s.artifacts.model;
+        if (m && m.stale && !this.reading) void this.open(m.path);
+      }),
+    );
+    return () => this.dispose();
   }
 
   /** The artifact kinds whose path is known (for the header). */
