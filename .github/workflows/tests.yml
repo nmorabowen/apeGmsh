@@ -319,16 +319,24 @@ jobs:
       # Files are discovered, not hardcoded, so a new qt-marked file
       # joins the lane automatically. All files run even after a
       # failure; the job fails at the end so one CI run reports the
-      # full per-file picture.
+      # full per-file picture. The directories searched are the ones
+      # tests/test_qt_lane_coverage.py requires (#1241): a qt-marked
+      # file outside them would run nowhere. tests/sections files
+      # skip unless the platform is offscreen, so they get that
+      # platform per file; everything else keeps the job's xcb.
       - name: Run qt tests (one process + one X server per file)
         run: |
           failed=0
-          for f in $(grep -rl "pytest\.mark\.qt" tests/viewers --include="*.py" | sort); do
+          for f in $(grep -rl "pytest\.mark\.qt" tests/viewers tests/sections tests/studio --include="*.py" | sort); do
             echo "::group::${f}"
+            case "${f}" in
+              tests/sections/*) platform=offscreen ;;
+              *) platform=xcb ;;
+            esac
             # timeout: a test that loses its window-close path hangs
             # the Qt loop forever (seen on the lane's first run) — cap
             # each file rather than eating the 6 h job limit.
-            timeout 300 xvfb-run -a pytest "${f}" -q -p no:cacheprovider -m qt \
+            QT_QPA_PLATFORM="${platform}" timeout 300 xvfb-run -a pytest "${f}" -q -rs -p no:cacheprovider -m qt \
               || { failed=1; echo "::error::qt lane failed in ${f}"; }
             echo "::endgroup::"
           done
