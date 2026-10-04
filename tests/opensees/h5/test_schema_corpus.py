@@ -34,6 +34,7 @@ import hashlib
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -300,16 +301,171 @@ def test_variants_are_the_shim_ledger() -> None:
         assert e["why"] == why, f"{e['variant']}: the manifest's why text lags the builder's"
 
 
-def test_builder_refuses_a_current_minor_no_base_commit_stamps() -> None:
-    """A bump PR run against a stale base cannot record its own minor as an
-    ``unwritten`` gap (which INV-6 accepts) and land without the file."""
+def test_builder_refuses_a_head_that_does_not_stamp_the_current_minor() -> None:
+    """A bump PR run without ``--base HEAD`` (or with the bump uncommitted)
+    cannot record its own minor as an ``unwritten`` gap (which INV-6
+    accepts) and land without the file."""
     builder = _builder()
-    bumps = [("a" * 40, "2.21.0"), ("b" * 40, "2.22.0")]
-    builder.check_current_is_written("opensees", (2, 22), bumps)
-    with pytest.raises(RuntimeError, match="2.23.x but no first-parent commit"):
-        builder.check_current_is_written("opensees", (2, 23), bumps)
+    head = "b" * 40
+    builder.check_head_writes_current("opensees", (2, 22), head, "2.22.0")
+    builder.check_head_writes_current("opensees", (2, 22), head, "2.22.3")
+    with pytest.raises(RuntimeError, match="2.23.x but bbbbbbbbbb stamps 2.22.0"):
+        builder.check_head_writes_current("opensees", (2, 23), head, "2.22.0")
     with pytest.raises(RuntimeError, match="--base HEAD"):
-        builder.check_current_is_written("opensees", (2, 23), [])
+        builder.check_head_writes_current("opensees", (2, 23), head, "2.22.0")
+
+
+# ---------------------------------------------------------------------------
+# #1365 — every non-current era SHA is on main. The builder takes the history
+# and every non-current era from the merge-base with origin/main; only the
+# current minor is written by --base (HEAD in a bump PR), so a squash merge
+# can orphan nothing the manifest keeps.
+# ---------------------------------------------------------------------------
+
+REPO = BUILDER.parents[1]
+
+#: The two writer files the builder reads (``build_schema_corpus.ZONES``),
+#: with a one-line body that its ``_const`` regex finds.
+_WRITERS = {
+    "neutral": ("src/apeGmsh/mesh/_femdata_h5_io.py", "NEUTRAL_SCHEMA"),
+    "opensees": ("src/apeGmsh/opensees/emitter/h5.py", "SCHEMA"),
+}
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _is_ancestor(root: Path, sha: str, of: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", sha, of],
+        capture_output=True,
+    ).returncode == 0
+
+
+def _is_current(entry: dict[str, Any]) -> bool:
+    return _minor_of(entry["minor"]) == _v(MANIFEST["current"][entry["zone"]])[1]
+
+
+def test_manifest_non_current_era_shas_are_on_main() -> None:
+    """Every non-current era's commit (and the bump commits it records) is an
+    ancestor of ``origin/main``: it was resolved on main's first-parent line,
+    not on a PR branch a squash merge orphans. The current minor is written
+    by ``--base`` and is re-anchored by the next bump, so it is not held.
+
+    Needs a full clone with ``origin/main``: a shallow CI checkout skips, and
+    says so, rather than passing on nothing.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH: cannot check origin/main ancestry")
+    if subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "-q",
+                       "refs/remotes/origin/main"], capture_output=True).returncode != 0:
+        pytest.skip("origin/main is absent (a shallow CI clone): MANIFEST era "
+                    "SHAs cannot be checked for main ancestry here; run this test "
+                    "locally in a full clone")
+    if _git(REPO, "rev-parse", "--is-shallow-repository") == "true":
+        pytest.skip("shallow repository: main's history is cut, so MANIFEST era "
+                    "SHAs cannot be checked for ancestry; run locally in a full clone")
+    checked, off_main = [], []
+    for e in ENTRIES:
+        if "sha" not in e or _is_current(e):
+            continue
+        for sha in (e["sha"], *e.get("bump_commits", [])):
+            checked.append(sha)
+            if not _is_ancestor(REPO, sha, "origin/main"):
+                off_main.append(f"{_id(e)}: {sha}")
+    assert checked, "the manifest holds no non-current era with a commit"
+    assert not off_main, (
+        "non-current era SHAs that are not on origin/main (a squash merge orphaned "
+        "a PR-branch SHA, #1365); rebuild those eras on main with "
+        "scripts/build_schema_corpus.py --zone <Z> --minor <M>:\n" + "\n".join(off_main)
+    )
+
+
+def _write_writer(repo: Path, zone: str, version: str, *, trailer: str = "") -> None:
+    path, prefix = _WRITERS[zone]
+    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(
+        f'{prefix}_FLOOR: str = "2.1.0"\n{prefix}_VERSION: str = "{version}"\n{trailer}',
+        encoding="utf-8",
+    )
+
+
+def _commit(repo: Path, msg: str) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", msg)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_builder_anchors_non_current_eras_on_the_merge_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A multi-commit bump PR on top of main, the shape #1365 reproduced.
+
+    main: A stamps 2.1, B stamps 2.2, C touches nothing of the writer. The
+    branch: D1 edits the writer without a bump, D2 stamps 2.3, D3 edits it
+    again. Under ``--base HEAD`` the 2.2 era must be C (main's last 2.2
+    writer, the merge-base), never D1 (the bump's first parent on the
+    branch, which the pre-fix builder recorded); 2.1 stays A; and only
+    the current 2.3 is written by HEAD, D3.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _write_writer(repo, "neutral", "2.1.0")
+    _write_writer(repo, "opensees", "2.1.0")
+    a = _commit(repo, "opensees 2.1.0")
+    _write_writer(repo, "opensees", "2.2.0")
+    b = _commit(repo, "opensees 2.2.0")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+    c = _commit(repo, "unrelated change on main")
+    _git(repo, "update-ref", "refs/remotes/origin/main", c)
+    _git(repo, "checkout", "-q", "-b", "bump-pr")
+    _write_writer(repo, "opensees", "2.2.0", trailer="# branch-only writer tweak\n")
+    d1 = _commit(repo, "writer tweak on the branch")
+    _write_writer(repo, "opensees", "2.3.0", trailer="# branch-only writer tweak\n")
+    d2 = _commit(repo, "opensees 2.3.0")
+    _write_writer(repo, "opensees", "2.3.0", trailer="# two branch-only tweaks\n")
+    d3 = _commit(repo, "second tweak on the branch")
+
+    builder = _builder()
+    monkeypatch.setattr(builder, "ROOT", repo)
+    monkeypatch.setattr(builder, "MANIFEST", repo / "MANIFEST.json")  # absent
+    monkeypatch.setattr(builder, "VARIANTS", {})  # the real variants name eras this repo lacks
+
+    # The CLI the bridge guide names, run from the PR head.
+    assert builder.main(["--list", "--zone", "opensees", "--base", "HEAD"]) == 0
+    rows = {ln.split()[1]: ln.split()[2] for ln in capsys.readouterr().out.splitlines()}
+    assert rows == {"2.1": a[:10], "2.2": c[:10], "2.3": d3[:10]}, (
+        f"--list resolved {rows}; the pre-fix builder gave 2.2 the branch commit "
+        f"{d1[:10]} (the bump's first parent), which a squash merge orphans"
+    )
+
+    # The plan in full: every non-current era on origin/main, the current one at HEAD.
+    eras = {builder._mstr(e.minor): e for e in builder.plan("opensees", c, d3)}
+    assert (eras["2.1"].sha, eras["2.1"].version, eras["2.1"].bumps) == (a, "2.1.0", [a])
+    assert (eras["2.2"].sha, eras["2.2"].version, eras["2.2"].bumps) == (c, "2.2.0", [b])
+    assert (eras["2.3"].sha, eras["2.3"].version, eras["2.3"].bumps) == (d3, "2.3.0", [d2])
+    for minor, era in eras.items():
+        if minor != "2.3":
+            assert _is_ancestor(repo, era.sha, "origin/main"), f"{minor}: {era.sha} is off main"
+            assert all(_is_ancestor(repo, s, "origin/main") for s in era.bumps)
+    assert not _is_ancestor(repo, eras["2.3"].sha, "origin/main")
+
+    # Without --base HEAD the merge-base writes 2.2, not the tree's 2.3: refused.
+    with pytest.raises(RuntimeError, match=r"2\.3\.x but .* stamps 2\.2\.0.*--base HEAD"):
+        builder.main(["--list", "--zone", "opensees"])
+
+    # On main itself (HEAD is the merge-base, tree at 2.2) the plan is self-contained.
+    _git(repo, "checkout", "-q", "main")
+    assert builder.main(["--list", "--zone", "opensees"]) == 0
+    rows = {ln.split()[1]: ln.split()[2] for ln in capsys.readouterr().out.splitlines()}
+    assert rows == {"2.1": a[:10], "2.2": c[:10]}
 
 
 # ---------------------------------------------------------------------------
