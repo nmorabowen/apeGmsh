@@ -1,0 +1,56 @@
+// R2 (#1283): the generated group palette, against the closed forms of its
+// construction: n evenly spaced hues (one 30-degree family each up to 12),
+// a legend order whose neighbours are far apart on the wheel, and sRGB
+// values inside the gamut.
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { HUE_FAMILIES, hueOf, hueOrder, oklchToSrgb, paletteFor } from "../src/state/palette.ts";
+
+const circ = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+
+test("hueOrder is a permutation whose consecutive entries are at least floor(n/2) - 1 slots apart", () => {
+  for (let n = 1; n <= 24; n++) {
+    const order = hueOrder(n);
+    assert.deepEqual([...order].sort((a, b) => a - b), [...Array(n).keys()], `n=${n} permutation`);
+    const minStep = Math.max(0, Math.floor(n / 2) - 1);
+    for (let i = 1; i < n; i++) {
+      const d = Math.min(Math.abs(order[i]! - order[i - 1]!), n - Math.abs(order[i]! - order[i - 1]!));
+      assert.ok(d >= minStep, `n=${n}: entries ${i - 1},${i} are ${d} slots apart (< ${minStep})`);
+    }
+  }
+});
+
+test("up to 12 groups: no two share a hue family (>= 30 degrees apart), neighbours contrast", () => {
+  for (let n = 2; n <= HUE_FAMILIES; n++) {
+    const hues = [...Array(n).keys()].map((i) => hueOf(i, n).hue);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) assert.ok(circ(hues[i]!, hues[j]!) >= 360 / n - 1e-9, `n=${n}: ${i},${j}`);
+    for (let i = 1; i < n; i++) {
+      const expected = Math.max(1, Math.floor(n / 2) - 1) * (360 / n);
+      assert.ok(circ(hues[i]!, hues[i - 1]!) >= expected - 1e-9, `n=${n}: neighbours ${i - 1},${i}: ${circ(hues[i]!, hues[i - 1]!)} < ${expected}`);
+    }
+  }
+});
+
+test("beyond 12 groups a family repeats in another tone, never the same tone", () => {
+  const seen = new Set<string>();
+  for (let i = 0; i < 20; i++) {
+    const { hue, ring } = hueOf(i, 20);
+    const key = `${Math.round(hue)}:${ring}`;
+    assert.ok(!seen.has(key), key);
+    seen.add(key);
+  }
+  assert.ok([...Array(20).keys()].some((i) => hueOf(i, 20).ring === 1));
+});
+
+test("every colour is inside sRGB, and two groups never get the same colour", () => {
+  for (const n of [1, 3, 6, 12, 20]) {
+    const p = paletteFor(n);
+    assert.equal(p.length, n);
+    for (const c of p) for (const v of c) assert.ok(v >= 0 && v <= 1, `${c}`);
+    assert.equal(new Set(p.map((c) => c.join(","))).size, n, `n=${n} distinct`);
+  }
+  // Grey (chroma 0) at L = 1 is white; OKLCH's own closed form.
+  assert.deepEqual(oklchToSrgb(1, 0, 0).map((v) => Math.round(v * 100) / 100), [1, 1, 1]);
+  assert.deepEqual(oklchToSrgb(0, 0, 0), [0, 0, 0]);
+});

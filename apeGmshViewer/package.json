@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test \"test/**/*.test.ts\"",
+    "lint": "depcruise --config .dependency-cruiser.cjs src",
     "start": "node scripts/build.mjs && node scripts/launch.mjs view",
     "measure": "node scripts/build.mjs && node scripts/launch.mjs measure",
     "capture": "node scripts/build.mjs && node scripts/launch.mjs capture",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/node": "24.19.1",
     "@types/three": "0.186.0",
+    "dependency-cruiser": "18.5.0",
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",

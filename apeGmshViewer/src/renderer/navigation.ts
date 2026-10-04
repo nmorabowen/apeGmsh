@@ -90,6 +90,25 @@ export function zoomToward(camera: THREE.Camera, point: THREE.Vector3, keep: num
   camera.updateMatrixWorld();
 }
 
+/** Zoom limits, as fractions of the model's bounding radius: the camera never comes closer to the zoom point than ZOOM_MIN, nor farther than ZOOM_MAX. */
+export const ZOOM_MIN = 1e-3;
+export const ZOOM_MAX = 40;
+
+/**
+ * The `keep` factor a wheel step may apply from `distance` (camera to the zoom
+ * point), clamped so the new distance stays in [ZOOM_MIN, ZOOM_MAX] * radius.
+ * A camera already outside the band can only move back into it.
+ */
+export function clampZoom(distance: number, keep: number, radius: number): number {
+  const lo = ZOOM_MIN * radius, hi = ZOOM_MAX * radius;
+  if (distance <= 0) return 1;
+  const next = THREE.MathUtils.clamp(distance * keep, lo, hi);
+  // Outside the band, allow only the direction that re-enters it.
+  if (distance < lo && keep < 1) return 1;
+  if (distance > hi && keep > 1) return 1;
+  return next / distance;
+}
+
 /** The nearest point where the ray hits `targets`, or null on a miss. */
 export function nearestHit(raycaster: THREE.Raycaster, targets: readonly THREE.Object3D[]): THREE.Vector3 | null {
   const hit = raycaster.intersectObjects(targets as THREE.Object3D[], false)[0];
@@ -109,10 +128,24 @@ export function clipPlanes(camera: THREE.PerspectiveCamera, center: THREE.Vector
   camera.updateProjectionMatrix();
 }
 
+/** The subset of a DOM event target the navigator listens on (a canvas, or `window` for keys). */
+export interface ListenTarget {
+  addEventListener(type: string, listener: (e: Event) => void, options?: AddEventListenerOptions | boolean): void;
+  removeEventListener(type: string, listener: (e: Event) => void, options?: EventListenerOptions | boolean): void;
+}
+
 /** What the navigator needs from the viewport. */
 export interface NavHost {
   readonly camera: THREE.PerspectiveCamera;
-  readonly element: HTMLElement;
+  /** the canvas: pointer and wheel events, pointer capture, its height for drag rates */
+  readonly element: ListenTarget & {
+    readonly clientHeight: number;
+    setPointerCapture(id: number): void;
+    hasPointerCapture(id: number): boolean;
+    releasePointerCapture(id: number): void;
+  };
+  /** where key events arrive (the window) */
+  readonly keys: ListenTarget;
   /** The model's bounding box centre and radius, or null when no model is loaded. */
   bounds(): { center: THREE.Vector3; radius: number } | null;
   /** The mesh point under a client-space point, or null on a miss. */
@@ -128,23 +161,55 @@ export interface NavHost {
 /** Wheel: one 100 px notch keeps 1/1.15 of the distance (zoom in) or 1.15 of it (out). */
 const WHEEL_STEP = 1.15;
 
+interface Drag {
+  id: number;
+  action: DragAction | null;
+  click: boolean;
+  x0: number;
+  y0: number;
+  x: number;
+  y: number;
+  pivot: THREE.Vector3;
+  depth: number;
+}
+
 export class Navigator {
   heading: Heading = { yaw: 0, tilt: 0 };
   /** The centre the last fit framed; scripted orbits turn about it. */
   readonly target = new THREE.Vector3();
   private readonly host: NavHost;
-  private drag: { id: number; action: DragAction | null; click: boolean; x0: number; y0: number; x: number; y: number; pivot: THREE.Vector3; depth: number } | null = null;
+  private drag: Drag | null = null;
+  private readonly off: (() => void)[] = [];
 
   constructor(host: NavHost) {
     this.host = host;
+    const on = <E>(target: ListenTarget, type: string, fn: (e: E) => void, options?: AddEventListenerOptions) => {
+      const listener = fn as unknown as (e: Event) => void;
+      target.addEventListener(type, listener, options);
+      this.off.push(() => target.removeEventListener(type, listener, options));
+    };
     const el = host.element;
-    el.addEventListener("pointerdown", (e) => this.onDown(e));
-    el.addEventListener("pointermove", (e) => this.onMove(e));
-    el.addEventListener("pointerup", (e) => this.onUp(e));
-    el.addEventListener("pointercancel", () => (this.drag = null));
-    el.addEventListener("contextmenu", (e) => e.preventDefault());
-    el.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
-    window.addEventListener("keydown", (e) => this.onKey(e));
+    on<PointerEvent>(el, "pointerdown", (e) => this.onDown(e));
+    on<PointerEvent>(el, "pointermove", (e) => this.onMove(e));
+    on<PointerEvent>(el, "pointerup", (e) => this.onUp(e));
+    on<PointerEvent>(el, "pointercancel", () => this.endDrag());
+    // The press ends without a pointerup when the capture is lost (a window
+    // switch, a release the OS swallowed): the drag state must not outlive it.
+    on<PointerEvent>(el, "lostpointercapture", () => this.endDrag());
+    on<Event>(el, "contextmenu", (e) => e.preventDefault());
+    on<WheelEvent>(el, "wheel", (e) => this.onWheel(e), { passive: false });
+    on<KeyboardEvent>(host.keys, "keydown", (e) => this.onKey(e));
+  }
+
+  /** True while a button is held (for tests). */
+  get dragging(): boolean {
+    return this.drag !== null;
+  }
+
+  /** Remove every listener this navigator added. */
+  dispose(): void {
+    for (const f of this.off.splice(0)) f();
+    this.drag = null;
   }
 
   /** Set the heading directly (fit on load). */
@@ -166,6 +231,10 @@ export class Navigator {
     this.host.changed();
   }
 
+  private endDrag(): void {
+    this.drag = null;
+  }
+
   private onDown(e: PointerEvent): void {
     const button = buttonOf(e.button);
     const b = this.host.bounds();
@@ -180,7 +249,9 @@ export class Navigator {
       pivot: anchor,
       depth: Math.max(depthOf(this.host.camera, anchor), 1e-3 * b.radius),
     };
-    if (binding.drag) this.host.element.setPointerCapture(e.pointerId);
+    // Capture every press, a click-only one too: the release then reaches
+    // this element wherever the pointer went, so no press is left pending.
+    this.host.element.setPointerCapture(e.pointerId);
   }
 
   private onMove(e: PointerEvent): void {
@@ -223,7 +294,9 @@ export class Navigator {
       const along = depth > 1e-3 * b.radius ? depth / ray.direction.dot(forward) : b.radius;
       point = ray.at(along, new THREE.Vector3());
     }
-    zoomToward(this.host.camera, point, keep);
+    const limited = clampZoom(this.host.camera.position.distanceTo(point), keep, b.radius);
+    if (limited === 1) return;
+    zoomToward(this.host.camera, point, limited);
     this.updated();
   }
 

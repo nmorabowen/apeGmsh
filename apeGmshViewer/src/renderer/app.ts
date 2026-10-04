@@ -1,53 +1,35 @@
-// Renderer entry: wires the store, the viewport and the panels, then runs
-// the mode main asked for (view, measure or capture).
+// Renderer entry: wires the store, the BlobStore, the effects, the viewport
+// and the panels, then runs the mode main asked for (view, measure or
+// capture).
 
 import * as THREE from "three";
-import { resolveChain, type ElementRef } from "../chain/resolve.ts";
-import { buildMesh } from "../mesh/build.ts";
-import type { ModelFile } from "../model/types.ts";
+import { Effects, type Bridge } from "../effects.ts";
+import { mountBanner } from "../panels/banner.ts";
+import { mountEmpty } from "../panels/empty.ts";
+import { mountHeader } from "../panels/header.ts";
+import { mountInspector } from "../panels/inspector.ts";
+import { mountLegend } from "../panels/legend.ts";
+import { BlobStore } from "../state/blobs.ts";
+import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
-import { mountPanels } from "./panels.ts";
-import { Viewport, sameRef } from "./viewport.ts";
+import type { DeclPath } from "../state/types.ts";
+import { Viewport } from "./viewport.ts";
 
-interface Bridge {
-  config(): Promise<{
-    mode: "view" | "measure" | "capture";
-    file: string | null;
-    t0: number;
-    appReadyMs: number;
-    configMs: number;
-    pick: string | null;
-  }>;
-  openModel(path: string): Promise<{ ok: true; model: ModelFile } | { ok: false; error: string }>;
-  pathForFile(f: File): string;
-  metrics(): Promise<{ mainMB: number; rendererMB: number; gpuProcessMB: number; gpuDevices: unknown[] }>;
-  measureDone(result: unknown): Promise<void>;
-  captureStill(suffix: string): Promise<string | null>;
-  captureDone(): Promise<void>;
-  fail(message: string): Promise<void>;
-}
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
 
 const store = new Store();
-const viewport = new Viewport(document.getElementById("viewport")!, store);
-mountPanels(store);
+const blobs = new BlobStore();
+const effects = new Effects(store, blobs, bridge);
+const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store)];
+window.addEventListener("beforeunload", () => {
+  for (const d of panels) d();
+  viewport.dispose();
+});
 
 const nextFrame = () => new Promise<number>((r) => requestAnimationFrame(r));
 /** Resolves once the frame after the current DOM change has been painted. */
 const painted = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
-
-async function load(path: string): Promise<boolean> {
-  const res = await bridge.openModel(path);
-  if (!res.ok) {
-    store.dispatch({ type: "model/failed", error: `${path}: ${res.error}` });
-    return false;
-  }
-  for (const w of res.model.warnings) console.warn(w);
-  const mesh = buildMesh(res.model);
-  for (const w of mesh.warnings) console.warn(w);
-  store.dispatch({ type: "model/loaded", model: res.model, mesh });
-  return true;
-}
 
 const BEAM_TYPES = new Set(["dispBeamColumn", "forceBeamColumn", "elasticBeamColumn"]);
 
@@ -59,47 +41,45 @@ const BEAM_TYPES = new Set(["dispBeamColumn", "forceBeamColumn", "elasticBeamCol
  * and the first of that OpenSees type whose chain resolves wins; none found
  * raises, naming the type.
  */
-function demoTarget(pickType: string | null = null): ElementRef | null {
+function demoTarget(pickType: string | null = null): DeclPath | null {
   const s = store.get();
-  if (!s.model || !s.mesh) return null;
+  if (!s.mesh) return null;
+  const drawn = s.mesh.elements;
   if (pickType !== null) {
-    for (const r of [...s.mesh.lineRefs, ...s.mesh.triRefs]) {
-      const c = resolveChain(s.model, r);
-      if (c.root.type === pickType && c.problems.length === 0) return r;
+    for (const p of drawn) {
+      if (s.decls[p]?.type !== pickType) continue;
+      const c = chainOf(s, p);
+      if (c && c.problems.length === 0) return p;
     }
     throw new Error(`--pick=${pickType}: no drawn element of that type with a resolved chain`);
   }
-  const sample = (list: ElementRef[]) => {
-    const step = Math.max(1, Math.floor(list.length / 200));
-    const out: ElementRef[] = [];
-    for (let i = Math.floor(list.length / 2); i < list.length; i += step) out.push(list[i]!);
-    for (let i = 0; i < Math.floor(list.length / 2); i += step) out.push(list[i]!);
-    return out;
-  };
-  const candidates = [...sample(s.mesh.lineRefs), ...sample(s.mesh.triRefs)];
-  const chains = candidates.map((r) => ({ r, c: resolveChain(s.model!, r) }));
+  const step = Math.max(1, Math.floor(drawn.length / 400));
+  const candidates: DeclPath[] = [];
+  for (let i = Math.floor(drawn.length / 2); i < drawn.length; i += step) candidates.push(drawn[i]!);
+  for (let i = 0; i < Math.floor(drawn.length / 2); i += step) candidates.push(drawn[i]!);
+  const chains = candidates.map((p) => ({ p, c: chainOf(s, p)! }));
   const beam = chains.find(({ c }) => BEAM_TYPES.has(c.root.type) && c.problems.length === 0);
   const linked = chains.find(({ c }) => c.root.children.length > 0 && c.problems.length === 0);
-  return (beam ?? linked)?.r ?? candidates[0] ?? null;
+  return (beam ?? linked)?.p ?? candidates[0] ?? null;
 }
 
 /** Click at the target's projected midpoint through the same pick path a mouse uses. */
-async function scriptedClick(target: ElementRef) {
+async function scriptedClick(target: DeclPath) {
   const pt = viewport.screenPointOf(target);
   if (!pt) throw new Error("scripted click: target is not drawn");
   const t = performance.now();
-  const ref = viewport.pickAt(pt.x, pt.y);
-  if (!ref) throw new Error("scripted click: pick returned nothing");
+  const pick = viewport.pickAt(pt.x, pt.y);
+  if (!pick) throw new Error("scripted click: pick returned nothing");
   const tPick = performance.now();
-  store.dispatch({ type: "select", ref });
+  store.dispatch({ type: "select", pick });
   const tState = performance.now();
   await painted();
   const end = performance.now();
   return {
     ms: end - t,
     split: { pickMs: tPick - t, stateAndDomMs: tState - tPick, paintMs: end - tState },
-    pickedTarget: sameRef(ref, target),
-    ref,
+    pickedTarget: pick.decl === target,
+    decl: pick.decl,
   };
 }
 
@@ -109,7 +89,8 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
   await painted();
   const firstFrameMs = Date.now() - t0;
   const s = store.get();
-  const model = s.model!;
+  const model = s.artifacts.model!;
+  const mesh = s.mesh!;
 
   // Scripted orbit: one turn about the vertical (Z) axis through the fitted
   // centre, 6 s, through the same turntable code a right-drag uses.
@@ -142,16 +123,15 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
   };
   const tgt = demoTarget();
   const click = tgt ? await scriptedClick(tgt) : null;
-  const chain = store.get().chain;
+  const chain = click ? chainOf(store.get(), click.decl) : null;
   const metrics = await bridge.metrics();
-  const cells = model.blocks.reduce((a, b) => a + b.ids.length, 0);
   return {
     file: model.path,
     sizeBytes: model.sizeBytes,
-    nodes: model.nodeIds.length,
-    cells,
-    opsOnlyElements: s.mesh!.counts.opsOnly,
-    drawn: { segments: s.mesh!.lineRefs.length, triangles: s.mesh!.triRefs.length },
+    nodes: model.counts.nodes,
+    cells: model.counts.cells,
+    opsOnlyElements: mesh.counts.opsOnly,
+    drawn: { segments: mesh.linePositions.shape[0], triangles: mesh.triPositions.shape[0] },
     readMs: model.readMs,
     firstFrameMs,
     startup: { electronReadyMs: startup.appReadyMs, rendererUpMs: startup.configMs },
@@ -176,7 +156,7 @@ async function measure(t0: number, startup: { appReadyMs: number; configMs: numb
     gpu: viewport.gpuName(),
     pixelRatio: window.devicePixelRatio,
     viewport: [viewport.renderer.domElement.width, viewport.renderer.domElement.height],
-    warnings: [...model.warnings, ...s.mesh!.warnings],
+    warnings: [...model.warnings],
     three: THREE.REVISION,
   };
 }
@@ -188,17 +168,14 @@ function countLinks(n: { children: { children: unknown[] }[] }): number {
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
-    window.addEventListener("dragover", (e) => e.preventDefault());
-    window.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const f = e.dataTransfer?.files[0];
-      if (f) void load(bridge.pathForFile(f));
-    });
-    if (cfg.file) await load(cfg.file);
+    effects.attach();
+    // With V2f's `onOpen`, main replays the open set on subscription; loading
+    // `config().file` here as well would read the model twice.
+    if (cfg.file && !effects.hasOpenFeed()) await effects.open(cfg.file);
     return;
   }
-  if (!cfg.file || !(await load(cfg.file))) {
-    await bridge.fail(store.get().error ?? "no --file given");
+  if (!cfg.file || !(await effects.open(cfg.file))) {
+    await bridge.fail(store.get().artifacts.model?.error ?? "no --file given");
     return;
   }
   if (cfg.mode === "measure") {
@@ -210,7 +187,7 @@ async function main() {
   const settle = () => new Promise((r) => setTimeout(r, 300));
   viewport.renderNow();
   const tgt = demoTarget(cfg.pick);
-  if (tgt) store.dispatch({ type: "select", ref: tgt });
+  if (tgt) store.dispatch({ type: "select", pick: { decl: tgt, at: null } });
   viewport.renderNow();
   await settle();
   viewport.renderNow();

@@ -7,7 +7,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
 import { bindingFor, buttonOf, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
-import { headingOf, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, zoomToward, type Heading } from "../src/renderer/navigation.ts";
+import {
+  clampZoom, headingOf, Navigator, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, zoomToward,
+  ZOOM_MAX, ZOOM_MIN, type Heading, type ListenTarget, type NavHost,
+} from "../src/renderer/navigation.ts";
 
 const W = 800, H = 600;
 
@@ -159,4 +162,107 @@ test("zoom: the point under the cursor keeps its pixel and the distance scales",
   close(after[0], before[0], 1e-6, "x px");
   close(after[1], before[1], 1e-6, "y px");
   close(c.position.distanceTo(p), d0 / 1.15, 1e-9, "distance");
+});
+
+// ---- zoom limits (V1 finding) -----------------------------------------------
+
+test("zoom: the distance to the zoom point never leaves [ZOOM_MIN, ZOOM_MAX] x radius", () => {
+  const r = 10;
+  // Repeated zoom-in from 5 r stops at ZOOM_MIN r; repeated zoom-out stops at ZOOM_MAX r.
+  let d = 5 * r;
+  for (let i = 0; i < 200; i++) d *= clampZoom(d, 1 / 1.15, r);
+  close(d, ZOOM_MIN * r, 1e-9, "min distance");
+  for (let i = 0; i < 200; i++) d *= clampZoom(d, 1.15, r);
+  close(d, ZOOM_MAX * r, 1e-9, "max distance");
+  // Inside the band a step is unclamped; at a limit the outward step is refused (keep 1) and the inward one allowed.
+  assert.equal(clampZoom(r, 1.15, r), 1.15);
+  assert.equal(clampZoom(ZOOM_MAX * r, 1.15, r), 1);
+  assert.equal(clampZoom(ZOOM_MIN * r, 1 / 1.15, r), 1);
+  assert.ok(clampZoom(ZOOM_MAX * r, 1 / 1.15, r) < 1);
+  // Outside the band (a fit on a tiny model) only re-entry is allowed.
+  assert.equal(clampZoom(100 * r, 1.15, r), 1);
+  assert.ok(clampZoom(100 * r, 1 / 1.15, r) < 1);
+});
+
+// ---- listeners: the stale-drag fix and dispose (V1 findings) -----------------
+
+type Listener = (e: unknown) => void;
+class FakeTarget implements ListenTarget {
+  readonly listeners = new Map<string, Listener[]>();
+  readonly removed: string[] = [];
+  clientHeight = 600;
+  captured = new Set<number>();
+  addEventListener(type: string, fn: (e: Event) => void): void {
+    (this.listeners.get(type) ?? this.listeners.set(type, []).get(type)!).push(fn as Listener);
+  }
+  removeEventListener(type: string, fn: (e: Event) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    const i = list.indexOf(fn as Listener);
+    if (i < 0) throw new Error(`remove of a listener never added: ${type}`);
+    list.splice(i, 1);
+    this.removed.push(type);
+  }
+  fire(type: string, e: object): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(e);
+  }
+  setPointerCapture(id: number): void { this.captured.add(id); }
+  hasPointerCapture(id: number): boolean { return this.captured.has(id); }
+  releasePointerCapture(id: number): void { this.captured.delete(id); }
+  get count(): number { return [...this.listeners.values()].reduce((a, l) => a + l.length, 0); }
+}
+
+function navigator() {
+  const element = new FakeTarget(), keys = new FakeTarget();
+  const selected: [number, number][] = [];
+  const host: NavHost = {
+    camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
+    element, keys,
+    bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
+    hitAt: () => null,
+    rayAt: () => new THREE.Ray(),
+    select: (x, y) => selected.push([x, y]),
+    fit: () => {},
+    changed: () => {},
+  };
+  return { nav: new Navigator(host), element, keys, selected };
+}
+
+const press = (id: number, button: number, x: number, y: number) => ({ pointerId: id, button, shiftKey: false, clientX: x, clientY: y });
+
+test("a left press is captured, so a release off the canvas still ends the press and a new one can start", () => {
+  const { nav, element, selected } = navigator();
+  element.fire("pointerdown", press(1, 0, 100, 100));
+  assert.ok(nav.dragging);
+  assert.ok(element.hasPointerCapture(1), "a click-only press is captured too");
+  // The release arrives through the capture, wherever the pointer went.
+  element.fire("pointerup", press(1, 0, 900, 900));
+  assert.ok(!nav.dragging, "the press ended");
+  assert.deepEqual(selected, [], "a release far from the press is not a click");
+  element.fire("pointerdown", press(2, 0, 10, 10));
+  assert.ok(nav.dragging, "the next press is not ignored");
+  element.fire("pointerup", press(2, 0, 11, 11));
+  assert.deepEqual(selected, [[11, 11]]);
+});
+
+test("a lost capture or a cancel clears the drag state", () => {
+  const { nav, element } = navigator();
+  element.fire("pointerdown", press(1, 2, 100, 100));
+  assert.ok(nav.dragging);
+  element.fire("lostpointercapture", { pointerId: 1 });
+  assert.ok(!nav.dragging);
+  element.fire("pointerdown", press(3, 1, 100, 100));
+  element.fire("pointercancel", { pointerId: 3 });
+  assert.ok(!nav.dragging);
+});
+
+test("dispose removes every listener it added, on the canvas and on the key target", () => {
+  const { nav, element, keys } = navigator();
+  assert.equal(element.count, 7, "pointerdown/move/up/cancel, lostpointercapture, contextmenu, wheel");
+  assert.equal(keys.count, 1, "keydown");
+  nav.dispose();
+  assert.equal(element.count, 0);
+  assert.equal(keys.count, 0);
+  assert.equal(element.removed.length + keys.removed.length, 8);
+  element.fire("pointerdown", press(1, 0, 0, 0));
+  assert.ok(!nav.dragging, "a disposed navigator ignores events");
 });

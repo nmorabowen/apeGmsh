@@ -103,3 +103,17 @@ td.f-value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .empty-sub { color: var(--muted); margin-top: 6px; }
 .empty-error { color: var(--error); margin-top: 10px; max-width: 520px; }
 code { font-family: var(--mono); }
+
+/* V2e: refusals, hidden groups, pins */
+#banner .refused { color: var(--error); font-weight: 600; }
+.empty-refused { color: var(--error); margin-top: 10px; max-width: 520px; font-weight: 600; }
+.sibling { color: var(--muted); }
+.legend-row.clickable { cursor: pointer; }
+.legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
+#legend h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+.legend-all, .pin {
+  margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
+  font: 600 10px "Segoe UI", sans-serif; letter-spacing: 0; text-transform: none;
+  color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+}
+.pin.pinned { color: #1b1e24; background: var(--accent); }

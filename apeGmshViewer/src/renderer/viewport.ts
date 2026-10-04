@@ -1,22 +1,53 @@
-// The 3-D viewport: renders the mesh from the store and turns a click
-// into a `select` event. It holds three.js objects, never model data.
+// The 3-D viewport: renders the mesh from the state and the BlobStore, and
+// turns a click into a `select` event. Its three.js objects are a
+// derivation of the state keyed by the mesh's BlobRef ids and the
+// visibility and selection records; it holds no model fact the store does
+// not.
+//
+// Selection (R1 on #1283): the selected element is drawn as a thick outline
+// in the selection colour over everything (no depth test), its faces filled
+// in that colour, and the rest of the model is dimmed. That reads at
+// full-model zoom for a beam and for a shell alike.
 
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import type { ElementRef } from "../chain/resolve.ts";
-import type { MeshBuffers } from "../mesh/build.ts";
+import type { BlobStore } from "../state/blobs.ts";
 import type { State, Store } from "../state/store.ts";
+import type { DeclPath, MeshInfo, Pick } from "../state/types.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
 
 /** Inspector width plus its margins (style.css #inspector). */
 const INSPECTOR_PX = 470 + 28;
 
-export const sameRef =(a: ElementRef, b: ElementRef): boolean =>
-  a.kind === b.kind &&
-  a.row === b.row &&
-  (a.kind === "fem" ? a.blockIndex === (b as typeof a).blockIndex : a.metaIndex === (b as typeof a).metaIndex);
+export const SELECTION_COLOUR = 0xffd400;
+/**
+ * What the unselected model's colours are multiplied by while something is
+ * selected. Material colours are linear; the renderer writes sRGB, so 0.07
+ * reads as about 30 % brightness on screen.
+ */
+const DIM = 0.07;
+
+/** The drawn primitives of one element. */
+interface Prims {
+  lines: number[];
+  tris: number[];
+}
+
+/** Per-mesh indices the viewport derives once: element -> primitives, decl path -> element. */
+interface MeshIndex {
+  info: MeshInfo;
+  byPath: Map<DeclPath, number>;
+  prims: Map<number, Prims>;
+}
+
+/** Which original segments / triangles / outline edges are drawn, and the drawn-to-original maps. */
+interface Drawn {
+  lineMap: Int32Array;
+  triMap: Int32Array;
+  edgeMask: Uint8Array | null;
+}
 
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
@@ -26,19 +57,26 @@ export class Viewport {
   private readonly raycaster = new THREE.Raycaster();
   private readonly host: HTMLElement;
   private readonly store: Store;
-  private content = new THREE.Group();
-  private highlight = new THREE.Group();
+  private readonly blobs: BlobStore;
+  private readonly content = new THREE.Group();
+  private readonly highlight = new THREE.Group();
   private lines: LineSegments2 | null = null;
   private faces: THREE.Mesh | null = null;
+  private edges: THREE.LineSegments | null = null;
   private lineMaterials: LineMaterial[] = [];
+  private index: MeshIndex | null = null;
+  private drawn: Drawn | null = null;
   private pending = false;
+  private readonly observer: ResizeObserver;
+  private readonly unsubscribe: () => void;
   /** CPU time of the last renderer.render call (ms). */
   lastRenderMs = 0;
   continuous = false;
 
-  constructor(host: HTMLElement, store: Store) {
+  constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
     this.store = store;
+    this.blobs = blobs;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0x000000, 0);
@@ -58,6 +96,7 @@ export class Viewport {
     this.nav = new Navigator({
       camera: this.camera,
       element: this.renderer.domElement,
+      keys: window,
       bounds: () => {
         const m = this.store.get().mesh;
         return m ? { center: new THREE.Vector3(...m.center), radius: m.radius } : null;
@@ -68,8 +107,8 @@ export class Viewport {
         return this.raycaster.ray.clone();
       },
       select: (x, y) => {
-        const ref = this.pickAt(x, y);
-        this.store.dispatch(ref ? { type: "select", ref } : { type: "clear-selection" });
+        const pick = this.pickAt(x, y);
+        this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
       },
       fit: () => {
         const m = this.store.get().mesh;
@@ -77,14 +116,33 @@ export class Viewport {
       },
       changed: () => this.requestRender(),
     });
-    new ResizeObserver(() => this.resize()).observe(host);
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(host);
     this.resize();
-    store.subscribe((s, prev) => this.onState(s, prev));
+    this.unsubscribe = store.subscribe((s, prev) => this.onState(s, prev));
+    this.onState(store.get(), null);
   }
 
-  private onState(s: State, prev: State): void {
-    if (s.mesh !== prev.mesh) this.setMesh(s.mesh);
-    if (s.selection !== prev.selection) this.setHighlight(s.selection, s.mesh);
+  /** Release the listeners, the observer, the subscription and the GPU objects. */
+  dispose(): void {
+    this.unsubscribe();
+    this.observer.disconnect();
+    this.nav.dispose();
+    this.clear(this.content);
+    this.clear(this.highlight);
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+
+  private onState(s: State, prev: State | null): void {
+    if (!prev || s.mesh !== prev.mesh) {
+      this.setMesh(s.mesh);
+      this.applyVisibility(s);
+      this.setHighlight(s);
+      return;
+    }
+    if (s.visibility !== prev.visibility) this.applyVisibility(s);
+    if (s.selection !== prev.selection) this.setHighlight(s);
   }
 
   /** Width kept clear for the inspector: the model is framed left of it. */
@@ -131,18 +189,113 @@ export class Viewport {
     group.clear();
   }
 
-  private setMesh(mesh: MeshBuffers | null): void {
+  /** The viewport's own index of a mesh, built once per MeshInfo. */
+  private indexOf(info: MeshInfo): MeshIndex {
+    if (this.index && this.index.info === info) return this.index;
+    const byPath = new Map<DeclPath, number>();
+    info.elements.forEach((p, i) => byPath.set(p, i));
+    const prims = new Map<number, Prims>();
+    const at = (e: number): Prims => prims.get(e) ?? prims.set(e, { lines: [], tris: [] }).get(e)!;
+    this.blobs.i32(info.lineElement).forEach((e, i) => at(e).lines.push(i));
+    this.blobs.i32(info.triElement).forEach((e, i) => at(e).tris.push(i));
+    this.index = { info, byPath, prims };
+    return this.index;
+  }
+
+  /** Vertex colours of the drawn primitives from the legend (R2) and the per-primitive group index. */
+  private colours(info: MeshInfo, group: Int32Array, map: Int32Array, perPrim: number): Float32Array {
+    const out = new Float32Array(map.length * perPrim * 3);
+    for (let d = 0; d < map.length; d++) {
+      const c = info.legend[group[map[d]!]!]?.color;
+      if (!c) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
+      for (let v = 0; v < perPrim; v++) out.set(c, (d * perPrim + v) * 3);
+    }
+    return out;
+  }
+
+  /** Which original primitives the hidden set leaves visible. */
+  private visible(s: State, info: MeshInfo): Drawn {
+    const hidden = new Set(s.visibility.hidden);
+    const rowHidden = info.legend.map((e) => e.decl !== null && hidden.has(e.decl));
+    const keep = (group: Int32Array): Int32Array => {
+      if (!rowHidden.some(Boolean)) return Int32Array.from(group.keys());
+      const out: number[] = [];
+      group.forEach((g, i) => {
+        if (!rowHidden[g]) out.push(i);
+      });
+      return Int32Array.from(out);
+    };
+    const lineMap = keep(this.blobs.i32(info.lineGroup));
+    const triMap = keep(this.blobs.i32(info.triGroup));
+    const nTri = info.triPositions.shape[0]!;
+    return { lineMap, triMap, edgeMask: triMap.length === nTri ? null : this.edgeMask(info, triMap) };
+  }
+
+  /**
+   * Which outline edges to keep when faces are hidden: an outline edge is a
+   * side of some polygon, and a polygon's sides are sides of its fan
+   * triangles, so an edge stays iff it is a side of a visible triangle.
+   * Vertices are matched by their float32 coordinates, which both buffers
+   * share.
+   */
+  private edgeMask(info: MeshInfo, triMap: Int32Array): Uint8Array {
+    const tp = this.blobs.f32(info.triPositions), ep = this.blobs.f32(info.edgePositions);
+    const vid = new Map<string, number>();
+    const id = (a: Float32Array, o: number) => {
+      const k = `${a[o]},${a[o + 1]},${a[o + 2]}`;
+      let v = vid.get(k);
+      if (v === undefined) vid.set(k, (v = vid.size));
+      return v;
+    };
+    const sides = new Set<number>();
+    const key = (a: number, b: number) => (a < b ? a * 4294967296 + b : b * 4294967296 + a);
+    for (const t of triMap) {
+      const v0 = id(tp, 9 * t), v1 = id(tp, 9 * t + 3), v2 = id(tp, 9 * t + 6);
+      sides.add(key(v0, v1)).add(key(v1, v2)).add(key(v2, v0));
+    }
+    const n = ep.length / 6;
+    const mask = new Uint8Array(n);
+    for (let e = 0; e < n; e++) mask[e] = sides.has(key(id(ep, 6 * e), id(ep, 6 * e + 3))) ? 1 : 0;
+    return mask;
+  }
+
+  private static gather(src: Float32Array, map: Int32Array, stride: number): Float32Array {
+    if (map.length * stride === src.length) return src;
+    const out = new Float32Array(map.length * stride);
+    map.forEach((o, d) => out.set(src.subarray(o * stride, (o + 1) * stride), d * stride));
+    return out;
+  }
+
+  private setMesh(info: MeshInfo | null): void {
     this.clear(this.content);
     this.clear(this.highlight);
     this.lineMaterials = [];
     this.lines = null;
     this.faces = null;
-    if (!mesh) return this.requestRender();
+    this.edges = null;
+    this.drawn = null;
+    this.index = null;
+    if (!info) return this.requestRender();
+    this.indexOf(info);
+    this.rebuild(this.store.get(), info);
+    this.frame(info);
+  }
 
-    if (mesh.triPositions.length) {
+  /** (Re)build the content group for the current hidden set. */
+  private rebuild(s: State, info: MeshInfo): void {
+    this.clear(this.content);
+    this.lineMaterials = this.lineMaterials.filter((m) => this.highlight.children.some((o) => (o as THREE.Mesh).material === m));
+    this.lines = null;
+    this.faces = null;
+    this.edges = null;
+    const drawn = this.visible(s, info);
+    this.drawn = drawn;
+
+    const tri = Viewport.gather(this.blobs.f32(info.triPositions), drawn.triMap, 9);
+    if (tri.length) {
       const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(mesh.triPositions, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(mesh.triColors, 3));
+      g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
+      g.setAttribute("color", new THREE.BufferAttribute(this.colours(info, this.blobs.i32(info.triGroup), drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
         vertexColors: true,
@@ -154,26 +307,65 @@ export class Viewport {
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
       });
-      // Line elements inside solids (embedded rebar) would be hidden: see through the solids.
-      if (mesh.counts.solidCells > 0 && mesh.linePositions.length > 0) {
-        m.transparent = true;
-        m.opacity = 0.35;
-        m.depthWrite = false;
-      }
       this.faces = new THREE.Mesh(g, m);
       this.content.add(this.faces);
-      if (mesh.edgePositions.length) {
+      const ep = this.blobs.f32(info.edgePositions);
+      const edgeMap = drawn.edgeMask
+        ? Int32Array.from(drawn.edgeMask.reduce<number[]>((acc, v, i) => (v ? (acc.push(i), acc) : acc), []))
+        : Int32Array.from({ length: ep.length / 6 }, (_, i) => i);
+      const edge = Viewport.gather(ep, edgeMap, 6);
+      if (edge.length) {
         const eg = new THREE.BufferGeometry();
-        eg.setAttribute("position", new THREE.BufferAttribute(mesh.edgePositions, 3));
+        eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
         const em = new THREE.LineBasicMaterial({ color: 0x0b0c0f, transparent: true, opacity: 0.45 });
-        this.content.add(new THREE.LineSegments(eg, em));
+        this.edges = new THREE.LineSegments(eg, em);
+        this.content.add(this.edges);
       }
     }
-    if (mesh.linePositions.length) {
-      this.lines = this.makeLines(mesh.linePositions, mesh.lineColors, 3);
+    const line = Viewport.gather(this.blobs.f32(info.linePositions), drawn.lineMap, 6);
+    if (line.length) {
+      this.lines = this.makeLines(line, this.colours(info, this.blobs.i32(info.lineGroup), drawn.lineMap, 2), 3);
       this.content.add(this.lines);
     }
-    this.frame(mesh);
+    this.applyVisibility(s, false);
+    this.applyDim(s.selection.decls.length > 0);
+    this.requestRender();
+  }
+
+  /** Edges on or off, opacity, and the hidden set (a rebuild when it changed). */
+  private applyVisibility(s: State, rebuild = true): void {
+    const info = s.mesh;
+    if (!info || !this.drawn) return;
+    if (rebuild) {
+      const hidden = new Set(s.visibility.hidden);
+      const rowHidden = info.legend.map((e) => e.decl !== null && hidden.has(e.decl));
+      const want = this.visible(s, info);
+      const same = want.lineMap.length === this.drawn.lineMap.length && want.triMap.length === this.drawn.triMap.length;
+      if (!same || rowHidden.length !== info.legend.length) {
+        this.rebuild(s, info);
+        return;
+      }
+    }
+    if (this.edges) this.edges.visible = s.visibility.edges;
+    if (this.faces) {
+      const m = this.faces.material as THREE.MeshStandardMaterial;
+      // Line elements inside solids (embedded rebar) would be hidden: see through the solids.
+      const auto = info.counts.solidCells > 0 && info.linePositions.shape[0]! > 0 ? 0.35 : 1;
+      const opacity = Math.min(auto, s.visibility.opacity);
+      m.transparent = opacity < 1;
+      m.opacity = opacity;
+      m.depthWrite = opacity >= 1;
+      m.needsUpdate = true;
+    }
+    this.requestRender();
+  }
+
+  /** Dim or restore the unselected model. */
+  private applyDim(on: boolean): void {
+    const k = on ? DIM : 1;
+    if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
+    if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
+    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : 0.45;
   }
 
   /**
@@ -181,11 +373,12 @@ export class Viewport {
    * planar model, else isometric. `F` passes the current heading, so only the
    * distance and the target change.
    */
-  frame(mesh: MeshBuffers, heading: Heading | null = null): void {
-    const c = new THREE.Vector3(...mesh.center);
-    const r = mesh.radius;
+  frame(info: MeshInfo, heading: Heading | null = null): void {
+    const c = new THREE.Vector3(...info.center);
+    const r = info.radius;
     if (!heading) {
-      const pos = mesh.triPositions.length ? mesh.triPositions : mesh.linePositions;
+      const tri = this.blobs.f32(info.triPositions);
+      const pos = tri.length ? tri : this.blobs.f32(info.linePositions);
       let z0 = Infinity, z1 = -Infinity;
       for (let i = 2; i < pos.length; i += 3) {
         z0 = Math.min(z0, pos[i]!);
@@ -227,41 +420,76 @@ export class Viewport {
     return nearestHit(this.raycaster, targets);
   }
 
-  private setHighlight(sel: ElementRef | null, mesh: MeshBuffers | null): void {
+  /** The outline of an element's triangles: the edges that belong to one of them only. */
+  private static outline(tp: Float32Array, tris: number[]): Float32Array {
+    const count = new Map<string, [number, number, number, number, number, number]>();
+    const seen = new Map<string, number>();
+    for (const t of tris) {
+      for (let k = 0; k < 3; k++) {
+        const a = 9 * t + 3 * k, b = 9 * t + 3 * ((k + 1) % 3);
+        const pa = [tp[a]!, tp[a + 1]!, tp[a + 2]!], pb = [tp[b]!, tp[b + 1]!, tp[b + 2]!];
+        const ka = pa.join(","), kb = pb.join(",");
+        const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+        count.set(key, [...pa, ...pb] as [number, number, number, number, number, number]);
+      }
+    }
+    const out: number[] = [];
+    for (const [key, n] of seen) if (n === 1) out.push(...count.get(key)!);
+    return new Float32Array(out);
+  }
+
+  private setHighlight(s: State): void {
     this.clear(this.highlight);
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
-    if (!sel || !mesh) return this.requestRender();
-    const seg: number[] = [];
-    mesh.lineRefs.forEach((r, i) => {
-      if (sameRef(r, sel)) for (let k = 0; k < 6; k++) seg.push(mesh.linePositions[6 * i + k]!);
-    });
-    if (seg.length) {
-      const hl = this.makeLines(new Float32Array(seg), null, 7, 0xf5c542);
+    const info = s.mesh;
+    const selected = s.selection.decls;
+    this.applyDim(selected.length > 0);
+    if (!info || selected.length === 0) return this.requestRender();
+    const idx = this.indexOf(info);
+    const lp = this.blobs.f32(info.linePositions), tp = this.blobs.f32(info.triPositions);
+    const seg: number[] = [], tri: number[] = [], outline: number[] = [];
+    for (const path of selected) {
+      const e = idx.byPath.get(path);
+      const prims = e === undefined ? undefined : idx.prims.get(e);
+      if (!prims) continue;
+      for (const i of prims.lines) for (let k = 0; k < 6; k++) seg.push(lp[6 * i + k]!);
+      for (const i of prims.tris) for (let k = 0; k < 9; k++) tri.push(tp[9 * i + k]!);
+      outline.push(...Viewport.outline(tp, prims.tris));
+    }
+    const thick = (pos: Float32Array, width: number) => {
+      const hl = this.makeLines(pos, null, width, SELECTION_COLOUR);
       hl.renderOrder = 10;
       (hl.material as LineMaterial).depthTest = false;
-      this.highlight.add(hl);
-    }
-    const tri: number[] = [];
-    mesh.triRefs.forEach((r, i) => {
-      if (sameRef(r, sel)) for (let k = 0; k < 9; k++) tri.push(mesh.triPositions[9 * i + k]!);
-    });
+      return hl;
+    };
+    if (seg.length) this.highlight.add(thick(new Float32Array(seg), 9));
+    if (outline.length) this.highlight.add(thick(new Float32Array(outline), 6));
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(tri), 3));
       const m = new THREE.MeshBasicMaterial({
-        color: 0xf5c542, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
-        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+        color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthTest: false,
       });
-      this.highlight.add(new THREE.Mesh(g, m));
+      const fill = new THREE.Mesh(g, m);
+      fill.renderOrder = 9;
+      this.highlight.add(fill);
     }
     this.requestRender();
   }
 
   /** The element under a client-space point, or null. Lines win over faces. */
-  pickAt(clientX: number, clientY: number): ElementRef | null {
-    const mesh = this.store.get().mesh;
-    if (!mesh) return null;
+  pickAt(clientX: number, clientY: number): Pick | null {
+    const info = this.store.get().mesh;
+    const drawn = this.drawn;
+    if (!info || !drawn) return null;
+    const lineElement = this.blobs.i32(info.lineElement), triElement = this.blobs.i32(info.triElement);
     this.aim(clientX, clientY);
+    const pick = (e: number, p: THREE.Vector3): Pick => {
+      const decl = info.elements[e];
+      if (decl === undefined) throw new Error(`viewport: element index ${e} is not in the mesh`);
+      return { decl, at: [p.x, p.y, p.z] };
+    };
     if (this.lines) {
       const hits = this.raycaster
         .intersectObject(this.lines, false)
@@ -269,37 +497,40 @@ export class Viewport {
       if (hits.length) {
         // An OpenSees-only element (no cell) drawn on the same nodes as a cell
         // would be unreachable behind it; among coincident hits, prefer it.
-        const near = hits[0]!.distance + 1e-6 * mesh.radius;
-        const coincident = hits.filter((h) => h.distance <= near).map((h) => mesh.lineRefs[h.faceIndex!]!);
-        return coincident.find((r) => r.kind === "ops") ?? coincident[0] ?? null;
+        const near = hits[0]!.distance + 1e-6 * info.radius;
+        const coincident = hits.filter((h) => h.distance <= near);
+        const ops = coincident.find((h) => info.elements[lineElement[drawn.lineMap[h.faceIndex!]!]!]!.startsWith("opensees/element/"));
+        const h = ops ?? coincident[0]!;
+        return pick(lineElement[drawn.lineMap[h.faceIndex!]!]!, h.point);
       }
     }
     if (this.faces) {
       const hit = this.raycaster.intersectObject(this.faces, false)[0];
-      if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null) return mesh.triRefs[hit.faceIndex] ?? null;
+      if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null) return pick(triElement[drawn.triMap[hit.faceIndex]!]!, hit.point);
     }
     return null;
   }
 
-  /** Client-space point at the middle of a ref's first drawn primitive. */
-  screenPointOf(ref: ElementRef): { x: number; y: number } | null {
-    const mesh = this.store.get().mesh;
-    if (!mesh) return null;
+  /** Client-space point at the middle of a declaration's first drawn primitive. */
+  screenPointOf(decl: DeclPath): { x: number; y: number } | null {
+    const info = this.store.get().mesh;
+    if (!info) return null;
+    const idx = this.indexOf(info);
+    const e = idx.byPath.get(decl);
+    const prims = e === undefined ? undefined : idx.prims.get(e);
+    if (!prims) return null;
     const p = new THREE.Vector3();
-    const li = mesh.lineRefs.findIndex((r) => sameRef(r, ref));
-    if (li >= 0) {
-      const a = mesh.linePositions;
+    if (prims.lines.length) {
+      const a = this.blobs.f32(info.linePositions), li = prims.lines[0]!;
       p.set((a[6 * li]! + a[6 * li + 3]!) / 2, (a[6 * li + 1]! + a[6 * li + 4]!) / 2, (a[6 * li + 2]! + a[6 * li + 5]!) / 2);
-    } else {
-      const ti = mesh.triRefs.findIndex((r) => sameRef(r, ref));
-      if (ti < 0) return null;
-      const a = mesh.triPositions;
+    } else if (prims.tris.length) {
+      const a = this.blobs.f32(info.triPositions), ti = prims.tris[0]!;
       p.set(
         (a[9 * ti]! + a[9 * ti + 3]! + a[9 * ti + 6]!) / 3,
         (a[9 * ti + 1]! + a[9 * ti + 4]! + a[9 * ti + 7]!) / 3,
         (a[9 * ti + 2]! + a[9 * ti + 5]! + a[9 * ti + 8]!) / 3,
       );
-    }
+    } else return null;
     p.project(this.camera);
     const rect = this.renderer.domElement.getBoundingClientRect();
     return { x: rect.left + ((p.x + 1) / 2) * rect.width, y: rect.top + ((1 - p.y) / 2) * rect.height };
@@ -325,5 +556,4 @@ export class Viewport {
     const ext = gl.getExtension("WEBGL_debug_renderer_info");
     return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
   }
-
 }
