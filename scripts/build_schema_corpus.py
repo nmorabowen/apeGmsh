@@ -18,14 +18,19 @@ for opensees files. ``MANIFEST.json`` names every minor from floor to
 current with its commit, status ``ok`` or ``gap``, and the reason for a gap.
 A gap is recorded, never filled with a file from another era (ADR 0113 D3).
 
-**Which commit is a minor's era.** The minors come from the bump commits
-(``git log --first-parent -G'^NEUTRAL_SCHEMA_VERSION' -- <writer>``, and
-``-G'^SCHEMA_VERSION'`` for the opensees writer). A minor's file is written
-by the *last* first-parent commit at that minor: the parent of the next
-minor's bump commit, or the base commit for the current minor. So patch
-bumps fold into their minor (2.26.1 writes the 2.26 file), and each file is
-what that minor's writer looked like when it was last current. A minor no
-first-parent commit ever stamped (a squash that bumped twice) is a gap.
+**Which commit is a minor's era.** The history is ``main``'s: the bump
+commits come from ``git log --first-parent -G'^NEUTRAL_SCHEMA_VERSION'
+-- <writer>`` (``-G'^SCHEMA_VERSION'`` for the opensees writer) up to the
+merge-base of ``HEAD`` and ``origin/main``. A non-current minor's file is
+written by the *last* first-parent commit at that minor: the parent of the
+next minor's bump commit, or the merge-base itself when no later bump is
+on main yet (the outgoing minor of a bump PR). So patch bumps fold into
+their minor (2.26.1 writes the 2.26 file), and each file is what that
+minor's writer looked like when it was last current. Only the **current**
+minor is written by ``--base`` (``HEAD`` in a bump PR, the merge-base by
+default), which must stamp it. A minor no first-parent commit on main ever
+stamped (a squash that bumped twice) is a gap. Every non-current era SHA is
+therefore on ``main``, which a squash merge cannot orphan (#1365).
 
 Usage, from the repository root (needs gmsh, h5py and the project deps)::
 
@@ -166,46 +171,67 @@ class Era:
         return (self.zone, _mstr(self.minor), self.variant or "")
 
 
-def check_current_is_written(
-    zone: str, current: tuple[int, int], bumps: list[tuple[str, str]],
+def check_head_writes_current(
+    zone: str, current: tuple[int, int], head: str, head_version: str,
 ) -> None:
-    """Refuse a current minor that no commit on ``base`` stamps.
+    """Refuse a ``head`` that does not stamp the current minor.
 
-    The current minor comes from the working tree and the history from
-    ``base``. A bump PR run against a ``base`` that predates its bump
-    commit would otherwise record its own minor as an ``unwritten`` gap,
-    which INV-6 accepts, and land without the outgoing minor's file.
+    The current minor comes from the working tree, the history from the
+    merge-base with ``origin/main``, and the current minor's file from
+    ``head`` (``--base``). A bump PR run without ``--base HEAD``, or with
+    the bump still uncommitted, would otherwise record its own minor as
+    an ``unwritten`` gap, which INV-6 accepts, and land without the
+    outgoing minor's file.
     """
-    if any(_minor(v) == current for _sha, v in bumps):
+    if _minor(head_version) == current:
         return
     raise RuntimeError(
-        f"{zone}: the working tree is at {_mstr(current)}.x but no first-parent "
-        f"commit on the base stamps it, so no writer of the current minor can be "
-        f"checked out. Commit the bump and pass --base HEAD (the current minor's "
-        f"file is written by the base commit); never record it as a gap"
+        f"{zone}: the working tree is at {_mstr(current)}.x but {head[:10]} stamps "
+        f"{head_version}, so it is not the writer of the current minor. Commit the "
+        f"bump and pass --base HEAD (the current minor's file is written by that "
+        f"commit; the history and every other era come from the merge-base with "
+        f"origin/main); never record it as a gap"
     )
 
 
-def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
+def _bumps(zone: str, rev_range: str) -> list[tuple[str, str]]:
+    """``(sha, version)`` of every first-parent commit in ``rev_range`` that
+    changed the zone's version constant, oldest first."""
+    path, const, _floor = ZONES[zone]
+    log = _git("log", "--first-parent", "--reverse", f"-G^{const}",
+               "--format=%H", rev_range, "--", path).split()
+    return [(sha, _version_at(sha, zone)) for sha in log]
+
+
+def plan(zone: str, base: str, head: str, *, start_minor: int | None = None) -> list[Era]:
     """Every minor from the zone's floor to its current minor, with its era commit.
 
+    ``base`` is the merge-base with ``origin/main``: the history and every
+    non-current era come from it. ``head`` writes the current minor only.
     ``start_minor`` lower than the floor extends the plan downward: the
     builder passes the lowest minor the manifest already holds, so a
     below-floor evidence era is rebuilt rather than dropped.
     """
-    path, const, floor_const = ZONES[zone]
+    _path, const, floor_const = ZONES[zone]
     floor = _minor(tree_constant(zone, floor_const))
     current = _minor(tree_constant(zone, const))
-    log = _git("log", "--first-parent", "--reverse", f"-G^{const}",
-               "--format=%H", base, "--", path).split()
-    bumps = [(sha, _version_at(sha, zone)) for sha in log]
-    check_current_is_written(zone, current, bumps)
+    head_version = _version_at(head, zone)
+    check_head_writes_current(zone, current, head, head_version)
+    bumps = _bumps(zone, base)
+    # The bump commits a PR adds on top of main: they stamp the current
+    # minor only (anything else on main's side is a gap below), and they
+    # are recorded with it until the next bump re-anchors that minor.
+    branch_bumps = _bumps(zone, f"{base}..{head}") if head != base else []
 
     first = floor[1] if start_minor is None else min(floor[1], start_minor)
     eras: list[Era] = []
     for minor in range(first, current[1] + 1):
         m = (floor[0], minor)
         at = [sha for sha, v in bumps if _minor(v) == m]
+        if m == current:
+            at += [sha for sha, v in branch_bumps if _minor(v) == m]
+            eras.append(Era(zone, m, sha=head, version=head_version, bumps=at))
+            continue
         era = Era(zone, m, bumps=at)
         if not at:
             prev = [(s, v) for s, v in bumps if _minor(v) < m]
@@ -218,6 +244,9 @@ def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
             )
             eras.append(era)
             continue
+        # The minor's last first-parent commit on main: the parent of the
+        # next bump there, or the merge-base when main has no later bump
+        # yet (the outgoing minor of a bump PR). Never a branch commit.
         later = [sha for sha, v in bumps if _minor(v) > m]
         era.sha = _git("rev-parse", f"{later[0]}^1").strip() if later else base
         era.version = _version_at(era.sha, zone)
@@ -374,18 +403,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--variant", choices=tuple(VARIANTS),
                     help="build only this variant (its zone and era are fixed)")
     ap.add_argument("--base", default=None,
-                    help="the main commit the era history is read from, and the "
-                         "writer of the current minors (default: merge-base of "
-                         "HEAD and origin/main); floors and current minors come "
-                         "from the working tree")
+                    help="the commit that writes the current minors (HEAD in a "
+                         "bump PR; default: the merge-base of HEAD and origin/main). "
+                         "The era history and every non-current era always come "
+                         "from that merge-base, so their SHAs are on main (#1365); "
+                         "floors and current minors come from the working tree")
     ap.add_argument("--list", action="store_true", help="print the plan and stop")
     ap.add_argument("--manifest-only", action="store_true",
                     help="re-classify the existing entries and rewrite MANIFEST.json")
     ap.add_argument("--python", default=sys.executable)
     a = ap.parse_args(argv)
 
-    base = a.base or _git("merge-base", "HEAD", "origin/main").strip()
-    base = _git("rev-parse", base).strip()
+    base = _git("merge-base", "HEAD", "origin/main").strip()
+    head = _git("rev-parse", a.base).strip() if a.base else base
     zones = list(ZONES) if a.zone == "all" else [a.zone]
 
     manifest = _load_manifest()
@@ -400,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
     for zone in zones:
         held = [_minor(e["minor"] + ".0")[1] for e in entries.values()
                 if e["zone"] == zone and "variant" not in e]
-        eras = plan(zone, base, start_minor=min(held) if held else None)
+        eras = plan(zone, base, head, start_minor=min(held) if held else None)
         todo = [] if a.variant else [
             era for era in eras if not a.minor or _mstr(era.minor) == a.minor
         ]
