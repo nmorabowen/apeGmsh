@@ -374,12 +374,15 @@ class _SessionBase:
             geometry_sibling_path,
             write_geometry_h5,
         )
-        from .opensees._internal.schema_version import GEOMETRY, NEUTRAL
+        from .opensees._internal.schema_version import GEOMETRY, NEUTRAL, PROVENANCE
 
         target: "Path | None" = None
         try:
             target = self._resolve_save_target(None)
-            if self._artifact_target_is_ours(target, writes=frozenset({NEUTRAL})):
+            # ``write_fem_h5`` writes the neutral zone and, for a snapshot
+            # a session extracted (V2c, ADR 0112 D3), ``/provenance``.
+            model_zones = frozenset({NEUTRAL, PROVENANCE})
+            if self._artifact_target_is_ours(target, writes=model_zones):
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
                     self._do_save(tmp)

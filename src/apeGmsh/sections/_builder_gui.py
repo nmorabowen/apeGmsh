@@ -37,6 +37,7 @@ Contract (mirrors ``sec.viewer()``):
 from __future__ import annotations
 
 import sys
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from ._catalog import (
@@ -45,7 +46,12 @@ from ._catalog import (
     catalog_labels,
     catalog_shape_params,
 )
-from ._document import _SHAPE_PARAMS, SectionDocument, SectionDocumentError
+from ._document import (
+    _SHAPE_PARAMS,
+    SectionDocument,
+    SectionDocumentError,
+    SectionDocumentNewerWarning,
+)
 from ._handoff import handoff_snippet
 from ._mc import MomentCurvatureError, backend_available, moment_curvature
 from ._properties import PropertiesController
@@ -124,14 +130,18 @@ def launch_builder(
             "open the builder."
         )
 
-    doc = _coerce_document(path_or_doc)
-    on_disk = (
-        None if path_or_doc is None or isinstance(path_or_doc, SectionDocument)
-        else path_or_doc
-    )
+    notice: "str | None" = None
+    if path_or_doc is None or isinstance(path_or_doc, SectionDocument):
+        doc = _coerce_document(path_or_doc)
+        on_disk = None
+    else:
+        doc, notice = _open_with_notice(path_or_doc)
+        on_disk = path_or_doc
     win = SectionBuilderWindow(doc, path=on_disk)
     win.set_live_properties(True)   # real launches solve live (B6)
     win.show()
+    if notice is not None:
+        win._flash(f"⚠ {notice}")
     if blocking:
         app.exec_()
     else:
@@ -147,6 +157,28 @@ def _coerce_document(
     if isinstance(path_or_doc, SectionDocument):
         return path_or_doc
     return SectionDocument.open(path_or_doc)
+
+
+def _open_with_notice(
+    path: "str | Path",
+) -> "tuple[SectionDocument, str | None]":
+    """Open a document for the GUI, turning a newer-minor
+    :class:`SectionDocumentNewerWarning` into a status-bar notice
+    (ADR 0113, 2026-10-04 amendment S2) instead of stderr text the GUI
+    user never sees. Any other warning is re-emitted unchanged."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", SectionDocumentNewerWarning)
+        doc = SectionDocument.open(path)
+    notice: "str | None" = None
+    for w in caught:
+        if issubclass(w.category, SectionDocumentNewerWarning):
+            notice = str(w.message)
+        else:
+            warnings.warn_explicit(
+                w.message, w.category, w.filename, w.lineno,
+                source=w.source,
+            )
+    return doc, notice
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -861,7 +893,7 @@ class SectionBuilderWindow:
     # ── open / save ──────────────────────────────────────────────────
 
     def open_document(self, path: "str | Path") -> None:
-        self.doc = SectionDocument.open(path)
+        self.doc, notice = _open_with_notice(path)
         self._path = path
         self._undo.clear()
         self._redo.clear()
@@ -873,6 +905,8 @@ class SectionBuilderWindow:
         )
         self._build_palette()
         self._refresh()
+        if notice is not None:
+            self._flash(f"⚠ {notice}")
 
     def save_document(self, path: "str | Path") -> None:
         self.doc.save(path)

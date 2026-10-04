@@ -117,3 +117,25 @@ code { font-family: var(--mono); }
   color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
 }
 .pin.pinned { color: #1b1e24; background: var(--accent); }
+
+/* V2f: phase axis, stale-geometry notice, go to source */
+#phase {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 4px; padding: 4px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#phase[hidden] { display: none; }
+.phase {
+  padding: 2px 10px; border-radius: 6px; cursor: pointer;
+  font: 600 11px "Segoe UI", sans-serif; color: var(--muted);
+  background: transparent; border: 1px solid transparent;
+}
+.phase.active { color: #1b1e24; background: var(--accent); }
+#banner .notice { color: #ffd7a8; font-weight: 600; }
+.source {
+  padding: 0 6px; border-radius: 4px; cursor: pointer;
+  font: 600 10px var(--mono); letter-spacing: 0; text-transform: none;
+  color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+}
+.source:disabled { cursor: default; color: var(--muted); opacity: 0.6; }
+.source-failed { color: var(--error); font-size: 12px; margin: 0 0 6px; }

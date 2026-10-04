@@ -4,6 +4,7 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
+import { geometryPairing } from "./selectors.ts";
 import type { ArtifactInfo, ArtifactKind, DeclPath, Event, PhaseKey, State } from "./types.ts";
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
@@ -22,6 +23,9 @@ export const initialState: State = {
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
+  geometry: null,
+  source: { seq: 0, request: null, last: null },
+  view: { frameSeq: 0 },
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -37,6 +41,7 @@ function opened(path: string): ArtifactInfo {
     zones: {},
     warnings: [],
     counts: { nodes: 0, cells: 0, opsOnly: 0 },
+    sessionId: null,
   };
 }
 
@@ -59,33 +64,67 @@ function groupPaths(s: State): DeclPath[] {
 
 const uniq = (a: readonly DeclPath[]): DeclPath[] => [...new Set(a)];
 
+/**
+ * The phase axis from what is loaded: geometry when the sibling may be drawn
+ * (it pairs with the model, or there is no model), then the mesh. The phase
+ * shown stays where it was while it is still on the axis; otherwise it is the
+ * mesh, or the geometry when there is no mesh.
+ */
+function withPhase(s: State): State {
+  const axis: PhaseKey[] = [];
+  if (geometryPairing(s).draw) axis.push({ kind: "geometry" });
+  if (s.mesh) axis.push({ kind: "mesh" });
+  const prev = s.phase.at;
+  const at = prev && axis.some((k) => samePhase(k, prev)) ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
+  return { ...s, phase: { axis, at } };
+}
+
 export function reduce(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
       const prev = s.artifacts[e.artifact];
       // The same path again (a reload after fileChanged) keeps what was read until the new read lands.
       const info: ArtifactInfo = prev && prev.path === e.path ? { ...prev, stale: false, error: null } : opened(e.path);
-      return { ...s, artifacts: { ...s.artifacts, [e.artifact]: info } };
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info } });
     }
     case "fileLoaded": {
-      const { decls, names, blocks, mesh } = e.load;
       // A fileChanged that arrived while this read ran keeps the artifact
       // stale, so the effects read it once more.
-      const prev = s.artifacts.model;
+      const prev = s.artifacts[e.artifact];
       const info: ArtifactInfo = { ...e.load.info, stale: prev !== null && prev.path === e.load.info.path && prev.stale };
-      return {
+      if (e.artifact === "geometry") {
+        return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
+      }
+      const { decls, names, blocks, mesh } = e.load;
+      // A model read for the first time opens on the mesh. A re-read of the
+      // same file (D1 rewrites it every run) keeps the phase shown only while
+      // that phase is still on the axis: a re-read model with a new
+      // session_id no longer pairs with the old geometry, so the geometry
+      // phase leaves the axis. That is why a D1 re-run re-reads the model and
+      // its geometry together and lands them in one `setLoaded`.
+      const reread = prev !== null && prev.status === "ready" && prev.path === info.path;
+      return withPhase({
         ...s,
+        phase: reread ? s.phase : { ...s.phase, at: null },
         artifacts: { ...s.artifacts, model: info },
         decls,
         names,
         blocks,
         mesh,
-        phase: { axis: [{ kind: "mesh" }], at: { kind: "mesh" } },
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
         inspector: { pinned: [] },
-      };
+        // The request count survives the re-read (see State.source).
+        source: { seq: s.source.seq, request: null, last: null },
+      });
+    }
+    case "setLoaded": {
+      // Geometry first, then the model: the pairing is judged once, on the pair.
+      let t = s;
+      if (e.geometry) t = reduce(t, { type: "fileLoaded", artifact: "geometry", load: e.geometry });
+      if (e.model) t = reduce(t, { type: "fileLoaded", artifact: "model", load: e.model });
+      return t;
     }
     case "fileFailed": {
       const prev = s.artifacts[e.artifact];
@@ -93,19 +132,30 @@ export function reduce(s: State, e: Event): State {
       // stale (the read may have hit a half-written file); the effects retry.
       const stale = prev !== null && prev.path === e.path && prev.stale;
       const info: ArtifactInfo = { ...(prev && prev.path === e.path ? prev : opened(e.path)), status: "failed", error: e.error, stale };
+      if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: null });
       if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: info } };
       // The model is gone with its derivations; the failure is shown instead.
-      return {
+      return withPhase({
         ...initialState,
         artifacts: { ...s.artifacts, model: info },
         visibility: s.visibility,
         windows: s.windows,
-      };
+        geometry: s.geometry,
+        source: { ...initialState.source, seq: s.source.seq },
+      });
     }
     case "fileClosed": {
       if (!s.artifacts[e.artifact]) return s;
+      if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: null }, geometry: null });
       if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: null } };
-      return { ...initialState, artifacts: { ...s.artifacts, model: null }, visibility: s.visibility, windows: s.windows };
+      return withPhase({
+        ...initialState,
+        artifacts: { ...s.artifacts, model: null },
+        visibility: s.visibility,
+        windows: s.windows,
+        geometry: s.geometry,
+        source: { ...initialState.source, seq: s.source.seq },
+      });
     }
     case "fileChanged": {
       const k = artifactAt(s, e.path);
@@ -168,6 +218,16 @@ export function reduce(s: State, e: Event): State {
       return { ...s, windows: { open: [...s.windows.open, e.window] } };
     case "closeWindow":
       return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
+    case "requestSource": {
+      if (!(e.decl in s.decls)) throw new Error(`requestSource: ${e.decl} is not a declaration of the loaded model`);
+      const seq = s.source.seq + 1;
+      return { ...s, source: { seq, request: { decl: e.decl, seq }, last: null } };
+    }
+    case "sourceResult":
+      return { ...s, source: { ...s.source, last: { decl: e.decl, ok: e.ok, reason: e.reason } } };
+    case "frameSelection":
+      if (!s.mesh) return s;
+      return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

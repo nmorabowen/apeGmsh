@@ -2,9 +2,9 @@
 // of the selection, from the `inspected` selector. A pin button dispatches
 // `inspectorPin` / `inspectorUnpin`.
 
-import { inspected } from "../state/selectors.ts";
+import { declOfH5, inspected, sourceFailure, sourceFor } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ChainNode, Field } from "../state/types.ts";
+import type { ChainNode, DeclPath, Field } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const ROLE_LABEL: Record<ChainNode["role"], string> = {
@@ -16,11 +16,15 @@ const ROLE_LABEL: Record<ChainNode["role"], string> = {
   nDMaterial: "nDMaterial",
 };
 
-function renderNode(n: ChainNode): HTMLElement {
+/** Adds what belongs to one node beside the read facts (the go-to-source button). */
+type Decorate = (n: ChainNode, depth: number, head: HTMLElement, box: HTMLElement) => void;
+
+function renderNode(n: ChainNode, decorate: Decorate, depth = 0): HTMLElement {
   const box = el("div", "node");
   const head = el("div", "node-head");
   head.append(el("span", "role", ROLE_LABEL[n.role]), el("span", "node-name", n.name), el("span", "node-type", n.type));
   box.append(head, el("div", "node-src", `name from ${n.nameSource}`));
+  decorate(n, depth, head, box);
   if (n.via) {
     const via = el("div", "via");
     via.append("via ", el("b", undefined, `${n.via.label} = ${n.via.value}`), ` from ${n.via.source}`);
@@ -54,7 +58,7 @@ function renderNode(n: ChainNode): HTMLElement {
   box.append(t);
   if (n.children.length) {
     const kids = el("div", "children");
-    for (const c of n.children) kids.append(renderNode(c));
+    for (const c of n.children) kids.append(renderNode(c, decorate, depth + 1));
     box.append(kids);
   }
   return box;
@@ -64,7 +68,14 @@ export function mountInspector(store: Store): () => void {
   const inspector = byId("inspector");
   let unlisten: (() => void)[] = [];
   const render = (s: State, prev: State | null) => {
-    if (prev && s.selection === prev.selection && s.inspector === prev.inspector && s.decls === prev.decls) return;
+    if (
+      prev &&
+      s.selection === prev.selection &&
+      s.inspector === prev.inspector &&
+      s.decls === prev.decls &&
+      s.source === prev.source &&
+      s.artifacts === prev.artifacts
+    ) return;
     for (const u of unlisten) u();
     unlisten = [];
     const shown = inspected(s);
@@ -82,7 +93,21 @@ export function mountInspector(store: Store): () => void {
         for (const msg of chain.problems) p.append(el("div", undefined, msg));
         parts.push(p);
       }
-      parts.push(renderNode(chain.root));
+      // Go to source (ADR 0112 D3) on every declaration of the chain: the root
+      // is the inspected decl; a linked node is found by its HDF5 path.
+      const decorate: Decorate = (n, depth, nodeHead, box) => {
+        const d: DeclPath | null = depth === 0 ? decl : declOfH5(s, n.path);
+        if (d === null) return;
+        const where = sourceFor(s, d);
+        const src = el("button", "source", where.ok ? where.label : "source");
+        src.title = where.ok ? `open ${where.source.file}:${where.source.line} in the editor` : where.reason;
+        if (where.ok) unlisten.push(listen(src, "click", () => store.dispatch({ type: "requestSource", decl: d })));
+        else src.disabled = true;
+        nodeHead.append(src);
+        const failed = sourceFailure(s, d);
+        if (failed) box.append(el("div", "source-failed", `go to source: ${failed}`));
+      };
+      parts.push(renderNode(chain.root, decorate));
     }
     inspector.replaceChildren(...parts);
   };

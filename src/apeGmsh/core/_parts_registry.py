@@ -1443,6 +1443,12 @@ class PartsRegistry(_PartsFragmentationMixin):
         # name: "{instance_label}.{pg_name}".  These are NOT user-
         # facing physical groups — the user promotes them when ready.
         label_names: list[str] = []
+        # ADR 0112 D3: the user's call declares the instance label.  It is
+        # captured here, before the sidecar labels ("{label}.{pg}") and the
+        # umbrella label are created, so the call's one record is the
+        # instance's and those synthesised labels record none.
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "neutral", "labels", label)
         # The umbrella-label block below (around the final ``if
         # labels_comp is not None and top_dim >= 0:``) runs even when
         # there is no sidecar payload, so ``labels_comp`` must be

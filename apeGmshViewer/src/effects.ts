@@ -9,11 +9,23 @@
 // works before and after that PR.
 
 import type { ModelFile } from "./model/types.ts";
-import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./reader/read.ts";
+import type { GeometryZone } from "./reader/geometry.ts";
+import type { ProvenanceZone } from "./reader/provenance.ts";
+import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import type { BlobStore } from "./state/blobs.ts";
+import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
+import { sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
-import type { ArtifactKind, BlobRef, State } from "./state/types.ts";
+import { focusOf, type Focus } from "./renderer/selection.ts";
+import type { ArtifactKind, BlobRef, State, ZoneStatus } from "./state/types.ts";
+
+const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
+
+/** What the frame effect moves: the viewport (or a test double). `null` frames the whole model. */
+export interface FrameTarget {
+  frameTo(focus: Focus | null): void;
+}
 
 export interface OpenSet {
   model: string | null;
@@ -31,7 +43,13 @@ export interface Bridge {
     configMs: number;
     pick: string | null;
   }>;
-  openModel(path: string): Promise<{ ok: true; model: ModelFile } | { ok: false; error: string }>;
+  /** V2f: a successful answer also carries the model file's /provenance (absent from older builds). */
+  openModel(path: string): Promise<
+    | { ok: true; model: ModelFile; provenance?: { ok: true; zone: ProvenanceZone | null } | { ok: false; error: string } }
+    | { ok: false; error: string }
+  >;
+  /** V2f: read a /geometry sibling (null: the file has no such zone). */
+  openGeometry?(path: string): Promise<{ ok: true; geometry: GeometryZone | null; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
   pathForFile(f: File): string;
   metrics(): Promise<{ mainMB: number; rendererMB: number; gpuProcessMB: number; gpuDevices: unknown[] }>;
   measureDone(result: unknown): Promise<void>;
@@ -56,11 +74,11 @@ export interface Bridge {
  * a structured refusal across the bridge would retire this parse.)
  */
 export function parseRefusal(error: string): { zone: string; version: string; accepted: string; newer: boolean; reason: string } | null {
-  const m = /^(neutral|opensees)_schema_version (\d+)\.(\d+)\.(\d+): (.+)$/.exec(error);
+  const m = /^(neutral|opensees|geometry|provenance)_schema_version (\d+)\.(\d+)\.(\d+): (.+)$/.exec(error);
   if (!m) return null;
   const zone = m[1] as keyof typeof ZONE_FLOOR;
   const major = Number(m[2]);
-  const t = zone === "neutral" ? NEUTRAL_TARGET : OPENSEES_TARGET;
+  const t = TARGET[zone];
   const accepted = `${t.major}.${ZONE_FLOOR[zone]} and any later ${t.major}.x`;
   return { zone, version: `${major}.${m[3]}.${m[4]}`, accepted, newer: major > t.major, reason: m[5]! };
 }
@@ -74,7 +92,20 @@ export function blobRefsOf(s: State): BlobRef[] {
   }
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
   for (const b of s.blocks) out.push(b.connectivity);
+  if (s.geometry) out.push(s.geometry.curvePositions, s.geometry.surfacePositions, s.geometry.pointPositions);
   return out;
+}
+
+/**
+ * A /provenance read error as the model artifact's zone status; the model
+ * loads either way. A version refusal is `refused` ("written by an older /
+ * newer apeGmsh"); any other error (a bad sha256, a backslash path, a broken
+ * table) is `malformed`, with the reader's message, which names the path.
+ */
+export function provenanceStatus(a: { ok: false; error: string }): ZoneStatus {
+  const r = parseRefusal(a.error);
+  if (r && r.zone === "provenance") return { status: "refused", version: r.version, accepted: r.accepted, newer: r.newer, reason: r.reason };
+  return { status: "malformed", reason: a.error };
 }
 
 export class Effects {
@@ -87,23 +118,182 @@ export class Effects {
   /** Failed re-reads of the current path after a mid-read change; reset by a successful read or a new path. */
   private retries = 0;
   private retryPath: string | null = null;
+  private frameTarget: FrameTarget | null = null;
   private readonly off: (() => void)[] = [];
 
-  constructor(store: Store, blobs: BlobStore, bridge: Bridge) {
+  /**
+   * How long a rewrite of the model or of its geometry waits for the other
+   * sibling's rewrite before both are re-read (a D1 re-run rewrites both;
+   * each run mints a new session_id, so reading one alone would pair a new
+   * file with an old one and flash the stale-geometry notice).
+   */
+  private readonly setWindowMs: number;
+  private setTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(store: Store, blobs: BlobStore, bridge: Bridge, opts: { setWindowMs?: number } = {}) {
     this.store = store;
     this.blobs = blobs;
     this.bridge = bridge;
+    this.setWindowMs = opts.setWindowMs ?? 1000;
     // A file rewritten on disk (D1 rewrites on every run) is read again; one
     // that changes mid-read is re-read when that read ends (see `open`).
     this.off.push(
       this.store.subscribe((s) => {
         const m = s.artifacts.model;
         if (!m || !m.stale || this.reading) return;
+        if (Effects.isSet(s)) return this.scheduleSetReload();
         // A change after the retries ran out starts a fresh count.
         if (m.status === "failed" && m.path === this.retryPath && this.retries >= Effects.MAX_RETRIES) this.retries = 0;
         void this.open(m.path);
       }),
+      // The geometry sibling is re-read the same way (no retries: a failed
+      // read shows, and the next change reads it again).
+      this.store.subscribe((s) => {
+        const g = s.artifacts.geometry;
+        if (!g || !g.stale || this.readingGeometry) return;
+        if (Effects.isSet(s)) return this.scheduleSetReload();
+        void this.openGeometry(g.path);
+      }),
+      // Go-to-source: a panel dispatches `requestSource`; this answers it.
+      this.store.subscribe((s) => {
+        const r = s.source.request;
+        if (!r || r.seq === this.sourceSeq) return;
+        this.sourceSeq = r.seq;
+        void this.jumpTo(r.decl);
+      }),
     );
+    // frameSelection: the camera frames the selection's bounds (from the
+    // mesh blobs), or the whole model when nothing is selected.
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        if (s.view.frameSeq === prev.view.frameSeq) return;
+        if (!this.frameTarget) throw new Error("frameSelection: no frame target is attached");
+        this.frameTarget.frameTo(focusOf(s, this.blobs));
+      }),
+    );
+  }
+
+  /** Attach what `frameSelection` moves (the viewport). */
+  setFrameTarget(target: FrameTarget | null): void {
+    this.frameTarget = target;
+  }
+
+  private readingGeometry = false;
+  private geometryToken = 0;
+  private sourceSeq = 0;
+
+  /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */
+  private static isSet(s: State): boolean {
+    return s.artifacts.model?.status === "ready" && s.artifacts.geometry?.status === "ready";
+  }
+
+  private scheduleSetReload(): void {
+    if (this.setTimer !== null) return;
+    this.setTimer = setTimeout(() => {
+      this.setTimer = null;
+      void this.reloadSet();
+    }, this.setWindowMs);
+  }
+
+  /**
+   * Re-read whichever of the model and its geometry went stale in the window,
+   * then land them in one `setLoaded`, so the pairing is judged on the new
+   * pair only. A failed read is reported as usual and the other still lands.
+   */
+  private async reloadSet(): Promise<void> {
+    const s = this.store.get();
+    const mPath = s.artifacts.model?.stale ? s.artifacts.model.path : null;
+    const gPath = s.artifacts.geometry?.stale && typeof this.bridge.openGeometry === "function" ? s.artifacts.geometry.path : null;
+    if (!mPath && !gPath) return;
+    const mt = mPath ? ++this.openToken : -1;
+    const gt = gPath ? ++this.geometryToken : -1;
+    if (mPath) {
+      this.reading = true;
+      this.store.dispatch({ type: "fileOpened", artifact: "model", path: mPath });
+    }
+    if (gPath) {
+      this.readingGeometry = true;
+      this.store.dispatch({ type: "fileOpened", artifact: "geometry", path: gPath });
+    }
+    const fail = (artifact: "model" | "geometry", path: string, error: string) => {
+      const refusal = parseRefusal(error);
+      if (refusal) this.store.dispatch({ type: "zoneRefused", artifact, ...refusal });
+      this.store.dispatch({ type: "fileFailed", artifact, path, error });
+    };
+    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    try {
+      const [mr, gr] = await Promise.all([
+        mPath ? this.bridge.openModel(mPath).catch((err: unknown) => ({ ok: false as const, error: message(err) })) : null,
+        gPath ? this.bridge.openGeometry!(gPath).catch((err: unknown) => ({ ok: false as const, error: message(err) })) : null,
+      ]);
+      let model = null, geometry = null;
+      if (mPath && mr && mt === this.openToken) {
+        if (!mr.ok) fail("model", mPath, mr.error);
+        else {
+          const prov = mr.provenance;
+          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null);
+        }
+      }
+      if (gPath && gr && gt === this.geometryToken) {
+        if (!gr.ok) fail("geometry", gPath, gr.error);
+        else if (!gr.geometry) fail("geometry", gPath, "the file has no /geometry zone");
+        else geometry = loadGeometry(gr.geometry, this.blobs, gr.sizeBytes, gr.readMs);
+      }
+      if (model || geometry) {
+        this.store.dispatch({ type: "setLoaded", model, geometry });
+        this.blobs.retain(blobRefsOf(this.store.get()));
+      }
+    } finally {
+      if (mt === this.openToken) this.reading = false;
+      if (gt === this.geometryToken) this.readingGeometry = false;
+      // A change that arrived during the reads starts another window.
+      const after = this.store.get();
+      if (after.artifacts.model?.stale || after.artifacts.geometry?.stale) this.scheduleSetReload();
+    }
+  }
+
+  /** Answer a `requestSource`: open the editor at the declaration's line, or say why not. */
+  private async jumpTo(decl: string): Promise<void> {
+    const where = sourceFor(this.store.get(), decl);
+    if (!where.ok) {
+      this.store.dispatch({ type: "sourceResult", decl, ok: false, reason: where.reason });
+      return;
+    }
+    const res = await this.goToSource(where.source.file, where.source.line);
+    this.store.dispatch({ type: "sourceResult", decl, ok: res.ok, reason: res.ok ? null : (res.reason ?? "go-to-source failed") });
+  }
+
+  /** Read a geometry sibling into the store; the latest open wins. */
+  async openGeometry(path: string): Promise<boolean> {
+    const token = ++this.geometryToken;
+    this.store.dispatch({ type: "fileOpened", artifact: "geometry", path });
+    if (typeof this.bridge.openGeometry !== "function") return false; // a build without the reader: recorded, not read
+    this.readingGeometry = true;
+    try {
+      const res = await this.bridge.openGeometry(path);
+      if (token !== this.geometryToken) return false;
+      if (!res.ok) {
+        const refusal = parseRefusal(res.error);
+        if (refusal) this.store.dispatch({ type: "zoneRefused", artifact: "geometry", ...refusal });
+        this.store.dispatch({ type: "fileFailed", artifact: "geometry", path, error: res.error });
+        return false;
+      }
+      if (!res.geometry) {
+        this.store.dispatch({ type: "fileFailed", artifact: "geometry", path, error: "the file has no /geometry zone" });
+        return false;
+      }
+      const load = loadGeometry(res.geometry, this.blobs, res.sizeBytes, res.readMs);
+      for (const w of load.info.warnings) console.warn(w);
+      this.store.dispatch({ type: "fileLoaded", artifact: "geometry", load });
+      this.blobs.retain(blobRefsOf(this.store.get()));
+      return true;
+    } catch (err) {
+      if (token !== this.geometryToken) return false;
+      this.store.dispatch({ type: "fileFailed", artifact: "geometry", path, error: err instanceof Error ? err.message : String(err) });
+      return false;
+    } finally {
+      if (token === this.geometryToken) this.readingGeometry = false;
+    }
   }
 
   /** Open a model artifact; resolves true when it loaded and is still the latest open. */
@@ -125,7 +315,8 @@ export class Effects {
         this.store.dispatch({ type: "fileFailed", artifact: "model", path, error: res.error });
         return false;
       }
-      const load = loadModel(res.model, this.blobs);
+      const prov = res.provenance;
+      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null);
       for (const w of load.info.warnings) console.warn(w);
       // One line per read, so a double load shows in the Electron log.
       console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);
@@ -161,21 +352,26 @@ export class Effects {
   static readonly MAX_RETRIES = 3;
 
   /**
-   * The files a V2f `onOpen` names: the model is read; the siblings are
-   * recorded until their readers exist (V2f phase 2); a kind the set does not
-   * name is closed.
+   * The files a V2f `onOpen` names: the model and the geometry are read; the
+   * results are recorded until their reader exists (V4); a kind the set does
+   * not name is closed.
    */
   openSet(set: OpenSet): void {
-    for (const k of ["geometry", "results"] as const) {
-      if (set[k]) this.store.dispatch({ type: "fileOpened", artifact: k, path: set[k]! });
-      else this.store.dispatch({ type: "fileClosed", artifact: k });
+    if (set.geometry) void this.openGeometry(set.geometry);
+    else {
+      this.geometryToken++;
+      this.store.dispatch({ type: "fileClosed", artifact: "geometry" });
     }
+    if (set.results) this.store.dispatch({ type: "fileOpened", artifact: "results", path: set.results });
+    else this.store.dispatch({ type: "fileClosed", artifact: "results" });
     if (set.model) void this.open(set.model);
     else this.store.dispatch({ type: "fileClosed", artifact: "model" });
   }
 
   /** Detach everything `attach` and the bridge subscriptions registered. */
   dispose(): void {
+    if (this.setTimer !== null) clearTimeout(this.setTimer);
+    this.setTimer = null;
     for (const f of this.off.splice(0)) f();
   }
 

@@ -2,19 +2,23 @@
 
 Round-trip identity, the SRC twin-match against a hand-authored
 session (same call order → deterministic mesh → analyzer numbers to
-1e-9), polygon oracles, translate/rotate flow-through, version-window
-gates, and the fail-loud validation surface.
+1e-9), polygon oracles, translate/rotate flow-through, the version
+floor (ADR 0113, 2026-10-04 amendment), and the fail-loud validation surface.
 """
 from __future__ import annotations
 
 import json
+import warnings
 
 import pytest
 
+import apeGmsh.sections._document as _docmod
 from apeGmsh.sections import (
+    SECTION_DOC_FLOOR,
     SECTION_DOC_VERSION,
     SectionDocument,
     SectionDocumentError,
+    SectionDocumentNewerWarning,
     SectionMaterial,
     SectionProperties,
 )
@@ -48,24 +52,135 @@ def test_json_round_trip_identity(tmp_path):
     assert p.read_text(encoding="utf-8") == p2.read_text(encoding="utf-8")
 
 
-def test_version_window(tmp_path):
+def _write_version(tmp_path, data, version):
+    data = dict(data, section_doc_version=version)
+    p = tmp_path / f"v{version}.section.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def _open_silently(path):
+    """Open and assert no newer-document warning fired."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SectionDocumentNewerWarning)
+        return SectionDocument.open(path)
+
+
+def test_floor_constant_is_writer_owned():
+    """ADR 0113 INV-2 for section documents: the floor sits beside the
+    version it bounds, same major, never above it; 1.0.0 at the
+    2026-10-04 amendment (the version has never been bumped)."""
+    floor = tuple(int(p) for p in SECTION_DOC_FLOOR.split("."))
+    cur = tuple(int(p) for p in SECTION_DOC_VERSION.split("."))
+    assert floor[0] == cur[0]
+    assert floor <= cur
+    assert SECTION_DOC_FLOOR == "1.0.0"
+
+
+def test_version_floor_today(tmp_path):
+    """The shipped constants (floor 1.0.0, loader 1.0.0): the floor and
+    any patch open silently; another major refuses naming the floor; a
+    newer same-major minor opens with one warning naming both versions."""
     base = _src_doc().to_dict()
-    for version, ok in (
-        (SECTION_DOC_VERSION, True),
-        ("1.0.99", True),
-        ("1.1.0", False),   # newer minor — refused loudly (no forward tolerance)
-        ("0.9.0", False),   # different major
-        ("2.0.0", False),
-        ("banana", False),
+    for version in (SECTION_DOC_FLOOR, SECTION_DOC_VERSION, "1.0.99"):
+        doc = _open_silently(_write_version(tmp_path, base, version))
+        assert doc.to_dict()["section_doc_version"] == version
+    for version in ("0.9.0", "0.99.0", "2.0.0"):
+        with pytest.raises(SectionDocumentError, match=r"floor 1\.0\.0"):
+            SectionDocument.open(_write_version(tmp_path, base, version))
+    with pytest.raises(SectionDocumentError, match="invalid section_doc_version"):
+        SectionDocument.open(_write_version(tmp_path, base, "banana"))
+    with pytest.warns(SectionDocumentNewerWarning) as rec:
+        SectionDocument.open(_write_version(tmp_path, base, "1.1.0"))
+    assert len(rec) == 1
+    assert "1.1.0" in str(rec[0].message)
+    assert SECTION_DOC_VERSION in str(rec[0].message)
+    # attributed to the caller of open(), not to apeGmsh internals
+    assert rec[0].filename == __file__
+    # ... and to the caller of SectionDocument(...) on that path
+    with pytest.warns(SectionDocumentNewerWarning) as rec:
+        SectionDocument(dict(base, section_doc_version="1.1.0"))
+    assert len(rec) == 1
+    assert rec[0].filename == __file__
+
+
+def test_version_floor_edges(tmp_path, monkeypatch):
+    """Both edges with a floor above X.0 (floor 1.3, loader 1.5): the
+    floor minor and every minor up to the loader open silently;
+    floor.minor - 1 refuses naming the floor; loader.minor + 1 opens
+    with the warning. Patches are ignored at every edge."""
+    monkeypatch.setattr(_docmod, "SECTION_DOC_FLOOR", "1.3.0")
+    monkeypatch.setattr(_docmod, "SECTION_DOC_VERSION", "1.5.0")
+    base = _src_doc().to_dict()
+    for version in ("1.3.0", "1.3.7", "1.4.0", "1.5.0", "1.5.2"):
+        _open_silently(_write_version(tmp_path, base, version))
+    for version in ("1.2.0", "1.2.9", "1.0.0", "0.5.0", "2.0.0"):
+        with pytest.raises(SectionDocumentError, match=r"floor 1\.3\.0"):
+            SectionDocument.open(_write_version(tmp_path, base, version))
+    with pytest.warns(SectionDocumentNewerWarning, match="1.6.0"):
+        SectionDocument.open(_write_version(tmp_path, base, "1.6.0"))
+
+
+def test_newer_minor_unknown_keys(tmp_path):
+    """What a newer same-major document carries (probed on the loader,
+    2026-10-04): unknown optional keys at the top level, on a shape and
+    in ``mesh`` are tolerated and kept verbatim, so a re-save does not
+    lose them, and the build ignores them; a value this loader cannot
+    interpret (a new shape kind, a new boolean op, a new material key,
+    a new parameter on a known shape) still refuses. Both lanes."""
+    data = _src_doc().to_dict()
+    data["fillets"] = [{"shape": "steel", "r": 5.0}]
+    data["shapes"][0]["chamfer"] = 2.0
+    data["mesh"]["algorithm"] = 6
+    p = _write_version(tmp_path, data, "1.1.0")
+    with pytest.warns(SectionDocumentNewerWarning):
+        doc = SectionDocument.open(p)
+    assert doc.to_dict() == dict(data, section_doc_version="1.1.0")
+    out = tmp_path / "resaved.section.json"
+    doc.save(out)
+    assert json.loads(out.read_text(encoding="utf-8")) == doc.to_dict()
+
+    # the build ignores them: a 2 x 3 rectangle carrying a "fillet" it
+    # cannot honour still integrates to the closed-form area and centroid
+    rect = SectionDocument.new(name="r")
+    rect.add_shape("rect_face", id="r", b=2.0, h=3.0)
+    rect.set_mesh(lc=0.5)
+    rdata = rect.to_dict()
+    rdata["shapes"][0]["fillet"] = 0.4
+    rdata["fillets"] = [{"shape": "r", "r": 0.4}]
+    with pytest.warns(SectionDocumentNewerWarning):
+        rdoc = SectionDocument.open(_write_version(tmp_path, rdata, "1.1.0"))
+    geo = rdoc.build().geometric()
+    assert geo.area == pytest.approx(6.0, rel=1e-9)
+    assert geo.cx == pytest.approx(0.0, abs=1e-9)
+    assert geo.cy == pytest.approx(0.0, abs=1e-9)
+
+    fiber = SectionDocument.new(name="f", kind="fiber").to_dict()
+    fiber["shear_springs"] = {"Vy": 1.0}
+    with pytest.warns(SectionDocumentNewerWarning):
+        fdoc = SectionDocument.open(_write_version(tmp_path, fiber, "1.1.0"))
+    assert fdoc.to_dict()["shear_springs"] == {"Vy": 1.0}
+
+    for mutate, match in (
+        (lambda d: d["shapes"][0].__setitem__("shape", "hexagon_face"),
+         "unknown shape kind"),
+        (lambda d: d["booleans"].append({"op": "union", "a": "concrete",
+                                         "b": "steel"}),
+         "unknown boolean op"),
+        (lambda d: d["materials"]["steel"].__setitem__("alpha", 1e-5),
+         "unknown keys"),
+        # a new parameter on a known shape kind: refused at load (as
+        # add_shape refuses it), not a raw TypeError at build time
+        (lambda d: d["shapes"][0]["params"].__setitem__("fillet", 5.0),
+         r"unknown params \['fillet'\] \(section_doc_version 1\.1\.0"),
     ):
-        base["section_doc_version"] = version
-        p = tmp_path / "v.section.json"
-        p.write_text(json.dumps(base), encoding="utf-8")
-        if ok:
-            SectionDocument.open(p)
-        else:
-            with pytest.raises(SectionDocumentError, match="version"):
-                SectionDocument.open(p)
+        bad = _src_doc().to_dict()
+        mutate(bad)
+        with pytest.warns(SectionDocumentNewerWarning):
+            with pytest.raises(SectionDocumentError, match=match):
+                SectionDocument.open(
+                    _write_version(tmp_path, bad, "1.1.0")
+                )
 
 
 def test_lane_mismatch_keys_rejected(tmp_path):

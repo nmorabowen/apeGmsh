@@ -8,13 +8,11 @@
 //
 // Browser-safe: no Node import.
 
-import { readAttrs, SchemaError, type H5File, type H5Module } from "./read.ts";
+import { PROVENANCE_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5File, type H5Module } from "./read.ts";
 import { dataset, group, has, int32s, sameLength, strs, zoneVersion } from "./geometry.ts";
 
-/** The provenance zone version this reader was written against. */
-export const PROVENANCE_TARGET = { major: 1, minor: 0 } as const;
-// TODO(#1313): read the floor from read.ts's ZONE_FLOOR table once #1313 lands.
-export const PROVENANCE_FLOOR = 0;
+// The target and the floor live in read.ts's one version table (#1303).
+export { PROVENANCE_TARGET } from "./read.ts";
 
 export interface ProvenanceZone {
   version: string;
@@ -30,7 +28,7 @@ export interface ProvenanceZone {
 export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | null {
   const warnings: string[] = [];
   const meta = has(f, "meta") ? readAttrs(group(h5, f, "meta")) : {};
-  const version = zoneVersion(meta, "provenance_schema_version", PROVENANCE_TARGET, PROVENANCE_FLOOR, warnings);
+  const version = zoneVersion(meta, "provenance_schema_version", PROVENANCE_TARGET, ZONE_FLOOR.provenance, warnings);
   const present = has(f, "provenance");
   if (version === null && !present) return null;
   if (version === null) throw new SchemaError(`/provenance is present but /meta has no provenance_schema_version`);
@@ -56,6 +54,12 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   files.sha256.forEach((h, i) => {
     if (!/^[0-9a-f]{64}$/.test(h)) throw new SchemaError(`${fg.path}/sha256[${i}] is not a hex sha256`);
   });
+  // The spec stores paths POSIX: a backslash is a writer fault, refused rather
+  // than guessed at (on POSIX it is a legal file-name character).
+  files.path.forEach((p, i) => {
+    if (p.includes("\\")) throw new SchemaError(`${fg.path}/path[${i}] = ${JSON.stringify(p)} has a backslash; paths are POSIX`);
+  });
+  if (baseDir.includes("\\")) throw new SchemaError(`/provenance@base_dir = ${JSON.stringify(baseDir)} has a backslash; paths are POSIX`);
 
   const sg = group(h5, g, "sites");
   const sites = {
@@ -80,7 +84,11 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   };
   const nRecords = sameLength(rg.path, records);
   const seen = new Set<string>();
+  // `seq` is the capture order in the run: one per declaration, so unique.
+  const seqs = new Set<number>();
   for (let i = 0; i < nRecords; i++) {
+    if (seqs.has(records.seq[i]!)) throw new SchemaError(`${rg.path}/seq has ${records.seq[i]} twice; it must be unique`);
+    seqs.add(records.seq[i]!);
     const p = records.path[i]!;
     if (seen.has(p)) throw new SchemaError(`${rg.path}/path has ${JSON.stringify(p)} twice; it must be unique`);
     seen.add(p);

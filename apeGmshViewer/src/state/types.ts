@@ -86,8 +86,20 @@ export interface Decl {
   fields: readonly Field[];
   element?: ElementFacts;
   group?: { dim: number; tag: number; count: number; ids: BlobRef };
-  /** reserved for /provenance (V2c, V2d) */
-  provenance?: { file: string; line: number; function: string };
+  /** where the user's code made this declaration (/provenance, joined by decl path); absent when the file has no record for it */
+  provenance?: DeclSource;
+}
+
+/** A declaration's source location, from /provenance (src/reader/provenance.ts). */
+export interface DeclSource {
+  /** absolute path (POSIX separators) */
+  file: string;
+  line: number;
+  function: string;
+  /** the file's sha256 when it was captured */
+  sha256: string;
+  /** the outermost script line, when the call came through a helper; null when there is none */
+  script: { file: string; line: number } | null;
 }
 
 export type ArtifactKind = "geometry" | "model" | "results";
@@ -97,7 +109,9 @@ export type ZoneStatus =
   | { status: "loading" }
   | { status: "ready"; version: string }
   /** `accepted` is the version range the reader opens; `newer` says the file is ahead of this app, not behind it */
-  | { status: "refused"; version: string; accepted: string; newer: boolean; reason: string };
+  | { status: "refused"; version: string; accepted: string; newer: boolean; reason: string }
+  /** the zone's version is fine but its content is broken (the reader's message names the HDF5 path) */
+  | { status: "malformed"; reason: string };
 
 export interface ArtifactInfo {
   path: string;
@@ -112,6 +126,8 @@ export interface ArtifactInfo {
   /** loud reader warnings, shown in the banner */
   warnings: string[];
   counts: { nodes: number; cells: number; opsOnly: number };
+  /** `/meta/session_id`: the key that pairs a model with its geometry sibling; null when the file has none */
+  sessionId: string | null;
 }
 
 /** One row of the legend: a colour group, in display order. */
@@ -142,6 +158,22 @@ export interface MeshInfo {
   radius: number;
   counts: { lineCells: number; faceCells: number; solidCells: number; opsOnly: number; points: number };
   warnings: string[];
+}
+
+/** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
+export interface GeometryInfo {
+  path: string;
+  /** `/meta/session_id` of the geometry file; the pairing rule compares it with the model's */
+  sessionId: string | null;
+  source: "mesh" | "temp_mesh";
+  status: "ok" | "partial";
+  /** 6 floats per curve segment, 9 per surface triangle, 3 per point */
+  curvePositions: BlobRef;
+  surfacePositions: BlobRef;
+  pointPositions: BlobRef;
+  counts: { points: number; curves: number; surfaces: number; volumes: number };
+  center: readonly [number, number, number];
+  radius: number;
 }
 
 export type PhaseKey =
@@ -188,6 +220,21 @@ export interface State {
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
   overrides: Record<DeclPath, never>;
+  /** the geometry sibling as read; drawn only when it pairs with the model (selectors.geometryPairing) */
+  geometry: GeometryInfo | null;
+  /**
+   * go-to-source: the latest request (the effects act on a new `seq`) and the
+   * latest answer. `seq` counts requests for the whole session and is never
+   * reset (a model re-read clears `request` and `last`, not the count), so a
+   * request after a re-read can never reuse a seq the effects already saw.
+   */
+  source: {
+    seq: number;
+    request: { decl: DeclPath; seq: number } | null;
+    last: { decl: DeclPath; ok: boolean; reason: string | null } | null;
+  };
+  /** view requests: `frameSeq` counts `frameSelection` events; the frame effect acts on each change */
+  view: { frameSeq: number };
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -199,13 +246,25 @@ export interface ModelLoad {
   mesh: MeshInfo;
 }
 
+/** The payload of `fileLoaded` for the geometry artifact. */
+export interface GeometryLoad {
+  info: ArtifactInfo;
+  geometry: GeometryInfo;
+}
+
 /**
  * Decision 17's twenty events, plus `fileClosed` (added by V2e review: an
- * `onOpen` set that names no results file closes the results artifact).
+ * `onOpen` set that names no results file closes the results artifact), and
+ * V2f's go-to-source pair: `requestSource` (a panel asks; the effects act)
+ * and `sourceResult` (the effects answer), and `setLoaded`: the model and its
+ * geometry sibling re-read together after a D1 re-run, applied as one step so
+ * no state pairs a new file with an old one.
  */
 export type Event =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
+  | { type: "setLoaded"; model: ModelLoad | null; geometry: GeometryLoad | null }
   | { type: "fileLoaded"; artifact: "model"; load: ModelLoad }
+  | { type: "fileLoaded"; artifact: "geometry"; load: GeometryLoad }
   | { type: "fileFailed"; artifact: ArtifactKind; path: string; error: string }
   | { type: "fileClosed"; artifact: ArtifactKind }
   | { type: "fileChanged"; path: string }
@@ -224,6 +283,10 @@ export type Event =
   | { type: "inspectorPin"; decl: DeclPath }
   | { type: "inspectorUnpin"; decl: DeclPath }
   | { type: "openWindow"; window: WindowKind }
-  | { type: "closeWindow"; window: WindowKind };
+  | { type: "closeWindow"; window: WindowKind }
+  | { type: "requestSource"; decl: DeclPath }
+  | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null }
+  /** frame the selection, or the whole model when nothing is selected (`F`, or any panel); the frame effect moves the camera */
+  | { type: "frameSelection" };
 
 export type EventType = Event["type"];

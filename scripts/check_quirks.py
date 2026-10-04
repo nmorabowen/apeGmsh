@@ -134,6 +134,15 @@ RULES: dict[str, str] = {
         "*_PRIOR_MINOR from tests/fixtures/schema.py. Incidents: stale at the "
         "2.12.0 and 2.13.0 bumps (fixed 60252205, #642), and at 2.16.0 (fixed #738)"
     ),
+    "bare-version-compare": (
+        "a file or zone version compared against a bare tuple literal, or a SchemaVersion built "
+        "inline from literals: the branch cannot be told from a live one, and it outlives the "
+        "floor that made it dead (a reader branch below the compatibility floor is unreachable "
+        "but still reads as supported). Compare against a named *_FROM / *_FLOOR constant at or "
+        "above the zone's floor, with a test on a corpus file below it (ADR 0113 INV-8, #1303). "
+        "Lesson: the `_fv < (2, 7, 0)` ndf branch in _femdata_h5_io.py stayed through the 2.10.0 "
+        "floor although no file below 2.7 could reach it (removed with this rule, #1303 PR-6)"
+    ),
     "compose-streams": (
         "a rebuild that must carry the whole model omits a stream the composite "
         "accepts, so that stream is silently dropped. Pass every parameter of "
@@ -802,8 +811,74 @@ def _stale_baseline(root: Path) -> list[Finding]:
     ]
 
 
+#: A version triple (or pair) spelled as literals, compared by order or equality.
+VERSION_COMPARE_TEXT = re.compile(
+    r"\(\s*\d+\s*,\s*\d+\s*(?:,\s*\d+\s*)?\)\s*[<>=!]=?|[<>=!]=?\s*\(\s*\d+\s*,\s*\d+\s*[,)]"
+    r"|SchemaVersion(?:\.parse)?\(|parse_(?:schema_)?version\(",
+    re.IGNORECASE,
+)
+#: What marks the other side of a compare as a version value (a name, an attribute or
+#: a tuple of `.major/.minor/.patch` fields); `shape == (3, 3)` has none of these.
+VERSION_NAME = re.compile(
+    r"version|(?<![a-z])_?fv(?![a-z])|(?<![a-z])_?ver(?![a-z])|\.(?:major|minor|patch)(?![a-z])",
+    re.IGNORECASE,
+)
+VERSION_BUILDERS = {"SchemaVersion", "parse_version", "parse_schema_version"}
+
+
+def _int_tuple(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Tuple)
+        and 2 <= len(node.elts) <= 3
+        and all(isinstance(e, ast.Constant) and type(e.value) is int for e in node.elts)
+    )
+
+
+def _inline_version(node: ast.AST) -> bool:
+    """`SchemaVersion(2, 7, 0)` or `parse_version("2.7.0")`: a version built from literals."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if isinstance(func, ast.Attribute) and func.attr == "parse":
+        name = "parse_version" if ast.unparse(func.value).endswith("SchemaVersion") else name
+    if name not in VERSION_BUILDERS:
+        return False
+    args = [*node.args, *(k.value for k in node.keywords)]
+    return bool(args) and all(isinstance(a, ast.Constant) for a in args)
+
+
+def check_bare_version_compare(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """`<version value> < (2, 7, 0)` and `<version> >= SchemaVersion(2, 7, 0)`, in src.
+
+    Only a compare against a tuple of two or three int literals (or a version built
+    inline from literals) is flagged; the other side may be anything, but
+    `sys.version_info` is the interpreter, not a file. A named constant is a
+    Name or Attribute, which this never reads.
+    """
+    if not rel.startswith(GETATTR_SCOPE):
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        sides = [node.left, *node.comparators]
+        for index in range(len(node.ops)):
+            left, right = sides[index], sides[index + 1]
+            for literal, other in ((left, right), (right, left)):
+                if not (_int_tuple(literal) or _inline_version(literal)):
+                    continue
+                text = ast.unparse(other)
+                if _int_tuple(other) or "version_info" in text:
+                    continue
+                if _int_tuple(literal) and not VERSION_NAME.search(text):
+                    continue
+                yield node.lineno, RULES["bare-version-compare"]
+                break
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
+    "bare-version-compare": check_bare_version_compare,
     "compose-streams": check_compose_streams,
     "resolve-swallow": check_resolve_swallow,
     "openseespy-import": check_openseespy_import,
@@ -829,6 +904,8 @@ def _may_apply(rel: str, lowered: str) -> bool:
     if rel in {path.as_posix() for path in CARRY_ALL} or _in_swallow_scope(rel):
         return True
     if rel.startswith(GETATTR_SCOPE) and ("getattr(" in lowered or "hasattr(" in lowered):
+        return True
+    if rel.startswith(GETATTR_SCOPE) and VERSION_COMPARE_TEXT.search(lowered):
         return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 

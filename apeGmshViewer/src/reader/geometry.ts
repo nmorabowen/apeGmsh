@@ -15,23 +15,20 @@
 //
 // Browser-safe: no Node import, so the renderer can use it too.
 
-import { readAttrs, SchemaError, type H5Dataset, type H5File, type H5Group, type H5Module } from "./read.ts";
+import { checkZoneVersion, GEOMETRY_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5Dataset, type H5File, type H5Group, type H5Module } from "./read.ts";
 import type { Param } from "../model/types.ts";
 
-/** The geometry zone version this reader was written against. */
-export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
-// TODO(#1313): read the floor from read.ts's ZONE_FLOOR table once #1313
-// lands; until then each zone reader keeps its own floor here.
-export const GEOMETRY_FLOOR = 0;
+// The target and the floor live in read.ts's one version table (#1303).
+export { GEOMETRY_TARGET } from "./read.ts";
 
 // ---------------------------------------------------------------------------
 // Zone helpers, shared with provenance.ts
 // ---------------------------------------------------------------------------
 
 /**
- * The zone's version from `/meta/<key>`, or `null` when the key is absent.
- * Another major, or a minor below the floor, is refused; a newer minor is
- * read with a warning (its additions are ignored).
+ * The zone's version from `/meta/<key>`, or `null` when the key is absent
+ * (an absent zone is ignored). A present stamp follows ADR 0113 D7, the one
+ * rule every zone shares (read.ts checkZoneVersion).
  */
 export function zoneVersion(
   meta: Record<string, Param | Param[]>,
@@ -42,21 +39,7 @@ export function zoneVersion(
 ): string | null {
   const raw = meta[key];
   if (raw === undefined) return null;
-  if (typeof raw !== "string") throw new SchemaError(`/meta/${key} is not a string`);
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(raw);
-  if (!m) throw new SchemaError(`/meta/${key} = ${JSON.stringify(raw)} is not X.Y.Z`);
-  const major = Number(m[1]);
-  const minor = Number(m[2]);
-  if (major !== target.major) throw new SchemaError(`${key} ${raw}: this app reads major ${target.major} only`);
-  if (minor < floor) {
-    throw new SchemaError(`${key} ${raw}: layouts before ${target.major}.${floor} are not supported`);
-  }
-  if (minor > target.minor) {
-    warnings.push(
-      `${key} ${raw} is newer than this reader (${target.major}.${target.minor}); fields added since are ignored`,
-    );
-  }
-  return raw;
+  return checkZoneVersion(raw, key, target, floor, warnings);
 }
 
 export function has(g: H5Group, name: string): boolean {
@@ -192,7 +175,7 @@ export interface GeometryZone {
 export function readGeometryZone(h5: H5Module, f: H5File, path: string): GeometryZone | null {
   const warnings: string[] = [];
   const meta = has(f, "meta") ? readAttrs(group(h5, f, "meta")) : {};
-  const version = zoneVersion(meta, "geometry_schema_version", GEOMETRY_TARGET, GEOMETRY_FLOOR, warnings);
+  const version = zoneVersion(meta, "geometry_schema_version", GEOMETRY_TARGET, ZONE_FLOOR.geometry, warnings);
   const present = has(f, "geometry");
   if (version === null && !present) return null;
   if (version === null) throw new SchemaError(`/geometry is present but /meta has no geometry_schema_version`);
@@ -221,6 +204,18 @@ export function readGeometryZone(h5: H5Module, f: H5File, path: string): Geometr
     ok: int8s(ds(eg, "ok")),
   };
   const K = sameLength(eg.path, { dim: entities.dim, tag: entities.tag, ok: entities.ok, bbox: { length: entities.bbox.length / 6 } });
+  // Strict where the spec implies an invariant: dims are 0..3, `ok` is a
+  // flag, and every model entity is listed once.
+  const listed = new Set<string>();
+  for (let k = 0; k < K; k++) {
+    const d = entities.dim[k]!;
+    if (d < 0 || d > 3) throw new SchemaError(`${eg.path}/dim[${k}] = ${d}; expected 0..3`);
+    const ok = entities.ok[k]!;
+    if (ok !== 0 && ok !== 1) throw new SchemaError(`${eg.path}/ok[${k}] = ${ok}; expected 0 or 1`);
+    const key = `${d}:${entities.tag[k]}`;
+    if (listed.has(key)) throw new SchemaError(`${eg.path} lists entity (dim ${d}, tag ${entities.tag[k]}) twice`);
+    listed.add(key);
+  }
 
   const pg = sub("points");
   const points = { entity: int32s(ds(pg, "entity")), xyz: float64s(ds(pg, "xyz"), 3) };
@@ -282,8 +277,18 @@ export function readGeometryZone(h5: H5Module, f: H5File, path: string): Geometr
   };
   sameLength(mg.path, memberships);
   for (let i = 0; i < kinds.length; i++) {
-    if (memberships.kind[i] === "label" && memberships.pg[i] !== -1) {
-      throw new SchemaError(`${mg.path}/pg[${i}] = ${memberships.pg[i]} for a label; expected -1`);
+    const pg = memberships.pg[i]!;
+    if (memberships.kind[i] === "label" && pg !== -1) {
+      throw new SchemaError(`${mg.path}/pg[${i}] = ${pg} for a label; expected -1`);
+    }
+    // A physical group's tag is a gmsh physical tag: positive.
+    if (memberships.kind[i] === "physical_group" && pg < 1) {
+      throw new SchemaError(`${mg.path}/pg[${i}] = ${pg} for a physical_group; expected its tag (>= 1)`);
+    }
+    // One row per (entity, label or group): the entity must be listed.
+    const key = `${memberships.dim[i]}:${memberships.tag[i]}`;
+    if (!listed.has(key)) {
+      throw new SchemaError(`${mg.path} row ${i} names entity (dim ${memberships.dim[i]}, tag ${memberships.tag[i]}), which /geometry/entities does not list`);
     }
   }
 
@@ -361,16 +366,20 @@ export type GeometryPairing = { paired: true } | { paired: false; reason: string
  * such a sibling must not be drawn as this model's geometry.
  */
 export function pairGeometry(modelMeta: Record<string, Param | Param[]>, geometry: GeometryZone): GeometryPairing {
-  const sid = modelMeta["session_id"];
-  if (sid === undefined) {
+  return pairSessions(modelMeta["session_id"], geometry.sessionId, geometry.path);
+}
+
+/** The pairing rule on the two ids alone (the store keeps the ids, not the files). */
+export function pairSessions(modelSid: unknown, geometrySid: string | null, geometryPath: string): GeometryPairing {
+  if (modelSid === undefined || modelSid === null) {
     return { paired: false, reason: "the model file has no session_id (written before apeGmsh stamped one), so no geometry pairs with it" };
   }
-  if (typeof sid !== "string") return { paired: false, reason: "the model file's session_id is not a string" };
-  if (geometry.sessionId === null) return { paired: false, reason: `${geometry.path} has no session_id` };
-  if (geometry.sessionId !== sid) {
+  if (typeof modelSid !== "string") return { paired: false, reason: "the model file's session_id is not a string" };
+  if (geometrySid === null) return { paired: false, reason: `${geometryPath} has no session_id` };
+  if (geometrySid !== modelSid) {
     return {
       paired: false,
-      reason: `${geometry.path} is stale or foreign: it was written by session ${geometry.sessionId}, the model by session ${sid}`,
+      reason: `${geometryPath} is stale or foreign: it was written by session ${geometrySid}, the model by session ${modelSid}`,
     };
   }
   return { paired: true };

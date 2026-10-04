@@ -415,3 +415,17 @@ gate G-E is blocking for exactly that reason.
   `FiberPoint`, `W_fiber`), `sections/_builder.py` (`*_face`
   builders, `plot_faces`), `sections/_inspector.py` (S6 panel).
 - apeSteel (optional): AISC v16 / EN 10365 catalogs for the picker.
+
+## Amendment — 2026-10-04 — The document version is read from a floor (ADR 0113, #1317)
+
+Append-only. "The document model" above describes the two-version
+window of ADR 0023 (#836 correction). That window is retired for
+section documents by
+[ADR 0113's 2026-10-04 amendment](0113-compatibility-is-a-floor-per-zone.md#amendment--2026-10-04--section-documents-come-under-the-floor-rule-1317),
+ratified by the maintainer on #1317. The loader now opens every
+document of its major from `SECTION_DOC_FLOOR` (1.0.0) up. A newer
+minor opens with a `SectionDocumentNewerWarning` and its unknown
+optional keys are kept and ignored. Another major, or a minor below the
+floor, refuses with a message that names the floor. A semantic change
+to an existing key ships a shim keyed on a named `*_FROM` constant, and
+a restructure is a major bump.

@@ -1,0 +1,6 @@
+# The schema corpus is frozen evidence (ADR 0113 D8): MANIFEST.json pins
+# each .h5 by sha256, and each era's .tcl deck is a byte-exact oracle for
+# chain K2. No EOL translation on any machine.
+*.h5 binary
+*.tcl -text
+*.json -text

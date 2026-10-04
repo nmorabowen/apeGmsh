@@ -208,6 +208,8 @@ from dataclasses import dataclass, field
 from collections.abc import Sequence
 from typing import Literal, Protocol
 
+import numpy as np
+
 
 @dataclass(frozen=True, slots=True)
 class StrategySpec:
@@ -797,6 +799,47 @@ def trim_coords_to_ndm(
     if ndm is None or len(coords) <= ndm:
         return coords
     return coords[:ndm]
+
+
+#: The numpy types :func:`plain_scalar` unwraps. The deck formatters
+#: test against this tuple before their ``int`` / ``float`` branches.
+NUMPY_VALUE_TYPES: tuple[type, ...] = (np.generic, np.ndarray)
+
+
+def plain_scalar(v: object) -> object:
+    """Return a numpy scalar or 0-d array as the plain Python scalar.
+
+    The deck formatters render a token with ``repr``, and under numpy
+    >= 2 ``repr(np.float64(1.5))`` is ``'np.float64(1.5)'``: the py deck
+    dies with ``NameError: name 'np' is not defined`` and the Tcl deck
+    carries a token OpenSees cannot parse (#1336). ``np.float64``
+    subclasses ``float``, so an ``isinstance(v, float)`` branch takes it;
+    ``np.int64`` and ``np.float32`` subclass neither ``int`` nor
+    ``float``. ``.item()`` gives the Python ``float`` / ``int`` / ``bool``
+    with the same value (``np.float32`` widens exactly to ``float``).
+
+    An array with ``ndim > 0`` is not one deck token, so it raises
+    ``TypeError`` rather than being written as ``array([...])``; so does
+    a scalar with no plain Python equivalent (``.item()`` returns numpy
+    again, e.g. an extended-precision ``np.longdouble``). Any non-numpy
+    value passes through unchanged.
+    """
+    if isinstance(v, np.ndarray):
+        if v.ndim != 0:
+            raise TypeError(
+                f"a numpy array of shape {v.shape} reached the deck "
+                "formatter as one token; pass a scalar, or spread the "
+                "array into separate arguments"
+            )
+    elif not isinstance(v, np.generic):
+        return v
+    item = v.item()
+    if isinstance(item, (np.generic, np.ndarray)):
+        raise TypeError(
+            f"a numpy {v.dtype} value has no plain Python equivalent "
+            "for a deck token; convert it with float() or int() first"
+        )
+    return item
 
 
 def _build_embedded_flag_args(

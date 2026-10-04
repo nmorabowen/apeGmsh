@@ -6,11 +6,12 @@
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
 import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
+import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
 import { NO_GROUP, OPS_ONLY, paletteFor } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
-import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad } from "./types.ts";
+import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ZoneStatus } from "./types.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -230,11 +231,62 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
   };
 }
 
-/** Everything `fileLoaded` carries for a model artifact. */
-export function loadModel(model: ModelFile, blobs: BlobStore): ModelLoad {
+/**
+ * Join /provenance records onto the declarations, by decl path. Unnamed
+ * objects (`#k`) are never joined: the app's `#k` is the reader's listing
+ * order and /provenance's is the declaration order, so the same key can name
+ * two objects (selectors.sourceFor says so to the user). A record for a
+ * family the app does not model (a fix, a pattern) joins nothing; that is
+ * expected, not an error.
+ */
+export function joinProvenance(decls: Record<DeclPath, Decl>, zone: ProvenanceZone): number {
+  let joined = 0;
+  for (const path of zone.records.path) {
+    if (path.includes("/#")) continue;
+    const d = decls[path];
+    if (!d) continue;
+    const r = sourceOf(zone, path);
+    if (!r.ok) continue;
+    const at = r.site ?? r.script!;
+    decls[path] = {
+      ...d,
+      provenance: {
+        file: at.file,
+        line: at.line,
+        function: at.function,
+        sha256: at.sha256,
+        script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
+      },
+    };
+    joined++;
+  }
+  return joined;
+}
+
+/**
+ * Everything `fileLoaded` carries for a model artifact. `provenance` is the
+ * file's /provenance zone when main read it (null: the file has none);
+ * `provenanceRefused` is the zone's status when main could not read it (the
+ * model loads all the same, without sources).
+ */
+export function loadModel(
+  model: ModelFile,
+  blobs: BlobStore,
+  provenance: ProvenanceZone | null = null,
+  provenanceRefused: ZoneStatus | null = null,
+): ModelLoad {
   const warnings: string[] = [...model.warnings];
   const mesh = buildMesh(model);
   const { decls, names } = declarationsOf(model, blobs, warnings);
+  if (provenance) {
+    warnings.push(...provenance.warnings);
+    joinProvenance(decls, provenance);
+  }
+  // A malformed zone is loud (the banner), not an "older apeGmsh" refusal.
+  if (provenanceRefused?.status === "malformed") {
+    warnings.push(`/provenance is malformed and was not read (go-to-source is off): ${provenanceRefused.reason}`);
+  }
+  const sid = model.meta["session_id"];
   const info: ArtifactInfo = {
     path: model.path,
     status: "ready",
@@ -245,7 +297,9 @@ export function loadModel(model: ModelFile, blobs: BlobStore): ModelLoad {
     zones: {
       neutral: { status: "ready", version: model.neutralVersion },
       opensees: model.opensees ? { status: "ready", version: model.opensees.version } : { status: "absent" },
+      provenance: provenanceRefused ?? (provenance ? { status: "ready", version: provenance.version } : { status: "absent" }),
     },
+    sessionId: typeof sid === "string" ? sid : null,
     warnings: [...warnings, ...mesh.warnings],
     counts: {
       nodes: model.nodeIds.length,

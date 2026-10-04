@@ -1,0 +1,329 @@
+{
+ "fem": {
+  "constraints": {
+   "element": 0,
+   "node": 0
+  },
+  "dump_format": 1,
+  "element_counts": {
+   "line2": 6
+  },
+  "labels": {
+   "element_side": {},
+   "node_side": {}
+  },
+  "loads": {
+   "element": 0,
+   "element_patterns": [],
+   "nodal": 1,
+   "nodal_patterns": [
+    "Lateral"
+   ],
+   "sp": 0,
+   "sp_patterns": []
+  },
+  "masses": 0,
+  "n_nodes": 7,
+  "physical_groups": {
+   "element_side": {
+    "0:Base": -1,
+    "0:Top": -1,
+    "1:Beam": 2,
+    "1:Cols": 4
+   },
+   "node_side": {
+    "0:Base": 2,
+    "0:Top": 1,
+    "1:Beam": 3,
+    "1:Cols": 6
+   }
+  },
+  "snapshot_id": "dfd7c7b4d90b18e36a2f2da7ffe2ce73"
+ },
+ "generator_notes": {
+  "neutral_case_api": "g.loads.case",
+  "neutral_load_api": "g.loads.point.force(pg=, force=)"
+ },
+ "model": {
+  "analysis": {},
+  "beam_integration": [
+   {
+    "__type__": "BeamIntegrationRecord",
+    "args": [
+     1,
+     3
+    ],
+    "tag": 1,
+    "type_token": "Lobatto"
+   }
+  ],
+  "dump_format": 1,
+  "elements": [
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     0.01,
+     200000000000,
+     80000000000,
+     0.0003,
+     0.0002,
+     0.0001,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 4,
+    "tag": 3,
+    "type_token": "elasticBeamColumn"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     0.01,
+     200000000000,
+     80000000000,
+     0.0003,
+     0.0002,
+     0.0001,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 5,
+    "tag": 4,
+    "type_token": "elasticBeamColumn"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     0.01,
+     200000000000,
+     80000000000,
+     0.0003,
+     0.0002,
+     0.0001,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 8,
+    "tag": 5,
+    "type_token": "elasticBeamColumn"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     0.01,
+     200000000000,
+     80000000000,
+     0.0003,
+     0.0002,
+     0.0001,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 9,
+    "tag": 6,
+    "type_token": "elasticBeamColumn"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 6,
+    "tag": 7,
+    "type_token": "forceBeamColumn"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1,
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 7,
+    "tag": 8,
+    "type_token": "forceBeamColumn"
+   }
+  ],
+  "fem": {
+   "constraints": {
+    "element": 0,
+    "node": 0
+   },
+   "dump_format": 1,
+   "element_counts": {
+    "line2": 6
+   },
+   "labels": {
+    "element_side": {},
+    "node_side": {}
+   },
+   "loads": {
+    "element": 0,
+    "element_patterns": [],
+    "nodal": 1,
+    "nodal_patterns": [
+     "Lateral"
+    ],
+    "sp": 0,
+    "sp_patterns": []
+   },
+   "masses": 0,
+   "n_nodes": 7,
+   "physical_groups": {
+    "element_side": {
+     "0:Base": -1,
+     "0:Top": -1,
+     "1:Beam": 2,
+     "1:Cols": 4
+    },
+    "node_side": {
+     "0:Base": 2,
+     "0:Top": 1,
+     "1:Beam": 3,
+     "1:Cols": 6
+    }
+   },
+   "snapshot_id": "dfd7c7b4d90b18e36a2f2da7ffe2ce73"
+  },
+  "fixes": [
+   {
+    "__type__": "FixRecord",
+    "dofs": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "tag": 1
+   },
+   {
+    "__type__": "FixRecord",
+    "dofs": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "tag": 4
+   }
+  ],
+  "masses": [
+   {
+    "__type__": "MassRecord",
+    "tag": 2,
+    "values": [
+     100.0,
+     100.0,
+     100.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "materials": {
+   "uniaxial": [
+    {
+     "__type__": "MaterialRecord",
+     "params": [
+      420000000,
+      200000000000,
+      0.01,
+      20,
+      0.925,
+      0.15
+     ],
+     "tag": 1,
+     "type_token": "Steel02"
+    }
+   ]
+  },
+  "model_name": "opensees_2.22",
+  "ndf": 6,
+  "ndm": 3,
+  "patterns": [
+   {
+    "__type__": "PatternRecord",
+    "args": [
+     1
+    ],
+    "ele_loads": [],
+    "loads": [
+     {
+      "__type__": "LoadRecord",
+      "forces": [
+       5000.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "target": 2
+     }
+    ],
+    "sp_holds": [],
+    "sps": [],
+    "tag": 1,
+    "type_token": "Plain"
+   }
+  ],
+  "recorders": [],
+  "sections": [
+   {
+    "__type__": "SectionComplexRecord",
+    "fibers": [
+     {
+      "__type__": "FiberRecord",
+      "area": 0.005,
+      "mat_tag": 1,
+      "y": 0.1,
+      "z": 0.0
+     },
+     {
+      "__type__": "FiberRecord",
+      "area": 0.005,
+      "mat_tag": 1,
+      "y": -0.1,
+      "z": 0.0
+     }
+    ],
+    "layers": [],
+    "params": [
+     "-GJ",
+     24000000
+    ],
+    "patches": [],
+    "tag": 1,
+    "type_token": "Fiber"
+   }
+  ],
+  "snapshot_id": "dfd7c7b4d90b18e36a2f2da7ffe2ce73",
+  "time_series": [
+   {
+    "__type__": "TimeSeriesRecord",
+    "args": [],
+    "tag": 1,
+    "type_token": "Linear"
+   }
+  ],
+  "transforms": [
+   {
+    "__type__": "TransformRecord",
+    "tag": 1,
+    "type_token": "Linear",
+    "vec": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   }
+  ]
+ }
+}

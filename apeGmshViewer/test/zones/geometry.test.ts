@@ -178,11 +178,17 @@ test("an entity row of the wrong dimension is refused", refuse((t) => ((t.geomet
 test("a volume face outside the surfaces is refused", refuse((t) => ((t.geometry!["volumes"] as Tree)["faces"] = new Int32Array([1])), /volumes\/faces\[0\] = 1 is not a row of surfaces/));
 test("an unknown membership kind is refused", refuse((t) => ((t.geometry!["memberships"] as Tree)["kind"] = ["group"]), /memberships\/kind\[0\] = "group"; expected one of label, physical_group/));
 test("a label with a pg is refused", refuse((t) => ((t.geometry!["memberships"] as Tree)["kind"] = ["label"]), /pg\[0\] = 7 for a label; expected -1/));
+// Strict where h5-schema.md implies an invariant (Fable on #1316):
+test("a physical_group row with pg = -1 is refused", refuse((t) => ((t.geometry!["memberships"] as Tree)["pg"] = new Int32Array([-1])), /pg\[0\] = -1 for a physical_group; expected its tag/));
+test("ok outside {0, 1} is refused", refuse((t) => ((t.geometry!["entities"] as Tree)["ok"] = new Int8Array([1, 2, 1, 1])), /entities\/ok\[1\] = 2; expected 0 or 1/));
+test("a dim outside 0..3 is refused", refuse((t) => ((t.geometry!["entities"] as Tree)["dim"] = new Int8Array([0, 1, 2, 4])), /entities\/dim\[3\] = 4; expected 0\.\.3/));
+test("an entity listed twice is refused", refuse((t) => ((t.geometry!["entities"] as Tree)["dim"] = new Int8Array([0, 1, 1, 3])), /lists entity \(dim 1, tag 1\) twice/));
+test("a membership of an unlisted entity is refused", refuse((t) => ((t.geometry!["memberships"] as Tree)["tag"] = new Int32Array([9])), /names entity \(dim 2, tag 9\), which \/geometry\/entities does not list/));
 test("an unknown @source is refused", refuse((t) => (t.geometry!.attrs!["source"] = "brep"), /\/geometry@source = "brep"/));
 test("status ok with a failed entity is refused", refuse((t) => ((t.geometry!["entities"] as Tree)["ok"] = new Int8Array([1, 0, 1, 1])), /status is ok but 1 of 4 entities have ok = 0/));
 
 test("a newer minor is read with a warning", () => {
   const g = readGeometry(h5, write("newer", (t) => (t.meta!.attrs!["geometry_schema_version"] = "1.4.0")))!;
   assert.equal(g.version, "1.4.0");
-  assert.match(g.warnings.join("\n"), /1\.4\.0 is newer than this reader \(1\.0\); fields added since are ignored/);
+  assert.deepEqual(g.warnings, ["geometry_schema_version 1.4.0 is newer than this app (1.0.x): the file opens, and what that apeGmsh added is not shown"]);
 });

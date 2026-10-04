@@ -58,6 +58,7 @@ from ..emitter.base import Emitter
 __all__ = [
     "ElasticIsotropic",
     "J2Plasticity",
+    "J2PlasticityNoYieldWarning",
     "DruckerPrager",
     "ManzariDafalias",
     "SAniSandMS",
@@ -148,6 +149,34 @@ class ElasticIsotropic(NDMaterial):
 # J2Plasticity — von Mises plasticity with isotropic + nonlinear hardening
 # ---------------------------------------------------------------------------
 
+#: The relative tolerance of ``J2Plasticity::plastic_integrator``
+#: (``SRC/material/nD/J2Plasticity.cpp``: ``tolerance = 1.0e-8*sigma_0``).
+#: The return map seeds ``resid = 1.0`` and loops
+#: ``while (fabs(resid) > tolerance)``, so once ``1.0e-8*sig0 >= 1.0`` the
+#: Newton loop never runs, ``gamma`` stays 0 and the material returns the
+#: elastic trial stress with no plastic strain (#1321).
+_J2_INTEGRATOR_RTOL = 1.0e-8
+
+
+class J2PlasticityNoYieldWarning(UserWarning):
+    """Raised (as a warning) for a ``J2Plasticity`` that can never yield.
+
+    Upstream ``J2Plasticity::plastic_integrator`` (stock OpenSees and the
+    Ladruno fork alike) compares an absolute residual seed of ``1.0``
+    against the tolerance ``1e-8*sig0``. At ``sig0 >= 1e8`` (any steel in
+    Pa) the return map is skipped, so every ``J2Plasticity`` view
+    (``J2PlaneStress``, ``J2PlaneStrain``, ``J2ThreeDimensional``,
+    ``J2PlateFiber``, ...) stays elastic past yield with no error. The
+    trigger is ``sig0`` alone: ``sigInf`` does not enter the tolerance.
+
+    Subclass of :class:`UserWarning` so it can be silenced per-call or
+    promoted to an error in CI via
+    ``pytest -W error::...J2PlasticityNoYieldWarning``, the warn-as-contract
+    idiom (cf. :class:`SanisandIntegrationWarning`). The defect is
+    upstream's and the deck is well-formed, so this never blocks emit.
+    """
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class J2Plasticity(NDMaterial):
     """von-Mises (J2) plasticity with combined nonlinear hardening.
@@ -205,6 +234,21 @@ class J2Plasticity(NDMaterial):
         if self.eta < 0:
             raise ValueError(
                 f"J2Plasticity: eta must be >= 0, got {self.eta!r}"
+            )
+        # Same arithmetic as the C++ loop guard: it skips the return map
+        # iff ``fabs(1.0) > 1e-8*sig0`` is false.
+        if _J2_INTEGRATOR_RTOL * self.sig0 >= 1.0:
+            warnings.warn(
+                f"J2Plasticity: sig0={self.sig0!r} >= 1e8 never yields. "
+                "OpenSees' J2Plasticity return map stops on "
+                "|resid| > 1e-8*sig0 with resid seeded at 1.0, so at this "
+                "magnitude the plastic correction is skipped and the "
+                "material stays elastic past yield, silently (every "
+                "J2PlaneStress/J2PlaneStrain/J2ThreeDimensional view). "
+                "Work in MPa (N, mm) so sig0 < 1e8, or use "
+                "ops.nDMaterial.LadrunoJ2 on the Ladruno fork.",
+                J2PlasticityNoYieldWarning,
+                stacklevel=3,
             )
 
     def _emit(self, emitter: Emitter, tag: int) -> None:

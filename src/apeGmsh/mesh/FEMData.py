@@ -73,6 +73,7 @@ from .._kernel.payloads import (
 if TYPE_CHECKING:
     import pandas as pd
     from pathlib import Path
+    from apeGmsh._internal.provenance import ProvenanceTable
     from apeGmsh.assess import AssessmentReport
     from .MeshSelectionSet import MeshSelectionStore
 
@@ -1762,6 +1763,13 @@ class FEMData:
             str(uuid.uuid4()) if session_id is None
             else _validated_session_id(session_id)
         )
+        # ── Declaration provenance (ADR 0112 D3) ─────────────────
+        # The session's frozen provenance table, attached by from_gmsh
+        # and restored by from_h5; ``None`` for a snapshot no session
+        # extracted (from_msh, imports, compose, hand-built), which
+        # writes no /provenance.  Like session_id it is not model
+        # content: no hash reads it, and derived snapshots inherit it.
+        self.provenance: ProvenanceTable | None = None
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
         # ── Compose provenance (Phase 3A.1 / ADR 0038) ───────────
@@ -1825,6 +1833,8 @@ class FEMData:
         self.__dict__.update(state)
         if "session_id" not in state:
             self.session_id = str(uuid.uuid4())
+        if "provenance" not in state:
+            self.provenance = None
 
     @property
     def snapshot_id(self) -> str:
@@ -1883,6 +1893,9 @@ class FEMData:
                     "begin() never ran on it"
                 )
             fem.session_id = _validated_session_id(session_id)
+            # ADR 0112 D3: carry the session's provenance, unhashed.
+            from apeGmsh._internal.provenance import table_for
+            fem.provenance = table_for(session)
         return fem
 
     @classmethod

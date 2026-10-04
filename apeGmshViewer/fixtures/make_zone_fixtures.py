@@ -5,9 +5,10 @@
 run from the repository root with an interpreter that has h5py and numpy.
 It writes, beside this file:
 
-* ``zones.h5``: ``shoebuckle.h5`` plus ``/meta/session_id`` and a
-  ``/provenance`` zone (1.0.0) whose records point at the lines of
-  ``examples/shoebuckle_arch.py`` that declare the beam chain;
+* ``zones.h5``: ``shoebuckle.h5`` plus ``/meta/session_id``, an
+  ``/opensees/names`` table naming the material ``Steel`` and the section
+  ``W_section``, and a ``/provenance`` zone (1.0.0) whose records point at
+  the lines of ``examples/shoebuckle_arch.py`` that declare the beam chain;
 * ``zones.geometry.h5``: a ``/geometry`` zone (1.0.0) for a unit cube
   (8 points, 12 straight curves of 32 samples, 6 two-triangle faces with
   outward normals, 1 volume), with the same ``session_id``.
@@ -60,9 +61,11 @@ def provenance(f: h5py.File) -> None:
     sites["file"] = np.array([r[0] for r in site_rows], dtype=np.int32)
     sites["line"] = np.array([r[1] for r in site_rows], dtype=np.int32)
     sites["function"] = np.array([r[2] for r in site_rows], dtype=object).astype(STR)
+    # The material and the section carry user names (/opensees/names, below),
+    # so their records are keyed by name; the rest are unnamed (#k).
     rec_rows = [
-        ("opensees/uniaxialMaterial/#1", 0, 5),
-        ("opensees/section/#1", 1, 5),
+        ("opensees/uniaxialMaterial/Steel", 0, 5),
+        ("opensees/section/W_section", 1, 5),
         ("opensees/geomTransf/#1", 2, 5),
         ("opensees/beamIntegration/#1", 3, 5),
         ("opensees/element/#1", 4, 5),
@@ -153,6 +156,11 @@ def main() -> None:
     shutil.copyfile(HERE / "shoebuckle.h5", model)
     with h5py.File(model, "a") as f:
         f["meta"].attrs["session_id"] = SESSION
+        # Bridge-side names (opensees 2.13+): name, kind (the family), tag.
+        names = f["opensees"].create_group("names")
+        names["name"] = np.array(["Steel", "W_section"], dtype=object).astype(STR)
+        names["kind"] = np.array(["uniaxialMaterial", "section"], dtype=object).astype(STR)
+        names["tag"] = np.array([1, 1], dtype=np.int64)
         provenance(f)
     cube_geometry(HERE / "zones.geometry.h5")
     for p in (model, HERE / "zones.geometry.h5"):
