@@ -12,6 +12,10 @@ apeGmsh package is imported. What it pins:
     ``verbs_ledger.txt``, whose ``N_LEDGER`` may only go down;
 (e) each emitter defines every Protocol verb, and every other public
     method it defines is in ``SIDE_CHANNELS``.
+
+It also checks the ``h5`` column against ``H5Emitter``'s source: a
+``refuse`` row's method raises ``NotImplementedError`` and no other
+row's method does.
 """
 from __future__ import annotations
 
@@ -171,6 +175,44 @@ def test_d_ledger_only_shrinks() -> None:
     )
 
 
+def _raises_not_implemented(
+    method: ast.FunctionDef | ast.AsyncFunctionDef,
+    helpers: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+) -> bool:
+    """True when the body, or a ``self._helper(...)`` it calls, raises
+    ``NotImplementedError`` (the H5 emitter's deferral refusal)."""
+    def direct(fn: ast.AST) -> bool:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Raise) and node.exc is not None:
+                exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+                if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+                    return True
+        return False
+
+    if direct(method):
+        return True
+    for node in ast.walk(method):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+                and node.func.attr in helpers
+                and direct(helpers[node.func.attr])):
+            return True
+    return False
+
+
+def test_h5_column_agrees_with_the_h5_emitter_source() -> None:
+    """``refuse`` rows raise ``NotImplementedError`` in ``H5Emitter``;
+    ``archive`` and ``ledger`` rows never do."""
+    methods = {m.name: m for m in _methods(_class_node("h5", "H5Emitter"))}
+    for verb, row in PROTOCOL_ROWS.items():
+        raises = _raises_not_implemented(methods[verb], methods)
+        if row.h5 == "refuse":
+            assert raises, f"{verb} is 'refuse' but H5Emitter.{verb} never refuses"
+        else:
+            assert not raises, f"{verb} is {row.h5!r} but H5Emitter.{verb} refuses"
+
+
 @pytest.mark.parametrize("stem", sorted(_EMITTERS))
 def test_e_emitters_define_protocol_and_declare_side_channels(stem: str) -> None:
     cls = _class_node(stem, _EMITTERS[stem])
@@ -178,7 +220,7 @@ def test_e_emitters_define_protocol_and_declare_side_channels(stem: str) -> None
     missing = set(PROTOCOL_NAMES) - defined
     assert not missing, f"{_EMITTERS[stem]} lacks {sorted(missing)}"
     public_extra = {n for n in defined
-                    if not n.startswith("_") and n not in PROTOCOL_ROWS}
+                    if not n.startswith("_") and n not in PROTOCOL_NAMES}
     side = VERBS_MOD.SIDE_CHANNELS[stem]
     assert public_extra == side, (
         f"{_EMITTERS[stem]}: undeclared public methods "
