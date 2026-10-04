@@ -101,15 +101,20 @@ def reads_dtime(prim: object) -> bool:
 
     ASDConcrete3D / ASDConcrete1D with ``implex=True`` (the IMPL-EX
     extrapolation ratio) or ``eta > 0`` (the viscous regularization
-    ``eta / (eta + dtime_n)``) -- STKO's C13 predicate restricted to the
-    types the bridge has.  ``DamageTC1D/3D``, ``ASDSteel1D`` and
-    ``ASDBondSlip`` join the predicate when the bridge types them.
+    ``eta / (eta + dtime_n)``), and ASDSteel1D with ``implex=True`` (same
+    ``dtime_is_user_defined`` switch, ``ASDSteel1DMaterial.cpp``
+    ``setTrialStrain`` / ``updateParameter``; it has no ``eta``) --
+    STKO's C13 predicate restricted to the types the bridge has.
+    ``DamageTC1D/3D`` and ``ASDBondSlip`` join the predicate when the
+    bridge types them.
     """
     from ..material.nd import ASDConcrete3D
-    from ..material.uniaxial import ASDConcrete1D
+    from ..material.uniaxial import ASDConcrete1D, ASDSteel1D
 
     if isinstance(prim, (ASDConcrete3D, ASDConcrete1D)):
         return bool(prim.implex) or float(prim.eta) > 0.0
+    if isinstance(prim, ASDSteel1D):
+        return bool(prim.implex)
     return False
 
 

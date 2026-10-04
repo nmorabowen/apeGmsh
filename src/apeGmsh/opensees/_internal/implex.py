@@ -57,15 +57,26 @@ def stage_increment(stage: "StageRecord") -> float:
             )
         return float(stage.dt)
     if isinstance(analysis, Static) and isinstance(integrator, LoadControl):
-        if integrator.num_iter is not None:
+        # OpenSees reads numIter only together with min/max
+        # (``OPS_LoadControlIntegrator``) and clamps every new increment to
+        # [min, max] (``LoadControl::newStep``): min == max == dlam is a
+        # constant increment whatever num_iter says.
+        lo, hi = integrator.min_lam, integrator.max_lam
+        dlam = float(integrator.dlam)
+        constant = integrator.num_iter is None or (
+            lo is not None and hi is not None
+            and float(lo) == dlam == float(hi)
+        )
+        if not constant:
             raise BridgeError(
-                f"stage {stage.name!r}: LoadControl(num_iter=...) adapts "
-                f"its increment step by step, so one dTime per stage would "
-                f"be wrong after the first change; the per-attempt driver "
-                f"of the adaptive loop ({_ADR} D5) is not emitted yet.  "
-                f"Drop num_iter / min_lam / max_lam."
+                f"stage {stage.name!r}: LoadControl(num_iter=..., "
+                f"min_lam={lo!r}, max_lam={hi!r}) adapts its increment step "
+                f"by step, so one dTime per stage would be wrong after the "
+                f"first change; the per-attempt driver of the adaptive loop "
+                f"({_ADR} D5) is not emitted yet.  Drop num_iter / min_lam / "
+                f"max_lam, or set min_lam == max_lam == dlam."
             )
-        return float(integrator.dlam)
+        return dlam
     raise BridgeError(
         f"stage {stage.name!r}: the IMPL-EX driver needs a stage whose "
         f"increment is one known number -- Static + LoadControl(dlam) or "
@@ -84,6 +95,14 @@ def _dtime_writes(stage: "StageRecord") -> dict[str, float]:
         for rec in stage.update_parameter_records
         if rec.name in DTIME_PARAMETERS
     }
+
+
+def _record_eids(fem: Any, rec: Any) -> set[int]:
+    """FEM element ids an ``s.update_parameter`` record addresses (the
+    ``material=`` form addresses elements too)."""
+    if rec.elements is not None:
+        return {int(e) for e in rec.elements}
+    return {int(e) for e, _conn in expand_pg_to_elements(fem, rec.pg)}
 
 
 def _target_eids(fem: Any, specs: Iterable[Any]) -> set[int]:
@@ -114,10 +133,11 @@ def validate_implex_time(
 
     With ``mode="off"``: no stage writes ``dTime*``.
 
-    Without a declaration (the dTime trap, D6): once a stage writes any
-    ``dTime*``, the materials stop following OpenSees' increment for
-    good, so that stage and every later one must write ``dTime`` equal to
-    its own increment.
+    Without a declaration (the dTime trap, D6): an element whose
+    materials got any ``dTime*`` write stops following OpenSees'
+    increment for good, so the stage of that write and every later one
+    must write ``dTime``, equal to its own increment, on every element
+    switched so far.
     """
     if implex is not None and implex.mode == "off":
         for st in stage_records:
@@ -144,10 +164,18 @@ def validate_implex_time(
         if not specs:
             raise BridgeError(
                 "ops.implex_time(mode='stko') is declared but no element "
-                "reaches an ASDConcrete3D / ASDConcrete1D with implex=True "
-                f"or eta > 0 ({_ADR} D2): the driver would update nothing.  "
+                "reaches an ASDConcrete3D / ASDConcrete1D (implex=True or "
+                f"eta > 0) or an ASDSteel1D (implex=True) ({_ADR} D2): the driver would update nothing.  "
                 "Drop the declaration or check the materials."
             )
+        for spec in specs:
+            pg = getattr(spec, "pg", None)
+            if pg is not None and not len(expand_pg_to_elements(fem, pg)):
+                raise BridgeError(
+                    f"IMPL-EX target {type(spec).__name__}(pg={pg!r}) has no "
+                    f"elements in the model ({_ADR} D2): the driver would "
+                    f"attach nothing to it.  Check the physical group."
+                )
         target_pgs: set[str] = {
             str(pg) for pg in (getattr(s, "pg", None) for s in specs)
             if pg is not None
@@ -197,24 +225,37 @@ def validate_implex_time(
             stage_increment(st)
         return
 
-    # No declaration: the trap check.
+    # No declaration: the trap check, element by element.
+    switched: set[int] = set()
     first_writer: str | None = None
     for st in stage_records:
-        w = _dtime_writes(st)
-        if first_writer is None and not w:
+        recs = [
+            r for r in st.update_parameter_records
+            if r.name in DTIME_PARAMETERS
+        ]
+        if first_writer is None and not recs:
             continue
         if first_writer is None:
             first_writer = st.name
-        if "dTime" not in w:
+        dtime_cover: set[int] = set()
+        for r in recs:
+            eids = _record_eids(fem, r)
+            switched |= eids
+            if r.name == "dTime":
+                dtime_cover |= eids
+        stale = sorted(switched - dtime_cover)
+        if stale:
             raise BridgeError(
-                f"the IMPL-EX dTime trap ({_ADR} D6): stage "
-                f"{first_writer!r} writes dTime* through "
-                f"s.update_parameter, which makes ASDConcrete stop following "
-                f"OpenSees' increment for the rest of the run, but stage "
-                f"{st.name!r} does not write dTime, so its materials keep a "
+                f"the IMPL-EX dTime trap ({_ADR} D6): from stage "
+                f"{first_writer!r} on, s.update_parameter has written dTime* "
+                f"on {len(switched)} element(s), which makes their materials "
+                f"stop following OpenSees' increment for the rest of the "
+                f"run, but stage {st.name!r} does not write dTime on "
+                f"{len(stale)} of them (first {stale[:5]}), so they keep a "
                 f"stale value.  Declare ops.implex_time(mode='stko') (and "
-                f"drop the s.update_parameter dTime* calls), or write "
-                f"dTime in every stage from {first_writer!r} on."
+                f"drop the s.update_parameter dTime* calls), or write dTime "
+                f"on every switched element in every stage from "
+                f"{first_writer!r} on."
             )
         try:
             inc = stage_increment(st)
@@ -225,14 +266,18 @@ def validate_implex_time(
                 f"{first_writer!r}) but its increment is not one known "
                 f"number, so no single dTime can be right.  {exc}"
             ) from exc
-        if not math.isclose(w["dTime"], inc, rel_tol=1e-12, abs_tol=0.0):
-            raise BridgeError(
-                f"the IMPL-EX dTime trap ({_ADR} D6): stage {st.name!r} "
-                f"writes dTime = {w['dTime']!r} but steps with an increment "
-                f"of {inc!r}; ASDConcrete would extrapolate and regularize "
-                f"with the wrong time step.  Write dTime = {inc!r}, or "
-                f"declare ops.implex_time(mode='stko')."
-            )
+        for r in recs:
+            if r.name != "dTime":
+                continue
+            if not math.isclose(float(r.value), inc, rel_tol=1e-12, abs_tol=0.0):
+                raise BridgeError(
+                    f"the IMPL-EX dTime trap ({_ADR} D6): stage {st.name!r} "
+                    f"writes dTime = {float(r.value)!r} but steps with an "
+                    f"increment of {inc!r}; the material would extrapolate "
+                    f"and regularize with the wrong time step.  Write "
+                    f"dTime = {inc!r}, or declare "
+                    f"ops.implex_time(mode='stko')."
+                )
 
 
 def implex_target_rows(

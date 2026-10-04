@@ -3002,13 +3002,6 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
-            # 7a. ADR 0113: the IMPL-EX driver call with this stage's
-            # increment, right after its ``analysis`` line (where STKO's
-            # hook first runs): every step of the stage takes this
-            # increment, so one call equals STKO's call per increment.
-            if self.implex_time is not None and self.implex_time.drives:
-                emitter.implex_time_update(stage_increment(stage), first=True)
-
             # 7b. Stage-scoped patterns (ADR 0051 BL-3) — emit AFTER
             # the chain, BEFORE analyze so the pattern's loads / sps /
             # from_model imports drive THIS stage's analyze loop and
@@ -3067,6 +3060,16 @@ class BuiltModel:
             # TIMs A8: per-stage profiler bracket (``s.profile``) —
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
+            # ADR 0113: the IMPL-EX driver call with this stage's increment,
+            # immediately before the analyze loop -- after ``reset`` (which
+            # reverts the materials to their start state and clears
+            # dtime_is_user_defined) and the velocity zeroing, where STKO's
+            # OnBeforeAnalyze hook sits.  Every step of the stage takes this
+            # increment, so one call equals STKO's call per increment.
+            # Global on a partitioned deck: each rank updates its own
+            # persistent parameters.
+            if self.implex_time is not None and self.implex_time.drives:
+                emitter.implex_time_update(stage_increment(stage), first=True)
             if stage.profile is not None:
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
             rc = emitter.analyze(
@@ -4766,11 +4769,6 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
-            # 5a. ADR 0113: the IMPL-EX driver call -- global, like the
-            # chain: every rank updates its own persistent parameters.
-            if self.implex_time is not None and self.implex_time.drives:
-                emitter.implex_time_update(stage_increment(stage), first=True)
-
             # 5b. Stage-scoped patterns (ADR 0051 BL-3) — per-rank
             # fan-out.  Unlike recorders (which write to disk and emit
             # once globally), a pattern's ``load`` / ``sp`` lines target
@@ -4867,6 +4865,16 @@ class BuiltModel:
             # TIMs A8: per-stage profiler bracket (``s.profile``) —
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
+            # ADR 0113: the IMPL-EX driver call with this stage's increment,
+            # immediately before the analyze loop -- after ``reset`` (which
+            # reverts the materials to their start state and clears
+            # dtime_is_user_defined) and the velocity zeroing, where STKO's
+            # OnBeforeAnalyze hook sits.  Every step of the stage takes this
+            # increment, so one call equals STKO's call per increment.
+            # Global on a partitioned deck: each rank updates its own
+            # persistent parameters.
+            if self.implex_time is not None and self.implex_time.drives:
+                emitter.implex_time_update(stage_increment(stage), first=True)
             if stage.profile is not None:
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
             rc = emitter.analyze(
@@ -8748,18 +8756,24 @@ class apeSees:
         reaches them; after that they keep the last value written.
         ``mode="stko"`` writes them as STKO's ``STKO_DT_UTIL_OnBeforeAnalyze``
         does: three persistent parameters over every element whose
-        material closure reaches an ASDConcrete with ``implex=True`` or
-        ``eta > 0`` (never a hand list of ids; per rank on a partitioned
-        deck), and each stage's increment written right after the stage's
-        ``analysis`` line (``dTimeCommit`` / ``dTimeInitial`` too, so the
-        IMPL-EX ratio restarts at 1 at every stage).  ``mode="off"``
-        declares that nothing writes ``dTime*``; ``"follow"`` is reserved.
+        material closure reaches an ASDConcrete3D / ASDConcrete1D with
+        ``implex=True`` or ``eta > 0``, or an ASDSteel1D with
+        ``implex=True`` (never a hand list of ids; per rank on a
+        partitioned deck), and each stage's increment written immediately
+        before the stage's analyze loop (``dTimeCommit`` / ``dTimeInitial``
+        too, so the IMPL-EX ratio restarts at 1 at every stage).
+        ``mode="off"`` declares that nothing writes ``dTime*``;
+        ``"follow"`` is reserved.
 
-        Staged decks only; each stage must step with one known increment
-        (``LoadControl(dlam)`` or a fixed-``dt`` ``Transient``) until the
-        adaptive transient loop lands (ADR 0113 D5).  Calling it again
-        replaces the declaration.  The H5 archive refuses a model that
-        drives (no store for the driver yet).
+        Staged Tcl / py decks only (``mode="stko"`` on an unstaged model is
+        refused; ``"off"`` is allowed anywhere); each stage must step with
+        one known increment (``LoadControl(dlam)`` or a fixed-``dt``
+        ``Transient``) until the adaptive transient loop lands (ADR 0113
+        D5).  Partitioned decks run under OpenSeesMP; **OpenSeesSP is not
+        supported** (its subdomain copies are not the materials the
+        parameters bind) and cannot be detected at emit, so it is not
+        refused.  Calling it again replaces the declaration.  The H5
+        archive and the live emitter refuse a model that drives.
         """
         spec = ImplexTime(mode=mode)
         self._implex_time = spec

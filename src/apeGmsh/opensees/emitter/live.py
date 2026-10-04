@@ -614,9 +614,6 @@ class LiveOpsEmitter:
         self._before_step_hooks: list[Callable[[], None]] = []
         self._after_step_hooks: list[Callable[[], None]] = []
         self._step_hooks_registered: bool = False
-        # ADR 0113: the three persistent IMPL-EX parameter tags
-        # (dTime, dTimeCommit, dTimeInitial), set by implex_time_declare.
-        self._implex_tags: tuple[int, int, int] | None = None
         # Fork-only element gate (B3). Tracks which fork-only element TYPES
         # have been confirmed to actually build on the live ops — keyed by
         # type name, NOT a single flag: a build predating one element (e.g.
@@ -1678,34 +1675,31 @@ class LiveOpsEmitter:
         self._ops.remove("parameter", int(pid))
 
     # -- IMPL-EX time driver (ADR 0113) -------------------------------------
+    # The driver exists only on staged models, and staged live runs are
+    # refused at ``stage_open``.  The prelude is emitted BEFORE the first
+    # stage, so without this refusal it would already have created the
+    # parameters and attached the targets in the live domain before the
+    # staged refusal fired.  Refuse first, touching nothing.
 
     def implex_time_declare(self, tags: tuple[int, int, int]) -> None:
-        p_dt, p_commit, p_init = (int(t) for t in tags)
-        for t in (p_dt, p_commit, p_init):
-            self._ops.parameter(t)
-        self._implex_tags = (p_dt, p_commit, p_init)
+        del tags
+        raise NotImplementedError(
+            "LiveOpsEmitter: ops.implex_time(mode='stko') drives staged "
+            "models, and staged live runs are not supported (ADR 0113 D3).  "
+            "Use ops.tcl(...) / ops.py(...) and run the deck."
+        )
 
     def implex_time_targets(
         self,
         tags: tuple[int, int, int],
         ele_tags: tuple[int, ...],
     ) -> None:
-        names = ("dTime", "dTimeCommit", "dTimeInitial")
-        for et in ele_tags:
-            for t, name in zip(tags, names):
-                self._ops.addToParameter(int(t), "element", int(et), name)
+        """Unreachable: :meth:`implex_time_declare` refuses first."""
+        del tags, ele_tags
 
     def implex_time_update(self, dt: float, *, first: bool) -> None:
-        if self._implex_tags is None:
-            raise RuntimeError(
-                "LiveOpsEmitter.implex_time_update before "
-                "implex_time_declare: the driver's parameters do not exist."
-            )
-        p_dt, p_commit, p_init = self._implex_tags
-        if first:
-            self._ops.updateParameter(p_commit, float(dt))
-            self._ops.updateParameter(p_init, float(dt))
-        self._ops.updateParameter(p_dt, float(dt))
+        """Unreachable: :meth:`implex_time_declare` refuses first."""
+        del dt, first
 
     def step_hook_ramp(
         self,

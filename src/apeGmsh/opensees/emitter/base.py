@@ -209,9 +209,9 @@ no-ops; recording captures.
 mode="stko")``: three persistent ``parameter`` tags over the elements
 whose material closure reaches an IMPL-EX ASDConcrete, and the
 ``_apesees_implex_dt`` driver called with each stage's increment.
-Tcl / py emit; live executes in-process; H5 refuses (no store, an
-archive replay would silently run without the driver); recording
-captures.  No schema bump.
+Tcl / py emit; live and H5 refuse in :meth:`implex_time_declare`
+(staged live runs are unsupported; H5 has no store, so an archive
+replay would silently run without the driver); recording captures.  No schema bump.
 """
 from __future__ import annotations
 
@@ -549,8 +549,10 @@ class Emitter(Protocol):
     #   emit issues it right after each stage's ``analysis`` line with the
     #   stage's increment and ``first=True``.
     #
-    # Live executes the same calls in-process; H5 refuses (the archive has
-    # no store for a driver, so a replay would run without it).
+    # Live refuses in ``implex_time_declare`` (staged live runs are refused
+    # at ``stage_open`` anyway; refusing first keeps the live domain
+    # untouched); H5 refuses (the archive has no store for a driver, so a
+    # replay would run without it).
     def implex_time_declare(self, tags: "tuple[int, int, int]") -> None: ...
 
     def implex_time_targets(

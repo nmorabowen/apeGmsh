@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 
+import numpy as np
 import pytest
 
 from apeGmsh.opensees._internal.build import BridgeError
@@ -50,7 +51,7 @@ COLUMN = (21, 22)
 SLAB = (31,)
 
 
-def _fem() -> FEMStub:
+def _fem(extra: dict[str, _ElementGroupView] | None = None) -> FEMStub:
     coords = {
         1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (2.0, 0.0, 0.0),
         4: (0.0, 0.0, 1.0), 5: (1.0, 0.0, 1.0), 6: (2.0, 0.0, 1.0),
@@ -73,13 +74,15 @@ def _fem() -> FEMStub:
             "slab": _ElementGroupView(
                 ids=SLAB, connectivity=((4, 5, 13, 10),),
             ),
+            **(extra or {}),
         }),
     )
 
 
 def _model(fem: FEMStub | None = None, *, implex: bool = True,
-           eta: float = 0.0) -> apeSees:
-    ops = apeSees(fem or _fem(), default_orientation=None, element_tags="fem")
+           eta: float = 0.0, element_tags: str = "fem") -> apeSees:
+    ops = apeSees(fem or _fem(), default_orientation=None,
+                  element_tags=element_tags)  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
     c3 = ops.nDMaterial.ASDConcrete3D(
         E=30000.0, v=0.2, fc=30.0, implex=implex, eta=eta, lch_ref=100.0)
@@ -239,7 +242,7 @@ def test_tcl_prelude_and_proc() -> None:
     assert last_element < i
 
 
-def test_tcl_one_call_per_stage_right_after_analysis() -> None:
+def test_tcl_one_call_per_stage_right_before_the_analyze_loop() -> None:
     ops = _model()
     ops.implex_time()
     _three_stages(ops)
@@ -251,7 +254,7 @@ def test_tcl_one_call_per_stage_right_after_analysis() -> None:
         "_apesees_implex_dt 0.0025 1",
     ]
     for k, _s in calls:
-        assert lines[k - 1].startswith("analysis ")
+        assert lines[k + 1].startswith("for {set _apesees_i 0}")
 
 
 def test_target_list_wraps_at_twenty_ids() -> None:
@@ -624,16 +627,37 @@ def test_golden_serial_replay_equals_the_sanramon_driver() -> None:
     assert len(theirs_log) == 3 + 12 + 3 * 3 + 1
 
 
-@pytest.mark.parametrize("pid,local", [(0, [11, 21, 31]), (1, [12, 22])])
+def _rank_element_tags(lines: list[str], pid: int) -> list[int]:
+    """OpenSees tags of the ``element`` lines inside every
+    ``if {[getPID] == pid}`` block of the deck, in deck order."""
+    out: list[int] = []
+    inside = False
+    for s in lines:
+        if s == f"if {{[getPID] == {pid}}} {{":
+            inside = True
+        elif inside and s == "}":
+            inside = False
+        elif inside and s.lstrip().startswith("element "):
+            out.append(int(s.split()[2]))
+    return out
+
+
+@pytest.mark.parametrize("pid", [0, 1])
 def test_golden_per_rank_replay_equals_the_getEleTags_intersection(
-    pid: int, local: list[int],
+    pid: int,
 ) -> None:
     """Rank K of our partitioned deck attaches exactly what the San Ramon
-    prelude attaches when ``getEleTags`` returns rank K's domain."""
+    prelude attaches when ``getEleTags`` returns the elements rank K
+    really builds -- read from the ``element`` lines inside rank K's
+    ``getPID`` blocks of the same deck, not from the bridge's ownership
+    map, so a target list that disagrees with the element blocks fails."""
     ops = _model(_partitioned_fem())
     ops.implex_time()
     _three_stages(ops)
-    ours = _driver_block(_tcl(ops))
+    lines = _tcl(ops)
+    local = _rank_element_tags(lines, pid)
+    assert local, f"rank {pid} builds no element"
+    ours = _driver_block(lines)
     seq = [(0.1, 1), (0.0025, 1)]
     theirs_log = _replay(
         SANRAMON_PRELUDE, ele_tags=local, pid=pid,
@@ -642,3 +666,227 @@ def test_golden_per_rank_replay_equals_the_getEleTags_intersection(
         ours, ele_tags=local, pid=pid,
         calls=[("_apesees_implex_dt", dt, f) for dt, f in seq])
     assert _norm(ours_log) == _norm(theirs_log)
+    attached = {int(e.split()[3]) for e in _norm(ours_log)
+                if e.startswith("addToParameter")}
+    assert attached == set(local) & set(WALL + COLUMN)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (ADR 0113 slice 1 review, 2026-10-03)
+# ---------------------------------------------------------------------------
+
+
+def test_asdsteel1d_with_implex_reads_dtime() -> None:
+    """Issue 1: ASDSteel1D has the same dtime_is_user_defined switch
+    (ASDSteel1DMaterial.cpp) and is in the translator's C13 types."""
+    from apeGmsh.opensees.material.uniaxial import ASDSteel1D
+
+    steel = dict(E=200000.0, sy=420.0, su=620.0, eu=0.1)
+    assert reads_dtime(ASDSteel1D(**steel, implex=True))
+    assert not reads_dtime(ASDSteel1D(**steel))
+
+
+def test_steel_only_fiber_column_is_a_target() -> None:
+    ops = apeSees(_fem(), default_orientation=None, element_tags="fem")
+    ops.model(ndm=3, ndf=6)
+    st = ops.uniaxialMaterial.ASDSteel1D(
+        E=200000.0, sy=420.0, su=620.0, eu=0.1, implex=True)
+    fib = ops.section.Fiber(
+        fibers=(FiberPoint(material=st, y=0.0, z=0.0, area=100.0),), GJ=1.0)
+    ops.element.forceBeamColumn(
+        pg="column", transf=ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0)),
+        integration=ops.beamIntegration.Lobatto(section=fib, n_ip=3))
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    ops.implex_time()
+    with ops.stage(name="g") as s:
+        s.analysis(**_static_chain(ops, 0.5))
+        s.run(n_increments=2)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    t = [c for c in rec.calls if c[0] == "implex_time_targets"]
+    assert t and t[0][1][1] == COLUMN
+
+
+def test_trap_a_later_stage_covering_a_different_subset() -> None:
+    """Issue 2, the reviewer's counterexample: the wall is switched at
+    0.1, the next stage rewrites dTime on the column only -- the wall
+    would step the hold stage with dTime = 0.1."""
+    ops = _model()
+    with ops.stage(name="gravity") as s:
+        for n in ("dTimeCommit", "dTimeInitial", "dTime"):
+            s.update_parameter(n, 0.1, pg="wall")
+        s.analysis(**_static_chain(ops, 0.1))
+        s.run(n_increments=2)
+    with ops.stage(name="hold") as s:
+        for n in ("dTimeCommit", "dTimeInitial", "dTime"):
+            s.update_parameter(n, 0.02, pg="column")
+        s.analysis(**_static_chain(ops, 0.02))
+        s.run(n_increments=2)
+    with pytest.raises(BridgeError, match=r"stage 'hold' does not write dTime on 2"):
+        _tcl(ops)
+
+
+def test_trap_a_later_stage_covering_the_union_passes() -> None:
+    ops = _model()
+    with ops.stage(name="gravity") as s:
+        s.update_parameter("dTime", 0.1, pg="wall")
+        s.analysis(**_static_chain(ops, 0.1))
+        s.run(n_increments=2)
+    with ops.stage(name="hold") as s:
+        s.update_parameter("dTime", 0.02, pg="wall")
+        s.update_parameter("dTime", 0.02, pg="column")
+        s.analysis(**_static_chain(ops, 0.02))
+        s.run(n_increments=2)
+    _tcl(ops)
+
+
+def test_trap_unknown_increment_after_a_writer() -> None:
+    ops = _model()
+    _reset_stage(ops, "gravity", 0.1, 0.1)
+    with ops.stage(name="vt") as s:
+        s.update_parameter("dTime", 0.01, elements=list(WALL + COLUMN))
+        chain = _transient_chain(ops)
+        chain["analysis"] = ops.analysis.VariableTransient()
+        s.analysis(**chain)
+        s.run(n_increments=10, dt=0.01)
+    with pytest.raises(BridgeError, match="not one known number"):
+        _tcl(ops)
+
+
+def test_refuses_a_transient_stage_without_dt() -> None:
+    ops = _model()
+    ops.implex_time()
+    with ops.stage(name="tr") as s:
+        s.analysis(**_transient_chain(ops))
+        s.run(n_increments=4)
+    with pytest.raises(BridgeError, match=r"needs run\(dt=\.\.\.\) > 0"):
+        _tcl(ops)
+
+
+def test_call_sits_after_reset_immediately_before_analyze() -> None:
+    """Issue 4: ``reset`` reverts the materials to their start state
+    (dtime_is_user_defined cleared), so the driver call must follow it."""
+    ops = _model()
+    ops.implex_time()
+    with ops.stage(name="g") as s:
+        s.analysis(**_static_chain(ops, 0.1))
+        s.reset()
+        s.run(n_increments=2)
+    lines = _tcl(ops)
+    k = lines.index("_apesees_implex_dt 0.1 1")
+    assert lines[k - 1] == "reset"
+    assert lines[k + 1].startswith("for {set _apesees_i 0}")
+
+
+def test_constant_loadcontrol_with_num_iter_is_accepted() -> None:
+    """Issue 5: min_lam == max_lam == dlam clamps every increment to dlam."""
+    ops = _model()
+    ops.implex_time()
+    with ops.stage(name="g") as s:
+        s.analysis(**_static_chain(ops, 0.1, num_iter=5, min_lam=0.1,
+                                   max_lam=0.1))
+        s.run(n_increments=2)
+    assert "_apesees_implex_dt 0.1 1" in _tcl(ops)
+
+
+def test_refuses_a_target_group_with_no_elements() -> None:
+    """Issue 6: a target spec on an empty physical group attaches nothing."""
+    # a group that exists with zero elements (a real snapshot's empty
+    # group has (0, n) connectivity)
+    fem = _fem({"empty": _ElementGroupView(
+        ids=(), connectivity=np.empty((0, 2), dtype=np.int64))})
+    ops = _model(fem)
+    c1 = ops.uniaxialMaterial.ASDConcrete1D(E=3e4, fc=30.0, implex=True)
+    fib = ops.section.Fiber(
+        fibers=(FiberPoint(material=c1, y=0.0, z=0.0, area=1.0),), GJ=1.0)
+    ops.element.forceBeamColumn(
+        pg="empty", transf=ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0)),
+        integration=ops.beamIntegration.Lobatto(section=fib, n_ip=3))
+    ops.implex_time()
+    _three_stages(ops)
+    with pytest.raises(BridgeError, match="'empty'.*has no elements"):
+        _tcl(ops)
+
+
+def test_sequential_element_tags_target_the_ops_tags() -> None:
+    """The default element_tags="sequential": the driver must attach the
+    OpenSees tags of the targets, read back from the deck's element lines,
+    not the FEM ids (here the elastic slab is declared first, so the two
+    numberings differ)."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    el = ops.nDMaterial.ElasticIsotropic(E=30000.0, nu=0.2, rho=0.0)
+    pf = ops.nDMaterial.PlateFiber(material=el)
+    slab = ops.section.LayeredShell(layers=tuple(
+        ShellLayer(material=pf, thickness=50.0) for _ in range(3)))
+    ops.element.ASDShellQ4(pg="slab", section=slab)
+    c1 = ops.uniaxialMaterial.ASDConcrete1D(E=3e4, fc=30.0, implex=True)
+    fib = ops.section.Fiber(
+        fibers=(FiberPoint(material=c1, y=0.0, z=0.0, area=1.0),), GJ=1.0)
+    ops.element.forceBeamColumn(
+        pg="column", transf=ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0)),
+        integration=ops.beamIntegration.Lobatto(section=fib, n_ip=3))
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    ops.implex_time()
+    with ops.stage(name="g") as s:
+        s.analysis(**_static_chain(ops, 0.5))
+        s.run(n_increments=2)
+    lines = _tcl(ops)
+    col_tags = [int(x.split()[2]) for x in lines
+                if x.startswith("element forceBeamColumn")]
+    assert len(col_tags) == 2 and set(col_tags).isdisjoint(COLUMN)
+    i = lines.index("foreach _apesees_e [list \\")
+    assert lines[i + 1] == "    " + " ".join(map(str, col_tags)) + "] {"
+
+
+def test_partitioned_stage_calls_are_global_with_first() -> None:
+    ops = _model(_partitioned_fem())
+    ops.implex_time()
+    _three_stages(ops)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    rank = None
+    ups = []
+    for name, args, kw in rec.calls:
+        if name == "partition_open":
+            rank = args[0]
+        elif name == "partition_close":
+            rank = None
+        elif name == "implex_time_update":
+            ups.append((rank, args[0], kw["first"]))
+    assert ups == [(None, 0.1, True), (None, 0.02, True), (None, 0.0025, True)]
+
+
+def test_py_partitioned_deck_nests_the_targets_per_rank() -> None:
+    ops = _model(_partitioned_fem())
+    ops.implex_time()
+    _three_stages(ops)
+    em = PyEmitter()
+    ops.build().emit(em)
+    lines = em.lines()
+    compile("\n".join(lines), "<deck>", "exec")
+    for pid, ids in ((0, "11, 21,"), (1, "12, 22,")):
+        k = lines.index(f"        {ids}")
+        head = max(j for j in range(k) if lines[j].startswith("if getPID() =="))
+        assert lines[head] == f"if getPID() == {pid}:"
+        assert lines[k - 1] == "    for _apesees_e in ["
+
+
+def test_live_emitter_refuses_before_touching_the_domain() -> None:
+    """Live: the prelude precedes stage_open's staged-live refusal, so the
+    driver refuses first and the live domain sees no parameter."""
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __getattr__(self, name: str):
+            return lambda *a, **k: self.calls.append(name)
+
+    em = LiveOpsEmitter.__new__(LiveOpsEmitter)
+    fake = _Fake()
+    em._ops = fake  # type: ignore[attr-defined]
+    with pytest.raises(NotImplementedError, match="ADR 0113"):
+        em.implex_time_declare((1, 2, 3))
+    assert fake.calls == []
