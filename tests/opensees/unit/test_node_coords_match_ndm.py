@@ -54,7 +54,7 @@ from tests.opensees.fixtures.fem_stub import (
     ],
 )
 def test_trim_coords_to_ndm(coords, ndm, expected) -> None:
-    assert trim_coords_to_ndm(coords, ndm) == expected
+    assert trim_coords_to_ndm(coords, ndm, tag=1) == expected
 
 
 # =====================================================================

@@ -584,7 +584,7 @@ class TclEmitter:
     ) -> None:
         # A padded coordinate would swallow the -ndf flag below (and
         # -mass) in a 2-D deck — see trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = trim_coords_to_ndm(coords, self._model_ndm, tag=tag)
         # Fast path for the dominant deck band (one line per mesh
         # node): plain-int tag + plain-float coords render via a single
         # f-string. ``{x!r}`` on an exact float is exactly what _join

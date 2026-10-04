@@ -767,8 +767,15 @@ class Emitter(Protocol):
         ...
 
 
+#: Relative tolerance below which a coordinate beyond ``ndm`` counts as
+#: padding (``|c| <= _NDM_DROP_RTOL * max(1, |kept coordinates|)``).
+#: CAD/mesher round-off on a planar model sits near 1e-15 relative; any
+#: real out-of-plane offset, in any length unit, is many orders above.
+_NDM_DROP_RTOL = 1e-9
+
+
 def trim_coords_to_ndm(
-    coords: "tuple[float, ...]", ndm: "int | None",
+    coords: "tuple[float, ...]", ndm: "int | None", *, tag: int,
 ) -> "tuple[float, ...]":
     """Drop the padding coordinates beyond the model's ``ndm``.
 
@@ -795,10 +802,51 @@ def trim_coords_to_ndm(
     3-D decks are unaffected (the slice is the identity on a 3-tuple).
     ``ndm`` is ``None`` until ``model()`` has been called — direct emitter
     use in tests — and then the coordinates pass through untouched.
+
+    Only *padding* may be dropped (#1337).  A dropped coordinate that is
+    not zero (beyond :data:`_NDM_DROP_RTOL`) is real geometry: a frame
+    drawn in the x-z plane under ``ops.model(ndm=2)`` lost every z, its
+    columns collapsed to coincident nodes, and the run died inside
+    OpenSees with an unrelated coordinate-transformation error.  That
+    raises :class:`~apeGmsh.opensees._internal.build.BridgeError` here,
+    naming the node (*tag*), the axis and the value.  This is the one
+    place every text and live emitter applies ``ndm``, so it is the one
+    place a lossy trim can be refused.
     """
     if ndm is None or len(coords) <= ndm:
         return coords
-    return coords[:ndm]
+    kept = coords[:ndm]
+    for c in coords[ndm:]:
+        # ``c and`` keeps the dominant exact-zero padding on one test.
+        if c and abs(c) > _NDM_DROP_RTOL * max(1.0, *map(abs, kept)):
+            _raise_nonplanar_node(coords, ndm, tag)
+    return kept
+
+
+def _raise_nonplanar_node(
+    coords: "tuple[float, ...]", ndm: int, tag: int,
+) -> None:
+    from .._internal.build import BridgeError
+
+    axes = ("x", "y", "z")
+    kept_axes = ", ".join(axes[:ndm])
+    dropped = ", ".join(
+        f"{axes[i]} = {coords[i]!r}"
+        for i in range(ndm, len(coords))
+        if coords[i]
+    )
+    where = (
+        "the z = 0 plane: build it in x-y (an x-z frame rotated so its "
+        "vertical axis is y)"
+        if ndm == 2 else "the x axis (y = z = 0)"
+    )
+    raise BridgeError(
+        f"ops.model(ndm={ndm}) keeps only {kept_axes}, but node {tag} has "
+        f"{dropped}. Emitting it would silently drop that coordinate, so "
+        f"distinct nodes can coincide and elements collapse to zero "
+        f"length. A {ndm}-D model must lie in {where}, or declare "
+        f"ops.model(ndm=3)."
+    )
 
 
 #: The numpy types :func:`plain_scalar` unwraps. The deck formatters

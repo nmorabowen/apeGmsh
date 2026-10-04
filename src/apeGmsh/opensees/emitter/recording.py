@@ -41,7 +41,7 @@ class RecordingEmitter:
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = trim_coords_to_ndm(coords, self._model_ndm, tag=tag)
         kwargs: dict[str, Any] = {}
         if ndf is not None:
             kwargs["ndf"] = ndf

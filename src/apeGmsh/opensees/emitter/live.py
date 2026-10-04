@@ -655,7 +655,7 @@ class LiveOpsEmitter:
         # openseespy parses the node argv exactly as Tcl does, so a
         # padded coordinate swallows -ndf here too — see
         # trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = trim_coords_to_ndm(coords, self._model_ndm, tag=tag)
         if ndf is None:
             self._ops.node(tag, *coords)
         else:
