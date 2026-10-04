@@ -117,10 +117,11 @@ _MODEL_REQUIRED_MESSAGE = (
 
 _MODEL_H5_REQUIRED_MESSAGE = (
     "model_h5= is required. For a model built through the apeSees "
-    "bridge, pass the sibling archive (model_h5='model.h5'). For a bare "
-    "FEMData snapshot (e.g. get_fem_data()), the one-call route is "
-    "Results.from_fem(fem, path) — or write it yourself with "
-    "fem.to_h5('model.h5') and pass model_h5='model.h5'."
+    "bridge, write ops.h5('model.h5') and pass model_h5='model.h5': that "
+    "archive carries the element tag map the bridge's dense renumbering "
+    "needs. For a bare FEMData that drove a hand-written deck whose "
+    "element tags are the fem element ids, use "
+    "Results.from_fem(fem, path) or fem.to_h5('model.h5')."
 )
 
 
