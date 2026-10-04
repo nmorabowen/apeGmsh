@@ -4,7 +4,10 @@
 written by that minor's frozen writer checked out of git
 (``scripts/build_schema_corpus.py``), with the semantic dump the era's
 **own** reader recorded beside it. ``MANIFEST.json`` names every minor
-from each zone's floor to its current minor, ``ok`` or ``gap``.
+from each zone's floor to its current minor, ``ok`` or ``gap``, keeps the
+real files of the eras *below* a floor as the evidence that raised it
+(``below_floor``), and holds one **variant** file per shim-ledger entry
+(ADR 0113 D4): ``sp_cases`` before 2.26.1 and ``frame2d`` before 2.34.0.
 
 Invariants held here (ADR 0113):
 
@@ -12,20 +15,27 @@ Invariants held here (ADR 0113):
   (and ``OpenSeesModel.from_h5`` when it has ``/opensees``), and today's
   dump equals the era's except for the fields the shim ledger names;
 * INV 6, corpus complete: one entry per minor from floor to current, each
-  ``ok`` with its commit, or a ``gap`` with its reason;
+  ``ok`` with its commit, or a ``gap`` with its reason; an entry below the
+  floor is a ``below_floor`` gap with a real file;
 * INV 7, bytes unchanged: opening a file never changes its bytes;
 * INV 10, tamper check kept: a tampered copy fails the snapshot_id check;
 * INV 12, paper floor fails: a floor set to the current minor turns the
   corpus check red;
 * D3, evidence-gated floors: a floor stands only if no runnable era at or
-  above it is a gap. A zone whose floor the corpus cannot prove is listed in
-  ``UNPROVEN_FLOORS`` as a strict xfail until the maintainer raises it.
+  above it is a gap, and it sits one minor above the last era whose file
+  no reader opens (opensees 2.11 stamped neutral 2.7.0, below the neutral
+  floor, so the opensees floor is 2.12.0: decided 2026-10-04 on #1303);
+* the below-floor files refuse through the zone's own reader, naming the
+  floor; the ledger variants read as the ledger says.
 """
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import shutil
+import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -44,26 +54,39 @@ from apeGmsh.opensees._internal.schema_version import (
     reader_version,
 )
 from apeGmsh.opensees.emitter import h5 as _h5_writer
+from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.h5_reader import (
     META_NDM_IS_SPATIAL_FROM,
     MalformedH5Error,
 )
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
-from tests.fixtures.schema_corpus._semantic_dump import dump_fem, dump_model
+from tests.fixtures.schema_corpus._semantic_dump import (
+    DUMP_FORMAT,
+    dump_fem,
+    dump_model,
+    dump_stamps,
+)
 
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
+BUILDER = Path(__file__).resolve().parents[3] / "scripts" / "build_schema_corpus.py"
 MANIFEST: dict[str, Any] = json.loads((CORPUS / "MANIFEST.json").read_text(encoding="utf-8"))
 ENTRIES: list[dict[str, Any]] = MANIFEST["entries"]
 ZONES = {"neutral": NEUTRAL, "opensees": OPENSEES}
 STAMP_KEYS = {"neutral": "neutral_schema_version", "opensees": "opensees_schema_version"}
 
-#: The ops.model ndm every opensees-era generator declares
+#: The ops.model ndm the plain opensees generator declares
 #: (``_era_generator.opensees_frame``): the closed-form answer for ``ndm``.
 DECLARED_NDM = 3
 
 #: Pre-2.26.1 SP loads read as one ``default`` case (ADR 0113 D4 ledger, Q5).
 SP_PER_CASE_FROM = (2, 26, 1)
+
+#: The case names the ``sp_cases`` variant authored (``_era_generator.SP_CASES``;
+#: not imported: the generator imports gmsh and binds ``_semantic_dump`` under a
+#: bare name, which the shared pytest process must not do). The era recorded
+#: them in its dump's ``generator_notes``, and the test holds them to this.
+SP_CASES = ["PushA", "PushB"]
 
 #: The shim ledger of ADR 0113 D4, as (neutral version the field is trusted
 #: from, dump paths excluded from the era comparison below it).
@@ -72,16 +95,19 @@ SHIM_LEDGER: tuple[tuple[tuple[int, int, int], tuple[str, ...]], ...] = (
     (SP_PER_CASE_FROM, ("fem.loads.sp_patterns", "model.fem.loads.sp_patterns")),
 )
 
-#: Zones whose floor constant the corpus cannot prove (ADR 0113 D3: the
-#: floor must rise past the gap; that is a maintainer decision, recorded on
-#: #1303). Strict xfail: raising the floor turns it XPASS, which fails until
-#: the entry is removed here.
-UNPROVEN_FLOORS: dict[str, str] = {
-    "opensees": (
-        "every opensees-2.11 writer stamped neutral 2.7.0, below the neutral "
-        "floor 2.10.0, so no opensees-2.11 file opens; the floor must rise to 2.12"
-    ),
-}
+#: The ``frame2d`` variant declared ``ops.model(ndm=2, ndf=3)``; its
+#: pre-2.34.0 writer stamped the mesh dimension (1) in ``/meta/ndm``. The
+#: file still says 2-D: a ``(1, 0)`` vecxz exists only in 2-D, and
+#: ``/meta/ndf = 3``. Today's ``read_spatial_ndm`` reads the stamp, 1, and
+#: ``build()`` drops every y coordinate: #1358. ``check_entry`` therefore
+#: asserts no declared ndm for this file; ``test_frame2d_reads_its_declared_ndm``
+#: holds the 2 as a strict xfail that #1358's fix flips.
+FRAME2D_DECLARED_NDM = 2
+
+#: The ``(dof, value)`` multiset the ``sp_cases`` variant authored: 9 base
+#: nodes, dofs [1, 1, 1], values (0, 0, -0.01) under PushA and (0.01, 0, 0)
+#: under PushB. Both cases' values must survive the flattening.
+SP_RECORDS = {(1, 0.01): 9, (3, -0.01): 9, (1, 0.0): 9, (2, 0.0): 18, (3, 0.0): 9}
 
 
 def _v(s: str) -> tuple[int, int, int]:
@@ -89,8 +115,22 @@ def _v(s: str) -> tuple[int, int, int]:
     return (p.major, p.minor, p.patch)
 
 
+def _minor_of(minor: str) -> int:
+    return int(minor.split(".")[1])
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _plain() -> list[dict[str, Any]]:
+    return [e for e in ENTRIES if "variant" not in e]
+
+
+def _variant(name: str) -> dict[str, Any]:
+    found = [e for e in ENTRIES if e.get("variant") == name]
+    assert len(found) == 1, f"the manifest must hold exactly one {name!r} variant"
+    return found[0]
 
 
 def _with_files() -> list[dict[str, Any]]:
@@ -102,12 +142,32 @@ def _openable() -> list[dict[str, Any]]:
 
 
 def _id(e: dict[str, Any]) -> str:
-    return f"{e['zone']}-{e['minor']}"
+    stem = f"{e['zone']}-{e['minor']}"
+    return f"{stem}-{e['variant']}" if "variant" in e else stem
 
 
 def _excluded(entry: dict[str, Any]) -> set[str]:
     neutral = _v(entry["stamps"]["neutral"])
     return {p for since, paths in SHIM_LEDGER if neutral < since for p in paths}
+
+
+def _era_dump(entry: dict[str, Any]) -> dict[str, Any]:
+    return json.loads((CORPUS / entry["files"]["dump"]["name"]).read_text(encoding="utf-8"))
+
+
+def _builder() -> Any:
+    """``scripts/build_schema_corpus.py`` as a module (it runs no git on import)."""
+    spec = importlib.util.spec_from_file_location("build_schema_corpus", BUILDER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: its dataclass resolves postponed annotations
+    # through sys.modules. Removed after, so no bare name outlives the test.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
 
 
 def _diff(era: Any, today: Any, path: str, skip: set[str]) -> list[str]:
@@ -140,41 +200,77 @@ def _diff(era: Any, today: Any, path: str, skip: set[str]) -> list[str]:
     return [] if era == today else [f"{path}: era {era!r} != today {today!r}"]
 
 
-def check_entry(entry: dict[str, Any]) -> None:
-    """Open one corpus file through today's readers and compare the dumps."""
+def check_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Open one corpus file through today's readers and compare the dumps.
+
+    Returns today's dump for the variant tests to look into.
+    """
     h5 = CORPUS / entry["files"]["h5"]["name"]
-    era = json.loads((CORPUS / entry["files"]["dump"]["name"]).read_text(encoding="utf-8"))
+    era = _era_dump(entry)
     with h5py.File(h5, "r") as f:
         has_bridge = "opensees" in f
-    today: dict[str, Any] = {"fem": dump_fem(FEMData.from_h5(str(h5)))}
+    today: dict[str, Any] = {
+        "fem": dump_fem(FEMData.from_h5(str(h5))),
+        "meta": dump_stamps(str(h5)),
+    }
     if has_bridge:
         model = OpenSeesModel.from_h5(str(h5))
         today["model"] = dump_model(model)
-        assert model.ndm == DECLARED_NDM, (
-            f"{h5.name}: today's reader resolves ndm={model.ndm}, "
-            f"the generator declared {DECLARED_NDM}"
-        )
+        if entry.get("variant") != "frame2d":  # frame2d: see FRAME2D_DECLARED_NDM
+            assert model.ndm == DECLARED_NDM, (
+                f"{h5.name}: today's reader resolves ndm={model.ndm}, "
+                f"the generator declared {DECLARED_NDM}"
+            )
+    assert era["fem"]["dump_format"] == DUMP_FORMAT, (
+        f"{h5.name}: the era dump is format {era['fem']['dump_format']}, the "
+        f"oracle is {DUMP_FORMAT}; rebuild the corpus with scripts/build_schema_corpus.py"
+    )
     assert ("model" in era) == has_bridge
-    diffs = _diff({k: era[k] for k in ("fem", "model") if k in era}, today, "",
+    diffs = _diff({k: era[k] for k in ("fem", "model", "meta") if k in era}, today, "",
                   _excluded(entry))
     assert not diffs, f"{h5.name}: today's reader departs from its era:\n" + "\n".join(diffs)
+    return today
 
 
 # ---------------------------------------------------------------------------
-# INV 6 — one entry per minor from floor to current
+# INV 6 — one entry per minor from floor to current; below the floor, evidence
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("zone", sorted(ZONES))
+def test_manifest_floors_match_the_constants(zone: str) -> None:
+    """The corpus was built against the floors the readers hold today."""
+    assert MANIFEST["floors"][zone] == str(reader_floor(ZONES[zone]))
+    assert MANIFEST["current"][zone] == str(reader_version(ZONES[zone]))
 
 
 @pytest.mark.parametrize("zone", sorted(ZONES))
 def test_corpus_covers_every_minor_from_floor_to_current(zone: str) -> None:
     floor, current = reader_floor(ZONES[zone]), reader_version(ZONES[zone])
-    have = {e["minor"]: e for e in ENTRIES if e["zone"] == zone}
+    have = {e["minor"]: e for e in _plain() if e["zone"] == zone}
     want = [f"{floor.major}.{m}" for m in range(floor.minor, current.minor + 1)]
-    assert sorted(have, key=lambda m: int(m.split(".")[1])) == want, (
+    in_range = sorted((m for m in have if _minor_of(m) >= floor.minor), key=_minor_of)
+    assert in_range == want, (
         f"{zone}: the manifest must hold exactly the minors {want[0]}..{want[-1]}; "
         "rerun scripts/build_schema_corpus.py after a bump or a floor change"
     )
+    # The current minor is never a gap of any kind: a bump PR adds the
+    # outgoing minor's file (ADR 0113 D8), and the builder refuses to plan a
+    # current minor that no base commit stamps (check_current_is_written).
+    assert have[want[-1]]["status"] == "ok", (
+        f"{zone} {want[-1]}: the current minor has no file ({have[want[-1]]}); "
+        "commit the bump and rebuild with --base HEAD"
+    )
     for minor, e in have.items():
+        if _minor_of(minor) < floor.minor:
+            # Kept as the evidence that raised the floor (ADR 0113 D3): a
+            # real file no reader opens, never a file-less placeholder.
+            assert e["status"] == "gap" and e.get("gap_kind") == "below_floor", (
+                f"{zone} {minor}: below the floor {floor}, so it must be a "
+                f"below_floor gap, not {e['status']!r}/{e.get('gap_kind')!r}"
+            )
+            assert e.get("sha") and e.get("files"), f"{zone} {minor}: evidence without a file"
+            continue
         if e["status"] == "ok":
             assert e.get("sha") and e.get("files"), f"{zone} {minor}: ok without a file"
             assert _v(e["stamps"][zone])[:2] == _v(f"{minor}.0")[:2]
@@ -184,12 +280,38 @@ def test_corpus_covers_every_minor_from_floor_to_current(zone: str) -> None:
 
 
 def test_current_minor_files_match_the_test_fixture_constants() -> None:
-    current = {e["zone"]: e for e in ENTRIES if e["status"] == "ok"}
     assert MANIFEST["current"]["neutral"] == NEUTRAL_CURRENT
     assert MANIFEST["current"]["opensees"] == OPENSEES_CURRENT
-    assert current  # at least one openable file per zone is checked below
     for zone in ZONES:
         assert any(e["zone"] == zone for e in _openable()), f"no openable {zone} file"
+
+
+def test_variants_are_the_shim_ledger() -> None:
+    """One variant per ledger row, each at an era below its row's version."""
+    assert sorted(e["variant"] for e in ENTRIES if "variant" in e) == ["frame2d", "sp_cases"]
+    sp, frame = _variant("sp_cases"), _variant("frame2d")
+    assert sp["zone"] == "neutral" and sp["status"] == "ok"
+    assert _v(sp["stamps"]["neutral"]) < SP_PER_CASE_FROM
+    assert frame["zone"] == "opensees" and frame["status"] == "ok"
+    assert _v(frame["stamps"]["neutral"]) < META_NDM_IS_SPATIAL_FROM
+    variants = _builder().VARIANTS
+    for e in (sp, frame):
+        zone, minor, why = variants[e["variant"]]
+        assert (e["zone"], e["minor"]) == (zone, minor)
+        assert e["generator"].endswith(f"--variant {e['variant']}")
+        assert e["why"] == why, f"{e['variant']}: the manifest's why text lags the builder's"
+
+
+def test_builder_refuses_a_current_minor_no_base_commit_stamps() -> None:
+    """A bump PR run against a stale base cannot record its own minor as an
+    ``unwritten`` gap (which INV-6 accepts) and land without the file."""
+    builder = _builder()
+    bumps = [("a" * 40, "2.21.0"), ("b" * 40, "2.22.0")]
+    builder.check_current_is_written("opensees", (2, 22), bumps)
+    with pytest.raises(RuntimeError, match="2.23.x but no first-parent commit"):
+        builder.check_current_is_written("opensees", (2, 23), bumps)
+    with pytest.raises(RuntimeError, match="--base HEAD"):
+        builder.check_current_is_written("opensees", (2, 23), [])
 
 
 # ---------------------------------------------------------------------------
@@ -210,23 +332,150 @@ def test_corpus_file_opens_and_matches_its_era(entry: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# A below-floor gap keeps its real file, and today's readers refuse it
+# The ledger variants read as the ledger says (ADR 0113 D4)
 # ---------------------------------------------------------------------------
+
+
+def test_sp_cases_before_2_26_1_read_as_one_default_case() -> None:
+    """Two authored ``g.displacements.case`` names, one ``default`` on read.
+
+    The era's writer flattened every SP record into ``/loads/sp/default``;
+    the records all survive, their case names do not, and neither reader
+    can tell the cases apart (ledger row "SP loads before 2.26.1", Q5).
+    """
+    entry = _variant("sp_cases")
+    h5 = CORPUS / entry["files"]["h5"]["name"]
+    era = _era_dump(entry)
+    assert era["generator_notes"]["sp_cases"] == SP_CASES
+    with h5py.File(h5, "r") as f:
+        # The era's layout: every record under the one ``default`` dataset.
+        assert list(f["loads/sp"].keys()) == ["default"]
+    today = check_entry(entry)
+    fem = FEMData.from_h5(str(h5))
+    n_base_nodes = len(fem.nodes.physical.node_ids("Base", dim=2))
+    n_dofs = 3
+    assert n_base_nodes == 9
+    assert today["fem"]["loads"]["sp"] == n_base_nodes * n_dofs * len(SP_CASES)
+    assert today["fem"]["loads"]["sp_patterns"] == ["default"]
+    assert era["fem"]["loads"]["sp_patterns"] == ["default"]
+    assert sorted({r.pattern for r in fem.nodes.sp}) == ["default"]
+    # The values of both cases survive the flattening, record by record;
+    # only the case binding is lost.
+    got = Counter((int(r.dof), float(r.value)) for r in fem.nodes.sp)
+    assert dict(got) == SP_RECORDS
+    assert sum(SP_RECORDS.values()) == n_base_nodes * n_dofs * len(SP_CASES)
+    assert all(int(r.node_id) in set(fem.nodes.physical.node_ids("Base", dim=2))
+               for r in fem.nodes.sp)
+    # The plain box of the same era carries no SP load: the records are the
+    # variant's, not an artefact of the era's reader.
+    plain = next(e for e in _plain() if e["zone"] == "neutral" and e["minor"] == entry["minor"])
+    assert _era_dump(plain)["fem"]["loads"]["sp"] == 0
+
+
+def test_frame2d_before_2_34_0_takes_the_ndm_shim() -> None:
+    """A 2-D frame written before neutral 2.34.0 stamps the mesh dimension;
+    ``read_spatial_ndm`` is the branch that reads it (ledger row
+    ``META_NDM_IS_SPATIAL_FROM``, #1300). The file's own 2-D evidence is
+    recorded here; what the reader makes of it is the next test."""
+    entry = _variant("frame2d")
+    h5 = CORPUS / entry["files"]["h5"]["name"]
+    era = _era_dump(entry)
+    assert era["generator_notes"]["declared_ndm"] == FRAME2D_DECLARED_NDM
+    assert era["model"]["ndf"] == 3
+    # The writer's own stamp is the mesh dimension of a line mesh, not 2,
+    # and the era's own reader read that stamp back.
+    assert era["meta"] == {"ndm": 1, "ndf": 3} and dump_stamps(str(h5))["ndm"] == 1
+    assert era["model"]["ndm"] == 1
+    # The 2-D evidence the file carries: a zero-width vecxz exists only in
+    # 2-D (the plain 3-D frame of the same era writes (1, 3)).
+    with h5py.File(h5, "r") as f:
+        shapes = {f[f"opensees/transforms/{t}/per_element_vecxz"].shape
+                  for t in f["opensees/transforms"]}
+    assert shapes == {(1, 0)}
+    # The salvage is keyed on the neutral stamp: the same bytes at or above
+    # META_NDM_IS_SPATIAL_FROM would be read as-is, so the file sits below it.
+    assert _v(entry["stamps"]["neutral"]) < META_NDM_IS_SPATIAL_FROM
+    # Era equality outside the ledger (model.ndm is excluded below 2.34.0).
+    today = check_entry(entry)
+    assert today["model"]["ndf"] == 3
+    # The plain frame of the same era is lifted to 3 by its 3-wide vecxz.
+    plain = next(e for e in _plain() if e["zone"] == "opensees" and e["minor"] == entry["minor"])
+    assert _era_dump(plain)["meta"]["ndm"] == 1
+    plain_h5 = CORPUS / plain["files"]["h5"]["name"]
+    with h5py.File(plain_h5, "r") as f:
+        assert {f[f"opensees/transforms/{t}/per_element_vecxz"].shape
+                for t in f["opensees/transforms"]} == {(1, 3)}
+    assert OpenSeesModel.from_h5(str(plain_h5)).ndm == DECLARED_NDM
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1358: read_spatial_ndm reads the pre-2.34.0 stamp (1) for a 2-D "
+           "frame whose (1, 0) vecxz and /meta/ndf = 3 say 2-D, and build() "
+           "then drops every y coordinate; the fix flips this test",
+)
+def test_frame2d_reads_its_declared_ndm() -> None:
+    """The right answer for the ``frame2d`` file is the declared 2."""
+    entry = _variant("frame2d")
+    model = OpenSeesModel.from_h5(str(CORPUS / entry["files"]["h5"]["name"]))
+    assert model.ndm == FRAME2D_DECLARED_NDM
+
+
+# ---------------------------------------------------------------------------
+# D3 — a below-floor era keeps its real file, and the zone's reader refuses
+# it naming the floor
+# ---------------------------------------------------------------------------
+
+
+def _below_floor_zones(entry: dict[str, Any]) -> dict[str, SchemaVersion]:
+    return {
+        z: SchemaVersion.parse(s) for z, s in entry["stamps"].items()
+        if z in ZONES and SchemaVersion.parse(s).minor < reader_floor(ZONES[z]).minor
+    }
+
+
+def _open_zone(zone: str, h5: Path) -> None:
+    """Open ``h5`` through the reader that validates ``zone``."""
+    if zone == "neutral":
+        FEMData.from_h5(str(h5))
+    else:
+        h5_reader.open(str(h5)).close()
 
 
 @pytest.mark.parametrize(
     "entry", [e for e in _with_files() if e["status"] == "gap"], ids=_id,
 )
-def test_below_floor_gap_is_refused_by_the_floor(entry: dict[str, Any]) -> None:
+def test_below_floor_gap_is_refused_naming_the_floor(entry: dict[str, Any]) -> None:
     assert entry["gap_kind"] == "below_floor"
-    low = [z for z, s in entry["stamps"].items()
-           if z in ZONES and SchemaVersion.parse(s).minor < reader_floor(ZONES[z]).minor]
+    low = _below_floor_zones(entry)
     assert low, f"{_id(entry)}: recorded below the floor but no stamp is"
     h5 = CORPUS / entry["files"]["h5"]["name"]
     before = _sha(h5)
-    with pytest.raises(SchemaVersionError, match="supports"):
+    for zone, stamp in low.items():
+        floor, reader = reader_floor(ZONES[zone]), reader_version(ZONES[zone])
+        with pytest.raises(SchemaVersionError) as exc:
+            _open_zone(zone, h5)
+        msg = str(exc.value)
+        assert f"{STAMP_KEYS[zone]}={stamp}: too old" in msg, msg
+        assert (
+            f"supports {floor.major}.{floor.minor}.x–"
+            f"{reader.major}.{reader.minor}.x" in msg
+        ), msg
+    with pytest.raises(SchemaVersionError, match="too old"):
         check_entry(entry)
     assert _sha(h5) == before
+
+
+def test_opensees_2_11_is_the_evidence_below_the_floor() -> None:
+    """The era the floor rose past (#1329, decision 2026-10-04): its file is
+    kept, and it is below the floor of both zones."""
+    floor = reader_floor(OPENSEES)
+    below = [e for e in _plain() if e["zone"] == "opensees" and _minor_of(e["minor"]) < floor.minor]
+    assert [e["minor"] for e in below] == ["2.11"]
+    (entry,) = below
+    assert entry["gap_kind"] == "below_floor" and (CORPUS / entry["files"]["h5"]["name"]).is_file()
+    assert set(_below_floor_zones(entry)) == {"neutral", "opensees"}
+    assert SchemaVersion.parse(entry["stamps"]["neutral"]).minor < reader_floor(NEUTRAL).minor
 
 
 # ---------------------------------------------------------------------------
@@ -255,18 +504,14 @@ def test_tampered_copy_fails_snapshot_check(entry: dict[str, Any], tmp_path: Pat
 def _unproven_minors(zone: str) -> list[str]:
     floor = reader_floor(ZONES[zone])
     return [
-        e["minor"] for e in ENTRIES
+        e["minor"] for e in _plain()
         if e["zone"] == zone and e["status"] == "gap"
         and e["gap_kind"] != "unwritten"
-        and _v(f"{e['minor']}.0")[1] >= floor.minor
+        and _minor_of(e["minor"]) >= floor.minor
     ]
 
 
-@pytest.mark.parametrize("zone", [
-    pytest.param(z, marks=pytest.mark.xfail(strict=True, reason=UNPROVEN_FLOORS[z]))
-    if z in UNPROVEN_FLOORS else z
-    for z in sorted(ZONES)
-])
+@pytest.mark.parametrize("zone", sorted(ZONES))
 def test_floor_is_proven_by_the_corpus(zone: str) -> None:
     """A floor stands only where no writable era at or above it is a gap.
 
@@ -278,6 +523,19 @@ def test_floor_is_proven_by_the_corpus(zone: str) -> None:
         f"{zone} floor {reader_floor(ZONES[zone])} is not proven: gaps at {gaps}. "
         "ADR 0113 D3: the floor must rise past them (a maintainer decision)."
     )
+
+
+@pytest.mark.parametrize("zone", sorted(ZONES))
+def test_floor_sits_just_above_its_evidence(zone: str) -> None:
+    """Where below-floor eras exist, the floor is the first era after them
+    (ADR 0113 D3: the floor rises *past* the gap, no further), and that
+    era's own file opens."""
+    floor = reader_floor(ZONES[zone])
+    plain = {e["minor"]: e for e in _plain() if e["zone"] == zone}
+    below = [_minor_of(m) for m in plain if _minor_of(m) < floor.minor]
+    if below:
+        assert max(below) + 1 == floor.minor
+    assert plain[f"{floor.major}.{floor.minor}"]["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -301,5 +559,5 @@ def test_paper_floor_fails_the_corpus(
             continue
         with pytest.raises(SchemaVersionError, match="supports"):
             check_entry(entry)
-        refused.append(entry["minor"])
+        refused.append(_id(entry))
     assert refused, f"a paper {zone} floor at {current} refused no corpus file"

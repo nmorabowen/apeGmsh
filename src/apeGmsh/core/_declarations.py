@@ -18,11 +18,49 @@ holds every public verb to it.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, ClassVar, TypeVar
+
+from apeGmsh._internal.provenance import capture as _capture_provenance
 
 from ._compose_errors import ChainPhaseError, is_kernelless_session
 
 _D = TypeVar("_D")
+
+#: Store attribute -> the provenance family its defs are recorded under
+#: (declaration path ``neutral/<family>/<name|#k>``, ADR 0112 D3).  A store
+#: missing here makes :meth:`_DeclarationsMixin._declare` raise, so a new
+#: store cannot silently go unrecorded.
+_PROVENANCE_FAMILY: dict[str, str] = {
+    "constraint_defs": "constraints",
+    "_bc_defs": "bcs",
+    "contact_defs": "contacts",
+    "contact_plane_defs": "contact_planes",
+    "interface_defs": "interfaces",
+    "node_defs": "decoupled_nodes",
+    "disp_defs": "displacements",
+    "embed_defs": "embeds",
+    "load_defs": "loads",
+    "mass_defs": "masses",
+    "placements": "rebar",
+    "_emit_members": "rebar_members",
+    "reinforce_defs": "reinforcements",
+}
+
+
+def _declaration_name(defn: object) -> str | None:
+    """The user's name for ``defn``: its ``name`` field, else ``label``
+    (``DecoupledNodeDef``), else none (unnamed, recorded as ``#k``)."""
+    if not dataclasses.is_dataclass(defn):
+        raise TypeError(
+            f"{type(defn).__name__} is not a dataclass def; provenance "
+            f"cannot read its name")
+    fields = {f.name for f in dataclasses.fields(defn)}
+    for field in ("name", "label"):
+        if field in fields:
+            value = getattr(defn, field)
+            return str(value) if value else None
+    return None
 
 
 class _DeclarationsMixin:
@@ -53,6 +91,9 @@ class _DeclarationsMixin:
         3. Bump the session's FEMData counter, so the next
            ``get_fem_data()`` re-extracts instead of returning the
            snapshot taken before ``defn`` existed.
+        4. Capture its provenance as ``neutral/<family>/<name|#k>``
+           (ADR 0112 D3): one record per user call, so a verb that
+           stores several defs records the first.
 
         Routing comes first so a def the router rejects is never
         stored: the call raised, and the store must not keep what it
@@ -68,10 +109,14 @@ class _DeclarationsMixin:
             try_chain_phase_route,
         )
 
-        store = self._store_for(defn)
+        attr = self._store_attr_for(defn)
+        family = _PROVENANCE_FAMILY[attr]
+        store = getattr(self, attr)
         try_chain_phase_route(self._parent, defn)
         store.append(defn)
         self._invalidate_fem()
+        _capture_provenance(
+            self._parent, "neutral", family, _declaration_name(defn))
         return defn
 
     def _clear_declarations(self) -> None:
@@ -99,9 +144,12 @@ class _DeclarationsMixin:
         self._invalidate_fem()
 
     def _store_for(self, defn: object) -> list:
+        return getattr(self, self._store_attr_for(defn))
+
+    def _store_attr_for(self, defn: object) -> str:
         for attr, kinds in self._DECLARATION_STORES.items():
             if type(defn) in kinds:
-                return getattr(self, attr)
+                return attr
         raise TypeError(
             f"{type(self).__name__} has no declaration store for "
             f"{type(defn).__name__} — add it to "

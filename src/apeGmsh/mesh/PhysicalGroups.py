@@ -160,6 +160,7 @@ class PhysicalGroups(_HasLogging):
                 self._log(
                     f"add(dim={dim}, name={name!r}): appended "
                     f"{n_new} entity(ies) -> {len(combined)} total")
+                # An append keeps the group's creating record.
                 return pg_tag
 
         pg_tag = gmsh.model.addPhysicalGroup(dim, resolved, tag=tag)
@@ -169,6 +170,10 @@ class PhysicalGroups(_HasLogging):
             f"add(dim={dim}, entities={tags}) -> pg_tag={pg_tag}"
             + (f", name={name!r}" if name else "")
         )
+        # ADR 0112 D3: the group's creation is its declaration
+        # (``neutral/physical_groups/<name|#k>``), one record per user call.
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "neutral", "physical_groups", name)
         return pg_tag
 
     def add_point(self, tags: list[Tag], *, name: str = "", tag: Tag = -1) -> PhysicalGroups:

@@ -1112,16 +1112,47 @@ equal-length column datasets.
   `#k`, its 1-based order among the unnamed declarations of that family
   in this run, so `#k` is stable within one run only. The key is never
   an HDF5 group name or an OpenSees tag (Q3).
+* **Families.** The session writes these paths (V2c,
+  `src/apeGmsh/_internal/provenance.py`):
+  * `neutral/labels/<name>` from `g.labels.add`, `g.labels.rename` (the
+    new name) and `g.parts.add` (the instance label);
+  * `neutral/physical_groups/<name|#k>` from `g.physical.add` and its
+    shorthands, and from `g.labels.promote_to_physical`;
+  * `geometry/<kind>/<label|#k>` from every geometry registration, where
+    `<kind>` is the registering primitive (`box`, `line`, `polyline`, ...);
+  * `neutral/<family>/<name|#k>` from the declaration verbs, where
+    `<family>` is one of `constraints`, `bcs`, `contacts`,
+    `contact_planes`, `interfaces`, `decoupled_nodes`, `displacements`,
+    `embeds`, `loads`, `masses`, `rebar`, `rebar_members` or
+    `reinforcements` (`core/_declarations.py::_PROVENANCE_FAMILY`).
+
+  A named path keeps its first record. A later call that merges into a
+  label or appends to a physical group adds no record.
 * **Files.** `path` is POSIX. It is relative to `@base_dir` when the
   file lies under it, and absolute otherwise (Q8). `sha256` is the hex
   digest of the file when it was captured, so go-to-source can tell
-  that the file has been edited since. `kind` is `script` for the run's
-  `__main__` file and `module` for any other file.
+  that the file has been edited since. `sha256` is `""` for a pseudo-file
+  (`<string>`, `<stdin>`, a notebook cell, which keep that name as
+  `path`) and for a source that could not be read. `kind` is `script`
+  for the run's `__main__` file and `module` for any other file.
 * **Sites.** `file` is a row of `files`; `line` is 1-based.
 * **Records.** `site` is a row of `sites`: the first frame outside
   apeGmsh and the standard library. `script` is a row of `sites`: the
-  outermost `__main__` frame, which differs from `site` when the call
-  came through a user helper. Either is -1 when no such frame exists.
+  outermost `__main__` frame of the user code around `site`, which
+  differs from `site` when the call came through a user helper. The
+  walk for `script` starts at `site`, passes through standard-library
+  frames (`contextlib`, `runpy`), and stops at the first apeGmsh or
+  site-packages frame. A launcher that runs as `__main__` from
+  site-packages (`pytest`, `ipykernel`) therefore never claims it, and
+  a call with no user `__main__` frame around it (a test function) gets
+  none. A `__main__` frame whose file lies under the apeGmsh tree is
+  user code. A stdlib launcher's `__main__` frame (`python -m cProfile`,
+  `pdb`, `trace`) is not, so the walk passes through it. A pseudo-file
+  `__main__` frame (`<string>`) never overrides a real-file one the
+  walk already found, so the `<string>` trampoline of `python -m pdb`
+  does not claim it; with no real file around it (`-c`, `<stdin>`, a
+  notebook cell) it is the script. Either is -1 when no such frame
+  exists.
   `seq` is the declaration's 0-based capture order in the run.
 * There is one record per user call: none per emitted row, none per
   fanned-out element, and none for calls apeGmsh synthesises.

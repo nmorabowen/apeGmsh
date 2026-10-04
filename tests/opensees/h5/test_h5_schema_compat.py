@@ -497,15 +497,27 @@ def test_opensees_stamp_at_floor_opens_through_h5_reader(
         assert m.schema_version == stamp
 
 
+@pytest.mark.parametrize("patch", _PATCHES)
 def test_opensees_stamp_below_floor_refuses_through_h5_reader(
-    tmp_path: Path,
+    tmp_path: Path, patch: int,
 ) -> None:
+    """One minor below the opensees floor refuses at every patch, and the
+    refusal names the floor (2.12.0 since the ADR 0113 D3 evidence gate
+    raised it past the 2.11 era, whose files never open: #1329)."""
+    floor, reader = reader_floor(OPENSEES), reader_version(OPENSEES)
+    stamp = f"{floor.major}.{floor.minor - 1}.{patch}"
     out = tmp_path / "bridge_old.h5"
-    e = H5Emitter(schema_version=_below(OPENSEES_FLOOR))
+    e = H5Emitter(schema_version=stamp)
     e.model(ndm=3, ndf=6)
     e.write(str(out))
-    with pytest.raises(SchemaVersionError, match="too old"):
+    with pytest.raises(SchemaVersionError) as exc:
         h5_reader.open(str(out))
+    msg = str(exc.value)
+    assert f"opensees_schema_version={stamp}: too old" in msg
+    assert (
+        f"supports {floor.major}.{floor.minor}.x–"
+        f"{reader.major}.{reader.minor}.x" in msg
+    )
 
 
 def _restamp_results(path: Path, *, neutral: str, opensees: str, results: str) -> None:

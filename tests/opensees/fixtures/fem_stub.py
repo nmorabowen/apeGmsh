@@ -129,6 +129,21 @@ class _ElementLabelsStub:
         return np.asarray(self._labels[name], dtype=np.int64)
 
 
+class _PhysicalNamesStub:
+    """Stand-in for ``fem.{nodes,elements}.physical`` — exposes the
+    public :meth:`PhysicalGroupSet.names` the bridge's "PG not found"
+    errors list (#1335).  The stub carries no dims, so ``dim`` must be
+    the default."""
+
+    def __init__(self, pgs: dict) -> None:
+        self._pgs = pgs
+
+    def names(self, dim: int = -1) -> list[str]:
+        if dim != -1:
+            raise NotImplementedError("fem-stub physical.names: dim filter")
+        return sorted(self._pgs.keys())
+
+
 class _MeshSelectionStub:
     """Stand-in for ``fem.mesh_selection`` — exposes ``node_ids`` and
     ``element_ids`` keyed by selection set name."""
@@ -173,6 +188,7 @@ class _NodesStub:
         self._coords = np.asarray(coords, dtype=np.float64)
         self._id_to_idx = {int(n): i for i, n in enumerate(self._ids)}
         self._pgs = {k: list(v) for k, v in node_pgs.items()}
+        self.physical = _PhysicalNamesStub(self._pgs)
         self.labels = _NodeLabelsStub(labels or {})
         # ADR 0043 split: per-node compose labels aligned to ``ids``;
         # ``None`` mirrors the uncomposed broker (no metadata).
@@ -301,6 +317,7 @@ class _ElementsStub:
         module_label: dict[int, str] | None = None,
     ) -> None:
         self._pgs = dict(elem_pgs)
+        self.physical = _PhysicalNamesStub(self._pgs)
         self.labels = _ElementLabelsStub(labels or {})
         # ADR 0043 split: flat ``element-id -> compose label`` map;
         # ``None`` mirrors the uncomposed broker (no metadata).

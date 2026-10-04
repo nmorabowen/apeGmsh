@@ -445,11 +445,15 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     2.21 and 2.22 files; a 2.21.x reader REFUSES a 2.22.x file.
 SCHEMA_VERSION: str = "2.22.0"
 
-#: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)): 2.11.0,
-#: the 0-based rank flip, is the zone's last non-additive minor. The
-#: floor moves only with a major bump; :func:`schema_version.reader_floor`
-#: reads it from here.
-SCHEMA_FLOOR: str = "2.11.0"
+#: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
+#: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
+#: every 2.11-era writer stamped neutral 2.7.0, below the neutral floor
+#: 2.10.0, so no 2.11 file opens through today's readers: the schema
+#: corpus proved it (#1329) and the maintainer raised the floor to 2.12.0
+#: on 2026-10-04 (ADR 0113 D3, the evidence gate; no major bump). From
+#: here on the floor moves only with a major bump;
+#: :func:`schema_version.reader_floor` reads it from here.
+SCHEMA_FLOOR: str = "2.12.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

@@ -480,6 +480,11 @@ def write_fem_h5(
 
     from ..opensees._internal.lineage import write_lineage_attrs
 
+    # ADR 0112 D3: a session's snapshot carries /provenance.  Encoded
+    # before the file is opened, so an int32 overflow refuses before
+    # anything is written (h5-schema.md, "Integer policy").
+    provenance = _encode_provenance(fem, path)
+
     with h5py.File(path, "w") as f:
         write_meta(
             fem, f,
@@ -489,6 +494,8 @@ def write_fem_h5(
             ndf=ndf,
         )
         write_neutral_zone(fem, f)
+        if provenance is not None:
+            _write_provenance(f, *provenance)
         # ADR 0021 lineage — broker-only files carry just ``fem_hash``
         # (no ``/opensees/`` ⇒ no ``model_hash``).  The fem snapshot
         # is authoritative; recompute happens at read time per the
@@ -500,6 +507,105 @@ def write_fem_h5(
                 fem_hash = ""
             if fem_hash:
                 write_lineage_attrs(f["meta"], fem_hash=fem_hash)
+
+
+#: ``/provenance`` table -> its columns; the string ones are named in
+#: :data:`_PROVENANCE_STR_COLUMNS`, the rest are int32
+#: (``architecture/h5-schema.md``, "/provenance").
+_PROVENANCE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "files": ("path", "sha256", "kind"),
+    "sites": ("file", "line", "function"),
+    "records": ("path", "site", "script", "seq"),
+}
+_PROVENANCE_STR_COLUMNS = frozenset({"path", "sha256", "kind", "function"})
+
+
+def _encode_provenance(
+    fem: "FEMData", path: str,
+) -> "tuple[dict[str, dict[str, list]], str] | None":
+    """``(columns, base_dir)`` for ``fem``'s ``/provenance``, or ``None``
+    when it carries none (no session extracted it, or a duck-typed test
+    double).  Raises ``ProvenanceOverflowError`` on an int32 overflow."""
+    from apeGmsh._internal.provenance import base_dir_for, encode_columns
+
+    from .FEMData import FEMData
+    if not isinstance(fem, FEMData) or fem.provenance is None:
+        return None
+    base_dir = base_dir_for(path)
+    return encode_columns(fem.provenance, base_dir), base_dir
+
+
+def _write_provenance(
+    f: Any, columns: "dict[str, dict[str, list]]", base_dir: str,
+) -> None:
+    """Write ``/provenance`` and stamp its zone key."""
+    from apeGmsh.opensees._internal.schema_version import (
+        PROVENANCE_KEY,
+        PROVENANCE_SCHEMA_VERSION,
+    )
+    str_dt = _vlen_utf8()
+    grp = f.create_group("provenance")
+    grp.attrs["base_dir"] = base_dir
+    for table, names in _PROVENANCE_COLUMNS.items():
+        sub = grp.create_group(table)
+        for name in names:
+            values = columns[table][name]
+            if name in _PROVENANCE_STR_COLUMNS:
+                sub.create_dataset(
+                    name, data=np.array(values, dtype=object).reshape(-1),
+                    dtype=str_dt)
+            else:
+                sub.create_dataset(
+                    name, data=np.asarray(values, dtype=np.int32).reshape(-1))
+    f["meta"].attrs[PROVENANCE_KEY] = PROVENANCE_SCHEMA_VERSION
+
+
+def _read_provenance(parent: Any, label: str) -> Any:
+    """Read ``/provenance`` under ``parent`` into a ``ProvenanceTable``,
+    or ``None`` when the file carries none."""
+    from apeGmsh._internal.provenance import decode_columns
+    from apeGmsh.opensees._internal.schema_version import (
+        PROVENANCE,
+        read_zone_version,
+        reader_version,
+        validate_zone_version,
+    )
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    if "provenance" not in parent:
+        return None
+    version = read_zone_version(parent["meta"].attrs, PROVENANCE)
+    if version is None:
+        raise MalformedH5Error(
+            f"{label}: /provenance is present but /meta carries no "
+            f"provenance_schema_version")
+    validate_zone_version(
+        version, reader_version(PROVENANCE), zone=PROVENANCE)
+    grp = parent["provenance"]
+    columns: dict[str, dict[str, list]] = {}
+    for table, names in _PROVENANCE_COLUMNS.items():
+        cols: dict[str, list] = {}
+        for name in names:
+            if table not in grp or name not in grp[table]:
+                raise MalformedH5Error(
+                    f"{label}: /provenance/{table}/{name} is missing")
+            raw = grp[table][name][()].tolist()
+            cols[name] = (
+                [v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                 for v in raw]
+                if name in _PROVENANCE_STR_COLUMNS
+                else [int(v) for v in raw]
+            )
+        if len({len(v) for v in cols.values()}) > 1:
+            raise MalformedH5Error(
+                f"{label}: /provenance/{table} columns differ in length")
+        columns[table] = cols
+    if "base_dir" not in grp.attrs:
+        raise MalformedH5Error(f"{label}: /provenance@base_dir is missing")
+    raw_base = grp.attrs["base_dir"]
+    base_dir = (raw_base.decode("utf-8") if isinstance(raw_base, bytes)
+                else str(raw_base))
+    return decode_columns(columns, base_dir)
 
 
 def write_neutral_zone_into_group(
@@ -2558,7 +2664,10 @@ def read_fem_h5(path: str, *, root: str = "/") -> "FEMData":
                 )
             parent = f[key]
             label = f"{path}{root}"
-        return read_neutral_zone_from_group(parent, label=label)
+        fem = read_neutral_zone_from_group(parent, label=label)
+        # ADR 0112 D3: the provenance the writing session captured.
+        fem.provenance = _read_provenance(parent, label)
+        return fem
 
 
 def read_neutral_zone_from_group(
