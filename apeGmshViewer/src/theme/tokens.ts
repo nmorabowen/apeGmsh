@@ -141,19 +141,23 @@ export function relight(hex: string, L: number): Hex {
   return rgbToHex(oklchToSrgb(L, C, h));
 }
 
-/**
- * Protanopia simulation (Machado, Oliveira and Fernandes 2009, severity 1.0),
- * in linear sRGB: what a protanope sees of a colour.
- */
-export function protanopia(rgb: RGB): [number, number, number] {
+export type Cvd = "protanopia" | "deuteranopia" | "tritanopia";
+
+/** Machado, Oliveira and Fernandes 2009, severity 1.0, in linear sRGB. */
+const CVD_MATRIX: Readonly<Record<Cvd, readonly (readonly [number, number, number])[]>> = {
+  protanopia: [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]],
+  deuteranopia: [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.01182, 0.04294, 0.968881]],
+  tritanopia: [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602], [0.004733, 0.691367, 0.3039]],
+};
+
+/** What a person with `kind` colour-vision deficiency sees of a colour (sRGB in, sRGB out). */
+export function simulateCvd(kind: Cvd, rgb: RGB): [number, number, number] {
   const [r, g, b] = rgb.map(toLinear) as [number, number, number];
-  const lin: [number, number, number] = [
-    0.152286 * r + 1.052583 * g - 0.204868 * b,
-    0.114503 * r + 0.786281 * g + 0.099216 * b,
-    -0.003882 * r - 0.048116 * g + 1.051998 * b,
-  ];
-  return lin.map((v) => toGamma(Math.min(1, Math.max(0, v)))) as [number, number, number];
+  return CVD_MATRIX[kind].map((row) => toGamma(Math.min(1, Math.max(0, row[0] * r + row[1] * g + row[2] * b)))) as [number, number, number];
 }
+
+/** Protanopia simulation: what a protanope sees of a colour. */
+export const protanopia = (rgb: RGB): [number, number, number] => simulateCvd("protanopia", rgb);
 
 /** Perceptual distance in OKLab (0 = identical; about 0.02 is just noticeable). */
 export function oklabDistance(a: RGB, b: RGB): number {
@@ -166,15 +170,21 @@ export function oklabDistance(a: RGB, b: RGB): number {
 // ---- the dark theme ----------------------------------------------------------
 
 /**
- * OKLCH lightness of each dark-adapted group colour, per office index. The
- * first ring alternates light and dark so legend neighbours step by at
- * least 0.10; the near-neutral slate (2), grey (6) and teal (7) keep
- * distinct levels, since lightness is all a protanope has to tell them
- * apart; every level clears WCAG 3:1 on the background. The second ring
- * (groups 9 to 16) is the same hue one step lighter: the second cue.
+ * OKLCH lightness of each dark-adapted group colour, per office index,
+ * found by a constrained search (levels 0.50 to 0.92 in steps of 0.02)
+ * against the rules test/tokens.test.ts holds: every level clears WCAG
+ * 3:1 on the background; legend neighbours step by at least 0.10; a
+ * repeated hue (the second ring, groups 9 to 16) is at least 0.10 from its
+ * first appearance; every pair of the sixteen is at least 0.05 OKLab apart
+ * as a protanope and as a deuteranope sees it (both lose red/green, and
+ * blue, sky, teal, slate and purple then fall into one family, so
+ * lightness is what tells them apart); and within the office eight a pair
+ * closer than 0.08 owes its separation to lightness (>= 0.10 L), not to a
+ * chroma crumb. Tritanopia is reported, not enforced: blue/yellow is the
+ * office palette's main axis.
  */
-export const DARK_L1: readonly number[] = [0.64, 0.82, 0.52, 0.84, 0.62, 0.74, 0.88, 0.6];
-export const DARK_L2: readonly number[] = [0.76, 0.94, 0.68, 0.96, 0.74, 0.92, 0.58, 0.72];
+export const DARK_L1: readonly number[] = [0.64, 0.82, 0.52, 0.82, 0.62, 0.92, 0.74, 0.62];
+export const DARK_L2: readonly number[] = [0.52, 0.7, 0.86, 0.58, 0.88, 0.76, 0.58, 0.78];
 
 /** The office `main_colors` adapted to the dark background: same hue order, alternating lightness. */
 export const DARK_MAIN: readonly Hex[] = OFFICE_MAIN.map((hex, i) => relight(hex, DARK_L1[i]!));
@@ -202,9 +212,10 @@ export const DARK = {
   hover: "rgba(255, 255, 255, 0.08)",
   dashed: "rgba(255, 255, 255, 0.12)",
   dropBorder: "rgba(255, 255, 255, 0.18)",
+  /** text tokens clear WCAG 4.5:1 on bg0 and on bg1 (the gradient's light end) */
   text: "#E6E8EC",
   muted: "#8B919C",
-  source: "#6F7682",
+  source: "#8A9099",
   /** the office accent: selection, pins, role chips */
   accent: OFFICE.accent,
   accentInk: "#1B1E24",

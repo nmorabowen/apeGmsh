@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 import { NO_GROUP, OPS_ONLY, paletteEntry, paletteFor, RING_SIZE } from "../src/state/palette.ts";
 import { roleColouring, UNASSIGNED_ROW } from "../src/state/roles.ts";
 import {
-  contrastRatio, DARK, DARK_MAIN, DARK_MAIN_RING2, DARK_ROLE, hexToRgb, oklabDistance, OFFICE, OFFICE_MAIN, protanopia, relight, rgbToHex,
-  srgbToOklch, type RGB,
+  contrastRatio, DARK, DARK_L1, DARK_L2, DARK_MAIN, DARK_MAIN_RING2, DARK_ROLE, FONT_FILES, hexToRgb, oklabDistance, OFFICE, OFFICE_MAIN, protanopia, relight, rgbToHex,
+  simulateCvd, srgbToOklch, type Cvd, type RGB,
 } from "../src/theme/tokens.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
@@ -24,8 +24,9 @@ import { openModel } from "../src/reader/node.ts";
 const src = fileURLToPath(new URL("../src", import.meta.url));
 const bg = hexToRgb(DARK.bg0);
 const L = (hex: string) => srgbToOklch(hexToRgb(hex)).L;
-/** What a protanope sees of two colours, as an OKLab distance. */
-const seen = (a: string, b: string) => oklabDistance(protanopia(hexToRgb(a)), protanopia(hexToRgb(b)));
+/** What a person with a colour-vision deficiency sees of two colours, as an OKLab distance. */
+const seenAs = (kind: Cvd, a: string, b: string) => oklabDistance(simulateCvd(kind, hexToRgb(a)), simulateCvd(kind, hexToRgb(b)));
+const seen = (a: string, b: string) => seenAs("protanopia", a, b);
 /** Just-noticeable in OKLab is about 0.02; a pair must be well past it. */
 const SAFE = 0.05;
 const STEP = 0.1;
@@ -63,27 +64,47 @@ test("dark adaptation keeps each office hue (and its order) and only moves the l
 });
 
 test("legend neighbours step in lightness by at least 0.10, across the ring boundary too", () => {
-  const seq = [...DARK_MAIN, ...DARK_MAIN_RING2].map(L);
+  const seq = [...DARK_L1, ...DARK_L2];
   for (let i = 1; i < seq.length; i++) assert.ok(Math.abs(seq[i]! - seq[i - 1]!) >= STEP - 1e-9, `entries ${i - 1},${i}: ${seq[i - 1]} vs ${seq[i]}`);
   // A repeated hue is one lightness step away from its first appearance.
-  for (let i = 0; i < RING_SIZE; i++) assert.ok(Math.abs(L(DARK_MAIN_RING2[i]!) - L(DARK_MAIN[i]!)) >= STEP - 1e-9, `ring step ${i}`);
+  for (let i = 0; i < RING_SIZE; i++) assert.ok(Math.abs(DARK_L2[i]! - DARK_L1[i]!) >= STEP - 1e-9, `ring step ${i}`);
+  // The rendered colours sit on the designed levels (hex rounding aside).
+  [...DARK_MAIN, ...DARK_MAIN_RING2].forEach((hex, i) => assert.ok(Math.abs(L(hex) - seq[i]!) < 0.012, `${i} ${hex}: L ${L(hex).toFixed(3)} vs ${seq[i]}`));
 });
 
-test("protanopia: no pair of the sixteen group colours is told apart by a red/green difference alone", () => {
+test("protanopia and deuteranopia: no pair of the sixteen group colours is told apart by a red/green difference alone", () => {
   const all = [...DARK_MAIN, ...DARK_MAIN_RING2];
-  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
-    assert.ok(seen(all[i]!, all[j]!) >= SAFE, `${i} ${all[i]} vs ${j} ${all[j]}: ${seen(all[i]!, all[j]!).toFixed(3)} as a protanope sees them`);
+  for (const kind of ["protanopia", "deuteranopia"] as const) {
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      const d = seenAs(kind, all[i]!, all[j]!);
+      assert.ok(d >= SAFE, `${i} ${all[i]} vs ${j} ${all[j]}: ${d.toFixed(3)} under ${kind}`);
+      // Within the office eight a near pair owes its separation to lightness, not to a chroma crumb
+      // (the designed levels; a hex-rounded L lands within 0.01 of them).
+      if (i < 8 && j < 8 && d < 0.08) assert.ok(Math.abs(DARK_L1[i]! - DARK_L1[j]!) >= STEP - 1e-9, `${i} vs ${j}: ${d.toFixed(3)} under ${kind} with dL ${Math.abs(DARK_L1[i]! - DARK_L1[j]!).toFixed(2)}`);
+    }
   }
-  // The simulation itself: pure red and pure green collapse together for a protanope; blue and yellow do not.
-  assert.ok(seen("#FF0000", "#00AA00") < seen("#0000FF", "#FFFF00") / 3);
+  // The pair the review named (entry 5, purple, and entry 8, the second-ring blue) is far apart in lightness.
+  assert.ok(Math.abs(L(all[5]!) - L(all[8]!)) >= 0.3, "entries 5 and 8");
+  assert.ok(seenAs("deuteranopia", all[5]!, all[8]!) >= 0.2);
+  // The simulations themselves: pure red and pure green collapse together for a protanope and a deuteranope; blue and yellow do not.
+  for (const kind of ["protanopia", "deuteranopia"] as const) assert.ok(seenAs(kind, "#FF0000", "#00AA00") < seenAs(kind, "#0000FF", "#FFFF00") / 3, kind);
+  // Tritanopia (blue/yellow loss) is reported only: the office palette's main axis is blue/yellow.
+  let worst: [number, number, number] = [Infinity, 0, 0];
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    const d = seenAs("tritanopia", all[i]!, all[j]!);
+    if (d < worst[0]) worst = [d, i, j];
+  }
+  console.log(`tritanopia (report only): closest pair ${worst[1]} ${all[worst[1]]} vs ${worst[2]} ${all[worst[2]]} at ${worst[0].toFixed(3)} OKLab`);
 });
 
-test("WCAG: every group, role and chrome colour clears its ratio on the background (printed for the PR)", () => {
+test("WCAG: every group, role and chrome colour clears its ratio on both ends of the background gradient (printed for the PR)", () => {
   const rows: string[] = [];
+  const bg1 = hexToRgb(DARK.bg1);
   const check = (name: string, hex: string, min: number) => {
-    const r = contrastRatio(hexToRgb(hex), bg);
-    rows.push(`${name.padEnd(28)} ${hex}  ${r.toFixed(2)}:1`);
-    assert.ok(r >= min, `${name} ${hex} is ${r.toFixed(2)}:1 on ${DARK.bg0}, needs ${min}:1`);
+    const r0 = contrastRatio(hexToRgb(hex), bg), r1 = contrastRatio(hexToRgb(hex), bg1);
+    rows.push(`${name.padEnd(28)} ${hex}  ${r0.toFixed(2)}:1 on bg0, ${r1.toFixed(2)}:1 on bg1`);
+    assert.ok(r0 >= min, `${name} ${hex} is ${r0.toFixed(2)}:1 on ${DARK.bg0}, needs ${min}:1`);
+    assert.ok(r1 >= min, `${name} ${hex} is ${r1.toFixed(2)}:1 on ${DARK.bg1}, needs ${min}:1`);
   };
   DARK_MAIN.forEach((h, i) => check(`group ${i} (${OFFICE_MAIN[i]})`, h, 3));
   DARK_MAIN_RING2.forEach((h, i) => check(`group ${i + 8} (${OFFICE_MAIN[i]}, ring 2)`, h, 3));
@@ -93,12 +114,13 @@ test("WCAG: every group, role and chrome colour clears its ratio on the backgrou
   check("unassigned role", DARK.unassigned, 3);
   check("text", DARK.text, 7);
   check("muted text", DARK.muted, 4.5);
-  check("source paths", DARK.source, 3);
+  check("source paths", DARK.source, 4.5);
+  check("interp text", DARK.interpText, 4.5);
   check("accent", DARK.accent, 4.5);
   check("interp tag", DARK.interp, 4.5);
   check("error", DARK.error, 4.5);
   check("selection", DARK.selection, 4.5);
-  console.log("WCAG contrast on " + DARK.bg0 + ":\n  " + rows.join("\n  "));
+  console.log("WCAG contrast:\n  " + rows.join("\n  "));
 });
 
 test("the roles take the office colours; no two roles are told apart by red/green alone", () => {
@@ -152,6 +174,19 @@ test("colour by role: a file with no role attribute says so and draws every elem
   assert.throws(() => roleColouring(bad), /not a structural role/);
 });
 
+// ---- the bundled font and its licence ----------------------------------------
+
+test("the Archivo Narrow files and the full OFL 1.1 text are bundled", () => {
+  const fonts = fileURLToPath(new URL("../src/renderer/fonts", import.meta.url));
+  for (const f of FONT_FILES) assert.ok(statSync(join(fonts, f.file.replace(/^fonts\//, ""))).size > 50_000, f.file);
+  const ofl = readFileSync(join(fonts, "OFL.txt"), "utf8");
+  assert.match(ofl, /Reserved Font Name "Archivo Narrow"/);
+  assert.match(ofl, /SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/);
+  for (const heading of ["PREAMBLE", "DEFINITIONS", "PERMISSION & CONDITIONS", "TERMINATION", "DISCLAIMER"]) assert.ok(ofl.includes(heading), heading);
+  for (const n of [1, 2, 3, 4, 5]) assert.ok(new RegExp(`^${n}\\) `, "m").test(ofl), `condition ${n}`);
+  assert.ok(ofl.length > 4000, `the full licence text (${ofl.length} chars)`);
+});
+
 // ---- the lint: no colour literal outside the token module --------------------
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -172,10 +207,27 @@ test("every colour in the app comes from src/theme/tokens.ts: no colour literal 
   // arguments are written out (`rgb(${...})` from a token colour is not one).
   // An issue number such as (#1295) or a `#k` declaration index is none.
   const literal = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{8}\b|["'`:]\s*#[0-9a-fA-F]{3,4}\b|\b0x[0-9a-fA-F]{6}\b|\brgba?\((?!\$\{)|\bhsla?\(/;
+  // A float triple on a line that talks about colour: `[0.29, 0.56, 0.89]` beside colour/color/palette/rgb.
+  const triple = /\[\s*[01]?\.\d+\s*,\s*[01]?\.\d+\s*,\s*[01]?\.\d+\s*\]/;
+  const colourContext = /colou?r|palette|rgb|swatch|tint|shade/i;
+  // A CSS named colour as a property value (CSS), or as a string or a three.js colour argument (TS).
+  const NAMED =
+    "aqua|black|blue|brown|coral|crimson|cyan|fuchsia|gold|gray|grey|green|indigo|ivory|khaki|lime|magenta|maroon|navy|olive|orange|orchid|pink|plum|purple|red|salmon|silver|tan|teal|tomato|violet|white|yellow|" +
+    "lightblue|lightgray|lightgrey|lightgreen|lightyellow|lightpink|lightcyan|lightcoral|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightgoldenrodyellow|" +
+    "darkblue|darkcyan|darkgray|darkgrey|darkgreen|darkorange|darkred|darkviolet|darkslategray|darkslategrey|darkslateblue|darkseagreen|darkkhaki|darkmagenta|darkolivegreen|darkorchid|darksalmon|darkturquoise|darkgoldenrod|" +
+    "dimgray|dimgrey|mediumblue|mediumpurple|mediumseagreen|mediumslateblue|mediumturquoise|mediumvioletred|mediumorchid|mediumaquamarine|palegreen|paleturquoise|palevioletred|deepskyblue|deeppink|" +
+    "slategray|slategrey|steelblue|skyblue|royalblue|cornflowerblue|dodgerblue|midnightblue|powderblue|cadetblue|aliceblue|blueviolet|forestgreen|seagreen|springgreen|lawngreen|chartreuse|yellowgreen|greenyellow|olivedrab|limegreen|" +
+    "hotpink|firebrick|chocolate|sienna|peru|wheat|beige|linen|snow|mintcream|honeydew|azure|lavender|lavenderblush|thistle|gainsboro|whitesmoke|antiquewhite|floralwhite|ghostwhite|turquoise|aquamarine|bisque|moccasin|burlywood|rosybrown|sandybrown|goldenrod|lemonchiffon|papayawhip|peachpuff|navajowhite|blanchedalmond|cornsilk|oldlace|seashell|mistyrose|orangered|indianred|rebeccapurple";
+  // As a CSS property value, as a quoted string, or as a three.js Color argument; a longer identifier (whitelist, tangent) is not one.
+  const named = new RegExp(`(?::\\s*|["'\`]\\s*)(?:${NAMED})\\b(?![-\\w])|\\bColor\\(\\s*["'](?:${NAMED})["']`, "i");
   const offenders: string[] = [];
   for (const f of files) {
     readFileSync(f, "utf8").split("\n").forEach((line, i) => {
-      if (literal.test(line)) offenders.push(`${f.slice(src.length + 1)}:${i + 1}: ${line.trim()}`);
+      const hit =
+        literal.test(line) ||
+        (triple.test(line) && colourContext.test(line)) ||
+        named.test(line);
+      if (hit) offenders.push(`${f.slice(src.length + 1)}:${i + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(offenders, []);
@@ -183,7 +235,16 @@ test("every colour in the app comes from src/theme/tokens.ts: no colour literal 
   for (const planted of ['color: "#0B5394"', "--x: #abc;", "new THREE.Color(0xff0000)", "background: rgba(1, 2, 3, 0.5)", "hsl(10, 50%, 50%)"]) {
     assert.ok(literal.test(planted), planted);
   }
-  for (const fine of ["(#1295)", "opensees/section/#3", "rgb(${c.join(',')})", "// see #1308 round 3"]) assert.ok(!literal.test(fine), fine);
+  for (const planted of ["export const PALETTE = [[0.29, 0.56, 0.89], [0.95, 0.55, 0.22]];", "const NO_GROUP: RGB = [0.62, 0.64, 0.68]; // colour", "color: [0.5, 0.5, 0.5]"]) {
+    assert.ok(triple.test(planted) && colourContext.test(planted), planted);
+  }
+  assert.ok(!(triple.test("center: [0.5, 0.5, 0.5]") && colourContext.test("center: [0.5, 0.5, 0.5]")), "a position triple is not a colour");
+  for (const planted of ['color: "white"', "background: red;", 'new THREE.Color("orange")', "border-color: darkslategray;", "fill: Gold"]) {
+    assert.ok(named.test(planted), planted);
+  }
+  for (const fine of ["(#1295)", "opensees/section/#3", "rgb(${c.join(',')})", "// see #1308 round 3", "const whitelist = 1", "--line: var(--x)", "text-align: center", "throw new RangeError(`paletteEntry: ${i}`)", "x: tangent", "color: var(--red-ish)"]) {
+    assert.ok(!literal.test(fine) && !named.test(fine), fine);
+  }
   const mainTs = readFileSync(join(src, "main", "main.ts"), "utf8");
   const m = /backgroundColor:\s*"(#[0-9a-fA-F]{6})"/.exec(mainTs);
   assert.ok(m, "main.ts sets the window background");
