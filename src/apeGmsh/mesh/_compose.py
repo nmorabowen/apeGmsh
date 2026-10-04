@@ -164,6 +164,23 @@ class ComposeFilterWarning(UserWarning):
     """
 
 
+class ComposeDroppedStreamWarning(UserWarning):
+    """The source module carries a non-empty neutral-zone stream that
+    compose does not carry, so the composed module arrives without it.
+
+    One warning per dropped stream per compose call, naming the stream
+    and its record count (program slice B2-2, D9).  The streams that
+    trip it are listed in :data:`_UNCARRIED_ELEMENT_STREAMS`; today that
+    is the source's ``elements.rebar_elements`` (the cage's auto-emitted
+    structural rebar from ``g.rebar.place(emit_elements=True)``), whose
+    carry needs the module's tag offset on ``connectivity``, the
+    namespace prefix on ``pg`` and a decision on the bridge-side
+    ``material`` name, so it is not a trivial copy like ``contacts``.
+    Carried streams and empty ones stay silent.  Silence per call with
+    ``warnings.simplefilter("ignore", ComposeDroppedStreamWarning)``.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Nested composition — depth tracking + separator alternation (Phase 3E.1)
 # ---------------------------------------------------------------------------
@@ -1627,6 +1644,11 @@ def _rewrite_source_for_compose(
         )
         for rec in (getattr(source.elements, "interfaces", None) or ())
     )
+    # Streams the source carries that this rewrite does NOT place on the
+    # bundle (today: ``elements.rebar_elements``).  Warn once per
+    # non-empty one so the drop is never silent (B2-2 / D9); the merge
+    # engine's ElementComposite rebuild then carries only the host's.
+    _warn_dropped_streams(source, label=label)
 
     # 7. Joined module_label arrays (Phase 3E.1).  The source's
     #    per-row ``_module_label`` arrays carry inner labels from
@@ -2717,9 +2739,12 @@ def _merge_bundle_into_fem(
                     + list(bundle.interfaces)),
         # ADR 0067 P5.2 / B1a.2: preserve the HOST's auto-emitted rebar
         # elements across the merge (the rebuilt ElementComposite would
-        # otherwise drop them). Carrying the SOURCE module's rebar_elements
-        # (PG + material-name prefixing, parallel to the reinforce-tie carry
-        # above) is a deferred compose teach-in follow-on.
+        # otherwise drop them). The SOURCE module's rebar_elements are NOT
+        # carried (the bundle has no such stream: the carry needs the tag
+        # offset on connectivity, the PG prefix and a material-name
+        # decision), so the rewriter warns per non-empty source stream
+        # (``_warn_dropped_streams``, B2-2 / D9) instead of dropping it
+        # silently. Carrying it is a compose teach-in follow-on.
         rebar_elements=list(getattr(fem.elements, "rebar_elements", [])),
         gmsh_source=getattr(fem.elements, "_gmsh_source", None),
     )
@@ -3383,6 +3408,45 @@ def _emit_filter_warnings(source_path: "str | Path", label: str) -> None:
             f"under compose. Re-declare on the host.",
             ComposeFilterWarning,
             stacklevel=3,
+        )
+
+
+#: Element-side neutral-zone streams that :func:`_rewrite_source_for_compose`
+#: reads from the source but does not place on the bundle, so the merge
+#: engine's ElementComposite rebuild carries only the host's.  Every
+#: other ``ElementComposite`` / ``NodeComposite`` stream is carried
+#: (ties, contacts, planes, interfaces, constraints, loads, sp, masses,
+#: parts, labels) or is an ADR 0038 DISCARD verdict rebuilt on the host
+#: (the module's own PartitionSet).  A stream leaves this tuple the day
+#: the bundle carries it; a new uncarried stream joins it, so the drop
+#: warns instead of passing silently (B2-2 / D9).
+_UNCARRIED_ELEMENT_STREAMS: "tuple[str, ...]" = ("rebar_elements",)
+
+
+def _warn_dropped_streams(source: "FEMData", *, label: str) -> None:
+    """Emit one :class:`ComposeDroppedStreamWarning` per non-empty source
+    stream in :data:`_UNCARRIED_ELEMENT_STREAMS`.
+
+    Warns iff the source carries a non-empty stream that compose does
+    not carry: an empty stream stays silent, and a stream the bundle
+    carries never enters the tuple.  The message names the stream and
+    its record count.  Attribute access is direct (not ``getattr`` with a
+    default): the stream is a public ``ElementComposite`` attribute, so a
+    missing one is a contract break and must raise.
+    """
+    for stream in _UNCARRIED_ELEMENT_STREAMS:
+        n = len(getattr(source.elements, stream))
+        if n == 0:
+            continue
+        warnings.warn(
+            f"compose(label={label!r}): module carries {n} "
+            f"elements.{stream} that compose does not carry; the composed "
+            f"module arrives without them. Re-declare them on the host "
+            f"(for rebar_elements: g.rebar.place(..., emit_elements=True) "
+            f"on the host cage), or silence with warnings.simplefilter("
+            f"\"ignore\", ComposeDroppedStreamWarning).",
+            ComposeDroppedStreamWarning,
+            stacklevel=4,
         )
 
 
