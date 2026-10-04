@@ -77,6 +77,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Sequence
 
+from .base import DroppedAxisGuard
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
     clear_element_emit_context,
@@ -997,6 +998,9 @@ class H5Emitter:
 
         self._ndm: int | None = None
         self._ndf: int | None = None
+        # The archive keeps every node's xyz, but a deck replayed from it
+        # trims to ndm; refuse here what that replay would refuse (#1337).
+        self._dropped_axes = DroppedAxisGuard.BEFORE_MODEL
 
         # Nodes — stored as parallel arrays for compact write.
         self._node_tags: list[int] = []
@@ -1177,6 +1181,7 @@ class H5Emitter:
     def model(self, *, ndm: int, ndf: int) -> None:
         self._ndm = ndm
         self._ndf = ndf
+        self._dropped_axes = DroppedAxisGuard(ndm)
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
@@ -1187,6 +1192,7 @@ class H5Emitter:
             x, y = cs
             triple = (x, y, 0.0)
         elif len(cs) == 3:
+            self._dropped_axes.trim(cs, int(tag))
             x, y, z = cs
             triple = (x, y, z)
         else:

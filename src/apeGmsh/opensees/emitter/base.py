@@ -767,15 +767,8 @@ class Emitter(Protocol):
         ...
 
 
-#: Relative tolerance below which a coordinate beyond ``ndm`` counts as
-#: padding (``|c| <= _NDM_DROP_RTOL * max(1, |kept coordinates|)``).
-#: CAD/mesher round-off on a planar model sits near 1e-15 relative; any
-#: real out-of-plane offset, in any length unit, is many orders above.
-_NDM_DROP_RTOL = 1e-9
-
-
 def trim_coords_to_ndm(
-    coords: "tuple[float, ...]", ndm: "int | None", *, tag: int,
+    coords: "tuple[float, ...]", ndm: "int | None",
 ) -> "tuple[float, ...]":
     """Drop the padding coordinates beyond the model's ``ndm``.
 
@@ -802,50 +795,107 @@ def trim_coords_to_ndm(
     3-D decks are unaffected (the slice is the identity on a 3-tuple).
     ``ndm`` is ``None`` until ``model()`` has been called — direct emitter
     use in tests — and then the coordinates pass through untouched.
-
-    Only *padding* may be dropped (#1337).  A dropped coordinate that is
-    not zero (beyond :data:`_NDM_DROP_RTOL`) is real geometry: a frame
-    drawn in the x-z plane under ``ops.model(ndm=2)`` lost every z, its
-    columns collapsed to coincident nodes, and the run died inside
-    OpenSees with an unrelated coordinate-transformation error.  That
-    raises :class:`~apeGmsh.opensees._internal.build.BridgeError` here,
-    naming the node (*tag*), the axis and the value.  This is the one
-    place every text and live emitter applies ``ndm``, so it is the one
-    place a lossy trim can be refused.
     """
     if ndm is None or len(coords) <= ndm:
         return coords
-    kept = coords[:ndm]
-    for c in coords[ndm:]:
-        # ``c and`` keeps the dominant exact-zero padding on one test.
-        if c and abs(c) > _NDM_DROP_RTOL * max(1.0, *map(abs, kept)):
-            _raise_nonplanar_node(coords, ndm, tag)
-    return kept
+    return coords[:ndm]
 
 
-def _raise_nonplanar_node(
-    coords: "tuple[float, ...]", ndm: int, tag: int,
+#: Relative tolerance on the spread of a dropped coordinate across nodes:
+#: two nodes share the plane when ``|d - d_ref| <= _PLANE_RTOL * scale``,
+#: with ``scale = max(1, every |coordinate| of both nodes)``.  Mesher
+#: round-off on a planar model sits near 1e-15 relative; a real
+#: out-of-plane offset, in any length unit, is orders above 1e-9.
+_PLANE_RTOL = 1e-9
+
+
+class DroppedAxisGuard:
+    """Trim nodes to ``ndm`` and refuse a trim that loses geometry (#1337).
+
+    The broker carries every node as ``(x, y, z)`` and the emitters trim
+    it to ``ndm`` (:func:`trim_coords_to_ndm`).  The trim is lossless only
+    when the dropped coordinates are the SAME on every node: a model in
+    the plane ``z = z0`` emits a correct 2-D deck whatever ``z0`` is
+    (``interop/strut_tie`` meshes at the STM's ``z`` and re-pads it on
+    readback).  When they differ, distinct nodes can collapse onto each
+    other: a portal frame drawn in x-z under ``ops.model(ndm=2)`` emitted
+    coincident column ends and died inside OpenSees with a
+    coordinate-transformation error.
+
+    One guard per ``model()`` call.  The first trimmed node fixes the
+    reference values of the dropped axes; every later node must match
+    them within :data:`_PLANE_RTOL`, or :meth:`trim` raises
+    :class:`~apeGmsh.opensees._internal.build.BridgeError` naming both
+    nodes, the axis and the two values.  The common case, an exact match
+    (``(0.0,) == (0.0,)``), is one tuple comparison per node.
+
+    ``ndm=None`` is the state before ``model()`` (direct emitter use in
+    tests): coordinates pass through untouched and nothing is recorded,
+    which is what makes the shared class-level :data:`BEFORE_MODEL`
+    instance safe.
+    """
+
+    __slots__ = ("_ndm", "_ref", "_ref_tag", "_ref_coords")
+
+    BEFORE_MODEL: "DroppedAxisGuard"
+
+    def __init__(self, ndm: "int | None") -> None:
+        self._ndm = ndm
+        self._ref: "tuple[float, ...] | None" = None
+        self._ref_tag = 0
+        self._ref_coords: "tuple[float, ...]" = ()
+
+    @property
+    def ndm(self) -> "int | None":
+        return self._ndm
+
+    def trim(self, coords: "tuple[float, ...]", tag: int) -> "tuple[float, ...]":
+        ndm = self._ndm
+        if ndm is None or len(coords) <= ndm:
+            return coords
+        dropped = coords[ndm:]
+        ref = self._ref
+        if ref is None:
+            self._ref = dropped
+            self._ref_tag = tag
+            self._ref_coords = coords
+        elif dropped != ref:
+            self._check(coords, tag, ndm)
+        return coords[:ndm]
+
+    def _check(
+        self, coords: "tuple[float, ...]", tag: int, ndm: int,
+    ) -> None:
+        ref = self._ref_coords
+        scale = max(1.0, *map(abs, coords), *map(abs, ref))
+        tol = _PLANE_RTOL * scale
+        for i in range(ndm, min(len(coords), len(ref))):
+            if abs(coords[i] - ref[i]) > tol:
+                _raise_off_plane(ndm, i, self._ref_tag, ref[i], tag, coords[i])
+
+
+DroppedAxisGuard.BEFORE_MODEL = DroppedAxisGuard(None)
+
+
+def _raise_off_plane(
+    ndm: int, axis: int, ref_tag: int, ref_val: float, tag: int, val: float,
 ) -> None:
     from .._internal.build import BridgeError
 
     axes = ("x", "y", "z")
-    kept_axes = ", ".join(axes[:ndm])
-    dropped = ", ".join(
-        f"{axes[i]} = {coords[i]!r}"
-        for i in range(ndm, len(coords))
-        if coords[i]
-    )
+    a = axes[axis]
+    kept = ", ".join(axes[:ndm])
     where = (
-        "the z = 0 plane: build it in x-y (an x-z frame rotated so its "
-        "vertical axis is y)"
-        if ndm == 2 else "the x axis (y = z = 0)"
+        "one plane of constant z (normally z = 0): build it in x-y (an x-z "
+        "frame rotated so its vertical axis is y)"
+        if ndm == 2 else "one line parallel to x (constant y and z)"
     )
     raise BridgeError(
-        f"ops.model(ndm={ndm}) keeps only {kept_axes}, but node {tag} has "
-        f"{dropped}. Emitting it would silently drop that coordinate, so "
-        f"distinct nodes can coincide and elements collapse to zero "
-        f"length. A {ndm}-D model must lie in {where}, or declare "
-        f"ops.model(ndm=3)."
+        f"ops.model(ndm={ndm}) keeps only {kept}, but the nodes do not share "
+        f"one {a}: node {ref_tag} has {a} = {ref_val!r} and node {tag} has "
+        f"{a} = {val!r}. Dropping {a} would silently move nodes, so distinct "
+        f"nodes can coincide and elements collapse to zero length. A "
+        f"{ndm}-D model must lie in {where}, or declare ops.model(ndm=3)."
     )
 
 

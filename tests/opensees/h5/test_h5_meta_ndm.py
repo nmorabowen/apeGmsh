@@ -31,7 +31,7 @@ def _write_frame(tmp_path: Path, *, ndm: int, ndf: int) -> Path:
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.section.fiber import FiberPoint
 
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=ndm)
     ops = apeSees(fem)
     ops.model(ndm=ndm, ndf=ndf)
     steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
@@ -94,7 +94,7 @@ def test_model_data_2d_frame_writes_and_reads_ndm(tmp_path: Path) -> None:
     """``ModelData(ndm=2)`` on a line-only fem writes, and reads back, 2."""
     from apeGmsh.opensees.model_data import ModelData
 
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=2)
     out = tmp_path / "md.h5"
     ModelData(fem, ndm=2, ndf=3).write(str(out))
     with h5py.File(out, "r") as f:
@@ -126,7 +126,7 @@ def test_composed_results_forward_the_declared_ndm(tmp_path: Path) -> None:
     from apeGmsh.results.writers import NativeWriter
 
     src = _write_frame(tmp_path, ndm=2, ndf=3)
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=2)
     composed = tmp_path / "composed.h5"
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     with NativeWriter(composed) as w:

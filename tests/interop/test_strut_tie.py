@@ -56,6 +56,27 @@ def test_corbel_plane_stress_overlay_balances_the_load() -> None:
     json.dumps(result.overlays, allow_nan=False)
 
 
+def test_corbel_in_an_offset_plane_solves_like_z0() -> None:
+    """#1337: the plane region meshes at the STM's z and runs ndm=2.
+
+    A plane at z = 1 drops a CONSTANT z, which is lossless, so the bridge
+    must not refuse it, and the answer must match the z = 0 corbel.
+    """
+    flat = _load("corbel.stm.json")
+    lifted = _load("corbel.stm.json")
+    for n in lifted["nodes"]:
+        n["xyz"][2] += 1.0
+    for p in lifted.get("plates", []):
+        p["center"][2] += 1.0
+    kw = {"mesh_size": 40.0, "extra_fixed_planes": (("x", -400.0, (0, 1)),)}
+    r0 = strut_tie_overlays(flat, **kw)
+    r1 = strut_tie_overlays(lifted, **kw)
+    assert r1.n_elements == r0.n_elements
+    assert np.allclose(r1.reactions, r0.reactions, rtol=1e-9, atol=1e-6)
+    segs = r1.overlays["fe_trajectories"]["segments"]
+    assert segs and all(s[0][2] == 1.0 and s[1][2] == 1.0 for s in segs)
+
+
 def test_pile_cap_solid_overlay(tmp_path: Path) -> None:
     out = write_strut_tie_overlays(
         FIXTURES / "pile_cap.stm.json", tmp_path / "cap.overlays.json", mesh_size=180.0

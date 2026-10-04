@@ -63,14 +63,9 @@ def test_a_numpy_coordinate_renders_plain_and_the_coercion_keeps_the_fast_path()
 
 # ── the emitter is the ONLY place dimension is applied ───────────────
 
-@pytest.mark.parametrize("coords,ndm,expected", [
-    ((1.0, 2.0, 0.0), 2, (1.0, 2.0)),
-    ((1.0, 2.0, 3.0), 3, (1.0, 2.0, 3.0)),
-])
-def test_the_emitter_owns_the_dimension_trim(coords, ndm, expected):
-    # The 2-D case drops padding only: a non-zero z is refused (#1337,
-    # tests/opensees/unit/test_ndm_drops_nonzero_coord.py).
-    assert trim_coords_to_ndm(coords, ndm, tag=1) == expected
+@pytest.mark.parametrize("ndm,expected", [(2, (1.0, 2.0)), (3, (1.0, 2.0, 3.0))])
+def test_the_emitter_owns_the_dimension_trim(ndm, expected):
+    assert trim_coords_to_ndm((1.0, 2.0, 3.0), ndm) == expected
 
 
 def test_a_2d_deck_still_carries_exactly_two_coordinates(tmp_path):

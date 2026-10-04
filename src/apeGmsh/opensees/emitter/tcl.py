@@ -43,9 +43,9 @@ from typing import (
 
 from .base import (
     NUMPY_VALUE_TYPES,
+    DroppedAxisGuard,
     StrategySpec,
     plain_scalar,
-    trim_coords_to_ndm,
 )
 
 
@@ -574,9 +574,12 @@ class TclEmitter:
     #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
     #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self._lines.append(f"model BasicBuilder -ndm {ndm} -ndf {ndf}")
 
     def node(
@@ -584,7 +587,7 @@ class TclEmitter:
     ) -> None:
         # A padded coordinate would swallow the -ndf flag below (and
         # -mass) in a 2-D deck — see trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm, tag=tag)
+        coords = self._dropped_axes.trim(coords, tag)
         # Fast path for the dominant deck band (one line per mesh
         # node): plain-int tag + plain-float coords render via a single
         # f-string. ``{x!r}`` on an exact float is exactly what _join

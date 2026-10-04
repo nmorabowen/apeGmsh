@@ -74,7 +74,7 @@ def _owning_rank(calls: list, idx: int) -> int | None:
 
 
 def test_stage_pattern_records_and_claims() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -92,7 +92,7 @@ def test_stage_pattern_records_and_claims() -> None:
 
 
 def test_pattern_method_returns_context_manager() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         pat = s.pattern(series=ops.timeSeries.Linear())
         # It is a context manager (Plain.__enter__/__exit__).
@@ -110,7 +110,7 @@ def test_pattern_method_returns_context_manager() -> None:
 
 
 def test_stage_pattern_load_lands_inside_stage_block() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -141,7 +141,7 @@ def test_stage_pattern_load_lands_inside_stage_block() -> None:
 
 
 def test_stage_pattern_emits_after_chain_before_analyze() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -162,7 +162,7 @@ def test_stage_pattern_emits_after_chain_before_analyze() -> None:
 
 
 def test_stage_pattern_tcl_load_before_loadconst(tmp_path) -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -197,7 +197,7 @@ def test_stage_pattern_tcl_load_before_loadconst(tmp_path) -> None:
 
 
 def test_two_stages_have_independent_patterns() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -242,7 +242,7 @@ def test_stage_pattern_from_model_imports_case() -> None:
     from apeGmsh._kernel.record_sets import NodalLoadSet
     from apeGmsh._kernel.records._loads import NodalLoadRecord
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
         NodalLoadRecord(node_id=2, force_xyz=(10.0, 20.0, 0.0),
                         pattern="live"),
@@ -278,7 +278,7 @@ def test_stage_pattern_from_model_imports_prescribed_sp_only() -> None:
     from apeGmsh._kernel.record_sets import SPSet
     from apeGmsh._kernel.records._loads import SPRecord
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
         SPRecord(node_id=2, dof=1, value=0.01,
                  is_homogeneous=False, pattern="settle"),
@@ -311,7 +311,7 @@ def test_stage_pattern_mix_from_model_and_explicit_load() -> None:
     from apeGmsh._kernel.record_sets import NodalLoadSet
     from apeGmsh._kernel.records._loads import NodalLoadRecord
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
         NodalLoadRecord(node_id=2, force_xyz=(10.0, 20.0, 0.0),
                         pattern="live"),
@@ -343,7 +343,7 @@ def test_stage_pattern_mix_from_model_and_explicit_load() -> None:
 def test_global_pattern_unaffected_by_bl3() -> None:
     """A vanilla ``ops.pattern.Plain`` (no stages) still emits in the
     global post-element pass — the BL-3 claim machinery is empty."""
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     ops = _frame_ops(fem)
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -362,7 +362,7 @@ def test_global_pattern_unaffected_by_bl3() -> None:
 
 
 def test_stage_pattern_partitioned_routes_per_rank() -> None:
-    fem = make_two_column_frame_partitioned()  # rank0: 1,2 / rank1: 3,4
+    fem = make_two_column_frame_partitioned(ndm=2)  # rank0: 1,2 / rank1: 3,4
     ops = _frame_ops(fem)
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
@@ -397,7 +397,7 @@ def test_stage_pattern_partitioned_skips_empty_rank_bracket() -> None:
     """A rank that owns no pattern node must NOT open an empty
     ``partition_open`` bracket (an empty ``if getPID()==K:`` body is a
     Python SyntaxError on the Py emitter)."""
-    fem = make_two_column_frame_partitioned()  # rank0: 1,2 / rank1: 3,4
+    fem = make_two_column_frame_partitioned(ndm=2)  # rank0: 1,2 / rank1: 3,4
     ops = _frame_ops(fem)
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
