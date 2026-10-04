@@ -270,7 +270,7 @@ class NativeWriter:
             # value under a new version stamp would launder it past the
             # reader's salvage, so the value forwarded is what the
             # reader would resolve from the SOURCE (its own version
-            # stamp, its transforms).
+            # stamp, its transforms, its node coordinates).
             if "meta" in src and "/model/meta" in h5:
                 from apeGmsh.opensees.emitter.h5_reader import read_spatial_ndm
 
