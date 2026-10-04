@@ -15,7 +15,11 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR, OPENSEES_CURRENT
+from tests.fixtures.schema import (
+    NEUTRAL_CURRENT,
+    NEUTRAL_PRIOR_MINOR,
+    OPENSEES_CURRENT,
+)
 from tests.opensees.h5._opensees_model_fixtures import (
     build_simple_frame_fem,
     build_simple_frame_h5,
@@ -143,21 +147,37 @@ def test_composed_results_forward_the_declared_ndm(tmp_path: Path) -> None:
     assert om.ndm == 2
 
 
-def test_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
+def test_inv9_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
     tmp_path: Path,
 ) -> None:
-    """A pre-2.34.0 sidecar (3-D frame stamped ``ndm=1``) composed into a
-    ``results.h5`` must not have its stale stamp forwarded under the
-    current writer's version, where the reader would trust it."""
+    """ADR 0113 INV-9 (no laundering), on the one restamping path: the
+    results twin.
+
+    ``NativeWriter.write_model`` restamps the embedded ``/model/meta``
+    with the CURRENT neutral version, and ``write_opensees_from``
+    forwards the source's ``ndm`` onto it. A pre-2.34.0 source (here a
+    3-D frame stamped ``ndm=1``, the mesh dimension) is below the
+    ndm-trust version but inside the floor, so the raw attribute means
+    something else than the new stamp says. The value forwarded must be
+    the spatial ndm the source's OWN reader resolves through its shim
+    (``read_spatial_ndm`` keyed on ``META_NDM_IS_SPATIAL_FROM``), never
+    the raw attribute: a raw forward fails this test.
+    """
     import numpy as np
 
     from apeGmsh.opensees.opensees_model import OpenSeesModel
     from apeGmsh.results.writers import NativeWriter
 
     src, fem = build_simple_frame_h5(tmp_path)
+    raw_stamp = 1
     with h5py.File(src, "r+") as f:
-        f["meta"].attrs["ndm"] = 1
+        f["meta"].attrs["ndm"] = raw_stamp
         f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+    # The oracle: what the source's own reader resolves under the
+    # source's own stamp (the shim lifts the mesh dimension to 3).
+    salvaged = OpenSeesModel.from_h5(src).ndm
+    assert salvaged == 3 and salvaged != raw_stamp
+
     composed = tmp_path / "composed_stale.h5"
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     with NativeWriter(composed) as w:
@@ -170,11 +190,16 @@ def test_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
         w.end_stage()
 
     with h5py.File(composed, "r") as f:
-        assert int(f["model/meta"].attrs["ndm"]) == 3
+        meta = f["model/meta"].attrs
+        # The twin IS restamped: the embedded zone carries the current
+        # neutral version, under which a reader trusts /meta/ndm.
+        assert str(meta["neutral_schema_version"]) == NEUTRAL_CURRENT
+        assert int(meta["ndm"]) == salvaged
+        assert int(meta["ndm"]) != raw_stamp
     om = OpenSeesModel.from_h5(
         composed, fem_root="/model", opensees_root="/opensees",
     )
-    assert om.ndm == 3
+    assert om.ndm == salvaged
 
 
 def test_opensees_model_refuses_to_build_from_a_broker_only_file(
