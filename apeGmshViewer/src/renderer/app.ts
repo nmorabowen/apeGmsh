@@ -9,6 +9,7 @@ import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
+import { mountPhase } from "../panels/phase.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
@@ -21,7 +22,7 @@ const store = new Store();
 const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store)];
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();

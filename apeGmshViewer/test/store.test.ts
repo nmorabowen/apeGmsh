@@ -132,6 +132,8 @@ const EVERY: Record<EventType, Event> = {
   inspectorUnpin: { type: "inspectorUnpin", decl: archPath },
   openWindow: { type: "openWindow", window: "stages" },
   closeWindow: { type: "closeWindow", window: "stages" },
+  requestSource: { type: "requestSource", decl: archPath },
+  sourceResult: { type: "sourceResult", decl: archPath, ok: false, reason: "missing: x.py" },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -147,7 +149,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 21, "decision 17's 20 events plus fileClosed");
+  assert.equal(Object.keys(EVERY).length, 23, "decision 17's 20 events plus fileClosed, requestSource and sourceResult (V2f)");
 });
 
 test("an event the union does not know raises at run time", () => {

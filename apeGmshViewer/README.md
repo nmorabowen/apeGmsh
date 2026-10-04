@@ -71,7 +71,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `src/chain/` | `resolve.ts` builds the definition chain; `signatures.ts` is the only table of OpenSees syntax the app uses |
 | `src/mesh/build.ts` | flat render buffers coloured by physical group (pure, tested in Node) |
 | `src/state/store.ts` | the single state store and its reducer (ADR 0112 D6) |
-| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set) and `source.ts` (go to source) |
+| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set), `source.ts` (go to source) and `zones.ts` (reads `/geometry` and `/provenance` for the renderer) |
 | `src/renderer/` | the three.js viewport, the panels and the page; `navigation.ts` is the Z-up turntable camera, and `bindings.ts` is the only table of mouse and key bindings (left-click selects, right-drag orbits about the point under the cursor, middle-drag or shift + right-drag pans, the wheel zooms to the cursor, `F` fits) |
 | `scripts/` | `build.mjs` (esbuild bundles) and `launch.mjs` (starts Electron in a mode) |
 | `fixtures/` | a small committed `model.h5` with beams; its README names the command that made it |
