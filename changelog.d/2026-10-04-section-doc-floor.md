@@ -8,7 +8,9 @@ version moves two minors. A document of a newer minor of the same major
 now opens with one `SectionDocumentNewerWarning` naming both versions,
 where it used to be refused. Its unknown optional keys are kept on save
 and ignored by `build()`, and a value the loader cannot interpret (a
-new shape kind, boolean op or material key) still refuses. Another
+new shape kind, boolean op or material key, or a parameter a known
+shape kind does not take) still refuses at load. The section builder
+shows the newer-document warning on its status bar. Another
 major, or a minor below the floor, refuses with a message that names
 the floor. Both names are exported from `apeGmsh.sections`. ADR 0113
 and ADR 0080 carry dated amendments.

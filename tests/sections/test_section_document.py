@@ -95,6 +95,13 @@ def test_version_floor_today(tmp_path):
     assert len(rec) == 1
     assert "1.1.0" in str(rec[0].message)
     assert SECTION_DOC_VERSION in str(rec[0].message)
+    # attributed to the caller of open(), not to apeGmsh internals
+    assert rec[0].filename == __file__
+    # ... and to the caller of SectionDocument(...) on that path
+    with pytest.warns(SectionDocumentNewerWarning) as rec:
+        SectionDocument(dict(base, section_doc_version="1.1.0"))
+    assert len(rec) == 1
+    assert rec[0].filename == __file__
 
 
 def test_version_floor_edges(tmp_path, monkeypatch):
@@ -119,8 +126,8 @@ def test_newer_minor_unknown_keys(tmp_path):
     2026-10-04): unknown optional keys at the top level, on a shape and
     in ``mesh`` are tolerated and kept verbatim, so a re-save does not
     lose them, and the build ignores them; a value this loader cannot
-    interpret (a new shape kind, a new boolean op, a new material key)
-    still refuses. Both lanes."""
+    interpret (a new shape kind, a new boolean op, a new material key,
+    a new parameter on a known shape) still refuses. Both lanes."""
     data = _src_doc().to_dict()
     data["fillets"] = [{"shape": "steel", "r": 5.0}]
     data["shapes"][0]["chamfer"] = 2.0
@@ -162,6 +169,10 @@ def test_newer_minor_unknown_keys(tmp_path):
          "unknown boolean op"),
         (lambda d: d["materials"]["steel"].__setitem__("alpha", 1e-5),
          "unknown keys"),
+        # a new parameter on a known shape kind: refused at load (as
+        # add_shape refuses it), not a raw TypeError at build time
+        (lambda d: d["shapes"][0]["params"].__setitem__("fillet", 5.0),
+         r"unknown params \['fillet'\] \(section_doc_version 1\.1\.0"),
     ):
         bad = _src_doc().to_dict()
         mutate(bad)

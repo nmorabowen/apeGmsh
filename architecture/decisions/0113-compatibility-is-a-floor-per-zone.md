@@ -463,19 +463,33 @@ only with a major bump, to `X.0.0`, and only rises (D3).
 for the Python HDF5 readers, a document of a newer minor of the
 loader's major opens. It is read through the same presence probes, and
 the loader emits exactly one `SectionDocumentNewerWarning` naming the
-document's version and its own. What the loader does with the newer
-content was probed on 2026-10-04, and the tests hold it:
+document's version and its own, attributed to the caller of
+`SectionDocument.open`. The section builder GUI, the format's primary
+reader, captures that warning when it opens a document (`Open…` and
+`launch_builder(path)`) and shows it on the status bar; other warnings
+pass through. What the loader does with the newer content was probed on
+2026-10-04, and the tests hold it:
 
 - unknown optional keys at the top level, on a shape and in `mesh`
   are kept verbatim, so a re-save does not lose them, and `build()`
   ignores them;
 - a value the loader cannot interpret (a new shape kind, a new boolean
-  op, an unknown material key) still refuses.
+  op, an unknown material key, a new parameter on a known shape kind)
+  still refuses, with a `SectionDocumentError` at load.
+
+**Known gap.** The `params` of a material's `uniaxial` spec are the
+bridge constructor's keywords, not section-document keys, and the
+loader does not check them at any version. An unknown keyword there
+loads, and `to_section()` fails with the bridge constructor's
+`TypeError` (probed 2026-10-04 on `ElasticMaterial`). Checking them at
+load needs the bridge's signatures in the loader; that is follow-up
+work, not this amendment's.
 
 D2's hazard is a newer column dropped *silently*. The warning makes the
 drop visible, the way D7's banner does for the app, and an unknown
 value in a field the loader already reads (a shape kind, a boolean op,
-a material key) refuses rather than being guessed. The deviation is the
+a material key, a shape parameter) refuses rather than being guessed.
+The deviation is the
 one the maintainer ratified on #1317 ("newer same-major files are read
 through presence probes"); it applies to section documents only, and
 D2 still holds for every HDF5 zone.
@@ -499,7 +513,8 @@ the cheap form of D8. The first major bump decides the migrator.
 - **S-INV-1, edges.** Same major and `floor.minor <= minor` opens, with
   no warning up to the loader's minor; `floor.minor - 1` and every
   other major refuse naming the floor; `loader.minor + 1` opens with
-  exactly one `SectionDocumentNewerWarning`. Held by
+  exactly one `SectionDocumentNewerWarning` whose filename is the
+  caller's. Held by
   `tests/sections/test_section_document.py::test_version_floor_today`
   (the shipped 1.0.0 constants) and `::test_version_floor_edges`
   (floor 1.3, loader 1.5, both edges).
@@ -509,8 +524,14 @@ the cheap form of D8. The first major bump decides the migrator.
 - **S-INV-3, newer content.** A newer minor's unknown optional keys
   survive open and save, `build()` ignores them (a 2 × 3 rectangle
   carrying a fillet it cannot honour integrates to area 6, centroid at
-  the origin), and an uninterpretable value still refuses
-  (`::test_newer_minor_unknown_keys`).
+  the origin), and an uninterpretable value, a new shape parameter
+  included, still refuses (`::test_newer_minor_unknown_keys`).
+- **S-INV-4, the GUI shows it.** Opening a newer-minor document in the
+  builder puts the warning's text on the status bar and lets other
+  warnings through (`tests/sections/test_builder_gui.py::
+  test_open_with_notice_captures_only_the_newer_warning`, headless, and
+  `::test_open_document_shows_the_newer_warning_on_the_status_bar`,
+  offscreen).
 
 ADR 0080 carries a dated amendment pointing here; its original text is
 unchanged.
