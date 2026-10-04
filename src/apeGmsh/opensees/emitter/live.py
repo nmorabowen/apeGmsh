@@ -28,7 +28,7 @@ from typing import (
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
-from .base import StrategySpec, command_row, trim_coords_to_ndm
+from .base import DroppedAxisGuard, StrategySpec, command_row
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -644,9 +644,12 @@ class LiveOpsEmitter:
     #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
     #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self._ops.model("basic", "-ndm", ndm, "-ndf", ndf)
 
     def node(
@@ -655,7 +658,7 @@ class LiveOpsEmitter:
         # openseespy parses the node argv exactly as Tcl does, so a
         # padded coordinate swallows -ndf here too — see
         # trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = self._dropped_axes.trim(coords, tag)
         if ndf is None:
             self._ops.node(tag, *coords)
         else:

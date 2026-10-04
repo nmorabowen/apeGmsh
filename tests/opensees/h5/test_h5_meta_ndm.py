@@ -15,12 +15,9 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tests.fixtures.schema import (
-    NEUTRAL_CURRENT,
-    NEUTRAL_PRIOR_MINOR,
-    OPENSEES_CURRENT,
-)
+from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
 from tests.opensees.h5._opensees_model_fixtures import (
+    PRE_NDM_FIX_STAMP,
     build_simple_frame_fem,
     build_simple_frame_h5,
 )
@@ -31,7 +28,7 @@ def _write_frame(tmp_path: Path, *, ndm: int, ndf: int) -> Path:
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.section.fiber import FiberPoint
 
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=ndm)
     ops = apeSees(fem)
     ops.model(ndm=ndm, ndf=ndf)
     steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
@@ -94,7 +91,7 @@ def test_model_data_2d_frame_writes_and_reads_ndm(tmp_path: Path) -> None:
     """``ModelData(ndm=2)`` on a line-only fem writes, and reads back, 2."""
     from apeGmsh.opensees.model_data import ModelData
 
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=2)
     out = tmp_path / "md.h5"
     ModelData(fem, ndm=2, ndf=3).write(str(out))
     with h5py.File(out, "r") as f:
@@ -112,7 +109,7 @@ def test_opensees_model_from_h5_salvages_a_pre_fix_stamp(
     out = _write_frame(tmp_path, ndm=3, ndf=6)
     with h5py.File(out, "r+") as f:
         f["meta"].attrs["ndm"] = 1
-        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = PRE_NDM_FIX_STAMP
     assert OpenSeesModel.from_h5(out).ndm == 3
 
 
@@ -126,7 +123,7 @@ def test_composed_results_forward_the_declared_ndm(tmp_path: Path) -> None:
     from apeGmsh.results.writers import NativeWriter
 
     src = _write_frame(tmp_path, ndm=2, ndf=3)
-    fem = build_simple_frame_fem()
+    fem = build_simple_frame_fem(ndm=2)
     composed = tmp_path / "composed.h5"
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     with NativeWriter(composed) as w:
@@ -172,7 +169,7 @@ def test_inv9_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
     raw_stamp = 1
     with h5py.File(src, "r+") as f:
         f["meta"].attrs["ndm"] = raw_stamp
-        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = PRE_NDM_FIX_STAMP
     # The oracle: what the source's own reader resolves under the
     # source's own stamp (the shim lifts the mesh dimension to 3).
     salvaged = OpenSeesModel.from_h5(src).ndm

@@ -692,6 +692,12 @@ def nodal_load_payload_dtype() -> np.dtype:
     against (``"lagrange"`` / ``"bernstein"``); ``""`` ⇒ ``None``
     (basis-insensitive record).  Old files lack this field and decode
     ``basis=None``.
+
+    The ``source`` field (added in neutral schema 2.35.0, #1338)
+    carries the ``kind`` of the definition the record was reduced from
+    (:class:`~apeGmsh._kernel.records._kinds.NodalLoadSource`); ``""``
+    ⇒ ``None`` (unknown).  Old files lack this field and decode
+    ``source=None``.
     """
     return np.dtype([
         ("node_id", np.int64),
@@ -699,6 +705,7 @@ def nodal_load_payload_dtype() -> np.dtype:
         ("moment_xyz", np.float64, (3,)),
         ("name", _utf8()),
         ("basis", _utf8()),
+        ("source", _utf8()),
     ])
 
 

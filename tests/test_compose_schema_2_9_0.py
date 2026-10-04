@@ -9,7 +9,9 @@ Locks ADR 0038 §"Schema":
   doesn't populate them; Phase 3B's merge engine will).
 * ``/composed_from/`` is OMITTED when ``fem.composed_from`` is empty.
 * ``/composed_from/`` round-trips field-for-field when populated.
-* 2.8.0 files load cleanly without warnings (the two-version window).
+* 2.8.0 files load cleanly without warnings (written under ADR 0023's
+  two-version window, since retired by ADR 0113's floor; a 2.8.0 neutral
+  stamp is now below the floor).
 """
 from __future__ import annotations
 

@@ -23,10 +23,10 @@ from typing import Any, Literal, Sequence
 
 from .base import (
     NUMPY_VALUE_TYPES,
+    DroppedAxisGuard,
     StrategySpec,
     command_row,
     plain_scalar,
-    trim_coords_to_ndm,
 )
 
 
@@ -200,11 +200,14 @@ class PyEmitter:
     #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
     #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         # openseespy.model takes positional + flag-style args:
         # ops.model('basic', '-ndm', 3, '-ndf', 6).
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self._lines.append(
             _ops_call("model", "basic", "-ndm", ndm, "-ndf", ndf)
         )
@@ -214,7 +217,7 @@ class PyEmitter:
     ) -> None:
         # A padded coordinate would swallow the -ndf flag below (and
         # -mass) in a 2-D deck — see trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = self._dropped_axes.trim(coords, tag)
         # Fast path for the dominant deck band — mirrors the
         # TclEmitter's: plain-int tag + plain-float coords render via a
         # single f-string, byte-identical to the generic path.  The

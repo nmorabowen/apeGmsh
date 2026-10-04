@@ -185,13 +185,13 @@ minor means additive (new group, new column; old required fields remain),
 major means breaking. Nearly every change lands as an additive minor, and
 the writer module keeps a ledger docstring entry for each one.
 
-Readers enforce a **two-version window**: code at X.Y accepts files at X.Y
-and X.(Y−1), refuses anything older, and — deliberately — refuses anything
-*newer*, because silently tolerating a file the reader does not fully
-understand is worse than an explicit "upgrade apeGmsh" error. Within the
-window, additive columns are presence-probed (`"omega" in p.dtype.names`)
-and decode to their dataclass defaults when absent, which is what lets a
-one-minor-old file round-trip without a migration step. Legacy files that
+Readers enforce a **floor per zone** (ADR 0113): code at X.Y accepts files
+from the zone's floor X.F up to X.Y, refuses anything older, and — deliberately
+— refuses anything *newer*, because silently tolerating a file the reader does
+not fully understand is worse than an explicit "upgrade apeGmsh" error. Between
+the floor and the current minor, additive columns are presence-probed
+(`"omega" in p.dtype.names`) and decode to their dataclass defaults when
+absent, which is what lets an older file round-trip without a migration step. Legacy files that
 predate per-zone stamps fall back to the single envelope
 `schema_version` key; new code never branches on the envelope.
 

@@ -194,6 +194,21 @@ that call deleted the column segments that stick out past the slabs.
 
 ## Pitfalls not covered in the other references
 
+### Linear quads with J2 (von Mises) soil lock, so the limit load comes out too high
+
+`FourNodeQuad` with `J2Plasticity` in plane strain locks under isochoric plastic flow: a strip
+footing converged at 600 kPa although the Prandtl limit, (2 + π)·SU, is 386 kPa. Use
+`SixNodeTri` on `g.mesh.generation.set_order(2)` (it fails at 380–400 kPa, as it should), and
+`reduction="consistent"` for line loads on the quadratic edges. The bridge has no stock B-bar
+or SSP quad. See `model-scripts.md`, `staged_footing.py`.
+
+### `analyze` can return 0 on a singular stiffness
+
+With `system.BandGeneral()`, a model with free DOFs (e.g. a rigid-diaphragm master that no
+element touches, #1333) printed "matrix singular" and `analyze` still returned 0, with garbage
+displacements. `assert status == 0` does not prove the solve. Add a check that would fail on
+garbage: an equilibrium sum, a hand estimate, or sane eigen periods.
+
 ### `remove_duplicates` tolerance is unit-dependent
 mm models: `tolerance=1e-3`. Metre models: `tolerance=1e-6`. Picking the
 metre tolerance on a mm model silently fails to merge coincident nodes.

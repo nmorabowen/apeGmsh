@@ -189,7 +189,7 @@ export function oklabDistance(a: RGB, b: RGB): number {
 export const DARK_L1: readonly number[] = [0.64, 0.82, 0.52, 0.82, 0.62, 0.92, 0.74, 0.62];
 export const DARK_L2: readonly number[] = [0.52, 0.7, 0.86, 0.58, 0.88, 0.76, 0.58, 0.78];
 
-/** The office `main_colors` adapted to the dark background: same hue order, alternating lightness. */
+/** The office `main_colors` adapted to the dark background: same hue order, each relit in OKLCH to a lightness found by search (DARK_L1, DARK_L2). */
 export const DARK_MAIN: readonly Hex[] = OFFICE_MAIN.map((hex, i) => relight(hex, DARK_L1[i]!));
 /** The second ring (slots 8 to 15): the same hues one lightness step away (found by search against the rules above; the legend adds a striped chip to a group that takes one). */
 export const DARK_MAIN_RING2: readonly Hex[] = OFFICE_MAIN.map((hex, i) => relight(hex, DARK_L2[i]!));

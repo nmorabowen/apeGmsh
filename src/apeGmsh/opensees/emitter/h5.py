@@ -34,8 +34,9 @@ https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d4
 
 The reshuffle is a breaking schema change — ``SCHEMA_VERSION`` jumps
 ``1.1.0 → 2.0.0``.  Phase 7a (ADR 0023) replaced the previous
-``EXPECTED_SCHEMA_MAJOR`` constant with per-zone two-version-window
-validation in :mod:`apeGmsh.opensees._internal.schema_version`.
+``EXPECTED_SCHEMA_MAJOR`` constant with per-zone version validation in
+:mod:`apeGmsh.opensees._internal.schema_version` (a two-version window
+then; a floor per zone since ADR 0113).
 
 **Schema deviation (documented).**  One place where the streaming
 Protocol cannot supply the spec-level grouping the schema asks for:
@@ -77,7 +78,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Literal, NoReturn, Sequence
 
-from .base import command_row
+from .base import DroppedAxisGuard, command_row
 from .verbs import VERBS, Verb
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
@@ -189,6 +190,12 @@ class H5RefusedVerb(NotImplementedError):
 #: Protocol's ``beamIntegration`` method in Phase 4.5).
 #:
 #: History:
+#:   Reading the history: entries that say "per ADR 0023 two-version
+#:   reader window, both N-1 and N files are accepted" record the rule
+#:   in force when that minor shipped. ADR 0113 retired the window; a
+#:   reader now opens every minor from :data:`SCHEMA_FLOOR` (2.12.0) up
+#:   to the current one and refuses a newer minor (INV-4).
+#:
 #:   * 1.0.0 — Phase 6 initial release.
 #:   * 1.1.0 — added ``/beam_integration`` group + widened fiber-layer
 #:     ``line`` field from float[4] to float[6].
@@ -1014,6 +1021,9 @@ class H5Emitter:
 
         self._ndm: int | None = None
         self._ndf: int | None = None
+        # The archive keeps every node's xyz, but a deck replayed from it
+        # trims to ndm; refuse here what that replay would refuse (#1337).
+        self._dropped_axes = DroppedAxisGuard.BEFORE_MODEL
 
         # Nodes — stored as parallel arrays for compact write.
         self._node_tags: list[int] = []
@@ -1266,6 +1276,7 @@ class H5Emitter:
     def model(self, *, ndm: int, ndf: int) -> None:
         self._ndm = ndm
         self._ndf = ndf
+        self._dropped_axes = DroppedAxisGuard(ndm)
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
@@ -1276,6 +1287,7 @@ class H5Emitter:
             x, y = cs
             triple = (x, y, 0.0)
         elif len(cs) == 3:
+            self._dropped_axes.trim(cs, int(tag))
             x, y, z = cs
             triple = (x, y, z)
         else:

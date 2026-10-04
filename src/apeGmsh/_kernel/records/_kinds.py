@@ -83,4 +83,33 @@ class LoadKind:
     ELEMENT: ClassVar[str] = "element"
 
 
-__all__ = ["ConstraintKind", "LoadKind"]
+class NodalLoadSource:
+    """String constants for :attr:`NodalLoadRecord.source` (#1338).
+
+    A resolved nodal load carries the ``kind`` of the
+    :class:`~apeGmsh._kernel.defs.loads.LoadDef` that produced it, so a
+    consumer can tell a reduced self-weight from a reduced surface load
+    once the definitions are gone (the bridge's body-force double-count
+    guard needs exactly this). The two groups partition every kind that
+    resolves to a nodal record; ``tests/test_nodal_load_source.py``
+    holds the partition against the ``defs`` module.
+    """
+    POINT:         ClassVar[str] = "point"
+    POINT_CLOSEST: ClassVar[str] = "point_closest"
+    LINE:          ClassVar[str] = "line"
+    SURFACE:       ClassVar[str] = "surface"
+    GRAVITY:       ClassVar[str] = "gravity"
+    BODY:          ClassVar[str] = "body"
+    FACE_LOAD:     ClassVar[str] = "face_load"
+
+    #: Kinds that ARE a body force reduced to the nodes: a continuum
+    #: element's constructor ``body_force`` counts the same weight again.
+    BODY_KINDS: ClassVar[frozenset[str]] = frozenset({"gravity", "body"})
+    #: Kinds applied on a boundary or at points: never a self-weight.
+    BOUNDARY_KINDS: ClassVar[frozenset[str]] = frozenset({
+        "point", "point_closest", "line", "surface", "face_load",
+    })
+    ALL: ClassVar[frozenset[str]] = BODY_KINDS | BOUNDARY_KINDS
+
+
+__all__ = ["ConstraintKind", "LoadKind", "NodalLoadSource"]

@@ -279,27 +279,26 @@ def _refusal_names(tree: ast.Module) -> frozenset[str]:
 
 def _raises_refusal(
     method: _FuncDef, helpers: dict[str, _FuncDef], names: frozenset[str],
-    *, skip: frozenset[str], depth: int = 3,
+    *, skip: frozenset[str],
 ) -> bool:
-    """True when ``method``, or a ``self._helper(...)`` it calls within
-    ``depth`` hops, has ``raise <refusal>(...)`` for a name in ``names``.
-    Helpers in ``skip`` (``_refuse`` itself) are not followed: reaching
-    ``_refuse`` is the sanctioned path, checked by :func:`_reaches`."""
+    """True when ``method``, or any ``self._helper(...)`` it calls
+    transitively (a visited set bounds the walk, not a depth), has
+    ``raise <refusal>(...)`` for a name in ``names``. Helpers in ``skip``
+    (``_refuse`` itself) are not followed: reaching ``_refuse`` is the
+    sanctioned path, checked by :func:`_reaches`."""
     seen: set[str] = set()
-    stack: list[tuple[_FuncDef, int]] = [(method, 0)]
+    stack: list[_FuncDef] = [method]
     while stack:
-        fn, hops = stack.pop()
+        fn = stack.pop()
         for node in ast.walk(fn):
             if isinstance(node, ast.Raise) and node.exc is not None:
                 exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
                 if isinstance(exc, ast.Name) and exc.id in names:
                     return True
-        if hops >= depth:
-            continue
         for name in _self_calls(fn):
             if name in helpers and name not in skip and name not in seen:
                 seen.add(name)
-                stack.append((helpers[name], hops + 1))
+                stack.append(helpers[name])
     return False
 
 
@@ -604,6 +603,17 @@ class H5Emitter:
         self._refuse("node", "ok path")
     def _refuse(self, verb, detail):
         raise H5RefusedVerb(verb, None, detail)
+    def element(self, *args):
+        self._h1()
+    def _h1(self):
+        self._h2()
+    def _h2(self):
+        self._h3()
+    def _h3(self):
+        self._h4()
+    def _h4(self):
+        self._h1()  # a cycle: the visited set must end the walk
+        raise NotImplementedError("four hops deep")
 """
     tree = ast.parse(source)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
@@ -613,4 +623,5 @@ class H5Emitter:
     skip = frozenset({"_refuse"})
     assert _raises_refusal(methods["fix"], methods, names, skip=skip)
     assert _raises_refusal(methods["mass"], methods, names, skip=skip)
+    assert _raises_refusal(methods["element"], methods, names, skip=skip)
     assert not _raises_refusal(methods["node"], methods, names, skip=skip)

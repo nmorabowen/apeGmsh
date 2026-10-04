@@ -145,8 +145,9 @@ def test_reader_accessors_return_attrs(tmp_path: Any) -> None:
 
 
 # ===========================================================================
-# Phase 7a — Per-zone schema versioning + two-version reader window
-# (ADR 0023). Tests below exercise the central helpers in
+# Phase 7a — Per-zone schema versioning; the reader gate is a floor per
+# zone since ADR 0113 (it retired ADR 0023's two-version window).
+# Tests below exercise the central helpers in
 # :mod:`apeGmsh.opensees._internal.schema_version` plus the read/write
 # wiring across the three zones (neutral, opensees, results).
 # ===========================================================================
@@ -429,7 +430,7 @@ def test_reader_version_reflects_writer_constants() -> None:
 # the real old files are the corpus's job (#1303 PR-3).
 # ---------------------------------------------------------------------------
 
-#: Neutral stamps the old two-version window refused: the floor itself, a
+#: Neutral stamps the retired two-version window refused: the floor itself, a
 #: mid-history minor, and the minor #1300 (2.34.0) expired.
 _OLD_NEUTRAL_STAMPS = (NEUTRAL_FLOOR, "2.12.0", "2.32.0")
 
@@ -682,10 +683,10 @@ def test_envelope_back_compat_preserves_existing_files(tmp_path: Any) -> None:
 
 
 def test_results_schema_version_independent_of_opensees(tmp_path: Any) -> None:
-    """Each zone's version window is independent of the others.
+    """Each zone's version check is independent of the others.
 
-    The results-zone reader window applies to the results version
-    only; the opensees-zone window applies to the opensees version
+    The results-zone floor check applies to the results version
+    only; the opensees-zone check applies to the opensees version
     only — they don't share a major (INV-3).
     """
     reader_neutral = reader_version(NEUTRAL)

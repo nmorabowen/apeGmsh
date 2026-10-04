@@ -42,7 +42,7 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
 
 | CI lane (`tests.yml`) | Run locally | Trap |
 |---|---|---|
-| `lock-tests` | `python scripts/sync_skill.py --check`, then the five lock files the job names | the locks encode contracts that were silently broken before; fix the code, never the lock |
+| `lock-tests` | `python scripts/sync_skill.py --check`, then the lock files the job names | the locks encode contracts that were silently broken before; fix the code, never the lock |
 | `static-gates` | `ruff check src/apeGmsh/opensees` and `mypy src/apeGmsh/opensees` | ruff is a hard gate; mypy is at baseline **0**, and the tool versions are pinned in the job |
 | `suite` | `pytest tests -q -m "not live and not subprocess and not bench and not qt"` | a CLI `-m` **replaces** the `addopts` one, so repeat `and not qt` or real windows hang the run |
 | `qt-window-tests` | `pytest -m qt <one file>`, one process per file | never run two qt files in one process (VTK/Qt pollution) |

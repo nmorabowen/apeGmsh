@@ -86,7 +86,7 @@ class TestDeclareRegistration:
 
     def test_declare_captures_bridge_ndm_ndf(self) -> None:
         # Phase 9 D8: bridge state is the source of truth for ndm/ndf
-        fem = make_two_node_beam()
+        fem = make_two_node_beam(ndm=2)
         ops = apeSees(cast("object", fem))
         ops.model(ndm=2, ndf=3)
         decl = ops.recorder.declare(nodes="displacement", pg="Top")
@@ -105,7 +105,7 @@ class TestDeclareRegistration:
         )
 
     def test_declare_expands_shorthand_clipped_to_ndm_2d(self) -> None:
-        fem = make_two_node_beam()
+        fem = make_two_node_beam(ndm=2)
         ops = apeSees(cast("object", fem))
         ops.model(ndm=2, ndf=3)
         decl = ops.recorder.declare(nodes="displacement", pg="Top")
@@ -192,7 +192,7 @@ class TestDeclareEmit:
         assert args[-1] == "disp"
 
     def test_nodes_2d_emit_clips_to_two_dofs(self) -> None:
-        fem = make_two_node_beam()
+        fem = make_two_node_beam(ndm=2)
         ops = apeSees(cast("object", fem))
         ops.model(ndm=2, ndf=3)
         ops.recorder.declare(nodes="displacement", pg="Top")

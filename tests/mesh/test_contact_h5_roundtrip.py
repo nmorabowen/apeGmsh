@@ -381,7 +381,7 @@ def test_writer_stamps_current_neutral_version():
 
 
 def test_reads_prior_minor_file_without_contacts_group_within_window(tmp_path):
-    # An in-window prior-minor file with the /contacts group stripped must
+    # A prior-minor file with the /contacts group stripped must
     # still read → empty contacts (absence ⇒ no contacts).
     import h5py
 

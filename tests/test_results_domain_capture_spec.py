@@ -282,8 +282,8 @@ class TestFromH5:
         self, path: Path, *, ndm: int = 3, ndf: int = 6,
     ) -> None:
         import h5py
-        # Per ADR 0023 fixture must be inside the two-version reader
-        # window (2.7.x / 2.8.x).
+        # Per ADR 0113 the fixture's stamp must be at or above the
+        # opensees floor.
         with h5py.File(path, "w") as f:
             meta = f.create_group("meta")
             meta.attrs["schema_version"] = OPENSEES_CURRENT

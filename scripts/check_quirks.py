@@ -197,6 +197,22 @@ RULES: dict[str, str] = {
         "silently lost its section tags for 138 days (fixed 7c7c1541); the node_ndf vestige "
         "is the same shape. Ratchet: scripts/quirks_getattr_baseline.txt"
     ),
+    "ratchet-baseline": (
+        "a module-level exception list in tests/ (EXCEPTIONS, EXTRAS_ONLY, ALLOWLIST, "
+        "GRANDFATHERED) with no baseline beside it: a check that only rejects stale entries "
+        "still lets the list grow. Add `<NAME>_BASELINE` (a count or a frozen set) and assert "
+        "that the current list is no larger; raising the baseline is a maintainer gate "
+        "(PROGRAM.md section 4). Lesson: #1240; tests/families.py::EXCEPTIONS grew while its "
+        "check only rejected stale entries (#1232, ee69e3e9), and EXTRAS_ONLY the same (#1239)"
+    ),
+    "qt-process-isolation": (
+        "a test module that imports a Qt binding and starts "
+        "a thread has no module-level `pytestmark` carrying `pytest.mark.qt` or "
+        "`pytest.mark.subprocess`, so it runs inside the shared pytest process, where a worker "
+        "thread plus Qt segfaults the whole run. Mark it qt (its own process in the qt lane) "
+        "or subprocess. Lesson: #1242; tests/sections/test_builder_gui_b6.py at 8269206d "
+        "crashed Linux CI; class history #1080, 3165568c, 47e20ca6"
+    ),
 }
 
 
@@ -876,6 +892,96 @@ def check_bare_version_compare(tree: ast.AST, rel: str, root: Path) -> Iterator[
                 break
 
 
+RATCHET_TEXT = re.compile(r"^(?:EXCEPTIONS|EXTRAS_ONLY|ALLOWLIST|GRANDFATHERED)\b", re.M)
+RATCHET_NAMES = re.compile(r"(?:EXCEPTIONS|EXTRAS_ONLY|ALLOWLIST|GRANDFATHERED)")
+_LITERALS = (ast.Dict, ast.Set, ast.List, ast.Tuple)
+
+
+def _is_collection_literal(node: ast.expr | None) -> bool:
+    if isinstance(node, _LITERALS):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "frozenset"
+    )
+
+
+def check_ratchet_baseline(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """A module-level exception list in tests/ whose module defines no `*BASELINE*` name."""
+    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
+        return
+    statements = list(_scope_statements(tree.body))
+    if any("BASELINE" in name for stmt in statements for name in _bound_names(stmt)):
+        return
+    for stmt in statements:
+        if isinstance(stmt, ast.Assign):
+            targets, value = [n for t in stmt.targets for n in _target_names(t)], stmt.value
+        elif isinstance(stmt, ast.AnnAssign):
+            targets, value = _target_names(stmt.target), stmt.value
+        else:
+            continue
+        if _is_collection_literal(value) and any(RATCHET_NAMES.fullmatch(t.id) for t in targets):
+            yield stmt.lineno, RULES["ratchet-baseline"]
+
+
+QT_BINDINGS = re.compile(r"(?:qtpy|PySide\d*|PyQt\d*)(?:\.|$)")
+THREAD_NAMES = {"Thread", "QThread", "PropertiesController"}
+ISOLATION_MARK = re.compile(r"\bmark\.(?:qt|subprocess)\b")
+
+
+def _imports_qt(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        names: list[str] = []
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            names = [module] + [f"{module}.{a.name}" for a in node.names]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, (ast.Attribute, ast.Name))
+            and getattr(node.func, "attr", getattr(node.func, "id", "")) in {"importorskip", "import_module"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            names = [node.args[0].value]
+        if any(QT_BINDINGS.match(n) for n in names):
+            return True
+    return False
+
+
+def _thread_start(tree: ast.AST) -> int | None:
+    lines = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in THREAD_NAMES:
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Attribute) and node.attr in THREAD_NAMES:
+            lines.append(node.lineno)
+    return min(lines) if lines else None
+
+
+def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """A test module importing a Qt binding and starting a thread must carry `pytestmark` qt/subprocess.
+
+    Half (1) is a Qt binding import only. The `_properties` controller counts toward the thread
+    (half 2) alone: the #1080/#1242 class is Qt teardown in the shared process, and a pure-Python
+    worker thread (tests/sections/test_properties.py) is not that class."""
+    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
+        return
+    if not _imports_qt(tree):
+        return
+    started = _thread_start(tree)
+    if started is None:
+        return
+    for stmt in _scope_statements(tree.body):
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and "pytestmark" in _bound_names(stmt):
+            if stmt.value is not None and ISOLATION_MARK.search(ast.unparse(stmt.value)):
+                return
+    yield started, RULES["qt-process-isolation"]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
     "bare-version-compare": check_bare_version_compare,
@@ -884,6 +990,8 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "openseespy-import": check_openseespy_import,
     "getattr-private": check_getattr_private,
     "getattr-undefined": check_getattr_undefined,
+    "ratchet-baseline": check_ratchet_baseline,
+    "qt-process-isolation": check_qt_process_isolation,
 }
 
 
@@ -897,10 +1005,14 @@ def _read_source(path: Path) -> str | None:
         return None
 
 
-def _may_apply(rel: str, lowered: str) -> bool:
+def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
     """Whether a rule could flag anything in this file, judged on its text alone."""
     if rel.startswith("tests/"):
-        return "schema_version" in lowered
+        return (
+            "schema_version" in lowered
+            or RATCHET_TEXT.search(text) is not None
+            or ("thread" in lowered and "qt" in lowered or "_properties" in lowered)
+        )
     if rel in {path.as_posix() for path in CARRY_ALL} or _in_swallow_scope(rel):
         return True
     if rel.startswith(GETATTR_SCOPE) and ("getattr(" in lowered or "hasattr(" in lowered):
@@ -915,7 +1027,7 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
     if text is None:
         return []  # not valid Python source; like a SyntaxError, ruff and pytest will say so
     lowered = text.lower()
-    if "apegmsh-lint" not in lowered and not _may_apply(rel, lowered):
+    if "apegmsh-lint" not in lowered and not _may_apply(rel, lowered, text):
         return []  # nothing a rule reads here; skipping the parse keeps the scan fast
     tree = _tree_cache.pop((root, rel), None)
     if tree is None:

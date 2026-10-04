@@ -31,7 +31,7 @@ from apeGmsh.opensees._internal.types import UniaxialMaterial
 from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-from tests.opensees.fixtures.fem_stub import make_two_node_beam
+from tests.opensees.live._springs import coincident_spring
 
 _N_STEPS = 200
 
@@ -40,7 +40,7 @@ def _drive(
     make_mat: str, kwargs: dict[str, float], u_end: float,
 ) -> tuple[list[float], list[float]]:
     """Push the spring monotonically to ``u_end``; return (u, F) samples."""
-    fem = make_two_node_beam()  # node 1 @origin (Base), node 2; line "Cols"
+    fem = coincident_spring()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
 

@@ -297,7 +297,8 @@ def test_fresh_emit_stamps_the_writer_constant(fresh: h5py.File) -> None:
 def test_golden_version_is_inside_the_reader_window(
     golden: h5py.File,
 ) -> None:
-    """The golden stays readable under the ADR 0023 two-version window."""
+    """The golden stays readable: its stamp is inside the reader's
+    supported range, floor to current (ADR 0113)."""
     stamped = SchemaVersion.parse(
         golden["meta"].attrs["neutral_schema_version"]
     )
