@@ -22,7 +22,7 @@ import { BlobStore } from "../../src/state/blobs.ts";
 import { loadGeometry } from "../../src/state/geometry.ts";
 import { loadModel } from "../../src/state/load.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
-import { geometryPairing, noticesOf, refusalsOf, sourceFailure, sourceFor } from "../../src/state/selectors.ts";
+import { geometryPairing, noticesOf, refusalsOf, sourceFailure, sourceFor, warningsOf } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
 import type { State } from "../../src/state/types.ts";
 
@@ -224,4 +224,89 @@ test("parseRefusal reads the ADR 0112 zones too", () => {
     zone: "geometry", version: "2.1.0", accepted: "1.0 and any later 1.x", newer: true, reason: "this app reads major 1 only",
   });
   assert.equal(parseRefusal("provenance_schema_version 0.9.0: this app reads major 1 only")?.newer, false);
+});
+
+// ---- Fable's review of #1320 (each fails on bc7c56c2) -----------------------
+
+test("review 1: a request after a model re-read is answered (the request seq never resets)", async () => {
+  const { store, effects, calls } = harness();
+  await effects.open(MODEL);
+  store.dispatch({ type: "requestSource", decl: "opensees/section/W_section" });
+  await settle();
+  await effects.open(MODEL); // D1 rewrites the file every run
+  store.dispatch({ type: "requestSource", decl: "opensees/section/W_section" });
+  await settle();
+  assert.equal(calls.goto.length, 2, "both requests reach the editor");
+  assert.deepEqual(store.get().source.last, { decl: "opensees/section/W_section", ok: true, reason: null });
+});
+
+test("review 2: a newer same-major /provenance minor opens with exactly one banner", () => {
+  const banner = "provenance_schema_version 1.3.0 is newer than this app (1.0.x): the file opens, and what that apeGmsh added is not shown";
+  const newer: ProvenanceZone = { ...provenance, version: "1.3.0", warnings: [banner] };
+  const s = withModel(initialState, model, newer);
+  assert.deepEqual(warningsOf(s), [banner]);
+  assert.ok(sourceFor(s, "opensees/section/W_section").ok, "the zone still serves go-to-source");
+});
+
+test("review 3: a malformed /provenance reports as malformed, naming the path, never as an older apeGmsh", async () => {
+  const error = "/provenance/files/sha256[0] is not a hex sha256";
+  const { store, effects } = harness({ openModel: async () => ({ ok: true, model, provenance: { ok: false, error } }) } as Partial<Bridge>);
+  assert.equal(await effects.open(MODEL), true);
+  const s = store.get();
+  assert.deepEqual(s.artifacts.model!.zones["provenance"], { status: "malformed", reason: error });
+  assert.deepEqual(refusalsOf(s), [], "no 'written by an older apeGmsh' sentence");
+  assert.ok(warningsOf(s).some((w) => w.includes("/provenance is malformed") && w.includes("/provenance/files/sha256[0]")), warningsOf(s).join("\n"));
+  assert.match((sourceFor(s, "opensees/section/W_section") as { reason: string }).reason, /\/provenance zone is malformed: \/provenance\/files\/sha256\[0\]/);
+});
+
+function rerunHarness(windowMs: number) {
+  const state = { sid: "0f8e5c1a2b3d4e5f8a9b0c1d2e3f4a5b", geometrySid: null as string | null };
+  const reads = { model: 0, geometry: 0 };
+  const bridge = {
+    openModel: async () => {
+      reads.model++;
+      return { ok: true, model: { ...model, meta: { ...model.meta, session_id: state.sid } }, provenance: { ok: true, zone: provenance } };
+    },
+    openGeometry: async () => {
+      reads.geometry++;
+      return { ok: true, geometry: { ...geometry, sessionId: state.geometrySid ?? state.sid }, sizeBytes: 1, readMs: 1 };
+    },
+  } as unknown as Bridge;
+  const store = new Store();
+  const effects = new Effects(store, new BlobStore(), bridge, { setWindowMs: windowMs });
+  return { state, reads, store, effects };
+}
+
+test("review 4: a D1 re-run rewrites both siblings; they reload as one set and no stale notice ever shows", async () => {
+  const { state, reads, store, effects } = rerunHarness(60);
+  effects.openSet({ model: MODEL, geometry: GEOMETRY, results: null });
+  await settle();
+  assert.equal(geometryPairing(store.get()).draw, true);
+  const notices: string[] = [];
+  const off = store.subscribe((s) => notices.push(...noticesOf(s)));
+  state.sid = "aaaabbbbccccddddeeeeffff00001111"; // the next run's session
+  store.dispatch({ type: "fileChanged", path: MODEL });
+  await new Promise((r) => setTimeout(r, 20));
+  store.dispatch({ type: "fileChanged", path: GEOMETRY });
+  await new Promise((r) => setTimeout(r, 250));
+  off();
+  assert.deepEqual(notices, [], "no state between the two re-reads pairs a new file with an old one");
+  const s = store.get();
+  assert.equal(s.artifacts.model!.sessionId, state.sid);
+  assert.equal(s.geometry!.sessionId, state.sid);
+  assert.deepEqual(geometryPairing(s), { draw: true, notice: null });
+  assert.deepEqual(reads, { model: 2, geometry: 2 }, "one re-read of each");
+  effects.dispose();
+});
+
+test("review 4: a model rewritten alone still shows the notice once its window closes", async () => {
+  const { state, store, effects } = rerunHarness(30);
+  effects.openSet({ model: MODEL, geometry: GEOMETRY, results: null });
+  await settle();
+  state.geometrySid = state.sid; // the geometry file is not rewritten
+  state.sid = "aaaabbbbccccddddeeeeffff00001111";
+  store.dispatch({ type: "fileChanged", path: MODEL });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(noticesOf(store.get())[0] ?? "", /stale or foreign/);
+  effects.dispose();
 });

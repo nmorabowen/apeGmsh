@@ -113,6 +113,7 @@ test("decision 15: an element holds a range into the connectivity blob, never a 
 const EVERY: Record<EventType, Event> = {
   fileOpened: { type: "fileOpened", artifact: "geometry", path: "x.geometry.h5" },
   fileLoaded: { type: "fileLoaded", artifact: "model", load },
+  setLoaded: { type: "setLoaded", model: load, geometry: null },
   fileFailed: { type: "fileFailed", artifact: "results", path: "x.results.h5", error: "no reader" },
   fileClosed: { type: "fileClosed", artifact: "results" },
   fileChanged: { type: "fileChanged", path: model.path },
@@ -149,7 +150,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 23, "decision 17's 20 events plus fileClosed, requestSource and sourceResult (V2f)");
+  assert.equal(Object.keys(EVERY).length, 24, "decision 17's 20 events plus fileClosed, requestSource, sourceResult and setLoaded (V2f)");
 });
 
 test("an event the union does not know raises at run time", () => {

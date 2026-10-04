@@ -187,6 +187,7 @@ export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSou
   const zone = s.artifacts.model?.zones["provenance"];
   if (!zone || zone.status === "absent") return { ok: false, reason: "the model file has no /provenance zone (written before apeGmsh recorded sources)" };
   if (zone.status === "refused") return { ok: false, reason: `the /provenance zone was refused: ${zone.reason}` };
+  if (zone.status === "malformed") return { ok: false, reason: `the /provenance zone is malformed: ${zone.reason}` };
   if (d.kind === "element") {
     return { ok: false, reason: "an element has no provenance key yet: /provenance records the declaration, and the file does not join it to its elements" };
   }

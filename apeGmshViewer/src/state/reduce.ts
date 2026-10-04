@@ -24,7 +24,7 @@ export const initialState: State = {
   windows: { open: [] },
   overrides: {},
   geometry: null,
-  source: { request: null, last: null },
+  source: { seq: 0, request: null, last: null },
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -95,8 +95,12 @@ export function reduce(s: State, e: Event): State {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
       const { decls, names, blocks, mesh } = e.load;
-      // A model read for the first time opens on the mesh; a re-read of the
-      // same file (D1 rewrites it every run) keeps the phase shown.
+      // A model read for the first time opens on the mesh. A re-read of the
+      // same file (D1 rewrites it every run) keeps the phase shown only while
+      // that phase is still on the axis: a re-read model with a new
+      // session_id no longer pairs with the old geometry, so the geometry
+      // phase leaves the axis. That is why a D1 re-run re-reads the model and
+      // its geometry together and lands them in one `setLoaded`.
       const reread = prev !== null && prev.status === "ready" && prev.path === info.path;
       return withPhase({
         ...s,
@@ -110,8 +114,16 @@ export function reduce(s: State, e: Event): State {
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
         inspector: { pinned: [] },
-        source: { request: null, last: null },
+        // The request count survives the re-read (see State.source).
+        source: { seq: s.source.seq, request: null, last: null },
       });
+    }
+    case "setLoaded": {
+      // Geometry first, then the model: the pairing is judged once, on the pair.
+      let t = s;
+      if (e.geometry) t = reduce(t, { type: "fileLoaded", artifact: "geometry", load: e.geometry });
+      if (e.model) t = reduce(t, { type: "fileLoaded", artifact: "model", load: e.model });
+      return t;
     }
     case "fileFailed": {
       const prev = s.artifacts[e.artifact];
@@ -128,6 +140,7 @@ export function reduce(s: State, e: Event): State {
         visibility: s.visibility,
         windows: s.windows,
         geometry: s.geometry,
+        source: { ...initialState.source, seq: s.source.seq },
       });
     }
     case "fileClosed": {
@@ -140,6 +153,7 @@ export function reduce(s: State, e: Event): State {
         visibility: s.visibility,
         windows: s.windows,
         geometry: s.geometry,
+        source: { ...initialState.source, seq: s.source.seq },
       });
     }
     case "fileChanged": {
@@ -205,8 +219,8 @@ export function reduce(s: State, e: Event): State {
       return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
     case "requestSource": {
       if (!(e.decl in s.decls)) throw new Error(`requestSource: ${e.decl} is not a declaration of the loaded model`);
-      const seq = (s.source.request?.seq ?? 0) + 1;
-      return { ...s, source: { request: { decl: e.decl, seq }, last: null } };
+      const seq = s.source.seq + 1;
+      return { ...s, source: { seq, request: { decl: e.decl, seq }, last: null } };
     }
     case "sourceResult":
       return { ...s, source: { ...s.source, last: { decl: e.decl, ok: e.ok, reason: e.reason } } };

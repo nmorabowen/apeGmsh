@@ -282,6 +282,10 @@ export function loadModel(
     warnings.push(...provenance.warnings);
     joinProvenance(decls, provenance);
   }
+  // A malformed zone is loud (the banner), not an "older apeGmsh" refusal.
+  if (provenanceRefused?.status === "malformed") {
+    warnings.push(`/provenance is malformed and was not read (go-to-source is off): ${provenanceRefused.reason}`);
+  }
   const sid = model.meta["session_id"];
   const info: ArtifactInfo = {
     path: model.path,

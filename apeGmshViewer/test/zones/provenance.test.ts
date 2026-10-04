@@ -146,4 +146,9 @@ test("a malformed sha256 is refused", refuse((t) => ((t.provenance!["files"] as 
 test("a backslash path is refused (paths are POSIX)", refuse((t) => ((t.provenance!["files"] as Tree)["path"] = ["sub\\model.py"]), /files\/path\[0\] = "sub\\\\model\.py" has a backslash; paths are POSIX/));
 test("a backslash base_dir is refused", refuse((t) => (t.provenance!.attrs!["base_dir"] = "C:\\runs\\frame"), /@base_dir = .* has a backslash/));
 test("a duplicate seq is refused (one capture order per declaration)", refuse((t) => (rec(t)["seq"] = new Int32Array([3, 3])), /records\/seq has 3 twice/));
+test("a newer same-major minor opens with exactly one banner (ADR 0113 D7)", () => {
+  const p = readProvenance(h5, write((t) => (t.meta!.attrs!["provenance_schema_version"] = "1.3.0")))!;
+  assert.equal(p.version, "1.3.0");
+  assert.deepEqual(p.warnings, ["provenance_schema_version 1.3.0 is newer than this app (1.0.x): the file opens, and what that apeGmsh added is not shown"]);
+});
 test("an int64 column is refused", refuse((t) => (rec(t)["seq"] = new BigInt64Array([0n, 1n])), /records\/seq is int64/));

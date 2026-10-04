@@ -209,6 +209,14 @@ test("opensees: below the floor (2.10, before the rank flip) is refused, naming 
   });
 });
 
+test("opensees: another major is refused through a real read", () => {
+  const n = v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor);
+  assert.throws(() => read(writeFile("o-major.h5", n, true, "3.0.0")), (e: unknown) => {
+    const r = parseRefusal((e as Error).message);
+    return e instanceof SchemaError && /opensees_schema_version 3\.0\.0: this app reads major 2 only/.test((e as Error).message) && r?.zone === "opensees" && r.newer === true;
+  });
+});
+
 test("opensees: the floor opens silently; a newer minor opens with one banner", () => {
   const n = v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor);
   assert.deepEqual(read(writeFile("o-floor.h5", n, true, v(OPENSEES_TARGET, ZONE_FLOOR.opensees))).warnings, []);

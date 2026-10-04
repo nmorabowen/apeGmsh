@@ -109,7 +109,9 @@ export type ZoneStatus =
   | { status: "loading" }
   | { status: "ready"; version: string }
   /** `accepted` is the version range the reader opens; `newer` says the file is ahead of this app, not behind it */
-  | { status: "refused"; version: string; accepted: string; newer: boolean; reason: string };
+  | { status: "refused"; version: string; accepted: string; newer: boolean; reason: string }
+  /** the zone's version is fine but its content is broken (the reader's message names the HDF5 path) */
+  | { status: "malformed"; reason: string };
 
 export interface ArtifactInfo {
   path: string;
@@ -220,8 +222,14 @@ export interface State {
   overrides: Record<DeclPath, never>;
   /** the geometry sibling as read; drawn only when it pairs with the model (selectors.geometryPairing) */
   geometry: GeometryInfo | null;
-  /** go-to-source: the latest request (the effects act on a new `seq`) and the latest answer */
+  /**
+   * go-to-source: the latest request (the effects act on a new `seq`) and the
+   * latest answer. `seq` counts requests for the whole session and is never
+   * reset (a model re-read clears `request` and `last`, not the count), so a
+   * request after a re-read can never reuse a seq the effects already saw.
+   */
   source: {
+    seq: number;
     request: { decl: DeclPath; seq: number } | null;
     last: { decl: DeclPath; ok: boolean; reason: string | null } | null;
   };
@@ -246,10 +254,13 @@ export interface GeometryLoad {
  * Decision 17's twenty events, plus `fileClosed` (added by V2e review: an
  * `onOpen` set that names no results file closes the results artifact), and
  * V2f's go-to-source pair: `requestSource` (a panel asks; the effects act)
- * and `sourceResult` (the effects answer).
+ * and `sourceResult` (the effects answer), and `setLoaded`: the model and its
+ * geometry sibling re-read together after a D1 re-run, applied as one step so
+ * no state pairs a new file with an old one.
  */
 export type Event =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
+  | { type: "setLoaded"; model: ModelLoad | null; geometry: GeometryLoad | null }
   | { type: "fileLoaded"; artifact: "model"; load: ModelLoad }
   | { type: "fileLoaded"; artifact: "geometry"; load: GeometryLoad }
   | { type: "fileFailed"; artifact: ArtifactKind; path: string; error: string }

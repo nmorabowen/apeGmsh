@@ -90,11 +90,16 @@ export function blobRefsOf(s: State): BlobRef[] {
   return out;
 }
 
-/** The /provenance answer as the model artifact's zone status (a broken zone is refused, the model still loads). */
-function provenanceStatus(a: { ok: false; error: string }): ZoneStatus {
+/**
+ * A /provenance read error as the model artifact's zone status; the model
+ * loads either way. A version refusal is `refused` ("written by an older /
+ * newer apeGmsh"); any other error (a bad sha256, a backslash path, a broken
+ * table) is `malformed`, with the reader's message, which names the path.
+ */
+export function provenanceStatus(a: { ok: false; error: string }): ZoneStatus {
   const r = parseRefusal(a.error);
   if (r && r.zone === "provenance") return { status: "refused", version: r.version, accepted: r.accepted, newer: r.newer, reason: r.reason };
-  return { status: "refused", version: "?", accepted: `${PROVENANCE_TARGET.major}.${ZONE_FLOOR.provenance} and any later ${PROVENANCE_TARGET.major}.x`, newer: false, reason: a.error };
+  return { status: "malformed", reason: a.error };
 }
 
 export class Effects {
@@ -109,16 +114,27 @@ export class Effects {
   private retryPath: string | null = null;
   private readonly off: (() => void)[] = [];
 
-  constructor(store: Store, blobs: BlobStore, bridge: Bridge) {
+  /**
+   * How long a rewrite of the model or of its geometry waits for the other
+   * sibling's rewrite before both are re-read (a D1 re-run rewrites both;
+   * each run mints a new session_id, so reading one alone would pair a new
+   * file with an old one and flash the stale-geometry notice).
+   */
+  private readonly setWindowMs: number;
+  private setTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(store: Store, blobs: BlobStore, bridge: Bridge, opts: { setWindowMs?: number } = {}) {
     this.store = store;
     this.blobs = blobs;
     this.bridge = bridge;
+    this.setWindowMs = opts.setWindowMs ?? 1000;
     // A file rewritten on disk (D1 rewrites on every run) is read again; one
     // that changes mid-read is re-read when that read ends (see `open`).
     this.off.push(
       this.store.subscribe((s) => {
         const m = s.artifacts.model;
         if (!m || !m.stale || this.reading) return;
+        if (Effects.isSet(s)) return this.scheduleSetReload();
         // A change after the retries ran out starts a fresh count.
         if (m.status === "failed" && m.path === this.retryPath && this.retries >= Effects.MAX_RETRIES) this.retries = 0;
         void this.open(m.path);
@@ -127,7 +143,9 @@ export class Effects {
       // read shows, and the next change reads it again).
       this.store.subscribe((s) => {
         const g = s.artifacts.geometry;
-        if (g && g.stale && !this.readingGeometry) void this.openGeometry(g.path);
+        if (!g || !g.stale || this.readingGeometry) return;
+        if (Effects.isSet(s)) return this.scheduleSetReload();
+        void this.openGeometry(g.path);
       }),
       // Go-to-source: a panel dispatches `requestSource`; this answers it.
       this.store.subscribe((s) => {
@@ -142,6 +160,76 @@ export class Effects {
   private readingGeometry = false;
   private geometryToken = 0;
   private sourceSeq = 0;
+
+  /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */
+  private static isSet(s: State): boolean {
+    return s.artifacts.model?.status === "ready" && s.artifacts.geometry?.status === "ready";
+  }
+
+  private scheduleSetReload(): void {
+    if (this.setTimer !== null) return;
+    this.setTimer = setTimeout(() => {
+      this.setTimer = null;
+      void this.reloadSet();
+    }, this.setWindowMs);
+  }
+
+  /**
+   * Re-read whichever of the model and its geometry went stale in the window,
+   * then land them in one `setLoaded`, so the pairing is judged on the new
+   * pair only. A failed read is reported as usual and the other still lands.
+   */
+  private async reloadSet(): Promise<void> {
+    const s = this.store.get();
+    const mPath = s.artifacts.model?.stale ? s.artifacts.model.path : null;
+    const gPath = s.artifacts.geometry?.stale && typeof this.bridge.openGeometry === "function" ? s.artifacts.geometry.path : null;
+    if (!mPath && !gPath) return;
+    const mt = mPath ? ++this.openToken : -1;
+    const gt = gPath ? ++this.geometryToken : -1;
+    if (mPath) {
+      this.reading = true;
+      this.store.dispatch({ type: "fileOpened", artifact: "model", path: mPath });
+    }
+    if (gPath) {
+      this.readingGeometry = true;
+      this.store.dispatch({ type: "fileOpened", artifact: "geometry", path: gPath });
+    }
+    const fail = (artifact: "model" | "geometry", path: string, error: string) => {
+      const refusal = parseRefusal(error);
+      if (refusal) this.store.dispatch({ type: "zoneRefused", artifact, ...refusal });
+      this.store.dispatch({ type: "fileFailed", artifact, path, error });
+    };
+    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    try {
+      const [mr, gr] = await Promise.all([
+        mPath ? this.bridge.openModel(mPath).catch((err: unknown) => ({ ok: false as const, error: message(err) })) : null,
+        gPath ? this.bridge.openGeometry!(gPath).catch((err: unknown) => ({ ok: false as const, error: message(err) })) : null,
+      ]);
+      let model = null, geometry = null;
+      if (mPath && mr && mt === this.openToken) {
+        if (!mr.ok) fail("model", mPath, mr.error);
+        else {
+          const prov = mr.provenance;
+          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null);
+        }
+      }
+      if (gPath && gr && gt === this.geometryToken) {
+        if (!gr.ok) fail("geometry", gPath, gr.error);
+        else if (!gr.geometry) fail("geometry", gPath, "the file has no /geometry zone");
+        else geometry = loadGeometry(gr.geometry, this.blobs, gr.sizeBytes, gr.readMs);
+      }
+      if (model || geometry) {
+        this.store.dispatch({ type: "setLoaded", model, geometry });
+        this.blobs.retain(blobRefsOf(this.store.get()));
+      }
+    } finally {
+      if (mt === this.openToken) this.reading = false;
+      if (gt === this.geometryToken) this.readingGeometry = false;
+      // A change that arrived during the reads starts another window.
+      const after = this.store.get();
+      if (after.artifacts.model?.stale || after.artifacts.geometry?.stale) this.scheduleSetReload();
+    }
+  }
 
   /** Answer a `requestSource`: open the editor at the declaration's line, or say why not. */
   private async jumpTo(decl: string): Promise<void> {
@@ -261,6 +349,8 @@ export class Effects {
 
   /** Detach everything `attach` and the bridge subscriptions registered. */
   dispose(): void {
+    if (this.setTimer !== null) clearTimeout(this.setTimer);
+    this.setTimer = null;
     for (const f of this.off.splice(0)) f();
   }
 
