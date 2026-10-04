@@ -1810,6 +1810,18 @@ class FEMData:
             )
         self.partitions: PartitionSet = PartitionSet(records)
 
+    def __setstate__(self, state: dict) -> None:
+        """Unpickle, minting a ``session_id`` for a pre-#1304 pickle.
+
+        A snapshot pickled before ``session_id`` existed has none.  Left
+        without one, ``write_meta`` would raise ``AttributeError``, and the
+        bridge composer reads that as a stub FEM and silently writes a file
+        with no neutral zone.  A fresh id is what any new snapshot gets.
+        """
+        self.__dict__.update(state)
+        if "session_id" not in state:
+            self.session_id = str(uuid.uuid4())
+
     @property
     def snapshot_id(self) -> str:
         """Deterministic content hash identifying this FEMData snapshot.

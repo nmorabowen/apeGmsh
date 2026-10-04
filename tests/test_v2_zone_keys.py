@@ -163,6 +163,22 @@ def test_writers_stamp_and_reader_restores_session_id(fem, tmp_path, writer):
     assert FEMData.from_h5(str(path)).session_id == fem.session_id
 
 
+def test_old_pickle_without_session_id_keeps_its_neutral_zone(fem, tmp_path):
+    """A FEMData pickled before #1304 has no session_id: it gets a fresh one,
+    and the bridge still writes its neutral zone (it is not read as a stub)."""
+    import pickle
+
+    old = copy.copy(fem)
+    del old.session_id  # the shape of a pre-#1304 pickle
+    revived = pickle.loads(pickle.dumps(old))
+    assert uuid.UUID(revived.session_id).version == 4
+    path = tmp_path / "old.h5"
+    _write_bridge(revived, path)
+    with h5py.File(path, "r") as f:
+        assert "nodes" in f and "elements" in f
+        assert f["meta"].attrs["session_id"] == revived.session_id
+
+
 def test_reader_refuses_malformed_session_id(fem, tmp_path):
     path = tmp_path / "m.h5"
     fem.to_h5(str(path))
