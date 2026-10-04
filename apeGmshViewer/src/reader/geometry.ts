@@ -15,7 +15,7 @@
 //
 // Browser-safe: no Node import, so the renderer can use it too.
 
-import { GEOMETRY_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5Dataset, type H5File, type H5Group, type H5Module } from "./read.ts";
+import { checkZoneVersion, GEOMETRY_TARGET, readAttrs, SchemaError, ZONE_FLOOR, type H5Dataset, type H5File, type H5Group, type H5Module } from "./read.ts";
 import type { Param } from "../model/types.ts";
 
 // The target and the floor live in read.ts's one version table (#1303).
@@ -26,9 +26,9 @@ export { GEOMETRY_TARGET } from "./read.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * The zone's version from `/meta/<key>`, or `null` when the key is absent.
- * Another major, or a minor below the floor, is refused; a newer minor is
- * read with a warning (its additions are ignored).
+ * The zone's version from `/meta/<key>`, or `null` when the key is absent
+ * (an absent zone is ignored). A present stamp follows ADR 0113 D7, the one
+ * rule every zone shares (read.ts checkZoneVersion).
  */
 export function zoneVersion(
   meta: Record<string, Param | Param[]>,
@@ -39,21 +39,7 @@ export function zoneVersion(
 ): string | null {
   const raw = meta[key];
   if (raw === undefined) return null;
-  if (typeof raw !== "string") throw new SchemaError(`/meta/${key} is not a string`);
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(raw);
-  if (!m) throw new SchemaError(`/meta/${key} = ${JSON.stringify(raw)} is not X.Y.Z`);
-  const major = Number(m[1]);
-  const minor = Number(m[2]);
-  if (major !== target.major) throw new SchemaError(`${key} ${raw}: this app reads major ${target.major} only`);
-  if (minor < floor) {
-    throw new SchemaError(`${key} ${raw}: layouts before ${target.major}.${floor} are not supported`);
-  }
-  if (minor > target.minor) {
-    warnings.push(
-      `${key} ${raw} is newer than this reader (${target.major}.${target.minor}); fields added since are ignored`,
-    );
-  }
-  return raw;
+  return checkZoneVersion(raw, key, target, floor, warnings);
 }
 
 export function has(g: H5Group, name: string): boolean {

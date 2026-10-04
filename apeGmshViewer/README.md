@@ -87,8 +87,11 @@ through Node's type stripping; nothing is compiled for the tests).
   for the types it knows. Any other type is reported as unresolved by name.
 - Section → material links are read directly: a Fiber section's patches,
   fibers and layers name their material by HDF5 path (`material_ref`).
-- A schema version outside the reader window (ADR 0023) is shown as a warning
-  banner; a different major version, or a neutral layout before 2.10, is refused.
+- Schema versions follow ADR 0113, with one floor per zone (`ZONE_FLOOR` in
+  `src/reader/read.ts`: neutral 2.10, opensees 2.11, geometry 1.0, provenance
+  1.0). A file from the floor to the app's version opens with no banner. A
+  newer minor of the same major opens with one banner. A file below the floor,
+  or of another major, is refused with a sentence naming the floor.
 - Colour: each element takes the colour of the smallest element-side physical
   group that contains it. Elements in no group are grey; OpenSees elements with
   no mesh cell (embedded rebar trusses) are drawn from their inline

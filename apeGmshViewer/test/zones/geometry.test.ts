@@ -190,5 +190,5 @@ test("status ok with a failed entity is refused", refuse((t) => ((t.geometry!["e
 test("a newer minor is read with a warning", () => {
   const g = readGeometry(h5, write("newer", (t) => (t.meta!.attrs!["geometry_schema_version"] = "1.4.0")))!;
   assert.equal(g.version, "1.4.0");
-  assert.match(g.warnings.join("\n"), /1\.4\.0 is newer than this reader \(1\.0\); fields added since are ignored/);
+  assert.deepEqual(g.warnings, ["geometry_schema_version 1.4.0 is newer than this app (1.0.x): the file opens, and what that apeGmsh added is not shown"]);
 });
