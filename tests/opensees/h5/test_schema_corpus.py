@@ -58,7 +58,6 @@ from apeGmsh.opensees.emitter.h5_reader import (
 )
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
-from tests.fixtures.schema_corpus._era_generator import SP_CASES
 from tests.fixtures.schema_corpus._semantic_dump import (
     DUMP_FORMAT,
     dump_fem,
@@ -78,6 +77,12 @@ DECLARED_NDM = 3
 
 #: Pre-2.26.1 SP loads read as one ``default`` case (ADR 0113 D4 ledger, Q5).
 SP_PER_CASE_FROM = (2, 26, 1)
+
+#: The case names the ``sp_cases`` variant authored (``_era_generator.SP_CASES``;
+#: not imported: the generator imports gmsh and binds ``_semantic_dump`` under a
+#: bare name, which the shared pytest process must not do). The era recorded
+#: them in its dump's ``generator_notes``, and the test holds them to this.
+SP_CASES = ["PushA", "PushB"]
 
 #: The shim ledger of ADR 0113 D4, as (neutral version the field is trusted
 #: from, dump paths excluded from the era comparison below it).
@@ -296,7 +301,7 @@ def test_sp_cases_before_2_26_1_read_as_one_default_case() -> None:
     entry = _variant("sp_cases")
     h5 = CORPUS / entry["files"]["h5"]["name"]
     era = _era_dump(entry)
-    assert era["generator_notes"]["sp_cases"] == list(SP_CASES)
+    assert era["generator_notes"]["sp_cases"] == SP_CASES
     with h5py.File(h5, "r") as f:
         # The era's layout: every record under the one ``default`` dataset.
         assert list(f["loads/sp"].keys()) == ["default"]
