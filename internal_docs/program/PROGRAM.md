@@ -77,6 +77,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | #1200 | S Hub splits |
 | #1201 | K Archive is the program |
 | #1202 | T Weekly triage |
+| #1372 | R Script English (readable model scripts) |
 
 **Slice issues** carry the labels `program`, `slice` and `chain:<X>`, plus either `mechanical` or `semantic`. The body is `internal_docs/program/slice_card.md`, filled in. Close the slice when its PR lands.
 
@@ -143,6 +144,7 @@ The full link specs are in the chain issues.
 | V0 → V5 | apeGmshViewer (ADR 0112): zone + state-store design → P0 spike → unconditional write, `/geometry`, provenance → readable stages → results → delete the Qt viewers | V0 ratified; K1 for V3; human gate at V5 |
 | S1 → S3 | `_StageBuilder` + procedures → `build/` layers → `nd`/compose/h5io | C2 + C3; S1 must need ≤1 fix in 7 days |
 | K0 → K4 | `VERBS` design → archive completeness → round-trip oracle → fork loader (KC1–6) → dated flip | C1 + C2; F2 for K3 |
+| R0 → R6 | Silent-defect follow-ups → read-back-by-label ADR (architect pair) → implement it → stage/solver ergonomics · advisory model-script lint → re-cut the rule card → validation loop | R1 ratified and the `apesees.py` lock free for R2; R2 + R3 for R5; human gate at R6 |
 
 **Waves:**
 
@@ -153,6 +155,7 @@ The full link specs are in the chain issues.
 | 3 | F2 · N2 · K0/K1 · S1 · X2 |
 | 4 and later | K2 · S2 · X3 · F3 · X4 · N3 · S3 |
 | any time | V1 (no `src/` change); V0 beside K0 |
+| after ratification | R0 · R1 · R4 in parallel; R2/R3 after R1; R5 → R6 |
 
 Run at most 2–3 orchestrator sessions at once. Put the parallelism inside each session.
 
