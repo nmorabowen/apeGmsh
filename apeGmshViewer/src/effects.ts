@@ -109,6 +109,8 @@ export class Effects {
       }
       const load = loadModel(res.model, this.blobs);
       for (const w of load.info.warnings) console.warn(w);
+      // One line per read, so a double load shows in the Electron log.
+      console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);
       this.store.dispatch({ type: "fileLoaded", artifact: "model", load });
       this.blobs.retain(blobRefsOf(this.store.get()));
       loaded = true;
