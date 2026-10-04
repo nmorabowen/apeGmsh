@@ -206,7 +206,7 @@ RULES: dict[str, str] = {
         "check only rejected stale entries (#1232, ee69e3e9), and EXTRAS_ONLY the same (#1239)"
     ),
     "qt-process-isolation": (
-        "a test module that imports a Qt binding (or apeGmsh.sections._properties) and starts "
+        "a test module that imports a Qt binding and starts "
         "a thread has no module-level `pytestmark` carrying `pytest.mark.qt` or "
         "`pytest.mark.subprocess`, so it runs inside the shared pytest process, where a worker "
         "thread plus Qt segfaults the whole run. Mark it qt (its own process in the qt lane) "
@@ -926,7 +926,6 @@ def check_ratchet_baseline(tree: ast.AST, rel: str, root: Path) -> Iterator[tupl
 
 
 QT_BINDINGS = re.compile(r"(?:qtpy|PySide\d*|PyQt\d*)(?:\.|$)")
-PROPERTIES_MODULE = "apeGmsh.sections._properties"
 THREAD_NAMES = {"Thread", "QThread", "PropertiesController"}
 ISOLATION_MARK = re.compile(r"\bmark\.(?:qt|subprocess)\b")
 
@@ -948,7 +947,7 @@ def _imports_qt(tree: ast.AST) -> bool:
             and isinstance(node.args[0].value, str)
         ):
             names = [node.args[0].value]
-        if any(QT_BINDINGS.match(n) or n == PROPERTIES_MODULE or n.startswith(PROPERTIES_MODULE + ".") for n in names):
+        if any(QT_BINDINGS.match(n) for n in names):
             return True
     return False
 
@@ -964,7 +963,11 @@ def _thread_start(tree: ast.AST) -> int | None:
 
 
 def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
-    """A test module with Qt (or `_properties`) and a thread must carry `pytestmark` qt/subprocess."""
+    """A test module importing a Qt binding and starting a thread must carry `pytestmark` qt/subprocess.
+
+    Half (1) is a Qt binding import only. The `_properties` controller counts toward the thread
+    (half 2) alone: the #1080/#1242 class is Qt teardown in the shared process, and a pure-Python
+    worker thread (tests/sections/test_properties.py) is not that class."""
     if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
         return
     if not _imports_qt(tree):

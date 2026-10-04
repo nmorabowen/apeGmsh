@@ -1056,7 +1056,7 @@ def test_qt_process_isolation_needs_a_module_level_mark(tmp_path: Path, mark: st
         (
             "from apeGmsh.sections._properties import PropertiesController\n"
             "def test_it():\n    PropertiesController()\n",
-            True,  # the _properties worker counts as both halves
+            False,  # the _properties worker is a thread only: no Qt binding, not the #1242 class
         ),
     ],
 )
@@ -1068,3 +1068,9 @@ def test_qt_process_isolation_needs_both_halves(tmp_path: Path, source: str, fla
 def test_qt_process_isolation_is_scoped_to_tests(tmp_path: Path) -> None:
     _write(tmp_path, "src/apeGmsh/viewers/a.py", QT_THREAD.format(mark=""))
     assert _found(tmp_path) == []
+
+
+def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -> None:
+    rel = "tests/sections/test_properties.py"
+    _write(tmp_path, rel, _real(rel))
+    assert quirks.scan(tmp_path) == []
