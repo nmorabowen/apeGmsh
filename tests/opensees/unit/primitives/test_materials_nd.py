@@ -23,6 +23,7 @@ from apeGmsh.opensees.material.nd import (
     ElasticIsotropic,
     InitDefGrad,
     J2Plasticity,
+    J2PlasticityNoYieldWarning,
     LadrunoCohesiveHingeBiaxial,
     LadrunoConcrete3D,
     LadrunoJ2,
@@ -204,6 +205,38 @@ class TestJ2Plasticity:
     def test_validation_rejects_negative_eta(self) -> None:
         with pytest.raises(ValueError, match="eta must be >= 0"):
             J2Plasticity(**self._ok_kwargs(), eta=-0.1)
+
+    # #1321: upstream plastic_integrator skips its Newton loop iff
+    # 1e-8*sig0 >= 1.0 (resid seeded at 1.0). Measured on stock openseespy
+    # 3.7.1.2, uniaxial pull to 3 eps_y: sxx/fy = 1.020 at sig0=8e7,
+    # 3.020 at sig0=1e8, 3.004 at 2.75e8; 1.020 at sig0=275 (MPa);
+    # 1.031 at sig0=8e7 with sigInf=2e8 (sigInf alone is harmless).
+    @staticmethod
+    def _steel(sig0: float, sigInf: float) -> dict[str, float]:
+        return {"K": 1.6e11, "G": 7.7e10, "sig0": sig0, "sigInf": sigInf,
+                "delta": 0.0, "H": 2.0e9}
+
+    @pytest.mark.parametrize("sig0", [1.0e8, 275.0e6, 355.0e6])
+    def test_sig0_at_or_above_1e8_warns_no_yield(self, sig0: float) -> None:
+        with pytest.warns(J2PlasticityNoYieldWarning,
+                          match=r"never yields.*MPa.*LadrunoJ2"):
+            J2Plasticity(**self._steel(sig0, sig0))
+
+    @pytest.mark.parametrize(
+        ("sig0", "sigInf"),
+        [(275.0, 275.0), (9.99e7, 9.99e7), (8.0e7, 2.0e8), (5.0e5, 7.0e5)],
+    )
+    def test_sig0_below_1e8_is_silent(self, sig0: float, sigInf: float) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", J2PlasticityNoYieldWarning)
+            J2Plasticity(**self._steel(sig0, sigInf))
+
+    def test_namespace_path_warns_too(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        with pytest.warns(J2PlasticityNoYieldWarning):
+            ops.nDMaterial.J2Plasticity(
+                K=1.6e11, G=7.7e10, sig0=275e6, sigInf=275e6, delta=0.0, H=0.0,
+            )
 
 
 # ---------------------------------------------------------------------------

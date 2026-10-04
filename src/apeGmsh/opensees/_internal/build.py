@@ -2810,6 +2810,57 @@ def replay_builder_scoped_declarations(
             emitter.geomTransf(type_token, tag, *vec)
 
 
+#: Gmsh quadrilateral codes (quad4, quad8) and the node counts of the
+#: triangle cells (tri3, tri6) a surface meshed without recombination gives.
+_QUAD_ETYPES: frozenset[int] = frozenset({3, 16})
+_TRI_NODE_COUNTS: frozenset[int] = frozenset({3, 6})
+
+
+def check_quad_element_on_triangles(
+    spec: Element,
+    elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
+) -> None:
+    """Raise, naming the PG, when a quad-only element meets triangle cells.
+
+    A surface meshed without recombination is all-triangle (most often
+    ``g.mesh.structured.recombine()`` called before ``generate()``, which
+    is a no-op). The element's own ``_emit`` would then fail with a bare
+    "expected 4 node tags, got 3" that says nothing about recombination
+    (#1327), so :func:`allocate_element_tags`, which plans every emit
+    route (flat, staged, partitioned), runs this first and names the cause.
+
+    Only classes whose registry entry accepts quadrilaterals alone are
+    checked. A class with no registry entry, or one that accepts other
+    shapes, keeps its own node-count check in ``_emit``, which still
+    fails loud on a mismatch.
+    """
+    from .._element_capabilities import _ETYPE_INFO, Unknown, element_capability
+
+    cap = element_capability(type(spec).__name__)
+    if cap is Unknown or not cap.gmsh_etypes or not cap.gmsh_etypes <= _QUAD_ETYPES:
+        return
+    if isinstance(elements, PGElementFanout) and elements.conn.ndim == 2:
+        counts = {int(elements.conn.shape[1])}
+    else:
+        counts = {len(nodes) for _, nodes in elements}
+    tri = sorted(counts & _TRI_NODE_COUNTS)
+    if not tri:
+        return
+    cls = type(spec).__name__
+    pg = getattr(spec, "pg", None)
+    want = sorted({_ETYPE_INFO[e][0] for e in cap.gmsh_etypes})
+    raise BridgeError(
+        f"{cls}(pg={pg!r}): the physical group holds "
+        f"{'/'.join(map(str, tri))}-node triangles, but {cls} needs "
+        f"{'/'.join(map(str, want))}-node quadrilaterals. Request quads "
+        f"before meshing with g.mesh.structured.set_recombine({pg!r}) or "
+        "g.mesh.recipe.structured(...), then generate(); "
+        "g.mesh.structured.recombine() only acts on an already generated "
+        "mesh. Otherwise declare a triangle element on this PG (e.g. "
+        "ShellMITC3 / ASDShellT3 for shells, Tri31 for plane solids)."
+    )
+
+
 def emit_element_spec(
     spec: Element,
     emitter: "Emitter",
@@ -8888,6 +8939,10 @@ def allocate_element_tags(
                 f"check that get_fem_data(dim=...) was not called with a "
                 f"dim that excludes this group's cells."
             )
+        if pg is not None:
+            # #1327: a quad-only element on a triangle PG fails here,
+            # naming the PG, instead of per element inside ``_emit``.
+            check_quad_element_on_triangles(spec, fanout)
         if element_tags == "fem" and pg is not None:
             eids = np.asarray(fanout.eids, dtype=np.int64)
             if n and int(eids.max()) > tags.last("element"):

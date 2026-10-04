@@ -19,6 +19,16 @@ if TYPE_CHECKING:
 from apeGmsh._types import DimTag
 
 
+class RecombineEmptyMeshWarning(UserWarning):
+    """``g.mesh.structured.recombine()`` ran with no 2-D elements to merge.
+
+    ``recombine()`` acts on an existing surface mesh. Called before
+    ``generate()`` it is a no-op, the mesh comes out all-triangle, and a
+    quad-only element fails much later at emit (#1327). Promote it with
+    ``pytest -W error::...RecombineEmptyMeshWarning`` (warn-as-contract).
+    """
+
+
 class _Structured:
     """Transfinite constraints, recombination, smoothing, compounds."""
 
@@ -1164,11 +1174,31 @@ class _Structured:
         We warn up front; the corruption itself is caught fail-loud at
         FEM extraction (``_validate_connectivity``).  For a hexahedral
         volume mesh use a structured/transfinite setup instead.
+
+        It is also a **post-generation** operation: with no 2-D elements
+        yet (called before ``generate()``) there is nothing to merge, so
+        it warns :class:`RecombineEmptyMeshWarning` and does nothing.
+        Request quads before meshing with :meth:`set_recombine` or
+        ``g.mesh.recipe.structured``.
         """
         self._guard("recombine")
+        import warnings
+        _, etags_2d, _ = gmsh.model.mesh.getElements(dim=2, tag=-1)
+        if not any(len(t) for t in etags_2d):
+            warnings.warn(
+                "g.mesh.structured.recombine() found no 2-D elements to "
+                "merge, so it does nothing: it acts on an already "
+                "generated mesh. Called before generate(), the mesh comes "
+                "out all-triangle and a quad element (ShellMITC4, "
+                "FourNodeQuad, ...) fails at emit. Request quads before "
+                "meshing with g.mesh.structured.set_recombine(<label or "
+                "PG>) or g.mesh.recipe.structured(...).",
+                RecombineEmptyMeshWarning,
+                stacklevel=2,
+            )
+            return self
         etypes, etags, _ = gmsh.model.mesh.getElements(dim=3, tag=-1)
         if any(len(t) for t in etags):
-            import warnings
             warnings.warn(
                 "g.mesh.structured.recombine() is a 2-D surface "
                 "operation, but the mesh contains 3-D elements. Running "

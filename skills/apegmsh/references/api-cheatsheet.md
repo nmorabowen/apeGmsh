@@ -284,7 +284,9 @@ set_transfinite_curve(tag, num_nodes, *, mesh_type="Progression", coef=1.0)
 set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
-set_recombine(dim, tag, *, angle=45)   recombine()   set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
+set_recombine(tag, *, dim=2, angle=45)   # BEFORE generate(): request quads
+recombine()                              # AFTER generate() only; warns on an empty 2-D mesh
+set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
 
 build_graded_box(*, extent=(bx,ly,hz), footprint=(B,L), h, l_mech, d_mech, r,
                  orientation=0.0) -> list[int]   # 18 sub-volume tags
