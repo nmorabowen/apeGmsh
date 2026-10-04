@@ -120,7 +120,12 @@ def _mesh_selections(store: Any) -> dict[str, dict[str, int]]:
 def _node_ndf(nodes: Any) -> dict[str, Any]:
     """The per-node ``ndf`` stream as a histogram, ``{"6": 7}``, plus the
     count of nodes whose snapshot carries no ndf (``ndf_for`` raises
-    ``LookupError`` for them: the sentinel 0 and the absent dataset alike)."""
+    ``LookupError`` for them: the sentinel 0 and the absent dataset alike).
+
+    Every corpus generator leaves ndf to the bridge, so today each dump
+    records ``declared == {}`` and every node undeclared: the field holds
+    the stream's shape, not yet a value.  It becomes live the day a
+    generator declares ``g.node_ndf`` / ``ops.ndf(...)``."""
     declared: dict[str, int] = {}
     undeclared = 0
     for nid in nodes.ids.tolist():

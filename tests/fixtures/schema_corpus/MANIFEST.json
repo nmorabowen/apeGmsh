@@ -957,7 +957,7 @@
    "zone": "opensees",
    "minor": "2.20",
    "variant": "frame2d",
-   "why": "the portal frame declared ops.model(ndm=2, ndf=3), written before neutral 2.34.0 made /meta/ndm the spatial dimension (#1291): the file read_spatial_ndm salvages (#1300)",
+   "why": "the portal frame declared ops.model(ndm=2, ndf=3), written before neutral 2.34.0 made /meta/ndm the spatial dimension (#1291): the stamp is the mesh dimension 1, the file says 2-D through its (1, 0) vecxz and /meta/ndf = 3, and read_spatial_ndm (#1300) must recover 2 from that evidence (#1358)",
    "sha": "099ad637f5e9d57f889565d6aeda11f07b1e03bd",
    "date": "2026-08-26",
    "version": "2.20.0",

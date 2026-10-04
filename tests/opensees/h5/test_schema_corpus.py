@@ -31,8 +31,11 @@ Invariants held here (ADR 0113):
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import shutil
+import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +69,7 @@ from tests.fixtures.schema_corpus._semantic_dump import (
 )
 
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
+BUILDER = Path(__file__).resolve().parents[3] / "scripts" / "build_schema_corpus.py"
 MANIFEST: dict[str, Any] = json.loads((CORPUS / "MANIFEST.json").read_text(encoding="utf-8"))
 ENTRIES: list[dict[str, Any]] = MANIFEST["entries"]
 ZONES = {"neutral": NEUTRAL, "opensees": OPENSEES}
@@ -91,16 +95,19 @@ SHIM_LEDGER: tuple[tuple[tuple[int, int, int], tuple[str, ...]], ...] = (
     (SP_PER_CASE_FROM, ("fem.loads.sp_patterns", "model.fem.loads.sp_patterns")),
 )
 
-#: What today's reader resolves for ``model.ndm`` on the ``frame2d``
-#: variant: a frame declared ``ops.model(ndm=2)`` by a writer before
-#: neutral 2.34.0, which stamped the mesh dimension (1) in ``/meta/ndm``.
-#: ``read_spatial_ndm`` lifts a pre-2.34.0 stamp only when a 3-wide
-#: ``per_element_vecxz`` proves a 3-D bridge wrote the file; a 2-D
-#: ``geomTransf Linear`` has no vecxz, so the stamp stands. The declared
-#: 2 cannot be recovered from such a file: that is the defect 2.34.0
-#: fixed (#1291) and the ledger's "salvaged" row, not an oracle this test
-#: can improve on.
-FRAME2D_SHIM_NDM = 1
+#: The ``frame2d`` variant declared ``ops.model(ndm=2, ndf=3)``; its
+#: pre-2.34.0 writer stamped the mesh dimension (1) in ``/meta/ndm``. The
+#: file still says 2-D: a ``(1, 0)`` vecxz exists only in 2-D, and
+#: ``/meta/ndf = 3``. Today's ``read_spatial_ndm`` reads the stamp, 1, and
+#: ``build()`` drops every y coordinate: #1358. ``check_entry`` therefore
+#: asserts no declared ndm for this file; ``test_frame2d_reads_its_declared_ndm``
+#: holds the 2 as a strict xfail that #1358's fix flips.
+FRAME2D_DECLARED_NDM = 2
+
+#: The ``(dof, value)`` multiset the ``sp_cases`` variant authored: 9 base
+#: nodes, dofs [1, 1, 1], values (0, 0, -0.01) under PushA and (0.01, 0, 0)
+#: under PushB. Both cases' values must survive the flattening.
+SP_RECORDS = {(1, 0.01): 9, (3, -0.01): 9, (1, 0.0): 9, (2, 0.0): 18, (3, 0.0): 9}
 
 
 def _v(s: str) -> tuple[int, int, int]:
@@ -146,6 +153,21 @@ def _excluded(entry: dict[str, Any]) -> set[str]:
 
 def _era_dump(entry: dict[str, Any]) -> dict[str, Any]:
     return json.loads((CORPUS / entry["files"]["dump"]["name"]).read_text(encoding="utf-8"))
+
+
+def _builder() -> Any:
+    """``scripts/build_schema_corpus.py`` as a module (it runs no git on import)."""
+    spec = importlib.util.spec_from_file_location("build_schema_corpus", BUILDER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: its dataclass resolves postponed annotations
+    # through sys.modules. Removed after, so no bare name outlives the test.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
 
 
 def _diff(era: Any, today: Any, path: str, skip: set[str]) -> list[str]:
@@ -194,10 +216,11 @@ def check_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if has_bridge:
         model = OpenSeesModel.from_h5(str(h5))
         today["model"] = dump_model(model)
-        want = FRAME2D_SHIM_NDM if entry.get("variant") == "frame2d" else DECLARED_NDM
-        assert model.ndm == want, (
-            f"{h5.name}: today's reader resolves ndm={model.ndm}, expected {want}"
-        )
+        if entry.get("variant") != "frame2d":  # frame2d: see FRAME2D_DECLARED_NDM
+            assert model.ndm == DECLARED_NDM, (
+                f"{h5.name}: today's reader resolves ndm={model.ndm}, "
+                f"the generator declared {DECLARED_NDM}"
+            )
     assert era["fem"]["dump_format"] == DUMP_FORMAT, (
         f"{h5.name}: the era dump is format {era['fem']['dump_format']}, the "
         f"oracle is {DUMP_FORMAT}; rebuild the corpus with scripts/build_schema_corpus.py"
@@ -230,6 +253,13 @@ def test_corpus_covers_every_minor_from_floor_to_current(zone: str) -> None:
     assert in_range == want, (
         f"{zone}: the manifest must hold exactly the minors {want[0]}..{want[-1]}; "
         "rerun scripts/build_schema_corpus.py after a bump or a floor change"
+    )
+    # The current minor is never a gap of any kind: a bump PR adds the
+    # outgoing minor's file (ADR 0113 D8), and the builder refuses to plan a
+    # current minor that no base commit stamps (check_current_is_written).
+    assert have[want[-1]]["status"] == "ok", (
+        f"{zone} {want[-1]}: the current minor has no file ({have[want[-1]]}); "
+        "commit the bump and rebuild with --base HEAD"
     )
     for minor, e in have.items():
         if _minor_of(minor) < floor.minor:
@@ -264,9 +294,24 @@ def test_variants_are_the_shim_ledger() -> None:
     assert _v(sp["stamps"]["neutral"]) < SP_PER_CASE_FROM
     assert frame["zone"] == "opensees" and frame["status"] == "ok"
     assert _v(frame["stamps"]["neutral"]) < META_NDM_IS_SPATIAL_FROM
+    variants = _builder().VARIANTS
     for e in (sp, frame):
+        zone, minor, why = variants[e["variant"]]
+        assert (e["zone"], e["minor"]) == (zone, minor)
         assert e["generator"].endswith(f"--variant {e['variant']}")
-        assert e.get("why")
+        assert e["why"] == why, f"{e['variant']}: the manifest's why text lags the builder's"
+
+
+def test_builder_refuses_a_current_minor_no_base_commit_stamps() -> None:
+    """A bump PR run against a stale base cannot record its own minor as an
+    ``unwritten`` gap (which INV-6 accepts) and land without the file."""
+    builder = _builder()
+    bumps = [("a" * 40, "2.21.0"), ("b" * 40, "2.22.0")]
+    builder.check_current_is_written("opensees", (2, 22), bumps)
+    with pytest.raises(RuntimeError, match="2.23.x but no first-parent commit"):
+        builder.check_current_is_written("opensees", (2, 23), bumps)
+    with pytest.raises(RuntimeError, match="--base HEAD"):
+        builder.check_current_is_written("opensees", (2, 23), [])
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +359,13 @@ def test_sp_cases_before_2_26_1_read_as_one_default_case() -> None:
     assert today["fem"]["loads"]["sp_patterns"] == ["default"]
     assert era["fem"]["loads"]["sp_patterns"] == ["default"]
     assert sorted({r.pattern for r in fem.nodes.sp}) == ["default"]
+    # The values of both cases survive the flattening, record by record;
+    # only the case binding is lost.
+    got = Counter((int(r.dof), float(r.value)) for r in fem.nodes.sp)
+    assert dict(got) == SP_RECORDS
+    assert sum(SP_RECORDS.values()) == n_base_nodes * n_dofs * len(SP_CASES)
+    assert all(int(r.node_id) in set(fem.nodes.physical.node_ids("Base", dim=2))
+               for r in fem.nodes.sp)
     # The plain box of the same era carries no SP load: the records are the
     # variant's, not an artefact of the era's reader.
     plain = next(e for e in _plain() if e["zone"] == "neutral" and e["minor"] == entry["minor"])
@@ -322,29 +374,51 @@ def test_sp_cases_before_2_26_1_read_as_one_default_case() -> None:
 
 def test_frame2d_before_2_34_0_takes_the_ndm_shim() -> None:
     """A 2-D frame written before neutral 2.34.0 stamps the mesh dimension;
-    ``read_spatial_ndm`` is the branch that reads it, and it cannot recover
-    the declared 2 (ledger row ``META_NDM_IS_SPATIAL_FROM``, #1300)."""
+    ``read_spatial_ndm`` is the branch that reads it (ledger row
+    ``META_NDM_IS_SPATIAL_FROM``, #1300). The file's own 2-D evidence is
+    recorded here; what the reader makes of it is the next test."""
     entry = _variant("frame2d")
     h5 = CORPUS / entry["files"]["h5"]["name"]
     era = _era_dump(entry)
-    assert era["generator_notes"]["declared_ndm"] == 2
+    assert era["generator_notes"]["declared_ndm"] == FRAME2D_DECLARED_NDM
     assert era["model"]["ndf"] == 3
-    # The writer's own stamp is the mesh dimension of a line mesh, not 2.
-    assert era["meta"]["ndm"] == 1 and dump_stamps(str(h5))["ndm"] == 1
-    today = check_entry(entry)
-    assert today["model"]["ndm"] == FRAME2D_SHIM_NDM
-    assert today["model"]["ndm"] == era["model"]["ndm"], (
-        "the shim must reproduce the era's own reading of its stamp"
-    )
-    assert today["model"]["ndf"] == 3
+    # The writer's own stamp is the mesh dimension of a line mesh, not 2,
+    # and the era's own reader read that stamp back.
+    assert era["meta"] == {"ndm": 1, "ndf": 3} and dump_stamps(str(h5))["ndm"] == 1
+    assert era["model"]["ndm"] == 1
+    # The 2-D evidence the file carries: a zero-width vecxz exists only in
+    # 2-D (the plain 3-D frame of the same era writes (1, 3)).
+    with h5py.File(h5, "r") as f:
+        shapes = {f[f"opensees/transforms/{t}/per_element_vecxz"].shape
+                  for t in f["opensees/transforms"]}
+    assert shapes == {(1, 0)}
     # The salvage is keyed on the neutral stamp: the same bytes at or above
     # META_NDM_IS_SPATIAL_FROM would be read as-is, so the file sits below it.
     assert _v(entry["stamps"]["neutral"]) < META_NDM_IS_SPATIAL_FROM
-    # The plain frame of the same era is lifted to 3 by its 3-wide vecxz:
-    # the two files together are the shim's two outcomes.
+    # Era equality outside the ledger (model.ndm is excluded below 2.34.0).
+    today = check_entry(entry)
+    assert today["model"]["ndf"] == 3
+    # The plain frame of the same era is lifted to 3 by its 3-wide vecxz.
     plain = next(e for e in _plain() if e["zone"] == "opensees" and e["minor"] == entry["minor"])
     assert _era_dump(plain)["meta"]["ndm"] == 1
-    assert OpenSeesModel.from_h5(str(CORPUS / plain["files"]["h5"]["name"])).ndm == DECLARED_NDM
+    plain_h5 = CORPUS / plain["files"]["h5"]["name"]
+    with h5py.File(plain_h5, "r") as f:
+        assert {f[f"opensees/transforms/{t}/per_element_vecxz"].shape
+                for t in f["opensees/transforms"]} == {(1, 3)}
+    assert OpenSeesModel.from_h5(str(plain_h5)).ndm == DECLARED_NDM
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1358: read_spatial_ndm reads the pre-2.34.0 stamp (1) for a 2-D "
+           "frame whose (1, 0) vecxz and /meta/ndf = 3 say 2-D, and build() "
+           "then drops every y coordinate; the fix flips this test",
+)
+def test_frame2d_reads_its_declared_ndm() -> None:
+    """The right answer for the ``frame2d`` file is the declared 2."""
+    entry = _variant("frame2d")
+    model = OpenSeesModel.from_h5(str(CORPUS / entry["files"]["h5"]["name"]))
+    assert model.ndm == FRAME2D_DECLARED_NDM
 
 
 # ---------------------------------------------------------------------------

@@ -93,7 +93,9 @@ VARIANTS: dict[str, tuple[str, str, str]] = {
         "opensees", "2.20",
         "the portal frame declared ops.model(ndm=2, ndf=3), written before "
         "neutral 2.34.0 made /meta/ndm the spatial dimension (#1291): the "
-        "file read_spatial_ndm salvages (#1300)",
+        "stamp is the mesh dimension 1, the file says 2-D through its "
+        "(1, 0) vecxz and /meta/ndf = 3, and read_spatial_ndm (#1300) must "
+        "recover 2 from that evidence (#1358)",
     ),
 }
 
@@ -164,6 +166,26 @@ class Era:
         return (self.zone, _mstr(self.minor), self.variant or "")
 
 
+def check_current_is_written(
+    zone: str, current: tuple[int, int], bumps: list[tuple[str, str]],
+) -> None:
+    """Refuse a current minor that no commit on ``base`` stamps.
+
+    The current minor comes from the working tree and the history from
+    ``base``. A bump PR run against a ``base`` that predates its bump
+    commit would otherwise record its own minor as an ``unwritten`` gap,
+    which INV-6 accepts, and land without the outgoing minor's file.
+    """
+    if any(_minor(v) == current for _sha, v in bumps):
+        return
+    raise RuntimeError(
+        f"{zone}: the working tree is at {_mstr(current)}.x but no first-parent "
+        f"commit on the base stamps it, so no writer of the current minor can be "
+        f"checked out. Commit the bump and pass --base HEAD (the current minor's "
+        f"file is written by the base commit); never record it as a gap"
+    )
+
+
 def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
     """Every minor from the zone's floor to its current minor, with its era commit.
 
@@ -177,6 +199,7 @@ def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
     log = _git("log", "--first-parent", "--reverse", f"-G^{const}",
                "--format=%H", base, "--", path).split()
     bumps = [(sha, _version_at(sha, zone)) for sha in log]
+    check_current_is_written(zone, current, bumps)
 
     first = floor[1] if start_minor is None else min(floor[1], start_minor)
     eras: list[Era] = []
