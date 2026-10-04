@@ -1973,21 +1973,23 @@ class H5Model:
 META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 34, 0)
 
 
-def read_spatial_ndm(meta: "Mapping[str, Any]", f: Any) -> int:
+def read_spatial_ndm(
+    meta: "Mapping[str, Any]", f: Any, *, coords: Any,
+) -> int:
     """Return the model's spatial ndm from a ``/meta`` attribute mapping (#1291).
 
     A file written at neutral ``2.34.0`` or later carries the
     ``ops.model`` ndm in ``/meta/ndm`` and is read as-is: a missing
     attribute is a malformed file, not a case to guess.  An older file
-    stamped the mesh dimension; keep the pre-fix salvage, which lifts
-    the stamp to 3 when a 3-wide ``vecxz`` under ``f["opensees"]``
-    proves a 3-D bridge wrote it (a 2-D frame still reads 1 there — the
-    defect 2.34.0 fixes).  ``0`` is the broker-only "undeclared"
-    sentinel and comes back as-is; callers that need a dimension
-    refuse it.
+    stamped the mesh dimension instead; :func:`_salvage_pre_spatial_ndm`
+    recovers the spatial ndm from the transforms under ``f["opensees"]``
+    or refuses (#1358).  ``0`` is the broker-only "undeclared" sentinel
+    and comes back as-is; callers that need a dimension refuse it.
 
     ``meta`` is the attribute mapping (``H5Model.meta()`` or an h5py
-    ``attrs``); ``f`` is the group holding ``opensees/``.
+    ``attrs``); ``f`` is the group holding ``opensees/``; ``coords`` is
+    the model's ``(N, 3)`` node coordinates (an array or an h5py
+    dataset), which the salvage never truncates.
     """
     version = read_zone_version(meta, NEUTRAL)
     if version is not None and (
@@ -2001,34 +2003,103 @@ def read_spatial_ndm(meta: "Mapping[str, Any]", f: Any) -> int:
                 f"/meta/ndm is missing (neutral_schema_version={version}); "
                 "the writer always stamps the ops.model ndm."
             ) from exc
-    return max(int(meta.get("ndm", 0)), _infer_ndm_from_transforms(f))
+    return _salvage_pre_spatial_ndm(int(meta.get("ndm", 0)), f, coords)
 
 
-def _infer_ndm_from_transforms(f: Any) -> int:
-    """Best-effort spatial dimension from ``/opensees/transforms/*/per_element_vecxz``.
+def _salvage_pre_spatial_ndm(stamp: int, f: Any, coords: Any) -> int:
+    """The spatial ndm of a file older than ``META_NDM_IS_SPATIAL_FROM``.
 
-    Salvage for files older than neutral ``2.34.0``, whose
-    ``/meta/ndm`` was the mesh dimension (see :func:`read_spatial_ndm`).
-    Returns 0 when no transforms are present (caller's ``max(broker_ndm,
-    inferred)`` falls back to the broker value).  The H5 emitter
-    writes ``per_element_vecxz`` as ``(N, 3)`` even in 2D, so this
-    can't distinguish 2D from 3D — but distinguishes "has bridge
-    output at all" from "broker only" which is the case worth
-    salvaging at read time.
+    ``stamp`` is that file's ``/meta/ndm``: the highest element
+    dimension of the mesh, a lower bound on the spatial ndm.  The
+    evidence is the width of each ``per_element_vecxz`` (one row per
+    emitted ``geomTransf``, holding exactly the vector it emitted):
+
+    * ``0`` — a ``geomTransf`` with no vecxz.  Only a 2-D bridge emits
+      one (since opensees 2.5.0, a0107165); every 3-D ``geomTransf``
+      carries a vecxz.  The file is 2-D (#1358).
+    * ``3`` — a 3-D bridge, or a 2-D one that passed an explicit or
+      orientation-derived vecxz before 47c49319 (``orientation=``) and
+      #1212 (``vecxz=``) refused it.  The width cannot tell those apart,
+      and it widens without dropping a coordinate, so the salvage lifts
+      the stamp to 3, as #1300 did.
+
+    Width ``0`` beside width ``3``, or beside a 3-D mesh stamp, is a
+    conflict; any other width was never written.  Both refuse.  The
+    result must not drop a coordinate: when the nodes use a column at
+    or past it, the reader refuses rather than truncate them.
     """
-    if "opensees" not in f:
-        return 0
-    if "transforms" not in f["opensees"]:
-        return 0
-    for tname in f["opensees/transforms"]:
-        g = f[f"opensees/transforms/{tname}"]
-        if "per_element_vecxz" in g:
-            shape = g["per_element_vecxz"].shape
-            if len(shape) >= 2 and shape[1] >= 3:
-                return 3
-            if len(shape) >= 2 and shape[1] == 2:
-                return 2
-    return 0
+    widths = _vecxz_widths(f)
+    unknown = widths - {0, 3}
+    if unknown:
+        raise MalformedH5Error(
+            f"/opensees/transforms: per_element_vecxz width(s) "
+            f"{sorted(unknown)}; a bridge writes 0 (2-D) or 3 (3-D)."
+        )
+    if 0 in widths:
+        if 3 in widths or stamp > 2:
+            raise MalformedH5Error(
+                "cannot salvage /meta/ndm from a file older than neutral "
+                f"{'.'.join(map(str, META_NDM_IS_SPATIAL_FROM))}: the "
+                f"evidence is in conflict (mesh-dimension stamp {stamp}, "
+                f"vecxz widths {sorted(widths)}); a 2-D geomTransf has no "
+                "vecxz, a 3-D one always has one."
+            )
+        ndm = 2
+    elif 3 in widths:
+        ndm = max(stamp, 3)
+    else:
+        ndm = stamp
+    _refuse_dropped_coords(ndm, coords, stamp, widths)
+    return ndm
+
+
+def _vecxz_widths(f: Any) -> "set[int]":
+    """The ``per_element_vecxz`` widths under ``/opensees/transforms``."""
+    if "opensees" not in f or "transforms" not in f["opensees"]:
+        return set()
+    widths: set[int] = set()
+    for tname, g in f["opensees/transforms"].items():
+        if "per_element_vecxz" not in g:
+            raise MalformedH5Error(
+                f"/opensees/transforms/{tname}: no per_element_vecxz; "
+                "every geomTransf the bridge writes carries one."
+            )
+        shape = g["per_element_vecxz"].shape
+        if len(shape) != 2:
+            raise MalformedH5Error(
+                f"/opensees/transforms/{tname}/per_element_vecxz has "
+                f"shape {shape}; the bridge writes (N, width)."
+            )
+        widths.add(int(shape[1]))
+    return widths
+
+
+#: Coordinates within this fraction of the model's extent of zero are
+#: float noise, not a dimension (a planar Gmsh model can carry ~1e-17).
+_DROPPED_COORD_RTOL: float = 1e-9
+
+
+def _refuse_dropped_coords(
+    ndm: int, coords: Any, stamp: int, widths: "set[int]",
+) -> None:
+    """Refuse a salvaged ``ndm`` that would truncate a non-zero coordinate."""
+    import numpy as np
+
+    xyz = np.asarray(coords, dtype=np.float64)
+    if xyz.ndim != 2 or xyz.shape[0] == 0 or ndm >= xyz.shape[1]:
+        return
+    scale = float(np.abs(xyz).max())
+    dropped = np.abs(xyz[:, ndm:]).max(axis=0)
+    used = [ndm + i for i, v in enumerate(dropped) if v > _DROPPED_COORD_RTOL * scale]
+    if used:
+        axes = ", ".join("xyz"[c] for c in used)
+        raise MalformedH5Error(
+            "cannot salvage /meta/ndm from a file older than neutral "
+            f"{'.'.join(map(str, META_NDM_IS_SPATIAL_FROM))}: the evidence "
+            f"(mesh-dimension stamp {stamp}, vecxz widths {sorted(widths)}) "
+            f"resolves ndm={ndm}, which would drop the non-zero {axes} "
+            "node coordinates. Refusing rather than guessing the dimension."
+        )
 
 
 def _recorder_group_order(name: str) -> "tuple[int, str]":

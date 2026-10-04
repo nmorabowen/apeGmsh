@@ -280,7 +280,9 @@ class NativeWriter:
                 # undeclared); the bridge's ops.model declaration lives
                 # on the source model.h5, so forward both (#1291).
                 if "ndm" in src_meta:
-                    dst_meta["ndm"] = int(read_spatial_ndm(src_meta, src))
+                    dst_meta["ndm"] = int(read_spatial_ndm(
+                        src_meta, src, coords=src["nodes/coords"],
+                    ))
                 if "ndf" in src_meta:
                     dst_meta["ndf"] = int(src_meta["ndf"])
                 if "model_name" in src_meta:

@@ -295,7 +295,9 @@ class OpenSeesModel:
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
-            ndm = h5_reader.read_spatial_ndm(meta, model.handle)
+            ndm = h5_reader.read_spatial_ndm(
+                meta, model.handle, coords=fem.nodes.coords,
+            )
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 
