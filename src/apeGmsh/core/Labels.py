@@ -1147,6 +1147,10 @@ class Labels(_HasLogging):
         pg_tag = gmsh.model.addPhysicalGroup(dim, [int(t) for t in tags])
         gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
         self._log(f"add({name!r}, dim={dim}, tags={tags}) -> pg_tag={pg_tag}")
+        # ADR 0112 D3: the label's creation is its declaration.  A merge
+        # into an existing label (above) keeps the creating record.
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "neutral", "labels", name)
         return pg_tag
 
     @staticmethod
