@@ -82,6 +82,10 @@ Public emitter methods outside the Protocol are side channels, listed
 per emitter in `verbs.py::SIDE_CHANNELS` (for example
 `H5Emitter.set_stage_records`).
 
+A stage-only verb (`scope == "stage"`) called outside a stage bracket
+**raises** (reconciliation §2, "smaller points"). Today it is a silent
+no-op in `H5Emitter`; K1-2 implements the raise.
+
 ### D3. Who calls `command()` (R1, Q7)
 
 Only a registered primitive's `_emit` with a literal verb, plus K2's
@@ -140,16 +144,31 @@ capture, `**kwargs` on `command()`, and a lossy escape.
 
 - K1-1 lands D1 and D2's lock (`tests/opensees/contract/test_verbs_lock.py`
   in `lock-tests`). It changes no emitted byte and no schema.
-- A 75th Protocol method, a missing row, a K0-5 stage verb that stops
-  archiving, a new ledger row, and an undeclared public emitter method
-  each fail `lock-tests`. The lock also checks the `h5` column against
-  the `H5Emitter` source: `refuse` rows raise `NotImplementedError` and
-  no other row does.
+- What the lock fails, exactly:
+  - a 75th Protocol method, or a name bound by assignment on the
+    Protocol;
+  - a missing row, or a row whose `returns` differs from the method's
+    annotation;
+  - a K0-5 stage verb whose **row** stops being `archive`;
+  - a new ledger row, or a raised `N_LEDGER`;
+  - a public emitter method or class attribute missing from
+    `SIDE_CHANNELS`;
+  - a `refuse` row whose `H5Emitter` method (or any `self._helper` it
+    reaches) does not raise `NotImplementedError`, or any other row
+    whose method does;
+  - an `archive` row whose `H5Emitter` method only discards its
+    arguments (every statement is `del`, `_ = …`, `pass`, or `return`
+    of a constant).
+
+  It reads the source, not behaviour: an archive body that still
+  stores, but stores the wrong thing or only part of it, passes the
+  lock. Those regressions are K2's round-trip oracle.
 - The stress-control trio (`addToParameter`, `step_hook_ramp`,
   `flip_element_stage`) is `archive` although the calls themselves
   write nothing: their information reaches the archive declaratively
   through the `set_initial_stress_records` / `set_stage_records` side
-  channels (ADR 0055).
+  channels (ADR 0055). The lock allow-lists exactly these three for the
+  empty-body check, and fails if one of them grows a body.
 - `constraints("LadrunoContact")` is skipped silently inside an
   `archive` row; that value-dependent skip is outside the row model and
   is K1-4's to ledger by a test.

@@ -11,11 +11,14 @@ apeGmsh package is imported. What it pins:
 (d) the ``ledger`` rows are exactly the ones listed in
     ``verbs_ledger.txt``, whose ``N_LEDGER`` may only go down;
 (e) each emitter defines every Protocol verb, and every other public
-    method it defines is in ``SIDE_CHANNELS``.
+    name (method or class attribute) it defines is in ``SIDE_CHANNELS``.
 
 It also checks the ``h5`` column against ``H5Emitter``'s source: a
-``refuse`` row's method raises ``NotImplementedError`` and no other
-row's method does.
+``refuse`` row's method raises ``NotImplementedError`` (directly or
+through any ``self._helper`` it reaches) and no other row's method
+does, and an ``archive`` row's method does more than discard its
+arguments. It reads source, not behaviour: an archive body that stores
+the wrong thing is K2's round-trip oracle.
 """
 from __future__ import annotations
 
@@ -83,6 +86,23 @@ def _methods(cls: ast.ClassDef) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
 
+def _assigned_names(cls: ast.ClassDef) -> set[str]:
+    """Names bound by class-level assignments (``x = property(...)``,
+    ``flag: bool = True``): public surface a ``def`` scan would miss."""
+    names: set[str] = set()
+    for node in cls.body:
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            for sub in ast.walk(target):
+                if isinstance(sub, ast.Name):
+                    names.add(sub.id)
+    return names
+
+
 def _read_ledger() -> tuple[int, frozenset[str]]:
     n_ledger: int | None = None
     names: list[str] = []
@@ -118,6 +138,11 @@ def test_verbs_module_imports_nothing_from_apegmsh() -> None:
 
 def test_a_protocol_method_count_is_frozen() -> None:
     assert len(PROTOCOL_NAMES) == len(set(PROTOCOL_NAMES))
+    bound = _assigned_names(_class_node("base", "Emitter"))
+    assert not bound, (
+        f"base.py::Emitter binds {sorted(bound)} by assignment; the "
+        "Protocol holds methods only, and its count is frozen"
+    )
     assert len(PROTOCOL_NAMES) == VERBS_MOD.EMITTER_METHOD_COUNT, (
         f"base.py::Emitter has {len(PROTOCOL_NAMES)} methods; ADR 0114 "
         f"freezes it at {VERBS_MOD.EMITTER_METHOD_COUNT}. A new verb goes "
@@ -175,37 +200,66 @@ def test_d_ledger_only_shrinks() -> None:
     )
 
 
-def _raises_not_implemented(
-    method: ast.FunctionDef | ast.AsyncFunctionDef,
-    helpers: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
-) -> bool:
-    """True when the body, or a ``self._helper(...)`` it calls, raises
-    ``NotImplementedError`` (the H5 emitter's deferral refusal)."""
-    def direct(fn: ast.AST) -> bool:
+_FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
+
+#: ``archive`` rows whose H5 call writes nothing: their information
+#: reaches the archive through the ``set_initial_stress_records`` /
+#: ``set_stage_records`` side channels (ADR 0055). Each must stay a
+#: trivial body; an entry that grows a real body is stale.
+_ARCHIVED_BY_SIDE_CHANNEL = frozenset(
+    {"addToParameter", "flip_element_stage", "step_hook_ramp"})
+
+
+def _raises_not_implemented(method: _FuncDef, helpers: dict[str, _FuncDef]) -> bool:
+    """True when the body, or any ``self._helper(...)`` it reaches
+    transitively, raises ``NotImplementedError`` (the H5 deferral refusal)."""
+    seen: set[str] = set()
+    stack: list[_FuncDef] = [method]
+    while stack:
+        fn = stack.pop()
         for node in ast.walk(fn):
             if isinstance(node, ast.Raise) and node.exc is not None:
                 exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
                 if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
                     return True
-        return False
-
-    if direct(method):
-        return True
-    for node in ast.walk(method):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "self"
-                and node.func.attr in helpers
-                and direct(helpers[node.func.attr])):
-            return True
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "self"
+                    and node.func.attr in helpers
+                    and node.func.attr not in seen):
+                seen.add(node.func.attr)
+                stack.append(helpers[node.func.attr])
     return False
+
+
+def _is_trivial(stmt: ast.stmt) -> bool:
+    """``del ...``, ``_ = ...``, ``pass``, ``return <const>`` or a bare
+    constant (a docstring or ``...``): a statement that stores nothing."""
+    if isinstance(stmt, (ast.Delete, ast.Pass)):
+        return True
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+        return True
+    if isinstance(stmt, ast.Return):
+        value = stmt.value
+        if value is None or isinstance(value, ast.Constant):
+            return True
+        return isinstance(value, (ast.List, ast.Dict, ast.Tuple)) and not (
+            value.elts if isinstance(value, (ast.List, ast.Tuple)) else value.keys)
+    if isinstance(stmt, ast.Assign):
+        return all(isinstance(t, ast.Name) and t.id == "_" for t in stmt.targets)
+    return False
+
+
+def _h5_methods() -> dict[str, _FuncDef]:
+    return {m.name: m for m in _methods(_class_node("h5", "H5Emitter"))}
 
 
 def test_h5_column_agrees_with_the_h5_emitter_source() -> None:
     """``refuse`` rows raise ``NotImplementedError`` in ``H5Emitter``;
     ``archive`` and ``ledger`` rows never do."""
-    methods = {m.name: m for m in _methods(_class_node("h5", "H5Emitter"))}
+    methods = _h5_methods()
     for verb, row in PROTOCOL_ROWS.items():
+        assert verb in methods, f"H5Emitter.{verb} is not a def; the lock cannot read it"
         raises = _raises_not_implemented(methods[verb], methods)
         if row.h5 == "refuse":
             assert raises, f"{verb} is 'refuse' but H5Emitter.{verb} never refuses"
@@ -213,17 +267,39 @@ def test_h5_column_agrees_with_the_h5_emitter_source() -> None:
             assert not raises, f"{verb} is {row.h5!r} but H5Emitter.{verb} refuses"
 
 
+def test_archive_rows_have_a_body_that_stores() -> None:
+    """An ``archive`` row's ``H5Emitter`` method does more than discard its
+    arguments. It catches a row flipped to ``archive`` over a no-op body
+    and an archive body emptied to ``del``; a body that still stores but
+    stores the wrong thing is K2's round-trip oracle, not this lock."""
+    methods = _h5_methods()
+    for verb, row in PROTOCOL_ROWS.items():
+        if row.h5 != "archive":
+            continue
+        trivial = all(_is_trivial(s) for s in methods[verb].body)
+        if verb in _ARCHIVED_BY_SIDE_CHANNEL:
+            assert trivial, (
+                f"H5Emitter.{verb} now has a body; drop it from "
+                "_ARCHIVED_BY_SIDE_CHANNEL"
+            )
+        else:
+            assert not trivial, (
+                f"{verb} is 'archive' but H5Emitter.{verb} only discards "
+                "its arguments; mark it 'ledger' or make it store"
+            )
+
+
 @pytest.mark.parametrize("stem", sorted(_EMITTERS))
 def test_e_emitters_define_protocol_and_declare_side_channels(stem: str) -> None:
     cls = _class_node(stem, _EMITTERS[stem])
-    defined = {m.name for m in _methods(cls)}
+    defined = {m.name for m in _methods(cls)} | _assigned_names(cls)
     missing = set(PROTOCOL_NAMES) - defined
     assert not missing, f"{_EMITTERS[stem]} lacks {sorted(missing)}"
     public_extra = {n for n in defined
                     if not n.startswith("_") and n not in PROTOCOL_NAMES}
     side = VERBS_MOD.SIDE_CHANNELS[stem]
     assert public_extra == side, (
-        f"{_EMITTERS[stem]}: undeclared public methods "
+        f"{_EMITTERS[stem]}: undeclared public names "
         f"{sorted(public_extra - side)}; stale SIDE_CHANNELS entries "
         f"{sorted(side - public_extra)}"
     )

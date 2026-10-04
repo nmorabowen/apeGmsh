@@ -281,14 +281,16 @@ VERBS: Final[Mapping[str, Verb]] = MappingProxyType(
 #: K1-2 raises it once, to 75, for ``command``, the last method.
 EMITTER_METHOD_COUNT: Final[int] = 74
 
-#: Public methods an emitter may define beyond the Protocol, per
-#: emitter module. They are emitter-specific side channels, not verbs.
+#: Public names an emitter may define beyond the Protocol, per emitter
+#: module: emitter-specific side channels, not verbs. The class-level
+#: capability flags (``model_reissue_purges``, ``supports_partitions``)
+#: are listed too; E2 ``TargetCaps`` absorbs them in K1-5.
 SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
     "tcl": frozenset({
         "lines", "line_count", "line_buffer", "write_to", "preamble",
         "stream_to", "stream_fragment_count", "stream_finish",
         "stream_abort", "eigen_feast_parallel", "eigen_parallel",
-        "partition_spans",
+        "partition_spans", "model_reissue_purges",
     }),
     "py": frozenset({"lines", "line_count", "line_buffer", "write_to"}),
     "live": frozenset({
@@ -296,7 +298,7 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "random_response", "ladruno_projection_tie_force",
         "ladruno_contact_force", "ladruno_contact_info",
         "ladruno_mortar_penetration", "ladruno_mortar_tie_residual",
-        "critical_time_step", "augment", "ops",
+        "critical_time_step", "augment", "ops", "supports_partitions",
     }),
     "h5": frozenset({
         "mark_mass_from_model", "add_oriented_elements", "write",
