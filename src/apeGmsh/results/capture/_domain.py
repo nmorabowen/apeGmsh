@@ -63,13 +63,14 @@ Usage
 
     # Live, bridge sources ndm/ndf (Phase 9 D8)
     from apeGmsh.results.capture import DomainCaptureSpec
+    import openseespy.opensees as osp   # raw module drives the steps
     spec = DomainCaptureSpec(opensees=ops)
     spec.nodes(components=["displacement"], pg="Top")
     with ops.domain_capture(spec, path="run.h5") as cap:
         cap.begin_stage("gravity", kind="static")
         for _ in range(n_grav):
-            ops.analyze(1, 1.0)
-            cap.step(t=ops.getTime())
+            osp.analyze(1, 1.0)   # raw openseespy, not the bridge
+            cap.step(t=osp.getTime())
         cap.end_stage()
         cap.capture_modes()
 
