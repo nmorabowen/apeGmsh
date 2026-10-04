@@ -484,19 +484,19 @@ Units: kN, m, s (stresses in kPa). x is horizontal, y is up, the ground is
 y = 0 and the footing centre is x = 0.
 
 Procedure:
-  1. Geometry: the block outline, with the footing edges and centre as points.
-  2. Groups, supports and loads: base fixed, sides on rollers; a self-weight
+  1. Data: geometry, clay, loading, mesh, solution and check tolerances.
+  2. Geometry: the block outline, with the footing edges and centre as points.
+  3. Groups, supports and loads: base fixed, sides on rollers; a self-weight
      case and a footing-pressure case (a line load on the footing strip).
-  3. Mesh: 6-node triangles, fine under the footing, coarser away from it.
-  4. OpenSees model: plane-strain triangles of J2 clay, recorders.
-  5. Analysis: one Newton chain shared by both stages.
-  6. Stage 1, geostatic: self-weight ramped on, then held.
-  7. Stage 2, footing: footing pressure ramped to 300 kPa.
-  8. Checks and report: base-reaction equilibrium, the early settlement slope
+  4. Mesh: 6-node triangles, fine under the footing, coarser away from it.
+  5. OpenSees model: plane-strain triangles of J2 clay, recorders.
+  6. Analysis: one Newton chain shared by both stages.
+  7. Stage 1, geostatic: self-weight ramped on, then held.
+  8. Stage 2, footing: footing pressure ramped to 300 kPa.
+  9. Checks and report: base-reaction equilibrium, the early settlement slope
      against the Flamant elastic estimate, and the settlement curve.
 """
 
-# --- Imports
 import math
 from pathlib import Path
 
@@ -505,7 +505,7 @@ import numpy as np
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 
-# --- Data
+# --- 1. Data
 OUT_DIR = Path(__file__).resolve().parent / "out_staged_footing"
 OUT_DIR.mkdir(exist_ok=True)
 
@@ -554,7 +554,7 @@ MM = 1.0e-3                # m per mm
 with apeGmsh(model_name="staged_footing") as g:
     geo = g.model.geometry
 
-    # --- 1. Geometry: outline points at z = 0 (a 2-D model), then the seven edges
+    # --- 2. Geometry: outline points at z = 0 (a 2-D model), then the seven edges
     geo.add_point(-HALF_SOIL, -SOIL_DEPTH, 0.0, label="base_left")
     geo.add_point(HALF_SOIL, -SOIL_DEPTH, 0.0, label="base_right")
     geo.add_point(HALF_SOIL, 0.0, 0.0, label="ground_right")
@@ -577,7 +577,7 @@ with apeGmsh(model_name="staged_footing") as g:
     ], label="soil_outline")
     geo.add_plane_surface("soil_outline", label="soil")
 
-    # --- 2. Groups, supports and loads
+    # --- 3. Groups, supports and loads
     g.physical.add_surface("soil", name="soil")
     g.physical.add_curve("base", name="base")
     g.physical.add_curve(["left_side", "right_side"], name="sides")
@@ -601,7 +601,7 @@ with apeGmsh(model_name="staged_footing") as g:
             direction=(0.0, -1.0, 0.0), reduction="consistent",
         )
 
-    # --- 3. Mesh: 6-node triangles graded from the footing outwards
+    # --- 4. Mesh: 6-node triangles graded from the footing outwards
     near_footing = g.mesh.field.distance(curves="footing")
     grading = g.mesh.field.threshold(
         near_footing, size_min=SIZE_FOOTING, size_max=SIZE_FAR,
@@ -613,7 +613,7 @@ with apeGmsh(model_name="staged_footing") as g:
     g.mesh.generation.set_order(2)
     fem = g.mesh.queries.get_fem_data(dim=2)
 
-# --- 4. OpenSees model
+# --- 5. OpenSees model
 ops = apeSees(fem)
 ops.model(ndm=2, ndf=2)
 clay = ops.nDMaterial.J2Plasticity(
@@ -630,7 +630,7 @@ reaction_file = OUT_DIR / "base_reaction_y.out"
 ops.recorder.Node(file=str(settlement_file), response="disp", pg="footing_centre", dofs=(2,))
 ops.recorder.Node(file=str(reaction_file), response="reaction", pg="base", dofs=(2,))
 
-# --- 5. Analysis: one Newton chain shared by both stages
+# --- 6. Analysis: one Newton chain shared by both stages
 # Newton follows the plastic tangent; RCM + UmfPack give a sparse direct solve.
 # API gap: no stage-level shared chain, so the chain is a dict passed to each stage.
 solver = dict(
@@ -642,18 +642,18 @@ solver = dict(
     analysis=ops.analysis.Static(),
 )
 # Each stage ramps its Linear series over pseudo-time 0 -> 1; at the stage end the
-# bridge holds the loads and resets time to 0 (API gap: this is undocumented).
+# bridge holds the loads and resets time to 0 (in the apeSees.stage docstring, not yet the skill).
 step_geostatic = 1.0 / N_STEPS_GEOSTATIC   # load-factor increment, stage 1
 step_footing = 1.0 / N_STEPS_FOOTING       # load-factor increment, stage 2
 
-# --- 6. Stage 1, geostatic: self-weight ramped on
+# --- 7. Stage 1, geostatic: self-weight ramped on
 with ops.stage(name="geostatic") as s:
     with s.pattern(series=ops.timeSeries.Linear()) as p:
         p.from_model("self_weight")
     s.analysis(integrator=ops.integrator.LoadControl(dlam=step_geostatic), **solver)
     s.run(n_increments=N_STEPS_GEOSTATIC, dt=step_geostatic)   # API gap: the step is stated twice
 
-# --- 7. Stage 2, footing: pressure ramped to FOOTING_PRESSURE, self-weight held
+# --- 8. Stage 2, footing: pressure ramped to FOOTING_PRESSURE, self-weight held
 with ops.stage(name="footing") as s:
     with s.pattern(series=ops.timeSeries.Linear()) as p:
         p.from_model("footing_pressure")
@@ -665,7 +665,7 @@ with ops.stage(name="footing") as s:
 deck_file = OUT_DIR / "staged_footing_deck.py"
 ops.py(str(deck_file), run=True, log=str(OUT_DIR / "run.log"), progress=False)
 
-# --- 8. Checks and report
+# --- 9. Checks and report
 uy_history = np.loadtxt(settlement_file)       # m, one row: footing-centre uy
 reaction_history = np.loadtxt(reaction_file)   # kN, one row: vertical reaction of each base node
 assert len(uy_history) == N_STEPS_GEOSTATIC + N_STEPS_FOOTING, "the run stopped early"
@@ -692,10 +692,10 @@ slope_fe = float(settlement[0] / pressure[0])   # m/kPa, over the first (elastic
 # over depth in plane strain (e.g. Poulos & Davis 1974; rigid base ignored).
 #   sigma_z = q/pi (alpha + sin alpha),  sigma_x = q/pi (alpha - sin alpha),
 #   alpha = 2 atan(b/z),  eps_z = [(1 - nu^2) sigma_z - nu (1 + nu) sigma_x] / E
-b = HALF_FOOTING
-H = SOIL_DEPTH
-integral_sin_alpha = b * math.log(1 + (H / b) ** 2)               # m
-integral_alpha = 2 * H * math.atan(b / H) + integral_sin_alpha    # m
+# b = HALF_FOOTING, H = SOIL_DEPTH in the source's notation.
+integral_sin_alpha = HALF_FOOTING * math.log(1 + (SOIL_DEPTH / HALF_FOOTING) ** 2)   # m
+integral_alpha = 2 * SOIL_DEPTH * math.atan(HALF_FOOTING / SOIL_DEPTH)           # m
+integral_alpha += integral_sin_alpha                                            # m
 strain_sum = (1 - NU_SOIL**2) * (integral_alpha + integral_sin_alpha)
 strain_sum -= NU_SOIL * (1 + NU_SOIL) * (integral_alpha - integral_sin_alpha)
 slope_hand = strain_sum / (math.pi * E_SOIL)   # m/kPa
