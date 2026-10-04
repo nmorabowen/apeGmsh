@@ -126,7 +126,7 @@ GEOMETRY_SCHEMA_VERSION: str = "1.0.0"
 
 #: Current version of the ``/provenance`` zone. Its writers (V2c, V2d)
 #: import this constant (``architecture/h5-schema.md``, "/provenance").
-PROVENANCE_SCHEMA_VERSION: str = "1.0.0"
+PROVENANCE_SCHEMA_VERSION: str = "1.1.0"  # V2d #1378: additive records/origin
 
 #: Floors of the two zones above (ADR 0113 (#1303)). A zone registered in
 #: ``_ZONE_KEY`` gets a floor equal to its first version.

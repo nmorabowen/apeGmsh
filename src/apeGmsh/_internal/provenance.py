@@ -98,12 +98,16 @@ class SiteRow(NamedTuple):
 
 class RecordRow(NamedTuple):
     """One declaration.  ``site`` and ``script`` are rows of ``sites``
-    (-1 when no such frame exists); ``seq`` is the 0-based capture order."""
+    (-1 when no such frame exists); ``seq`` is the 0-based capture order.
+    ``origin`` is ``"user"`` for a declaration the user made and
+    ``"synthesised"`` for an object apeGmsh created inside a verb the
+    user called (schema 1.1.0; a 1.0.0 file reads as ``"user"``)."""
 
     path: str
     site: int
     script: int
     seq: int
+    origin: str = "user"
 
 
 class SourceLocation(NamedTuple):
@@ -301,6 +305,42 @@ class ProvenanceStore:
         )
         return path
 
+    def capture_synthesised(self, zone: str, family: str,
+                            key: str) -> str | None:
+        """Record an object apeGmsh synthesised inside the current user
+        call, under its own key (maintainer ruling on #1378, finding 2).
+
+        ``key`` has the form ``<verb>:<owner>/<role>`` (``support:<stage>/hold``,
+        ``imposed_displacement:<name>``); it never uses the family's ``#k``
+        counter, so the user's unnamed declarations keep their numbers.
+        The record's site is the user's verb call, like any other
+        capture, but the one-record-per-call rule does not apply: every
+        synthesised object of the call gets its record, and none of them
+        claims the call's entry frame.  ``origin`` is ``"synthesised"``.
+        Returns the path, or ``None`` when it already has a record.
+        """
+        for part, what in ((zone, "zone"), (family, "family")):
+            if not part or "/" in part:
+                raise ValueError(
+                    f"provenance {what} must be a non-empty segment "
+                    f"without '/', got {part!r}")
+        if not key or ":" not in key:
+            raise ValueError(
+                "provenance synthesised key must read '<verb>:<owner>[/<role>]', "
+                f"got {key!r}")
+        path = f"{zone}/{family}/{key}"
+        if path in self._records:
+            return None
+        site, _entry, script = _capture_frames(sys._getframe(1))
+        self._records[path] = RecordRow(
+            path,
+            self._site_row(site) if site is not None else -1,
+            self._site_row(script) if script is not None else -1,
+            len(self._records),
+            "synthesised",
+        )
+        return path
+
     def snapshot(self) -> ProvenanceTable:
         """The tables as they stand, frozen."""
         return ProvenanceTable(
@@ -457,20 +497,24 @@ def encode_columns(table: ProvenanceTable,
             "site": [r.site for r in table.records],
             "script": [r.script for r in table.records],
             "seq": [r.seq for r in table.records],
+            "origin": [r.origin for r in table.records],
         },
     }
 
 
 def decode_columns(columns: dict[str, dict[str, list]],
                    base_dir: str) -> ProvenanceTable:
-    """Inverse of :func:`encode_columns`."""
+    """Inverse of :func:`encode_columns`.  A ``records`` table without
+    an ``origin`` column (schema 1.0.0) reads every record as
+    ``"user"``."""
     f, s, r = columns["files"], columns["sites"], columns["records"]
+    origin = r.get("origin") or ["user"] * len(r["path"])
     return ProvenanceTable(
         tuple(FileRow(_absolute(p, base_dir), h, k)
               for p, h, k in zip(f["path"], f["sha256"], f["kind"])),
         tuple(SiteRow(int(a), int(b), c)
               for a, b, c in zip(s["file"], s["line"], s["function"])),
-        tuple(RecordRow(p, int(a), int(b), int(c))
-              for p, a, b, c in zip(r["path"], r["site"], r["script"],
-                                    r["seq"])),
+        tuple(RecordRow(p, int(a), int(b), int(c), str(o))
+              for p, a, b, c, o in zip(r["path"], r["site"], r["script"],
+                                       r["seq"], origin)),
     )

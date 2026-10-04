@@ -8225,6 +8225,9 @@ class apeSees:
         # ``opensees/<kind>/<name|#k>``; ``h5()`` appends the table to
         # the snapshot's own ``/provenance``.  Never hashed.
         self._provenance = ProvenanceStore()
+        # Call ordinal of ``imposed_displacement``: the ``<name>`` of its
+        # synthesised records when the call gives no ``name=``.
+        self._imposed_displacement_calls = 0
         self._tags = TagAllocator()
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -8911,6 +8914,7 @@ class apeSees:
         uz: float | None = None,
         pattern_factor: float = 1.0,
         series: "TimeSeries | None" = None,
+        name: str | None = None,
     ) -> "Plain":
         """Imposed-displacement pattern helper (Phase SSI-3).
 
@@ -8947,6 +8951,16 @@ class apeSees:
             already registered with the bridge.  When supplied,
             ``pattern_factor`` is ignored — the user is in full
             control of the time-history shape.
+        name
+            Optional bridge-side alias for the pattern (as ``name=`` on
+            ``ops.pattern.Plain``).  It is also the ``<name>`` of the
+            call's provenance records,
+            ``opensees/pattern/imposed_displacement:<name>`` and, for the
+            auto-created series,
+            ``opensees/timeSeries/imposed_displacement:<name>``; without
+            it ``<name>`` is the call's 1-based ordinal on this bridge.
+            Both records carry ``origin = "synthesised"`` and point at
+            this call (ADR 0112 D3, #1378).
 
         Returns
         -------
@@ -9000,16 +9014,30 @@ class apeSees:
                         f"ops.model(..., ndf={dof_idx}) first."
                     )
 
+        from .pattern.pattern import Plain as _Plain
+        from .time_series.time_series import Linear as _Linear
+
+        # Provenance key of this call's synthesised objects
+        # (``<verb>:<name>``; see ``name`` above).
+        self._imposed_displacement_calls += 1
+        _key = (
+            f"imposed_displacement:"
+            f"{name if name is not None else self._imposed_displacement_calls}"
+        )
+
         # Default time series: Linear scaled by pattern_factor.
         # Folds STKO's ``-fact F`` semantics into the time-series
         # factor instead of an explicit ``-fact`` on the pattern
         # (apeGmsh's Plain pattern primitive doesn't carry one).
         if series is None:
-            series = self.timeSeries.Linear(factor=float(pattern_factor))
+            series = self._register(
+                _Linear(factor=float(pattern_factor)), synthesised=_key,
+            )
 
-        # Construct the Plain pattern via the namespace so it gets
-        # registered + tagged.
-        plain = self.pattern.Plain(series=series)
+        # Register + tag the Plain pattern directly (not through the
+        # namespace) so its provenance record carries the verb's key.
+        plain = self._register(_Plain(series=series), name=name,
+                               synthesised=_key)
         # Populate the sp records.  Plain's recording API accepts
         # either pg= or node=; we route based on the helper's input.
         dof_values: tuple[tuple[int, float | None], ...] = (
@@ -11941,7 +11969,10 @@ class apeSees:
 
     # -- Registration -----------------------------------------------------
 
-    def _register(self, prim: _P, *, name: str | None = None) -> _P:
+    def _register(
+        self, prim: _P, *, name: str | None = None,
+        synthesised: str | None = None,
+    ) -> _P:
         """Add ``prim`` to the bridge, allocate its tag, return it.
 
         When ``name`` is given, register it as a bridge-side alias for
@@ -11955,10 +11986,13 @@ class apeSees:
         provenance as ``opensees/<kind>/<name|#k>``, where ``<kind>``
         is the tag-allocator kind (the OpenSees command: ``element``,
         ``uniaxialMaterial``, ``pattern``, ...).  The helper keeps one
-        record per user call, so a primitive the bridge synthesises
-        inside a verb the user called (the HOLD series of
-        ``s.support``, the series and pattern of
-        ``imposed_displacement``) adds no record of its own.
+        record per user call.  A primitive the bridge synthesises inside
+        a verb the user called (the HOLD series and pattern of
+        ``s.support``, the series and pattern of ``imposed_displacement``)
+        is registered with ``synthesised=<verb>:<owner>[/<role>]`` and
+        gets a record under that key, pointing at the verb call, with
+        ``origin = "synthesised"`` and no ``#k`` number (maintainer
+        ruling on #1378).
         """
         kind = _kind_of(prim)
         self._tags.allocate_for(prim, kind)
@@ -11973,7 +12007,10 @@ class apeSees:
                     "handle directly)."
                 )
             self._names[name] = prim
-        self._provenance.capture("opensees", kind, name)
+        if synthesised is not None:
+            self._provenance.capture_synthesised("opensees", kind, synthesised)
+        else:
+            self._provenance.capture("opensees", kind, name)
         return prim
 
     def register(self, prim: _P) -> _P:
@@ -13371,13 +13408,23 @@ class _StageBuilder:
         # per stage), then claim the pattern so neither the global
         # post-element pattern pass nor the 7b stage-load-pattern pass
         # double-emits it — the dedicated HOLD block drives its emit.
+        # Registered directly (not through the namespaces) so each gets
+        # its own provenance record, keyed ``support:<stage>[/hold]``,
+        # pointing at this ``s.support`` call, ``origin = "synthesised"``
+        # (ADR 0112 D3, #1378).  The shared HOLD series is keyed by the
+        # stage whose first ``support`` created it.
         if self._support_pattern is None:
+            from .pattern.pattern import Plain as _Plain
+            from .time_series.time_series import Constant as _Constant
+
             if self._bridge._hold_series is None:
-                self._bridge._hold_series = self._bridge.timeSeries.Constant(
-                    factor=1.0,
+                self._bridge._hold_series = self._bridge._register(
+                    _Constant(factor=1.0),
+                    synthesised=f"support:{self._name}/hold",
                 )
-            self._support_pattern = self._bridge.pattern.Plain(
-                series=self._bridge._hold_series,
+            self._support_pattern = self._bridge._register(
+                _Plain(series=self._bridge._hold_series),
+                synthesised=f"support:{self._name}",
             )
             self._bridge._stage_claimed_pattern_ids.add(
                 id(self._support_pattern),

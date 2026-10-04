@@ -515,9 +515,13 @@ def write_fem_h5(
 _PROVENANCE_COLUMNS: dict[str, tuple[str, ...]] = {
     "files": ("path", "sha256", "kind"),
     "sites": ("file", "line", "function"),
-    "records": ("path", "site", "script", "seq"),
+    "records": ("path", "site", "script", "seq", "origin"),
 }
-_PROVENANCE_STR_COLUMNS = frozenset({"path", "sha256", "kind", "function"})
+_PROVENANCE_STR_COLUMNS = frozenset(
+    {"path", "sha256", "kind", "function", "origin"})
+#: Columns a 1.0.0 file lacks; the reader fills them (``origin`` reads as
+#: ``"user"``, ``decode_columns``) instead of refusing the file.
+_PROVENANCE_OPTIONAL_COLUMNS = frozenset({"origin"})
 
 
 def _encode_provenance(
@@ -587,6 +591,8 @@ def _read_provenance(parent: Any, label: str) -> Any:
         cols: dict[str, list] = {}
         for name in names:
             if table not in grp or name not in grp[table]:
+                if name in _PROVENANCE_OPTIONAL_COLUMNS and table in grp:
+                    continue  # a 1.0.0 file: decode_columns defaults it
                 raise MalformedH5Error(
                     f"{label}: /provenance/{table}/{name} is missing")
             raw = grp[table][name][()].tolist()

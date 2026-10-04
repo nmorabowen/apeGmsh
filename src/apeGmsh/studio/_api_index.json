@@ -3110,7 +3110,7 @@
     },
     "ops.imposed_displacement": {
       "doc": "Imposed-displacement pattern helper (Phase SSI-3).",
-      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None) -> \"'Plain'\"",
+      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None, name: 'str | None' = None) -> \"'Plain'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.imposed_displacement"
     },

@@ -283,11 +283,193 @@ def test_one_record_per_user_call_and_unnamed_order_keys(fem):
     paths = [r.path for r in ops._provenance.snapshot().records]
     assert paths == ["opensees/timeSeries/#1", "opensees/timeSeries/ramp",
                      "opensees/pattern/#1"]
-    # imposed_displacement synthesises a series and a pattern: one user
-    # call, one record, none for the synthesised partner.
-    before = len(ops._provenance)
+
+
+# ---------------------------------------------------------------------------
+# Synthesised objects (maintainer ruling on #1378, finding 2)
+# ---------------------------------------------------------------------------
+
+
+def _lineno() -> int:
+    """The caller's line number."""
+    import inspect
+
+    frame = inspect.currentframe()
+    assert frame is not None and frame.f_back is not None
+    return frame.f_back.f_lineno
+
+
+def _chain(ops):
+    return {
+        "test": ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+        "algorithm": ops.algorithm.Newton(),
+        "integrator": ops.integrator.LoadControl(dlam=0.1),
+        "constraints": ops.constraints.Plain(),
+        "numberer": ops.numberer.RCM(),
+        "system": ops.system.UmfPack(),
+        "analysis": ops.analysis.Static(),
+    }
+
+
+def test_support_synthesises_hold_series_and_pattern_under_own_keys(fem):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    with ops.stage(name="s1") as s:
+        here = _lineno()
+        s.support(pg="B", dofs=(1, 1, 1))  # the verb call: site of both
+        s.support(pg="B", dofs=(1, 0, 0))  # same stage: nothing new
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    with ops.stage(name="s2") as s:
+        s.support(pg="B", dofs=(0, 0, 1))  # new stage pattern, shared HOLD
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    ramp = ops.timeSeries.Linear()  # the user's first unnamed series
+    assert ops.tag_for(ramp) is not None
+    table = ops._provenance.snapshot()
+    by_path = {r.path: r for r in table.records}
+    hold = by_path["opensees/timeSeries/support:s1/hold"]
+    pat1 = by_path["opensees/pattern/support:s1"]
+    pat2 = by_path["opensees/pattern/support:s2"]
+    assert hold.origin == pat1.origin == pat2.origin == "synthesised"
+    site = table.location(hold.site)
+    assert (site.line, site.function) == (
+        here + 1, "test_support_synthesises_hold_series_and_pattern_under_own_keys")
+    assert table.location(pat1.site).line == here + 1
+    assert "opensees/timeSeries/support:s2/hold" not in by_path
+    # The synthesised objects never took a ``#k``: the user's series is #1.
+    assert by_path["opensees/timeSeries/#1"].origin == "user"
+    assert not any(p.startswith("opensees/pattern/#") for p in by_path)
+
+
+def test_imposed_displacement_synthesises_series_and_pattern(fem):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    here = _lineno()
     ops.imposed_displacement(nodes=[1], ux=0.01)
-    assert len(ops._provenance) == before + 1
+    named = ops.imposed_displacement(nodes=[2], uy=0.01, name="push")
+    ts = ops.timeSeries.Linear()  # the user's first unnamed series
+    ops.imposed_displacement(nodes=[3], uz=0.01, series=ts)
+    table = ops._provenance.snapshot()
+    by_path = {r.path: r for r in table.records}
+    assert [p for p in by_path if "imposed_displacement" in p] == [
+        "opensees/timeSeries/imposed_displacement:1",
+        "opensees/pattern/imposed_displacement:1",
+        "opensees/timeSeries/imposed_displacement:push",
+        "opensees/pattern/imposed_displacement:push",
+        "opensees/pattern/imposed_displacement:3",
+    ]
+    assert {by_path[p].origin for p in by_path if "imposed" in p} == {
+        "synthesised"}
+    assert table.location(
+        by_path["opensees/timeSeries/imposed_displacement:1"].site).line == here + 1
+    assert table.location(
+        by_path["opensees/pattern/imposed_displacement:push"].site).line == here + 2
+    assert by_path["opensees/timeSeries/#1"].origin == "user"
+    assert ops._resolve("push") is named
+
+
+def test_origin_column_round_trips_and_a_1_0_file_reads_as_user(fem, tmp_path):
+    from tests.fixtures.schema import PROVENANCE_PRIOR_MINOR
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, name="conc")
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    ops.imposed_displacement(pg="B", ux=0.001, name="push")
+    out = tmp_path / "origin.h5"
+    ops.h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert f["meta"].attrs[PROVENANCE_KEY] == PROVENANCE_CURRENT
+        origins = [o.decode() for o in f["provenance/records/origin"][()]]
+        paths = [p.decode() for p in f["provenance/records/path"][()]]
+    by_path = dict(zip(paths, origins))
+    assert by_path["opensees/nDMaterial/conc"] == "user"
+    assert by_path["opensees/pattern/imposed_displacement:push"] == "synthesised"
+    back = FEMData.from_h5(str(out)).provenance
+    assert back is not None
+    assert {r.path: r.origin for r in back.records} == by_path
+    # A 1.0.0 file has no origin column: every record reads as "user".
+    old = tmp_path / "old.h5"
+    shutil.copyfile(out, old)
+    with h5py.File(old, "a") as f:
+        del f["provenance/records/origin"]
+        f["meta"].attrs[PROVENANCE_KEY] = PROVENANCE_PRIOR_MINOR
+    older = FEMData.from_h5(str(old)).provenance
+    assert older is not None
+    assert {r.origin for r in older.records} == {"user"}
+    assert [r.path for r in older.records] == [r.path for r in back.records]
+
+
+# ---------------------------------------------------------------------------
+# A reloaded snapshot through a second bridge (the "analyse" script)
+# ---------------------------------------------------------------------------
+
+
+def test_reloaded_snapshot_then_h5_redeclaring_the_same_names(oracle, tmp_path):
+    """FEMData.from_h5 -> apeSees -> h5 with the same names raised at
+    cfaaaf80 (the snapshot carried the source's opensees/ records)."""
+    script, out, _ = oracle
+    fem = FEMData.from_h5(str(out))
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01, name="steel")
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    ops.mass_from_model()
+    again = tmp_path / "again.h5"
+    ops.h5(str(again))
+    table = FEMData.from_h5(str(again)).provenance
+    assert table is not None
+    paths = [r.path for r in table.records]
+    assert len(paths) == len(set(paths))
+    assert paths[-3:] == list(BRIDGE_PATHS)
+    # The records are this bridge's: their site is this test, not the script.
+    site = table.location(table.record("opensees/uniaxialMaterial/steel").site)
+    assert site.path.endswith("test_bridge_provenance.py")
+    assert site.function == "test_reloaded_snapshot_then_h5_redeclaring_the_same_names"
+    assert script.as_posix() not in {table.location(r.site).path
+                                     for r in table.records
+                                     if r.path.startswith("opensees/")}
+
+
+def test_reloaded_snapshot_then_h5_with_other_declarations_keeps_no_stale_record(
+        oracle, tmp_path):
+    _, out, _ = oracle
+    source = FEMData.from_h5(str(out)).provenance
+    assert source is not None
+    session_paths = [r.path for r in source.records
+                     if not r.path.startswith("opensees/")]
+    fem = FEMData.from_h5(str(out))
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, name="conc2")
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    ops.mass_from_model()
+    again = tmp_path / "other.h5"
+    ops.h5(str(again))
+    table = FEMData.from_h5(str(again)).provenance
+    assert table is not None
+    paths = [r.path for r in table.records]
+    assert paths == session_paths + ["opensees/nDMaterial/conc2",
+                                     "opensees/element/#1"]
+    # The source's steel and its unnamed nDMaterial are gone; the element
+    # key is this bridge's own #1, not the source's (its site is here).
+    assert "opensees/uniaxialMaterial/steel" not in paths
+    assert "opensees/nDMaterial/#1" not in paths
+    assert table.location(table.record("opensees/element/#1").site).path.endswith(
+        "test_bridge_provenance.py")
+    assert [r.seq for r in table.records] == list(range(len(paths)))
+    # The session's own records are untouched: same sites, same lines.
+    for p in session_paths:
+        assert table.location(table.record(p).site) == source.location(
+            source.record(p).site)
+    # The dropped records' file row went with them: the script is still
+    # referenced by the session records, so it stays; nothing dangles.
+    referenced = {s.file for s in table.sites} | set()
+    assert referenced == set(range(len(table.files)))
+    used_sites = {r.site for r in table.records} | {r.script for r in table.records}
+    assert used_sites - {-1} == set(range(len(table.sites)))
 
 
 def test_register_of_a_standalone_primitive_records_it(fem):
@@ -356,6 +538,32 @@ def test_merge_dedupes_files_and_sites_and_continues_seq():
         RecordRow("neutral/labels/x", 0, 0, 0),
         RecordRow("opensees/element/#1", 1, 0, 1),
         RecordRow("opensees/element/#2", -1, -1, 2))
+
+
+def test_drop_zone_compacts_files_sites_and_seq():
+    from apeGmsh.opensees._internal.compose import _drop_zone
+
+    t = ProvenanceTable(
+        files=(_F, _G),
+        sites=(SiteRow(0, 3, "<module>"), SiteRow(1, 7, "helper")),
+        records=(RecordRow("opensees/element/#1", 1, 0, 0),
+                 RecordRow("neutral/labels/x", 0, 0, 1),
+                 RecordRow("opensees/pattern/support:s1", 1, -1, 2,
+                           "synthesised")))
+    dropped = _drop_zone(t, "opensees")
+    assert dropped == ProvenanceTable(
+        files=(_F,), sites=(SiteRow(0, 3, "<module>"),),
+        records=(RecordRow("neutral/labels/x", 0, 0, 0),))
+    assert _drop_zone(dropped, "opensees") is dropped
+
+
+def test_merge_carries_origin():
+    base = ProvenanceTable(records=(RecordRow("neutral/labels/x", -1, -1, 0),))
+    extra = ProvenanceTable(records=(
+        RecordRow("opensees/pattern/support:s1", -1, -1, 0, "synthesised"),))
+    merged = _merge_provenance(base, extra)
+    assert merged is not None
+    assert [r.origin for r in merged.records] == ["user", "synthesised"]
 
 
 def test_merge_passes_through_when_one_side_is_missing():

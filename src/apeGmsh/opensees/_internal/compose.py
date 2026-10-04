@@ -164,10 +164,18 @@ def _compose_model_h5(
     # the stub fallback below writes none.
     from ...mesh.FEMData import FEMData
 
-    prov_table = (
-        _merge_provenance(fem.provenance, provenance)
-        if isinstance(fem, FEMData) else None
-    )
+    prov_table = None
+    if isinstance(fem, FEMData):
+        base = fem.provenance
+        if provenance is not None and base is not None:
+            # The bridge owns the ``opensees/`` zone: a snapshot loaded
+            # from a bridge-written file carries that file's bridge
+            # records, which this bridge declares afresh (the "script 2,
+            # analyse" flow, FEMData.from_h5 -> apeSees -> h5).  Keeping
+            # them would collide on a repeated name or leave a stale
+            # record for a declaration this bridge did not make.
+            base = _drop_zone(base, "opensees")
+        prov_table = _merge_provenance(base, provenance)
     prov_base_dir = base_dir_for(path)
     prov_columns = (
         encode_columns(prov_table, prov_base_dir)
@@ -307,8 +315,29 @@ def _merge_provenance(
                 "stores must not share a zone")
         paths.add(r.path)
         records.append(RecordRow(
-            r.path, site_row(r.site), site_row(r.script), offset + r.seq))
+            r.path, site_row(r.site), site_row(r.script), offset + r.seq,
+            r.origin))
     return ProvenanceTable(tuple(files), tuple(sites), tuple(records))
+
+
+def _drop_zone(table: "ProvenanceTable", zone: str) -> "ProvenanceTable":
+    """``table`` without the records of ``zone``, compacted: ``seq``
+    renumbered from 0 in the surviving order and the ``files`` / ``sites``
+    rows nothing references any more dropped."""
+    from ..._internal.provenance import ProvenanceTable, RecordRow
+
+    kept = [r for r in table.records if not r.path.startswith(f"{zone}/")]
+    if len(kept) == len(table.records):
+        return table
+    renumbered = ProvenanceTable(
+        table.files, table.sites,
+        tuple(RecordRow(r.path, r.site, r.script, i, r.origin)
+              for i, r in enumerate(kept)))
+    # Merging onto an empty table re-indexes files and sites through the
+    # dedupe path, so only the rows the kept records reach survive.
+    merged = _merge_provenance(ProvenanceTable(), renumbered)
+    assert merged is not None
+    return merged
 
 
 def _try_write_broker_zone(
