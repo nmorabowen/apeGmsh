@@ -17,6 +17,16 @@ import numpy as np
 
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
+from apeGmsh.opensees.emitter.h5_reader import META_NDM_IS_SPATIAL_FROM
+
+#: The last neutral minor before #1291's ``/meta/ndm`` fix: one below the
+#: salvage shim's own ``META_NDM_IS_SPATIAL_FROM``. The ndm salvage tests
+#: restamp a current file with it; ``NEUTRAL_PRIOR_MINOR`` cannot serve,
+#: because it became 2.34.0 itself at the 2.35.0 bump (#1338) and moves
+#: again at every later one.
+PRE_NDM_FIX_STAMP = "{}.{}.0".format(
+    META_NDM_IS_SPATIAL_FROM[0], META_NDM_IS_SPATIAL_FROM[1] - 1,
+)
 from apeGmsh.mesh.FEMData import (
     ElementComposite,
     FEMData,

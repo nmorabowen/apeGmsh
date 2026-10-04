@@ -15,12 +15,9 @@ from pathlib import Path
 import h5py
 import pytest
 
-from tests.fixtures.schema import (
-    NEUTRAL_CURRENT,
-    NEUTRAL_PRIOR_MINOR,
-    OPENSEES_CURRENT,
-)
+from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
 from tests.opensees.h5._opensees_model_fixtures import (
+    PRE_NDM_FIX_STAMP,
     build_simple_frame_fem,
     build_simple_frame_h5,
 )
@@ -112,7 +109,7 @@ def test_opensees_model_from_h5_salvages_a_pre_fix_stamp(
     out = _write_frame(tmp_path, ndm=3, ndf=6)
     with h5py.File(out, "r+") as f:
         f["meta"].attrs["ndm"] = 1
-        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = PRE_NDM_FIX_STAMP
     assert OpenSeesModel.from_h5(out).ndm == 3
 
 
@@ -172,7 +169,7 @@ def test_inv9_composed_results_do_not_launder_a_pre_fix_sidecar_stamp(
     raw_stamp = 1
     with h5py.File(src, "r+") as f:
         f["meta"].attrs["ndm"] = raw_stamp
-        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = PRE_NDM_FIX_STAMP
     # The oracle: what the source's own reader resolves under the
     # source's own stamp (the shim lifts the mesh dimension to 3).
     salvaged = OpenSeesModel.from_h5(src).ndm
