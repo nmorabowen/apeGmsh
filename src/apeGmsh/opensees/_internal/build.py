@@ -67,6 +67,7 @@ from ..element.beam_column import (
 from ..pattern.pattern import Plain, _LoadRecord, _SPRecord
 from ..recorder import RecorderDeclaration, RecorderRecord
 from ..transform import Corotational, Linear, PDelta
+from .stage_window import warn_stage_series_outside_window
 from .tag_allocator import TagAllocator
 from .tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
@@ -1636,6 +1637,12 @@ class StageRecord:
     # started).  Default ``()`` keeps existing construction sites
     # working unmodified.
     update_parameter_records: tuple["UpdateParameterRecord", ...] = ()
+
+    def __post_init__(self) -> None:
+        # #1334: a stage pattern whose Path series is zero at every
+        # increment of the stage applies no load; warn when the stage
+        # closes, before any route emits or runs it.
+        warn_stage_series_outside_window(self)
 
 
 @dataclass(frozen=True, slots=True)

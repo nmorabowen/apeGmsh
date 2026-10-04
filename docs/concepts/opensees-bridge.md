@@ -137,8 +137,12 @@ with ops.stage(name="push") as s:
     s.run(n_increments=10, dt=0.1)
 ```
 
-Loads from a finished stage are frozen (`loadConst`) before the next begins,
-stages can bring element groups online with `s.activate(pgs=[...])`, and an
+Loads from a finished stage are frozen (`loadConst -time 0.0`) before the next
+begins, and the pseudo-time restarts at 0. A stage's series is read on that
+clock, so a load history that continues from an earlier stage needs
+`s.set_time(t)`; a `Path` series that would read 0 at every increment of the
+stage raises `SeriesOutsideStageWindowWarning` when the stage closes. Stages
+can bring element groups online with `s.activate(pgs=[...])`, and an
 MP constraint whose nodes only exist from a later stage onward is claimed by
 name inside that stage (`s.tie(name=...)`) instead of emitting globally. A
 model is either staged or not — a global pattern alongside stage blocks
