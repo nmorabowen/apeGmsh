@@ -25,6 +25,7 @@ import { fileFromArgv } from "./pairing.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
+import { openGeometry, openProvenance } from "./zones.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -62,8 +63,7 @@ let win: BrowserWindow | null = null;
 const subscribed = new Set<string>();
 
 function fail(message: string): void {
-  process.stderr.write(`apeGmshViewer: ${message}
-`);
+  process.stderr.write(`apeGmshViewer: ${message}\n`);
   if (mode === "view") void app.whenReady().then(() => dialog.showErrorBox("apeGmshViewer", message));
 }
 
@@ -80,8 +80,7 @@ const session = new OpenSession({
   watch: (opened, sink) => new SetWatcher(opened, sink).start(),
   deliver,
   fail,
-  note: (message) => process.stderr.write(`apeGmshViewer: ${message}
-`),
+  note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
 });
 const openPath = (path: string, notify: boolean) => session.open(path, notify);
 
@@ -116,11 +115,20 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   // A model the renderer opened on its own (a drop on the P0 page): the open
   // set follows what is on screen (./session.ts).
   if (mode === "view" && typeof path === "string") session.rendererOpened(path);
+  let model;
   try {
-    return { ok: true, model: await openModel(path) };
+    model = await openModel(path);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // /provenance rides with the model; a refused or broken zone does not stop
+  // the model from loading (the renderer shows why go-to-source is off).
+  return { ok: true, model, provenance: await openProvenance(path) };
+});
+
+ipcMain.handle("geometry:open", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
+  return openGeometry(path);
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {

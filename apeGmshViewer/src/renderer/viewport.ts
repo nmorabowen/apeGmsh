@@ -14,8 +14,9 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
+import { geometryPairing } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { DeclPath, MeshInfo, Pick } from "../state/types.ts";
+import type { DeclPath, GeometryInfo, MeshInfo, Pick } from "../state/types.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
 import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
@@ -54,6 +55,9 @@ export class Viewport {
   private readonly blobs: BlobStore;
   private readonly content = new THREE.Group();
   private readonly highlight = new THREE.Group();
+  /** V2f: the /geometry sibling (curves, faint surfaces, points), drawn on the geometry phase or alone. */
+  private readonly geometryLayer = new THREE.Group();
+  private geometryInfo: GeometryInfo | null = null;
   private lines: LineSegments2 | null = null;
   private faces: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
@@ -84,7 +88,7 @@ export class Viewport {
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(0.5, 0.8, 1);
     this.camera.add(key);
-    this.scene.add(this.content, this.highlight);
+    this.scene.add(this.content, this.highlight, this.geometryLayer);
 
     this.raycaster.params.Line2 = { threshold: 7 };
     this.nav = new Navigator({
@@ -92,7 +96,7 @@ export class Viewport {
       element: this.renderer.domElement,
       keys: window,
       bounds: () => {
-        const m = this.store.get().mesh;
+        const m = this.store.get().mesh ?? this.geometryInfo;
         return m ? { center: new THREE.Vector3(...m.center), radius: m.radius } : null;
       },
       hitAt: (x, y) => this.pointAt(x, y),
@@ -105,8 +109,10 @@ export class Viewport {
         this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
       },
       fit: () => {
-        const m = this.store.get().mesh;
-        if (m) this.frame(m, this.nav.heading);
+        const s = this.store.get();
+        // On the geometry phase (or with no mesh), F fits the geometry.
+        if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, this.nav.heading);
+        else if (s.mesh) this.frame(s.mesh, this.nav.heading);
       },
       changed: () => this.requestRender(),
     });
@@ -124,11 +130,13 @@ export class Viewport {
     this.nav.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
+    this.clear(this.geometryLayer);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
 
   private onState(s: State, prev: State | null): void {
+    this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
       this.setMesh(s.mesh);
       this.applyVisibility(s);
@@ -137,6 +145,55 @@ export class Viewport {
     }
     if (s.visibility !== prev.visibility) this.applyVisibility(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
+  }
+
+  /**
+   * The geometry layer (V2f): rebuilt when the geometry changes; shown when
+   * it may be drawn (it pairs with the model, or there is no model) and the
+   * phase is geometry or there is no mesh. The mesh and its selection are
+   * hidden on the geometry phase.
+   */
+  private onGeometry(s: State, prev: State | null): void {
+    if (!prev || s.geometry !== prev.geometry) this.setGeometry(s.geometry);
+    const onGeometry = s.phase.at?.kind === "geometry";
+    const show = this.geometryInfo !== null && geometryPairing(s).draw && (onGeometry || !s.mesh);
+    const wasShown = this.geometryLayer.visible && this.geometryLayer.children.length > 0;
+    this.geometryLayer.visible = show;
+    this.content.visible = !onGeometry;
+    this.highlight.visible = !onGeometry;
+    // A geometry opened alone is framed when it first shows.
+    if (show && !wasShown && !s.mesh && this.geometryInfo) this.frameGeometry(this.geometryInfo);
+    if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) this.requestRender();
+  }
+
+  private setGeometry(g: GeometryInfo | null): void {
+    this.clear(this.geometryLayer);
+    this.geometryLayer.visible = false;
+    this.geometryInfo = g;
+    if (!g) return;
+    const curves = this.blobs.f32(g.curvePositions);
+    if (curves.length) {
+      const cg = new THREE.BufferGeometry();
+      cg.setAttribute("position", new THREE.BufferAttribute(curves, 3));
+      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0xd8dde6 })));
+    }
+    const tris = this.blobs.f32(g.surfacePositions);
+    if (tris.length) {
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute("position", new THREE.BufferAttribute(tris, 3));
+      sg.computeVertexNormals();
+      const m = new THREE.MeshStandardMaterial({
+        color: 0x7d8796, side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+      });
+      this.geometryLayer.add(new THREE.Mesh(sg, m));
+    }
+    const pts = this.blobs.f32(g.pointPositions);
+    if (pts.length) {
+      const pg = new THREE.BufferGeometry();
+      pg.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: 5, sizeAttenuation: false })));
+    }
   }
 
   /** Width kept clear for the inspector: the model is framed left of it. */
@@ -329,11 +386,20 @@ export class Viewport {
    * distance and the target change.
    */
   frame(info: MeshInfo, heading: Heading | null = null): void {
-    const c = new THREE.Vector3(...info.center);
-    const r = info.radius;
+    const tri = this.blobs.f32(info.triPositions);
+    this.fit(info.center, info.radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
+  }
+
+  /** Fit the camera to the geometry sibling, the same way (V2f). */
+  frameGeometry(g: GeometryInfo, heading: Heading | null = null): void {
+    const tri = this.blobs.f32(g.surfacePositions);
+    this.fit(g.center, g.radius, tri.length ? tri : this.blobs.f32(g.curvePositions), heading);
+  }
+
+  /** Fit a bounding sphere; with no heading, plan view when `pos` is planar, else isometric. */
+  private fit(center: readonly [number, number, number], r: number, pos: Float32Array, heading: Heading | null): void {
+    const c = new THREE.Vector3(...center);
     if (!heading) {
-      const tri = this.blobs.f32(info.triPositions);
-      const pos = tri.length ? tri : this.blobs.f32(info.linePositions);
       let z0 = Infinity, z1 = -Infinity;
       for (let i = 2; i < pos.length; i += 3) {
         z0 = Math.min(z0, pos[i]!);

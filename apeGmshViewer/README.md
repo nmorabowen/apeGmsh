@@ -71,7 +71,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `src/chain/` | `resolve.ts` builds the definition chain; `signatures.ts` is the only table of OpenSees syntax the app uses |
 | `src/mesh/build.ts` | flat render buffers coloured by physical group (pure, tested in Node) |
 | `src/state/store.ts` | the single state store and its reducer (ADR 0112 D6) |
-| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set) and `source.ts` (go to source) |
+| `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set), `source.ts` (go to source) and `zones.ts` (reads `/geometry` and `/provenance` for the renderer) |
 | `src/renderer/` | the three.js viewport, the panels and the page; `navigation.ts` is the Z-up turntable camera, and `bindings.ts` is the only table of mouse and key bindings (left-click selects, right-drag orbits about the point under the cursor, middle-drag or shift + right-drag pans, the wheel zooms to the cursor, `F` fits) |
 | `scripts/` | `build.mjs` (esbuild bundles) and `launch.mjs` (starts Electron in a mode) |
 | `fixtures/` | a small committed `model.h5` with beams; its README names the command that made it |
@@ -87,8 +87,11 @@ through Node's type stripping; nothing is compiled for the tests).
   for the types it knows. Any other type is reported as unresolved by name.
 - Section → material links are read directly: a Fiber section's patches,
   fibers and layers name their material by HDF5 path (`material_ref`).
-- A schema version outside the reader window (ADR 0023) is shown as a warning
-  banner; a different major version, or a neutral layout before 2.10, is refused.
+- Schema versions follow ADR 0113, with one floor per zone (`ZONE_FLOOR` in
+  `src/reader/read.ts`: neutral 2.10, opensees 2.11, geometry 1.0, provenance
+  1.0). A file from the floor to the app's version opens with no banner. A
+  newer minor of the same major opens with one banner. A file below the floor,
+  or of another major, is refused with a sentence naming the floor.
 - Colour: each element takes the colour of the smallest element-side physical
   group that contains it. Elements in no group are grey; OpenSees elements with
   no mesh cell (embedded rebar trusses) are drawn from their inline

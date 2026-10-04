@@ -52,12 +52,53 @@ export interface H5File extends H5Group {
 /** The schema versions this reader was written against (ADR 0023). */
 export const NEUTRAL_TARGET = { major: 2, minor: 33 } as const;
 export const OPENSEES_TARGET = { major: 2, minor: 21 } as const;
+/** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
+export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
+export const PROVENANCE_TARGET = { major: 1, minor: 0 } as const;
 /**
- * The lowest minor of each zone this reader opens (#1303: one floor table,
- * the only place the version check reads). Physical groups and labels are
- * side-partitioned from neutral 2.10.
+ * The lowest minor of each zone this reader opens, under the zone's target
+ * major (ADR 0113 D1/D7: one floor table, the only place the version check
+ * reads; it equals the Python writer constants). Neutral 2.10 is the B2 layout
+ * split (physical groups and labels side-partitioned); opensees 2.11 is the
+ * 0-based rank flip; the ADR 0112 zones start at their first version.
+ * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 11, geometry: 0, provenance: 0 } as const;
+
+/**
+ * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:
+ * - another major: refused;
+ * - same major, below the floor: refused, naming the floor;
+ * - same major, floor to target: opens, no banner;
+ * - same major, newer than the target: opens with one banner (warning)
+ *   naming the file's stamp and the app's target (an app-only deviation
+ *   from INV-4: the app reads, and new data goes in new zones).
+ * The refusal is `<key> <stamp>: <reason>`, the shape effects.parseRefusal reads.
+ */
+export function checkZoneVersion(
+  raw: Param | Param[] | undefined,
+  key: string,
+  target: { major: number; minor: number },
+  floor: number,
+  warnings: string[],
+): string {
+  if (typeof raw !== "string") throw new SchemaError(`/meta has no string attribute ${key}`);
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(raw);
+  if (!m) throw new SchemaError(`/meta/${key} = ${JSON.stringify(raw)} is not X.Y.Z`);
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  if (major !== target.major) throw new SchemaError(`${key} ${raw}: this app reads major ${target.major} only`);
+  if (minor < floor) {
+    throw new SchemaError(`${key} ${raw}: layouts before ${target.major}.${floor} are not supported`);
+  }
+  if (minor > target.minor) {
+    warnings.push(
+      `${key} ${raw} is newer than this app (${target.major}.${target.minor}.x): ` +
+        `the file opens, and what that apeGmsh added is not shown`,
+    );
+  }
+  return raw;
+}
 
 export class SchemaError extends Error {}
 
@@ -154,34 +195,9 @@ class Reader {
     meta: Record<string, Param | Param[]>,
     key: string,
     target: { major: number; minor: number },
-    minMinor: number,
+    floor: number,
   ): string {
-    const raw = meta[key];
-    if (typeof raw !== "string") {
-      throw new SchemaError(`/meta has no string attribute ${key}`);
-    }
-    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(raw);
-    if (!m) throw new SchemaError(`/meta/${key} = ${JSON.stringify(raw)} is not X.Y.Z`);
-    const major = Number(m[1]);
-    const minor = Number(m[2]);
-    if (major !== target.major) {
-      throw new SchemaError(
-        `${key} ${raw}: this app reads major ${target.major} only`,
-      );
-    }
-    if (minor < minMinor) {
-      throw new SchemaError(
-        `${key} ${raw}: layouts before ${target.major}.${minMinor} are not supported`,
-      );
-    }
-    if (minor !== target.minor && minor !== target.minor - 1) {
-      this.warnings.push(
-        `${key} ${raw} is outside the reader window ` +
-          `${target.major}.${target.minor - 1}-${target.major}.${target.minor}; ` +
-          `fields added or moved since may be missing or misread`,
-      );
-    }
-    return raw;
+    return checkZoneVersion(meta[key], key, target, floor, this.warnings);
   }
 
   private readBlock(g: H5Group, alias: string): ElementBlock {
