@@ -4189,6 +4189,11 @@ no filter pipeline, so a reader can slice without a decompressor.</p>
 <td>hash of the <code>FEMData</code> snapshot; 32 lowercase hex characters.</td>
 </tr>
 <tr>
+<td><code>session_id</code></td>
+<td>string</td>
+<td><strong>optional</strong>. The writing session's uuid4, in canonical 36-character form. It pairs a <code>model.h5</code> with its <code>&lt;stem&gt;.geometry.h5</code> sibling and is never hashed. Absent in files at neutral 2.34.0 or older; read it without a version gate, and treat a missing one as "pairs with nothing" (#1304).</td>
+</tr>
+<tr>
 <td><code>model_name</code></td>
 <td>string</td>
 <td>user-supplied name. May be the empty string.</td>
