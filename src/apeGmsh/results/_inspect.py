@@ -24,12 +24,20 @@ class ResultsInspect:
         r = self._r
         lines = [f"Results: {r._reader_path()!s}"]
 
-        fem = r.fem
+        # Read the stored fields, not ``r.fem``: on a D9-flagged file the
+        # property raises, and a summary (``repr``, Jupyter display) must
+        # still print and say so.
+        fem = r._fem
         if fem is not None:
             lines.append(
                 f"  FEM: {len(fem.nodes.ids)} nodes, "
                 f"{sum(len(g) for g in fem.elements)} elements "
                 f"(snapshot_id={fem.snapshot_id})"
+            )
+        elif r._fem_unavailable is not None:
+            lines.append(
+                "  FEM: unavailable (embedded /model below its floor, "
+                "ADR 0113 D9; pass fem= or call .bind(fem))"
             )
         else:
             lines.append("  FEM: not bound")

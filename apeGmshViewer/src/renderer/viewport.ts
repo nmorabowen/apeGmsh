@@ -18,7 +18,9 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import type { BlobStore } from "../state/blobs.ts";
 import { geometryPairing } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { DeclPath, GeometryInfo, MeshInfo, Pick } from "../state/types.ts";
+import { roleColouring } from "../state/roles.ts";
+import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
+import { DARK, toHexNumber } from "../theme/tokens.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
 import { fitDistance, type Focus, highlightObjects, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
@@ -81,15 +83,15 @@ export class Viewport {
     this.blobs = blobs;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.setClearColor(toHexNumber(DARK.bg0), 0);
     host.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
     // Z up, always: the navigator's heading has no roll, so Z stays vertical on screen.
     this.camera.up.set(0, 0, 1);
     this.scene.add(this.camera);
-    this.scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x30343c, 1.6));
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    this.scene.add(new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6));
+    const key = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
     key.position.set(0.5, 0.8, 1);
     this.camera.add(key);
     this.scene.add(this.content, this.highlight, this.geometryLayer);
@@ -150,7 +152,8 @@ export class Viewport {
       this.setHighlight(s);
       return;
     }
-    if (s.visibility !== prev.visibility) this.applyVisibility(s);
+    if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
+    else if (s.visibility !== prev.visibility) this.applyVisibility(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
   }
 
@@ -182,7 +185,7 @@ export class Viewport {
     if (curves.length) {
       const cg = new THREE.BufferGeometry();
       cg.setAttribute("position", new THREE.BufferAttribute(curves, 3));
-      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0xd8dde6 })));
+      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: toHexNumber(DARK.geometryCurve) })));
     }
     const tris = this.blobs.f32(g.surfacePositions);
     if (tris.length) {
@@ -190,7 +193,7 @@ export class Viewport {
       sg.setAttribute("position", new THREE.BufferAttribute(tris, 3));
       sg.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        color: 0x7d8796, side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
+        color: toHexNumber(DARK.geometrySurface), side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
       });
       this.geometryLayer.add(new THREE.Mesh(sg, m));
@@ -199,7 +202,7 @@ export class Viewport {
     if (pts.length) {
       const pg = new THREE.BufferGeometry();
       pg.setAttribute("position", new THREE.BufferAttribute(pts, 3));
-      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: 5, sizeAttenuation: false })));
+      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: toHexNumber(DARK.geometryPoint), size: 5, sizeAttenuation: false })));
     }
   }
 
@@ -229,7 +232,7 @@ export class Viewport {
     const m = new LineMaterial({
       linewidth: width,
       vertexColors: col !== null,
-      color: colour ?? 0xffffff,
+      color: colour ?? toHexNumber(DARK.keyLight),
       worldUnits: false,
     });
     m.resolution.set(this.host.clientWidth || 1, this.host.clientHeight || 1);
@@ -261,11 +264,26 @@ export class Viewport {
     return this.index;
   }
 
-  /** Vertex colours of the drawn primitives from the legend (R2) and the per-primitive group index. */
-  private colours(info: MeshInfo, group: Int32Array, map: Int32Array, perPrim: number): Float32Array {
+  /**
+   * What colours the primitives: by physical group (the loader's legend and
+   * per-primitive group blobs) or by the structural role the file records
+   * (state/roles.ts, per element, mapped to the primitives here).
+   */
+  private colourSource(s: State, info: MeshInfo): { legend: readonly LegendEntry[]; line: Int32Array; tri: Int32Array; edge: number } {
+    if (s.visibility.colourBy === "group") {
+      return { legend: info.legend, line: this.blobs.i32(info.lineGroup), tri: this.blobs.i32(info.triGroup), edge: toHexNumber(DARK.edge) };
+    }
+    const r = roleColouring(s);
+    if (!r) throw new Error("viewport: colour by role with no mesh");
+    const perPrim = (element: Int32Array) => Int32Array.from(element, (e) => r.byElement[e]!);
+    return { legend: r.legend, line: perPrim(this.blobs.i32(info.lineElement)), tri: perPrim(this.blobs.i32(info.triElement)), edge: toHexNumber(DARK.edgeRole) };
+  }
+
+  /** Vertex colours of the drawn primitives from a legend and a per-primitive row index. */
+  private colours(legend: readonly LegendEntry[], group: Int32Array, map: Int32Array, perPrim: number): Float32Array {
     const out = new Float32Array(map.length * perPrim * 3);
     for (let d = 0; d < map.length; d++) {
-      const c = info.legend[group[map[d]!]!]?.color;
+      const c = legend[group[map[d]!]!]?.color;
       if (!c) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
       for (let v = 0; v < perPrim; v++) out.set(c, (d * perPrim + v) * 3);
     }
@@ -311,12 +329,13 @@ export class Viewport {
     this.edges = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
+    const source = this.colourSource(s, info);
 
     const tri = Viewport.gather(this.blobs.f32(info.triPositions), drawn.triMap, 9);
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(this.colours(info, this.blobs.i32(info.triGroup), drawn.triMap, 3), 3));
+      g.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
         vertexColors: true,
@@ -338,14 +357,14 @@ export class Viewport {
       if (edge.length) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
-        const em = new THREE.LineBasicMaterial({ color: 0x0b0c0f, transparent: true, opacity: 0.45 });
+        const em = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: 0.45 });
         this.edges = new THREE.LineSegments(eg, em);
         this.content.add(this.edges);
       }
     }
     const line = Viewport.gather(this.blobs.f32(info.linePositions), drawn.lineMap, 6);
     if (line.length) {
-      this.lines = this.makeLines(line, this.colours(info, this.blobs.i32(info.lineGroup), drawn.lineMap, 2), 3);
+      this.lines = this.makeLines(line, this.colours(source.legend, source.line, drawn.lineMap, 2), 3);
       this.content.add(this.lines);
     }
     this.applyVisibility(s, false);

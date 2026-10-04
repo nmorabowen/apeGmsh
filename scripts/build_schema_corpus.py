@@ -33,6 +33,17 @@ Usage, from the repository root (needs gmsh, h5py and the project deps)::
     python scripts/build_schema_corpus.py                   # build everything
     python scripts/build_schema_corpus.py --zone neutral --minor 2.10
 
+**Variants.** The ADR 0113 D4 shim ledger names two semantic changes; each
+has one real file from the last era *before* it, built by the generator's
+``--variant`` at the era :data:`VARIANTS` fixes (the same frozen-writer
+method, one more model). They sit beside the plain entries with a
+``variant`` field and are not counted toward the one-file-per-minor rule.
+
+**Below the floor.** An era whose file no reader opens is a ``below_floor``
+gap: its file stays committed as evidence of the refusal, and a rebuild
+keeps re-running it (the plan starts at the lowest minor already in the
+manifest), so raising a floor never drops the files that justified it.
+
 Frozen writers give frozen files: the corpus is committed and never rebuilt
 in CI. A schema bump adds the outgoing minor's file by re-running this
 script (or ``--zone Z --minor M`` for that one era) and committing the
@@ -69,6 +80,25 @@ ZONES: dict[str, tuple[str, str, str]] = {
 META_KEYS = {"neutral": "neutral_schema_version",
              "opensees": "opensees_schema_version"}
 
+#: variant -> (zone, era minor, why). One real file per shim-ledger entry
+#: (ADR 0113 D4), written by the last era before the semantic change.
+VARIANTS: dict[str, tuple[str, str, str]] = {
+    "sp_cases": (
+        "neutral", "2.25",
+        "prescribed displacements under two g.displacements.case names, "
+        "written before 2.26.1 split /loads/sp/default into one group per "
+        "case: the ledger says it reads as one `default` case (Q5)",
+    ),
+    "frame2d": (
+        "opensees", "2.20",
+        "the portal frame declared ops.model(ndm=2, ndf=3), written before "
+        "neutral 2.34.0 made /meta/ndm the spatial dimension (#1291): the "
+        "stamp is the mesh dimension 1, the file says 2-D through its "
+        "(1, 0) vecxz and /meta/ndf = 3, and read_spatial_ndm (#1300) must "
+        "recover 2 from that evidence (#1358)",
+    ),
+}
+
 ERA_TIMEOUT_S = 900
 
 
@@ -92,6 +122,21 @@ def _version_at(sha: str, zone: str) -> str:
     return v
 
 
+def tree_constant(zone: str, name: str) -> str:
+    """A floor or version constant as the **working tree** holds it.
+
+    The floors and current minors describe today's reader, the claim the
+    corpus proves; the era history comes from ``base``, a commit on main.
+    Reading them from the tree lets a PR that moves a floor build its
+    corpus against a main ``base`` whose source still holds the old one.
+    """
+    path = ZONES[zone][0]
+    v = _const((ROOT / path).read_text(encoding="utf-8"), name)
+    if v is None:
+        raise RuntimeError(f"{name} not found in the working tree's {path}")
+    return v
+
+
 def _minor(v: str) -> tuple[int, int]:
     major, minor, _patch = (int(p) for p in v.split("."))
     return major, minor
@@ -109,24 +154,56 @@ class Era:
     version: str | None = None
     gap_reason: str | None = None
     bumps: list[str] = field(default_factory=list)
+    variant: str | None = None
 
     @property
     def stem(self) -> str:
-        return f"{self.zone}_{_mstr(self.minor)}"
+        stem = f"{self.zone}_{_mstr(self.minor)}"
+        return f"{stem}_{self.variant}" if self.variant else stem
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (self.zone, _mstr(self.minor), self.variant or "")
 
 
-def plan(zone: str, base: str) -> list[Era]:
-    """Every minor from the zone's floor to its current minor, with its era commit."""
+def check_current_is_written(
+    zone: str, current: tuple[int, int], bumps: list[tuple[str, str]],
+) -> None:
+    """Refuse a current minor that no commit on ``base`` stamps.
+
+    The current minor comes from the working tree and the history from
+    ``base``. A bump PR run against a ``base`` that predates its bump
+    commit would otherwise record its own minor as an ``unwritten`` gap,
+    which INV-6 accepts, and land without the outgoing minor's file.
+    """
+    if any(_minor(v) == current for _sha, v in bumps):
+        return
+    raise RuntimeError(
+        f"{zone}: the working tree is at {_mstr(current)}.x but no first-parent "
+        f"commit on the base stamps it, so no writer of the current minor can be "
+        f"checked out. Commit the bump and pass --base HEAD (the current minor's "
+        f"file is written by the base commit); never record it as a gap"
+    )
+
+
+def plan(zone: str, base: str, *, start_minor: int | None = None) -> list[Era]:
+    """Every minor from the zone's floor to its current minor, with its era commit.
+
+    ``start_minor`` lower than the floor extends the plan downward: the
+    builder passes the lowest minor the manifest already holds, so a
+    below-floor evidence era is rebuilt rather than dropped.
+    """
     path, const, floor_const = ZONES[zone]
-    head_src = _git("show", f"{base}:{path}")
-    floor = _minor(_const(head_src, floor_const) or "")
-    current = _minor(_const(head_src, const) or "")
+    floor = _minor(tree_constant(zone, floor_const))
+    current = _minor(tree_constant(zone, const))
     log = _git("log", "--first-parent", "--reverse", f"-G^{const}",
                "--format=%H", base, "--", path).split()
     bumps = [(sha, _version_at(sha, zone)) for sha in log]
+    check_current_is_written(zone, current, bumps)
 
+    first = floor[1] if start_minor is None else min(floor[1], start_minor)
     eras: list[Era] = []
-    for minor in range(floor[1], current[1] + 1):
+    for minor in range(first, current[1] + 1):
         m = (floor[0], minor)
         at = [sha for sha, v in bumps if _minor(v) == m]
         era = Era(zone, m, bumps=at)
@@ -172,18 +249,35 @@ def _tail(text: str, era_root: str, n: int = 12) -> list[str]:
     return lines[-n:]
 
 
+def variant_era(variant: str, eras: list[Era]) -> Era:
+    """The variant's era: the planned entry at the minor :data:`VARIANTS` fixes."""
+    zone, minor, _why = VARIANTS[variant]
+    for era in eras:
+        if era.zone == zone and _mstr(era.minor) == minor:
+            if era.sha is None:
+                raise RuntimeError(f"variant {variant}: era {zone} {minor} is a gap")
+            return Era(zone, era.minor, sha=era.sha, version=era.version,
+                       bumps=era.bumps, variant=variant)
+    raise RuntimeError(f"variant {variant}: {zone} {minor} is not in the plan")
+
+
 def build_era(era: Era, python: str) -> dict:
     entry: dict = {"zone": era.zone, "minor": _mstr(era.minor)}
+    if era.variant:
+        entry.update(variant=era.variant, why=VARIANTS[era.variant][2])
     if era.gap_reason:
         entry.update(status="gap", reason=era.gap_reason)
         return entry
     assert era.sha is not None
+    generator = f"tests/fixtures/schema_corpus/_era_generator.py --zone {era.zone}"
+    if era.variant:
+        generator += f" --variant {era.variant}"
     entry.update(
         sha=era.sha,
         date=_git("log", "-1", "--format=%cs", era.sha).strip(),
         version=era.version,
         bump_commits=era.bumps,
-        generator=f"tests/fixtures/schema_corpus/_era_generator.py --zone {era.zone}",
+        generator=generator,
     )
     names = {"h5": f"{era.stem}.h5", "dump": f"{era.stem}.dump.json"}
     if era.zone == "opensees":
@@ -201,6 +295,8 @@ def build_era(era: Era, python: str) -> dict:
                "--out", str(stage / names["h5"]),
                "--dump", str(stage / names["dump"]),
                "--expect-src", str(wt / "src")]
+        if era.variant:
+            cmd += ["--variant", era.variant]
         if "tcl" in names:
             cmd += ["--tcl", str(stage / names["tcl"])]
         env = dict(os.environ)
@@ -275,9 +371,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--zone", choices=(*ZONES, "all"), default="all")
     ap.add_argument("--minor", help="build only this minor, e.g. 2.10")
+    ap.add_argument("--variant", choices=tuple(VARIANTS),
+                    help="build only this variant (its zone and era are fixed)")
     ap.add_argument("--base", default=None,
-                    help="the main commit the plan is read from "
-                         "(default: merge-base of HEAD and origin/main)")
+                    help="the main commit the era history is read from, and the "
+                         "writer of the current minors (default: merge-base of "
+                         "HEAD and origin/main); floors and current minors come "
+                         "from the working tree")
     ap.add_argument("--list", action="store_true", help="print the plan and stop")
     ap.add_argument("--manifest-only", action="store_true",
                     help="re-classify the existing entries and rewrite MANIFEST.json")
@@ -289,30 +389,42 @@ def main(argv: list[str] | None = None) -> int:
     zones = list(ZONES) if a.zone == "all" else [a.zone]
 
     manifest = _load_manifest()
-    entries = {(e["zone"], e["minor"]): e for e in manifest.get("entries", [])}
+    entries = {_key(e): e for e in manifest.get("entries", [])}
     floors, currents = {}, {}
-    for zone, (path, const, floor_const) in ZONES.items():
-        src = _git("show", f"{base}:{path}")
-        floors[zone], currents[zone] = _const(src, floor_const), _const(src, const)
+    for zone, (_path, const, floor_const) in ZONES.items():
+        floors[zone] = tree_constant(zone, floor_const)
+        currents[zone] = tree_constant(zone, const)
     if a.manifest_only:
         _write_manifest(base, floors, currents, entries)
         return 0
     for zone in zones:
-        for era in plan(zone, base):
-            if a.minor and _mstr(era.minor) != a.minor:
-                continue
+        held = [_minor(e["minor"] + ".0")[1] for e in entries.values()
+                if e["zone"] == zone and "variant" not in e]
+        eras = plan(zone, base, start_minor=min(held) if held else None)
+        todo = [] if a.variant else [
+            era for era in eras if not a.minor or _mstr(era.minor) == a.minor
+        ]
+        todo += [
+            variant_era(name, eras) for name, (vzone, _m, _why) in VARIANTS.items()
+            if vzone == zone and not a.minor and (a.variant in (None, name))
+        ]
+        for era in todo:
             if a.list:
                 where = era.sha[:10] if era.sha else "-"
-                print(f"{zone:9s} {_mstr(era.minor):6s} {where:10s} "
-                      f"{era.version or ''} {era.gap_reason or ''}")
+                print(f"{zone:9s} {_mstr(era.minor):6s} {era.variant or '':9s} "
+                      f"{where:10s} {era.version or ''} {era.gap_reason or ''}")
                 continue
             print(f"building {era.stem} ...", flush=True)
             e = classify(build_era(era, a.python), floors)
             print(f"  {e['status']}" + (f": {e['reason']}" if e["status"] == "gap" else ""),
                   flush=True)
-            entries[(zone, e["minor"])] = e
+            entries[era.key] = e
             _write_manifest(base, floors, currents, entries)
     return 0
+
+
+def _key(entry: dict) -> tuple[str, str, str]:
+    return (entry["zone"], entry["minor"], entry.get("variant", ""))
 
 
 def _write_manifest(base: str, floors: dict, currents: dict, entries: dict) -> None:
@@ -324,7 +436,8 @@ def _write_manifest(base: str, floors: dict, currents: dict, entries: dict) -> N
         "floors": floors,
         "current": currents,
         "entries": sorted((classify(e, floors) for e in entries.values()),
-                          key=lambda e: (e["zone"], _minor(e["minor"] + ".0"))),
+                          key=lambda e: (e["zone"], _minor(e["minor"] + ".0"),
+                                         e.get("variant", ""))),
     }
     MANIFEST.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8", newline="\n")
 

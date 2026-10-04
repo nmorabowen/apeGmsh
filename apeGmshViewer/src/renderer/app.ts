@@ -14,9 +14,11 @@ import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import type { DeclPath } from "../state/types.ts";
+import { applyTheme } from "../theme/tokens.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
+applyTheme(document);
 
 const store = new Store();
 const blobs = new BlobStore();
@@ -233,6 +235,19 @@ async function main() {
     viewport.renderNow();
     await bridge.captureStill("framed");
   }
+  // Two palette stills with nothing selected (a selection dims the model):
+  // `<out>.groups.png` coloured by physical group, `<out>.role.png` by role.
+  // With nothing selected, `frameSelection` frames the whole model again
+  // after `F` framed the selection above.
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
+  await settle();
+  viewport.renderNow();
+  await bridge.captureStill("groups");
+  store.dispatch({ type: "setColourBy", by: "role" });
+  await settle();
+  viewport.renderNow();
+  await bridge.captureStill("role");
   await bridge.captureDone();
 }
 

@@ -1440,9 +1440,12 @@ full "why" and the exact affected dtype columns:
   stamp `0`, the undeclared sentinel `ndf` has always used, which
   `OpenSeesModel.build`/`to_h5` and `DomainCapture.from_h5` refuse.
   `h5_reader.read_spatial_ndm` trusts `/meta/ndm` from this minor on
-  and keeps the transform-based salvage for 2.33.x files, which the
-  two-version window still admits; `NativeWriter` forwards the salvaged
-  value (not the raw stamp) onto a composed file's `/model/meta`.
+  and salvages it for older files from the `per_element_vecxz` widths:
+  `0` (a 2-D `geomTransf`, which has no vecxz) resolves 2, `3` lifts the
+  stamp to 3, and conflicting evidence, an unknown width, or a result
+  that would drop a non-zero coordinate column refuses (#1358);
+  `NativeWriter` forwards the salvaged value (not the raw stamp) onto a
+  composed file's `/model/meta`.
 
 ### OpenSees-zone history (post-2.10)
 

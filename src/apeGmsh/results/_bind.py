@@ -34,18 +34,23 @@ def _resolve_fem(
 
     Resolution rules:
 
-    1. If ``candidate`` is None: return the reader's embedded fem
-       (may itself be None — bare construction is allowed).
-    2. If ``candidate`` is provided: return it (preferred — carries
-       apeGmsh-specific labels and provenance that may be richer than
-       the embedded snapshot). No hash validation is performed; it is
-       the user's responsibility to provide a FEMData consistent with
-       the results file.
+    1. If ``candidate`` is provided: return it without touching the
+       reader (preferred — carries apeGmsh-specific labels and
+       provenance that may be richer than the embedded snapshot). No
+       hash validation is performed; it is the user's responsibility to
+       provide a FEMData consistent with the results file. The embedded
+       zone is never read on this path, so a results file whose
+       ``/model`` is below its floor (ADR 0113 D9) binds a supplied fem.
+    2. If ``candidate`` is None: return the reader's embedded fem
+       (may itself be None — bare construction is allowed). A
+       ``NativeReader`` whose embedded ``/model`` is below its floor
+       raises here; ``Results.from_native`` checks
+       ``unavailable_zones`` first and defers that refusal to
+       ``Results.fem``.
     """
-    embedded = reader.fem()
-    if candidate is None:
-        return embedded
-    return candidate
+    if candidate is not None:
+        return candidate
+    return reader.fem()
 
 
 def resolve_bound_model(

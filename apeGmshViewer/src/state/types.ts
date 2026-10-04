@@ -137,7 +137,14 @@ export interface LegendEntry {
   name: string;
   color: readonly [number, number, number];
   elements: number;
+  /** a second cue beside the colour: stripes on the chip of a group whose slot is in the second ring (the same hue as an office colour, one lightness step away; taken when no free office colour contrasts with the group's neighbours) */
+  cue: "stripe" | "stripe2" | null;
+  /** the palette slot the group was assigned (state/palette.ts); null for the synthetic rows */
+  slot: number | null;
 }
+
+/** What colours the model: its physical groups, or the structural role each element's file records. */
+export type ColourBy = "group" | "role";
 
 /** The render derivation of the model artifact: blob refs, per-primitive indices, legend and bounds. */
 export interface MeshInfo {
@@ -154,6 +161,8 @@ export interface MeshInfo {
   /** the decl path of every drawn element, in first-drawn order */
   elements: DeclPath[];
   legend: LegendEntry[];
+  /** legend rows whose elements share a node (each pair once, a < b): what the slot assignment keeps apart */
+  adjacency: [number, number][];
   center: readonly [number, number, number];
   radius: number;
   counts: { lineCells: number; faceCells: number; solidCells: number; opsOnly: number; points: number };
@@ -215,7 +224,7 @@ export interface State {
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
   selection: { decls: DeclPath[]; picks: Pick[] };
   hover: Pick | DeclPath | null;
-  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number };
+  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number; colourBy: ColourBy };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
@@ -278,6 +287,7 @@ export type Event =
   | { type: "showAll" }
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
+  | { type: "setColourBy"; by: ColourBy }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }

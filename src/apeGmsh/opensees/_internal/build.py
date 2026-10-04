@@ -2398,27 +2398,18 @@ def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
 
 
 def _available_pg_names(fem: "FEMData") -> set[str]:
-    """Best-effort enumeration of PG names known to the snapshot.
+    """PG names known to the snapshot, for the "not found" errors.
 
-    Used in error messages — helps the user spot a typo without having
-    to re-query the FEM. We probe both ``elements`` and ``nodes``
-    composites since the user might have asked for a node PG via an
-    element-fan-out call site (or vice versa).
+    Helps the user spot a typo without having to re-query the FEM. Both
+    ``elements`` and ``nodes`` are read, since the user might have
+    asked for a node PG via an element-fan-out call site (or vice
+    versa). Reads the public ``PhysicalGroupSet.names()``: the private
+    ``_groups`` dict is keyed by ``(dim, tag)``, so filtering its keys
+    for strings always listed nothing (#1335).
     """
-    out: set[str] = set()
-    for composite_name in ("elements", "nodes"):
-        composite = getattr(fem, composite_name, None)
-        if composite is None:
-            continue
-        physical = getattr(composite, "physical", None)
-        if physical is None:
-            continue
-        groups = getattr(physical, "_groups", None)
-        if isinstance(groups, dict):
-            for key in groups.keys():
-                if isinstance(key, str):
-                    out.add(key)
-    return out
+    return set(fem.elements.physical.names()) | set(
+        fem.nodes.physical.names()
+    )
 
 
 def _describe_pg_cells(fem: "FEMData", pg: str) -> str:

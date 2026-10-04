@@ -5,6 +5,7 @@ import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
+import { roleColouring } from "./roles.ts";
 import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Pick, State, ZoneStatus } from "./types.ts";
 
 function lookupOf(s: State): Lookup {
@@ -104,6 +105,12 @@ export function inspected(s: State): { decl: DeclPath; pinned: boolean; chain: C
 }
 
 export const legendOf = (s: State): LegendEntry[] => s.mesh?.legend ?? [];
+
+/** The colour-by-role legend: the roles the file records, the unassigned row, and whether it records any. */
+export const roleLegendOf = (s: State): { legend: LegendEntry[]; fileHasRoles: boolean } | null => {
+  const r = roleColouring(s);
+  return r ? { legend: r.legend, fileHasRoles: r.fileHasRoles } : null;
+};
 
 export const isHidden = (s: State, decl: DeclPath | null): boolean => decl !== null && s.visibility.hidden.includes(decl);
 

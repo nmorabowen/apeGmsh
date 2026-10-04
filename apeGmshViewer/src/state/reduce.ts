@@ -19,7 +19,7 @@ export const initialState: State = {
   phase: { axis: [], at: null },
   selection: { decls: [], picks: [] },
   hover: null,
-  visibility: { hidden: [], edges: true, opacity: 1 },
+  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group" },
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
@@ -200,6 +200,9 @@ export function reduce(s: State, e: Event): State {
     case "setOpacity":
       if (!Number.isFinite(e.value)) throw new RangeError(`setOpacity: ${e.value} is not a number`);
       return { ...s, visibility: { ...s.visibility, opacity: Math.min(1, Math.max(0, e.value)) } };
+    case "setColourBy":
+      if (e.by !== "group" && e.by !== "role") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
+      return s.visibility.colourBy === e.by ? s : { ...s, visibility: { ...s.visibility, colourBy: e.by } };
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       return { ...s, phase: { ...s.phase, at: e.at } };

@@ -2,7 +2,7 @@
 // renderer (browser IIFE with three.js), plus the static page.
 
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,3 +41,5 @@ await Promise.all([
   }),
 ]);
 for (const f of ["index.html", "style.css"]) copyFileSync(join(root, "src/renderer", f), join(dist, f));
+// The bundled Archivo Narrow files and their licence (src/theme/tokens.ts FONT_FILES).
+cpSync(join(root, "src/renderer/fonts"), join(dist, "fonts"), { recursive: true });

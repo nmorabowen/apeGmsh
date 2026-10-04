@@ -4,7 +4,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
-import { fitDistance, HALO_LAYER, HALO_PX, highlightObjects, maskBytes, outlineOf, pulseAt, PULSE_MS, PULSE_SCALE, selectionBounds } from "../src/renderer/selection.ts";
+import { fitDistance, HALO_COLOUR, HALO_LAYER, HALO_PX, highlightObjects, maskBytes, outlineOf, pulseAt, PULSE_MS, PULSE_SCALE, SELECTION_COLOUR, selectionBounds } from "../src/renderer/selection.ts";
+import { DARK, OFFICE } from "../src/theme/tokens.ts";
+
+test("the selection core is the office accent #E69F00 and the halo is white (#1308 round 3, item 3)", () => {
+  // The maintainer's decision names both colours; the token module is the only place they live.
+  assert.equal(OFFICE.accent, "#E69F00");
+  assert.equal(DARK.selection, OFFICE.accent);
+  assert.equal(SELECTION_COLOUR, 0xe69f00, "the core (outline and fill) is the office accent");
+  assert.equal(HALO_COLOUR, 0xffffff, "the halo stays white");
+  assert.equal(DARK.halo.toUpperCase(), "#FFFFFF");
+});
 
 test("every highlight object sits on HALO_LAYER (the mask pass) and on the default layer (the frame), without depth test", () => {
   // One segment and one quad (two triangles, fanned from the first corner).

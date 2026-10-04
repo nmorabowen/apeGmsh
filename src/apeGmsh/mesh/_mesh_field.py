@@ -8,9 +8,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import gmsh
+import numpy as np
 
 if TYPE_CHECKING:
     from .Mesh import Mesh
+
+
+_INT = (int, np.integer)
 
 
 class FieldHelper:
@@ -55,12 +59,14 @@ class FieldHelper:
         """
         if refs is None:
             return []
+        if isinstance(refs, np.ndarray):
+            refs = refs.tolist()
 
         # Normalise to a list of refs.  Treat a (dim, tag) tuple as a
         # single ref, not a 2-element list.
         is_dimtag_tuple = (
             isinstance(refs, tuple) and len(refs) == 2
-            and isinstance(refs[0], int) and isinstance(refs[1], int)
+            and isinstance(refs[0], _INT) and isinstance(refs[1], _INT)
         )
         if is_dimtag_tuple or not isinstance(refs, (list, tuple)):
             refs_list = [refs]
@@ -73,12 +79,12 @@ class FieldHelper:
                 raise TypeError(
                     f"{what}: bool refs are not supported (got {r!r})."
                 )
-            if isinstance(r, int):
+            if isinstance(r, _INT):
                 out.append(int(r))
                 continue
             if (
                 isinstance(r, tuple) and len(r) == 2
-                and isinstance(r[0], int) and isinstance(r[1], int)
+                and isinstance(r[0], _INT) and isinstance(r[1], _INT)
             ):
                 d, t = r
                 if d != expected_dim:

@@ -234,6 +234,13 @@ class Results:
     ) -> None:
         self._reader = reader
         self._fem = fem
+        # ADR 0113 D9 — ``from_native`` sets this after construction
+        # when no ``fem=`` was supplied and the file's embedded
+        # ``/model`` is below its floor: the refusal text. ``/stages``
+        # read; :attr:`fem` raises it until ``bind(fem)`` supplies a
+        # snapshot. Not a constructor keyword: it stays off the public
+        # ``Results`` signature.
+        self._fem_unavailable: Optional[str] = None
         self._stage_id = stage_id
         self._path = path
         # ADR 0020 INV-1 (Phase 8 prune) — ``_model`` is required and
@@ -280,6 +287,15 @@ class Results:
         If ``fem`` is omitted, the embedded ``/model/`` snapshot is
         used as the bound FEMData.
 
+        ADR 0113 D9 — a results file outlives its embedded model zones.
+        When the embedded ``/model`` is below its floor the file still
+        opens and ``/stages`` read: with ``fem=`` supplied the zone is
+        never read; without it :attr:`fem` raises the reader's refusal
+        (with a ``fem=`` hint) until :meth:`bind` supplies a snapshot.
+        The embedded ``/opensees`` is never read here, since ``model=``
+        is required; ``OpenSeesModel.from_h5`` on such a file refuses,
+        so the model comes from a sidecar archive.
+
         ``model_path`` records the on-disk archive the ``model`` was read
         from, for when it is *not* ``path`` itself — e.g. results whose
         embedded ``/model`` zone is not independently readable. The
@@ -288,18 +304,28 @@ class Results:
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
+        from ..opensees._internal.schema_version import NEUTRAL
         from .readers._native import NativeReader
         reader = NativeReader(path)
-        bound_fem = _resolve_fem(reader, fem)
+        fem_unavailable: Optional[str] = None
+        if fem is None and NEUTRAL in reader.unavailable_zones:
+            # D9: no snapshot to bind and the file's own is below its
+            # floor. Open anyway; ``Results.fem`` refuses with the text.
+            fem_unavailable = reader.unavailable_zones[NEUTRAL]
+            bound_fem: "Optional[FEMData]" = None
+        else:
+            bound_fem = _resolve_fem(reader, fem)
         bound_model = resolve_bound_model(reader, model)
         # ``resolve_bound_model`` always returns ``model`` here since
         # we just asserted it is non-None, but route through the helper
         # to keep the resolution semantics in one place.
         assert bound_model is not None
-        return cls(
+        results = cls(
             reader, fem=bound_fem, path=Path(path), model=bound_model,
             model_path=Path(model_path) if model_path is not None else None,
-        )._with_autoloaded_definitions()
+        )
+        results._fem_unavailable = fem_unavailable
+        return results._with_autoloaded_definitions()
 
     @classmethod
     def from_recorders(
@@ -694,7 +720,22 @@ class Results:
 
     @property
     def fem(self) -> "Optional[FEMData]":
-        """The bound FEMData snapshot, or None if not bound."""
+        """The bound FEMData snapshot, or None if not bound.
+
+        Raises :class:`SchemaVersionError` on a native results file whose
+        embedded ``/model`` is below its floor and no ``fem=`` was
+        supplied (ADR 0113 D9): the zone is never read silently, and
+        the message says to pass ``fem=`` or call :meth:`bind`.
+        """
+        if self._fem_unavailable is not None:
+            from ..opensees._internal.schema_version import SchemaVersionError
+
+            raise SchemaVersionError(
+                f"{self._fem_unavailable} The embedded neutral zone is "
+                "unavailable; only /stages reads (ADR 0113 D9). Pass "
+                "fem= to Results.from_native, or call results.bind(fem), "
+                "with the FEMData this run used."
+            )
         return self._fem
 
     @property
@@ -1941,6 +1982,11 @@ class Results:
         new = Results.__new__(Results)
         new._reader = self._reader
         new._fem = self._fem if isinstance(fem, _Sentinel) else fem
+        # A supplied fem (``bind``) clears the D9 refusal; stage / mode
+        # derivation carries it.
+        new._fem_unavailable = (
+            self._fem_unavailable if isinstance(fem, _Sentinel) else None
+        )
         new._stage_id = (
             self._stage_id if isinstance(stage_id, _Sentinel) else stage_id
         )
