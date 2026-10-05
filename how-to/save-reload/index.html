@@ -3695,9 +3695,18 @@ as a resumable chain-phase session with <code>apeGmsh.from_h5</code>.</p>
 <li><strong>Autosave fires on <code>end()</code>, not eagerly.</strong> Nothing is written until
   <code>__exit__</code> / <code>g.end()</code> runs — if the process dies mid-build, the file
   never lands. Call <code>g.save()</code> explicitly when a checkpoint matters.</li>
-<li><strong><code>save_to=None</code> (the default) disables autosave.</strong> With a path set,
-  <code>overwrite=False</code> against an existing file raises <code>FileExistsError</code>;
-  <code>g.save()</code> with neither an argument nor a <code>save_to=</code> raises <code>RuntimeError</code>.</li>
+<li><strong><code>save_to=None</code> (the default) still writes.</strong> <code>end()</code> leaves
+  <code>&lt;model_name&gt;.h5</code> and <code>&lt;model_name&gt;.geometry.h5</code> beside the running
+  script, and <code>model_name</code> defaults to the script's stem (<code>python
+  frame.py</code> leaves <code>frame.h5</code>). A notebook, <code>python -c</code> or stdin has no
+  script: with no explicit <code>model_name</code> nothing is written automatically,
+  and one warning says so. Set <code>model_name</code> per run in a parameter sweep
+  that keeps every run's file; a file another script wrote at that path
+  is kept, with a warning. A notebook's cells are not scripts, so a
+  notebook replaces its file on every run: give each notebook its own
+  <code>model_name</code>. With a path set, <code>overwrite=False</code> against an
+  existing file raises <code>FileExistsError</code> on <code>g.save()</code>; <code>g.save()</code> with
+  neither an argument nor a <code>save_to=</code> raises <code>RuntimeError</code>.</li>
 <li><strong>Autosave catches-and-warns on write failure</strong> so gmsh still finalizes.
   A silently-warned failure can lose data — prefer an explicit <code>g.save()</code>
   when persistence is the point.</li>
