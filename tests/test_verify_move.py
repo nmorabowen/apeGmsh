@@ -179,3 +179,101 @@ def test_unresolvable_path_keeps_raw_dump(tmp_path, capsys):
     code, out = _run_paths(repo, capsys, "lib")
     assert code == 1  # raw level differs; no resolution outside src/, no crash
     assert "changed: K.go" in out
+
+
+# --- --class-map: methods moved into mixins (S1-m) ---------------------------
+
+CM_BASE = '''\
+class A:
+    """Doc A."""
+
+    def m(self):
+        return 1
+
+    def n(self):
+        return 2
+'''
+CM_HEAD_A = '''\
+from mix import M
+
+
+class A(M):
+    """Doc A."""
+
+    def n(self):
+        return 2
+'''
+CM_HEAD_M = '''\
+class M:
+    def m(self):
+        return 1
+'''
+
+
+def _cm_repo(tmp_path, head_a=CM_HEAD_A, head_m=CM_HEAD_M):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a.py").write_text(CM_BASE)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "a.py").write_text(head_a)
+    (tmp_path / "mix.py").write_text(head_m)
+    return tmp_path
+
+
+def _cm_run(repo, capsys, *extra):
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", *extra, "a.py", "mix.py"])
+    return code, capsys.readouterr().out
+
+
+def test_class_map_method_move_passes(tmp_path, capsys):
+    repo = _cm_repo(tmp_path)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 0, out
+    assert "moved:   A.m -> M.m" in out
+
+
+def test_method_move_without_class_map_fails(tmp_path, capsys):
+    repo = _cm_repo(tmp_path)
+    code, out = _cm_run(repo, capsys)
+    assert code == 1
+    assert "removed: A.m" in out and "added:   M.m" in out
+    assert "class headers" not in out and "moved:   " not in out
+
+
+def test_class_map_changed_body_fails(tmp_path, capsys):
+    repo = _cm_repo(tmp_path, head_m=CM_HEAD_M.replace("return 1", "return 9"))
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 1
+    assert "removed: A.m" in out and "added:   M.m" in out
+
+
+def test_class_map_name_collision_fails(tmp_path, capsys):
+    head_m = CM_HEAD_M + "\n\nclass N:\n    def m(self):\n        return 1\n"
+    repo = _cm_repo(tmp_path, head_m=head_m)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M,N")
+    assert code == 1
+    assert "removed: A.m" in out
+
+
+def test_class_map_unmapped_header_fails(tmp_path, capsys):
+    head_m = CM_HEAD_M + "\n\nclass Other:\n    pass\n"
+    repo = _cm_repo(tmp_path, head_m=head_m)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 1
+    assert "added:   Other" in out
+
+
+def test_class_map_header_sections_printed(tmp_path, capsys):
+    repo = _cm_repo(tmp_path)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 0
+    assert "class headers (review by hand):" in out
+    assert "added: M" in out and "changed: A" in out
+    assert "bases" in out
+
+
+def test_class_map_bad_spec_errors(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit):
+        vm.main(["--repo", str(tmp_path), "--class-map", "nonsense", "a.py"])
