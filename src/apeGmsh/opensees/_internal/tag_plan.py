@@ -307,7 +307,9 @@ def plan_of(tags: TagAllocator) -> TagPlan:
     allocator, a plain :meth:`TagAllocator.fork`) raises
     :class:`TagLawError`: no plan drove that emit.
     """
-    plan = tags.origin
+    # The fork's origin is set by TagAllocator.fork and read only here
+    # (a sibling module of tag_allocator in this package).
+    plan = tags._origin
     if not isinstance(plan, TagPlan):
         raise TagLawError(
             "plan_of: this allocator did not come from "

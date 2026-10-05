@@ -51,8 +51,10 @@ class TagAllocator:
         # :meth:`fork` froze. Either makes a mint raise TagLawError.
         self._frozen: bool = False
         self._frozen_kinds: frozenset[str] = frozenset()
-        # Set by :meth:`fork`: a fork refuses :meth:`reset`, and carries
-        # the object it was forked for (:attr:`origin`).
+        # Set by :meth:`fork`: a fork refuses :meth:`reset`, and keeps the
+        # ``origin`` it was forked for. ``TagPlan.emit_allocator`` forks
+        # with its plan as the origin, and ``tag_plan.plan_of`` reads it
+        # back, so a helper handed only the emit allocator reaches the plan.
         self._forked: bool = False
         self._origin: object | None = None
 
@@ -69,16 +71,6 @@ class TagAllocator:
     def frozen_kinds(self) -> frozenset[str]:
         """The kinds frozen by :meth:`fork` (empty for a fresh allocator)."""
         return self._frozen_kinds
-
-    @property
-    def origin(self) -> object | None:
-        """What this allocator was forked for (``None`` if not given).
-
-        :meth:`TagPlan.emit_allocator` forks with its plan as the origin,
-        so a helper handed only the emit allocator can read the plan
-        (``tag_plan.plan_of``).
-        """
-        return self._origin
 
     def freeze(self) -> None:
         """Refuse every later mint, in every kind.
@@ -101,8 +93,9 @@ class TagAllocator:
         mints on. The copy is not whole-frozen even when this allocator
         is, and this allocator is never changed by the copy's mints. A
         copy refuses :meth:`reset`, frozen kinds or not: clearing it would
-        re-mint tags its parent already handed out. ``origin`` is kept,
-        read-only, as :attr:`origin`.
+        re-mint tags its parent already handed out. ``origin`` is kept on
+        the copy for ``tag_plan.plan_of`` to read; nothing else reads or
+        changes it.
         """
         kinds = frozenset(frozen_kinds)
         for k in kinds:

@@ -781,7 +781,6 @@ def test_fork_with_no_kinds_is_an_open_copy() -> None:
     child = parent.fork()
     assert child.allocate("element") == 5
     assert child.allocate_for(object(), "element") == 6
-    assert child.origin is None
 
 
 @pytest.mark.parametrize("make", [
