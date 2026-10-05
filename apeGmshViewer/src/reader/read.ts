@@ -50,8 +50,8 @@ export interface H5File extends H5Group {
 }
 
 /** The schema versions this reader was written against (ADR 0023). */
-export const NEUTRAL_TARGET = { major: 2, minor: 33 } as const;
-export const OPENSEES_TARGET = { major: 2, minor: 21 } as const;
+export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 22 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 0 } as const;

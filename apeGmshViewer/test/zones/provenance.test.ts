@@ -88,7 +88,11 @@ test("an unknown declaration path says so; it is not a silent null", () => {
 });
 
 test("a file without the zone is ignored", () => {
-  assert.equal(readProvenance(h5, join(fixtures, "shoebuckle.h5")), null);
+  // main's writer stamps /provenance into every model.h5 (#1378), so the
+  // zone-less model is written here, as a file from before the zone existed.
+  const bare = join(tmp, "no-provenance.h5");
+  writeTree(h5wasm, bare, tree({ meta: { attrs: { neutral_schema_version: "2.33.0" } }, nodes: { ids: new Int32Array([1]) } }));
+  assert.equal(readProvenance(h5, bare), null);
   assert.equal(readProvenance(h5, join(fixtures, "zones.geometry.h5")), null);
 });
 
