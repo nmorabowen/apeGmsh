@@ -188,7 +188,7 @@ test("AC5: a #k collision row has no jump and states its reason", () => {
   // two #k numberings differ, so the row must not jump.
   const clash = Object.keys(s0.decls).find((p) => /^opensees\/geomTransf\/#/.test(p))!;
   assert.ok(clash);
-  const s = { ...s0, provenance: [...s0.provenance, { key: clash, origin: "user" as const, seq: 99, source: { file: "/x/m.py", line: 3, function: "f", sha256: "", script: null } }] };
+  const s = { ...s0, provenance: [...s0.provenance, { key: clash, origin: "user" as const, seq: 99, source: { file: "/x/m.py", line: 3, function: "f", sha256: "a".repeat(64), recorded: true, script: null } }] };
   const row = sourcesOf(s).find((r) => r.key === clash)!;
   assert.equal(row.label, null);
   assert.match(row.off!, /unnamed declaration is not joined/);

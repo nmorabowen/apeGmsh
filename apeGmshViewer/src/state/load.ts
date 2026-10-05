@@ -280,6 +280,7 @@ function declSourceOf(zone: ProvenanceZone, path: string): DeclSource | null {
     line: at.line,
     function: at.function,
     sha256: at.sha256,
+    recorded: at.recorded,
     script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
   };
 }

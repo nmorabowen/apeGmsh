@@ -96,8 +96,10 @@ export interface DeclSource {
   file: string;
   line: number;
   function: string;
-  /** the file's sha256 when it was captured */
+  /** the file's sha256 when it was captured; "" when the writer had none to take */
   sha256: string;
+  /** the source can be opened; false for a pseudo-file, or a path with no digest that is not on disk ("source not recorded") */
+  recorded: boolean;
   /** the outermost script line, when the call came through a helper; null when there is none */
   script: { file: string; line: number } | null;
 }
