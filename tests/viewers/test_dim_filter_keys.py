@@ -13,6 +13,39 @@ import ast
 from pathlib import Path
 
 VIEWERS = Path(__file__).resolve().parents[2] / "src" / "apeGmsh" / "viewers"
+
+
+def _unit(class_name: str) -> list[Path]:
+    """The module defining ``class_name`` (found by AST walk, not by
+    filename) plus its package siblings if it was split into a package.
+    A missing or ambiguous class raises, so the guard cannot pass
+    vacuously after a hub move."""
+    found = []
+    for p in sorted(VIEWERS.rglob("*.py")):
+        tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+        if any(isinstance(n, ast.ClassDef) and n.name == class_name
+               for n in tree.body):
+            found.append(p)
+    assert len(found) == 1, (
+        f"expected exactly one class {class_name!r} under {VIEWERS}, "
+        f"found {[str(f) for f in found]}"
+    )
+    f = found[0]
+    pkg = f.parent if f.name == "__init__.py" else f.with_suffix("")
+    files = [f]
+    if pkg.is_dir():
+        files += sorted(q for q in pkg.rglob("*.py") if q != f)
+    return files
+
+
+def _lines(unit: list[Path]) -> list[int]:
+    return [ln for p in unit for ln in _digit_add_key_event_lines(p)]
+
+
+def _src(unit: list[Path]) -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in unit)
+
+
 _DIGIT_KEYS = frozenset({"0", "1", "2", "3", "4"})
 
 
@@ -33,23 +66,23 @@ def _digit_add_key_event_lines(path: Path) -> list[int]:
 
 
 def test_model_viewer_dim_keys_are_not_vtk_events() -> None:
-    path = VIEWERS / "model_viewer.py"
-    assert _digit_add_key_event_lines(path) == []
-    src = path.read_text(encoding="utf-8")
+    unit = _unit("ModelViewer")
+    assert _lines(unit) == []
+    src = _src(unit)
     assert "application=True" in src
     assert 'win.add_shortcut' in src
 
 
 def test_mesh_viewer_dim_keys_are_not_vtk_events() -> None:
-    path = VIEWERS / "mesh_viewer.py"
-    assert _digit_add_key_event_lines(path) == []
-    src = path.read_text(encoding="utf-8")
+    unit = _unit("MeshViewer")
+    assert _lines(unit) == []
+    src = _src(unit)
     assert "application=True" in src
 
 
 def test_results_viewer_dim_keys_are_not_vtk_events() -> None:
-    path = VIEWERS / "results_viewer.py"
-    assert _digit_add_key_event_lines(path) == []
-    src = path.read_text(encoding="utf-8")
+    unit = _unit("ResultsViewer")
+    assert _lines(unit) == []
+    src = _src(unit)
     assert "ApplicationShortcut" in src
     assert "_results_filter.toggle" in src
