@@ -1240,6 +1240,29 @@ def _added_lines(diff: str) -> dict[str, set[int]]:
     return added
 
 
+def _deleted_comments(diff: str) -> Counter[str]:
+    """Multiset of the stripped comment text on the lines a `git diff -U0` deletes.
+
+    A pure move deletes a comment here and re-adds it verbatim elsewhere, so the added
+    copy is not new provenance.
+    """
+    deleted: Counter[str] = Counter()
+    in_header = False
+    for row in diff.splitlines():
+        if row.startswith("diff --git"):
+            in_header = True
+        elif row.startswith("@@"):
+            in_header = False
+        elif not in_header and row.startswith("-"):
+            body = row[1:]
+            if body.lstrip().startswith("#"):
+                deleted[body.strip()] += 1
+            else:  # a trailing comment; a line that does not tokenize alone has none we can read
+                for comment in _comments(body).values():
+                    deleted[comment.strip()] += 1
+    return deleted
+
+
 def _waived_above(lines: list[str], line: int) -> bool:
     """A `comment-provenance-ok <reason>` waiver on `line` or in the comment block above it."""
     at = line
@@ -1264,6 +1287,7 @@ def check_comment_provenance(root: Path, base: str) -> list[Finding]:
 
     fork = run("merge-base", base, "HEAD").strip()
     diff = run("diff", "-U0", "--no-color", "--no-ext-diff", fork, "--", f"{PROVENANCE_SCOPE}*.py")
+    moved = _deleted_comments(diff)
     findings: list[Finding] = []
     for rel, numbers in sorted(_added_lines(diff).items()):
         path = root / rel
@@ -1274,6 +1298,9 @@ def check_comment_provenance(root: Path, base: str) -> list[Finding]:
         for line, comment in sorted(_comments(text).items()):
             body = comment.lstrip("#")
             if line in numbers and PROVENANCE.search(body) and not _waived_above(lines, line):
+                if moved[comment.strip()] > 0:  # one deleted copy covers one added copy
+                    moved[comment.strip()] -= 1
+                    continue
                 findings.append(Finding(rel, line, "comment-provenance", RULES["comment-provenance"]))
     return findings
 

@@ -1482,3 +1482,50 @@ def test_added_lines_reads_a_zero_context_diff() -> None:
         -deleted
         """)
     assert quirks._added_lines(diff) == {"src/a.py": {3, 4}}
+
+
+# --- comment-provenance: a comment moved verbatim is not new provenance -------
+
+
+def _two_file_repo(tmp_path: Path, before: dict[str, str], after: dict[str, str]) -> Path:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    for rel, text in before.items():
+        _write(tmp_path, rel, text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    _git(tmp_path, "checkout", "-q", "-b", "topic")
+    for rel, text in after.items():
+        _write(tmp_path, rel, text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "topic")
+    return tmp_path
+
+
+def test_comment_provenance_passes_a_comment_moved_verbatim_between_files(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "def f():\n    # kept for the hub (ADR 0112 D3, #1378)\n    return 1\n",
+         "src/apeGmsh/_b.py": "z = 0\n"},
+        {"src/apeGmsh/_a.py": "def f():\n    return 1\n",
+         "src/apeGmsh/_b.py": "z = 0\ndef f():\n    # kept for the hub (ADR 0112 D3, #1378)\n    return 1\n"},
+    )
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_flags_a_new_comment_when_another_is_deleted(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "# old note #1378\nx = 1\n"},
+        {"src/apeGmsh/_a.py": "x = 1\n# brand new note #1500\n"},
+    )
+    assert _provenance(root) == ["src/apeGmsh/_a.py:2"]
+
+
+def test_comment_provenance_moved_once_added_twice_is_flagged_once(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "# moved note #1378\nx = 1\n", "src/apeGmsh/_b.py": "z = 0\n"},
+        {"src/apeGmsh/_a.py": "x = 1\n",
+         "src/apeGmsh/_b.py": "z = 0\n# moved note #1378\ny = 1\n# moved note #1378\n"},
+    )
+    assert len(_provenance(root)) == 1
