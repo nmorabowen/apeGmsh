@@ -3887,12 +3887,18 @@ Three group-level constraints build on the same idea. <code>rigid_diaphragm</cod
 classic floor constraint — every slab node within <code>plane_tolerance</code> of the
 diaphragm plane shares in-plane motion with a master node:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_diaphragm</span><span class="p">(</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">"slab"</span><span class="p">,</span> <span class="s2">"slab_master"</span><span class="p">,</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">"slab_master"</span><span class="p">,</span> <span class="s2">"slab"</span><span class="p">,</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">master_point</span><span class="o">=</span><span class="p">(</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">2.5</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">),</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">plane_normal</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">plane_tolerance</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
 </span></code></pre></div>
+<p>The diaphragm ties only the in-plane DOFs (<code>ux, uy, rz</code> here). A master that
+is a lone point at the centre of mass sits in no element, so its <code>uz, rx, ry</code>
+are stiffened by nothing and the stiffness matrix is singular there; fix them on
+the bridge, <code>ops.fix(pg="slab_master", dofs=(0, 0, 1, 1, 1, 0))</code>, or attach the
+master to an element. The build warns (<code>DetachedDiaphragmMasterWarning</code>) when a
+detached master still has free DOFs, naming the mask.</p>
 <p><code>rigid_body</code> welds a whole region to a master (all six DOFs), and
 <code>kinematic_coupling</code> is the RBE2 of the family: a reference node rigidly drives
 a node set with a per-set DOF selection, carrying the correct moment-arm
