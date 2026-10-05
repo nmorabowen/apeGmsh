@@ -352,14 +352,25 @@ def test_class_map_allows_dunder_names(tmp_path, capsys):
 
 
 def test_class_map_move_never_exits_zero_sibling_base_wins(tmp_path, capsys):
-    # class A(N, M): N.m shadows the moved M.m in the MRO; only review can tell
-    head_a = CM_HEAD_A.replace("(M)", "(N, M)").replace(
-        "from mix import M", "from mix import M, N")
-    head_m = CM_HEAD_M + "\n\nclass N:\n    def m(self):\n        return 99\n"
-    repo = _cm_repo(tmp_path, head_a=head_a, head_m=head_m)
-    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
-    assert code != 0
-    assert "NEEDS REVIEW" in out or "FAIL" in out
+    # M, N and class A(N, M) already exist in the base: no header changes, only
+    # m moves A -> M, and N.m shadows it in the MRO. Only review can tell.
+    wired_a = ("from mix import M, N\n\n\nclass A(N, M):\n"
+               "    def m(self):\n        return 1\n\n"
+               "    def n(self):\n        return 2\n")
+    mix = ("class M:\n    pass\n\n\nclass N:\n"
+           "    def m(self):\n        return 99\n")
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a.py").write_text(wired_a)
+    (tmp_path / "mix.py").write_text(mix)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "a.py").write_text(wired_a.replace(
+        "    def m(self):\n        return 1\n\n", ""))
+    (tmp_path / "mix.py").write_text(mix.replace(
+        "class M:\n    pass\n", "class M:\n    def m(self):\n        return 1\n"))
+    code, out = _cm_run(tmp_path, capsys, "--class-map", "A=M", "--json")
+    assert code == 2
+    assert '"needs_review": true' in out and '"class_headers": []' in out
 
 
 def test_class_map_same_named_old_in_other_file(tmp_path, capsys):
