@@ -818,17 +818,20 @@ def test_artifact_zones_by_root_group(tmp_path: Path) -> None:
 
 
 def test_apesees_file_at_the_model_path_is_not_replaced(monkeypatch, tmp_path: Path) -> None:
-    """Finding 3 (maintainer ruling: skip and warn). An ``apeSees(fem).h5``
-    written at the session's own model path inside the ``with`` block
-    holds ``/opensees``, which the end-of-session neutral write would
-    drop: ``end()`` warns, leaves the file byte-identical with its
-    ``/opensees`` zone, and still writes the geometry sibling, paired."""
+    """Finding 3, under the D1 overwrite policy (#1307, P4). An
+    ``apeSees(fem).h5`` written at the session's own model path inside
+    the ``with`` block holds ``/opensees``, which the end-of-session
+    neutral write would drop: it is this run's fuller output (the same
+    ``session_id`` and ``snapshot_id``), so ``end()`` keeps it
+    **silently**, byte-identical with its ``/opensees`` zone, and still
+    writes the geometry sibling, paired.  ``tests/test_artifact_policy.py``
+    holds the stale and another-run cases."""
     from apeGmsh.opensees import apeSees
 
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     target = tmp_path / "bridge.h5"
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         with apeGmsh(model_name="bridge") as g:
             _small_box(g)
             fem = g.mesh.queries.get_fem_data()
@@ -839,8 +842,6 @@ def test_apesees_file_at_the_model_path_is_not_replaced(monkeypatch, tmp_path: P
             ops.h5(str(target))
             before = target.read_bytes()
     assert target.read_bytes() == before
-    msgs = [str(x.message) for x in w if "would drop" in str(x.message)]
-    assert len(msgs) == 1 and "opensees" in msgs[0]
     with h5py.File(target, "r") as f:
         assert "opensees" in f
     sibling = tmp_path / "bridge.geometry.h5"

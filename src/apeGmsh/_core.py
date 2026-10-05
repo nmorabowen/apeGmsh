@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._session import _SessionBase
+from ._session import ArtifactTargetUnavailable, _SessionBase
 
 if TYPE_CHECKING:
     from .viz.Inspect import Inspect
@@ -69,10 +69,19 @@ class apeGmsh(_SessionBase):
 
     Parameters
     ----------
-    model_name : str
-        Name passed to ``gmsh.model.add()``.
+    model_name : str or None
+        Name passed to ``gmsh.model.add()`` and the stem of the
+        session's ``model.h5`` (``<dir>/<model_name>.h5``).  ``None``
+        (the default) takes the stem of the script Python is running;
+        with no real script (a notebook, ``-c``, stdin) the session has
+        no name and writes nothing automatically (one warning).
     verbose : bool
         If True, composites print diagnostic messages.
+    save_to : str, Path or None
+        Where ``end()`` writes ``model.h5`` instead of the conventional
+        path; a directory means ``<dir>/<model_name>.h5``.
+    overwrite : bool
+        ``False`` refuses to replace an existing target.
     """
 
     _COMPOSITES = (
@@ -130,13 +139,31 @@ class apeGmsh(_SessionBase):
     def __init__(
         self,
         *,
-        model_name: str = "ModelName",
+        model_name: str | None = None,
         verbose: bool = False,
         save_to: str | Path | None = None,
         overwrite: bool = True,
         _artifacts: bool = True,
     ) -> None:
-        super().__init__(name=model_name, verbose=verbose)
+        # ADR 0112 D1, P2 (#1307): the default name is the ``__main__``
+        # script's stem, so ``python frame.py`` leaves ``frame.h5``
+        # beside it.  With no real script (a notebook, ``-c``, stdin)
+        # the session has no name: ``end()`` writes nothing automatically
+        # and warns once, and the snapshot's ``model_name`` is ``""``.
+        # An explicit ``model_name`` always wins; an empty one is refused.
+        if model_name is None:
+            from ._artifact_policy import main_script
+
+            script = main_script()
+            name = script.stem if script is not None else ""
+        else:
+            name = str(model_name)
+            if not name:
+                raise ValueError(
+                    "apeGmsh(model_name=''): the model name must be a "
+                    "non-empty string; leave it out to take the script's stem"
+                )
+        super().__init__(name=name, verbose=verbose)
         # ADR 0112 D1: this session *is* the model; ``end()`` writes
         # ``model.h5`` and its geometry sibling unconditionally.  The
         # private ``_artifacts=False`` is for library-internal sessions
@@ -473,6 +500,11 @@ class apeGmsh(_SessionBase):
         truncate-opens it as a file and fails with a cryptic OS-level
         ``PermissionError`` on Windows; this gives both :meth:`save` and
         the :meth:`end` autosave a usable file path instead.
+
+        Raises :class:`~apeGmsh._session.ArtifactTargetUnavailable` when
+        the path needs the session's name and it has none (P2, #1307: no
+        ``model_name`` and no script file); ``end()`` turns that into one
+        warning and writes nothing.
         """
         if path is not None:
             target = Path(path)
@@ -481,6 +513,14 @@ class apeGmsh(_SessionBase):
         else:
             target = default_artifact_dir()
         if target.is_dir() or target.suffix == "":
+            if not self.name:
+                raise ArtifactTargetUnavailable(
+                    f"no model name: the session has no model_name and "
+                    f"Python is not running a script file (a notebook, -c "
+                    f"or stdin), so there is no conventional model.h5 path "
+                    f"under {target}; nothing is written automatically. "
+                    f"Pass model_name= or save_to=<file>."
+                )
             target = target / f"{self.name}.h5"
         return target
 
