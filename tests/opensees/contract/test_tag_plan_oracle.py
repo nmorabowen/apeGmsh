@@ -16,7 +16,8 @@ A tapped row of a derived verb (``VERB_KIND``) then belongs to:
   transform's first ``geomTransf``);
 * the family whose function minted it at emit time;
 * while the element family is pending, the element family, for an
-  ``element`` row nobody minted (a FEM id under ``element_tags="fem"``);
+  ``element`` row nobody minted inside the emit's reserved range (a FEM
+  id under ``element_tags="fem"``);
 * otherwise the plan: a tag the emit read rather than minted, which some
   migrated family's plan must hold.
 
@@ -250,8 +251,9 @@ def _owner(case: Case, row: Row) -> str | None:
         return None
     if key in case.mints:
         return case.mints[key]
-    if kind == "element" and not FAMILY_PLANS["elements"].MIGRATED:
-        return "elements"
+    if (kind == "element" and not FAMILY_PLANS["elements"].MIGRATED
+            and row[1] <= case.seed.get("element", 0)):
+        return "elements"      # a FEM id, inside the reserved range
     return PLANNED
 
 
