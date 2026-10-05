@@ -231,7 +231,11 @@ jobs:
       # (bump pins + re-measure + adjust in one PR).
       MYPY_BASELINE: 0
     steps:
+      # Full history: the quirk lint's comment-provenance rule diffs the PR
+      # against its merge base with the base branch.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -269,7 +273,7 @@ jobs:
       # stream. Stdlib-only and a couple of seconds. Last in the job so a
       # red lint never hides ruff or mypy.
       - name: Quirk lint (scripts/check_quirks.py)
-        run: python scripts/check_quirks.py
+        run: python scripts/check_quirks.py ${{ github.event_name == 'pull_request' && format('--base origin/{0}', github.base_ref) || '' }}
 
       # ADR 0112 D4: the app in apeGmshViewer/ never imports or spawns apeGmsh.
       # No waivers; passes while the directory does not exist.
