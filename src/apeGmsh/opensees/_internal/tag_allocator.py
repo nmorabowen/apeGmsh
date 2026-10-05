@@ -80,7 +80,8 @@ class TagAllocator:
         mint in a kind of ``frozen_kinds`` (or in a kind this allocator's
         own fork froze) raises :class:`TagLawError`; every other kind
         mints on. The copy is not whole-frozen even when this allocator
-        is, and this allocator is never changed by the copy's mints.
+        is, and this allocator is never changed by the copy's mints. A
+        copy with any frozen kind refuses :meth:`reset`.
         """
         kinds = frozenset(frozen_kinds)
         for k in kinds:
@@ -107,6 +108,13 @@ class TagAllocator:
                 f"{verb}({kind!r}): kind {kind!r} is planned and frozen in "
                 "this allocator, so the emit path must read its tag from "
                 "the tag plan instead of minting one (ADR 0114 D4)."
+            )
+        if kind is None and self._frozen_kinds:
+            raise TagLawError(
+                f"{verb}() on an allocator with frozen kinds "
+                f"{sorted(self._frozen_kinds)}: clearing it would let a "
+                "kind it does not freeze re-mint tags the plan already "
+                "handed out (ADR 0114 D4)."
             )
         raise AssertionError("_refuse called for an allowed mint")
 
@@ -197,10 +205,11 @@ class TagAllocator:
     def reset(self) -> None:
         """Clear all counters and assignments — fresh allocator state.
 
-        Refused on a frozen allocator: clearing it would let the next
-        mint hand out a planned tag a second time.
+        Refused on a frozen allocator, and on a fork with any frozen
+        kind: clearing it would let the next mint hand out a planned tag
+        a second time.
         """
-        if self._frozen:
+        if self._frozen or self._frozen_kinds:
             self._refuse(None, "reset")
         self._counters.clear()
         self._assignments.clear()

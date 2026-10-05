@@ -170,7 +170,131 @@ def models() -> dict[str, Callable[[], apeSees]]:
     out["kitchen_sink_absorbing/staged"] = _real_kitchen_sink_bridge
     for mode in GOLDEN_MODES:
         out[f"two_rank_regions/{mode}"] = partial(two_rank_regions, mode)
+    out["synthesised_elements/flat"] = partial(
+        synthesised_elements, element_tags="sequential")
+    out["synthesised_elements_fem_ids/flat"] = partial(
+        synthesised_elements, element_tags="fem")
     return out
+
+
+#: The FEM element ids of :func:`synthesised_elements_fem`: the emitted
+#: bars start at 33, and an unemitted point carrier holds the largest id.
+_SYNTH_FIRST_EID = 33
+_SYNTH_CARRIER_EID = 50
+
+
+def synthesised_elements_fem() -> Any:
+    """A truss whose FEM carries every stream the bridge synthesises tags for.
+
+    Thirteen 3-dof nodes and seven bars (``Bars``, ids 33-39) carry:
+
+    * MP elements: a kinematic coupling 11 -> 12 (an element) and a
+      penalty tie of node 13 to the triangle 1-2-3 (an ``embeddedNode``);
+    * an interface between the coincident nodes 9 and 10 (a
+      ``zeroLength`` and its two materials);
+    * a node-to-surface contact of nodes 5 and 6 on the face 1-2-3-4, and
+      a rigid-plane contact of nodes 7 and 8.
+
+    A one-node group (``Carrier``, id 50) is never emitted, so under
+    ``element_tags="fem"`` the reservation reaches past the emitted ids.
+    """
+    from apeGmsh._kernel.records._constraints import (
+        ContactPlaneRecord,
+        ContactRecord,
+        InterfaceRecord,
+        InterpolationRecord,
+        NodeGroupRecord,
+        NormalLaw,
+        TangentialLaw,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+    from apeGmsh.mesh._element_types import ElementGroup, make_type_info
+    from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
+    from apeGmsh.mesh.FEMData import (
+        ElementComposite,
+        FEMData,
+        MeshInfo,
+        NodeComposite,
+    )
+
+    coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+        [0.2, 0.2, 0.5], [0.8, 0.8, 0.5],
+        [0.0, 0.0, -1.0], [1.0, 0.0, -1.0],
+        [2.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0], [3.0, 1.0, 0.0], [4.0, 0.0, 0.0],
+    ], dtype=np.float64)
+    node_ids = np.arange(1, len(coords) + 1, dtype=np.int64)
+    conn = np.array([
+        [1, 5], [2, 6], [3, 4], [7, 8], [9, 11], [10, 12], [13, 2],
+    ], dtype=np.int64)
+    eids = np.arange(_SYNTH_FIRST_EID, _SYNTH_FIRST_EID + len(conn),
+                     dtype=np.int64)
+    line = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=len(conn))
+    point = make_type_info(
+        code=15, gmsh_name="Point", dim=0, order=1, npe=1, count=1)
+    groups = {
+        1: ElementGroup(element_type=line, ids=eids, connectivity=conn),
+        15: ElementGroup(
+            element_type=point,
+            ids=np.array([_SYNTH_CARRIER_EID], dtype=np.int64),
+            connectivity=np.array([[13]], dtype=np.int64)),
+    }
+    pg = {(1, 100): {
+        "name": "Bars",
+        "node_ids": node_ids,
+        "node_coords": coords,
+        "element_ids": eids,
+    }}
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=coords,
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+        constraints=[NodeGroupRecord(
+            kind=ConstraintKind.KINEMATIC_COUPLING, master_node=11,
+            slave_nodes=[12], dofs=[1, 2, 3],
+        )],
+    )
+    elements = ElementComposite(
+        groups=groups,
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+        constraints=[InterpolationRecord(
+            kind=ConstraintKind.TIE, slave_node=13, master_nodes=[1, 2, 3],
+            dofs=[1, 2, 3], enforce="penalty",
+        )],
+        interfaces=[InterfaceRecord(
+            kind=ConstraintKind.INTERFACE, master_node=9, slave_node=10,
+            backing_element=int(eids[4]),
+            orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+            a_trib=0.25,
+            normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+            tangential_law=TangentialLaw(
+                kind="epp", k_per_area=1.0e5, tau_b=250.0),
+        )],
+        contacts=[ContactRecord(
+            kind="contact", name="pad", formulation="nts",
+            master_faces=np.array([[1, 2, 3, 4]], dtype=np.int64),
+            master_nps=4, slave_nodes=[5, 6], kn=1.0e6, kt=0.0, mu=0.0,
+        )],
+        contact_planes=[ContactPlaneRecord(
+            kind="contact_plane", name="floor", slave_nodes=[7, 8],
+            normal=(0.0, 0.0, 1.0), point=(0.0, 0.0, -2.0), kn=1.0e6,
+        )],
+    )
+    info = MeshInfo(
+        n_nodes=len(node_ids), n_elems=len(conn) + 1, bandwidth=1,
+        types=[line, point],
+    )
+    return FEMData(nodes=nodes, elements=elements, info=info)
+
+
+def synthesised_elements(*, element_tags: str) -> apeSees:
+    """:func:`synthesised_elements_fem` under a plain truss declaration."""
+    ops = apeSees(synthesised_elements_fem(), element_tags=element_tags)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
+    ops.element.Truss(pg="Bars", A=0.01, material=mat)
+    return ops
 
 
 def two_rank_regions(mode: str) -> apeSees:
