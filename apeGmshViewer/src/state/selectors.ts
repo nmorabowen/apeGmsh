@@ -221,17 +221,28 @@ export function declOfH5(s: State, h5: string): DeclPath | null {
   return null;
 }
 
-/** The latest go-to-source answer for `decl`, when it failed. */
 /** One row of the sources listing (panels/sources.ts). */
 export interface SourceRow {
   key: DeclPath;
   origin: Origin;
   /** `<verb>` of a synthesised key (`support` in `support:<stage>/hold`); null for the user's own declarations */
   verb: string | null;
+  /**
+   * The key cut after each `/`, the only places it may wrap: joined they are
+   * the key; the first is the zone prefix (`opensees/`).
+   */
+  segments: string[];
   /** `file:line` of the go-to-source target, or null when the record has no frame */
   label: string | null;
-  /** why go-to-source is off for this row, or null when it can jump */
+  /** the button's tooltip: the absolute file, the line and the function; or the reason it is off */
+  title: string;
+  /** why go-to-source is off for this row (shown on a second line), or null when it can jump */
   off: string | null;
+}
+
+/** `a/b:c/d` -> [`a/`, `b:c/`, `d`]: the pieces between which a path may wrap. */
+export function pathSegments(key: string): string[] {
+  return key.match(/[^/]*\/|[^/]+$/g) ?? [];
 }
 
 /**
@@ -248,12 +259,35 @@ export function sourcesOf(s: State): SourceRow[] {
       key: p.key,
       origin: p.origin,
       verb: p.origin === "synthesised" && colon > 0 ? name.slice(0, colon) : null,
+      segments: pathSegments(p.key),
       label: where.ok ? where.label : null,
+      title: where.ok ? `open ${where.source.file}:${where.source.line} (${where.source.function}) in the editor` : where.reason,
       off: where.ok ? null : where.reason,
     };
   });
 }
 
+/** The first /provenance version that marks synthesised records (`records/origin`). */
+const ORIGIN_FROM_MINOR = 1;
+
+/**
+ * The sources panel's header: the record count, how many are synthesised,
+ * and a notice for a 1.0.x file, whose records carry no origin and so are
+ * never marked (the app does not guess one from the key). `null` when there
+ * is nothing to list: no model, no /provenance, or no record (the panel hides).
+ */
+export function sourcesHeaderOf(s: State): { count: number; synthesised: number; notice: string | null } | null {
+  if (s.provenance.length === 0) return null;
+  const zone = s.artifacts.model?.zones["provenance"];
+  const v = zone?.status === "ready" ? /^(1)\.(\d+)\./.exec(zone.version) : null;
+  return {
+    count: s.provenance.length,
+    synthesised: s.provenance.filter((p) => p.origin === "synthesised").length,
+    notice: v !== null && Number(v[2]) < ORIGIN_FROM_MINOR ? `provenance ${v[1]}.${v[2]}: synthesised records are not marked` : null,
+  };
+}
+
+/** The latest go-to-source answer for `decl`, when it failed. */
 export function sourceFailure(s: State, decl: DeclPath): string | null {
   const l = s.source.last;
   return l && l.decl === decl && !l.ok ? (l.reason ?? "go-to-source failed") : null;

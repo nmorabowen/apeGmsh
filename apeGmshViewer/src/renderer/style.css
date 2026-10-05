@@ -58,8 +58,17 @@ html, body {
 }
 .legend-mode button.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
-#inspector {
+/* The right rail (V2g, design brief on #1426): the inspector on top, the
+   sources below, never overlapping. The rail itself takes no clicks. */
+#rail {
   position: fixed; top: 14px; right: 14px; bottom: 14px; width: 470px;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;
+  pointer-events: none;
+}
+#rail > * { pointer-events: auto; }
+#rail > [hidden] { display: none; }
+#inspector {
+  flex: 1 1 auto; min-height: 0;
   overflow: auto; padding: 14px; border-radius: 12px;
   background: var(--panel); border: 1px solid var(--line);
 }
@@ -141,3 +150,31 @@ code { font-family: var(--mono); }
 }
 .source:disabled { cursor: default; color: var(--muted); opacity: 0.6; }
 .source-failed { color: var(--error); font-size: 13px; margin: 0 0 6px; }
+
+/* V2g: the sources listing, below the inspector in #rail (design brief on
+   #1426). Capped at 40% of the rail while the inspector shows. */
+#sources {
+  flex: 0 1 auto; min-height: 0; max-height: 100%;
+  overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#inspector:not([hidden]) + #sources { max-height: 40%; }
+#sources h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.sources-notice { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.source-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
+  column-gap: 6px; padding: 3px 0; border-top: 1px solid var(--line);
+}
+/* A key wraps only at the <wbr> after each `/`, never inside a segment. */
+.source-key { font: 11px var(--mono); color: var(--text); overflow-wrap: normal; word-break: keep-all; }
+.source-zone, .source-row.synthesised .source-key { color: var(--muted); }
+.synth {
+  padding: 0 5px; border-radius: 4px;
+  font: 600 11px var(--font); color: var(--muted); background: none;
+  border: 1px dashed var(--muted);
+}
+.source-off, .source-row .source-failed { grid-column: 1 / -1; margin: 1px 0 0; }

@@ -23,7 +23,7 @@ import type { H5Module } from "../../src/reader/read.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { loadModel } from "../../src/state/load.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
-import { sourceFor, sourcesOf, warningsOf } from "../../src/state/selectors.ts";
+import { pathSegments, sourceFor, sourcesHeaderOf, sourcesOf, warningsOf } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
 
 await h5wasm.ready;
@@ -109,6 +109,95 @@ test("effects: go-to-source on a synthesised object opens the s.support( line", 
   // A key that is neither a declaration nor a record still fails loud.
   assert.throws(() => store.dispatch({ type: "requestSource", decl: "opensees/pattern/support:nope" }), /not a declaration or a \/provenance record/);
   effects.dispose();
+});
+
+// ---- the design brief's acceptance criteria (#1426) -------------------------
+// AC1/AC2 (no overlap, the viewport keeps its width) and AC4's colours are
+// layout facts: checked here on the stylesheet and the page, and in the still.
+
+const renderer = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "renderer");
+const css = readFileSync(join(renderer, "style.css"), "utf8");
+const html = readFileSync(join(renderer, "index.html"), "utf8");
+/** The declarations of the first rule whose selector list is exactly `sel`. */
+const rule = (sel: string): string => {
+  const m = new RegExp(`(?:^|\\})\\s*${sel.replace(/[.#()[\]+*>]/g, "\\$&")}\\s*\\{([^}]*)\\}`, "m").exec(css);
+  assert.ok(m, `style.css has no rule ${sel}`);
+  return m[1]!;
+};
+
+test("AC1/AC2: the inspector and Sources share one rail, stacked, and the rail leaves the viewport >= 640 px of 1280", () => {
+  assert.match(html, /<div id="rail">\s*<aside id="inspector" hidden><\/aside>\s*<aside id="sources" hidden><\/aside>\s*<\/div>/);
+  const railCss = rule("#rail");
+  assert.match(railCss, /position: fixed/);
+  assert.match(railCss, /flex-direction: column/);
+  const width = Number(/width: (\d+)px/.exec(railCss)![1]);
+  const right = Number(/right: (\d+)px/.exec(railCss)![1]);
+  assert.ok(1280 - width - right >= 640, `the rail covers ${width + right} px of 1280`);
+  // Neither panel positions itself: the rail's flex column stacks them.
+  assert.doesNotMatch(rule("#inspector"), /position:/);
+  assert.doesNotMatch(rule("#sources"), /position:/);
+  assert.match(rule("#inspector:not([hidden]) + #sources"), /max-height: 40%/);
+});
+
+test("AC3: rows in ascending seq; the header counts the records and the synthesised ones", () => {
+  const s = loaded(bridgeModel, bridgeZone);
+  const rows = sourcesOf(s);
+  const seqs = rows.map((r) => s.provenance.find((p) => p.key === r.key)!.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  const header = sourcesHeaderOf(s)!;
+  assert.equal(header.count, bridgeZone.records.path.length);
+  assert.equal(header.synthesised, bridgeZone.records.origin.filter((o) => o === "synthesised").length);
+  assert.equal(header.synthesised, 2);
+  assert.equal(header.notice, null);
+});
+
+test("AC4: the synth marker is a dashed muted outline, never the warn or accent colour", () => {
+  const synth = rule(".synth");
+  assert.match(synth, /border: 1px dashed var\(--muted\)/);
+  assert.match(synth, /color: var\(--muted\)/);
+  assert.doesNotMatch(synth, /--interp|--accent/);
+  assert.match(readFileSync(join(renderer, "..", "panels", "sources.ts"), "utf8"), /el\("span", "synth", "synth"\)/);
+});
+
+test("AC5: a #k collision row has no jump and states its reason", () => {
+  const s0 = loaded(zonesModel, zonesZone);
+  // An unnamed declaration of the app whose path is also a record key: the
+  // two #k numberings differ, so the row must not jump.
+  const clash = Object.keys(s0.decls).find((p) => /^opensees\/geomTransf\/#/.test(p))!;
+  assert.ok(clash);
+  const s = { ...s0, provenance: [...s0.provenance, { key: clash, origin: "user" as const, seq: 99, source: { file: "/x/m.py", line: 3, function: "f", sha256: "", script: null } }] };
+  const row = sourcesOf(s).find((r) => r.key === clash)!;
+  assert.equal(row.label, null);
+  assert.match(row.off!, /unnamed declaration is not joined/);
+  assert.equal(row.title, row.off);
+  // The panel shows the reason on its own line and wires no click on a disabled row.
+  const panel = readFileSync(join(renderer, "..", "panels", "sources.ts"), "utf8");
+  assert.match(panel, /if \(r\.off === null\) \{[\s\S]*?listen\(go, "click"[\s\S]*?\} else go\.disabled = true;/);
+  assert.match(panel, /el\("div", "f-src source-off", r\.off\)/);
+});
+
+test("AC6: a key wraps only after a /", () => {
+  for (const key of [HOLD, PATTERN, "geometry/box/block", "opensees/element/#1", "a", "a/b:c/d"]) {
+    const segs = pathSegments(key);
+    assert.equal(segs.join(""), key);
+    segs.slice(0, -1).forEach((g) => assert.match(g, /^[^/]*\/$/, `${key}: ${g}`));
+    assert.doesNotMatch(segs.at(-1)!.slice(0, -1), /\//);
+  }
+  assert.deepEqual(pathSegments(HOLD), ["opensees/", "timeSeries/", "support:gravity/", "hold"]);
+  const keyCss = rule(".source-key");
+  assert.match(keyCss, /overflow-wrap: normal/);
+  assert.match(keyCss, /word-break: keep-all/);
+});
+
+test("AC7: no /provenance hides the panel; a 1.0.x file shows the notice and no marker", () => {
+  assert.equal(sourcesHeaderOf(initialState), null);
+  const plain = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(bridgeModel, new BlobStore(), null) });
+  assert.equal(sourcesHeaderOf(plain), null);
+  const old = loaded(zonesModel, zonesZone);
+  const header = sourcesHeaderOf(old)!;
+  assert.equal(header.notice, "provenance 1.0: synthesised records are not marked");
+  assert.equal(header.synthesised, 0);
+  assert.equal(sourcesOf(old).filter((r) => r.origin === "synthesised").length, 0);
 });
 
 test("a model re-read replaces the listing; a failed read clears it", () => {
