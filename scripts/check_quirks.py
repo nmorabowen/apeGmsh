@@ -17,6 +17,11 @@ waiver: a collision is never right, and a dead citation is fixed in the doc.
 
     python scripts/check_quirks.py              # this checkout
     python scripts/check_quirks.py --root DIR   # another tree, e.g. a `git archive`
+    python scripts/check_quirks.py --base origin/main   # also `comment-provenance`
+
+`comment-provenance` reads only the comment lines a branch added in `src/` since its
+merge base with `--base REF`, so it never flags an existing comment; CI passes the PR's
+base branch. Its waiver is the same `# apegmsh-lint: comment-provenance-ok <reason>`.
 
 `getattr-private` and `getattr-undefined` also read a ratchet baseline
 (`scripts/quirks_getattr_baseline.txt`, `path::name` per line): it may only
@@ -35,6 +40,7 @@ import fnmatch
 import gc
 import io
 import re
+import subprocess
 import sys
 import tokenize
 from collections import Counter
@@ -50,7 +56,9 @@ FEMDATA = Path("src/apeGmsh/mesh/FEMData.py")
 #: The rebuilds that must carry a whole model: compose, and the model.h5
 #: round-trip. Foreign-format readers (MPCO, .ladruno) legitimately build
 #: partial composites and are out of scope.
-CARRY_ALL = (Path("src/apeGmsh/mesh/_compose.py"), Path("src/apeGmsh/mesh/_femdata_h5_io.py"))
+#: Keyed by package glob (fnmatch, where `*` also crosses `/`), so the rule still
+#: fires when `_compose.py` becomes `_compose/` or the h5 I/O is split into a package.
+CARRY_ALL = ("src/apeGmsh/mesh/_compose*", "src/apeGmsh/mesh/_femdata_h5*")
 COMPOSITES = ("ElementComposite", "NodeComposite")
 
 #: The one file allowed to spell schema versions as literals.
@@ -212,6 +220,31 @@ RULES: dict[str, str] = {
         "thread plus Qt segfaults the whole run. Mark it qt (its own process in the qt lane) "
         "or subprocess. Lesson: #1242; tests/sections/test_builder_gui_b6.py at 8269206d "
         "crashed Linux CI; class history #1080, 3165568c, 47e20ca6"
+    ),
+    "stale-patch-target": (
+        "a `mock.patch(\"a.b.c\")` or `monkeypatch.setattr(\"a.b.c\", ...)` string target "
+        "that no longer resolves in src/: the module or the name moved, so the patch either "
+        "raises at run time or (with `raising=False`, or a patch on a never-called path) "
+        "silently patches nothing and the test passes against the real code. Re-point the "
+        "string at the symbol's new home, or waive a genuinely dynamic target. Lesson: "
+        "plan_expert_panel_2026-09 S5; every module split strands patch strings the "
+        "import rewrite does not see"
+    ),
+    "comment-provenance": (
+        "a comment added in src/ carries narrative provenance (an issue or PR number, "
+        "'shipped in', 'as of <date>', 'previously' / 'used to'): history in a comment goes "
+        "stale the day it is written and the code reads as current anyway. Say what the code "
+        "does and why, and leave the history to the commit and the issue. Only lines added "
+        "since the merge base are read, so existing comments are never flagged. Lesson: "
+        "plan_expert_panel_2026-09 section 6, the comment-provenance diet"
+    ),
+    "raw-meta-ndm": (
+        "reads `ndm` straight off an H5 meta/attrs mapping. Since neutral 2.34.0 `/meta/ndm` "
+        "is the spatial ndm, but an older file stamped the mesh dimension there, so a raw read "
+        "returns the wrong dimension for old files and a silent default for a missing one. Call "
+        "emitter.h5_reader.read_spatial_ndm(meta, f, coords). Lesson: #1405; the raw reads at "
+        "model_data.py, results/capture/_domain.py and emitter/h5_reader.py (fabfa042) were "
+        "each fixed in turn after #1358"
     ),
 }
 
@@ -543,8 +576,12 @@ def _init_params(root: Path) -> dict[str, list[str]]:
     return params
 
 
+def _is_carry_all(rel: str) -> bool:
+    return any(fnmatch.fnmatchcase(rel, pattern) for pattern in CARRY_ALL)
+
+
 def check_compose_streams(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
-    if rel not in {path.as_posix() for path in CARRY_ALL}:
+    if not _is_carry_all(rel):
         return
     params = _init_params(root)
     for node in ast.walk(tree):
@@ -982,6 +1019,176 @@ def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[
     yield started, RULES["qt-process-isolation"]
 
 
+# --- stale-patch-target -----------------------------------------------------
+
+PATCH_TEXT = re.compile(r"(?:patch|setattr)\(\s*[rRuU]?['\"][A-Za-z_]\w*\.\w")
+MONKEYPATCH_NAMES = {"monkeypatch", "mp", "mpatch"}
+
+#: A parsed module: its top-level names, and each top-level class's members with
+#: whether the class can inherit members this file does not show (a base or a decorator).
+PatchNames = tuple[set[str], dict[str, tuple[set[str], bool]]]
+_patch_names_cache: dict[Path, PatchNames | None] = {}
+
+
+def _patch_names(path: Path) -> PatchNames | None:
+    if path not in _patch_names_cache:
+        source = _read_source(path)
+        names: PatchNames | None = None
+        if source is not None:
+            try:
+                tree: ast.Module | None = ast.parse(source, filename=str(path))
+            except SyntaxError:
+                tree = None
+            if tree is not None:
+                top: set[str] = set()
+                classes: dict[str, tuple[set[str], bool]] = {}
+                for stmt in _scope_statements(tree.body):
+                    top |= _bound_names(stmt)
+                    if isinstance(stmt, ast.ClassDef):
+                        opened = bool(stmt.decorator_list) or bool(stmt.keywords) or any(
+                            not (isinstance(b, ast.Name) and b.id == "object") for b in stmt.bases
+                        )
+                        classes[stmt.name] = (_class_members(stmt), opened)
+                names = (top, classes)
+        _patch_names_cache[path] = names
+    return _patch_names_cache[path]
+
+
+def _attrs_resolve(path: Path, rest: list[str]) -> bool:
+    """Whether the dotted `rest` names something in module `path`; True when unreadable."""
+    names = _patch_names(path)
+    if names is None or not rest:
+        return True
+    top, classes = names
+    if "*" in top or "__getattr__" in top:
+        return True  # a star import or a module __getattr__ can supply any name
+    if rest[0] not in top:
+        return False
+    if len(rest) == 2 and rest[0] in classes:
+        members, opened = classes[rest[0]]
+        return rest[1] in members or opened
+    return True  # deeper than a class member, or an imported name: not read further
+
+
+def _target_resolves(target: str, root: Path) -> bool:
+    """A dotted `a.b.c` string target against src/, statically; True for a non-src target."""
+    parts = target.split(".")
+    src = root / "src"
+    if not ((src / parts[0]).is_dir() or (src / f"{parts[0]}.py").is_file()):
+        return True  # not a src/ package (a stdlib or third-party patch): out of scope
+    path = src
+    for index, part in enumerate(parts):
+        if (path / part).is_dir():
+            path = path / part
+            continue
+        if (path / f"{part}.py").is_file():
+            return _attrs_resolve(path / f"{part}.py", parts[index + 1:])
+        init = path / "__init__.py"
+        return init.is_file() and _attrs_resolve(init, parts[index:])
+    return True  # the target is a package itself
+
+
+def _patch_string(node: ast.Call) -> str | None:
+    """The dotted string target of `patch("a.b")`, `x.patch("a.b")` or `monkeypatch.setattr("a.b", v)`."""
+    func = node.func
+    if not node.args or not isinstance(func, (ast.Name, ast.Attribute)):
+        return None
+    first = node.args[0]
+    if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+        return None
+    name = func.id if isinstance(func, ast.Name) else func.attr
+    if name == "patch":
+        return first.value
+    if (
+        isinstance(func, ast.Attribute) and func.attr == "setattr" and len(node.args) == 2
+        and isinstance(func.value, ast.Name) and func.value.id in MONKEYPATCH_NAMES
+    ):
+        return first.value
+    return None
+
+
+def check_stale_patch_target(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """A string patch target in tests/ whose module, class or name is not in src/."""
+    if not rel.startswith("tests/"):
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target = _patch_string(node)
+        if target is not None and "." in target and not _target_resolves(target, root):
+            yield node.lineno, f"{target!r} does not resolve in src/. " + RULES["stale-patch-target"]
+
+
+# --- raw-meta-ndm -----------------------------------------------------------
+
+#: The one reader of /meta/ndm: it and the private helpers it delegates to.
+NDM_READER = "src/apeGmsh/opensees/emitter/h5_reader.py"
+NDM_READER_FUNCS = {"read_spatial_ndm", "_trusted_meta_ndm", "_salvage_pre_spatial_ndm"}
+NDM_TEXT = re.compile(r"""["']ndm["']""")
+META_RECEIVERS = {"meta", "attrs"}
+
+
+def _is_meta_receiver(node: ast.expr) -> bool:
+    """`meta`, `attrs`, `x.attrs`, `x.meta`, `x.meta()`: an H5 meta or attrs mapping."""
+    if isinstance(node, ast.Call):
+        node = node.func
+    if isinstance(node, ast.Name):
+        return node.id in META_RECEIVERS
+    return isinstance(node, ast.Attribute) and node.attr in META_RECEIVERS
+
+
+def _json_names(tree: ast.AST) -> set[str]:
+    """Names bound from `json.load(s)(...)`: a JSON sidecar, not an H5 meta group."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr in {"load", "loads"}
+            and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "json"
+        ):
+            names |= {n.id for t in node.targets for n in _target_names(t)}
+    return names
+
+
+def _raw_ndm_reads(tree: ast.AST) -> Iterator[ast.expr]:
+    sidecars = _json_names(tree)
+
+    def reads_meta(receiver: ast.expr) -> bool:
+        return _is_meta_receiver(receiver) and not (
+            isinstance(receiver, ast.Name) and receiver.id in sidecars
+        )
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant) and node.slice.value == "ndm"
+            and reads_meta(node.value)
+        ):
+            yield node
+        elif (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and node.args
+            and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ndm"
+            and reads_meta(node.func.value)
+        ):
+            yield node
+
+
+def check_raw_meta_ndm(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """`meta["ndm"]` / `meta.get("ndm", ...)` in src/apeGmsh outside the one reader."""
+    if not rel.startswith(GETATTR_SCOPE):
+        return
+    exempt: set[int] = set()
+    if rel == NDM_READER:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in NDM_READER_FUNCS:
+                exempt.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    for node in _raw_ndm_reads(tree):
+        if node.lineno not in exempt:
+            yield node.lineno, RULES["raw-meta-ndm"]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
     "bare-version-compare": check_bare_version_compare,
@@ -992,7 +1199,83 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "getattr-undefined": check_getattr_undefined,
     "ratchet-baseline": check_ratchet_baseline,
     "qt-process-isolation": check_qt_process_isolation,
+    "stale-patch-target": check_stale_patch_target,
+    "raw-meta-ndm": check_raw_meta_ndm,
 }
+
+
+# --- comment-provenance (diff mode) -----------------------------------------
+
+#: Rules read from the lines a branch adds, so they need `--base REF`. Without it they
+#: stay silent; a waiver for one is read here, not by the per-file scan.
+DIFF_RULES = {"comment-provenance"}
+PROVENANCE_SCOPE = "src/"
+_MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
+PROVENANCE = re.compile(
+    r"(?<![\w&/])#\d{2,}\b"  # an issue or PR number
+    r"|\bshipped\s+(?:in|with|at|on)\b"
+    r"|\bas\s+of\s+(?:\d{4}-\d{2}|\d{1,2}\s+" + _MONTH + r"|" + _MONTH + r"\s+\d{1,4}|\d{4}\b)"
+    r"|\bpreviously\b"
+    r"|\bused\s+to\b",
+    re.IGNORECASE,
+)
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def _added_lines(diff: str) -> dict[str, set[int]]:
+    """`path -> new line numbers` of the lines a `git diff -U0` adds."""
+    added: dict[str, set[int]] = {}
+    path: str | None = None
+    line = 0
+    for row in diff.splitlines():
+        if row.startswith("+++ "):
+            target = row[4:].strip()
+            path = target[2:] if target.startswith("b/") else None  # /dev/null: a deletion
+        elif row.startswith("@@"):
+            match = _HUNK.match(row)
+            line = int(match.group(1)) if match else 0
+        elif path is not None and row.startswith("+") and not row.startswith("+++"):
+            added.setdefault(path, set()).add(line)
+            line += 1
+    return added
+
+
+def _waived_above(lines: list[str], line: int) -> bool:
+    """A `comment-provenance-ok <reason>` waiver on `line` or in the comment block above it."""
+    at = line
+    while True:
+        match = WAIVER.search(lines[at - 1]) if 0 < at <= len(lines) else None
+        if match and match.group("rule") == "comment-provenance" and match.group("reason").strip(" —-:"):
+            return True
+        at -= 1
+        if at < 1 or not lines[at - 1].lstrip().startswith("#"):
+            return False
+
+
+def check_comment_provenance(root: Path, base: str) -> list[Finding]:
+    """Comments that `src/` gained since the merge base with `base` and carry history."""
+    def run(*args: str) -> str:
+        done = subprocess.run(
+            ["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8"
+        )
+        if done.returncode != 0:
+            raise SystemExit(f"check_quirks: `git {' '.join(args)}` failed: {done.stderr.strip()}")
+        return done.stdout
+
+    fork = run("merge-base", base, "HEAD").strip()
+    diff = run("diff", "-U0", "--no-color", "--no-ext-diff", fork, "--", f"{PROVENANCE_SCOPE}*.py")
+    findings: list[Finding] = []
+    for rel, numbers in sorted(_added_lines(diff).items()):
+        path = root / rel
+        text = _read_source(path) if path.is_file() else None
+        if text is None:
+            continue
+        lines = text.splitlines()
+        for line, comment in sorted(_comments(text).items()):
+            body = comment.lstrip("#")
+            if line in numbers and PROVENANCE.search(body) and not _waived_above(lines, line):
+                findings.append(Finding(rel, line, "comment-provenance", RULES["comment-provenance"]))
+    return findings
 
 
 def _read_source(path: Path) -> str | None:
@@ -1012,12 +1295,15 @@ def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
             "schema_version" in lowered
             or RATCHET_TEXT.search(text) is not None
             or ("thread" in lowered and "qt" in lowered or "_properties" in lowered)
+            or PATCH_TEXT.search(text) is not None
         )
-    if rel in {path.as_posix() for path in CARRY_ALL} or _in_swallow_scope(rel):
+    if _is_carry_all(rel) or _in_swallow_scope(rel):
         return True
     if rel.startswith(GETATTR_SCOPE) and ("getattr(" in lowered or "hasattr(" in lowered):
         return True
     if rel.startswith(GETATTR_SCOPE) and VERSION_COMPARE_TEXT.search(lowered):
+        return True
+    if rel.startswith(GETATTR_SCOPE) and NDM_TEXT.search(text):
         return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 
@@ -1045,11 +1331,11 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
         if match is None:
             continue
         rule, reason = match.group("rule"), match.group("reason").strip(" —-:")
-        if rule not in PYTHON_RULES:
+        if rule not in PYTHON_RULES and rule not in DIFF_RULES:
             findings.append(Finding(rel, line, "waiver", f"no waivable rule {rule!r}"))
         elif not reason:
             findings.append(Finding(rel, line, "waiver", f"`{rule}-ok` needs a reason"))
-        else:
+        elif rule in PYTHON_RULES:  # a diff rule's waiver is read by the diff scan, not tracked here
             waivers[line] = rule
 
     used: set[int] = set()
@@ -1073,7 +1359,7 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
 
 
 def _python_files(root: Path) -> list[Path]:
-    found = [root / path for path in CARRY_ALL if (root / path).is_file()]
+    found: list[Path] = []
     for path in SWALLOW_SCOPE:
         target = root / path
         found += [target] if target.is_file() else sorted(target.rglob("*.py")) if target.is_dir() else []
@@ -1086,17 +1372,18 @@ def _python_files(root: Path) -> list[Path]:
     return list(dict.fromkeys(found))  # src/apeGmsh holds the narrow scopes too: scan each once
 
 
-def scan(root: Path) -> list[Finding]:
+def scan(root: Path, base: str | None = None) -> list[Finding]:
     was_enabled = gc.isenabled()
     gc.disable()  # the getattr index holds every parsed tree; collection passes over them cost more than they free
     try:
-        return _scan(root)
+        return _scan(root, base)
     finally:
         if was_enabled:
             gc.enable()
 
 
-def _scan(root: Path) -> list[Finding]:
+def _scan(root: Path, base: str | None = None) -> list[Finding]:
+    _patch_names_cache.clear()
     _getattr_cache.pop(root, None)
     _baseline_seen.pop(root, None)
     _baseline_cache.pop(root, None)
@@ -1104,6 +1391,8 @@ def _scan(root: Path) -> list[Finding]:
         for key in [k for k in cache if k[0] == root]:
             del cache[key]
     findings = check_adr_numbers(root) + check_doc_paths(root) + check_arch_path(root)
+    if base is not None:
+        findings += check_comment_provenance(root, base)
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
     findings.extend(_stale_baseline(root))
@@ -1115,8 +1404,12 @@ def _scan(root: Path) -> list[Finding]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO, help="tree to scan")
+    parser.add_argument(
+        "--base", metavar="REF",
+        help="also read the comments this branch adds since its merge base with REF (comment-provenance)",
+    )
     args = parser.parse_args(argv)
-    findings = scan(args.root.resolve())
+    findings = scan(args.root.resolve(), args.base)
     for finding in findings:
         print(finding)
     if findings:

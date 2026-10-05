@@ -35,7 +35,11 @@ const PLAIN = join(fixtures, "shoebuckle.h5");
 const SCRIPT = "/work/apeGmsh/examples/shoebuckle_arch.py";
 
 const model: ModelFile = await openModel(MODEL);
-const plain: ModelFile = await openModel(PLAIN);
+// shoebuckle.h5 with no session_id, as files before #1304 had none. main's
+// writer stamps one into every model.h5, so the attribute is dropped here.
+const withoutSession = (m: ModelFile): ModelFile =>
+  ({ ...m, meta: Object.fromEntries(Object.entries(m.meta).filter(([k]) => k !== "session_id")) });
+const plain: ModelFile = withoutSession(await openModel(PLAIN));
 const provenance: ProvenanceZone = readProvenance(h5, MODEL)!;
 const geometry: GeometryZone = readGeometry(h5, GEOMETRY)!;
 

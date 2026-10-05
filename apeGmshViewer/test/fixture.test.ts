@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import * as h5wasm from "h5wasm/node";
 import { resolveChain, walk, type ElementRef } from "../src/chain/resolve.ts";
 import { buildMesh, colourGroups } from "../src/mesh/build.ts";
 import { openModel } from "../src/reader/node.ts";
@@ -32,10 +33,34 @@ test("closed-form counts: nodes and elements", () => {
   assert.equal(line2.ids.length, 2 * (N_COL - 1) + (N_ARCH - 1));
 });
 
-test("schema versions are read from /meta and are inside the window", () => {
-  assert.equal(model.neutralVersion, "2.33.0");
-  assert.equal(model.opensees?.version, "2.21.0");
+test("a file written by main's current writer opens with no neutral and no opensees banner", () => {
+  assert.equal(model.neutralVersion, "2.35.0");
+  assert.equal(model.opensees?.version, "2.22.0");
   assert.deepEqual(model.warnings, []);
+});
+
+test("neutral 2.34: /meta/ndm is the declared spatial dimension (ops.model(ndm=2)), read as a plain attribute", () => {
+  // Before 2.34 the writer stamped the highest element dimension (1 for this
+  // line-only frame); the app never branched on it (ADR 0113 D7), so the
+  // value comes through as the example declares it.
+  assert.equal(model.meta["ndm"], 2);
+  assert.equal(model.meta["ndf"], 3);
+});
+
+test("neutral 2.35: the fixture carries the `source` column on /loads/nodal (#1338), which the reader never opens", () => {
+  // The app does not read /loads, so the column is ignored safely: the
+  // warnings above are empty on this very file. This checks the file really
+  // is a 2.35 one, so the ignore is proven on the column and not on its absence.
+  const f = new h5wasm.File(FIXTURE, "r");
+  try {
+    const ds = f.get("loads/nodal/Pressure") as h5wasm.Dataset;
+    const members = ds.dtype as unknown as [string, unknown][];
+    const payload = members.find(([name]) => name === "payload")?.[1] as [string, unknown][] | undefined;
+    assert.ok(payload, "the nodal load rows have a payload member");
+    assert.deepEqual(payload.map(([name]) => name), ["node_id", "force_xyz", "moment_xyz", "name", "basis", "source"]);
+  } finally {
+    f.close();
+  }
 });
 
 test("bounding box: crown at H_COL + RISE, span SPAN", () => {

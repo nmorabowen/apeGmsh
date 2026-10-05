@@ -167,6 +167,9 @@ def test_rigid_diaphragm_claim_routes_to_stage(tmp_path) -> None:
     # model it in a 3D envelope with no declared element so the master takes
     # the model ndf (the 2D quad's ndf=2 master would be invalid, ADR 0049 G2).
     ops = _build_ops_3d_noelem(fem)
+    # Master 1 is in no element: hold the DOFs the diaphragm leaves free
+    # (uz, rx, ry) or the build warns (#1333).
+    ops.fix(nodes=(1,), dofs=(0, 0, 1, 1, 1, 0))
     with ops.stage(name="bind") as s:
         claimed = s.rigid_diaphragm(name="my_dia")
         s.analysis(**_full_chain(ops))

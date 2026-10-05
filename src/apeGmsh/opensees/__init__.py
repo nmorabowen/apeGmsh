@@ -26,7 +26,10 @@ removed in the Phase-8 teardown (ADR 0009 — no back-compat shim).
 from __future__ import annotations
 
 from .apesees import apeSees
-from ._internal.build import UnconsumedModelDefinitionWarning
+from ._internal.build import (
+    DetachedDiaphragmMasterWarning,
+    UnconsumedModelDefinitionWarning,
+)
 from ._internal.stage_window import SeriesOutsideStageWindowWarning
 from .model_data import ModelData
 from .node import Node, NodeSet
@@ -48,4 +51,5 @@ __all__ = [
     "OpenSeesCapabilities",
     "UnconsumedModelDefinitionWarning",
     "SeriesOutsideStageWindowWarning",
+    "DetachedDiaphragmMasterWarning",
 ]

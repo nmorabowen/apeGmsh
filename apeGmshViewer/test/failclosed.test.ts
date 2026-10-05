@@ -222,7 +222,24 @@ test("opensees: the floor opens silently; a newer minor opens with one banner", 
   assert.deepEqual(read(writeFile("o-floor.h5", n, true, v(OPENSEES_TARGET, ZONE_FLOOR.opensees))).warnings, []);
   const w = read(writeFile("o-new.h5", n, true, v(OPENSEES_TARGET, OPENSEES_TARGET.minor + 1))).warnings;
   assert.equal(w.length, 1);
-  assert.match(w[0]!, /^opensees_schema_version 2\.22\.0 is newer than this app \(2\.21\.x\)/);
+  assert.equal(
+    w[0],
+    `opensees_schema_version ${v(OPENSEES_TARGET, OPENSEES_TARGET.minor + 1)} is newer than this app (${OPENSEES_TARGET.major}.${OPENSEES_TARGET.minor}.x): the file opens, and what that apeGmsh added is not shown`,
+  );
+});
+
+test("opensees 2.22: the /opensees/bcs@mass_from_model marker (#1304) is ignored without a warning", () => {
+  // The marker tells a reader that rebuilds the model to stream /masses; this
+  // app rebuilds nothing and never reads /opensees/bcs, so a file carrying it
+  // at the target opens with no banner and no warning (V2h, #1427).
+  const path = writeFile("o-mass-marker.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, v(OPENSEES_TARGET, OPENSEES_TARGET.minor));
+  const f = new h5wasm.File(path, "a");
+  const bcs = (f.get("opensees") as h5wasm.Group).create_group("bcs");
+  bcs.create_attribute("mass_from_model", 1, null, "<b");
+  f.close();
+  const m = read(path);
+  assert.equal(m.opensees?.version, v(OPENSEES_TARGET, OPENSEES_TARGET.minor));
+  assert.deepEqual(m.warnings, []);
 });
 
 /** A file holding only the zone's stamp and an empty zone group: the version is checked first. */
