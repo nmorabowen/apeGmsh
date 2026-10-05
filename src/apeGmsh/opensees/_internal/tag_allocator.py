@@ -15,23 +15,105 @@ primitive instance is registered twice (lookup keyed on ``id()``).
 This protects against accidental double-registration of a primitive
 the user constructed standalone (P11) and then passed through the
 namespace API.
+
+The tag law (ADR 0114 D4, amended): a tag is written once, by the
+bridge's build. The build-time tag plan (``_internal/tag_plan.py``)
+mints with one of these allocators and then calls :meth:`freeze`; every
+minting method of a frozen allocator raises :class:`TagLawError`, so a
+mint after the plan raises where it happens. :meth:`fork` copies the
+state with chosen kinds frozen: the safety net while the emit paths
+move their minting into the plan one family at a time.
 """
 from __future__ import annotations
+
+from collections.abc import Iterable
+
+
+class TagLawError(RuntimeError):
+    """A tag was minted after the tag plan froze its allocator (or kind)."""
 
 
 class TagAllocator:
     """Per-kind sequential 1-based tag allocator."""
 
-    __slots__ = ("_counters", "_assignments")
+    __slots__ = ("_counters", "_assignments", "_frozen", "_frozen_kinds")
 
     def __init__(self) -> None:
         self._counters: dict[str, int] = {}
         # id(primitive) -> assigned tag. The kind context is implicit:
         # a primitive is tagged exactly once, in exactly one kind.
         self._assignments: dict[int, int] = {}
+        # Whole-allocator freeze (:meth:`freeze`) and the kinds a
+        # :meth:`fork` froze. Either makes a mint raise TagLawError.
+        self._frozen: bool = False
+        self._frozen_kinds: frozenset[str] = frozenset()
+
+    # ------------------------------------------------------------------
+    # The freeze
+    # ------------------------------------------------------------------
+
+    @property
+    def frozen(self) -> bool:
+        """``True`` once :meth:`freeze` has been called."""
+        return self._frozen
+
+    @property
+    def frozen_kinds(self) -> frozenset[str]:
+        """The kinds frozen by :meth:`fork` (empty for a fresh allocator)."""
+        return self._frozen_kinds
+
+    def freeze(self) -> None:
+        """Refuse every later mint, in every kind.
+
+        After this, :meth:`allocate`, :meth:`allocate_block`,
+        :meth:`allocate_for`, :meth:`reserve_through` and :meth:`reset`
+        raise :class:`TagLawError`. Reads (:meth:`last`, :meth:`tag_for`)
+        and :meth:`fork` stay legal. Idempotent.
+        """
+        self._frozen = True
+
+    def fork(self, frozen_kinds: Iterable[str] = ()) -> TagAllocator:
+        """A mutable copy of this allocator with ``frozen_kinds`` frozen.
+
+        The copy continues every counter and assignment from here. A
+        mint in a kind of ``frozen_kinds`` (or in a kind this allocator's
+        own fork froze) raises :class:`TagLawError`; every other kind
+        mints on. The copy is not whole-frozen even when this allocator
+        is, and this allocator is never changed by the copy's mints.
+        """
+        kinds = frozenset(frozen_kinds)
+        for k in kinds:
+            if not isinstance(k, str) or not k:
+                raise TypeError(
+                    f"fork: a frozen kind must be a non-empty str, got {k!r}."
+                )
+        child = TagAllocator()
+        child._counters = dict(self._counters)
+        child._assignments = dict(self._assignments)
+        child._frozen_kinds = self._frozen_kinds | kinds
+        return child
+
+    def _check_mint(self, kind: str | None, verb: str) -> None:
+        if self._frozen:
+            raise TagLawError(
+                f"{verb}({kind!r}) after the tag plan froze this allocator: "
+                "a tag is minted once, by the build's tag plan (ADR 0114 "
+                "D4). Move this mint into plan_tags."
+            )
+        if kind is not None and kind in self._frozen_kinds:
+            raise TagLawError(
+                f"{verb}({kind!r}): kind {kind!r} is planned and frozen in "
+                "this allocator, so the emit path must read its tag from "
+                "the tag plan instead of minting one (ADR 0114 D4)."
+            )
+
+    # ------------------------------------------------------------------
+    # Minting
+    # ------------------------------------------------------------------
 
     def allocate(self, kind: str) -> int:
         """Return the next 1-based tag for ``kind`` and bump the counter."""
+        self._check_mint(kind, "allocate")
         n = self._counters.get(kind, 0) + 1
         self._counters[kind] = n
         return n
@@ -54,6 +136,7 @@ class TagAllocator:
         ``n == 0`` reserves nothing and returns the next tag that *would*
         be allocated (the counter is untouched).
         """
+        self._check_mint(kind, "allocate_block")
         if n < 0:
             raise ValueError(f"allocate_block: n must be >= 0, got {n}.")
         base = self._counters.get(kind, 0)
@@ -75,6 +158,7 @@ class TagAllocator:
         0111 D2) to put every bridge-synthesised element above the
         model's FEM element ids, which the plan uses verbatim as tags.
         """
+        self._check_mint(kind, "reserve_through")
         if last > self._counters.get(kind, 0):
             self._counters[kind] = int(last)
 
@@ -85,7 +169,12 @@ class TagAllocator:
         tag and do not bump the counter. This keeps standalone-then-
         registered primitives (P11) safe against accidental
         double-registration.
+
+        A frozen allocator (or kind) raises :class:`TagLawError` even
+        when ``primitive`` already has a tag: read it with
+        :meth:`tag_for` instead.
         """
+        self._check_mint(kind, "allocate_for")
         prev = self._assignments.get(id(primitive))
         if prev is not None:
             return prev
@@ -99,6 +188,11 @@ class TagAllocator:
         return self._assignments.get(id(primitive))
 
     def reset(self) -> None:
-        """Clear all counters and assignments — fresh allocator state."""
+        """Clear all counters and assignments — fresh allocator state.
+
+        Refused on a frozen allocator: clearing it would let the next
+        mint hand out a planned tag a second time.
+        """
+        self._check_mint(None, "reset")
         self._counters.clear()
         self._assignments.clear()
