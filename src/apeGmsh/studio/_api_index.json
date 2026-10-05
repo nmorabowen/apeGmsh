@@ -259,7 +259,7 @@
       "symbol": "Results.show_web"
     },
     "Results.stage": {
-      "doc": "Return a Results scoped to a stage (matched by id or name).",
+      "doc": "Return a Results scoped to a stage (matched by id, name or alias).",
       "signature": "stage(name_or_id: 'str') -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.stage"
@@ -3110,7 +3110,7 @@
     },
     "ops.imposed_displacement": {
       "doc": "Imposed-displacement pattern helper (Phase SSI-3).",
-      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None) -> \"'Plain'\"",
+      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None, name: 'str | None' = None) -> \"'Plain'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.imposed_displacement"
     },

@@ -19,9 +19,12 @@ from typing import TYPE_CHECKING, Any, Sequence
 if TYPE_CHECKING:
     import h5py
 
+    from ..._internal.provenance import ProvenanceTable
+
 
 __all__ = [
     "_compose_model_h5",
+    "_merge_provenance",
     "_replay_into",
     "_try_write_broker_zone",
     "_override_schema_version",
@@ -81,13 +84,15 @@ def _compose_model_h5(
     computed_sections: "Sequence[tuple[int, str, str]]" = (),
     snapshot_id: str | None = None,
     nodes_ndf: "dict[int, int] | None" = None,
+    provenance: "ProvenanceTable | None" = None,
 ) -> None:
     """Compose a ``model.h5`` from a broker ``fem`` + a populated ``emitter``.
 
     The one composition path.  Order: broker ``/meta`` + neutral zone
     (with a stub-FEM fallback to the bridge's own ``/meta`` +
     schema-version override), then the ``emitter``'s ``/opensees/...``
-    enrichment, then apeGmsh.cuts v4 ``/opensees/cuts`` / ``/sweeps``.
+    enrichment, then apeGmsh.cuts v4 ``/opensees/cuts`` / ``/sweeps``,
+    then ``/provenance`` (ADR 0112 D3).
 
     Parameters
     ----------
@@ -117,11 +122,26 @@ def _compose_model_h5(
         carry-through for ``ModelData.from_h5``).  ``None`` ⇒ leave
         whatever the broker / bridge wrote: the pre-extraction
         behaviour, so ``apeSees.h5`` is byte-invariant under C1.
+    provenance
+        The bridge's declaration provenance (``apeSees._provenance``),
+        appended to the snapshot's own table (``fem.provenance``, the
+        session's records, which ``FEMData.from_h5`` carries forward
+        from a source file).  The merged table is written as
+        ``/provenance`` when the snapshot is a real :class:`FEMData`
+        and either side has records; a replay writer passes ``None``
+        and so copies the snapshot's table forward (V0 Q7).  A stub
+        snapshot (the bridge-only fallback) writes none: it belongs to
+        no run, and its records would hold test paths.  No hash reads
+        it.
     """
     import h5py
 
+    from ..._internal.provenance import base_dir_for, encode_columns
     from ...cuts._h5_io import write_cuts_into
-    from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
+    from ...mesh._femdata_h5_io import (
+        NEUTRAL_SCHEMA_VERSION,
+        _write_provenance,
+    )
     from ..emitter.h5 import SCHEMA_VERSION
     from ._computed_sections_h5 import write_computed_sections_into
     from ._names_h5 import write_names_into
@@ -137,6 +157,30 @@ def _compose_model_h5(
             "dimension; call ops.model(ndm=, ndf=) before writing model.h5 "
             "(/meta/ndm is read as the model's dimension, #1291)."
         )
+
+    # ADR 0112 D3: merge and encode before the file is opened, so an
+    # int32 overflow refuses with nothing written (h5-schema.md,
+    # "Integer policy").  Only a real FEMData snapshot carries the zone;
+    # the stub fallback below writes none.
+    from ...mesh.FEMData import FEMData
+
+    prov_table = None
+    if isinstance(fem, FEMData):
+        base = fem.provenance
+        if provenance is not None and base is not None:
+            # The bridge owns the ``opensees/`` zone: a snapshot loaded
+            # from a bridge-written file carries that file's bridge
+            # records, which this bridge declares afresh (the "script 2,
+            # analyse" flow, FEMData.from_h5 -> apeSees -> h5).  Keeping
+            # them would collide on a repeated name or leave a stale
+            # record for a declaration this bridge did not make.
+            base = _drop_zone(base, "opensees")
+        prov_table = _merge_provenance(base, provenance)
+    prov_base_dir = base_dir_for(path)
+    prov_columns = (
+        encode_columns(prov_table, prov_base_dir)
+        if prov_table is not None else None
+    )
 
     with h5py.File(path, "w") as f:
         broker_used = _try_write_broker_zone(
@@ -186,6 +230,12 @@ def _compose_model_h5(
         # no-op when empty; hash-excluded like names (provenance
         # metadata, not authored model state).
         write_computed_sections_into(f, computed_sections)
+        # ADR 0112 D3 — the declaration provenance of the snapshot and
+        # the bridge, after /opensees.  ``model_hash`` below reads
+        # /opensees only and ``fem_hash`` the neutral zone, so the zone
+        # changes neither (V2a invariance).
+        if prov_columns is not None and "meta" in f:
+            _write_provenance(f, prov_columns, prov_base_dir)
 
         # ADR 0021 — stamp the lineage triple ``/meta/lineage/...``
         # after every zone is written.  ``fem_hash`` is recomputed
@@ -205,6 +255,89 @@ def _compose_model_h5(
                 fem_hash=fem_hash if fem_hash else None,
                 model_hash=model_hash,
             )
+
+
+def _merge_provenance(
+    base: "ProvenanceTable | None",
+    extra: "ProvenanceTable | None",
+) -> "ProvenanceTable | None":
+    """Append ``extra``'s records to ``base``, re-indexing its rows.
+
+    The tables come from two stores (the session's and the bridge's),
+    each with its own ``files`` / ``sites`` rows and 0-based ``seq``.
+    ``extra``'s files and sites are deduplicated into ``base``'s, its
+    records keep their order with ``seq`` continued after ``base``'s
+    last record, and a declaration path present on both sides is
+    refused: the zones differ (``neutral/`` / ``geometry/`` against
+    ``opensees/``), so a collision is a programming error, not a
+    merge.  ``None`` when neither side has a table; an empty ``extra``
+    leaves ``base`` as it is.
+    """
+    from ..._internal.provenance import ProvenanceTable, RecordRow, SiteRow
+
+    if extra is None or not extra.records:
+        return base
+    if base is None:
+        return extra
+
+    files = list(base.files)
+    file_index = {row: i for i, row in enumerate(files)}
+    sites = list(base.sites)
+    site_index = {row: i for i, row in enumerate(sites)}
+    records = list(base.records)
+    paths = {r.path for r in records}
+
+    def file_row(i: int) -> int:
+        row = extra.files[i]
+        j = file_index.get(row)
+        if j is None:
+            j = file_index[row] = len(files)
+            files.append(row)
+        return j
+
+    def site_row(i: int) -> int:
+        if i < 0:
+            return -1
+        s = extra.sites[i]
+        row = SiteRow(file_row(s.file), s.line, s.function)
+        j = site_index.get(row)
+        if j is None:
+            j = site_index[row] = len(sites)
+            sites.append(row)
+        return j
+
+    offset = len(records)
+    for r in extra.records:
+        if r.path in paths:
+            raise ValueError(
+                f"_merge_provenance: declaration path {r.path!r} is "
+                "recorded by both the snapshot and the bridge; the two "
+                "stores must not share a zone")
+        paths.add(r.path)
+        records.append(RecordRow(
+            r.path, site_row(r.site), site_row(r.script), offset + r.seq,
+            r.origin))
+    return ProvenanceTable(tuple(files), tuple(sites), tuple(records))
+
+
+def _drop_zone(table: "ProvenanceTable", zone: str) -> "ProvenanceTable":
+    """``table`` without the records of ``zone``, compacted: ``seq``
+    renumbered from 0 in the surviving order and the ``files`` / ``sites``
+    rows nothing references any more dropped."""
+    from ..._internal.provenance import ProvenanceTable, RecordRow
+
+    kept = [r for r in table.records if not r.path.startswith(f"{zone}/")]
+    if len(kept) == len(table.records):
+        return table
+    renumbered = ProvenanceTable(
+        table.files, table.sites,
+        tuple(RecordRow(r.path, r.site, r.script, i, r.origin)
+              for i, r in enumerate(kept)))
+    # Merging onto an empty table re-indexes files and sites through the
+    # dedupe path, so only the rows the kept records reach survive.
+    merged = _merge_provenance(ProvenanceTable(), renumbered)
+    assert merged is not None
+    return merged
 
 
 def _try_write_broker_zone(

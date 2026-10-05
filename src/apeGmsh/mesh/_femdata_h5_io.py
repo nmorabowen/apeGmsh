@@ -537,9 +537,14 @@ def write_fem_h5(
 _PROVENANCE_COLUMNS: dict[str, tuple[str, ...]] = {
     "files": ("path", "sha256", "kind"),
     "sites": ("file", "line", "function"),
-    "records": ("path", "site", "script", "seq"),
+    "records": ("path", "site", "script", "seq", "origin"),
 }
-_PROVENANCE_STR_COLUMNS = frozenset({"path", "sha256", "kind", "function"})
+_PROVENANCE_STR_COLUMNS = frozenset(
+    {"path", "sha256", "kind", "function", "origin"})
+#: Columns a file below ``PROVENANCE_ORIGIN_FROM`` lacks; the reader fills
+#: them (``origin`` reads as ``"user"``, ``decode_columns``) instead of
+#: refusing the file.  From that version on they are required.
+_PROVENANCE_PRE_ORIGIN_COLUMNS = frozenset({"origin"})
 
 
 def _encode_provenance(
@@ -588,6 +593,7 @@ def _read_provenance(parent: Any, label: str) -> Any:
     from apeGmsh._internal.provenance import decode_columns
     from apeGmsh.opensees._internal.schema_version import (
         PROVENANCE,
+        PROVENANCE_ORIGIN_FROM,
         read_zone_version,
         reader_version,
         validate_zone_version,
@@ -603,14 +609,24 @@ def _read_provenance(parent: Any, label: str) -> Any:
             f"provenance_schema_version")
     validate_zone_version(
         version, reader_version(PROVENANCE), zone=PROVENANCE)
+    pre_origin = (
+        (version.major, version.minor, version.patch) < PROVENANCE_ORIGIN_FROM
+    )
     grp = parent["provenance"]
     columns: dict[str, dict[str, list]] = {}
     for table, names in _PROVENANCE_COLUMNS.items():
         cols: dict[str, list] = {}
         for name in names:
             if table not in grp or name not in grp[table]:
+                if (pre_origin and table in grp
+                        and name in _PROVENANCE_PRE_ORIGIN_COLUMNS):
+                    continue  # below 1.1.0: decode_columns defaults it
                 raise MalformedH5Error(
-                    f"{label}: /provenance/{table}/{name} is missing")
+                    f"{label}: /provenance/{table}/{name} is missing"
+                    + (f" (required from provenance_schema_version "
+                       f"{'.'.join(map(str, PROVENANCE_ORIGIN_FROM))}, "
+                       f"this file is {version})"
+                       if name in _PROVENANCE_PRE_ORIGIN_COLUMNS else ""))
             raw = grp[table][name][()].tolist()
             cols[name] = (
                 [v.decode("utf-8") if isinstance(v, bytes) else str(v)

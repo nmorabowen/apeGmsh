@@ -77,7 +77,12 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from numpy import ndarray
 
-from ._bind import _resolve_fem, resolve_bound_model
+from ._bind import (
+    _bind_stage_names,
+    _resolve_fem,
+    _resolve_fem_via_model,
+    resolve_bound_model,
+)
 from ._composites import (
     ElementResultsComposite,
     NodeResultsComposite,
@@ -112,10 +117,11 @@ _MODEL_REQUIRED_MESSAGE = (
 
 _MODEL_H5_REQUIRED_MESSAGE = (
     "model_h5= is required. For a model built through the apeSees "
-    "bridge, pass the sibling archive (model_h5='model.h5'). For a bare "
-    "FEMData snapshot (e.g. get_fem_data()), the one-call route is "
-    "Results.from_fem(fem, path) — or write it yourself with "
-    "fem.to_h5('model.h5') and pass model_h5='model.h5'."
+    "bridge, write ops.h5('model.h5') and pass model_h5='model.h5': that "
+    "archive carries the element tag map the bridge's dense renumbering "
+    "needs. For a bare FEMData that drove a hand-written deck whose "
+    "element tags are the fem element ids, use "
+    "Results.from_fem(fem, path) or fem.to_h5('model.h5')."
 )
 
 
@@ -442,9 +448,33 @@ class Results:
         (no derived ``results.h5`` is written copying the
         ``/opensees/`` zone in).
 
+        What the archive carries, the results use (#1324, #1325):
+
+        - **FEMData.** ``fem=`` wins when given. Otherwise the neutral
+          FEMData stored in ``model_h5`` (physical groups, labels) is
+          bound whenever its node ids cover the capture's and sit at
+          the capture's coordinates (the model's ``ndm`` columns: a 2-D
+          model on an offset plane compares in ``x, y``), so ``pg=``
+          queries work from files alone. An archive written by
+          ``fem.to_h5`` carries no element tag map, so it is bound
+          only when the capture's element ids and nodes are its own
+          (ops tags are read as fem element ids on that route); a ``model_h5`` from another model or another mesh of
+          the same part warns (``ModelFemMismatchWarning``) and the
+          partial FEMData synthesized from the MPCO ``MODEL/`` group is
+          bound instead.
+        - **Stage names.** ``ops.stage(name=...)`` names from
+          ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
+          names in order (``results.stage("gravity")``);
+          ``MODEL_STAGE[<k>]`` stays resolvable as an alias. A partial
+          run (fewer capture stages than program stages) names the
+          prefix and warns (``StageCountMismatchWarning``); more capture
+          stages than program stages warns and keeps the file's names.
+          Two program stages with one name warn
+          (``DuplicateStageNameWarning``); ``stage(name)`` picks the
+          first, and the ids ``stage_<k>`` stay unique.
+
         Single-file mode (default for non-partitioned analyses): pass
-        the path of one ``.mpco`` file. Synthesizes a partial FEMData
-        from the MPCO ``MODEL/`` group if ``fem`` is omitted.
+        the path of one ``.mpco`` file.
 
         Multi-partition mode (parallel OpenSees runs): pass either
 
@@ -487,11 +517,17 @@ class Results:
                 reader = MPCOMultiPartitionReader(discovered)
             else:
                 reader = MPCOReader(discovered[0])
-        bound_fem = _resolve_fem(reader, fem)
         # Per INV-3, this is an in-memory rehydrate from the sibling
         # file; we never copy the zone into a derived h5.
         from ..opensees.opensees_model import OpenSeesModel
         bound_model = OpenSeesModel.from_h5(model_h5)
+        # #1325 — the archive's neutral FEMData carries the physical
+        # groups the MPCO MODEL/ group lacks; #1324 — its /opensees/stages
+        # carry the names the MODEL_STAGE[<k>] groups lack.
+        bound_fem = _resolve_fem_via_model(
+            reader, fem, bound_model, model_path=model_h5,
+        )
+        _bind_stage_names(reader, bound_model, model_path=model_h5)
         # ADR 0043 slice 1.3 — MPCO buckets key element results by the
         # OpenSees ops tag; the results API speaks fem_eid. Whenever the
         # bound model carries a real element_meta pairing, the reader must
@@ -1047,7 +1083,7 @@ class Results:
         return list(self._all_stages())
 
     def stage(self, name_or_id: str) -> "Results":
-        """Return a Results scoped to a stage (matched by id or name)."""
+        """Return a Results scoped to a stage (matched by id, name or alias)."""
         info = self._lookup_stage(name_or_id)
         return self._derive(stage_id=info.id)
 
@@ -1905,11 +1941,25 @@ class Results:
         return self._stages_cache
 
     def _lookup_stage(self, name_or_id: str) -> StageInfo:
-        for s in self._all_stages():
-            if s.id == name_or_id or s.name == name_or_id:
-                return s
-        names = sorted({s.name for s in self._all_stages()} |
-                        {s.id for s in self._all_stages()})
+        """Resolve a stage by exact id, then by name, then by alias.
+
+        Three passes, not one first-match: the viewers hand back
+        ``StageInfo.id`` (``stage_<k>``), and a program whose stages
+        are named ``stage_1`` / ``stage_2`` would otherwise send
+        ``stage("stage_1")`` to ``stage_0`` by name (#1393).
+        """
+        stages = self._all_stages()
+        for pick in (
+            lambda s: s.id == name_or_id,
+            lambda s: s.name == name_or_id,
+            lambda s: name_or_id in s.aliases,
+        ):
+            for s in stages:
+                if pick(s):
+                    return s
+        names = sorted({s.name for s in stages} |
+                        {s.id for s in stages} |
+                        {a for s in stages for a in s.aliases})
         raise KeyError(
             f"No stage matches {name_or_id!r}. Available: {names}"
         )

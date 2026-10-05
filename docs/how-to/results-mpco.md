@@ -60,9 +60,10 @@ with spec.emit_mpco("run.mpco"):
         ops.analyze(1, dt)
 
 # Read it back — model_h5= is REQUIRED (a sibling path, not the in-memory
-# model object). Omitting it raises TypeError. fem= is what lets pg= names
-# resolve: without it the reader knows only the ids the .mpco file carries.
-results = Results.from_mpco("run.mpco", fem=fem, model_h5="model.h5")
+# model object). Omitting it raises TypeError. The archive also supplies the
+# physical groups and the ops.stage() names, so pg= and results.stage("...")
+# resolve from files alone; fem= is optional and wins when given.
+results = Results.from_mpco("run.mpco", model_h5="model.h5")
 
 disp = results.nodes.get(pg="Top", component="displacement_z")
 sigma = results.elements.gauss.get(pg="Body", component="stress_xx")

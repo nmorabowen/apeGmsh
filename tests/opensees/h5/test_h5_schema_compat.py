@@ -418,9 +418,12 @@ def test_reader_version_reflects_writer_constants() -> None:
         ), zone
         reader = reader_version(zone)
         assert floor.major == reader.major and floor.minor <= reader.minor, zone
-    # The new zones' floor is their first (and, so far, only) version.
+    # The new zones' floor is their first version: geometry has only that
+    # one; provenance gained the additive 1.1.0 (records/origin, V2d
+    # #1378) and its floor stays at 1.0.0.
     assert GEOMETRY_SCHEMA_FLOOR == GEOMETRY_SCHEMA_VERSION
-    assert PROVENANCE_SCHEMA_FLOOR == PROVENANCE_SCHEMA_VERSION
+    assert PROVENANCE_SCHEMA_FLOOR == PROVENANCE_FLOOR
+    assert SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION).minor >= 1
 
 
 # ---------------------------------------------------------------------------

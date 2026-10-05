@@ -361,6 +361,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # test_schema_corpus needs refs/remotes/origin/main history (#1407)
 
       - uses: actions/setup-python@v5
         with:

@@ -1099,7 +1099,9 @@ detail, and no normals or UVs.
 
 ## `/provenance`
 
-Version key: `/meta/provenance_schema_version` (current `1.0.0`).
+Version key: `/meta/provenance_schema_version` (current `1.1.0`, floor
+`1.0.0`; `1.1.0` added the `records/origin` column, #1378, and a
+`1.0.0` file reads with every record as `origin = "user"`).
 Layout from V0 decisions 11 to 14: the source location of every user
 declaration, deduplicated into three tables. Each table is a group of
 equal-length column datasets.
@@ -1108,7 +1110,7 @@ equal-length column datasets.
 /provenance   @base_dir str
   /files      path str · sha256 str · kind str
   /sites      file i4 · line i4 · function str
-  /records    path str (unique) · site i4 · script i4 · seq i4
+  /records    path str (unique) · site i4 · script i4 · seq i4 · origin str
 ```
 
 * **Key.** `records/path` is the **declaration path**
@@ -1133,6 +1135,42 @@ equal-length column datasets.
 
   A named path keeps its first record. A later call that merges into a
   label or appends to a physical group adds no record.
+
+  The bridge writes (V2d, `apeSees._register`):
+  * `opensees/<kind>/<name|#k>` for every primitive the user declared,
+    where `<kind>` is the OpenSees command (`element`,
+    `uniaxialMaterial`, `nDMaterial`, `section`, `geomTransf`,
+    `beamIntegration`, `timeSeries`, `pattern`, `damping`, `recorder`,
+    `constraints`, `numberer`, `system`, `test`, `algorithm`,
+    `integrator`, `analysis`) and `<name>` the `name=` alias;
+  * `opensees/<kind>/<verb>:<owner>[/<role>]` for an object the bridge
+    synthesises inside a verb the user called, with
+    `origin = "synthesised"`: `opensees/timeSeries/support:<stage>/hold`
+    and `opensees/pattern/support:<stage>` from `s.support`,
+    `opensees/timeSeries/imposed_displacement:<name>` and
+    `opensees/pattern/imposed_displacement:<name>` from
+    `imposed_displacement` (`<name>` is its `name=`, else `#<k>`, the
+    call's 1-based ordinal on the bridge; a `name=` starting with `#`
+    is refused). The bridge allows a repeated stage name, so a stage
+    whose pattern key `support:<stage>` is taken keys its support
+    objects `<stage>@<n>` with the smallest `n >= 2` whose key is free
+    (stages `s`, `s`, `s@2` give `support:s`, `support:s@2`,
+    `support:s@2@2`). These keys never use the family's `#k` counter,
+    so the user's first unnamed `Linear()` stays `#1`.
+
+  User names and synthesised keys share one key space per family, and
+  no name is restricted. A collision, whichever side comes second (a
+  user `Linear(name="imposed_displacement:foo")` after
+  `imposed_displacement(name="foo")`, a stage `x` whose HOLD key a user
+  `Linear(name="support:x/hold")` took, a user name `#1` followed by an
+  unnamed declaration), fails loud **before** the bridge allocates a
+  tag: the refused call leaves no primitive, no tag and no record. A
+  record is never overwritten and never dropped.
+
+  In a file the bridge writes, the `opensees/` records are the bridge's
+  own: a snapshot loaded from an earlier bridge-written file drops that
+  file's `opensees/` records before the new ones are appended, so a
+  repeated name does not collide and no stale record survives.
 * **Files.** `path` is POSIX. It is relative to `@base_dir` when the
   file lies under it, and absolute otherwise (Q8). `sha256` is the hex
   digest of the file when it was captured, so go-to-source can tell
@@ -1159,8 +1197,16 @@ equal-length column datasets.
   notebook cell) it is the script. Either is -1 when no such frame
   exists.
   `seq` is the declaration's 0-based capture order in the run.
+  `origin` (1.1.0) is `user` for a declaration the user made and
+  `synthesised` for an object apeGmsh created inside a verb the user
+  called (the keys above); a viewer shows synthesised objects by
+  default. Absent in a file below `1.1.0`, where every record reads as
+  `user`; from `1.1.0` on the column is required and a file without it
+  is malformed (`schema_version.py::PROVENANCE_ORIGIN_FROM`).
 * There is one record per user call: none per emitted row, none per
-  fanned-out element, and none for calls apeGmsh synthesises.
+  fanned-out element. A call that synthesises deck objects (series,
+  patterns) gets one record per synthesised object, each pointing at
+  the call's own site.
 * Every artifact the session writes carries its own `/provenance`
   (decision 14). The replay writers copy it forward (Q7).
 * No hash reads `/provenance` (the same allowlists as above).
@@ -1213,7 +1259,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
-| provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 
 > The geometry and provenance keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not

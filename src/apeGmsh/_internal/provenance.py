@@ -98,12 +98,16 @@ class SiteRow(NamedTuple):
 
 class RecordRow(NamedTuple):
     """One declaration.  ``site`` and ``script`` are rows of ``sites``
-    (-1 when no such frame exists); ``seq`` is the 0-based capture order."""
+    (-1 when no such frame exists); ``seq`` is the 0-based capture order.
+    ``origin`` is ``"user"`` for a declaration the user made and
+    ``"synthesised"`` for an object apeGmsh created inside a verb the
+    user called (schema 1.1.0; a 1.0.0 file reads as ``"user"``)."""
 
     path: str
     site: int
     script: int
     seq: int
+    origin: str = "user"
 
 
 class SourceLocation(NamedTuple):
@@ -266,13 +270,35 @@ class ProvenanceStore:
     def __len__(self) -> int:
         return len(self._records)
 
-    def capture(self, zone: str, family: str, name: str | None) -> str | None:
+    def has(self, zone: str, family: str, key: str) -> bool:
+        """True iff ``<zone>/<family>/<key>`` already has a record.  The
+        pre-allocation check of a writer that must fail loud on a
+        collision before it creates anything (``apeSees._register``)."""
+        return f"{zone}/{family}/{key}" in self._records
+
+    def next_unnamed_key(self, zone: str, family: str) -> str:
+        """The ``#k`` key the next unnamed capture in ``family`` takes."""
+        return f"#{self._unnamed.get((zone, family), 0) + 1}"
+
+    def capture(self, zone: str, family: str, name: str | None, *,
+                on_existing: str = "keep") -> str | None:
         """Record one declaration made by the current user call.
 
         ``name`` is the user's name for it; ``None`` or ``""`` gives the
         unnamed key ``#k`` (1-based order among the family's unnamed
         records).  Returns the declaration path recorded, or ``None``
-        when the call already has a record, or the named path does.
+        when the call already has a record.
+
+        A named path that already has a record is, for a session,
+        the same declaration touched again (a label merged into, a
+        physical group appended to): with ``on_existing="keep"`` the
+        first record stays and ``None`` is returned (V2c,
+        ``h5-schema.md`` "/provenance").  For a writer whose names share
+        one key space with synthesised keys (the bridge), the same path
+        is a collision: ``on_existing="raise"`` raises ``ValueError``
+        instead.  An unnamed key is never an append, so a ``#k`` that
+        already has a record (a user named something ``#k``) always
+        raises: a record is never overwritten.
         """
         global _LAST_ENTRY
         for part, what in ((zone, "zone"), (family, "family")):
@@ -280,6 +306,10 @@ class ProvenanceStore:
                 raise ValueError(
                     f"provenance {what} must be a non-empty segment "
                     f"without '/', got {part!r}")
+        if on_existing not in ("keep", "raise"):
+            raise ValueError(
+                f"provenance on_existing must be 'keep' or 'raise', "
+                f"got {on_existing!r}")
         site, entry, script = _capture_frames(sys._getframe(1))
         if site is not None and entry is not None:
             if entry is _LAST_ENTRY:
@@ -288,16 +318,66 @@ class ProvenanceStore:
         if name:
             path = f"{zone}/{family}/{name}"
             if path in self._records:
-                return None
+                if on_existing == "keep":
+                    return None
+                raise ValueError(
+                    f"provenance: declaration path {path!r} already has a "
+                    "record; the name collides with an existing key")
         else:
             k = self._unnamed.get((zone, family), 0) + 1
-            self._unnamed[(zone, family)] = k
             path = f"{zone}/{family}/#{k}"
+            if path in self._records:
+                raise ValueError(
+                    f"provenance: the unnamed key {path!r} already has a "
+                    "record (a declaration was named like an ordinal key); "
+                    "a record is never overwritten")
+            self._unnamed[(zone, family)] = k
         self._records[path] = RecordRow(
             path,
             self._site_row(site) if site is not None else -1,
             self._site_row(script) if script is not None else -1,
             len(self._records),
+        )
+        return path
+
+    def capture_synthesised(self, zone: str, family: str,
+                            key: str) -> str | None:
+        """Record an object apeGmsh synthesised inside the current user
+        call, under its own key (maintainer ruling on #1378, finding 2).
+
+        ``key`` has the form ``<verb>:<owner>/<role>`` (``support:<stage>/hold``,
+        ``imposed_displacement:<name>``); it never uses the family's ``#k``
+        counter, so the user's unnamed declarations keep their numbers.
+        The record's site is the user's verb call, like any other
+        capture, but the one-record-per-call rule does not apply: every
+        synthesised object of the call gets its record, and none of them
+        claims the call's entry frame.  ``origin`` is ``"synthesised"``.
+        Returns the path.  A key that already has a record is a caller
+        bug (the keys are built to be unique: an ordinal ``#k`` for an
+        unnamed verb call, a ``@n`` suffix for a repeated owner) and
+        raises ``ValueError`` rather than dropping either record.
+        """
+        for part, what in ((zone, "zone"), (family, "family")):
+            if not part or "/" in part:
+                raise ValueError(
+                    f"provenance {what} must be a non-empty segment "
+                    f"without '/', got {part!r}")
+        if not key or ":" not in key:
+            raise ValueError(
+                "provenance synthesised key must read '<verb>:<owner>[/<role>]', "
+                f"got {key!r}")
+        path = f"{zone}/{family}/{key}"
+        if path in self._records:
+            raise ValueError(
+                f"provenance: synthesised key {path!r} already has a record; "
+                "the caller must give each synthesised object a unique key")
+        site, _entry, script = _capture_frames(sys._getframe(1))
+        self._records[path] = RecordRow(
+            path,
+            self._site_row(site) if site is not None else -1,
+            self._site_row(script) if script is not None else -1,
+            len(self._records),
+            "synthesised",
         )
         return path
 
@@ -457,20 +537,24 @@ def encode_columns(table: ProvenanceTable,
             "site": [r.site for r in table.records],
             "script": [r.script for r in table.records],
             "seq": [r.seq for r in table.records],
+            "origin": [r.origin for r in table.records],
         },
     }
 
 
 def decode_columns(columns: dict[str, dict[str, list]],
                    base_dir: str) -> ProvenanceTable:
-    """Inverse of :func:`encode_columns`."""
+    """Inverse of :func:`encode_columns`.  A ``records`` table without
+    an ``origin`` column (schema 1.0.0) reads every record as
+    ``"user"``."""
     f, s, r = columns["files"], columns["sites"], columns["records"]
+    origin = r.get("origin") or ["user"] * len(r["path"])
     return ProvenanceTable(
         tuple(FileRow(_absolute(p, base_dir), h, k)
               for p, h, k in zip(f["path"], f["sha256"], f["kind"])),
         tuple(SiteRow(int(a), int(b), c)
               for a, b, c in zip(s["file"], s["line"], s["function"])),
-        tuple(RecordRow(p, int(a), int(b), int(c))
-              for p, a, b, c in zip(r["path"], r["site"], r["script"],
-                                    r["seq"])),
+        tuple(RecordRow(p, int(a), int(b), int(c), str(o))
+              for p, a, b, c, o in zip(r["path"], r["site"], r["script"],
+                                       r["seq"], origin)),
     )

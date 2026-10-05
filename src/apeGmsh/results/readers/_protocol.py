@@ -51,6 +51,12 @@ class StageInfo:
     For ``kind="mode"``, the eigenvalue/frequency/period/index
     fields are populated and ``n_steps`` is 1. For other kinds,
     the mode-only fields are ``None``.
+
+    ``aliases`` are further names ``Results.stage(...)`` resolves to
+    this stage.  Empty under every reader's own naming; an MPCO reader
+    that has had the program's stage names attached (#1324) keeps the
+    file's ``MODEL_STAGE[<k>]`` group name here so older scripts still
+    find it.
     """
 
     id: str
@@ -62,6 +68,7 @@ class StageInfo:
     frequency_hz: Optional[float] = None
     period_s: Optional[float] = None
     mode_index: Optional[int] = None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

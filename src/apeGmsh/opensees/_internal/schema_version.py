@@ -57,6 +57,7 @@ __all__ = [
     "OPENSEES_KEY",
     "PROVENANCE",
     "PROVENANCE_KEY",
+    "PROVENANCE_ORIGIN_FROM",
     "PROVENANCE_SCHEMA_FLOOR",
     "PROVENANCE_SCHEMA_VERSION",
     "RESULTS",
@@ -126,12 +127,18 @@ GEOMETRY_SCHEMA_VERSION: str = "1.0.0"
 
 #: Current version of the ``/provenance`` zone. Its writers (V2c, V2d)
 #: import this constant (``architecture/h5-schema.md``, "/provenance").
-PROVENANCE_SCHEMA_VERSION: str = "1.0.0"
+PROVENANCE_SCHEMA_VERSION: str = "1.1.0"  # V2d #1378: additive records/origin
 
 #: Floors of the two zones above (ADR 0113 (#1303)). A zone registered in
 #: ``_ZONE_KEY`` gets a floor equal to its first version.
 GEOMETRY_SCHEMA_FLOOR: str = "1.0.0"
 PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
+
+#: First ``/provenance`` version whose ``records`` table carries the
+#: ``origin`` column (#1378), as a ``(major, minor, patch)`` triple.  The
+#: reader requires the column from this version on and fills ``"user"``
+#: below it.
+PROVENANCE_ORIGIN_FROM: tuple[int, int, int] = (1, 1, 0)
 
 
 # Internal map zone -> per-zone key. Centralised so callers never spell the

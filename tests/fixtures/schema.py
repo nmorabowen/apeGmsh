@@ -17,10 +17,11 @@ NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nod
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
 NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
 RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
-# ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0, so neither has a
-# prior minor yet; add *_PRIOR_MINOR at their first minor bump. A zone's
-# floor is its first version.
-GEOMETRY_CURRENT     = "1.0.0"  # V2a: /geometry zone registered (sibling <stem>.geometry.h5)
-PROVENANCE_CURRENT   = "1.0.0"  # V2a: /provenance zone registered
-GEOMETRY_FLOOR       = "1.0.0"
-PROVENANCE_FLOOR     = "1.0.0"
+# ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0; a zone's floor
+# is its first version. Geometry has no prior minor yet; add
+# GEOMETRY_PRIOR_MINOR at its first minor bump.
+GEOMETRY_CURRENT       = "1.0.0"  # V2a: /geometry zone registered (sibling <stem>.geometry.h5)
+PROVENANCE_CURRENT     = "1.1.0"  # V2d #1378: additive /provenance/records/origin column
+PROVENANCE_PRIOR_MINOR = "1.0.0"  # V2a: /provenance zone registered
+GEOMETRY_FLOOR         = "1.0.0"
+PROVENANCE_FLOOR       = "1.0.0"

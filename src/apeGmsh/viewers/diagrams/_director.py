@@ -1446,12 +1446,27 @@ class ResultsDirector:
         return list(self._results.stages)
 
     def _lookup_stage(self, name_or_id: str) -> "StageInfo":
-        for s in self._all_stages():
-            if s.id == name_or_id or s.name == name_or_id:
-                return s
+        """Resolve a stage by exact id, then by name, then by alias.
+
+        The same three passes as ``Results._lookup_stage`` (#1393):
+        every caller of :meth:`set_stage` hands over ``StageInfo.id``
+        (``stage_<k>``), and a program whose stages are *named*
+        ``stage_1`` / ``stage_2`` must not pull ``set_stage("stage_1")``
+        onto ``stage_0`` by name.
+        """
+        stages = self._all_stages()
+        for pick in (
+            lambda s: s.id == name_or_id,
+            lambda s: s.name == name_or_id,
+            lambda s: name_or_id in s.aliases,
+        ):
+            for s in stages:
+                if pick(s):
+                    return s
         raise KeyError(
             f"No stage matches {name_or_id!r}. "
-            f"Available: {[s.name for s in self._all_stages()]}"
+            f"Available: {[s.name for s in stages]} "
+            f"(ids {[s.id for s in stages]})"
         )
 
     def _render(self) -> None:

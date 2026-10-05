@@ -87,10 +87,8 @@ the quoted heading. Paths are from the repo root; `architecture/` is
       after committing the bump (`--list` shows the plan first), and commit the
       new `tests/fixtures/schema_corpus/` files and `MANIFEST.json`.
       `tests/opensees/h5/test_schema_corpus.py` fails a bump that skipped it.
-      **Caveat (#1365):** `--base HEAD` records PR-branch SHAs, and a squash
-      merge orphans them. Keep the bump to one commit on top of `origin/main`,
-      so the outgoing minor's writer is main's; no test checks yet that the
-      manifest's non-current SHAs are on `main`.
+      The builder anchors non-current eras on `origin/main`, and the suite fails a manifest
+      SHA that is not an ancestor of it (#1365, #1407), so a squash merge cannot orphan one.
 - [ ] A change to what an existing field *means* ships a reader shim keyed on
       a named `*_FROM` constant above the floor, a corpus file below it, and a
       row in the shim ledger in `h5-schema.md`. A restructure is a major bump.
