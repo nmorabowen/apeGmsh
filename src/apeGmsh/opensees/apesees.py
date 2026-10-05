@@ -955,15 +955,17 @@ class BuiltModel:
         default_factory=dict, compare=False)
     # ADR 0114 D4 (amended) — the build-time tag plan, one per emit mode,
     # made by ``plan_tags`` on the first ``emit`` in that mode and reused
-    # by every later one. Same per-build, mutate-in-place pattern as
-    # ``_mt_pairs_cache``.
+    # by every later one. ``init=False``, so ``dataclasses.replace`` gives
+    # the copy a fresh memo; ``copy.copy`` still shares it, so
+    # ``_tag_plan`` also checks that the memoised plan was made from this
+    # model's inputs (``TagPlan.planned_for``) and re-plans if not.
     _tag_plans:              "dict[TagMode, TagPlan]" = field(
-        default_factory=dict, compare=False, repr=False)
+        default_factory=dict, init=False, compare=False, repr=False)
 
     def _tag_plan(self, mode: "TagMode") -> "TagPlan":
-        """The memoised :class:`TagPlan` of emit mode ``mode``."""
+        """The memoised :class:`TagPlan` of emit mode ``mode`` for this model."""
         plan = self._tag_plans.get(mode)
-        if plan is None:
+        if plan is None or not plan.planned_for(self):
             plan = plan_tags(self, mode)
             self._tag_plans[mode] = plan
         return plan

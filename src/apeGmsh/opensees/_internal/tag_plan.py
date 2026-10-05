@@ -227,7 +227,10 @@ class TagPlan:
     """Every tag one emit mode writes, planned before the emit.
 
     ``allocator`` is the planner allocator, frozen: it holds the seeded
-    primitive tags and every planned family's mints.
+    primitive tags and every planned family's mints. ``inputs`` is
+    :func:`plan_inputs` of the model the plan was made for, so a memoised
+    plan can tell whether it still describes a model
+    (:meth:`planned_for`).
     """
 
     mode: TagMode
@@ -239,6 +242,19 @@ class TagPlan:
     mp_elements: MPElementTagPlan
     interfaces: InterfaceTagPlan
     contacts: ContactTagPlan
+    inputs: tuple[object, ...] = field(default=(), compare=False, repr=False)
+
+    def planned_for(self, bm: BuiltModel) -> bool:
+        """``True`` iff this plan was made from exactly ``bm``'s inputs.
+
+        Every public field of ``bm`` must be the very object the plan
+        read (identity, not equality): a model copied with
+        :func:`dataclasses.replace` or :func:`copy.copy` and then changed
+        is not described by its source's plan.
+        """
+        now = plan_inputs(bm)
+        return len(now) == len(self.inputs) and all(
+            a is b for a, b in zip(now, self.inputs))
 
     def __post_init__(self) -> None:
         if not self.allocator.frozen:
@@ -319,6 +335,21 @@ def plan_of(tags: TagAllocator) -> TagPlan:
     return plan
 
 
+def plan_inputs(bm: BuiltModel) -> tuple[object, ...]:
+    """Every public field of ``bm``, in field order: what a plan reads.
+
+    The planner reads the primitives, their tags, the FEM snapshot and
+    ``element_tags`` today, and the families still to migrate read the
+    records; taking every public field covers them all.
+    """
+    import dataclasses
+
+    return tuple(
+        getattr(bm, f.name) for f in dataclasses.fields(bm)
+        if not f.name.startswith("_")
+    )
+
+
 def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     """Plan every tag ``bm``'s emit in ``mode`` writes, then freeze.
 
@@ -377,4 +408,5 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         mp_elements=MPElementTagPlan(),
         interfaces=InterfaceTagPlan(),
         contacts=ContactTagPlan(),
+        inputs=plan_inputs(bm),
     )

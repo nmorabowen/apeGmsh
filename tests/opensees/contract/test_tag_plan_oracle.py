@@ -606,6 +606,7 @@ def test_every_emit_path_reads_the_memoised_plan(
             bm = _MODELS[name]().build()
             cls = RecordingEmitter
         forks: list[TagAllocator] = []
+        plans: list[TagPlan] = []
         for _ in range(2):
             seen.clear()
             ts.emit_stream(bm, cls, split=mode.split)
@@ -615,6 +616,9 @@ def test_every_emit_path_reads_the_memoised_plan(
                 reached.add(path)
                 assert plan_of(tags) is memo, f"{name}: {path}"
             forks.append(seen[0][1])
+            plans.append(plan_of(seen[0][1]))
+        # The second emit reads the plan the first one made.
+        assert plans[0] is plans[1], f"{name}: re-planned on the second emit"
         assert forks[0] is not forks[1], f"{name}: one fork, two emits"
         assert list(bm._tag_plans) == [mode]
     assert reached == set(_PATHS)
@@ -632,16 +636,81 @@ def test_plan_of_refuses_an_allocator_without_a_plan() -> None:
 def test_emit_refuses_an_element_plan_for_other_specs() -> None:
     from apeGmsh.opensees.apesees import _planned_element_specs
 
-    plan = _case("two_column_frame/flat").plan
+    plan = _case("kitchen_sink_absorbing/staged").plan
     specs = [s for s, _ in plan.elements.specs]
+    assert len({id(s) for s in specs}) == len(specs) >= 2
     tags = plan.emit_allocator()
-    assert [s for s, _ in _planned_element_specs(tags, specs)] == specs
-    for wrong in (specs[:-1], [*specs, specs[0]], [specs[-1], *specs[:-1]],
-                  []):
-        if wrong == specs:
-            continue
+    got = [s for s, _ in _planned_element_specs(tags, specs)]
+    assert [id(s) for s in got] == [id(s) for s in specs]
+    wrongs = {
+        "short": specs[:-1],
+        "extra": [*specs, specs[0]],
+        "rotated": [specs[-1], *specs[:-1]],
+        "swapped": [specs[1], specs[0], *specs[2:]],
+        "reversed": specs[::-1],
+        "empty": [],
+    }
+    for label, wrong in wrongs.items():
         with pytest.raises(TagLawError, match="element plan"):
             _planned_element_specs(tags, wrong)
+            pytest.fail(f"{label}: accepted")
+
+
+def _fresh_stream(name: str) -> list[Row]:
+    return list(ts.emit_stream(_MODELS[name]().build(), RecordingEmitter))
+
+
+def test_replace_gives_a_fresh_memo_and_fresh_tags() -> None:
+    """``dataclasses.replace`` never reuses its source's plan.
+
+    The source is emitted first, so its memo is populated; the copy, with
+    ``element_tags`` or ``fem`` replaced, must emit what a freshly built
+    model of the same inputs emits.
+    """
+    import dataclasses
+
+    bm = _MODELS["synthesised_elements/flat"]().build()
+    ts.emit_stream(bm, RecordingEmitter)
+    assert bm._tag_plans
+
+    as_fem = dataclasses.replace(bm, element_tags="fem")
+    assert as_fem._tag_plans == {}
+    assert (ts.emit_stream(as_fem, RecordingEmitter)
+            == _fresh_stream("synthesised_elements_fem_ids/flat"))
+
+    new_fem = dataclasses.replace(bm, fem=ts.synthesised_elements_fem())
+    assert new_fem._tag_plans == {}
+    assert (ts.emit_stream(new_fem, RecordingEmitter)
+            == _fresh_stream("synthesised_elements/flat"))
+    (mode,) = bm._tag_plans
+    assert not bm._tag_plans[mode].planned_for(new_fem)
+
+
+def test_copy_shares_the_memo_only_while_the_inputs_match() -> None:
+    """``copy.copy`` shares the memo dict; the plan checks its inputs.
+
+    A copy emitted as is reuses the plan and writes the same tags. A copy
+    whose input changes (here through ``object.__setattr__``, the only way
+    to change a frozen model in place) re-plans instead of reading a plan
+    made for other inputs.
+    """
+    import copy
+
+    bm = _MODELS["synthesised_elements/flat"]().build()
+    first = ts.emit_stream(bm, RecordingEmitter)
+    (mode,) = bm._tag_plans
+    plan = bm._tag_plans[mode]
+
+    same = copy.copy(bm)
+    assert same._tag_plans is bm._tag_plans
+    assert ts.emit_stream(same, RecordingEmitter) == first
+    assert bm._tag_plans[mode] is plan
+
+    changed = copy.copy(bm)
+    object.__setattr__(changed, "element_tags", "fem")
+    assert (ts.emit_stream(changed, RecordingEmitter)
+            == _fresh_stream("synthesised_elements_fem_ids/flat"))
+    assert not plan.planned_for(changed)
 
 
 def test_emit_allocator_continues_the_plan() -> None:
