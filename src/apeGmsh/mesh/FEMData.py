@@ -1750,7 +1750,7 @@ class FEMData:
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
-        # ── The session's name (ADR 0112 D1, P1; #1307) ──────────
+        # ── The session's name (ADR 0112 D1) ─────────────────────
         # ``from_gmsh`` stamps ``session.name``, the H5 reader passes
         # ``/meta/model_name`` back, and derived copies inherit it.  It
         # is what the bridge's automatic write forms its conventional

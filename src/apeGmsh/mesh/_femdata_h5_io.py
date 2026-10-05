@@ -3036,9 +3036,9 @@ def read_neutral_zone_from_group(
             raise MalformedH5Error(
                 f"{label}: /meta/session_id is malformed: {exc}"
             ) from exc
-    # ADR 0112 D1, P1 (#1307): carry ``/meta/model_name`` back, so a
-    # reloaded snapshot keeps the session's conventional artifact name;
-    # a file without the attr gives ``""`` (no session named it).
+    # ADR 0112 D1: carry ``/meta/model_name`` back, so a reloaded
+    # snapshot keeps the session's conventional artifact name; a file
+    # without the attr gives ``""`` (no session named it).
     model_name = ""
     if "model_name" in parent["meta"].attrs:
         raw_name = parent["meta"].attrs["model_name"]

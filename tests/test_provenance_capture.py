@@ -433,3 +433,16 @@ def test_missing_base_dir_is_malformed(oracle, tmp_path):
         del f["provenance"].attrs["base_dir"]
     with pytest.raises(MalformedH5Error, match="base_dir"):
         FEMData.from_h5(str(broken))
+
+
+def test_a_console_script_launcher_is_not_the_users_code():
+    """A console-script entry point (``bin/pytest`` on Linux, ``Scripts\\pytest``
+    on Windows) runs as ``__main__`` from the environment's scripts directory:
+    it is third-party, like the package it starts, so it never claims the
+    ``script`` row and never names a session."""
+    import sysconfig
+
+    scripts = sysconfig.get_paths()["scripts"]
+    assert prov._classify(os.path.join(scripts, "pytest-probe")) == prov._THIRD_PARTY
+    assert prov._classify(os.path.join(scripts, "sub", "tool")) == prov._THIRD_PARTY
+    assert prov._classify(os.path.join(os.path.dirname(scripts), "user", "run.py")) == prov._USER

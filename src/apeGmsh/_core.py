@@ -145,12 +145,12 @@ class apeGmsh(_SessionBase):
         overwrite: bool = True,
         _artifacts: bool = True,
     ) -> None:
-        # ADR 0112 D1, P2 (#1307): the default name is the ``__main__``
-        # script's stem, so ``python frame.py`` leaves ``frame.h5``
-        # beside it.  With no real script (a notebook, ``-c``, stdin)
-        # the session has no name: ``end()`` writes nothing automatically
-        # and warns once, and the snapshot's ``model_name`` is ``""``.
-        # An explicit ``model_name`` always wins; an empty one is refused.
+        # ADR 0112 D1: the default name is the ``__main__`` script's
+        # stem, so ``python frame.py`` leaves ``frame.h5`` beside it.
+        # With no real script (a notebook, ``-c``, stdin, a launcher) the
+        # session has no name: ``end()`` writes nothing automatically and
+        # warns once, and the snapshot's ``model_name`` is ``""``.  An
+        # explicit ``model_name`` always wins; an empty one is refused.
         if model_name is None:
             from ._artifact_policy import main_script
 

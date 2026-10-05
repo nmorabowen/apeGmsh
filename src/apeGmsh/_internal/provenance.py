@@ -164,10 +164,13 @@ def _roots(*names: str) -> tuple[str, ...]:
 
 
 # ``platstdlib`` is the venv's ``Lib`` on Windows, which holds
-# site-packages, so site-packages is tested first.
+# site-packages, so site-packages is tested first.  The ``scripts``
+# directory (``bin``, or ``Scripts`` on Windows) holds the console-script
+# launchers (``pytest``, ``jupyter``), which run as ``__main__`` and are
+# no more the user's code than the packages they start.
 _STDLIB_ROOTS = _roots("stdlib", "platstdlib") + (
     os.path.normcase(os.path.dirname(os.__file__)) + os.sep,)
-_SITE_ROOTS = _roots("purelib", "platlib")
+_SITE_ROOTS = _roots("purelib", "platlib", "scripts")
 
 _CLASS_CACHE: dict[str, int] = {}
 
@@ -198,8 +201,9 @@ def _frame_class(f: FrameType) -> int:
     """``_classify`` by file, except that a ``__main__`` frame under the
     apeGmsh tree is the user's: a script run in place there is still the
     user's script.  Launchers that run as ``__main__`` stay what they are:
-    stdlib (``python -m cProfile|pdb|trace|profile``) or site-packages
-    (``pytest``, ``ipykernel``)."""
+    stdlib (``python -m cProfile|pdb|trace|profile``), site-packages
+    (``python -m pytest``, ``ipykernel``) or a console script in the
+    environment's ``bin`` / ``Scripts`` directory (``pytest``)."""
     cls = _classify(f.f_code.co_filename)
     if cls == _APEGMSH and f.f_globals.get("__name__") == "__main__":
         return _USER

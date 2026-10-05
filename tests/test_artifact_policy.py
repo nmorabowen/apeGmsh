@@ -195,6 +195,31 @@ def test_main_script_ignores_launchers_and_pseudo_files(monkeypatch, tmp_path: P
     assert main_script() is None                      # site-packages
 
 
+def test_a_console_script_launcher_gives_no_default_name(monkeypatch, tmp_path: Path) -> None:
+    """Linux CI runs ``/opt/.../bin/pytest``, a console script in the
+    environment's scripts directory, as ``__main__``: a launcher, never the
+    user's script, so there is no default name, no write and one warning.
+    Simulated so the test does not depend on how pytest itself was launched."""
+    import sysconfig
+
+    launcher = os.path.join(sysconfig.get_paths()["scripts"], "pytest")
+    assert prov._classify(launcher) == prov._THIRD_PARTY
+    real_isfile = os.path.isfile
+    monkeypatch.setattr(os.path, "isfile", lambda p: p == launcher or real_isfile(p))
+    main = types.ModuleType("__main__")
+    main.__file__ = launcher
+    monkeypatch.setitem(sys.modules, "__main__", main)
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    assert main_script() is None
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with apeGmsh() as g:
+            _small_box(g)
+    assert g.name == ""
+    assert len(w) == 1 and "model_name" in str(w[0].message), _messages(w)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_explicit_name_wins_over_the_script(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     _fake_main(monkeypatch, tmp_path / "frame_model.py")
