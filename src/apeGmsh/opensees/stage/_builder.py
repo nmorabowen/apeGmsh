@@ -1059,6 +1059,7 @@ class _StageBuilder:
                 f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        # apegmsh-lint: comment-provenance-ok moved verbatim from apesees.py in the S1 pure move
         # Lazily create the shared Constant series (once across all
         # stages) and this stage's dedicated Plain HOLD pattern (once
         # per stage), then claim the pattern so neither the global
