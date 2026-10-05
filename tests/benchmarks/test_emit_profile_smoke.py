@@ -119,3 +119,61 @@ def test_mem_cell_report_prints_on_cp1252_stdout(tmp_path: Path) -> None:
         f"printed verdict says {expected!r} but the json record says "
         f"{records[0].get('gate_status')!r}"
     )
+
+
+@pytest.mark.parametrize("mode", ["flat", "partitioned", "staged"])
+def test_arch_orientation_fan_out_is_planned_once(mode: str) -> None:
+    """Profile the ``arch_with_orientation_fan_out`` golden fixture's emit.
+
+    K1-3d S3a moved the orientation fan-out's allocation loop out of the
+    emit and into the build's tag plan (ADR 0114 D4, amended). The move
+    must not double its cost: across two emits of one built model, the
+    profile shows ``plan_transform_specs`` once (the plan is memoised per
+    mode) and one ``vecxz`` computation per arch element, while
+    ``emit_transform_specs`` still writes the lines on every emit.
+    """
+    import cProfile
+    import pstats
+
+    from apeGmsh.opensees.emitter.tcl import TclEmitter
+
+    from tests.opensees.golden import builder as golden
+
+    bm = golden.build_model(
+        "arch_with_orientation_fan_out", mode, "tcl").build()
+    n_arch = len(_oriented_element_ids(bm))
+    assert n_arch >= 2
+
+    prof = cProfile.Profile()
+    prof.enable()
+    for _ in range(2):
+        bm.emit(TclEmitter())
+    prof.disable()
+
+    stats = pstats.Stats(prof).stats  # type: ignore[attr-defined]
+    calls = {
+        name: stat[1]     # primitive call count
+        for (_file, _line, name), stat in stats.items()
+        if name in ("plan_transform_specs", "emit_transform_specs",
+                    "compute_vecxz_for_element")
+    }
+    assert calls.get("plan_transform_specs") == 1, calls
+    assert calls.get("compute_vecxz_for_element") == n_arch, calls
+    assert calls.get("emit_transform_specs") == 2, calls
+
+
+def _oriented_element_ids(bm: "object") -> "list[int]":
+    """The FEM ids of every element whose transform fans out."""
+    from apeGmsh.opensees._internal.build import (
+        _element_transf,
+        expand_pg_to_elements,
+        is_orientation_transform,
+    )
+
+    out: "list[int]" = []
+    for prim in bm.primitives:  # type: ignore[attr-defined]
+        t = _element_transf(prim)
+        if t is not None and is_orientation_transform(t):
+            out += [int(eid) for eid, _ in
+                    expand_pg_to_elements(bm.fem, prim.pg)]  # type: ignore[attr-defined]
+    return out

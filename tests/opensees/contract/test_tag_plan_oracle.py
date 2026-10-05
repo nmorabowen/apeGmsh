@@ -380,6 +380,113 @@ def test_short_or_empty_element_plan_fails_the_oracle() -> None:
     assert checked >= 10
 
 
+def test_short_or_empty_transform_plan_fails_the_oracle() -> None:
+    """The transform comparison is not vacuous: a dropped row is caught.
+
+    Every case whose orientation fan-out plans a tag must reject the
+    transform plan with its last row dropped, and with every row
+    dropped, while accepting the real one.
+    """
+    checked = 0
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.transforms.stream()
+        if not rows:
+            continue
+        checked += 1
+        assert _family_mismatch(case, "transforms", rows) is None, name
+        assert _family_mismatch(case, "transforms", rows[:-1]), name
+        assert _family_mismatch(case, "transforms", ()), name
+    assert checked >= 4      # the arch fixture, in each of its four modes
+
+
+# ---------------------------------------------------------------------------
+# The transform family (K1-3d S3a)
+# ---------------------------------------------------------------------------
+
+
+def _arch_transform_inputs(case: Case) -> tuple[list[Any], list[Any]]:
+    from apeGmsh.opensees._internal.build import topological_order
+    from apeGmsh.opensees._internal.types import Element, GeomTransf
+
+    ordered = topological_order(case.bm.primitives)
+    return ([p for p in ordered if isinstance(p, GeomTransf)],
+            [p for p in ordered if isinstance(p, Element)])
+
+
+def test_geomtransf_is_frozen_in_the_emit_fork() -> None:
+    """A stray ``geomTransf`` mint at emit time raises where it is."""
+    plan = _case("arch_with_orientation_fan_out/flat").plan
+    assert "geomTransf" in plan.frozen_kinds
+    tags = plan.emit_allocator()
+    with pytest.raises(TagLawError, match="planned and frozen"):
+        tags.allocate("geomTransf")
+    with pytest.raises(TagLawError):
+        tags.allocate_block("geomTransf", 1)
+
+
+def test_emit_transform_specs_is_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop.
+
+    The plain-allocator path (a direct caller, until K1-3d S6) writes the
+    same lines and overrides as the planned path; any other fork raises.
+    """
+    from apeGmsh.opensees._internal.build import emit_transform_specs
+
+    case = _case("arch_with_orientation_fan_out/flat")
+    bm, plan = case.bm, case.plan
+    transforms, elements = _arch_transform_inputs(case)
+
+    def run(tags: TagAllocator) -> tuple[list[Row], Any]:
+        em = ts.tapped(RecordingEmitter)()
+        em.tap = []
+        overrides = emit_transform_specs(
+            transforms, elements, em, bm.fem, tags, bm.tag_for, ndm=bm.ndm)
+        return list(em.tap), overrides
+
+    planned_rows, planned_over = run(plan.emit_allocator())
+    plain_rows, plain_over = run(_seeded_like_the_planner(bm))
+    assert planned_rows == plain_rows and planned_over == plain_over
+    assert planned_over == plan.transforms.fanout_for(transforms).overrides
+    assert planned_over      # the arch fans out past the spec's own tag
+
+    for other in (plan.allocator.fork(), plan.allocator,
+                  plan.allocator.fork({"geomTransf"}, origin=object())):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            run(other)
+
+
+def _seeded_like_the_planner(bm: Any) -> TagAllocator:
+    """A plain allocator seeded with ``bm``'s primitives, as a direct
+    caller of an emit helper seeds one."""
+    from apeGmsh.opensees.apesees import _kind_of
+
+    tags = TagAllocator()
+    for prim in bm.primitives:
+        tags.allocate_for(prim, _kind_of(prim))
+    return tags
+
+
+def test_emit_refuses_a_transform_plan_for_other_specs() -> None:
+    case = _case("arch_with_orientation_fan_out/flat")
+    transforms, _ = _arch_transform_inputs(case)
+    assert transforms
+    sub = case.plan.transforms
+    assert sub.fanout_for(transforms) is sub.fanout
+    for wrong in ([], [*transforms, transforms[0]], transforms[:-1]):
+        with pytest.raises(TagLawError, match="transform plan"):
+            sub.fanout_for(wrong)
+
+
+def test_transform_plan_derives_its_rows_from_its_fanout() -> None:
+    from apeGmsh.opensees._internal.tag_plan import TransformTagPlan
+
+    with pytest.raises(TagLawError, match="fanout, not rows"):
+        TransformTagPlan(rows=(("geomTransf", 2),))
+    with pytest.raises(TagLawError, match="no fan-out"):
+        TransformTagPlan().stream()
+
+
 _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
 
 
