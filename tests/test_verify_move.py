@@ -109,3 +109,73 @@ def test_json_output(tmp_path, capsys):
     code, out = _run(repo, capsys, "--json")
     assert code == 1
     assert '"changed"' in out and '"name": "f"' in out
+
+
+# --- relative imports resolve by module path (S1-v) -------------------------
+
+SRC = "src/pkg"
+BODY = '''\
+class K:
+    def go(self):
+        from {dots}x import y
+        return y
+'''
+
+
+def _pkg_repo(tmp_path, base_path, base_text):
+    _git(tmp_path, "init", "-q")
+    f = tmp_path / base_path
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(base_text)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    return tmp_path
+
+
+def _run_paths(repo, capsys, *paths):
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", *paths])
+    return code, capsys.readouterr().out
+
+
+def _move_to(repo, old, new, text):
+    (repo / old).unlink()
+    dest = repo / new
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text)
+
+
+def test_relative_import_one_package_deeper_passes(tmp_path, capsys):
+    repo = _pkg_repo(tmp_path, f"{SRC}/mod.py", BODY.format(dots="."))
+    _move_to(repo, f"{SRC}/mod.py", f"{SRC}/sub/mod.py", BODY.format(dots=".."))
+    code, out = _run_paths(repo, capsys, SRC)
+    assert code == 0, out
+
+
+def test_relative_import_different_target_fails(tmp_path, capsys):
+    repo = _pkg_repo(tmp_path, f"{SRC}/mod.py", BODY.format(dots="."))
+    # same dots after moving deeper: now resolves to pkg.sub.x, not pkg.x
+    _move_to(repo, f"{SRC}/mod.py", f"{SRC}/sub/mod.py", BODY.format(dots="."))
+    code, out = _run_paths(repo, capsys, SRC)
+    assert code == 1
+    assert "changed: K.go" in out
+
+
+def test_relative_import_in_init_resolves_against_package(tmp_path, capsys):
+    # `.x` inside pkg/sub/__init__.py is pkg.sub.x (the package itself).
+    repo = _pkg_repo(tmp_path, f"{SRC}/sub/__init__.py", BODY.format(dots="."))
+    _move_to(repo, f"{SRC}/sub/__init__.py", f"{SRC}/sub/impl.py",
+             BODY.format(dots="pkg.sub."))
+    code, out = _run_paths(repo, capsys, SRC)
+    assert code == 0, out
+    (repo / f"{SRC}/sub/impl.py").write_text(BODY.format(dots="pkg."))
+    code, _ = _run_paths(repo, capsys, SRC)
+    assert code == 1
+
+
+def test_unresolvable_path_keeps_raw_dump(tmp_path, capsys):
+    repo = _pkg_repo(tmp_path, "lib/mod.py", BODY.format(dots="."))
+    _move_to(repo, "lib/mod.py", "lib/sub/mod.py", BODY.format(dots=".."))
+    code, out = _run_paths(repo, capsys, "lib")
+    assert code == 1  # raw level differs; no resolution outside src/, no crash
+    assert "changed: K.go" in out

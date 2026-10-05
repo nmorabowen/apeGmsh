@@ -21,6 +21,9 @@ changed. ``--json`` prints machine-readable output.
 What it cannot see (so a green run is necessary, not sufficient):
   * import-time registration order (decorators run in a new order, a
     registry fills in a different order);
+  * relative imports are compared by resolved absolute module, taken from the
+    file's path under ``src/`` (an ``__init__.py`` is its own package). A file
+    outside ``src/``, or a ``..`` that climbs past the top, keeps the raw form;
   * free-name resolution: a moved body whose globals or imports no longer
     resolve. That is ruff F821's job;
   * module-level statements. Imports and assignments are reported as an
@@ -101,9 +104,43 @@ def _header_dump(node: ast.ClassDef) -> str:
     return ast.dump(clone, include_attributes=False)
 
 
+def module_package(path: str) -> list[str] | None:
+    """Dotted *package* parts of a repo path under ``src/``, else None.
+
+    ``src/a/b/c.py`` is module ``a.b.c`` in package ``a.b``; ``src/a/b/__init__.py``
+    is the package ``a.b`` itself. A path outside ``src/`` cannot be resolved.
+    """
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) < 2 or parts[0] != "src" or not parts[-1].endswith(".py"):
+        return None
+    # Both ``c.py`` and ``__init__.py`` live in the package named by the
+    # directory, so the package is the directory parts either way.
+    return parts[1:-1] or None
+
+
+class _AbsoluteImports(ast.NodeTransformer):
+    """Rewrite ``from .x import y`` to ``level=0`` with the resolved module."""
+
+    def __init__(self, package: list[str]):
+        self.package = package
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        if node.level > 0:
+            up = node.level - 1
+            if up < len(self.package):
+                base = self.package[: len(self.package) - up]
+                tail = node.module.split(".") if node.module else []
+                node.module = ".".join(base + tail)
+                node.level = 0
+        return node
+
+
 def collect(source: str, path: str):
     """Return ([(qualname, dump, path)], [module-level statement dumps])."""
     tree = ast.parse(source, filename=path)
+    package = module_package(path)
+    if package is not None:
+        tree = _AbsoluteImports(package).visit(tree)
     defs: list[tuple[str, str, str]] = []
     module_level: list[str] = []
 
