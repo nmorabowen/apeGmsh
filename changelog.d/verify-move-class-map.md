@@ -6,3 +6,7 @@
 under two mapped classes, or a changed body, still fails. Class-header entries (added NEW classes, a
 changed OLD class) stop failing only when named in the map, and their full dump or diff prints under
 `class headers (review by hand):`. Without the flag, behaviour and output are unchanged.
+
+A move is accepted only when NEW is a direct head-side base of OLD. Class-sensitive bodies (private
+`__x`, zero-argument `super()`, `__class__`) are refused. Any exempted class header makes the run exit 2
+(`--json`: `"needs_review": true`) instead of 0, so a header change always gets a human pass.

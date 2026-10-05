@@ -229,8 +229,9 @@ def _cm_run(repo, capsys, *extra):
 def test_class_map_method_move_passes(tmp_path, capsys):
     repo = _cm_repo(tmp_path)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M")
-    assert code == 0, out
+    assert code == 2, out  # exempt headers: never a plain OK
     assert "moved:   A.m -> M.m" in out
+    assert "identical multiset" not in out
 
 
 def test_method_move_without_class_map_fails(tmp_path, capsys):
@@ -250,7 +251,8 @@ def test_class_map_changed_body_fails(tmp_path, capsys):
 
 def test_class_map_name_collision_fails(tmp_path, capsys):
     head_m = CM_HEAD_M + "\n\nclass N:\n    def m(self):\n        return 1\n"
-    repo = _cm_repo(tmp_path, head_m=head_m)
+    repo = _cm_repo(tmp_path, head_a=CM_HEAD_A.replace("(M)", "(M, N)"),
+                    head_m=head_m)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M,N")
     assert code == 1
     assert "removed: A.m" in out
@@ -267,7 +269,7 @@ def test_class_map_unmapped_header_fails(tmp_path, capsys):
 def test_class_map_header_sections_printed(tmp_path, capsys):
     repo = _cm_repo(tmp_path)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M")
-    assert code == 0
+    assert code == 2
     assert "class headers (review by hand):" in out
     assert "added: M" in out and "changed: A" in out
     assert "bases" in out
@@ -277,3 +279,73 @@ def test_class_map_bad_spec_errors(tmp_path):
     import pytest
     with pytest.raises(SystemExit):
         vm.main(["--repo", str(tmp_path), "--class-map", "nonsense", "a.py"])
+
+
+def test_class_map_json_needs_review(tmp_path, capsys):
+    repo = _cm_repo(tmp_path)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M", "--json")
+    assert code == 2
+    assert '"ok": false' in out and '"needs_review": true' in out
+
+
+def test_class_map_requires_inheritance_link(tmp_path, capsys):
+    repo = _cm_repo(tmp_path, head_a=CM_HEAD_A.replace("(M)", ""))
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 1
+    assert "removed: A.m" in out and "added:   M.m" in out
+
+
+def test_class_map_shadow_in_old_not_ok(tmp_path, capsys):
+    head_a = CM_HEAD_A.replace('    """Doc A."""\n',
+                               '    """Doc A."""\n    m = None\n')
+    repo = _cm_repo(tmp_path, head_a=head_a)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code != 0
+    assert "Assign" in out
+
+
+def test_class_map_shadow_in_new_not_ok(tmp_path, capsys):
+    head_m = CM_HEAD_M + "    m = lambda self: 99\n"
+    repo = _cm_repo(tmp_path, head_m=head_m)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code != 0
+    assert "Lambda" in out
+
+
+def test_class_map_self_map_rejected(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit):
+        vm.main(["--repo", str(tmp_path), "--class-map", "A=A", "a.py"])
+
+
+def _sens_run(tmp_path, capsys, body):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a.py").write_text(CM_BASE.replace("return 1", body))
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "a.py").write_text(CM_HEAD_A)
+    (tmp_path / "mix.py").write_text(CM_HEAD_M.replace("return 1", body))
+    return _cm_run(tmp_path, capsys, "--class-map", "A=M")
+
+
+def test_class_map_refuses_mangled_name(tmp_path, capsys):
+    code, out = _sens_run(tmp_path, capsys, "return self.__x")
+    assert code == 1
+    assert "class-sensitive: A.m (private name-mangled __x)" in out
+
+
+def test_class_map_refuses_zero_arg_super(tmp_path, capsys):
+    code, out = _sens_run(tmp_path, capsys, "return super().m()")
+    assert code == 1
+    assert "class-sensitive: A.m (zero-argument super())" in out
+
+
+def test_class_map_refuses_dunder_class(tmp_path, capsys):
+    code, out = _sens_run(tmp_path, capsys, "return __class__")
+    assert code == 1
+    assert "class-sensitive: A.m (__class__)" in out
+
+
+def test_class_map_allows_dunder_names(tmp_path, capsys):
+    code, out = _sens_run(tmp_path, capsys, "return self.__dict__")
+    assert code == 2 and "class-sensitive" not in out

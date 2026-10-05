@@ -16,7 +16,7 @@ Paths are files, directories (recursed for ``*.py``) or globs, and must cover
 both the source and the destination of the move. ``--head`` is a git revision
 or ``WORKTREE`` (the files on disk). Revisions are read with ``git show``,
 never checked out. Exit 0 when identical, 1 when defs were added, removed or
-changed. ``--json`` prints machine-readable output.
+changed (2: see ``--class-map``). ``--json`` prints machine-readable output.
 
 What it cannot see (so a green run is necessary, not sufficient):
   * import-time registration order (decorators run in a new order, a
@@ -41,14 +41,23 @@ What it cannot see (so a green run is necessary, not sufficient):
 ``--class-map OLD=NEW[,NEW...]`` (repeatable, opt-in) is for methods moved out
 of a class into mixins, where the qualname changes (``apeSees.eigen`` ->
 ``_ModalMixin.eigen``):
-  * a removed ``OLD.m`` and an added ``NEW.m`` (NEW in OLD's list) with an
-    identical dump count as a match and print as ``moved: OLD.m -> NEW.m``.
-    Only exact dump equality matches. If ``m`` is added under two mapped NEW
-    classes the match is ambiguous and stays a failure;
-  * class-header entries (added NEW classes, a changed OLD class: new bases,
-    decorators, class-body statements) are exempt from failing only when the
-    class is named in the map. Their full dump or diff is printed under
-    ``class headers (review by hand):``. A header for an unmapped class fails.
+  * a removed ``OLD.m`` and an added ``NEW.m`` with an identical dump count as
+    a match (``moved: OLD.m -> NEW.m``) only when NEW is one of OLD's direct
+    bases in the head (by simple name), so attribute lookup still reaches it.
+    Otherwise, or on a changed body, or when ``m`` is added under two linked
+    NEW classes, it stays removed/added and fails. A class cannot be mapped to
+    itself (``A=A`` is a usage error);
+  * a moved body that is class-sensitive (a private name-mangled identifier
+    ``__x``, a zero-argument ``super()``, or ``__class__``) is refused and
+    reported as ``class-sensitive: OLD.m (reason)``;
+  * class-header entries (an added NEW class, a changed OLD class: bases,
+    decorators, class-body statements) do not fail, but only in the module
+    files that took part in a moved method. They print under
+    ``class headers (review by hand):`` and the run exits **2**
+    (``--json``: ``"ok": false, "needs_review": true``), never 0, so a header
+    change always forces a human pass. A header of an unmapped class fails.
+    Exit 0 in map mode means moves only, zero exempted headers. The OK line
+    reads ``OK -- N defs, M moved``, not "identical multiset".
 Without ``--class-map`` the behaviour and output are unchanged.
 
 Same qualified name in two modules is legal (a multiset counts both); a
@@ -66,6 +75,7 @@ import fnmatch
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
@@ -189,6 +199,41 @@ def gather(repo: str, rev: str, specs: list[str]):
     return defs, module_level
 
 
+def head_bases(repo: str, rev: str, specs: list[str]) -> dict[str, set[str]]:
+    """qualname -> simple names of its direct bases, over the head files."""
+    out: dict[str, set[str]] = defaultdict(set)
+
+    def walk(body, prefix: str) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                q = prefix + node.name
+                out[q].update(b.id if isinstance(b, ast.Name) else b.attr
+                              for b in node.bases
+                              if isinstance(b, (ast.Name, ast.Attribute)))
+                walk(node.body, q + ".")
+
+    for f in list_files(repo, rev, specs):
+        walk(ast.parse(read_file(repo, rev, f), filename=f).body, "")
+    return out
+
+
+_SUPER0 = re.compile(r"Call\(func=Name\(id='super', ctx=Load\(\)\)"
+                     r"(?:, args=\[\])?(?:, keywords=\[\])?\)")
+
+
+def class_sensitive(dump: str) -> str | None:
+    """Why a body depends on the class it sits in, or None."""
+    if _SUPER0.search(dump):
+        return "zero-argument super()"
+    names = set(re.findall(r"(?:id|attr|arg|name)='([^']*)'", dump))
+    if "__class__" in names:
+        return "__class__"
+    for n in sorted(names):
+        if n.startswith("__") and not n.endswith("__"):
+            return f"private name-mangled {n}"
+    return None
+
+
 def _diff(rd: str, ad: str) -> str:
     return "\n".join(difflib.unified_diff(
         rd.replace(", ", ",\n").splitlines(),
@@ -200,14 +245,14 @@ def _is_header(dump: str) -> bool:
     return dump.startswith("ClassDef(")
 
 
-def _match_moves(removed_by_q, added_by_q, class_map):
+def _match_moves(removed_by_q, added_by_q, class_map, bases, sensitive):
     """Pair ``OLD.rest`` removals with ``NEW.rest`` additions of equal dump.
 
     Consumes the matched entries from both dicts and returns the moves.
     """
     moved = []
     for old in sorted(class_map):
-        news = class_map[old]
+        news = [n for n in class_map[old] if n in bases.get(old, ())]
         for q in sorted(removed_by_q):
             if not q.startswith(old + "."):
                 continue
@@ -218,6 +263,10 @@ def _match_moves(removed_by_q, added_by_q, class_map):
                         if any(ad == d for ad, _ in added_by_q.get(f"{n}.{rest}", []))]
                 if len(hits) != 1:
                     continue  # no match, or a name collision: stays a FAIL
+                why = class_sensitive(d)
+                if why:
+                    sensitive.append({"name": q, "reason": why})
+                    continue
                 new_q = f"{hits[0]}.{rest}"
                 for a_entry in added_by_q[new_q]:
                     if a_entry[0] == d:
@@ -229,7 +278,7 @@ def _match_moves(removed_by_q, added_by_q, class_map):
     return moved
 
 
-def compare(base_defs, head_defs, class_map=None):
+def compare(base_defs, head_defs, class_map=None, bases=None):
     b = Counter((q, d) for q, d, _ in base_defs)
     h = Counter((q, d) for q, d, _ in head_defs)
     where_b: dict = {}
@@ -244,15 +293,26 @@ def compare(base_defs, head_defs, class_map=None):
         removed_by_q[q].extend([(d, where_b[(q, d)])] * n)
     for (q, d), n in (h - b).items():
         added_by_q[q].extend([(d, where_h[(q, d)])] * n)
-    moved = _match_moves(removed_by_q, added_by_q, class_map) if class_map else []
+    sensitive: list = []
+    moved = (_match_moves(removed_by_q, added_by_q, class_map, bases or {},
+                          sensitive) if class_map else [])
     mapped = set(class_map or ()) | {n for v in (class_map or {}).values() for n in v}
+    # exemption is keyed by (module path, qualname): only the files that took
+    # part in a move may carry an exempt header.
+    ok_paths: dict[str, set[str]] = defaultdict(set)
+    for m in moved:
+        ok_paths[m["from"].split(".")[0]].add(m["base_file"])
+        ok_paths[m["to"].split(".")[0]].add(m["head_file"])
+
+    def exempt(q, path):
+        return q in mapped and path in ok_paths.get(q, ())
     headers = []
     changed, removed, added = [], [], []
     for q in sorted(set(removed_by_q) | set(added_by_q)):
         rs, as_ = removed_by_q.get(q, []), added_by_q.get(q, [])
         pairs = min(len(rs), len(as_))
         for (rd, rp), (ad, ap) in zip(rs[:pairs], as_[:pairs]):
-            if q in mapped and _is_header(rd) and _is_header(ad):
+            if exempt(q, ap) and _is_header(rd) and _is_header(ad):
                 headers.append({"kind": "changed", "name": q, "file": ap,
                                 "text": _diff(rd, ad)})
                 continue
@@ -261,14 +321,14 @@ def compare(base_defs, head_defs, class_map=None):
                             "diff": diff})
         removed += [{"name": q, "file": p} for _, p in rs[pairs:]]
         for d, p in as_[pairs:]:
-            if q in mapped and _is_header(d):
+            if exempt(q, p) and _is_header(d):
                 headers.append({"kind": "added", "name": q, "file": p,
                                 "text": d.replace(", ", ",\n")})
             else:
                 added.append({"name": q, "file": p})
     if class_map is None:
         return sum(h.values()), removed, added, changed
-    return sum(h.values()), removed, added, changed, moved, headers
+    return sum(h.values()), removed, added, changed, moved, headers, sensitive
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -291,19 +351,24 @@ def main(argv: list[str] | None = None) -> int:
             names = [n for n in news.split(",") if n]
             if not (sep and old and names):
                 ap.error(f"--class-map expects OLD=NEW[,NEW...], got {spec!r}")
+            if old in names:
+                ap.error(f"--class-map: {old} cannot be mapped to itself")
             class_map.setdefault(old, []).extend(names)
     base_defs, base_mod = gather(a.repo, a.base, a.paths)
     head_defs, head_mod = gather(a.repo, a.head, a.paths)
     moved: list = []
     headers: list = []
+    sensitive: list = []
     if class_map is None:
         total, removed, added, changed = compare(base_defs, head_defs)
     else:
-        total, removed, added, changed, moved, headers = compare(
-            base_defs, head_defs, class_map)
+        total, removed, added, changed, moved, headers, sensitive = compare(
+            base_defs, head_defs, class_map,
+            head_bases(a.repo, a.head, a.paths))
     delta = {"removed": sum((base_mod - head_mod).values()),
              "added": sum((head_mod - base_mod).values())}
     ok = not (removed or added or changed)
+    review = ok and bool(headers)
     info = (f"module-level delta (informational): "
             f"-{delta['removed']} +{delta['added']} statements")
 
@@ -319,20 +384,32 @@ def main(argv: list[str] | None = None) -> int:
                     print("    " + line)
 
     if a.json:
-        out = {"ok": ok, "defs": total, "removed": removed,
+        out = {"ok": ok and not review, "defs": total, "removed": removed,
                "added": added, "changed": changed,
                "module_level_delta": delta}
         if class_map is not None:
             out["moved"] = moved
             out["class_headers"] = headers
+            out["class_sensitive"] = sensitive
+            out["needs_review"] = review
         print(json.dumps(out, indent=2))
+    elif ok and review:
+        print(f"verify_move: NEEDS REVIEW — {total} defs, {len(moved)} moved, "
+              f"{len(headers)} class headers exempted")
+        print_extra()
+        print(info)
     elif ok:
-        print(f"verify_move: OK — {total} defs, identical multiset")
+        if class_map is None:
+            print(f"verify_move: OK — {total} defs, identical multiset")
+        else:
+            print(f"verify_move: OK — {total} defs, {len(moved)} moved")
         print_extra()
         print(info)
     else:
         print("verify_move: FAIL")
         print_extra()
+        for sv in sensitive:
+            print(f"  class-sensitive: {sv['name']} ({sv['reason']})")
         for r in removed:
             print(f"  removed: {r['name']}  ({r['file']})")
         for r in added:
@@ -342,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             for line in c["diff"].splitlines():
                 print("    " + line)
         print(info)
-    return 0 if ok else 1
+    return 2 if review else (0 if ok else 1)
 
 
 if __name__ == "__main__":
