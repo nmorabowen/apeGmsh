@@ -108,10 +108,9 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        import numpy as np
-
         from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
+        import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -191,10 +190,9 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        import numpy as np
-
         from ..analysis.modal import ModalPropertiesResult
         from ..emitter.live import LiveOpsEmitter
+        import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -636,10 +634,9 @@ class _ModalMixin(_ProcedureHost):
                 "the in-process openseespy is not the fork."
             )
 
-        import numpy as np
-
         from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
+        import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -817,14 +814,13 @@ class _ModalMixin(_ProcedureHost):
         solver
             Eigen-solver flag (``-fullGenLapack`` on tiny models).
         """
-        import numpy as np
-
         from ..analysis.modal import (
             ModalHistoryResult,
             _damping_channel_args,
         )
         from ..emitter.live import LiveOpsEmitter
         from ..pattern.pattern import Plain as _Plain
+        import numpy as np
 
         context = "apeSees.modal_response_history"
         self._modal_prereqs_and_guards(num_modes, context=context)
@@ -921,13 +917,12 @@ class _ModalMixin(_ProcedureHost):
             Optional damping channel (uniform ratio or per-mode).
             Required for ``CQC``.
         """
-        import numpy as np
-
         from ..analysis.modal import (
             ResponseSpectrumResult,
             _damping_channel_args,
         )
         from ..emitter.live import LiveOpsEmitter
+        import numpy as np
 
         context = "apeSees.response_spectrum_analysis"
         self._modal_prereqs_and_guards(num_modes, context=context)

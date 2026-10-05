@@ -86,9 +86,8 @@ class _FrfMixin(_ProcedureHost):
             damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
             resp=resp, modes=modes, out=out, solver=solver,
         )
-        import numpy as np
-
         from ..analysis.modal import FrequencyResponseResult
+        import numpy as np
 
         table = np.asarray(rows, dtype=np.float64)
         return FrequencyResponseResult(
@@ -129,9 +128,8 @@ class _FrfMixin(_ProcedureHost):
             damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
             resp=resp, modes=modes, out=out, solver=solver,
         )
-        import numpy as np
-
         from ..analysis.modal import SteadyStateResult
+        import numpy as np
 
         table = np.asarray(rows, dtype=np.float64)
         return SteadyStateResult(
