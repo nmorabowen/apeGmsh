@@ -33,6 +33,20 @@ construction; the file is written on `end()` / context exit.
 `Path`; with no argument it reuses `save_to`, and raises
 `RuntimeError` if neither a path nor `save_to` was supplied.
 
+Without `save_to`, `end()` still writes: `model.h5` goes to the
+conventional path `<dir>/<model_name>.h5` (with `<dir>` the running
+script's directory, or `$APEGMSH_ARTIFACT_DIR`), and the geometry
+sibling `<model_name>.geometry.h5` beside it. The default `model_name`
+is the running script's stem, so `python frame.py` leaves `frame.h5`
+next to `frame.py`. In a notebook, under `python -c` or from stdin
+there is no script: the session has no name, nothing is written
+automatically, and one warning says so; pass `model_name=` or
+`save_to=<file>`. A parameter sweep that wants to keep each run's
+output sets `model_name` per run, because a later run of the same
+script replaces the file, while a file another script wrote at that
+path is kept (one warning). Under MPI only rank 0 writes, and a
+partitioned model gets no automatic write; `save_to=` still writes it.
+
 Both paths write the **neutral zone only**. The OpenSees zone
 (typed primitives, recorders, analysis chain) is written
 separately by the bridge via `apeSees(fem).h5(path)` — see the
