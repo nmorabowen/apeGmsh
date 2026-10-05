@@ -1,14 +1,17 @@
 """The tag plan's oracle (ADR 0114 D4, amended): the plan is what the emit writes.
 
 For every model the K1-3 tag-law pins drive (``_tag_streams.models()``,
-plus the split frame) and the emit mode it takes, ``plan_tags`` must plan
-exactly the derived ``(kind, tag)`` rows the emit writes. The oracle is the
-emit itself, read twice:
+plus the split frame) and the emit mode it takes, the plan the emit read
+(``BuiltModel.emit`` memoises one per mode) must plan exactly the derived
+``(kind, tag)`` rows the emit writes. The oracle is the emit itself, read
+twice:
 
 * the K1-3 tap records the ``(kind, tag)`` row of every emitted verb;
 * a mint log records every ``TagAllocator`` call the emit makes, with the
-  function that made it. ``_MINT_SITES`` names the family of each minting
-  function (an unknown one raises), so every emit-time tag has an owner.
+  function that made it. The calls on the plan's own allocator are the
+  planning (the seeding, then the migrated families' mints); every other
+  call is an emit-time mint. ``_MINT_SITES`` names the family of each
+  minting function (an unknown one raises), so every tag has an owner.
 
 A tapped row of a derived verb (``VERB_KIND``) then belongs to:
 
@@ -25,17 +28,24 @@ A tapped row of a derived verb (``VERB_KIND``) then belongs to:
 case is ``xfail(strict=True)``: its ``stream()`` raises. A migrated
 family's case fails if the emit still mints any of its tags, and otherwise
 compares its plan, exactly, with the planned rows of its kinds less the
-other migrated families' plans in those kinds. The ``MIGRATED`` flag in
-``tag_plan.py`` drives the marker, so a migration slice turns its cases
-into real comparisons in the same commit; ``test_every_family_has_rows``
-keeps every family's comparison non-vacuous.
+other migrated families' plans in those kinds. Rows compare by
+``(verb, tag)``: an element spec picks its type token in its own
+``_emit``, so the plan's element rows carry the bare verb. The
+``MIGRATED`` flag in ``tag_plan.py`` drives the marker, so a migration
+slice turns its cases into real comparisons in the same commit;
+``test_every_family_has_rows`` keeps every family's comparison
+non-vacuous, and ``test_short_or_empty_element_plan_fails_the_oracle``
+proves the comparison catches a plan that drops rows.
 
-Beside the oracle, this file pins what S1 ships: ``TagAllocator.freeze()``
-and ``fork()``, ``TagLawError``, and a plan seeded exactly as the emit seeds
-its allocator (``element_tags="fem"`` included).
+Beside the oracle, this file pins what S1 and S2 ship:
+``TagAllocator.freeze()`` and ``fork()``, ``TagLawError``, a plan seeded
+exactly as the emit used to seed its allocator (``element_tags="fem"``
+included), the plan each emit path reads (``plan_of``), and the refusal
+of ``reset()`` on every fork.
 """
 from __future__ import annotations
 
+import inspect
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -52,6 +62,7 @@ from apeGmsh.opensees._internal.tag_plan import (
     TagMode,
     TagPlan,
     emit_mode,
+    plan_of,
     plan_tags,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -174,30 +185,60 @@ def _mint_log() -> Iterator[list[_Op]]:
 class Case(NamedTuple):
     bm: Any
     stream: tuple[Row, ...]
-    plan: TagPlan
-    seed: dict[str, int]                  # the emit's counters before any mint
+    plan: TagPlan                         # the plan the emit read
+    seed: dict[str, int]                  # the plan's counters before its mints
     seeded: frozenset[tuple[str, int]]    # (kind, tag) of each seeded primitive
+    planned: dict[str, list[int]]         # kind -> tags the planner minted
     mints: dict[tuple[str, int], str]     # (kind, tag) minted at emit -> family
     minted: dict[str, list[int]]          # kind -> tags minted at emit, in order
 
 
-def _read_log(name: str, log: list[_Op]) -> tuple[
-    dict[str, int], frozenset[tuple[str, int]],
+def _mint_range(op: _Op) -> range:
+    first = int(op.result)
+    n = 1 if op.method == "allocate" else int(op.args[1])
+    return range(first, first + n)
+
+
+def _mint_family(name: str, op: _Op) -> str:
+    if op.caller not in _MINT_SITES:
+        raise AssertionError(
+            f"{name}: {op.caller}() mints {op.args[0]!r}; name its family "
+            "in _MINT_SITES"
+        )
+    return _MINT_SITES[op.caller]
+
+
+def _read_log(name: str, log: list[_Op], plan: TagPlan) -> tuple[
+    dict[str, int], frozenset[tuple[str, int]], dict[str, list[int]],
     dict[tuple[str, int], str], dict[str, list[int]],
 ]:
-    allocators = {op.allocator for op in log}
-    assert len(allocators) <= 1, (
-        f"{name}: the emit used {len(allocators)} allocators; this oracle "
-        "reads one (update it when the emit reads the plan)"
+    """Split the log into the planning and the emit-time mints."""
+    planner = id(plan.allocator)
+    assert any(op.allocator == planner for op in log), (
+        f"{name}: the emit's plan was not made inside this emit")
+    emit_allocators = {op.allocator for op in log} - {planner}
+    assert len(emit_allocators) <= 1, (
+        f"{name}: the emit minted from {len(emit_allocators)} allocators "
+        "besides the plan's; it mints from one emit_allocator() fork"
     )
     seed: dict[str, int] = {}
     seeded: set[tuple[str, int]] = set()
+    planned: dict[str, list[int]] = {}
     mints: dict[tuple[str, int], str] = {}
     minted: dict[str, list[int]] = {}
     for op in log:
+        if op.allocator != planner:
+            assert op.method not in ("allocate_for", "reserve_through"), (
+                f"{name}: {op.caller}() seeds the emit allocator with "
+                f"{op.method}; the plan seeds it")
+            family = _mint_family(name, op)
+            for tag in _mint_range(op):
+                mints[(op.args[0], tag)] = family
+                minted.setdefault(op.args[0], []).append(tag)
+            continue
         if op.method in ("allocate_for", "reserve_through"):
-            assert not minted, (
-                f"{name}: {op.method} after the emit's first mint")
+            assert not planned, (
+                f"{name}: {op.method} after the planner's first mint")
             if op.method == "allocate_for":
                 kind, tag = op.args[1], int(op.result)
                 seeded.add((kind, tag))
@@ -205,18 +246,11 @@ def _read_log(name: str, log: list[_Op]) -> tuple[
                 kind, tag = op.args[0], int(op.args[1])
             seed[kind] = max(seed.get(kind, 0), tag)
             continue
-        if op.caller not in _MINT_SITES:
-            raise AssertionError(
-                f"{name}: {op.caller}() mints {op.args[0]!r} at emit time; "
-                "name its family in _MINT_SITES"
-            )
-        kind = op.args[0]
-        first = int(op.result)
-        n = 1 if op.method == "allocate" else int(op.args[1])
-        for tag in range(first, first + n):
-            mints[(kind, tag)] = _MINT_SITES[op.caller]
-            minted.setdefault(kind, []).append(tag)
-    return seed, frozenset(seeded), mints, minted
+        family = _mint_family(name, op)
+        assert FAMILY_PLANS[family].MIGRATED, (
+            f"{name}: the planner mints for pending family {family}")
+        planned.setdefault(op.args[0], []).extend(_mint_range(op))
+    return seed, frozenset(seeded), planned, mints, minted
 
 
 @lru_cache(maxsize=None)
@@ -230,15 +264,17 @@ def _case(name: str) -> Case:
         bm = _MODELS[name]().build()
         cls = RecordingEmitter
         split = False
-    with _mint_log() as log:
-        stream = ts.emit_stream(bm, cls, split=split)
     mode = emit_mode(
         bm, split=split,
         supports_partitions=getattr(cls, "supports_partitions", True),
     )
-    seed, seeded, mints, minted = _read_log(name, log)
-    return Case(bm, tuple(stream), plan_tags(bm, mode),
-                seed, seeded, mints, minted)
+    assert mode not in bm._tag_plans
+    with _mint_log() as log:
+        stream = ts.emit_stream(bm, cls, split=split)
+    plan = bm._tag_plans[mode]
+    seed, seeded, planned, mints, minted = _read_log(name, log, plan)
+    return Case(bm, tuple(stream), plan, seed, seeded, planned, mints,
+                minted)
 
 
 def _owner(case: Case, row: Row) -> str | None:
@@ -258,14 +294,45 @@ def _owner(case: Case, row: Row) -> str | None:
 
 
 def _rows(case: Case, owner: str, kinds: frozenset[str]) -> Counter[Row]:
+    """The tapped rows of ``owner`` in ``kinds``, as ``(verb, tag)``."""
     return Counter(
-        r for r in case.stream
+        (_verb(r[0]), r[1]) for r in case.stream
         if _owner(case, r) == owner and VERB_KIND[_verb(r[0])] in kinds
     )
 
 
 def _in_kinds(rows: Any, kinds: frozenset[str]) -> Counter[Row]:
-    return Counter(r for r in rows if VERB_KIND[_verb(r[0])] in kinds)
+    """Planned ``rows`` in ``kinds``, as ``(verb, tag)``."""
+    return Counter(
+        (_verb(r[0]), r[1]) for r in rows if VERB_KIND[_verb(r[0])] in kinds)
+
+
+def _family_mismatch(
+    case: Case, family: str, planned_rows: Any,
+) -> str | None:
+    """Why ``planned_rows`` is not ``family``'s rows of ``case``, or None."""
+    kinds = FAMILY_PLANS[family].KINDS
+    still_minted = _rows(case, family, kinds)
+    if still_minted:
+        return (f"{family} is MIGRATED, but the emit still mints its rows "
+                f"{sorted(still_minted.elements())}")
+    others: Counter[Row] = Counter()
+    for other in FAMILIES:
+        cls = FAMILY_PLANS[other]
+        if other != family and cls.MIGRATED and cls.KINDS & kinds:
+            others += _in_kinds(case.plan.family(other).stream(), kinds)
+    pool = _rows(case, PLANNED, kinds)
+    if others - pool:
+        return ("other families plan rows the emit does not write: "
+                f"{sorted((others - pool).elements())}")
+    expected = pool - others
+    planned = _in_kinds(planned_rows, kinds)
+    if planned != expected:
+        return (f"[{case.plan.mode}] the {family} plan and the emit "
+                f"disagree: planned only "
+                f"{sorted((planned - expected).elements())}, emitted only "
+                f"{sorted((expected - planned).elements())}")
+    return None
 
 
 def _family_param(name: str, family: str) -> Any:
@@ -289,29 +356,28 @@ def _family_param(name: str, family: str) -> Any:
 )
 def test_plan_equals_tapped_stream(name: str, family: str) -> None:
     case = _case(name)
-    planned = Counter(case.plan.family(family).stream())
-    kinds = FAMILY_PLANS[family].KINDS
-    still_minted = _rows(case, family, kinds)
-    assert not still_minted, (
-        f"{name}: {family} is MIGRATED, but the emit still mints its rows "
-        f"{sorted(still_minted.elements())}"
-    )
-    others: Counter[Row] = Counter()
-    for other in FAMILIES:
-        cls = FAMILY_PLANS[other]
-        if other != family and cls.MIGRATED and cls.KINDS & kinds:
-            others += _in_kinds(case.plan.family(other).stream(), kinds)
-    pool = _rows(case, PLANNED, kinds)
-    assert not others - pool, (
-        f"{name}: other families plan rows the emit does not write: "
-        f"{sorted((others - pool).elements())}"
-    )
-    expected = pool - others
-    assert planned == expected, (
-        f"{name} [{case.plan.mode}]: the {family} plan and the emit "
-        f"disagree: planned only {sorted((planned - expected).elements())}, "
-        f"emitted only {sorted((expected - planned).elements())}"
-    )
+    planned = case.plan.family(family).stream()
+    problem = _family_mismatch(case, family, planned)
+    assert problem is None, f"{name}: {problem}"
+
+
+def test_short_or_empty_element_plan_fails_the_oracle() -> None:
+    """The element comparison is not vacuous: a dropped row is caught.
+
+    Every case with elements must reject the element plan with its last
+    row dropped, and with every row dropped, while accepting the real one.
+    """
+    checked = 0
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.elements.stream()
+        if not rows:
+            continue
+        checked += 1
+        assert _family_mismatch(case, "elements", rows) is None, name
+        assert _family_mismatch(case, "elements", rows[:-1]), name
+        assert _family_mismatch(case, "elements", ()), name
+    assert checked >= 10
 
 
 _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
@@ -328,8 +394,10 @@ _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
 def test_whole_plan_equals_tapped_stream(name: str) -> None:
     """``sorted(plan.stream())`` is every derived row the emit writes."""
     case = _case(name)
-    planned = sorted(case.plan.stream())
-    derived = sorted(r for r in case.stream if _owner(case, r) is not None)
+    planned = sorted((_verb(k), t) for k, t in case.plan.stream())
+    derived = sorted(
+        (_verb(k), t) for k, t in case.stream
+        if _owner(case, (k, t)) is not None)
     assert planned == derived, (
         f"{name} [{case.plan.mode}]: the plan and the emit disagree")
 
@@ -371,21 +439,28 @@ def test_mint_sites_name_families() -> None:
 
 @pytest.mark.parametrize("name", CASES)
 def test_plan_seed_is_the_emit_seed(name: str) -> None:
-    """``plan_tags`` seeds its allocator exactly as the emit seeds its own.
+    """The planner seeds, then mints its families, then the emit runs on.
 
-    The emit's seed is read from the mint log: its counters after the
+    The planner's seed is read from the mint log: its counters after the
     primitive seeding and the ``element_tags="fem"`` reservation, before
-    its first mint. Every emit-time mint in a kind then runs on, without a
-    gap, from one above the plan's counter.
+    its first mint (``test_plan_seeds_every_registered_tag`` holds the
+    seed to ``bm.tag_for``). Its mints in a kind run on, without a gap,
+    from one above the seed, and the frozen counter ends there. Every
+    emit-time mint in a kind then runs on, without a gap, from one above
+    the plan's counter.
     """
     case = _case(name)
     kinds = set(case.seed) | {
         k for cls in FAMILY_PLANS.values() for k in cls.KINDS}
     for kind in sorted(kinds):
-        assert case.plan.allocator.last(kind) == case.seed.get(kind, 0), (
-            f"{name}: the plan seeds {kind!r} through "
-            f"{case.plan.allocator.last(kind)}, the emit through "
-            f"{case.seed.get(kind, 0)}"
+        first = case.seed.get(kind, 0) + 1
+        tags = case.planned.get(kind, [])
+        assert sorted(tags) == list(range(first, first + len(tags))), (
+            f"{name}: planned {kind} tags are not the run from {first}")
+        assert case.plan.allocator.last(kind) == first - 1 + len(tags), (
+            f"{name}: the plan's {kind!r} counter is "
+            f"{case.plan.allocator.last(kind)}, its seed and mints end at "
+            f"{first - 1 + len(tags)}"
         )
     for kind, tags in case.minted.items():
         first = case.plan.allocator.last(kind) + 1
@@ -448,14 +523,125 @@ def test_plan_seeds_every_registered_tag() -> None:
         assert plan.allocator.tag_for(prim) == bm.tag_for[id(prim)]
 
 
-def test_pending_plan_freezes_no_kind() -> None:
+def test_a_kind_shared_with_a_pending_family_stays_open() -> None:
+    """``element`` is frozen only once every family minting it has moved.
+
+    The elements family is planned, but the MP-element and interface
+    families still mint ``element`` tags at emit time, so the emit fork
+    leaves ``element`` open; the oracle's still-minted check is then what
+    catches an element-spec mint the migration missed.
+    """
     plan = _case("two_column_frame/flat").plan
     assert plan.migrated == tuple(
         f for f in FAMILIES if FAMILY_PLANS[f].MIGRATED)
-    if not plan.migrated:
-        assert plan.frozen_kinds == frozenset()
+    assert "elements" in plan.migrated
+    sharing = [f for f, cls in FAMILY_PLANS.items()
+               if "element" in cls.KINDS and not cls.MIGRATED]
+    assert ("element" in plan.frozen_kinds) == (not sharing)
+    if len(plan.migrated) < len(FAMILIES):
         with pytest.raises(NotImplementedError):
             plan.stream()
+
+
+def test_element_plan_rows_come_from_its_specs() -> None:
+    from apeGmsh.opensees._internal.tag_plan import ElementTagPlan
+
+    with pytest.raises(TagLawError, match="specs, not rows"):
+        ElementTagPlan(rows=(("element", 1),))
+    plan = _case("two_column_frame/flat").plan
+    assert plan.elements.stream() == tuple(
+        ("element", t) for _s, sub in plan.elements.specs
+        for _e, _c, t in sub)
+    assert plan.elements.stream()
+
+
+# ---------------------------------------------------------------------------
+# The plan each emit path reads (plan_of)
+# ---------------------------------------------------------------------------
+
+
+_PATHS = ("_emit_flat", "_emit_split", "_emit_partitioned",
+          "_emit_stages_flat", "_emit_stages_partitioned")
+
+
+def _first_case_per_mode() -> dict[TagMode, str]:
+    out: dict[TagMode, str] = {}
+    for name in CASES:
+        out.setdefault(_case(name).plan.mode, name)
+    return out
+
+
+def test_every_emit_path_reads_the_memoised_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``plan_of(tags)`` is the memoised plan, on every path and every emit.
+
+    Each emit path (flat, split, staged flat, partitioned, staged
+    partitioned) receives a fresh ``emit_allocator()`` fork of the one plan
+    ``BuiltModel.emit`` memoises for its mode; a second emit reuses it.
+    """
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    seen: list[tuple[str, TagAllocator]] = []
+
+    def spy(path: str) -> Callable[..., Any]:
+        orig = getattr(BuiltModel, path)
+        sig = inspect.signature(orig)
+
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            bound = sig.bind(self, *args, **kwargs)
+            seen.append((path, bound.arguments["tags"]))
+            return orig(self, *args, **kwargs)
+        return wrapper
+
+    for path in _PATHS:
+        monkeypatch.setattr(BuiltModel, path, spy(path))
+
+    reached: set[str] = set()
+    for mode, name in _first_case_per_mode().items():
+        if name == _SPLIT:
+            bm = ts.split_model().build()
+            cls: type = TclEmitter
+        else:
+            bm = _MODELS[name]().build()
+            cls = RecordingEmitter
+        forks: list[TagAllocator] = []
+        for _ in range(2):
+            seen.clear()
+            ts.emit_stream(bm, cls, split=mode.split)
+            assert seen, f"{name}: no emit path ran"
+            memo = bm._tag_plans[mode]
+            for path, tags in seen:
+                reached.add(path)
+                assert plan_of(tags) is memo, f"{name}: {path}"
+            forks.append(seen[0][1])
+        assert forks[0] is not forks[1], f"{name}: one fork, two emits"
+        assert list(bm._tag_plans) == [mode]
+    assert reached == set(_PATHS)
+
+
+def test_plan_of_refuses_an_allocator_without_a_plan() -> None:
+    plan = _case("two_column_frame/flat").plan
+    for tags in (TagAllocator(), plan.allocator, plan.allocator.fork(),
+                 plan.allocator.fork({"element"}, origin=object())):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            plan_of(tags)
+    assert plan_of(plan.emit_allocator()) is plan
+
+
+def test_emit_refuses_an_element_plan_for_other_specs() -> None:
+    from apeGmsh.opensees.apesees import _planned_element_specs
+
+    plan = _case("two_column_frame/flat").plan
+    specs = [s for s, _ in plan.elements.specs]
+    tags = plan.emit_allocator()
+    assert [s for s, _ in _planned_element_specs(tags, specs)] == specs
+    for wrong in (specs[:-1], [*specs, specs[0]], [specs[-1], *specs[:-1]],
+                  []):
+        if wrong == specs:
+            continue
+        with pytest.raises(TagLawError, match="element plan"):
+            _planned_element_specs(tags, wrong)
 
 
 def test_emit_allocator_continues_the_plan() -> None:
@@ -463,11 +649,14 @@ def test_emit_allocator_continues_the_plan() -> None:
     tags = plan.emit_allocator()
     assert not tags.frozen
     assert tags.frozen_kinds == plan.frozen_kinds
-    for kind in ("element", "geomTransf", "region"):
+    before = {k: plan.allocator.last(k)
+              for k in ("element", "geomTransf", "region")}
+    for kind in before:
         if kind not in plan.frozen_kinds:
-            assert tags.allocate(kind) == plan.allocator.last(kind) + 1
+            assert tags.allocate(kind) == before[kind] + 1
     # The plan's own allocator is untouched by the fork's mints.
-    assert plan.allocator.last("element") == 1
+    assert {k: plan.allocator.last(k) for k in before} == before
+    assert before["element"] > 1      # the planned element fan-out
 
 
 def test_unknown_family_raises() -> None:
@@ -592,6 +781,25 @@ def test_fork_with_no_kinds_is_an_open_copy() -> None:
     child = parent.fork()
     assert child.allocate("element") == 5
     assert child.allocate_for(object(), "element") == 6
+    assert child.origin is None
+
+
+@pytest.mark.parametrize("make", [
+    lambda: _seeded_allocator().fork(),
+    lambda: _seeded_allocator().fork({"region"}),
+    lambda: _case("two_column_frame/flat").plan.emit_allocator(),
+], ids=["no_frozen_kinds", "frozen_kind", "emit_allocator"])
+def test_every_fork_refuses_reset(make: Any) -> None:
+    """A fork never clears: that would re-mint tags its parent handed out.
+
+    Before S2 a fork with no frozen kinds still reset; now that the emit
+    mints from ``plan.emit_allocator()``, every fork refuses.
+    """
+    child = make()
+    last = child.last("element")
+    with pytest.raises(TagLawError, match="forked allocator"):
+        child.reset()
+    assert child.last("element") == last
 
 
 @pytest.mark.parametrize("bad", ["", 3, None])

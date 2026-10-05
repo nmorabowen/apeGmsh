@@ -21,19 +21,27 @@ number their derived tags in their own order today. The plan for one
 mode is what that mode's emit writes.
 
 A plan row is ``(kind, tag)`` in the emit's verb vocabulary: the verb,
-joined by ``:`` to its type token when the verb takes one
-(``("element:quad", 7)``, ``("region", 3)``). That is the vocabulary of
-the stream the emitter records, so the oracle can compare the two.
+joined by ``:`` to its type token when the planner knows it
+(``("region", 3)``). That is the vocabulary of the stream the emitter
+records, so the oracle can compare the two. An element spec picks its
+type token inside its own ``_emit``, so an element row carries the bare
+verb, ``("element", 7)``, and the oracle compares element rows by verb.
+
+The emit helpers that are handed only the emit allocator reach the plan
+through it: :func:`plan_of` reads the plan that an allocator from
+:meth:`TagPlan.emit_allocator` was forked for.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
 from .tag_allocator import TagAllocator, TagLawError
 
 if TYPE_CHECKING:
     from ..apesees import BuiltModel
+    from .build import ElementPlanRows
+    from .types import Element
 
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
 TagRow = tuple[str, int]
@@ -113,10 +121,37 @@ class FamilyTagPlan:
 
 @dataclass(frozen=True, slots=True)
 class ElementTagPlan(FamilyTagPlan):
-    """Element-spec fan-out: one tag per element instance of every spec."""
+    """Element-spec fan-out: one tag per element instance of every spec.
+
+    ``specs`` is :func:`~.build.allocate_element_tags`'s plan, made once
+    by :func:`plan_tags`: each element spec, in the emit's topological
+    order, with its columnar rows (FEM id, connectivity, tag). The emit
+    paths read it instead of allocating. :meth:`stream` derives the
+    ``("element", tag)`` rows on demand, so the plan holds no Python
+    object per element.
+    """
 
     FAMILY: ClassVar[str] = "elements"
     KINDS: ClassVar[frozenset[str]] = frozenset({"element"})
+    MIGRATED: ClassVar[bool] = True
+
+    specs: tuple[tuple[Element, ElementPlanRows], ...] = field(
+        default=(), compare=False)
+
+    def __post_init__(self) -> None:
+        if self.rows:
+            raise TagLawError(
+                "elements: the element plan derives its rows from specs; "
+                "pass specs, not rows."
+            )
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """One ``("element", tag)`` row per planned element, spec by spec."""
+        return tuple(
+            ("element", tag)
+            for _spec, sub in self.specs
+            for _eid, _conn, tag in sub
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +296,25 @@ class TagPlan:
         counter from the plan, and every :attr:`frozen_kinds` kind raises
         :class:`TagLawError` on a mint.
         """
-        return self.allocator.fork(self.frozen_kinds)
+        return self.allocator.fork(self.frozen_kinds, origin=self)
+
+
+def plan_of(tags: TagAllocator) -> TagPlan:
+    """The plan ``tags`` was forked from by :meth:`TagPlan.emit_allocator`.
+
+    The emit helpers that are handed only the emit allocator read the
+    plan here. Any other allocator (a fresh one, the frozen planner
+    allocator, a plain :meth:`TagAllocator.fork`) raises
+    :class:`TagLawError`: no plan drove that emit.
+    """
+    plan = tags.origin
+    if not isinstance(plan, TagPlan):
+        raise TagLawError(
+            "plan_of: this allocator did not come from "
+            "TagPlan.emit_allocator(), so it carries no tag plan; an emit "
+            "is driven by BuiltModel.emit (ADR 0114 D4, amended)."
+        )
+    return plan
 
 
 def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
@@ -275,7 +328,11 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     describe the tags the model was registered with.
     """
     from ..apesees import _kind_of
-    from .build import reserve_fem_element_tags
+    from .build import (
+        allocate_element_tags,
+        reserve_fem_element_tags,
+        topological_order,
+    )
     from .types import Element
 
     if not isinstance(mode, TagMode):
@@ -296,12 +353,22 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
             bm.fem, tags,
         )
 
-    # Every family is pending: its tags are still minted at emit time.
+    # Elements: every spec's fan-out, in the emit's topological order.
+    # Each emit path made this allocation once, before any other
+    # element-kind mint, so planning it here numbers it as they did.
+    elements = ElementTagPlan(specs=tuple(allocate_element_tags(
+        [p for p in topological_order(bm.primitives)
+         if isinstance(p, Element)],
+        bm.fem, tags, element_tags=bm.element_tags,
+    )))
+
+    # The other families are pending: their tags are still minted at
+    # emit time, from TagPlan.emit_allocator().
     tags.freeze()
     return TagPlan(
         mode=mode,
         allocator=tags,
-        elements=ElementTagPlan(),
+        elements=elements,
         transforms=TransformTagPlan(),
         regions=RegionTagPlan(),
         parameters=ParameterTagPlan(),

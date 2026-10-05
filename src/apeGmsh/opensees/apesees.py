@@ -39,8 +39,6 @@ from ._internal.build import (
     ELEMENT_TAG_MODES,
     ElementTagMode,
     _emit_node_with_inferred_ndf,
-    allocate_element_tags,
-    reserve_fem_element_tags,
     bucket_primary_nodes_by_rank,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -153,7 +151,14 @@ from ._internal.ns import (
     _TimeSeriesNS,
     _UniaxialMaterialNS,
 )
-from ._internal.tag_allocator import TagAllocator
+from ._internal.tag_allocator import TagAllocator, TagLawError
+from ._internal.tag_plan import (
+    TagMode,
+    TagPlan,
+    emit_mode,
+    plan_of,
+    plan_tags,
+)
 from ._internal.tag_resolution import set_tag_resolver
 from ._internal.types import (
     Analysis,
@@ -328,6 +333,26 @@ def _kind_of(prim: Primitive) -> str:
         f"Primitive {type(prim).__name__} does not inherit from any "
         f"recognized family base (UniaxialMaterial, Section, ...)."
     )
+
+
+def _planned_element_specs(
+    tags: TagAllocator, elements: "list[Element]",
+) -> "list[tuple[Element, ElementPlanRows]]":
+    """The element plan this emit reads, from the plan ``tags`` carries.
+
+    ADR 0114 D4 (amended): element tags are allocated once, by
+    ``plan_tags``; the emit paths read them here instead of minting.
+    The plan must cover exactly ``elements``, the specs this emit fans
+    out, in order; anything else raises :class:`TagLawError`.
+    """
+    specs = plan_of(tags).elements.specs
+    if [id(s) for s, _ in specs] != [id(e) for e in elements]:
+        raise TagLawError(
+            f"the element plan holds {len(specs)} specs, but this emit fans "
+            f"out {len(elements)}, or in another order: the plan was not "
+            "made for this model (ADR 0114 D4, amended)."
+        )
+    return list(specs)
 
 
 def _fem_has_contacts(fem: "FEMData") -> bool:
@@ -928,6 +953,20 @@ class BuiltModel:
     # rebind the field), so ``id(rec)`` reuse across builds is not a hazard.
     _mt_pairs_cache:         "dict[int, list[tuple[int, Any]]]" = field(
         default_factory=dict, compare=False)
+    # ADR 0114 D4 (amended) — the build-time tag plan, one per emit mode,
+    # made by ``plan_tags`` on the first ``emit`` in that mode and reused
+    # by every later one. Same per-build, mutate-in-place pattern as
+    # ``_mt_pairs_cache``.
+    _tag_plans:              "dict[TagMode, TagPlan]" = field(
+        default_factory=dict, compare=False, repr=False)
+
+    def _tag_plan(self, mode: "TagMode") -> "TagPlan":
+        """The memoised :class:`TagPlan` of emit mode ``mode``."""
+        plan = self._tag_plans.get(mode)
+        if plan is None:
+            plan = plan_tags(self, mode)
+            self._tag_plans[mode] = plan
+        return plan
 
     def _has_equation_constraints(self) -> bool:
         """True iff the deck carries any ``equationConstraint`` row.
@@ -1132,30 +1171,6 @@ class BuiltModel:
           4. Pattern / recorder specs resolve ``pg=`` records into
              per-node / per-element calls.
         """
-        # Re-create a TagAllocator seeded with the bridge's existing
-        # primitive-tag assignments. Element fan-out + orientation
-        # override tags allocate freshly during emit; the seeded
-        # counters keep those allocations from colliding with
-        # primitive-own tags.
-        tags = TagAllocator()
-        for prim in self.primitives:
-            tags.allocate_for(prim, _kind_of(prim))
-        # tag_for already mirrors the assignments; nothing else to do
-        # for the seeded primitives.
-
-        # ADR 0111 D2: ``element_tags="fem"`` reserves the FEM element-id
-        # range on the ``"element"`` counter HERE, before any emit path
-        # allocates an element tag (the element plan, interface /
-        # embedded / rebar / rigid-body / coupling elements, node-pair
-        # springs), so every synthesised tag lands above max(FEM id) on
-        # every path: flat, split, staged and partitioned alike. It also
-        # refuses ids that cannot be tags (<= 0, or fanned out twice).
-        if self.element_tags == "fem":
-            reserve_fem_element_tags(
-                [p for p in self.primitives if isinstance(p, Element)],
-                self.fem, tags,
-            )
-
         # Tag resolver: returns the bridge-allocated tag for any
         # primitive in self.primitives. Fan-out helpers may install
         # short-lived element-specific resolvers on top of this; they
@@ -1628,6 +1643,21 @@ class BuiltModel:
             stage_records=self.stage_records,
         )
 
+        # ADR 0114 D4 (amended): the tags this emit writes come from the
+        # build-time tag plan of its mode, made once per mode and
+        # memoised.  ``plan_tags`` seeds the planner allocator from the
+        # registered primitives, reserves the FEM element-id range under
+        # ``element_tags="fem"`` (ADR 0111 D2: every synthesised tag lands
+        # above max(FEM id) on every path), plans every migrated family
+        # (the element fan-out included) and freezes.  The emit mints its
+        # still-pending families from a fork of that allocator, which
+        # continues every counter from the plan and carries the plan
+        # (``tag_plan.plan_of``).  The mode matches the dispatch below.
+        emitter_can_partition = getattr(emitter, "supports_partitions", True)
+        plan = self._tag_plan(emit_mode(
+            self, split=split, supports_partitions=emitter_can_partition))
+        tags = plan.emit_allocator()
+
         # ADR 0043 slice 1.1: split (mode A) dispatch.  Routed before
         # the partitioned branch so the split guards (which fail loud
         # on partitioned / staged / initial_stress / non-composed
@@ -1663,7 +1693,6 @@ class BuiltModel:
         # is what lets a composed multi-module model emit ALL its nodes and
         # analyze in-process.  Partition-capable emitters (Tcl/Py/MPI
         # writers) keep the per-rank fan-out.
-        emitter_can_partition = getattr(emitter, "supports_partitions", True)
         if not is_partitioned(self.fem) or not emitter_can_partition:
             self._emit_flat(
                 emitter=emitter,
@@ -1740,8 +1769,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no per-element
             # boxed dict). Node-pair sentinel rows are dropped in from_plan.
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
@@ -1823,8 +1851,7 @@ class BuiltModel:
         # the element / geomTransf counters are unaffected by the move —
         # the staged branch above has always allocated here.
         if element_plan is None:
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
         if fem_eid_to_ops_tag is None:
@@ -2186,8 +2213,7 @@ class BuiltModel:
         # geomTransf counters are unaffected by allocating ahead of the
         # transform fan-out, and allocation itself emits nothing: an
         # unhoisted deck does not move a byte.
-        element_plan = allocate_element_tags(
-            elements, self.fem, tags, element_tags=self.element_tags)
+        element_plan = _planned_element_specs(tags, elements)
         # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
         fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
@@ -3268,8 +3294,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            early_element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            early_element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
             early_fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(
                 early_element_plan
@@ -3370,8 +3395,7 @@ class BuiltModel:
                 )
             fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
         else:
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # Global fem-eid → ops-tag map; used by the initial_stress
             # per-rank ``addToParameter`` fan-out to translate the user's
             # FEM element selection into OpenSees element tags (Phase
