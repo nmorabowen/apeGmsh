@@ -187,3 +187,106 @@ capture, `**kwargs` on `command()`, and a lossy escape.
   and its side channels.
 - [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D1 and
   [ADR 0113](0113-compatibility-is-a-floor-per-zone.md) D4, D5, D8.
+
+## Amendment — 2026-10-05 — D4: tags come from a build-time tag plan (K1-3d, #1445)
+
+**Evidence:** two independent architect briefs (`prog-architect-opus`,
+`prog-architect-fable`) written on `295b4f1d`, reconciled on #1445
+(comment 5988261377) and ratified by the maintainer on #1445 (comment
+5988371537). The briefs stay on the issue. **Program slice:** #1452
+(K1-3d P0, the first of the K1-3d PRs; chain issue #1201).
+
+### What D4 said, and what K1-3 landed
+
+D4 placed the enforcement in K1-3 as `TagAllocator.freeze()` at the end
+of `build()`. K1-3 was re-scoped (#1361, PR #1447): it pinned today's
+behaviour (the cross-interpreter determinism pin, the `(verb, tag)`
+multiset across the four emitters, the AST lock with its locked list of
+minting helpers, and the shrink-only replay ledger
+`tests/opensees/contract/tag_law_ledger.txt`) and shipped no `freeze()`.
+Today, emit-time minting is spread across the emit helpers: `build()`
+seeds a fresh allocator from the registered primitives, and elements,
+transforms, MP constraints, interfaces, contacts, regions and parameters
+each take their tags as they are emitted, with the split, partitioned
+and staged decks each in their own order. A freeze at the end of
+`build()` would close the allocator after the last mint, so it cannot
+separate planning from emission. This amendment replaces that sentence
+of D4; the law itself (a tag is written once, by the bridge's build, and
+the archive keeps it; replay never allocates one) stands.
+
+### D4, amended
+
+1. **The plan.** Tags are minted by a build-time tag plan:
+   `plan_tags` in `src/apeGmsh/opensees/_internal/tag_plan.py` (new, S1).
+   Each existing allocation loop moves out of its emit helper into the
+   planner (moved, not copied, so there is one source of order), and the
+   emit helpers read the plan. Rejected: a dry-run or tape emit (it
+   doubles build cost against `emit-cost-gate`) and a second, simulated
+   planner beside the emit.
+2. **The freeze.** `TagAllocator.freeze()` is called at the end of
+   `plan_tags`, not in `build()`. A mint after the freeze raises
+   `TagLawError`. `apeSees._tags`, the registration-time allocator, is
+   never frozen: registering a primitive after a build is legal, and the
+   next build plans again.
+3. **Mode-keyed during the migration.** The plan is keyed by emit mode
+   (`split`, `partitioned`, `staged`) and memoised lazily per mode, so
+   every migration slice (S1–S6) leaves the flat, split, partitioned and
+   staged decks, and the 86 golden cells, byte-identical. The
+   migration-time safety net is the frozen planner allocator plus a
+   per-kind `fork()`: a kind that has migrated is frozen in the plan, so
+   a minting site the migration missed raises where it is.
+4. **Canonical numbering, in the last slice (S7).** The final slice
+   makes partitioned numbering canonical: flat order, so a tag is
+   rank-invariant and one owner has one tag whatever the emit mode ("a
+   tag is an archive fact" implies it). This is the one deliberate deck
+   change of K1-3d: partitioned decks renumber once (the region,
+   MP/interface and contact order), the partitioned golden cells are
+   regenerated in that PR, and
+   `tests/opensees/integration/test_interface_partitioned_emit.py::test_interface_plus_embedded_exactly_once_with_documented_drift`
+   flips to equality, retiring the conditional in
+   [ADR 0093](0093-zerolength-interface-constraint.md) INV-5 (its S8
+   amendment).
+5. **The archive.** Tags with no archived row today (the initial-stress
+   and absorbing parameters, `update_parameter`) are archived per row in
+   K1-8 (opensees 2.27.0). There is no `/opensees/tag_blocks` table: a
+   third copy of each tag would need a hashing rule, and the ratified
+   K1-4…K1-8 version plan does not change. The ledgered reinforce-tie
+   and contact tags get their home when K2 flips those rows.
+
+### Slices and oracles
+
+P0 (this amendment) → S1 (the scaffold: `tag_plan.py`, `freeze()` /
+`TagLawError`, the plan == tapped-stream oracle; no hub lock) → S2
+(`apesees.py`: elements) ∥ S3 (`_internal/build.py`: transforms, MP,
+interfaces, contacts) → S4 (`apesees.py`: regions, which fixes #1446)
+∥ S5 (`build.py`: parameters) → S6 (drop `tags` from the emit
+signatures, extend the AST lock) → S7 (canonical partitioned
+numbering). A new label, `lock:src/apeGmsh/opensees/_internal/build.py`,
+serialises S3 and S5 against other `build.py` work. Then K1-4…K1-8,
+then V2d-4b (#1307), unless chain T interleaves.
+
+Every slice runs: the 86 golden cells and their `.h5dump` files
+byte-identical (S7 excepted, on purpose, and only its partitioned
+cells); K1-3's pins (`test_tag_law_lock.py`, `test_tag_streams.py`,
+`test_tag_law_replay_pins.py`, and `pytest -m subprocess
+tests/opensees/subprocess/test_tag_determinism.py`); from S1, the plan
+== tapped-stream oracle (the plan's `(kind, tag)` sequence equals the
+stream the K1-3 tap records from the emit); and `emit-cost-gate` within
+noise, with no re-baseline. The gate cell has only pre-planned element
+specs, so the cost change is expected to be within noise.
+
+### Consequences
+
+- The five replay waivers on the tag-law ledger stay until the archive
+  carries those tags: per row from K1-8 for the initial-stress and
+  staged parameters, and with K2's flip for the reinforce ties. The
+  plan does not touch replay.
+- A correction to the #1361 inventory: the partitioned path plans
+  elements once per emit; its two `allocate_element_tags` calls are
+  exclusive branches.
+- Flagged by both briefs for V2d-4b (#1307): the overwrite policy's
+  dirty key `(primitive count, fem_hash)` misses edits that only add
+  records (region, recorder, fix, mass, stage), so `model.h5` can go
+  stale. It is not this design's to fix.
+- #1446 (one region tag wasted per stage-claimed filtered recorder on
+  the partitioned staged path) is fixed by S4, not in a fast lane.

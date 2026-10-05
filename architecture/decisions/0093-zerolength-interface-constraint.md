@@ -318,6 +318,14 @@ axes from the master face geometry, per-pair tributary-scaled materials.
      Folding pattern `sp` into the ghost stream is a named follow-up;
      until then the emit refuses loudly, advising
      `uncuttable_elements=`, `ops.fix`, or serial emit.
+
+  *Note, 2026-10-05 ([ADR 0114](0114-the-archive-is-the-program.md) D4
+  amendment, K1-3d, #1445).* The up-front tag pre-pass
+  (`allocate_interface_tags`) moves into the build-time tag plan
+  (`_internal/tag_plan.py::plan_tags`); the owner rule above is unchanged.
+  The conditional in item 1 ends with K1-3d S7, which numbers partitioned
+  decks in flat order: flat and partitioned interface tags then match
+  unconditionally, and the drift pin flips to equality.
 - **INV-6 — staged: claimable by name, emitted on the equilibrated ground.**
   `g.constraints.interface(..., name="RockLinerInterface")` +
   `s.interface(name="RockLinerInterface")` inside a stage claims the records
