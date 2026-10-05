@@ -37,7 +37,10 @@ class TagLawError(RuntimeError):
 class TagAllocator:
     """Per-kind sequential 1-based tag allocator."""
 
-    __slots__ = ("_counters", "_assignments", "_frozen", "_frozen_kinds")
+    __slots__ = (
+        "_counters", "_assignments", "_frozen", "_frozen_kinds", "_forked",
+        "_origin",
+    )
 
     def __init__(self) -> None:
         self._counters: dict[str, int] = {}
@@ -48,6 +51,10 @@ class TagAllocator:
         # :meth:`fork` froze. Either makes a mint raise TagLawError.
         self._frozen: bool = False
         self._frozen_kinds: frozenset[str] = frozenset()
+        # Set by :meth:`fork`: a fork refuses :meth:`reset`, and carries
+        # the object it was forked for (:attr:`origin`).
+        self._forked: bool = False
+        self._origin: object | None = None
 
     # ------------------------------------------------------------------
     # The freeze
@@ -63,6 +70,16 @@ class TagAllocator:
         """The kinds frozen by :meth:`fork` (empty for a fresh allocator)."""
         return self._frozen_kinds
 
+    @property
+    def origin(self) -> object | None:
+        """What this allocator was forked for (``None`` if not given).
+
+        :meth:`TagPlan.emit_allocator` forks with its plan as the origin,
+        so a helper handed only the emit allocator can read the plan
+        (``tag_plan.plan_of``).
+        """
+        return self._origin
+
     def freeze(self) -> None:
         """Refuse every later mint, in every kind.
 
@@ -73,7 +90,9 @@ class TagAllocator:
         """
         self._frozen = True
 
-    def fork(self, frozen_kinds: Iterable[str] = ()) -> TagAllocator:
+    def fork(
+        self, frozen_kinds: Iterable[str] = (), *, origin: object | None = None,
+    ) -> TagAllocator:
         """A mutable copy of this allocator with ``frozen_kinds`` frozen.
 
         The copy continues every counter and assignment from here. A
@@ -81,7 +100,9 @@ class TagAllocator:
         own fork froze) raises :class:`TagLawError`; every other kind
         mints on. The copy is not whole-frozen even when this allocator
         is, and this allocator is never changed by the copy's mints. A
-        copy with any frozen kind refuses :meth:`reset`.
+        copy refuses :meth:`reset`, frozen kinds or not: clearing it would
+        re-mint tags its parent already handed out. ``origin`` is kept,
+        read-only, as :attr:`origin`.
         """
         kinds = frozenset(frozen_kinds)
         for k in kinds:
@@ -93,6 +114,8 @@ class TagAllocator:
         child._counters = dict(self._counters)
         child._assignments = dict(self._assignments)
         child._frozen_kinds = self._frozen_kinds | kinds
+        child._forked = True
+        child._origin = origin
         return child
 
     def _refuse(self, kind: str | None, verb: str) -> NoReturn:
@@ -109,12 +132,11 @@ class TagAllocator:
                 "this allocator, so the emit path must read its tag from "
                 "the tag plan instead of minting one (ADR 0114 D4)."
             )
-        if kind is None and self._frozen_kinds:
+        if kind is None and (self._frozen_kinds or self._forked):
             raise TagLawError(
-                f"{verb}() on an allocator with frozen kinds "
-                f"{sorted(self._frozen_kinds)}: clearing it would let a "
-                "kind it does not freeze re-mint tags the plan already "
-                "handed out (ADR 0114 D4)."
+                f"{verb}() on a forked allocator (frozen kinds "
+                f"{sorted(self._frozen_kinds)}): clearing it would let it "
+                "re-mint tags the plan already handed out (ADR 0114 D4)."
             )
         raise AssertionError("_refuse called for an allowed mint")
 
@@ -205,11 +227,11 @@ class TagAllocator:
     def reset(self) -> None:
         """Clear all counters and assignments — fresh allocator state.
 
-        Refused on a frozen allocator, and on a fork with any frozen
-        kind: clearing it would let the next mint hand out a planned tag
-        a second time.
+        Refused on a frozen allocator and on every fork, frozen kinds or
+        not: clearing it would let the next mint hand out a planned tag a
+        second time.
         """
-        if self._frozen or self._frozen_kinds:
+        if self._frozen or self._forked:
             self._refuse(None, "reset")
         self._counters.clear()
         self._assignments.clear()
