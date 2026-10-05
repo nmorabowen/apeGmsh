@@ -331,6 +331,36 @@ def test_a_file_naming_no_script_or_without_provenance_is_replaced(
     }
 
 
+def test_a_notebook_cell_names_no_script(monkeypatch, tmp_path: Path) -> None:
+    """A cell's path carries the kernel's pid (``ipykernel_<pid>``), so an
+    unchanged cell re-run after a kernel restart must still replace the
+    file: the cell names no script on either side, silently."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    model = tmp_path / "nb.h5"
+    cell_a = tmp_path / "ipykernel_1111" / "a1b2c3d4.py"
+    cell_b = tmp_path / "ipykernel_2222" / "a1b2c3d4.py"
+    for cell in (cell_a, cell_b):
+        cell.parent.mkdir()
+    _name_script(monkeypatch, cell_a)
+    _run("nb")
+    first = _meta(model, "session_id")
+    assert artifact_identity(model)[1] == frozenset()
+    with h5py.File(model, "r") as f:                # the row is written, unkeyed
+        kinds = f["provenance/files/kind"].asstr()[()].tolist()
+        assert "script" in kinds
+    _name_script(monkeypatch, cell_b)               # a new kernel, the same cell
+    _run("nb")
+    assert _meta(model, "session_id") != first
+    table = ProvenanceTable(files=(
+        FileRow(cell_a.resolve().as_posix(), "", "script"),
+        FileRow("<ipython-input-3-9f8e>", "", "script"),
+        FileRow((tmp_path / "run.py").resolve().as_posix(), "", "script"),
+    ))
+    assert provenance_scripts(table) == {
+        os.path.normcase(str((tmp_path / "run.py").resolve())),
+    }
+
+
 def test_save_to_is_exempt_from_the_script_rule(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "x.h5"
     _name_script(monkeypatch, tmp_path / "a.py")
@@ -358,6 +388,10 @@ def test_only_mpi_rank_zero_writes(monkeypatch, tmp_path: Path, var: str) -> Non
     assert mpi_rank() == 1
     _run("mpi")                                     # silent, nothing written
     assert list(tmp_path.iterdir()) == []
+    # an explicit save_to= is the user's intent: every rank that asks writes
+    _run("mpi", save_to=tmp_path / "rank1.h5")
+    assert (tmp_path / "rank1.h5").is_file() and (tmp_path / "rank1.geometry.h5").is_file()
+    assert not (tmp_path / "mpi.h5").exists()
     monkeypatch.setenv(var, "0")
     assert mpi_rank() == 0
     _run("mpi")
@@ -480,7 +514,12 @@ def test_this_runs_fuller_file_from_an_earlier_snapshot_warns_stale(
             before = target.read_bytes()
             assert artifact_content_hash(target) == content_hash(solids) != content_hash(full)
     msgs = _messages(w)
-    assert len(msgs) == 1 and "stale" in msgs[0] and "opensees" in msgs[0], msgs
+    assert len(msgs) == 1, msgs
+    assert (
+        "holds different content than this session would write (a filtered "
+        "get_fem_data, or a change after it was written)" in msgs[0]
+    )
+    assert "not replaced" in msgs[0] and "opensees" in msgs[0]
     assert "bridge.geometry.h5" in msgs[0] and "pair stays consistent" in msgs[0]
     assert target.read_bytes() == before
     assert not (tmp_path / "bridge.geometry.h5").exists()
@@ -511,7 +550,7 @@ def test_a_declaration_after_the_write_warns_stale(
             assert fem.snapshot_id == _meta(target, "snapshot_id")
             assert content_hash(fem) != written
     msgs = _messages(w)
-    assert len(msgs) == 1 and "stale" in msgs[0], msgs
+    assert len(msgs) == 1 and "different content" in msgs[0], msgs
     assert target.read_bytes() == before
     assert not (tmp_path / "bridge.geometry.h5").exists()
 
@@ -630,8 +669,8 @@ def test_rule_decision_table(tmp_path: Path) -> None:
         assert artifact_verdict(
             make("b.h5", sid="S", hash_="H", groups=("nodes", "opensees")),
             writes=neutral, overwrite=True, **ours) == "keep"
-    # this run, fuller, content changed since: stale
-    with pytest.warns(UserWarning, match="stale"):
+    # this run, fuller, content changed since: refused
+    with pytest.warns(UserWarning, match="different content"):
         assert artifact_verdict(
             make("c.h5", sid="S", hash_="OLD", groups=("nodes", "opensees")),
             writes=neutral, overwrite=True, **ours) == "refuse"

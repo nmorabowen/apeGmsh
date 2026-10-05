@@ -13,10 +13,14 @@ rulings of 2026-10-05 on PR #1439:
   stdin) nothing is written automatically, and one warning says so.
 * **P3.** A file from another run is replaced only when its
   ``/provenance`` names a script this run's provenance also names, or
-  names no script (:func:`provenance_scripts`).  Under MPI only rank 0
-  writes (:func:`mpi_rank`); a run whose mesh is partitioned (an MPI
-  deck's) gets no automatic write.  A composed model is not partitioned
-  for D1: it writes.
+  names no script (:func:`provenance_scripts`).  A notebook cell's path
+  (``.../ipykernel_<pid>/...``) carries the kernel's process id and is
+  no stable identity, so it names no script: a notebook's file is
+  replaced, and the docs say to give each notebook its own
+  ``model_name``.  Under MPI only rank 0 writes automatically
+  (:func:`mpi_rank`); a run whose mesh is partitioned (an MPI deck's)
+  gets no automatic write.  A composed model is not partitioned for D1:
+  it writes.  An explicit ``save_to=`` bypasses both gates (P7).
 * **P4.** A file from this run (the same ``session_id``) that holds a
   zone the write would drop is this run's fuller output: it is kept
   silently when the content it holds is what the write would produce
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sys
 import uuid
 import warnings
@@ -81,6 +86,11 @@ Verdict = Literal["write", "keep", "refuse"]
 #: Root groups that are not neutral-zone content (h5-schema.md, "Zone
 #: registry"): the other zones, and ``/meta`` with its timestamp and ids.
 _NON_NEUTRAL_ROOTS = frozenset({"meta", "provenance", "opensees", "stages", "geometry"})
+
+#: A notebook cell as ipykernel names it: a file under a per-kernel
+#: temp directory (``ipykernel_<pid>``), or IPython's older pseudo-file.
+#: Neither outlives the kernel, so neither is a script identity for P3.
+_NOTEBOOK_CELL = re.compile(r"(^|[\\/])ipykernel_\d+[\\/]|^<ipython-input-")
 
 #: ``warnings.warn`` depth from these functions to the user's line:
 #: the function, the writer's private method, its public caller
@@ -279,8 +289,9 @@ def artifact_identity(path: "str | Path") -> tuple[str, frozenset[str]]:
     ``scripts`` holds every ``/provenance/files`` row of kind ``script``
     (the ``__main__`` file of the run that wrote the file), absolute and
     case-normalised for a real file, as written for a pseudo-file
-    (``<string>``, a notebook cell); empty when the file carries no
-    ``/provenance`` or names no script.
+    (``<string>``, ``<stdin>``); a notebook cell is left out, as it is
+    no stable identity.  Empty when the file carries no ``/provenance``
+    or names no script.
     """
     with h5py.File(str(path), "r") as f:
         session_id = _attr_str(f["meta"].attrs, "session_id") if "meta" in f else ""
@@ -293,16 +304,21 @@ def artifact_identity(path: "str | Path") -> tuple[str, frozenset[str]]:
             kinds = files["kind"].asstr()[()]
             for p, k in zip(paths, kinds):
                 if k == "script":
-                    scripts.add(_script_key(str(p), base_dir))
+                    key = _script_key(str(p), base_dir)
+                    if key is not None:
+                        scripts.add(key)
     return session_id, frozenset(scripts)
 
 
-def _script_key(path: str, base_dir: str) -> str:
-    """One comparable key for a provenance file path: as written for a
+def _script_key(path: str, base_dir: str) -> str | None:
+    """One comparable key for a provenance script path: as written for a
     pseudo-file, else absolute (``base_dir`` resolves a relative
-    ``/provenance/files`` path) and case-normalised."""
+    ``/provenance/files`` path) and case-normalised; ``None`` for a
+    notebook cell (:data:`_NOTEBOOK_CELL`), which names no script."""
     from ._internal.provenance import _absolute
 
+    if _NOTEBOOK_CELL.search(path):
+        return None
     if path.startswith("<"):
         return path
     return os.path.normcase(os.path.abspath(_absolute(path, base_dir)))
@@ -311,16 +327,16 @@ def _script_key(path: str, base_dir: str) -> str:
 def provenance_scripts(table: "ProvenanceTable | None") -> frozenset[str]:
     """The scripts a snapshot's provenance names, as :func:`artifact_identity`
     keys them: what the write would put in ``/provenance/files`` with kind
-    ``script``.  Empty for a snapshot without a table, or one whose
+    ``script``.  Empty for a snapshot without a table, one whose
     declarations were made with no user ``__main__`` frame around them (a
-    test function).  P3 compares these with the target's: a file from
-    another run is replaced when the two sets meet, or the file's is empty.
+    test function), or one made in a notebook.  P3 compares these with
+    the target's: a file from another run is replaced when the two sets
+    meet, or the file's is empty.
     """
     if table is None:
         return frozenset()
-    return frozenset(
-        _script_key(f.path, "") for f in table.files if f.kind == "script"
-    )
+    keys = (_script_key(f.path, "") for f in table.files if f.kind == "script")
+    return frozenset(k for k in keys if k is not None)
 
 
 # ---------------------------------------------------------------------------
@@ -371,14 +387,13 @@ def artifact_verdict(
       write would drop.  One that does is this run's fuller output (the
       bridge's neutral + ``/opensees``): ``"keep"``, silently, when its
       neutral content equals what the write would produce (P4), and
-      ``"refuse"`` with one "stale" warning when anything changed after
-      it was written;
+      ``"refuse"`` with one warning when it holds different content (a
+      filtered ``get_fem_data``, or a change after it was written);
     * **another run's file**: it holds no zone the write would drop
       (V2b's warning otherwise), and, unless ``explicit``, its
       ``/provenance`` names a script in ``scripts`` or names no script
       (P3; a parameter sweep that keeps each run sets ``model_name``
-      per run).  A notebook names its cells, so an edited notebook does
-      not refresh the file it wrote earlier: ``save_to=`` does.
+      per run, and so does each notebook, whose cells name no script).
 
     Every ``"refuse"`` is one warning (``UserWarning``); the file is
     never written elsewhere.
@@ -405,9 +420,10 @@ def artifact_verdict(
         if artifact_content_hash(target) == content():
             return "keep"
         return _refuse(
-            f"{target} is stale: it holds this run's {', '.join(dropped)} "
-            f"zone(s), written before the model changed; not overwritten. "
-            f"Emit again after the last change, or pass save_to=.",
+            f"{target} holds different content than this session would "
+            f"write (a filtered get_fem_data, or a change after it was "
+            f"written) with its {', '.join(dropped)} zone(s); not replaced. "
+            f"Emit again from the session's snapshot, or pass save_to=.",
             skips,
         )
     if dropped:

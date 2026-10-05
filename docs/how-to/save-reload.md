@@ -54,9 +54,9 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
   script: with no explicit `model_name` nothing is written automatically,
   and one warning says so. Set `model_name` per run in a parameter sweep
   that keeps every run's file; a file another script wrote at that path
-  is kept, with a warning. A notebook counts its cells as scripts, so an
-  edited notebook with an explicit `model_name` warns instead of
-  refreshing its earlier file; `save_to=` refreshes it. With a path set, `overwrite=False` against an
+  is kept, with a warning. A notebook's cells are not scripts, so a
+  notebook replaces its file on every run: give each notebook its own
+  `model_name`. With a path set, `overwrite=False` against an
   existing file raises `FileExistsError` on `g.save()`; `g.save()` with
   neither an argument nor a `save_to=` raises `RuntimeError`.
 - **Autosave catches-and-warns on write failure** so gmsh still finalizes.

@@ -347,13 +347,14 @@ class _SessionBase:
         Whether a target may be replaced is the D1 overwrite policy
         (:func:`~apeGmsh._artifact_policy.artifact_verdict`, #1307),
         shared with the bridge's automatic write.  Before any write,
-        three gates: an MPI rank other than 0 writes nothing (silent); a
-        session with no name and no script, or a run whose mesh the
-        kernel partitioned (an MPI deck's; a composed model is not
-        partitioned for D1) with no ``save_to``, writes nothing and warns
-        once (P2, P3).  A refused model write skips the sibling too, in
-        the same warning; a kept one (this run's fuller file) still
-        writes the sibling, which pairs with it.
+        three gates on the automatic (conventional-path) write, which an
+        explicit ``save_to=`` bypasses as the user's intent (P7): an MPI
+        rank other than 0 writes nothing (silent); a session with no
+        name and no script, or a run whose mesh the kernel partitioned
+        (an MPI deck's; a composed model is not partitioned for D1),
+        writes nothing and warns once (P2, P3).  A refused model write
+        skips the sibling too, in the same warning; a kept one (this
+        run's fuller file) still writes the sibling, which pairs with it.
         """
         from ._artifact_policy import (
             artifact_verdict,
@@ -374,7 +375,10 @@ class _SessionBase:
         explicit = self._save_to is not None
         scripts: frozenset[str] = frozenset()
         try:
-            if mpi_rank() not in (None, 0):
+            # P3: under MPI only rank 0 writes automatically (``srun -n N``
+            # sets SLURM_PROCID on every task); a ``save_to=`` is the
+            # user's intent and is written by every rank that asks.
+            if not explicit and mpi_rank() not in (None, 0):
                 return
             target = self._resolve_save_target(None)
             sibling = geometry_sibling_path(target)

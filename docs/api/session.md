@@ -44,12 +44,12 @@ automatically, and one warning says so; pass `model_name=` or
 `save_to=<file>`. A parameter sweep that wants to keep each run's
 output sets `model_name` per run, because a later run of the same
 script replaces the file, while a file another script wrote at that
-path is kept (one warning). A notebook counts its cells as scripts: with
-an explicit `model_name`, an edited notebook warns instead of refreshing
-the file it wrote earlier, and `save_to=` refreshes it. Under MPI only
-rank 0 writes, and a mesh partitioned with `g.mesh.partitioning` gets
-no automatic write (`save_to=` still writes it); a composed model is not
-partitioned for this purpose and writes.
+path is kept (one warning). A notebook's cells are not scripts, so a
+notebook replaces the file on every run: give each notebook its own
+`model_name`. Under MPI only rank 0 writes automatically, and a mesh
+partitioned with `g.mesh.partitioning` gets no automatic write; an
+explicit `save_to=` is written regardless of either, and a composed model
+is not partitioned for this purpose and writes.
 
 Both paths write the **neutral zone only**. The OpenSees zone
 (typed primitives, recorders, analysis chain) is written

@@ -283,8 +283,9 @@ Without `save_to=`, `end()` still writes `<model_name>.h5` and
 `frame.h5`). In a notebook, `-c` or stdin there is no script: with no
 `model_name=` nothing is written and one warning says so. A later run of
 the same script replaces the file; a file another script wrote at that
-path is kept with a warning (set `model_name` per run in a sweep; an
-edited notebook counts as another script, `save_to=` refreshes anyway).
+path is kept with a warning (set `model_name` per run in a sweep). A
+notebook's cells are not scripts: a notebook replaces its file on every
+run, so give each notebook its own `model_name`.
 
 Exact signatures:
 
