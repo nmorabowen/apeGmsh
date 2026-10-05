@@ -10,3 +10,5 @@ changed OLD class) stop failing only when named in the map, and their full dump 
 A move is accepted only when NEW is a direct head-side base of OLD. Class-sensitive bodies (private
 `__x`, zero-argument `super()`, `__class__`) are refused. Any exempted class header makes the run exit 2
 (`--json`: `"needs_review": true`) instead of 0, so a header change always gets a human pass.
+
+Map mode fails closed: any matched move or exempted header exits 2 (MRO and class wiring are left to review). OLD's bases are read per file, and a non-def binding of the moved name in OLD's or NEW's body refuses the move.

@@ -50,14 +50,21 @@ of a class into mixins, where the qualname changes (``apeSees.eigen`` ->
   * a moved body that is class-sensitive (a private name-mangled identifier
     ``__x``, a zero-argument ``super()``, or ``__class__``) is refused and
     reported as ``class-sensitive: OLD.m (reason)``;
+  * a move is also refused when OLD's or NEW's head class body binds the moved
+    name without a def (an assignment, an annotated assignment with a value,
+    an import alias): that binding shadows or replaces the def. OLD's bases
+    are read from the head class in the file OLD had in the base, so a
+    same-named class elsewhere cannot supply the link;
   * class-header entries (an added NEW class, a changed OLD class: bases,
     decorators, class-body statements) do not fail, but only in the module
     files that took part in a moved method. They print under
-    ``class headers (review by hand):`` and the run exits **2**
-    (``--json``: ``"ok": false, "needs_review": true``), never 0, so a header
-    change always forces a human pass. A header of an unmapped class fails.
-    Exit 0 in map mode means moves only, zero exempted headers. The OK line
-    reads ``OK -- N defs, M moved``, not "identical multiset".
+    ``class headers (review by hand):``;
+  * the run fails closed: if any method moved or any header was exempted it
+    exits **2** (``--json``: ``"ok": false, "needs_review": true``), never 0.
+    Map mode proves the moved bodies identical and nothing else; the MRO
+    (a sibling base can win the lookup) and the class wiring are always left
+    to review. Exit 0 in map mode means nothing moved and nothing was exempted,
+    the same as a no-flag pass. A header of an unmapped class fails.
 Without ``--class-map`` the behaviour and output are unchanged.
 
 Same qualified name in two modules is legal (a multiset counts both); a
@@ -199,22 +206,35 @@ def gather(repo: str, rev: str, specs: list[str]):
     return defs, module_level
 
 
-def head_bases(repo: str, rev: str, specs: list[str]) -> dict[str, set[str]]:
-    """qualname -> simple names of its direct bases, over the head files."""
-    out: dict[str, set[str]] = defaultdict(set)
+def head_info(repo: str, rev: str, specs: list[str]):
+    """Per (path, class qualname) in the head: direct base simple names, and
+    the names its body binds without a def (shadow check)."""
+    bases: dict[tuple[str, str], set[str]] = defaultdict(set)
+    bound: dict[tuple[str, str], set[str]] = defaultdict(set)
 
-    def walk(body, prefix: str) -> None:
+    def walk(body, prefix: str, path: str) -> None:
         for node in body:
-            if isinstance(node, ast.ClassDef):
-                q = prefix + node.name
-                out[q].update(b.id if isinstance(b, ast.Name) else b.attr
+            if not isinstance(node, ast.ClassDef):
+                continue
+            q = prefix + node.name
+            key = (path, q)
+            bases[key].update(b.id if isinstance(b, ast.Name) else b.attr
                               for b in node.bases
                               if isinstance(b, (ast.Name, ast.Attribute)))
-                walk(node.body, q + ".")
+            names = bound[key]
+            for st in node.body:
+                if isinstance(st, DEFS):
+                    continue
+                for n in ast.walk(st):
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+                        names.add(n.id)
+                    elif isinstance(n, ast.alias):
+                        names.add((n.asname or n.name).split(".")[0])
+            walk(node.body, q + ".", path)
 
     for f in list_files(repo, rev, specs):
-        walk(ast.parse(read_file(repo, rev, f), filename=f).body, "")
-    return out
+        walk(ast.parse(read_file(repo, rev, f), filename=f).body, "", f)
+    return bases, bound
 
 
 _SUPER0 = re.compile(r"Call\(func=Name\(id='super', ctx=Load\(\)\)"
@@ -245,24 +265,34 @@ def _is_header(dump: str) -> bool:
     return dump.startswith("ClassDef(")
 
 
-def _match_moves(removed_by_q, added_by_q, class_map, bases, sensitive):
+def _match_moves(removed_by_q, added_by_q, class_map, info, sensitive):
     """Pair ``OLD.rest`` removals with ``NEW.rest`` additions of equal dump.
 
     Consumes the matched entries from both dicts and returns the moves.
     """
     moved = []
     for old in sorted(class_map):
-        news = [n for n in class_map[old] if n in bases.get(old, ())]
+        bases, bound = info
         for q in sorted(removed_by_q):
             if not q.startswith(old + "."):
                 continue
             rest = q[len(old) + 1:]
             for entry in list(removed_by_q[q]):
                 d, path = entry
-                hits = [n for n in news
-                        if any(ad == d for ad, _ in added_by_q.get(f"{n}.{rest}", []))]
+                linked = bases.get((path, old), ())
+                hits = [n for n in class_map[old] if n in linked
+                        and any(ad == d for ad, _ in added_by_q.get(f"{n}.{rest}", []))]
                 if len(hits) != 1:
                     continue  # no match, or a name collision: stays a FAIL
+                a_path = next(ap_ for ad, ap_ in added_by_q[f"{hits[0]}.{rest}"]
+                              if ad == d)
+                top = rest.split(".")[0]
+                shadow = [c for c, cp in ((old, path), (hits[0], a_path))
+                          if top in bound.get((cp, c), ())]
+                if shadow:
+                    sensitive.append({"name": q, "reason":
+                                      f"{top} is also bound by a non-def in {shadow[0]}"})
+                    continue
                 why = class_sensitive(d)
                 if why:
                     sensitive.append({"name": q, "reason": why})
@@ -278,7 +308,7 @@ def _match_moves(removed_by_q, added_by_q, class_map, bases, sensitive):
     return moved
 
 
-def compare(base_defs, head_defs, class_map=None, bases=None):
+def compare(base_defs, head_defs, class_map=None, info=None):
     b = Counter((q, d) for q, d, _ in base_defs)
     h = Counter((q, d) for q, d, _ in head_defs)
     where_b: dict = {}
@@ -294,7 +324,7 @@ def compare(base_defs, head_defs, class_map=None, bases=None):
     for (q, d), n in (h - b).items():
         added_by_q[q].extend([(d, where_h[(q, d)])] * n)
     sensitive: list = []
-    moved = (_match_moves(removed_by_q, added_by_q, class_map, bases or {},
+    moved = (_match_moves(removed_by_q, added_by_q, class_map, info or ({}, {}),
                           sensitive) if class_map else [])
     mapped = set(class_map or ()) | {n for v in (class_map or {}).values() for n in v}
     # exemption is keyed by (module path, qualname): only the files that took
@@ -364,11 +394,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         total, removed, added, changed, moved, headers, sensitive = compare(
             base_defs, head_defs, class_map,
-            head_bases(a.repo, a.head, a.paths))
+            head_info(a.repo, a.head, a.paths))
     delta = {"removed": sum((base_mod - head_mod).values()),
              "added": sum((head_mod - base_mod).values())}
     ok = not (removed or added or changed)
-    review = ok and bool(headers)
+    review = ok and bool(headers or moved)
     info = (f"module-level delta (informational): "
             f"-{delta['removed']} +{delta['added']} statements")
 
@@ -395,7 +425,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(out, indent=2))
     elif ok and review:
         print(f"verify_move: NEEDS REVIEW — {total} defs, {len(moved)} moved, "
-              f"{len(headers)} class headers exempted")
+              f"{len(headers)} class headers exempted; MRO and class wiring "
+              f"are left to review")
         print_extra()
         print(info)
     elif ok:

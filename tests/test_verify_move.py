@@ -300,16 +300,16 @@ def test_class_map_shadow_in_old_not_ok(tmp_path, capsys):
                                '    """Doc A."""\n    m = None\n')
     repo = _cm_repo(tmp_path, head_a=head_a)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M")
-    assert code != 0
-    assert "Assign" in out
+    assert code == 1
+    assert "class-sensitive: A.m (m is also bound by a non-def in A)" in out
 
 
 def test_class_map_shadow_in_new_not_ok(tmp_path, capsys):
     head_m = CM_HEAD_M + "    m = lambda self: 99\n"
     repo = _cm_repo(tmp_path, head_m=head_m)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M")
-    assert code != 0
-    assert "Lambda" in out
+    assert code == 1
+    assert "class-sensitive: A.m (m is also bound by a non-def in M)" in out
 
 
 def test_class_map_self_map_rejected(tmp_path):
@@ -349,3 +349,41 @@ def test_class_map_refuses_dunder_class(tmp_path, capsys):
 def test_class_map_allows_dunder_names(tmp_path, capsys):
     code, out = _sens_run(tmp_path, capsys, "return self.__dict__")
     assert code == 2 and "class-sensitive" not in out
+
+
+def test_class_map_move_never_exits_zero_sibling_base_wins(tmp_path, capsys):
+    # class A(N, M): N.m shadows the moved M.m in the MRO; only review can tell
+    head_a = CM_HEAD_A.replace("(M)", "(N, M)").replace(
+        "from mix import M", "from mix import M, N")
+    head_m = CM_HEAD_M + "\n\nclass N:\n    def m(self):\n        return 99\n"
+    repo = _cm_repo(tmp_path, head_a=head_a, head_m=head_m)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code != 0
+    assert "NEEDS REVIEW" in out or "FAIL" in out
+
+
+def test_class_map_same_named_old_in_other_file(tmp_path, capsys):
+    # a.py's head A has no bases; other.py defines another A(M)
+    repo = _cm_repo(tmp_path, head_a=CM_HEAD_A.replace("(M)", ""))
+    (repo / "other.py").write_text("from mix import M\n\n\nclass A(M):\n    pass\n")
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head", "WORKTREE",
+                    "--class-map", "A=M", "a.py", "mix.py", "other.py"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "removed: A.m" in out
+
+
+def test_class_map_import_alias_shadow_refused(tmp_path, capsys):
+    head_a = CM_HEAD_A.replace('    """Doc A."""\n',
+                               '    """Doc A."""\n    from os import path as m\n')
+    repo = _cm_repo(tmp_path, head_a=head_a)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 1
+    assert "class-sensitive: A.m" in out
+
+
+def test_class_map_annassign_shadow_refused(tmp_path, capsys):
+    head_m = CM_HEAD_M + "    m: int = 3\n"
+    repo = _cm_repo(tmp_path, head_m=head_m)
+    code, out = _cm_run(repo, capsys, "--class-map", "A=M")
+    assert code == 1
