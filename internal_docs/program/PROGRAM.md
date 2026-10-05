@@ -31,6 +31,8 @@ The orchestrator:
 
 The orchestrator **never implements**, and its context stays small. It reads issue text and worker reports of at most 300 words.
 
+**Quality first, then token-efficient.** Run one worker per slice and continue it with SendMessage rather than starting fresh. Use the cheap pinned roles for measurement and mechanical work. Navigate with `nav.py` and ranged reads, never whole large files. Batch `gh --json` queries, or use `git log --first-parent`, instead of many single calls. Keep reports to 300 words or fewer, file side-quests as issues, and run at most 3–4 sessions at once.
+
 ## 2. Roster
 
 Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on the slice type, not on per-call judgment.
@@ -213,6 +215,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | A shadow registry or path reaches 30 days without a flip | Delete it. S3's families list is exempt: it is gate configuration. |
 | The fork lane is not green within 30 days of the pin | Make an explicit C-or-D decision. |
 | The index-touch share is not below 20% 30 days after fragments ship | Fragments have failed. |
+| The median ready-to-merge time, or the wait in the hub-lock queue, doubles against its first measurement for 2 consecutive weeks | T reviews the gates that cost the time (`gates.md`) and narrows or retires them. |
 
 **K3-only criteria (KC1–KC6):**
 - KC1: 14 consecutive green `live-fork` nights before any loader PR.
@@ -235,6 +238,10 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | Private cross-package imports | 48% |
 | `live-fork` green streak | 0 |
 | Legacy viewer LOC | 23.9k |
+| `src/` Python lines | 301.7k |
+| Line count of each hub file | `apesees.py` 14,181 |
+
+The structure KPIs are a KPI, never a hard gate; contracts are constrained, internals stay fluid.
 
 ## 9. Next-link chip prompt
 

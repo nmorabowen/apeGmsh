@@ -31,6 +31,8 @@ the verdict.
 5. **Units, normalisation and refusal paths.**
 6. **Mode interactions:** serial or partitioned, flat or staged, stock or fork.
 
+Round 1 checks every seam the card lists.
+
 **Output:**
 - `Verdict: approve|changes <head-sha>`;
 - at most 5 findings, each with `file:line` and a reproducer;

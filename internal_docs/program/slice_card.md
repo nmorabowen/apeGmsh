@@ -14,6 +14,14 @@
 ### Goal
 <!-- One paragraph: what changes and why. Link the report section that motivates it. -->
 
+### Seams
+<!-- Semantic cards that touch a hub or write files only; delete otherwise. List each seam the change crosses: reload, shared namespace, a raise after registration, empty or degenerate names, partial writes. -->
+- reload:
+- shared namespace:
+- a raise after registration:
+- empty or degenerate names:
+- partial writes:
+
 ### Owned files
 <!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`. -->
 - `path::symbol`
