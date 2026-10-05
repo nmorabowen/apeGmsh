@@ -48,12 +48,13 @@ companion test suite.
 :meth:`from_h5`.
 
 **INV-5.**  ``build(target)`` replays the tags the archive stores and
-allocates none.  A tag is written once, by the bridge's build, and the
-archive keeps it (ADR 0114 D4, which supersedes ADR 0019 INV-5), so
-the replayed deck carries the same tags as the build that wrote the
-archive, with no masking.  Three replay sites still re-derive tags for
-rows the archive does not carry yet (reinforce ties, and the
-initial-stress and staged parameters); each is waived on
+allocates none of its own.  A tag is written once, by the bridge's
+build, and the archive keeps it (ADR 0114 D4, which supersedes ADR
+0019 INV-5), so the replayed deck carries the same tags as the build
+that wrote the archive, with no masking.  Three waived replay paths
+still re-derive tags for rows the archive does not carry yet
+(reinforce ties, and the initial-stress and staged parameters); each
+is waived on
 ``tests/opensees/contract/tag_law_ledger.txt`` and pinned to the
 forward deck's tags by ``test_tag_law_replay_pins.py``.
 
