@@ -23,7 +23,13 @@ What it cannot see (so a green run is necessary, not sufficient):
     registry fills in a different order);
   * relative imports are compared by resolved absolute module, taken from the
     file's path under ``src/`` (an ``__init__.py`` is its own package). A file
-    outside ``src/``, or a ``..`` that climbs past the top, keeps the raw form;
+    outside ``src/``, or a ``..`` that climbs past the top, keeps the raw form.
+    Outside ``src/`` a def moved to a different package depth with the same
+    dots can therefore pass although it now resolves to a different module;
+  * dynamic module-relative code is not resolved:
+    ``importlib.import_module('.x', __package__)``, ``__name__``,
+    ``__module__`` and ``__file__``. A cross-package move can change what
+    these evaluate to;
   * free-name resolution: a moved body whose globals or imports no longer
     resolve. That is ruff F821's job;
   * module-level statements. Imports and assignments are reported as an
