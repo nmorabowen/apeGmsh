@@ -261,9 +261,9 @@ P0 (this amendment) → S1 (the scaffold: `tag_plan.py`, `freeze()` /
 interfaces, contacts) → S4 (`apesees.py`: regions, which fixes #1446)
 ∥ S5 (`build.py`: parameters) → S6 (drop `tags` from the emit
 signatures, extend the AST lock) → S7 (canonical partitioned
-numbering). A new label, `lock:src/apeGmsh/opensees/_internal/build.py`,
-serialises S3 and S5 against other `build.py` work. Then K1-4…K1-8,
-then V2d-4b (#1307), unless chain T interleaves.
+numbering). S3 and S5 take a new hub lock,
+`lock:src/apeGmsh/opensees/_internal/build.py`. Then K1-4…K1-8, then
+V2d-4b (#1307), unless chain T interleaves.
 
 Every slice runs: the 86 golden cells and their `.h5dump` files
 byte-identical (S7 excepted, on purpose, and only its partitioned
