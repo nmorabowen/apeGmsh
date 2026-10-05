@@ -964,9 +964,9 @@ def _replay_into(
         from .build import emit_reinforce_ties
         from .tag_allocator import TagAllocator
 
-        # tag-law waiver reinforce-tie-replay (K2 ledger, #1361): replay
+        # tag-law waiver reinforce-tie-replay (tag_law_ledger.txt): replay
         # mints the tie element tags (the _counters seed below and
-        # emit_reinforce_ties). Pinned by test_tag_law_replay_pins.py.
+        # emit_reinforce_ties) because the deck zone stores no tie record.
         _rt_tags = TagAllocator()
         # Seed the element counter past the max replayed element tag so the tie
         # element tags don't collide with the directly-replayed elements.
@@ -1006,9 +1006,9 @@ def _replay_into(
         # so global + per-stage parameter tags accumulate on one counter
         # (the bridge reuses one ``tags`` across everything).  Flat
         # callers pass None → fresh allocator (unchanged behaviour).
-        # tag-law waiver initial-stress-replay (K2 ledger, #1361): replay
-        # mints the parameter tags (emit_initial_stress_global). Pinned by
-        # test_tag_law_replay_pins.py.
+        # tag-law waiver initial-stress-replay (tag_law_ledger.txt): replay
+        # mints the parameter tags (emit_initial_stress_global) because the
+        # archive stores the declarative record, not the allocated tags.
         _is_tags = initial_stress_tags or TagAllocator()
         # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
         fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
@@ -1311,9 +1311,9 @@ def _replay_staged_into(
     # ONE allocator threaded across the global prefix AND every stage
     # (the bridge reuses a single ``tags``; a per-stage allocator would
     # restart parameter counters at stage boundaries — gate-1 FATAL).
-    # tag-law waiver staged-replay-params (K2 ledger, #1361): replay mints
+    # tag-law waiver staged-replay-params (tag_law_ledger.txt): replay mints
     # the stage parameter tags (emit_initial_stress_global and
-    # emit_activate_absorbing). Pinned by test_tag_law_replay_pins.py.
+    # emit_activate_absorbing) because the archive stores no parameter tag.
     tags = TagAllocator()
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
