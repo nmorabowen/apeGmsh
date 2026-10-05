@@ -11,11 +11,17 @@ The maintainer's ruling of 2026-10-04 on #1307 is the spec.  Oracles:
   an empty one is refused; ``save_to=<file>`` needs no name.
 * **P3.** A file from another run is replaced when its ``/provenance``
   names this run's script or no script, and kept (one warning) otherwise;
-  ``save_to`` is exempt.  Only MPI rank 0 writes; a partitioned run gets
-  no automatic write and one warning.
+  ``save_to`` is exempt.  Only MPI rank 0 writes; a run whose mesh the
+  kernel partitioned gets no automatic write and one warning, while a
+  composed session writes.
 * **P4.** A file from this run holding a zone the write would drop is
-  kept silently when its ``snapshot_id`` is the snapshot's, and with one
-  "stale" warning otherwise; another run's such file keeps V2b's warning.
+  kept silently when its neutral content is what the write would
+  produce (``content_hash``: mesh, groups, labels, loads, masses and
+  constraints), and with one "stale" warning otherwise; another run's
+  such file keeps V2b's warning.  The hash is stable across a reload and
+  deterministic.
+* A refused model write skips the geometry sibling too, in one warning
+  naming both files.
 
 The happy paths run under ``simplefilter("error")``: no warning may fire
 where the rule says silence.
@@ -35,8 +41,11 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh._artifact_policy import (
+    artifact_content_hash,
     artifact_identity,
     artifact_target_is_ours,
+    artifact_verdict,
+    content_hash,
     main_script,
     mpi_rank,
     provenance_scripts,
@@ -269,21 +278,26 @@ def test_same_script_replaces_and_another_script_is_kept(
     _name_script(monkeypatch, tmp_path / "a.py")
     _run("frame")
     first = _meta(model, "session_id")
-    assert artifact_identity(model)[2] == {
+    assert artifact_identity(model)[1] == {
         os.path.normcase(str((tmp_path / "a.py").resolve()))
     }
     _run("frame")                                   # same script, another run
     second = _meta(model, "session_id")
     assert second != first
-    before = model.read_bytes()
+    sibling = tmp_path / "frame.geometry.h5"
+    before = (model.read_bytes(), sibling.read_bytes())
     _name_script(monkeypatch, tmp_path / "b.py")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         with apeGmsh(model_name="frame") as g:
             _small_box(g)
-    msgs = [m for m in _messages(w) if "another script" in m]
-    assert len(msgs) == 1 and "a.py" in msgs[0] and "model_name=" in msgs[0]
-    assert model.read_bytes() == before
+    msgs = _messages(w)
+    assert len(msgs) == 1, msgs
+    assert "another script" in msgs[0] and "a.py" in msgs[0] and "model_name=" in msgs[0]
+    # the refusal names the sibling and skips it, so the pair stays paired
+    assert str(sibling) in msgs[0] and "pair stays consistent" in msgs[0]
+    assert (model.read_bytes(), sibling.read_bytes()) == before
+    assert _meta(sibling, "session_id") == second
     assert not list(tmp_path.glob("*.tmp-*"))
 
 
@@ -293,12 +307,12 @@ def test_a_file_naming_no_script_or_without_provenance_is_replaced(
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     model = tmp_path / "frame.h5"
     _run("frame")                                   # a test run: no script row
-    assert artifact_identity(model)[2] == frozenset()
+    assert artifact_identity(model)[1] == frozenset()
     _name_script(monkeypatch, tmp_path / "a.py")
     first = _meta(model, "session_id")
     _run("frame")
     assert _meta(model, "session_id") != first
-    assert artifact_identity(model)[2] == {
+    assert artifact_identity(model)[1] == {
         os.path.normcase(str((tmp_path / "a.py").resolve()))
     }
     # no /provenance at all (a snapshot without a table), then a run
@@ -312,7 +326,7 @@ def test_a_file_naming_no_script_or_without_provenance_is_replaced(
     _name_script(monkeypatch, tmp_path / "b.py")
     _run("noprov")
     assert _meta(noprov, "session_id") != second
-    assert artifact_identity(noprov)[2] == {
+    assert artifact_identity(noprov)[1] == {
         os.path.normcase(str((tmp_path / "b.py").resolve()))
     }
 
@@ -376,7 +390,9 @@ def test_partitioned_run_gets_no_automatic_write(monkeypatch, tmp_path: Path) ->
             _small_box(g)
             g.mesh.partitioning.partition(2)
             assert len(g.mesh.queries.get_fem_data().partitions) == 2
-    assert len(w) == 1 and "partitioned run (2 partitions" in str(w[0].message)
+    assert len(w) == 1, _messages(w)
+    assert "partitioned run (2 partitions" in str(w[0].message)
+    assert "parts.h5" in str(w[0].message) and "parts.geometry.h5" in str(w[0].message)
     assert list(tmp_path.iterdir()) == []
     # save_to= is the user's intent and still writes
     target = tmp_path / "parts.h5"
@@ -387,15 +403,26 @@ def test_partitioned_run_gets_no_automatic_write(monkeypatch, tmp_path: Path) ->
             g.mesh.partitioning.partition(2)
     assert target.is_file()
     assert len(FEMData.from_h5(str(target)).partitions) == 2
-    # a composed model is partitioned too (ADR 0038: one rank per module)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+
+
+def test_a_composed_session_writes(monkeypatch, tmp_path: Path) -> None:
+    """``g.compose`` reports its modules as partitions (ADR 0038's rank
+    model) but is not partitioned for D1: the session writes, silently."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    _run("module")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         with apeGmsh(model_name="host") as g:
             _small_box(g)
             g.mesh.queries.get_fem_data()
-            g.compose(target, label="M", translate=(3.0, 0.0, 0.0))
-    assert len(w) == 1 and "composed model" in str(w[0].message)
-    assert not (tmp_path / "host.h5").exists()
+            g.compose(tmp_path / "module.h5", label="M", translate=(3.0, 0.0, 0.0))
+            fem = g.mesh.queries.get_fem_data()
+    assert len(fem.partitions) == 2                 # the module's rank
+    model = tmp_path / "host.h5"
+    assert model.is_file() and (tmp_path / "host.geometry.h5").is_file()
+    reloaded = FEMData.from_h5(str(model))
+    assert len(reloaded.partitions) == 2
+    assert reloaded.session_id == fem.session_id == _meta(tmp_path / "host.geometry.h5", "session_id")
 
 
 # ---------------------------------------------------------------------------
@@ -436,10 +463,10 @@ def test_this_runs_fuller_file_is_kept_silently(monkeypatch, tmp_path: Path) -> 
 def test_this_runs_fuller_file_from_an_earlier_snapshot_warns_stale(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """The bridge wrote a snapshot of this session whose ``fem_hash``
-    differs from the one ``end()`` holds (here the ``dim=3`` slice the
-    bridge is often fed, against the session's full extraction): one
-    "stale" warning, the bridge's file kept."""
+    """The bridge wrote a snapshot of this session whose mesh differs
+    from the one ``end()`` holds (the ``dim=3`` slice the bridge is often
+    fed, against the session's full extraction): one "stale" warning
+    naming both files, the bridge's file kept, no sibling written."""
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     target = tmp_path / "bridge.h5"
     with warnings.catch_warnings(record=True) as w:
@@ -449,35 +476,64 @@ def test_this_runs_fuller_file_from_an_earlier_snapshot_warns_stale(
             full = g.mesh.queries.get_fem_data()
             solids = g.mesh.queries.get_fem_data(dim=3)
             assert solids.session_id == full.session_id
-            assert solids.snapshot_id != full.snapshot_id
             _bridge_write(g, target, fem=solids)
             before = target.read_bytes()
-            assert _meta(target, "snapshot_id") == solids.snapshot_id
+            assert artifact_content_hash(target) == content_hash(solids) != content_hash(full)
     msgs = _messages(w)
     assert len(msgs) == 1 and "stale" in msgs[0] and "opensees" in msgs[0], msgs
+    assert "bridge.geometry.h5" in msgs[0] and "pair stays consistent" in msgs[0]
     assert target.read_bytes() == before
-    assert (tmp_path / "bridge.geometry.h5").is_file()
+    assert not (tmp_path / "bridge.geometry.h5").exists()
 
 
-def test_a_declaration_after_the_emit_is_not_seen_by_fem_hash(
-    monkeypatch, tmp_path: Path
+@pytest.mark.parametrize("declare", ["load", "mass"])
+def test_a_declaration_after_the_write_warns_stale(
+    monkeypatch, tmp_path: Path, declare: str
 ) -> None:
-    """The ruling keys P4 on ``fem_hash``, which is ``snapshot_id``
-    (lineage INV-1): a mass, load or constraint declared after the
-    emit leaves it unchanged, so the bridge's file is kept silently.
-    Pinned here so the gap is visible; a declaration-aware hash is a
-    follow-up, not this slice."""
+    """P4 compares everything the write would put in the file: a load or
+    a mass declared after the bridge's write (``snapshot_id`` is blind
+    to both) makes the bridge's file stale: one warning, nothing
+    written, the pair untouched."""
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     target = tmp_path / "bridge.h5"
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
         with apeGmsh(model_name="bridge") as g:
             _small_box(g)
             _bridge_write(g, target)
             before = target.read_bytes()
-            g.masses.point(pg="body", mass=2.5)
-            assert g.mesh.queries.get_fem_data().snapshot_id == _meta(target, "snapshot_id")
+            written = artifact_content_hash(target)
+            if declare == "load":
+                g.loads.point.force(pg="body", force=(0.0, 0.0, -1.0))
+            else:
+                g.masses.point(pg="body", mass=2.5)
+            fem = g.mesh.queries.get_fem_data()
+            assert fem.snapshot_id == _meta(target, "snapshot_id")
+            assert content_hash(fem) != written
+    msgs = _messages(w)
+    assert len(msgs) == 1 and "stale" in msgs[0], msgs
     assert target.read_bytes() == before
+    assert not (tmp_path / "bridge.geometry.h5").exists()
+
+
+def test_content_hash_is_stable_across_reload_and_deterministic(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
+    with apeGmsh(model_name="hash") as g:
+        _small_box(g)
+        g.loads.point.force(pg="body", force=(1.0, 2.0, 3.0))
+        g.masses.point(pg="body", mass=0.1)
+        fem = g.mesh.queries.get_fem_data()
+    model = tmp_path / "hash.h5"
+    h = content_hash(fem)
+    assert h == content_hash(fem) == artifact_content_hash(model)
+    assert h == content_hash(FEMData.from_h5(str(model)))
+    assert h == content_hash(pickle.loads(pickle.dumps(fem)))
+    copy_path = tmp_path / "copy.h5"
+    fem.to_h5(str(copy_path), model_name="other")   # /meta differs, content equal
+    assert artifact_content_hash(copy_path) == h
+    assert _meta(copy_path, "model_name") != _meta(model, "model_name")
 
 
 def test_another_runs_fuller_file_keeps_v2b_warning(monkeypatch, tmp_path: Path) -> None:
@@ -521,30 +577,35 @@ def test_reload_then_write_again(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_rule_on_a_missing_target_and_overwrite_false(tmp_path: Path) -> None:
-    kw = dict(writes=MODEL_ZONES, session_id="s", fem_hash="h",
+    kw = dict(writes=MODEL_ZONES, session_id="s", content=lambda: "h",
               scripts=frozenset(), explicit=False)
     assert artifact_target_is_ours(tmp_path / "none.h5", overwrite=True, **kw)
     p = tmp_path / "x.h5"
     p.write_bytes(b"x")
     with pytest.warns(UserWarning, match="overwrite=False"):
         assert not artifact_target_is_ours(p, overwrite=False, **kw)
-    with pytest.warns(UserWarning, match="not an apeGmsh artifact"):
-        assert not artifact_target_is_ours(p, overwrite=True, **kw)
+    with pytest.warns(UserWarning, match="not an apeGmsh artifact") as rec:
+        assert not artifact_target_is_ours(
+            p, overwrite=True, skips=(tmp_path / "x.geometry.h5",), **kw)
+    assert len(rec) == 1 and "x.geometry.h5" in str(rec[0].message)
 
 
 def test_rule_decision_table(tmp_path: Path) -> None:
     """Every row of the ruling, on hand-made artifacts."""
     from tests.fixtures.schema import NEUTRAL_CURRENT
 
+    import numpy as np
+
     def make(name, *, sid, hash_, groups, scripts=()):
+        """``hash_`` is the neutral content: a dataset under ``/nodes``."""
         p = tmp_path / name
         with h5py.File(p, "w") as f:
             m = f.create_group("meta")
             m.attrs["neutral_schema_version"] = NEUTRAL_CURRENT
             m.attrs["session_id"] = sid
-            m.attrs["snapshot_id"] = hash_
             for g_ in groups:
                 f.create_group(g_)
+            f["nodes"].create_dataset("ids", data=np.frombuffer(hash_.encode(), dtype=np.uint8))
             if scripts:
                 pr = f.require_group("provenance")
                 pr.attrs["base_dir"] = tmp_path.as_posix()
@@ -555,23 +616,25 @@ def test_rule_decision_table(tmp_path: Path) -> None:
                 files.create_dataset("sha256", data=[""] * len(scripts), dtype=dt)
         return p
 
-    ours = dict(session_id="S", fem_hash="H", scripts=frozenset(), explicit=False)
+    same = make("same.h5", sid="S", hash_="H", groups=("nodes",))
+    ours = dict(session_id="S", content=lambda: artifact_content_hash(same),
+                scripts=frozenset(), explicit=False)
     neutral = frozenset({NEUTRAL})
     # this run, same zones: refreshed
     assert artifact_target_is_ours(
         make("a.h5", sid="S", hash_="H", groups=("nodes",)),
         writes=neutral, overwrite=True, **ours)
-    # this run, fuller, same hash: kept silently
+    # this run, fuller, same content: kept silently
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert not artifact_target_is_ours(
+        assert artifact_verdict(
             make("b.h5", sid="S", hash_="H", groups=("nodes", "opensees")),
-            writes=neutral, overwrite=True, **ours)
-    # this run, fuller, model changed since: stale
+            writes=neutral, overwrite=True, **ours) == "keep"
+    # this run, fuller, content changed since: stale
     with pytest.warns(UserWarning, match="stale"):
-        assert not artifact_target_is_ours(
+        assert artifact_verdict(
             make("c.h5", sid="S", hash_="OLD", groups=("nodes", "opensees")),
-            writes=neutral, overwrite=True, **ours)
+            writes=neutral, overwrite=True, **ours) == "refuse"
     # another run, fuller: V2b
     with pytest.warns(UserWarning, match="would drop"):
         assert not artifact_target_is_ours(
@@ -584,7 +647,7 @@ def test_rule_decision_table(tmp_path: Path) -> None:
     # another run naming a script this run does not: kept
     key = os.path.normcase(str((tmp_path / "a.py").resolve()))
     f = make("f.h5", sid="T", hash_="X", groups=("nodes",), scripts=("a.py",))
-    assert artifact_identity(f) == ("T", "X", frozenset({key}))
+    assert artifact_identity(f) == ("T", frozenset({key}))
     with pytest.warns(UserWarning, match="another script"):
         assert not artifact_target_is_ours(
             f, writes=MODEL_ZONES, overwrite=True, **ours)
@@ -596,7 +659,7 @@ def test_rule_decision_table(tmp_path: Path) -> None:
         f, writes=MODEL_ZONES, overwrite=True, **{**ours, "explicit": True})
     # a pseudo-file script is compared as written
     g_ = make("g.h5", sid="T", hash_="X", groups=("nodes",), scripts=("<string>",))
-    assert artifact_identity(g_)[2] == {"<string>"}
+    assert artifact_identity(g_)[1] == {"<string>"}
     assert artifact_target_is_ours(
         g_, writes=MODEL_ZONES, overwrite=True,
         **{**ours, "scripts": frozenset({"<string>"})})

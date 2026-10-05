@@ -22,13 +22,15 @@ into labels.
 ```python
 from apeGmsh import apeGmsh, Part
 
-g = apeGmsh(model_name="...", verbose=False,
-            save_to=None, overwrite=True)   # save_to= autosaves neutral zone on end()
+g = apeGmsh(model_name=None, verbose=False,
+            save_to=None, overwrite=True)   # model_name=None -> the running script's stem
 g.begin()           # opens gmsh, wires composites
 g.is_active         # True while session is open
-g.name              # the model name
+g.name              # the model name ("" in a notebook / -c / stdin with no model_name=)
 g.save(path=None)   # explicit neutral-zone checkpoint (uses save_to if path None)
-g.end()             # closes gmsh (+ autosaves if save_to set)
+g.end()             # closes gmsh; writes <dir>/<model_name>.h5 + <model_name>.geometry.h5
+                    # beside the script (save_to= overrides the path). No model_name and no
+                    # script file: nothing written, one warning. Pass model_name= in notebooks.
 
 # Preferred form
 with apeGmsh(model_name="...", save_to="m.h5") as g:

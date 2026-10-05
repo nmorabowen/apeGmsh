@@ -277,6 +277,15 @@ g.save()                # writes to the ctor save_to= target
 g.save("ckpt.h5")       # or an explicit path
 ```
 
+Without `save_to=`, `end()` still writes `<model_name>.h5` and
+`<model_name>.geometry.h5` beside the running script (ADR 0112 D1), and
+`model_name` defaults to the script's stem (`python frame.py` ->
+`frame.h5`). In a notebook, `-c` or stdin there is no script: with no
+`model_name=` nothing is written and one warning says so. A later run of
+the same script replaces the file; a file another script wrote at that
+path is kept with a warning (set `model_name` per run in a sweep; an
+edited notebook counts as another script, `save_to=` refreshes anyway).
+
 Exact signatures:
 
 ```python

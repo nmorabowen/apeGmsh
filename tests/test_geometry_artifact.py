@@ -462,7 +462,9 @@ def _mesh_fingerprint() -> tuple[int, int, int]:
 
 def test_foreign_files_are_never_overwritten(monkeypatch, tmp_path: Path) -> None:
     """Finding 1: a non-apeGmsh ``data.h5`` / ``data.geometry.h5`` beside a
-    session named ``data`` is left byte-identical, with one warning each."""
+    session named ``data`` is left byte-identical.  The refused model
+    write skips the sibling too (#1439 ruling 3): one warning, naming
+    both files."""
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     model = tmp_path / "data.h5"
     sibling = tmp_path / "data.geometry.h5"
@@ -476,7 +478,7 @@ def test_foreign_files_are_never_overwritten(monkeypatch, tmp_path: Path) -> Non
             _small_box(g)
     assert (model.read_bytes(), sibling.read_bytes()) == before
     msgs = [str(x.message) for x in w if "not an apeGmsh artifact" in str(x.message)]
-    assert len(msgs) == 2
+    assert len(msgs) == 1 and str(model) in msgs[0] and str(sibling) in msgs[0]
     assert not list(tmp_path.glob("*.tmp-*"))
     assert sorted(p.name for p in tmp_path.iterdir()) == ["data.geometry.h5", "data.h5"]
 
@@ -508,7 +510,8 @@ def test_overwrite_false_is_honoured_by_the_automatic_write(
         with apeGmsh(model_name="keep", overwrite=False) as g:
             _small_box(g)
     assert (model.read_bytes(), sibling.read_bytes()) == before
-    assert len([x for x in w if "overwrite=False" in str(x.message)]) == 2
+    msgs = [str(x.message) for x in w if "overwrite=False" in str(x.message)]
+    assert len(msgs) == 1 and str(sibling) in msgs[0]   # one warning, both files
 
 
 def test_internal_sessions_opt_out(monkeypatch, tmp_path: Path) -> None:
@@ -670,8 +673,8 @@ def test_capture_never_mutates_the_users_mesh(monkeypatch, tmp_path: Path) -> No
 def test_generic_schema_version_attr_is_not_ours(monkeypatch, tmp_path: Path) -> None:
     """A third-party ``data.h5`` with ``/meta@schema_version="3.1"`` (the
     generic envelope name) and its own datasets is foreign: byte-identical
-    after a session named ``data``, one warning; only the free sibling
-    target is written."""
+    after a session named ``data``, one warning; the free sibling target
+    is skipped with it (#1439 ruling 3), so nothing else appears."""
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     foreign = tmp_path / "data.h5"
     with h5py.File(foreign, "w") as f:
@@ -685,8 +688,7 @@ def test_generic_schema_version_attr_is_not_ours(monkeypatch, tmp_path: Path) ->
             _small_box(g)
     assert foreign.read_bytes() == before
     assert len([x for x in w if "not an apeGmsh artifact" in str(x.message)]) == 1
-    assert (tmp_path / "data.geometry.h5").is_file()
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["data.geometry.h5", "data.h5"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["data.h5"]
 
 
 def test_is_apegmsh_artifact_ownership_rules(tmp_path: Path) -> None:
@@ -856,7 +858,8 @@ def test_rerun_without_a_provenance_table_never_drops_provenance(
     """Opus on 15e3b5ef: ``write_fem_h5`` writes ``/provenance`` only when the
     snapshot carries a table, so a re-run whose snapshot has none must not
     replace an earlier ``model.h5`` that has the zone: one warning, the file
-    byte-identical with ``/provenance`` intact, the sibling still written."""
+    byte-identical with ``/provenance`` intact, and the sibling skipped
+    with it (#1439 ruling 3), so no unpaired sibling appears."""
     from apeGmsh._internal import provenance as prov
 
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
@@ -877,9 +880,10 @@ def test_rerun_without_a_provenance_table_never_drops_provenance(
     assert model.read_bytes() == before
     msgs = [str(x.message) for x in w if "would drop" in str(x.message)]
     assert len(msgs) == 1 and "provenance" in msgs[0]
+    assert "prov.geometry.h5" in msgs[0]
     with h5py.File(model, "r") as f:
         assert "provenance" in f
-    assert (tmp_path / "prov.geometry.h5").is_file()
+    assert not (tmp_path / "prov.geometry.h5").exists()
     assert not list(tmp_path.glob("*.tmp-*"))
 
 

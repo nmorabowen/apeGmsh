@@ -14,19 +14,21 @@ rule `apeGmsh._artifact_policy.artifact_target_is_ours`, which the
 session delegates to and the bridge's automatic write (part 4b) will share.
 Its new rows: a file from this run (equal `session_id`) that holds a zone
 the write would drop — the bridge's neutral + `/opensees` — is kept
-**silently** when its `snapshot_id` equals the snapshot's (`fem_hash`,
-lineage INV-1) and with one "stale" warning when the model changed after
-it was written; a file from another run is replaced only when its
-`/provenance` names a script this run's provenance also names, or names no
-script, and is kept with one warning otherwise (a parameter sweep that
-keeps each run's output sets `model_name` per run; `save_to=` is exempt).
-A foreign file, `overwrite=False` and an older file holding a zone the
-write would drop keep V2b's warnings. Under MPI only rank 0 writes
-(`OMPI_COMM_WORLD_RANK`, `PMI_RANK`, `PMIX_RANK`, `MV2_COMM_WORLD_RANK`,
-`SLURM_PROCID`); a partitioned run — a composed model included, since
-ADR 0038 gives each module a partition — gets no automatic write and one
-warning, `save_to=` still writing. `fem_hash` reads nodes, elements,
-groups, labels and `composed_from`, so a load, mass or constraint declared
-after the bridge's emit does not make the bridge's file stale; the gap is
-pinned by a test. A bench case (`tests/benchmarks/test_artifact_policy_cost.py`)
-measures the hash against the write it gates.
+**silently** when its neutral content is what the write would produce
+(`content_hash`: the zone written in memory and walked with the lineage
+canonical walk, so mesh, groups, labels, loads, masses, constraints and
+ties all count, and a reload gives the same digest) and with one "stale"
+warning when anything changed after it was written; a file from another
+run is replaced only when its `/provenance` names a script this run's
+provenance also names, or names no script, and is kept with one warning
+otherwise (a parameter sweep that keeps each run's output sets `model_name`
+per run; an edited notebook counts as another script; `save_to=` is
+exempt). A refused model write skips the geometry sibling too, and the one
+warning names both files. A foreign file, `overwrite=False` and an older
+file holding a zone the write would drop keep V2b's warnings. Under MPI
+only rank 0 writes (`OMPI_COMM_WORLD_RANK`, `PMI_RANK`, `PMIX_RANK`,
+`MV2_COMM_WORLD_RANK`, `SLURM_PROCID`); a mesh the kernel partitioned
+(`g.mesh.partitioning`) gets no automatic write and one warning, `save_to=`
+still writing, while a composed session writes. A bench case
+(`tests/benchmarks/test_artifact_policy_cost.py`) measures the content
+hash against the write it gates.

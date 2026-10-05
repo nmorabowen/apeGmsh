@@ -345,14 +345,19 @@ class _SessionBase:
         write leaves the previous file untouched and no temp behind.
 
         Whether a target may be replaced is the D1 overwrite policy
-        (:func:`~apeGmsh._artifact_policy.artifact_target_is_ours`,
-        #1307), shared with the bridge's automatic write.  Before any
-        write, three gates: an MPI rank other than 0 writes nothing
-        (silent); a session with no name and no script, or a partitioned
-        run with no ``save_to``, writes nothing and warns once (P2, P3).
+        (:func:`~apeGmsh._artifact_policy.artifact_verdict`, #1307),
+        shared with the bridge's automatic write.  Before any write,
+        three gates: an MPI rank other than 0 writes nothing (silent); a
+        session with no name and no script, or a run whose mesh the
+        kernel partitioned (an MPI deck's; a composed model is not
+        partitioned for D1) with no ``save_to``, writes nothing and warns
+        once (P2, P3).  A refused model write skips the sibling too, in
+        the same warning; a kept one (this run's fuller file) still
+        writes the sibling, which pairs with it.
         """
         from ._artifact_policy import (
-            artifact_target_is_ours,
+            artifact_verdict,
+            content_hash,
             mpi_rank,
             provenance_scripts,
         )
@@ -372,15 +377,17 @@ class _SessionBase:
             if mpi_rank() not in (None, 0):
                 return
             target = self._resolve_save_target(None)
+            sibling = geometry_sibling_path(target)
             fem = self._snapshot_to_save()
-            # P3: what the bridge emits per rank is a partitioned run,
-            # a composed model included (ADR 0038's rank model gives
-            # each module a partition).
-            if not explicit and len(fem.partitions) > 1:
+            # P3: a mesh the kernel partitioned is an MPI deck's; the
+            # kernel's count, not ``fem.partitions``, because a composed
+            # model reports its modules as partitions (ADR 0038) and is
+            # not partitioned for D1.
+            n_parts = gmsh.model.getNumberOfPartitions()
+            if not explicit and n_parts > 1:
                 warnings.warn(
-                    f"partitioned run ({len(fem.partitions)} partitions; a "
-                    f"composed model's modules count): no automatic write of "
-                    f"{target} and its geometry sibling, the partitioned "
+                    f"partitioned run ({n_parts} partitions): no automatic "
+                    f"write of {target} and {sibling}, the partitioned "
                     f"model.h5 being outside V2's scope. Pass save_to= to "
                     f"write the model anyway.",
                     stacklevel=3,
@@ -394,11 +401,14 @@ class _SessionBase:
                 frozenset({PROVENANCE}) if fem.provenance is not None else frozenset()
             )
             scripts = provenance_scripts(fem.provenance)
-            if artifact_target_is_ours(
+            verdict = artifact_verdict(
                 target, writes=model_zones, overwrite=self._overwrite,
-                session_id=fem.session_id, fem_hash=fem.snapshot_id,
-                scripts=scripts, explicit=explicit,
-            ):
+                session_id=fem.session_id, content=lambda: content_hash(fem),
+                scripts=scripts, explicit=explicit, skips=(sibling,),
+            )
+            if verdict == "refuse":
+                return
+            if verdict == "write":
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
                     self._do_save(tmp, fem=fem)
@@ -416,7 +426,6 @@ class _SessionBase:
             )
         if target is None:
             return
-        sibling = geometry_sibling_path(target)
         try:
             fem = getattr(self, "_fem", None)
             session_id = (
@@ -424,11 +433,11 @@ class _SessionBase:
             )
             if session_id is None:
                 raise RuntimeError("session has no session_id (begin() never ran)")
-            if not artifact_target_is_ours(
+            if artifact_verdict(
                 sibling, writes=frozenset({GEOMETRY}), overwrite=self._overwrite,
-                session_id=session_id, fem_hash="",
+                session_id=session_id, content=lambda: "",
                 scripts=scripts, explicit=explicit,
-            ):
+            ) != "write":
                 return
             capture = self._geometry_capture
             if capture is None:
