@@ -40,8 +40,8 @@ from .tag_allocator import TagAllocator, TagLawError
 
 if TYPE_CHECKING:
     from ..apesees import BuiltModel
-    from .build import ElementPlanRows
-    from .types import Element
+    from .build import ElementPlanRows, TransformFanout
+    from .types import Element, GeomTransf
 
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
 TagRow = tuple[str, int]
@@ -156,10 +156,65 @@ class ElementTagPlan(FamilyTagPlan):
 
 @dataclass(frozen=True, slots=True)
 class TransformTagPlan(FamilyTagPlan):
-    """Orientation fan-out: one ``geomTransf`` per distinct ``vecxz``."""
+    """Orientation fan-out: one ``geomTransf`` per distinct ``vecxz``.
+
+    ``fanout`` is :func:`~.build.plan_transform_specs`'s result, made once
+    by :func:`plan_tags`: each transform spec, in the emit's topological
+    order, with its planned lines, plus the per-element override map.
+    :func:`~.build.emit_transform_specs` writes it instead of allocating.
+    :meth:`stream` holds only the planned tags: a fan-out's first line
+    reuses the spec's own (registered) tag, which no family mints.
+    """
 
     FAMILY: ClassVar[str] = "transforms"
     KINDS: ClassVar[frozenset[str]] = frozenset({"geomTransf"})
+    MIGRATED: ClassVar[bool] = True
+
+    fanout: TransformFanout | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.rows:
+            raise TagLawError(
+                "transforms: the transform plan derives its rows from its "
+                "fan-out; pass fanout, not rows."
+            )
+
+    def _planned(self) -> TransformFanout:
+        if self.fanout is None:
+            raise TagLawError(
+                "transforms: this plan carries no fan-out; plan_tags "
+                "plans one for every mode (ADR 0114 D4, amended)."
+            )
+        return self.fanout
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """One ``("geomTransf:<type>", tag)`` row per planned tag."""
+        from .build import _TRANSF_TYPE_TOKEN
+
+        rows: list[TagRow] = []
+        for transf, lines in self._planned().specs:
+            if not lines:
+                continue
+            token = _TRANSF_TYPE_TOKEN[type(transf)]
+            rows.extend((f"geomTransf:{token}", tag) for tag, _ in lines[1:])
+        return tuple(rows)
+
+    def fanout_for(self, transforms: list[GeomTransf]) -> TransformFanout:
+        """The planned fan-out, which must cover exactly ``transforms``.
+
+        ``transforms`` are the specs this emit walks, in order; a plan
+        made for other specs, or in another order, raises
+        :class:`TagLawError`.
+        """
+        fanout = self._planned()
+        if [id(t) for t, _ in fanout.specs] != [id(t) for t in transforms]:
+            raise TagLawError(
+                f"the transform plan holds {len(fanout.specs)} specs, but "
+                f"this emit walks {len(transforms)}, or in another order: "
+                "the plan was not made for this model (ADR 0114 D4, "
+                "amended)."
+            )
+        return fanout
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +390,23 @@ def plan_of(tags: TagAllocator) -> TagPlan:
     return plan
 
 
+def plan_or_standalone(tags: TagAllocator) -> TagPlan | None:
+    """The plan of a bridge emit's allocator, or ``None`` for a plain one.
+
+    The two-way emit helpers (ADR 0114 D4, amended; until K1-3d S6 drops
+    ``tags`` from their signatures) read the plan when handed
+    :meth:`TagPlan.emit_allocator`'s fork, and plan their own rows from
+    a plain :class:`TagAllocator` (a direct caller, or the compose
+    replay under its ledger waiver) through the same ``plan_*`` loop.
+    ``None`` therefore means "plan from ``tags``", never "skip". Any other
+    allocator (a plain :meth:`TagAllocator.fork`, a fork for another
+    origin, the frozen planner allocator) raises :class:`TagLawError`.
+    """
+    if not tags._forked and not tags.frozen:
+        return None
+    return plan_of(tags)
+
+
 def plan_inputs(bm: BuiltModel) -> tuple[object, ...]:
     """Every public field of ``bm``, in field order: what a plan reads.
 
@@ -363,10 +435,11 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     from ..apesees import _kind_of
     from .build import (
         allocate_element_tags,
+        plan_transform_specs,
         reserve_fem_element_tags,
         topological_order,
     )
-    from .types import Element
+    from .types import Element, GeomTransf
 
     if not isinstance(mode, TagMode):
         raise TypeError(
@@ -386,14 +459,23 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
             bm.fem, tags,
         )
 
+    ordered = topological_order(bm.primitives)
+    element_specs = [p for p in ordered if isinstance(p, Element)]
+
     # Elements: every spec's fan-out, in the emit's topological order.
     # Each emit path made this allocation once, before any other
     # element-kind mint, so planning it here numbers it as they did.
     elements = ElementTagPlan(specs=tuple(allocate_element_tags(
-        [p for p in topological_order(bm.primitives)
-         if isinstance(p, Element)],
-        bm.fem, tags, element_tags=bm.element_tags,
+        element_specs, bm.fem, tags, element_tags=bm.element_tags,
     )))
+
+    # Transforms: the orientation fan-out, over the transform specs in
+    # the same topological order. Every emit path ran it once, and no
+    # other family mints ``geomTransf``, so every mode numbers it alike.
+    transforms = TransformTagPlan(fanout=plan_transform_specs(
+        [p for p in ordered if isinstance(p, GeomTransf)],
+        element_specs, bm.fem, tags, bm.tag_for, ndm=bm.ndm,
+    ))
 
     # The other families are pending: their tags are still minted at
     # emit time, from TagPlan.emit_allocator().
@@ -402,7 +484,7 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         mode=mode,
         allocator=tags,
         elements=elements,
-        transforms=TransformTagPlan(),
+        transforms=transforms,
         regions=RegionTagPlan(),
         parameters=ParameterTagPlan(),
         mp_elements=MPElementTagPlan(),

@@ -100,6 +100,7 @@ MINTING_HELPERS = frozenset({
     "emit_stage_mp_constraints_partitioned",
     "emit_transform_specs",
     "emit_update_parameters",
+    "plan_transform_specs",
     "reserve_fem_element_tags",
 })
 

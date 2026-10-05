@@ -3240,34 +3240,44 @@ def _element_transf(spec: Element) -> GeomTransf | None:
 # distinct vecxz observed across the elements that reference the spec.
 # ---------------------------------------------------------------------------
 
-def emit_transform_specs(
+#: One ``geomTransf`` line of an orientation fan-out: ``(tag, vecxz)``.
+TransformLine: TypeAlias = "tuple[int, tuple[float, float, float]]"
+
+
+@dataclass(frozen=True, slots=True)
+class TransformFanout:
+    """:func:`plan_transform_specs`'s result: every transform's lines.
+
+    ``specs`` holds one ``(transform, lines)`` pair per transform spec, in
+    the order the emit walks them. ``lines`` is ``None`` for a transform
+    with no orientation fan-out (it emits its own line under its own
+    tag), and otherwise the ``(tag, vecxz)`` line of each distinct
+    ``vecxz``, first-seen order: the first reuses the spec's own tag, the
+    rest are the planned tags (empty when no element references it).
+    ``overrides`` maps ``(id(transform), element id)`` to the planned tag
+    of every element whose ``vecxz`` is not the spec's own.
+    """
+
+    specs: "tuple[tuple[GeomTransf, tuple[TransformLine, ...] | None], ...]"
+    overrides: "dict[tuple[int, int], int]"
+
+
+def plan_transform_specs(
     transforms: Iterable[GeomTransf],
     elements: Iterable[Element],
-    emitter: "Emitter",
     fem: "FEMData",
     tags: TagAllocator,
     spec_to_own_tag: dict[int, int],
     ndm: int = 3,
-    replay_log: "list[tuple[Any, ...]] | None" = None,
-) -> dict[tuple[int, int], int]:
-    """Emit ``geomTransf`` lines for every transform spec.
+) -> TransformFanout:
+    """Plan the orientation fan-out's ``geomTransf`` tags (ADR 0010).
 
-    ``replay_log`` (ADR 0099 S7): when a stage-activated gated element
-    will bracket mid-deck, the staged path must be able to re-declare
-    these lines at bracket close — but the orientation fan-out ALLOCATES
-    per-vecxz tags, so a re-run cannot reproduce them.  A non-None log
-    captures one entry per emitted line, in emit order, for
-    :func:`replay_builder_scoped_declarations` to re-drive verbatim.
+    The allocation loop of :func:`emit_transform_specs`, moved out of the
+    emit (ADR 0114 D4, amended): the build's tag plan runs it once per
+    emit mode with the planner allocator, and a standalone call of
+    :func:`emit_transform_specs` runs it with the caller's allocator.
 
-    For non-orientation transforms (explicit ``vecxz=``), one line
-    per spec using the spec's own allocated tag — that's the path
-    :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
-    handle in their ``_emit``. When ``ndm == 2`` and such a transform
-    has neither ``vecxz`` nor ``orientation``, the bare 2-D form
-    ``geomTransf <Type> $tag`` is emitted here instead (the primitive
-    ``_emit`` requires a ``vecxz`` and doesn't know ``ndm``).
-
-    For orientation-bearing transforms, the bridge:
+    For each orientation-bearing transform, the bridge:
 
       1. Walks every element spec whose ``transf`` IS this transform.
       2. For each element in the spec's PG, computes the per-element
@@ -3277,16 +3287,13 @@ def emit_transform_specs(
          reuses the spec's own allocated tag (so the spec's tag is
          never wasted); subsequent distinct vecxz get freshly-allocated
          transform tags.
-      4. Emits one ``geomTransf`` line per distinct ``vecxz``.
-      5. Returns a per-element override map so the element fan-out can
-         install element-specific resolvers for elements whose transform
-         vecxz is not the spec's "own" tag.
+      4. Records one line per distinct ``vecxz`` and a per-element
+         override map, so the element fan-out can install
+         element-specific resolvers for elements whose transform vecxz
+         is not the spec's "own" tag.
 
-    Returns
-    -------
-    dict[(id(transf_spec), element_id), int]
-        Per-element override tags. Elements not in the dict use the
-        spec's own resolver lookup (which yields the spec's own tag).
+    A transform with no orientation records ``None``: its single line
+    is the spec's own, written by :func:`emit_transform_specs`.
     """
     # Pre-bin elements by transform spec.
     elems_by_transf: dict[int, list[Element]] = {}
@@ -3296,42 +3303,13 @@ def emit_transform_specs(
             continue
         elems_by_transf.setdefault(id(t), []).append(ele)
 
+    specs: "list[tuple[GeomTransf, tuple[TransformLine, ...] | None]]" = []
     overrides: dict[tuple[int, int], int] = {}
 
     for transf in transforms:
         own_tag = spec_to_own_tag[id(transf)]
         if not is_orientation_transform(transf):
-            # No orientation fan-out. Either an explicit vecxz= (3D —
-            # one line, the spec's own _emit) or the bare 2D form
-            # (``geomTransf <Type> $tag`` with no vecxz vector, which
-            # is required in 2D and invalid in 3D). The primitive's
-            # _emit can't take this branch because it doesn't know ndm.
-            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
-            if bare_2d:
-                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
-                # ``geomTransf`` rejects any trailing args (and exits
-                # 0), while openseespy silently ignores them.  Only a
-                # vector along global Z matches what a 2-D model can
-                # mean (local z = global Z); anything else is a 3-D
-                # intent the 2-D transform cannot honor.
-                vecxz = getattr(transf, "vecxz", None)
-                if vecxz is not None and not _is_global_z(vecxz):
-                    raise BridgeError(
-                        f"geomTransf {type(transf).__name__}: "
-                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
-                        "2-D transforms take no vecxz (local z is always "
-                        "global Z); drop the vecxz= kwarg."
-                    )
-                emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
-                if replay_log is not None:
-                    replay_log.append(
-                        ("line", _TRANSF_TYPE_TOKEN[type(transf)],
-                         own_tag, ()),
-                    )
-            else:
-                transf._emit(emitter, own_tag)
-                if replay_log is not None:
-                    replay_log.append(("spec", transf, own_tag))
+            specs.append((transf, None))
             continue
 
         # Guard: orientation= is meaningless in OpenSees 2-D.  The
@@ -3373,12 +3351,12 @@ def emit_transform_specs(
 
         # orientation path: walk every element whose transf IS this
         # transform, compute per-element vecxz, dedupe.
-        type_token = _TRANSF_TYPE_TOKEN[type(transf)]
         elems = elems_by_transf.get(id(transf), [])
         if not elems:
             # No elements reference this transform — emit nothing. The
             # spec is effectively a dead declaration; the user can
             # find this with introspection.
+            specs.append((transf, ()))
             continue
 
         # Gather per-element vecxz, keyed by element id.
@@ -3401,6 +3379,7 @@ def emit_transform_specs(
         # Dedupe by quantized key. First-seen vecxz reuses the spec's
         # own tag; later distinct vecxz claim fresh transform tags.
         key_to_tag: dict[tuple[int, int, int], int] = {}
+        lines: list[TransformLine] = []
         for eid, vec in per_element_vecxz:
             k = _vecxz_key(vec)
             if k not in key_to_tag:
@@ -3409,15 +3388,115 @@ def emit_transform_specs(
                     key_to_tag[k] = own_tag
                 else:
                     key_to_tag[k] = tags.allocate("geomTransf")
-                emitter.geomTransf(type_token, key_to_tag[k], *vec)
-                if replay_log is not None:
-                    replay_log.append(("line", type_token, key_to_tag[k], vec))
+                lines.append((key_to_tag[k], vec))
 
             assigned = key_to_tag[k]
             if assigned != own_tag:
                 overrides[(id(transf), eid)] = assigned
+        specs.append((transf, tuple(lines)))
 
-    return overrides
+    return TransformFanout(specs=tuple(specs), overrides=overrides)
+
+
+def emit_transform_specs(
+    transforms: Iterable[GeomTransf],
+    elements: Iterable[Element],
+    emitter: "Emitter",
+    fem: "FEMData",
+    tags: TagAllocator,
+    spec_to_own_tag: dict[int, int],
+    ndm: int = 3,
+    replay_log: "list[tuple[Any, ...]] | None" = None,
+) -> dict[tuple[int, int], int]:
+    """Emit ``geomTransf`` lines for every transform spec.
+
+    The tags come from :func:`plan_transform_specs` (ADR 0114 D4,
+    amended). Handed the emit allocator of a bridge emit
+    (``TagPlan.emit_allocator()``), this reads the fan-out the build's
+    tag plan made, and refuses one made for other transforms. Handed a
+    plain :class:`TagAllocator` (a direct caller), it plans the fan-out
+    from that allocator through the same loop. Any other fork raises
+    :class:`TagLawError`. The plain-allocator path goes when the emit
+    signatures drop ``tags`` (K1-3d S6).
+
+    ``replay_log`` (ADR 0099 S7): when a stage-activated gated element
+    will bracket mid-deck, the staged path must be able to re-declare
+    these lines at bracket close — but the orientation fan-out ALLOCATES
+    per-vecxz tags, so a re-run cannot reproduce them.  A non-None log
+    captures one entry per emitted line, in emit order, for
+    :func:`replay_builder_scoped_declarations` to re-drive verbatim.
+
+    For non-orientation transforms (explicit ``vecxz=``), one line
+    per spec using the spec's own allocated tag — that's the path
+    :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
+    handle in their ``_emit``. When ``ndm == 2`` and such a transform
+    has neither ``vecxz`` nor ``orientation``, the bare 2-D form
+    ``geomTransf <Type> $tag`` is emitted here instead (the primitive
+    ``_emit`` requires a ``vecxz`` and doesn't know ``ndm``).
+
+    For orientation-bearing transforms, one ``geomTransf`` line per
+    distinct ``vecxz``, as :func:`plan_transform_specs` planned them.
+
+    Returns
+    -------
+    dict[(id(transf_spec), element_id), int]
+        Per-element override tags. Elements not in the dict use the
+        spec's own resolver lookup (which yields the spec's own tag).
+    """
+    from .tag_plan import plan_or_standalone
+
+    transforms = list(transforms)
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        fanout = plan_transform_specs(
+            transforms, elements, fem, tags, spec_to_own_tag, ndm=ndm,
+        )
+    else:
+        fanout = plan.transforms.fanout_for(transforms)
+
+    for transf, lines in fanout.specs:
+        own_tag = spec_to_own_tag[id(transf)]
+        if lines is None:
+            # No orientation fan-out. Either an explicit vecxz= (3D —
+            # one line, the spec's own _emit) or the bare 2D form
+            # (``geomTransf <Type> $tag`` with no vecxz vector, which
+            # is required in 2D and invalid in 3D). The primitive's
+            # _emit can't take this branch because it doesn't know ndm.
+            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
+            if bare_2d:
+                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
+                # ``geomTransf`` rejects any trailing args (and exits
+                # 0), while openseespy silently ignores them.  Only a
+                # vector along global Z matches what a 2-D model can
+                # mean (local z = global Z); anything else is a 3-D
+                # intent the 2-D transform cannot honor.
+                vecxz = getattr(transf, "vecxz", None)
+                if vecxz is not None and not _is_global_z(vecxz):
+                    raise BridgeError(
+                        f"geomTransf {type(transf).__name__}: "
+                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
+                        "2-D transforms take no vecxz (local z is always "
+                        "global Z); drop the vecxz= kwarg."
+                    )
+                emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
+                if replay_log is not None:
+                    replay_log.append(
+                        ("line", _TRANSF_TYPE_TOKEN[type(transf)],
+                         own_tag, ()),
+                    )
+            else:
+                transf._emit(emitter, own_tag)
+                if replay_log is not None:
+                    replay_log.append(("spec", transf, own_tag))
+            continue
+
+        type_token = _TRANSF_TYPE_TOKEN[type(transf)]
+        for tag, vec in lines:
+            emitter.geomTransf(type_token, tag, *vec)
+            if replay_log is not None:
+                replay_log.append(("line", type_token, tag, vec))
+
+    return fanout.overrides
 
 
 def _is_global_z(v: "tuple[float, float, float]") -> bool:

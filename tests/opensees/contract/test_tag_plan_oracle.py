@@ -102,7 +102,7 @@ NON_DERIVED_VERBS: frozenset[str] = frozenset({
 _MINT_SITES: dict[str, str] = {
     "allocate_element_tags": "elements",
     "emit_element_spec": "elements",
-    "emit_transform_specs": "transforms",
+    "plan_transform_specs": "transforms",
     "_emit_rayleigh": "regions",
     "_emit_damping_attach": "regions",
     "_emit_regions": "regions",
