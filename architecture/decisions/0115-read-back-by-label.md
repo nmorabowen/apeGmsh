@@ -1,7 +1,8 @@
 # ADR 0115 — Read-back by label and label-addressed records
 
-**Status:** Proposed (2026-10-04). Awaiting the maintainer's ratification
-on #1434; the open questions in §Open questions are decided there.
+**Status:** Accepted, pending the maintainer's merge (2026-10-05; ratified by
+the maintainer on #1434, comment 5987895202, with every recommendation
+in §Questions decided at ratification)
 
 **Owner:** nmora
 
@@ -78,11 +79,13 @@ After a live `analyze`, the bridge keeps a read session: the frozen
 ### D3. History read: `ops.results(path)` returns a `Results`
 
 The deck and staged routes cannot answer in-process. `ops.results(path)`
-returns the existing `Results` after a `py`/`tcl(run=True)` run:
+returns the existing `Results` after a `py`/`tcl(run=True)` run. `path=` is
+required (Q5; ADR 0112 D1). The live route of `ops.results` is deferred (Q4):
 
 - an `MPCO` recorder → `Results.from_mpco`;
 - a `recorder.declare(...)` → `Results.from_recorders`;
-- typed `recorder.Node` text recorders → see Q3;
+- typed `recorder.Node` text recorders → a recorder spec synthesised from
+  the typed records, read by `Results.from_recorders` (Q3);
 - otherwise `BridgeError` naming `recorder.MPCO`, `recorder.declare` and
   `np.loadtxt`.
 
@@ -114,7 +117,8 @@ keeps working.
 ### D6. Identical homogeneous fixes merge within a tier
 
 Within one tier (the global pool, or one stage), homogeneous fixes form a
-set of `(node, DOF)` pairs. The first declaration emits a pair; a later
+set of `(node, DOF)` pairs, whether they come from `fix`, `s.fix`,
+`Node`/`NodeSet.fix` or `fix_from_model` (Q1). The first declaration emits a pair; a later
 one emits only its remaining DOFs on that node, or nothing. A homogeneous
 SP is idempotent at zero, so nothing is lost. The duplicate validator
 runs on every build, staged or not. These still raise:
@@ -122,7 +126,6 @@ runs on every build, staged or not. These still raise:
 - a cross-tier overlap without `s.remove_sp` (the lifecycles differ);
 - a `fix` against an `s.support` HOLD (ADR 0052);
 - any `mass` overlap without `overwrite=True` (`setMass` is not idempotent);
-- `fix_from_model` against an explicit `fix`, pending Q1.
 
 ## Invariants
 
@@ -168,9 +171,9 @@ across tiers; `label=` on loads, `sp`, supports or regions (Q6); a label
 falling back to a PG; unit conversion; staged live execution (K24); new
 return values for `analyze` or `py` (R3).
 
-## Open questions (decided at ratification)
+## Questions decided at ratification
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
 | Q1 | Merge `fix_from_model` with an explicit homogeneous `fix` on the same DOF? | Yes: the physics is the same |
 | Q2 | Naming: `nodes.one` (vs `only`); `ops.elements` beside the `ops.element` primitives | `one`; `ops.elements`, mirroring `ops.nodes` |
