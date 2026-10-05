@@ -96,8 +96,10 @@ export interface DeclSource {
   file: string;
   line: number;
   function: string;
-  /** the file's sha256 when it was captured */
+  /** the file's sha256 when it was captured; "" when the writer had none to take */
   sha256: string;
+  /** the source can be opened; false for a pseudo-file, or a path with no digest that is not on disk ("source not recorded") */
+  recorded: boolean;
   /** the outermost script line, when the call came through a helper; null when there is none */
   script: { file: string; line: number } | null;
 }
@@ -256,6 +258,8 @@ export interface State {
   geometry: GeometryInfo | null;
   /** the model file's /provenance records in capture order; [] when it has none (selectors.sourcesOf lists them) */
   provenance: ProvenanceEntry[];
+  /** the records carry `records/origin` (1.1.0 on); false when they do not, so none is marked synthesised */
+  provenanceOrigin: boolean;
   /**
    * go-to-source: the latest request (the effects act on a new `seq`) and the
    * latest answer. `seq` counts requests for the whole session and is never
@@ -280,6 +284,8 @@ export interface ModelLoad {
   mesh: MeshInfo;
   /** the /provenance records, in capture order; [] when the file has none or the zone was not read */
   provenance: ProvenanceEntry[];
+  /** the zone carries `records/origin` (false with no zone) */
+  provenanceOrigin: boolean;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */

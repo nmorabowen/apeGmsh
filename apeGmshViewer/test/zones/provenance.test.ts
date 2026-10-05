@@ -9,14 +9,21 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { readProvenance, sourceOf, type SourceSite } from "../../src/reader/provenance.ts";
+import { openProvenance } from "../../src/main/zones.ts";
+import type { ModelFile } from "../../src/model/types.ts";
+import { openModel } from "../../src/reader/node.ts";
+import { isRecorded, readProvenance, sourceOf, type ProvenanceZone, type SourceSite } from "../../src/reader/provenance.ts";
 import { SchemaError, type H5Module } from "../../src/reader/read.ts";
+import { BlobStore } from "../../src/state/blobs.ts";
+import { loadModel } from "../../src/state/load.ts";
+import { initialState, reduce } from "../../src/state/reduce.ts";
+import { sourceFor, sourcesOf } from "../../src/state/selectors.ts";
 import { tree, writeTree, type Tree } from "./tree.ts";
 
 await h5wasm.ready;
@@ -26,6 +33,7 @@ const fixtures = join(here, "..", "..", "fixtures");
 const repo = join(here, "..", "..", "..");
 const tmp = mkdtempSync(join(tmpdir(), "agv-provenance-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
+const zonesModel: ModelFile = await openModel(join(fixtures, "zones.h5"));
 
 const script = join(repo, "examples", "shoebuckle_arch.py");
 const scriptLines = readFileSync(script, "utf8").split(/\r?\n/);
@@ -146,6 +154,114 @@ test("columns of different lengths are refused", refuse((t) => (rec(t)["seq"] = 
 test("a 0 line is refused", refuse((t) => ((t.provenance!["sites"] as Tree)["line"] = new Int32Array([0, 40])), /sites\/line\[0\] = 0; lines are 1-based/));
 test("an unknown file kind is refused", refuse((t) => ((t.provenance!["files"] as Tree)["kind"] = ["notebook"]), /files\/kind\[0\] = "notebook"/));
 test("a malformed sha256 is refused", refuse((t) => ((t.provenance!["files"] as Tree)["sha256"] = ["xyz"]), /sha256\[0\] is not a hex sha256/));
+
+// --- sha256 "" (#1435 item 1; orchestrator ruling on #1444) -----------------
+// h5-schema.md, "Files": sha256 is "" for a pseudo-file (`<string>`, `<stdin>`,
+// a notebook cell) and for a source the writer could not read (`_file_row`'s
+// `except OSError`), so "" is valid for any path. Such a source opens only
+// when main finds its path on disk; otherwise go-to-source is off with
+// "source not recorded". Only a non-empty non-hex value is malformed.
+
+const files = (t: Tree) => t.provenance!["files"] as Tree;
+const oneFile = (path: string, sha: string) => (t: Tree) => {
+  files(t)["path"] = [path];
+  files(t)["sha256"] = [sha];
+};
+/** A /provenance zone as main answers it (with `present` filled from the disk). */
+const viaMain = async (path: string): Promise<ProvenanceZone> => {
+  const answer = await openProvenance(path);
+  assert.ok(answer.ok, JSON.stringify(answer).slice(0, 300));
+  return (answer as { zone: ProvenanceZone }).zone;
+};
+const stateWith = (zone: ProvenanceZone) =>
+  reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(zonesModel, new BlobStore(), zone) });
+
+for (const pseudo of ["<string>", "<stdin>", "<ipython-input-3-9f2c41ab>"]) {
+  test(`a pseudo-file ${pseudo} with an empty sha256 opens, keeps its name, and is not recorded`, async () => {
+    const p = await viaMain(write(oneFile(pseudo, "")));
+    assert.deepEqual(p.files.sha256, [""]);
+    const s = site(sourceOf(p, "opensees/section/Cols"));
+    assert.equal(s.file, pseudo, "never joined to @base_dir");
+    assert.equal(s.recorded, false);
+    assert.deepEqual(sourceFor(stateWith(p), "opensees/section/Cols"), { ok: false, reason: `source not recorded (${pseudo})` });
+  });
+}
+
+// (a) ipykernel 7 names a cell <tmp>/ipykernel_<pid>/<hash>.py and never
+// writes it, so the writer records that absolute path with no digest.
+const IPYKERNEL_CELL = "C:/Users/someone/AppData/Local/Temp/ipykernel_4242/2093384912.py";
+test("(a) an ipykernel-style temp path with an empty sha256 opens; its go-to-source is off: source not recorded", async () => {
+  const path = write(oneFile(IPYKERNEL_CELL, ""));
+  assert.equal(readProvenance(h5, path)!.files.sha256[0], "", "the reader takes it");
+  const p = await viaMain(path);
+  assert.deepEqual(p.present, [false]);
+  const s = site(sourceOf(p, "opensees/section/Cols"));
+  assert.equal(s.file, IPYKERNEL_CELL);
+  assert.equal(s.recorded, false);
+  const state = stateWith(p);
+  const reason = `source not recorded (${IPYKERNEL_CELL})`;
+  assert.deepEqual(sourceFor(state, "opensees/section/Cols"), { ok: false, reason });
+  const row = sourcesOf(state).find((r) => r.key === "opensees/section/Cols")!;
+  assert.equal(row.label, null, "the button is disabled");
+  assert.equal(row.off, reason, "and the row says why");
+  // The model itself loads with no malformed warning.
+  assert.deepEqual(state.artifacts.model!.zones["provenance"], { status: "ready", version: "1.0.0" });
+});
+
+test("an empty sha256 whose path is on disk still opens (no edit check: no digest to compare)", async () => {
+  const cell = join(tmp, "cell.py");
+  writeFileSync(cell, "x = 1\n");
+  const posix = cell.replace(/\\/g, "/");
+  const p = await viaMain(write(oneFile(posix, "")));
+  assert.deepEqual(p.present, [true]);
+  const w = sourceFor(stateWith(p), "opensees/section/Cols");
+  assert.ok(w.ok, JSON.stringify(w));
+  assert.equal(w.source.file, posix);
+  assert.equal(w.source.sha256, "");
+  // Read without main, the disk is unknown: not recorded, never guessed.
+  assert.equal(site(sourceOf(readProvenance(h5, write(oneFile(posix, "")))!, "opensees/section/Cols")).recorded, false);
+});
+
+// (b) Only a non-empty value that is not 64 lower-case hex digits is malformed.
+for (const [path, sha] of [["model.py", "xyz"], ["<string>", "xyz"], [IPYKERNEL_CELL, "a".repeat(63)], ["model.py", "A".repeat(64)]] as const) {
+  test(`(b) sha256 ${JSON.stringify(sha.length > 8 ? `${sha.slice(0, 4)}…(${sha.length})` : sha)} for ${path} is refused`, refuse(oneFile(path, sha), /^\/provenance\/files\/sha256\[0\] is not a hex sha256$/));
+}
+
+test("a mixed table: a hashed file, a pseudo-file and an unreadable file all open; only the hashed one is recorded", async () => {
+  const p = await viaMain(write((t) => {
+    files(t)["path"] = ["model.py", "<string>", "/opt/helpers/frames.py"];
+    files(t)["sha256"] = ["a".repeat(64), "", ""];
+    files(t)["kind"] = ["module", "script", "module"];
+  }));
+  assert.deepEqual(p.files.sha256, ["a".repeat(64), "", ""]);
+  assert.deepEqual([0, 1, 2].map((i) => isRecorded(p, i)), [true, false, false]);
+  assert.equal(site(sourceOf(p, "opensees/section/Cols")).file, "C:/runs/frame/model.py");
+});
+
+test("shoebuckle.h5, written by the writer from `python -c`, opens: <string> has no digest", async () => {
+  const path = join(fixtures, "shoebuckle.h5");
+  const p = readProvenance(h5, path)!;
+  assert.ok(p, "the regenerated fixture carries /provenance");
+  assert.equal(p.version, "1.1.0");
+  const at = p.files.path.indexOf("<string>");
+  assert.ok(at >= 0, "the -c command is the script, recorded as <string>");
+  assert.equal(p.files.sha256[at], "");
+  assert.equal(p.files.kind[at], "script");
+  // Every other file is real and hashed.
+  p.files.path.forEach((f, i) => {
+    if (i !== at) assert.match(p.files.sha256[i]!, /^[0-9a-f]{64}$/, f);
+  });
+  // A record's script frame is the `-c` line, kept as <string>.
+  const withScript = p.records.path.find((_, i) => p.records.script[i]! >= 0 && p.sites.file[p.records.script[i]!] === at)!;
+  const r = sourceOf(p, withScript) as { script: SourceSite; site: SourceSite };
+  assert.equal(r.script.file, "<string>");
+  assert.equal(r.script.recorded, false, "a pseudo-file never opens");
+  assert.match(r.site.file, /\/examples\/shoebuckle_arch\.py$/);
+  assert.equal(r.site.recorded, true, "a hashed file opens");
+  // The main process answers it as read, not as malformed.
+  const answer = await openProvenance(path);
+  assert.equal(answer.ok, true, JSON.stringify(answer).slice(0, 300));
+});
 // Strict where h5-schema.md implies an invariant (Fable on #1316):
 test("a backslash path is refused (paths are POSIX)", refuse((t) => ((t.provenance!["files"] as Tree)["path"] = ["sub\\model.py"]), /files\/path\[0\] = "sub\\\\model\.py" has a backslash; paths are POSIX/));
 test("a backslash base_dir is refused", refuse((t) => (t.provenance!.attrs!["base_dir"] = "C:\\runs\\frame"), /@base_dir = .* has a backslash/));
@@ -201,6 +317,8 @@ test("an origin column of another length is refused", refuse((t) => {
 test("a 1.0.0 file that carries the column is read as written", () => {
   const p = readProvenance(h5, write((t) => (rec(t)["origin"] = ["synthesised", "user"])))!;
   assert.deepEqual(p.records.origin, ["synthesised", "user"]);
+  assert.equal(p.originColumn, true);
+  assert.equal(readProvenance(h5, write(() => {}))!.originColumn, false);
 });
 
 // The fixture main's own writer produced (fixtures/README.md, "bridge_provenance.h5").

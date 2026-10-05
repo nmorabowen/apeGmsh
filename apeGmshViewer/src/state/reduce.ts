@@ -25,6 +25,7 @@ export const initialState: State = {
   overrides: {},
   geometry: null,
   provenance: [],
+  provenanceOrigin: false,
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
 };
@@ -96,7 +97,7 @@ export function reduce(s: State, e: Event): State {
       if (e.artifact === "geometry") {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
-      const { decls, names, blocks, mesh, provenance } = e.load;
+      const { decls, names, blocks, mesh, provenance, provenanceOrigin } = e.load;
       // A model read for the first time opens on the mesh. A re-read of the
       // same file (D1 rewrites it every run) keeps the phase shown only while
       // that phase is still on the axis: a re-read model with a new
@@ -113,6 +114,7 @@ export function reduce(s: State, e: Event): State {
         blocks,
         mesh,
         provenance,
+        provenanceOrigin,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },

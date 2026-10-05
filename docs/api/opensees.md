@@ -74,6 +74,8 @@ SSI helpers, cuts and sweeps), see the in-repo
 ## Public surface
 
 ::: apeGmsh.opensees.apeSees
+    options:
+      inherited_members: true
 
 ## Staged analysis
 

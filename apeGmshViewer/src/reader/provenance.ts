@@ -6,11 +6,23 @@
 // geometry.ts: a broken table, an index out of range, an unknown `kind` or
 // `origin`, or a duplicate declaration path raises, naming its HDF5 path.
 //
+// `files/sha256` is 64 hex digits, or "" for any path (h5-schema.md, "Files"):
+// a pseudo-file source (`<string>` from `python -c`, `<stdin>`, an old IPython
+// `<ipython-input-…>` cell), or a source the writer could not read, such as a
+// Jupyter cell's never-written `<tmp>/ipykernel_<pid>/<hash>.py`. A non-empty
+// value that is not 64 hex digits is refused. A pseudo-file keeps its `<...>`
+// name and is never joined to `@base_dir` (the writer's `_file_row` and
+// `_absolute`). A frame in a file with no digest has its source "not
+// recorded" unless main finds the path on disk (`present`, below).
+//
 // 1.1.0 (#1378) added `records/origin`: `user` for a declaration the user
 // made, `synthesised` for an object apeGmsh created inside a verb the user
-// called (keys `<verb>:<owner>[/<role>]`). From 1.1.0 the column is required;
-// a file below it reads with every record as `user`, as the Python reader does
-// (`_femdata_h5_io._read_provenance`, `schema_version.PROVENANCE_ORIGIN_FROM`).
+// called (keys `<verb>:<owner>[/<role>]`). From 1.1.0 the column is required,
+// and a file below it reads with every record as `user`: these two rules are
+// the Python reader's (`_femdata_h5_io._read_provenance`,
+// `schema_version.PROVENANCE_ORIGIN_FROM`). Refusing an unknown `origin`
+// value is the app's own, stricter rule: the Python reader passes any string
+// through (`decode_columns`).
 //
 // Browser-safe: no Node import.
 
@@ -34,8 +46,23 @@ export interface ProvenanceZone {
   files: { path: string[]; sha256: string[]; kind: ("script" | "module")[] };
   sites: { file: Int32Array; line: Int32Array; function: string[] };
   records: { path: string[]; site: Int32Array; script: Int32Array; seq: Int32Array; origin: Origin[] };
+  /** the file carries `records/origin`; false only below 1.1.0, where every origin reads as `user` */
+  originColumn: boolean;
+  /**
+   * Per `files` row: whether its absolute path is a file on disk, which only
+   * main can tell (`main/zones.ts` fills it); `null` here, where it is unknown.
+   * It matters for a row with no digest: its source opens only when present.
+   */
+  present: (boolean | null)[];
   warnings: string[];
 }
+
+/**
+ * A pseudo-file source, `<string>`, `<stdin>`, `<ipython-input-…>`: no file on
+ * disk, so no digest and no `@base_dir` join. The leading `<` is the writer's
+ * own test (`_file_row`, `_absolute`).
+ */
+export const isPseudoFile = (p: string): boolean => p.startsWith("<");
 
 /** Read `/provenance` from an open file; `null` when the file has no such zone. */
 export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | null {
@@ -65,7 +92,8 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   };
   const nFiles = sameLength(fg.path, files);
   files.sha256.forEach((h, i) => {
-    if (!/^[0-9a-f]{64}$/.test(h)) throw new SchemaError(`${fg.path}/sha256[${i}] is not a hex sha256`);
+    // "" is no digest: a pseudo-file, or a source the writer could not read.
+    if (h !== "" && !/^[0-9a-f]{64}$/.test(h)) throw new SchemaError(`${fg.path}/sha256[${i}] is not a hex sha256`);
   });
   // The spec stores paths POSIX: a backslash is a writer fault, refused rather
   // than guessed at (on POSIX it is a legal file-name character).
@@ -96,7 +124,8 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   if (atLeast(version, PROVENANCE_ORIGIN_FROM) && !has(rg, "origin")) {
     throw new SchemaError(`${rg.path}/origin is missing (required from provenance_schema_version ${major}.${minor}.${patch}; this file is ${version})`);
   }
-  const rawOrigin = has(rg, "origin") ? strs(dataset(h5, rg, "origin")) : path.map(() => "user");
+  const originColumn = has(rg, "origin");
+  const rawOrigin = originColumn ? strs(dataset(h5, rg, "origin")) : path.map(() => "user");
   const records = {
     path,
     site: int32s(dataset(h5, rg, "site")),
@@ -127,7 +156,7 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
     }
     if (records.seq[i]! < 0) throw new SchemaError(`${rg.path}/seq[${i}] = ${records.seq[i]}; expected >= 0`);
   }
-  return { version, baseDir, files, sites, records, warnings };
+  return { version, baseDir, files, sites, records, originColumn, present: files.path.map(() => null), warnings };
 }
 
 /** `version` ("X.Y.Z", already checked by zoneVersion) is at or above `v`. */
@@ -148,13 +177,19 @@ export function readProvenance(h5: H5Module, path: string): ProvenanceZone | nul
 
 /** One source location, ready for `goToSource(file, line)`. */
 export interface SourceSite {
-  /** Absolute path (POSIX separators; Windows accepts them). */
+  /** Absolute path (POSIX separators; Windows accepts them), or a pseudo-file's `<...>` name. */
   file: string;
   line: number;
   function: string;
-  /** The file's sha256 when it was captured: compare to detect an edit. */
+  /** The file's sha256 when it was captured: compare to detect an edit; "" when the writer had none to take. */
   sha256: string;
   kind: "script" | "module";
+  /**
+   * The source can be opened: the file has a digest, or main found its path on
+   * disk. False for a pseudo-file, and for a path with no digest that is
+   * missing or not yet checked: its go-to-source says "source not recorded".
+   */
+  recorded: boolean;
 }
 
 export type SourceOf =
@@ -162,6 +197,18 @@ export type SourceOf =
   | { ok: false; reason: string };
 
 const isAbsolutePosix = (p: string) => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+
+/** The path of `files` row `fi` as go-to-source opens it: absolute, or a pseudo-file's `<...>` name. */
+export function filePath(zone: Pick<ProvenanceZone, "baseDir" | "files">, fi: number): string {
+  const rel = zone.files.path[fi]!;
+  return isAbsolutePosix(rel) || isPseudoFile(rel) ? rel : `${zone.baseDir.replace(/\/+$/, "")}/${rel}`;
+}
+
+/** Whether `files` row `fi` can be opened (see SourceSite.recorded). */
+export function isRecorded(zone: Pick<ProvenanceZone, "files" | "present">, fi: number): boolean {
+  if (isPseudoFile(zone.files.path[fi]!)) return false;
+  return zone.files.sha256[fi] !== "" || zone.present[fi] === true;
+}
 
 /**
  * Where the declaration at `declPath` (`<zone>/<family>/<name|#k>`) was
@@ -175,13 +222,13 @@ export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
   const at = (row: number): SourceSite | null => {
     if (row === -1) return null;
     const fi = zone.sites.file[row]!;
-    const rel = zone.files.path[fi]!;
     return {
-      file: isAbsolutePosix(rel) ? rel : `${zone.baseDir.replace(/\/+$/, "")}/${rel}`,
+      file: filePath(zone, fi),
       line: zone.sites.line[row]!,
       function: zone.sites.function[row]!,
       sha256: zone.files.sha256[fi]!,
       kind: zone.files.kind[fi]!,
+      recorded: isRecorded(zone, fi),
     };
   };
   const site = at(zone.records.site[i]!);

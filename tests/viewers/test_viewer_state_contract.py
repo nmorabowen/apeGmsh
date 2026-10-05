@@ -233,6 +233,21 @@ _FORBIDDEN_IMPORT_ROOTS = frozenset({
 })
 
 
+def _unit_of(rel: str) -> str:
+    """Budget key for a viewers/-relative path.
+
+    A guarded hub (``results_viewer.py``) may be split into a package
+    (``results_viewer/``): every file of that package then counts
+    against the hub's one budget, so a split can neither dodge the
+    guard nor orphan the budget entry.
+    """
+    for f in _GUARDED_FILES:
+        stem = f[: -len(".py")]
+        if rel == f or rel.startswith(stem + "/"):
+            return f
+    return rel
+
+
 def _guarded_files() -> list[Path]:
     files: list[Path] = []
     for d in _GUARDED_DIRS:
@@ -241,8 +256,19 @@ def _guarded_files() -> list[Path]:
         )
     for f in _GUARDED_FILES:
         p = VIEWERS_DIR / f
+        pkg = VIEWERS_DIR / f[: -len(".py")]
+        found = []
         if p.is_file():
-            files.append(p)
+            found.append(p)
+        if pkg.is_dir():
+            found.extend(q for q in pkg.rglob("*.py") if q.is_file())
+        # A guarded hub that resolves to nothing must fail, never be
+        # skipped: the guard would pass over zero files.
+        assert found, (
+            f"guarded hub {f!r} is neither a module nor a package under "
+            f"{VIEWERS_DIR}; update _GUARDED_FILES (ADR 0056)."
+        )
+        files.extend(found)
     return sorted(files)
 
 
@@ -294,24 +320,38 @@ def _check(
     assert files, f"No guarded source files found — {guard} path is wrong."
 
     failures: list[str] = []
+    per_unit: dict[str, list[tuple[str, int, str]]] = {}
+    units: set[str] = set()
     for path in files:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        hits = collect(tree)
         rel = path.relative_to(VIEWERS_DIR).as_posix()
-        budget = allow.get(rel, 0)
+        units.add(_unit_of(rel))
+        per_unit.setdefault(_unit_of(rel), []).extend(
+            (rel, ln, what) for ln, what in collect(tree)
+        )
+    # An allowlist key that matches no scanned unit is a waiver for a
+    # file that moved or died: fail loudly instead of ignoring it.
+    for key in sorted(set(allow) - units):
+        failures.append(
+            f"  {key}: allowlist entry matches no guarded file or package "
+            f"(moved or deleted?) - re-key or delete it."
+        )
+    for unit in sorted(units):
+        hits = per_unit.get(unit, [])
+        budget = allow.get(unit, 0)
         if len(hits) > budget:
-            detail = ", ".join(f"line {ln}: {what}" for ln, what in hits)
+            detail = ", ".join(f"{r} line {ln}: {what}" for r, ln, what in hits)
             failures.append(
-                f"  {rel}: {len(hits)} violation(s) (allowlisted: {budget})"
-                f" — {detail}"
+                f"  {unit}: {len(hits)} violation(s) (allowlisted: {budget})"
+                f" - {detail}"
             )
         elif len(hits) < budget:
             # A budget whose file dropped to ZERO hits is stale too (it
             # used to pass silently under ``elif hits and ...``; #1170
             # review): delete the entry rather than keep a dead waiver.
             failures.append(
-                f"  {rel}: allowlist says {budget} but only {len(hits)} "
-                f"remain — ratchet the {guard} allowlist down (ADR 0056)."
+                f"  {unit}: allowlist says {budget} but only {len(hits)} "
+                f"remain - ratchet the {guard} allowlist down (ADR 0056)."
             )
     if failures:
         raise AssertionError(
@@ -326,7 +366,8 @@ def test_guarded_scope_exists() -> None:
         f"ui/ not found under {VIEWERS_DIR}; update the path constants "
         "if the package moved."
     )
-    assert (VIEWERS_DIR / "mesh_viewer.py").is_file()
+    # Resolves every guarded hub (module or package); raises if one is gone.
+    assert _guarded_files()
 
 
 def test_g_render_no_direct_renders() -> None:
@@ -434,10 +475,19 @@ def foreign_actor_reads_under(viewers_dir: Path) -> list[str]:
 
 
 def test_g_actors_scope_covers_the_pump_homes() -> None:
-    # If the scan ever stops seeing the files the two incidents lived in
-    # (and the module the pumps moved to), it would pass vacuously.
-    scanned = {p.relative_to(VIEWERS_DIR).as_posix() for p in VIEWERS_DIR.rglob("*.py")}
-    assert {"results_viewer.py", "_pump_set.py", "diagrams/_base.py"} <= scanned
+    # If the scan ever stops seeing the code the two incidents lived in
+    # (and the module the pumps moved to), it would pass vacuously. The
+    # targets are keyed by symbol, so a hub split that moves them keeps
+    # them in scope and one that deletes them fails here.
+    wanted = {"ResultsViewer", "PumpSet", "Diagram"}
+    defined: set[str] = set()
+    for path in VIEWERS_DIR.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        defined |= {
+            n.name for n in tree.body
+            if isinstance(n, ast.ClassDef) and n.name in wanted
+        }
+    assert wanted <= defined, f"G-ACTORS scope lost: {wanted - defined}"
 
 
 def test_g_actors_no_foreign_diagram_actor_reads() -> None:
@@ -527,9 +577,44 @@ def test_ratchet_fails_on_a_budget_with_zero_hits(tmp_path, monkeypatch) -> None
     (tmp_path / "ui").mkdir()
     (tmp_path / "ui" / "clean.py").write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setitem(globals(), "VIEWERS_DIR", tmp_path)
+    monkeypatch.setitem(globals(), "_GUARDED_FILES", ())
     try:
         _check("G-TEST", {"ui/clean.py": 1}, lambda tree: [])
     except AssertionError as exc:
         assert "ratchet the G-TEST allowlist down" in str(exc)
     else:
         raise AssertionError("a budget of 1 over 0 hits passed the ratchet")
+
+
+def test_split_hub_shares_one_budget_and_dead_key_fails(tmp_path, monkeypatch) -> None:
+    # C3.1: a guarded hub split into a package keeps one budget over the
+    # whole package, and an allowlist key that matches nothing fails.
+    (tmp_path / "ui").mkdir()
+    pkg = tmp_path / "hub"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (pkg / "b.py").write_text("y = 1\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "VIEWERS_DIR", tmp_path)
+    monkeypatch.setitem(globals(), "_GUARDED_FILES", ("hub.py",))
+
+    def hit(tree):
+        return [(1, "h")]  # one hit per file -> 2 for the package
+
+    _check("G-TEST", {"hub.py": 2}, hit)  # package-wide budget holds
+    for allow, needle in (
+        ({"hub.py": 1}, "2 violation(s)"),
+        ({"hub.py": 2, "gone.py": 1}, "matches no guarded file"),
+    ):
+        try:
+            _check("G-TEST", allow, hit)
+        except AssertionError as exc:
+            assert needle in str(exc)
+        else:
+            raise AssertionError(f"{allow} passed")
+    monkeypatch.setitem(globals(), "_GUARDED_FILES", ("missing.py",))
+    try:
+        _guarded_files()
+    except AssertionError as exc:
+        assert "neither a module nor a package" in str(exc)
+    else:
+        raise AssertionError("a missing guarded hub was skipped")

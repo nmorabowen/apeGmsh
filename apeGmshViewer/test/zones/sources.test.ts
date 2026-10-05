@@ -139,11 +139,34 @@ test("AC1/AC2: the inspector and Sources share one rail, stacked, and the rail l
   assert.match(rule("#inspector:not([hidden]) + #sources"), /max-height: 40%/);
 });
 
+/** `zone` with its records stored in reverse: the file order no longer follows `seq`. */
+function reversedRecords(zone: ProvenanceZone): ProvenanceZone {
+  const r = zone.records;
+  const rev = <T>(a: ArrayLike<T>): T[] => Array.from(a).reverse();
+  return {
+    ...zone,
+    records: {
+      path: rev(r.path),
+      site: Int32Array.from(rev(r.site)),
+      script: Int32Array.from(rev(r.script)),
+      seq: Int32Array.from(rev(r.seq)),
+      origin: rev(r.origin),
+    },
+  };
+}
+
 test("AC3: rows in ascending seq; the header counts the records and the synthesised ones", () => {
-  const s = loaded(bridgeModel, bridgeZone);
+  // The rows must come out in seq order even when the file stores them in
+  // another order (#1435 item 2: in-order input kept this green without the sort).
+  const zone = reversedRecords(bridgeZone);
+  const stored = Array.from(zone.records.seq);
+  assert.ok(stored[0]! > stored.at(-1)!, "the fabricated table is out of seq order");
+  const s = loaded(bridgeModel, zone);
   const rows = sourcesOf(s);
-  const seqs = rows.map((r) => s.provenance.find((p) => p.key === r.key)!.seq);
-  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  const seqs = rows.map((r) => zone.records.seq[zone.records.path.indexOf(r.key)]!);
+  assert.deepEqual(seqs, [...stored].sort((a, b) => a - b));
+  assert.deepEqual(rows.map((r) => r.key), [...bridgeZone.records.path].sort((a, b) =>
+    bridgeZone.records.seq[bridgeZone.records.path.indexOf(a)]! - bridgeZone.records.seq[bridgeZone.records.path.indexOf(b)]!));
   const header = sourcesHeaderOf(s)!;
   assert.equal(header.count, bridgeZone.records.path.length);
   assert.equal(header.synthesised, bridgeZone.records.origin.filter((o) => o === "synthesised").length);
@@ -165,7 +188,7 @@ test("AC5: a #k collision row has no jump and states its reason", () => {
   // two #k numberings differ, so the row must not jump.
   const clash = Object.keys(s0.decls).find((p) => /^opensees\/geomTransf\/#/.test(p))!;
   assert.ok(clash);
-  const s = { ...s0, provenance: [...s0.provenance, { key: clash, origin: "user" as const, seq: 99, source: { file: "/x/m.py", line: 3, function: "f", sha256: "", script: null } }] };
+  const s = { ...s0, provenance: [...s0.provenance, { key: clash, origin: "user" as const, seq: 99, source: { file: "/x/m.py", line: 3, function: "f", sha256: "a".repeat(64), recorded: true, script: null } }] };
   const row = sourcesOf(s).find((r) => r.key === clash)!;
   assert.equal(row.label, null);
   assert.match(row.off!, /unnamed declaration is not joined/);
@@ -195,9 +218,29 @@ test("AC7: no /provenance hides the panel; a 1.0.x file shows the notice and no 
   assert.equal(sourcesHeaderOf(plain), null);
   const old = loaded(zonesModel, zonesZone);
   const header = sourcesHeaderOf(old)!;
-  assert.equal(header.notice, "provenance 1.0: synthesised records are not marked");
+  assert.equal(header.notice, "provenance 1.0: synthesised records are not marked (origin is recorded from 1.1)");
   assert.equal(header.synthesised, 0);
   assert.equal(sourcesOf(old).filter((r) => r.origin === "synthesised").length, 0);
+});
+
+test("#1435 item 4: the notice follows the origin column, not the version", () => {
+  // A 1.0.x file that carries the column is read as written (the Python
+  // reader's rule): its synthesised rows are marked, so no notice may say
+  // they are not.
+  assert.equal(zonesZone.originColumn, false);
+  const withColumn: ProvenanceZone = {
+    ...zonesZone,
+    originColumn: true,
+    records: { ...zonesZone.records, origin: zonesZone.records.origin.map((o, i) => (i === 0 ? "synthesised" : o)) },
+  };
+  const s = loaded(zonesModel, withColumn);
+  assert.deepEqual(s.artifacts.model!.zones["provenance"], { status: "ready", version: "1.0.0" });
+  const header = sourcesHeaderOf(s)!;
+  assert.equal(header.notice, null);
+  assert.equal(header.synthesised, 1);
+  // The 1.1.0 file carries it as well.
+  assert.equal(bridgeZone.originColumn, true);
+  assert.equal(sourcesHeaderOf(loaded(bridgeModel, bridgeZone))!.notice, null);
 });
 
 test("a model re-read replaces the listing; a failed read clears it", () => {

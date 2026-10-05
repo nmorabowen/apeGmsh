@@ -115,6 +115,7 @@ with apeGmsh(model_name="frame") as g:
 
 ::: apeGmsh.core.ConstraintsComposite.ConstraintsComposite
     options:
+      inherited_members: true
       members_order: source
       show_bases: false
       heading_level: 3

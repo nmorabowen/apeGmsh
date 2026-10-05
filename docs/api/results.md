@@ -86,6 +86,8 @@ sub-composite `.select()` (`gauss`/`fibers`/`layers`/`line_stations`/
 `springs`) is a tracked, not-yet-shipped follow-up.
 
 ::: apeGmsh.results.Results.Results
+    options:
+      inherited_members: true
 
 ## Slabs
 

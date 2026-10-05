@@ -106,7 +106,7 @@ test("a geometry opened with no model is drawn alone, as the only phase", () => 
 test("provenance joins named declarations; the inspector's source is the declaring line", () => {
   const s = withModel(initialState, model, provenance);
   const sec = s.decls["opensees/section/W_section"]!;
-  assert.deepEqual(sec.provenance, { file: SCRIPT, line: 293, function: "declare_model", sha256: provenance.files.sha256[0], script: { file: SCRIPT, line: 451 } });
+  assert.deepEqual(sec.provenance, { file: SCRIPT, line: 293, function: "declare_model", sha256: provenance.files.sha256[0], recorded: true, script: { file: SCRIPT, line: 451 } });
   assert.equal(s.decls["opensees/uniaxialMaterial/Steel"]!.provenance!.line, 285);
   const r = sourceFor(s, "opensees/section/W_section");
   assert.ok(r.ok);

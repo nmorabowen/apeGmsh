@@ -25,7 +25,7 @@ import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts"
 import { fitDistance, type Focus, highlightObjects, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
-/** Inspector width plus its margins (style.css #inspector). */
+/** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
 const INSPECTOR_PX = 470 + 28;
 
 export { SELECTION_COLOUR } from "./selection.ts";
@@ -206,7 +206,7 @@ export class Viewport {
     }
   }
 
-  /** Width kept clear for the inspector: the model is framed left of it. */
+  /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
     const w = this.host.clientWidth || 1;
     return w > 1000 ? INSPECTOR_PX : 0;

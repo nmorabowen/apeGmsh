@@ -5,6 +5,7 @@ import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
+import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Origin, Pick, State, ZoneStatus } from "./types.ts";
 
@@ -182,6 +183,17 @@ export function noticesOf(s: State): string[] {
 }
 
 /**
+ * The jump to a recorded source. A source with no digest (a pseudo-file, or a
+ * file the writer could not read) opens only when main found its path on
+ * disk; otherwise it is "source not recorded" and the button is off. There is
+ * no edit check: with no digest there is nothing to compare.
+ */
+function jumpOf(src: DeclSource): { ok: true; source: DeclSource; label: string } | { ok: false; reason: string } {
+  if (!src.recorded) return { ok: false, reason: `source not recorded (${src.file})` };
+  return { ok: true, source: src, label: `${baseName(src.file)}:${src.line}` };
+}
+
+/**
  * Where go-to-source would jump for `decl`, or why it cannot. An unnamed
  * object's path (`#k`) is never joined: the app numbers unnamed objects in
  * the reader's listing order and /provenance in declaration order, so one
@@ -195,9 +207,9 @@ export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSou
     const r = s.provenance.find((p) => p.key === decl);
     if (!r) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
     if (!r.source) return { ok: false, reason: `${decl} has no source frame in /provenance` };
-    return { ok: true, source: r.source, label: `${baseName(r.source.file)}:${r.source.line}` };
+    return jumpOf(r.source);
   }
-  if (d.provenance) return { ok: true, source: d.provenance, label: `${baseName(d.provenance.file)}:${d.provenance.line}` };
+  if (d.provenance) return jumpOf(d.provenance);
   const zone = s.artifacts.model?.zones["provenance"];
   if (!zone || zone.status === "absent") return { ok: false, reason: "the model file has no /provenance zone (written before apeGmsh recorded sources)" };
   if (zone.status === "refused") return { ok: false, reason: `the /provenance zone was refused: ${zone.reason}` };
@@ -267,23 +279,23 @@ export function sourcesOf(s: State): SourceRow[] {
   });
 }
 
-/** The first /provenance version that marks synthesised records (`records/origin`). */
-const ORIGIN_FROM_MINOR = 1;
-
 /**
  * The sources panel's header: the record count, how many are synthesised,
- * and a notice for a 1.0.x file, whose records carry no origin and so are
- * never marked (the app does not guess one from the key). `null` when there
- * is nothing to list: no model, no /provenance, or no record (the panel hides).
+ * and a notice when the records carry no `origin` column (a file below
+ * 1.1.0), so none is marked: the app does not guess one from the key. The
+ * notice follows the column, not the version: a 1.0.x file that carries the
+ * column is read as written and needs none. `null` when there is nothing to
+ * list: no model, no /provenance, or no record (the panel hides).
  */
 export function sourcesHeaderOf(s: State): { count: number; synthesised: number; notice: string | null } | null {
   if (s.provenance.length === 0) return null;
   const zone = s.artifacts.model?.zones["provenance"];
-  const v = zone?.status === "ready" ? /^(1)\.(\d+)\./.exec(zone.version) : null;
+  const version = zone?.status === "ready" ? zone.version.split(".").slice(0, 2).join(".") : "?";
+  const { major, minor } = PROVENANCE_ORIGIN_FROM;
   return {
     count: s.provenance.length,
     synthesised: s.provenance.filter((p) => p.origin === "synthesised").length,
-    notice: v !== null && Number(v[2]) < ORIGIN_FROM_MINOR ? `provenance ${v[1]}.${v[2]}: synthesised records are not marked` : null,
+    notice: s.provenanceOrigin ? null : `provenance ${version}: synthesised records are not marked (origin is recorded from ${major}.${minor})`,
   };
 }
 
