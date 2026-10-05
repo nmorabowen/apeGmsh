@@ -83,6 +83,7 @@ jobs:
             tests/test_skill_docs_drift.py \
             tests/studio/test_lookup.py \
             tests/test_nav.py \
+            tests/test_fork_token_ratchet.py \
             tests/opensees/contract/test_verbs_lock.py
 
       # A PR merged into a stacked base lands on a branch that is orphaned
@@ -247,6 +248,11 @@ jobs:
 
       - name: ruff (opensees package, hard gate)
         run: ruff check src/apeGmsh/opensees
+
+      # Undefined names are runtime NameErrors. #1422 cleared F821 to 0
+      # across src/apeGmsh; hold it on the hub packages.
+      - name: ruff F821 (hub packages, hard gate)
+        run: ruff check --select F821 src/apeGmsh/_kernel src/apeGmsh/core src/apeGmsh/mesh src/apeGmsh/results src/apeGmsh/viewers src/apeGmsh/opensees
 
       - name: mypy ratchet (opensees package)
         run: |
