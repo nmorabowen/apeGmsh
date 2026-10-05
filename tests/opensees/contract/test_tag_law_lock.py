@@ -7,10 +7,11 @@ design slice #1445. This lock holds the other side now. No module under
 ``opensees_model.py``, may:
 
 ``allocate``
-    call a minting method of ``TagAllocator`` (``allocate*``,
-    ``reserve_through``);
+    reference a minting method: ``TagAllocator``'s ``allocate*`` and
+    ``reserve_through``, or a recorder's ``materialize``, which allocates
+    the recorder's region tags (:data:`RECORDER_MINT_METHODS`);
 ``helper``
-    call a tag-minting helper of ``_internal/build.py``
+    reference a tag-minting helper of ``_internal/build.py``
     (:data:`MINTING_HELPERS`, derived from ``build.py`` and locked, so a
     new minting helper must join the list);
 ``counters``
@@ -22,6 +23,16 @@ Today's replay minting in ``compose.py`` (the step-8b reinforce ties and
 the initial-stress and absorbing parameter tags) is waived by name in
 ``tag_law_ledger.txt``. That ledger is shrink-only, each waiver is commented
 at its site, and each one is pinned by ``test_tag_law_replay_pins.py``.
+
+The ``allocate`` and ``helper`` rules flag every *reference* to a minting
+callable, not only a direct call, so a call through an assigned alias
+(``a = tags.allocate``; ``ec = emit_contacts``), an aliased import, or a
+callback argument is caught at the reference.
+
+Known gap: ``max_plus_one`` sees the expression ``max(...) + 1`` only. A
+tag computed through an intermediate name (``m = max(xs); m + 1``) is not
+caught. The ``counters`` rule still catches the usual way of seeding an
+allocator from such a value.
 
 The lock reads source with ``ast`` and imports nothing from apeGmsh.
 """
@@ -53,6 +64,11 @@ MINT_METHODS = frozenset({
 })
 NON_MINT_METHODS = frozenset({"__init__", "last", "tag_for", "reset"})
 
+#: Recorder methods that mint (``recorder.py``: ``materialize`` allocates
+#: the filter/energy region tags). Checked against ``recorder.py`` by
+#: :func:`test_recorder_mint_methods_are_derived`.
+RECORDER_MINT_METHODS = frozenset({"materialize"})
+
 #: Every module-level function of ``build.py`` that mints a tag, directly or
 #: through another one. Derived by :func:`derive_minting_helpers`; this
 #: literal is the lock on that list.
@@ -74,6 +90,7 @@ MINTING_HELPERS = frozenset({
     "emit_mp_constraints",
     "emit_mp_constraints_partitioned",
     "emit_rebar_elements",
+    "emit_recorder_spec",
     "emit_reinforce_ties",
     "emit_stage_interfaces",
     "emit_stage_mp_constraints",
@@ -96,10 +113,17 @@ def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def _is_mint_call(node: ast.Call) -> bool:
-    f = node.func
-    return isinstance(f, ast.Attribute) and (
-        f.attr in MINT_METHODS or f.attr.startswith("allocate"))
+def _is_allocator_mint_attr(node: ast.AST) -> bool:
+    """``x.allocate*`` / ``x.reserve_through``: a ``TagAllocator`` mint."""
+    return isinstance(node, ast.Attribute) and (
+        node.attr in MINT_METHODS or node.attr.startswith("allocate"))
+
+
+def _is_mint_attr(node: ast.AST) -> bool:
+    """An allocator mint, or a recorder's ``x.materialize``."""
+    return _is_allocator_mint_attr(node) or (
+        isinstance(node, ast.Attribute)
+        and node.attr in RECORDER_MINT_METHODS)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +144,7 @@ def derive_minting_helpers(tree: ast.Module) -> frozenset[str]:
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call):
                 continue
-            if _is_mint_call(node):
+            if _is_mint_attr(node.func):
                 minting.add(name)
             if isinstance(node.func, ast.Name) and node.func.id in funcs:
                 calls[name].add(node.func.id)
@@ -185,22 +209,20 @@ class _Scanner(ast.NodeVisitor):
                 self.aliases[alias.asname or alias.name] = alias.name
         self.generic_visit(node)
 
-    def visit_Call(self, node: ast.Call) -> None:
-        f = node.func
-        if _is_mint_call(node):
-            assert isinstance(f, ast.Attribute)
-            self._add("allocate", f.attr, node)
-        elif isinstance(f, ast.Name) and f.id in self.aliases:
-            self._add("helper", self.aliases[f.id], node)
-        elif isinstance(f, ast.Name) and f.id in self.helpers:
-            self._add("helper", f.id, node)
-        elif isinstance(f, ast.Attribute) and f.attr in self.helpers:
-            self._add("helper", f.attr, node)
-        self.generic_visit(node)
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            if node.id in self.aliases:
+                self._add("helper", self.aliases[node.id], node)
+            elif node.id in self.helpers:
+                self._add("helper", node.id, node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr == "_counters":
             self._add("counters", "_counters", node)
+        elif _is_mint_attr(node):
+            self._add("allocate", node.attr, node)
+        elif node.attr in self.helpers:
+            self._add("helper", node.attr, node)
         self.generic_visit(node)
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
@@ -294,6 +316,23 @@ def test_allocator_methods_are_classified() -> None:
     )
 
 
+def test_recorder_mint_methods_are_derived() -> None:
+    """Every ``recorder.py`` method that allocates is in RECORDER_MINT_METHODS."""
+    tree = _parse(_OPENSEES / "recorder.py")
+    minting = {
+        fn.name
+        for cls in tree.body if isinstance(cls, ast.ClassDef)
+        for fn in cls.body if isinstance(fn, ast.FunctionDef)
+        if any(
+            isinstance(n, ast.Call) and _is_allocator_mint_attr(n.func)
+            for n in ast.walk(fn))
+    }
+    assert minting, "recorder.py no longer allocates; revisit the lock"
+    assert minting <= RECORDER_MINT_METHODS, (
+        "recorder.py methods mint but are not locked: "
+        f"{sorted(minting - RECORDER_MINT_METHODS)}")
+
+
 def test_minting_helper_list_is_derived_from_build() -> None:
     derived = derive_minting_helpers(_parse(_BUILD))
     assert derived == MINTING_HELPERS, (
@@ -375,6 +414,18 @@ def test_each_waiver_is_pinned_by_a_test() -> None:
     ("from .build import emit_contacts as ec\n"
      "def f(e, fem, tags):\n    ec(e, fem, tags)\n",
      "helper", "emit_contacts"),
+    ("def f(spec, e, fem, tags):\n    spec.materialize(e, fem, tags)\n",
+     "allocate", "materialize"),
+    ("def f(spec, e, fem, tags):\n"
+     "    from .build import emit_recorder_spec\n"
+     "    emit_recorder_spec(spec, e, fem, tags)\n",
+     "helper", "emit_recorder_spec"),
+    ("def f(e, fem, tags):\n    ec = emit_contacts\n    ec(e, fem, tags)\n",
+     "helper", "emit_contacts"),
+    ("def f(tags):\n    a = tags.allocate\n    return a('element')\n",
+     "allocate", "allocate"),
+    ("def f(run, tags):\n    run(emit_contacts, tags)\n",
+     "helper", "emit_contacts"),
     ("def f(t):\n    t._counters['element'] = 4\n",
      "counters", "_counters"),
     ("def f(t):\n    t._counters.update({'element': 4})\n",
@@ -401,14 +452,19 @@ def test_clean_code_is_not_flagged() -> None:
     assert scan(ast.parse(snippet)) == []
 
 
-def test_planted_violation_in_a_locked_module_fails_the_lock() -> None:
-    """An unwaived helper call appended to ``compose.py`` is reported."""
+@pytest.mark.parametrize("body", [
+    "    from .build import emit_contacts\n"
+    "    emit_contacts(emitter, fem, tags)\n",
+    # Fable review of #1447: region minting through a recorder.
+    "    from .build import emit_recorder_spec\n"
+    "    emit_recorder_spec(spec, emitter, fem, tags)\n",
+    "    spec.materialize(emitter, fem, tags)\n",
+])
+def test_planted_violation_in_a_locked_module_fails_the_lock(body: str) -> None:
+    """An unwaived minting reference appended to ``compose.py`` is reported."""
     path = _OPENSEES / "_internal" / "compose.py"
     planted = path.read_text(encoding="utf-8") + (
-        "\n\ndef _planted(emitter, fem, tags):\n"
-        "    from .build import emit_contacts\n"
-        "    emit_contacts(emitter, fem, tags)\n"
-    )
+        "\n\ndef _planted(emitter, fem, tags, spec):\n" + body)
     _n, waivers = _read_ledger()
     extra, stale = _unwaived(
         _violations_by_module({path: ast.parse(planted)}), waivers)
