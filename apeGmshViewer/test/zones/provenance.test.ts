@@ -147,8 +147,85 @@ test("a backslash path is refused (paths are POSIX)", refuse((t) => ((t.provenan
 test("a backslash base_dir is refused", refuse((t) => (t.provenance!.attrs!["base_dir"] = "C:\\runs\\frame"), /@base_dir = .* has a backslash/));
 test("a duplicate seq is refused (one capture order per declaration)", refuse((t) => (rec(t)["seq"] = new Int32Array([3, 3])), /records\/seq has 3 twice/));
 test("a newer same-major minor opens with exactly one banner (ADR 0113 D7)", () => {
-  const p = readProvenance(h5, write((t) => (t.meta!.attrs!["provenance_schema_version"] = "1.3.0")))!;
+  const p = readProvenance(h5, write((t) => {
+    t.meta!.attrs!["provenance_schema_version"] = "1.3.0";
+    rec(t)["origin"] = ["user", "user"]; // required from 1.1.0
+  }))!;
   assert.equal(p.version, "1.3.0");
-  assert.deepEqual(p.warnings, ["provenance_schema_version 1.3.0 is newer than this app (1.0.x): the file opens, and what that apeGmsh added is not shown"]);
+  assert.deepEqual(p.warnings, ["provenance_schema_version 1.3.0 is newer than this app (1.1.x): the file opens, and what that apeGmsh added is not shown"]);
+});
+
+// --- 1.1.0: records/origin (#1378; V2g, #1425) ------------------------------
+
+test("the 1.0.0 fixture reads every record as origin user", () => {
+  const p = readProvenance(h5, join(fixtures, "zones.h5"))!;
+  assert.equal(p.version, "1.0.0");
+  assert.equal(p.records.origin.length, 7);
+  assert.deepEqual([...new Set(p.records.origin)], ["user"]);
+  assert.equal((sourceOf(p, "opensees/fix/#1") as { origin: string }).origin, "user");
+});
+
+const v110 = (t: Tree) => {
+  t.meta!.attrs!["provenance_schema_version"] = "1.1.0";
+  rec(t)["origin"] = ["user", "synthesised"];
+};
+test("a 1.1.0 file reads its origin column, with no banner", () => {
+  const p = readProvenance(h5, write(v110))!;
+  assert.deepEqual(p.warnings, []);
+  assert.deepEqual(p.records.origin, ["user", "synthesised"]);
+  assert.equal((sourceOf(p, "opensees/section/#1") as { origin: string }).origin, "synthesised");
+});
+test("a 1.1.0 file without origin is malformed", refuse((t) => {
+  v110(t);
+  delete rec(t)["origin"];
+}, /^\/provenance\/records\/origin is missing \(required from provenance_schema_version 1\.1\.0; this file is 1\.1\.0\)$/));
+test("a 1.2.0 file without origin is malformed too (the column stays required)", refuse((t) => {
+  v110(t);
+  t.meta!.attrs!["provenance_schema_version"] = "1.2.0";
+  delete rec(t)["origin"];
+}, /records\/origin is missing/));
+test("an unknown origin is refused", refuse((t) => {
+  v110(t);
+  rec(t)["origin"] = ["user", "generated"];
+}, /records\/origin\[1\] = "generated"; expected user or synthesised/));
+test("an origin column of another length is refused", refuse((t) => {
+  v110(t);
+  rec(t)["origin"] = ["user"];
+}, /records: column lengths differ/));
+// The Python reader reads the column when a pre-1.1 file has one
+// (_femdata_h5_io._read_provenance); so does the app.
+test("a 1.0.0 file that carries the column is read as written", () => {
+  const p = readProvenance(h5, write((t) => (rec(t)["origin"] = ["synthesised", "user"])))!;
+  assert.deepEqual(p.records.origin, ["synthesised", "user"]);
+});
+
+// The fixture main's own writer produced (fixtures/README.md, "bridge_provenance.h5").
+const readme = readFileSync(join(fixtures, "README.md"), "utf8").replace(/\r\n/g, "\n");
+const bridgeScript = readme.match(/## `bridge_provenance\.h5`[\s\S]*?```python\n([\s\S]*?)```/)![1]!;
+const bridgeLines = bridgeScript.split("\n");
+const lineOf = (code: RegExp) => {
+  const hits = bridgeLines.flatMap((l, i) => (code.test(l) ? [i + 1] : []));
+  assert.equal(hits.length, 1, `${code} matches ${hits.length} lines of the README script`);
+  return hits[0]!;
+};
+
+test("main's writer: the 1.1.0 file opens with no banner and marks the synthesised objects", () => {
+  const p = readProvenance(h5, join(fixtures, "bridge_provenance.h5"))!;
+  assert.equal(p.version, "1.1.0");
+  assert.deepEqual(p.warnings, [], "no 'newer than this app' banner for /provenance 1.1.0");
+  assert.equal(p.files.sha256[0], createHash("sha256").update(bridgeScript).digest("hex"), "the fixture was made by the README's script");
+  const synthesised = p.records.path.filter((_, i) => p.records.origin[i] === "synthesised");
+  assert.deepEqual(synthesised, ["opensees/timeSeries/support:gravity/hold", "opensees/pattern/support:gravity"]);
+  assert.equal(p.records.origin.filter((o) => o === "user").length, p.records.path.length - 2);
+  // Both point at the user's verb call, the `s.support(` line.
+  const support = lineOf(/^\s+s\.support\(/);
+  for (const key of synthesised) {
+    const s = site(sourceOf(p, key));
+    assert.equal(s.line, support, key);
+    assert.equal(s.file, `${p.baseDir}/bridge_model.py`);
+    assert.equal(s.kind, "script");
+  }
+  // A user declaration keeps its own line.
+  assert.equal(site(sourceOf(p, "opensees/nDMaterial/concrete")).line, lineOf(/ops\.nDMaterial\.ElasticIsotropic\(/));
 });
 test("an int64 column is refused", refuse((t) => (rec(t)["seq"] = new BigInt64Array([0n, 1n])), /records\/seq is int64/));

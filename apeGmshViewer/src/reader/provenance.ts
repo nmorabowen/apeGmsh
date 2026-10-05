@@ -3,8 +3,14 @@
 //
 // Layout and rules: architecture/h5-schema.md, "/provenance". Every artifact
 // may carry the zone; absent, it is ignored (`null`). The checks follow
-// geometry.ts: a broken table, an index out of range, an unknown `kind` or a
-// duplicate declaration path raises, naming its HDF5 path.
+// geometry.ts: a broken table, an index out of range, an unknown `kind` or
+// `origin`, or a duplicate declaration path raises, naming its HDF5 path.
+//
+// 1.1.0 (#1378) added `records/origin`: `user` for a declaration the user
+// made, `synthesised` for an object apeGmsh created inside a verb the user
+// called (keys `<verb>:<owner>[/<role>]`). From 1.1.0 the column is required;
+// a file below it reads with every record as `user`, as the Python reader does
+// (`_femdata_h5_io._read_provenance`, `schema_version.PROVENANCE_ORIGIN_FROM`).
 //
 // Browser-safe: no Node import.
 
@@ -14,13 +20,20 @@ import { dataset, group, has, int32s, sameLength, strs, zoneVersion } from "./ge
 // The target and the floor live in read.ts's one version table (#1303).
 export { PROVENANCE_TARGET } from "./read.ts";
 
+/** The first version whose `records` carry `origin` (= Python's `PROVENANCE_ORIGIN_FROM`, 1.1.0). */
+export const PROVENANCE_ORIGIN_FROM = { major: 1, minor: 1, patch: 0 } as const;
+
+/** `user`: a declaration the user made; `synthesised`: an object apeGmsh made inside a verb the user called. */
+export type Origin = "user" | "synthesised";
+const ORIGINS: readonly Origin[] = ["user", "synthesised"];
+
 export interface ProvenanceZone {
   version: string;
   /** `@base_dir`: the directory relative `files/path` entries are under. */
   baseDir: string;
   files: { path: string[]; sha256: string[]; kind: ("script" | "module")[] };
   sites: { file: Int32Array; line: Int32Array; function: string[] };
-  records: { path: string[]; site: Int32Array; script: Int32Array; seq: Int32Array };
+  records: { path: string[]; site: Int32Array; script: Int32Array; seq: Int32Array; origin: Origin[] };
   warnings: string[];
 }
 
@@ -76,11 +89,25 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   }
 
   const rg = group(h5, g, "records");
+  const path = strs(dataset(h5, rg, "path"));
+  // From 1.1.0 the column is required; below it, an absent column reads as
+  // every record the user's.
+  const { major, minor, patch } = PROVENANCE_ORIGIN_FROM;
+  if (atLeast(version, PROVENANCE_ORIGIN_FROM) && !has(rg, "origin")) {
+    throw new SchemaError(`${rg.path}/origin is missing (required from provenance_schema_version ${major}.${minor}.${patch}; this file is ${version})`);
+  }
+  const rawOrigin = has(rg, "origin") ? strs(dataset(h5, rg, "origin")) : path.map(() => "user");
   const records = {
-    path: strs(dataset(h5, rg, "path")),
+    path,
     site: int32s(dataset(h5, rg, "site")),
     script: int32s(dataset(h5, rg, "script")),
     seq: int32s(dataset(h5, rg, "seq")),
+    origin: rawOrigin.map((o, i): Origin => {
+      if (!(ORIGINS as readonly string[]).includes(o)) {
+        throw new SchemaError(`${rg.path}/origin[${i}] = ${JSON.stringify(o)}; expected ${ORIGINS.join(" or ")}`);
+      }
+      return o as Origin;
+    }),
   };
   const nRecords = sameLength(rg.path, records);
   const seen = new Set<string>();
@@ -101,6 +128,12 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
     if (records.seq[i]! < 0) throw new SchemaError(`${rg.path}/seq[${i}] = ${records.seq[i]}; expected >= 0`);
   }
   return { version, baseDir, files, sites, records, warnings };
+}
+
+/** `version` ("X.Y.Z", already checked by zoneVersion) is at or above `v`. */
+function atLeast(version: string, v: { major: number; minor: number; patch: number }): boolean {
+  const [a, b, c] = version.split(".").map(Number) as [number, number, number];
+  return a !== v.major ? a > v.major : b !== v.minor ? b > v.minor : c >= v.patch;
 }
 
 /** Open `path` and read its `/provenance` zone (see readProvenanceZone). */
@@ -125,7 +158,7 @@ export interface SourceSite {
 }
 
 export type SourceOf =
-  | { ok: true; site: SourceSite | null; script: SourceSite | null; seq: number }
+  | { ok: true; site: SourceSite | null; script: SourceSite | null; seq: number; origin: Origin }
   | { ok: false; reason: string };
 
 const isAbsolutePosix = (p: string) => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
@@ -134,6 +167,7 @@ const isAbsolutePosix = (p: string) => p.startsWith("/") || /^[A-Za-z]:\//.test(
  * Where the declaration at `declPath` (`<zone>/<family>/<name|#k>`) was
  * made: its `site` (the first frame outside apeGmsh) and its `script` line
  * (the outermost `__main__` frame); either is null when the record has -1.
+ * A synthesised object's site is the user's call of the verb that made it.
  */
 export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
   const i = zone.records.path.indexOf(declPath);
@@ -153,5 +187,5 @@ export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
   const site = at(zone.records.site[i]!);
   const script = at(zone.records.script[i]!);
   if (site === null && script === null) return { ok: false, reason: `${declPath} has no source frame` };
-  return { ok: true, site, script, seq: zone.records.seq[i]! };
+  return { ok: true, site, script, seq: zone.records.seq[i]!, origin: zone.records.origin[i]! };
 }

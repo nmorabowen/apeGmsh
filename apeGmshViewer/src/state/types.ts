@@ -102,6 +102,29 @@ export interface DeclSource {
   script: { file: string; line: number } | null;
 }
 
+/**
+ * Who made a /provenance record (schema 1.1.0, `records/origin`): `user` for a
+ * declaration the user made, `synthesised` for an object apeGmsh created
+ * inside a verb the user called (a stage's HOLD series and support pattern).
+ * A 1.0.x file reads every record as `user`.
+ */
+export type Origin = "user" | "synthesised";
+
+/**
+ * One /provenance record, as the sources listing shows it. The listing has
+ * every record of the file, synthesised ones included (maintainer ruling on
+ * #1378: shown by default), in capture order (`seq`).
+ */
+export interface ProvenanceEntry {
+  /** the record's declaration path, `<zone>/<family>/<name|#k>`, or `<zone>/<family>/<verb>:<owner>[/<role>]` when synthesised */
+  key: DeclPath;
+  origin: Origin;
+  /** 0-based capture order in the run */
+  seq: number;
+  /** where go-to-source jumps: the call site (for a synthesised object, the user's verb call); null when the record has no frame */
+  source: DeclSource | null;
+}
+
 export type ArtifactKind = "geometry" | "model" | "results";
 
 export type ZoneStatus =
@@ -231,6 +254,8 @@ export interface State {
   overrides: Record<DeclPath, never>;
   /** the geometry sibling as read; drawn only when it pairs with the model (selectors.geometryPairing) */
   geometry: GeometryInfo | null;
+  /** the model file's /provenance records in capture order; [] when it has none (selectors.sourcesOf lists them) */
+  provenance: ProvenanceEntry[];
   /**
    * go-to-source: the latest request (the effects act on a new `seq`) and the
    * latest answer. `seq` counts requests for the whole session and is never
@@ -253,6 +278,8 @@ export interface ModelLoad {
   names: Record<string, DeclPath[]>;
   blocks: BlockInfo[];
   mesh: MeshInfo;
+  /** the /provenance records, in capture order; [] when the file has none or the zone was not read */
+  provenance: ProvenanceEntry[];
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */

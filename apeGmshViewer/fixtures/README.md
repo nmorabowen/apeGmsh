@@ -46,3 +46,54 @@ Re-run it when `examples/shoebuckle_arch.py` changes:
 `test/zones/provenance.test.ts` checks the recorded lines and digest against
 the script itself. The geometry tests check closed forms of the cube (face
 area 6, volume 1, edge length 12).
+
+## `bridge_provenance.h5`
+
+A `model.h5` written by `main`'s own writer (commit `281154bf`, after #1378):
+`/provenance` 1.1.0 with the `records/origin` column, neutral 2.35.0 and
+OpenSees 2.22.0. A tetrahedral unit box with one material, one element
+declaration and one stage, `gravity`, whose `s.support(...)` makes the bridge
+synthesise two objects: `opensees/timeSeries/support:gravity/hold` and
+`opensees/pattern/support:gravity`, each with `origin = "synthesised"` and
+the site of the `s.support(...)` line. Every other record is `user`.
+
+The script below is the whole generator, run as `bridge_model.py` from an
+empty directory with `PYTHONPATH` set to the repository's `src` and the opensees
+venv interpreter; it writes `model.h5` there, which is copied here. The
+recorded `@base_dir` is that directory, and the file's `sha256` is this
+script's digest with LF line ends. Like `shoebuckle.h5`, the generator imports
+apeGmsh, so it is kept here as text and never as a `.py` file of the app
+(ADR 0112 D4).
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+with apeGmsh(model_name="bridge_provenance", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="block")
+    g.physical.add_volume("block", name="Block")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+concrete = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0, name="concrete")
+ops.element.FourNodeTetrahedron(pg="Block", material=concrete)
+with ops.stage(name="gravity") as s:
+    s.support(pg="Block", dofs=(1, 1, 1))
+    s.analysis(
+        test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+        algorithm=ops.algorithm.Newton(),
+        integrator=ops.integrator.LoadControl(dlam=0.1),
+        constraints=ops.constraints.Plain(),
+        numberer=ops.numberer.RCM(),
+        system=ops.system.UmfPack(),
+        analysis=ops.analysis.Static(),
+    )
+    s.run(n_increments=1)
+ops.h5("model.h5")
+```
+
+`test/zones/provenance.test.ts` checks the fixture against this block: the
+digest, and the synthesised records' line, which is the `s.support(` line.

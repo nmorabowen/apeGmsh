@@ -6,7 +6,7 @@ import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { roleColouring } from "./roles.ts";
-import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Pick, State, ZoneStatus } from "./types.ts";
+import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Origin, Pick, State, ZoneStatus } from "./types.ts";
 
 function lookupOf(s: State): Lookup {
   // Tags are not keys of the state; an element's links are followed by the
@@ -189,7 +189,14 @@ export function noticesOf(s: State): string[] {
  */
 export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSource; label: string } | { ok: false; reason: string } {
   const d = s.decls[decl];
-  if (!d) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
+  if (!d) {
+    // A /provenance record with no declaration in the app (a series, a
+    // pattern, a synthesised object): the listing's go-to-source.
+    const r = s.provenance.find((p) => p.key === decl);
+    if (!r) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
+    if (!r.source) return { ok: false, reason: `${decl} has no source frame in /provenance` };
+    return { ok: true, source: r.source, label: `${baseName(r.source.file)}:${r.source.line}` };
+  }
   if (d.provenance) return { ok: true, source: d.provenance, label: `${baseName(d.provenance.file)}:${d.provenance.line}` };
   const zone = s.artifacts.model?.zones["provenance"];
   if (!zone || zone.status === "absent") return { ok: false, reason: "the model file has no /provenance zone (written before apeGmsh recorded sources)" };
@@ -215,6 +222,38 @@ export function declOfH5(s: State, h5: string): DeclPath | null {
 }
 
 /** The latest go-to-source answer for `decl`, when it failed. */
+/** One row of the sources listing (panels/sources.ts). */
+export interface SourceRow {
+  key: DeclPath;
+  origin: Origin;
+  /** `<verb>` of a synthesised key (`support` in `support:<stage>/hold`); null for the user's own declarations */
+  verb: string | null;
+  /** `file:line` of the go-to-source target, or null when the record has no frame */
+  label: string | null;
+  /** why go-to-source is off for this row, or null when it can jump */
+  off: string | null;
+}
+
+/**
+ * The sources listing: every /provenance record of the model, in capture
+ * order. Synthesised objects are listed by default, marked by `origin`
+ * (maintainer ruling on #1378); there is no filter that hides them.
+ */
+export function sourcesOf(s: State): SourceRow[] {
+  return s.provenance.map((p) => {
+    const where = sourceFor(s, p.key);
+    const name = p.key.split("/").slice(2).join("/");
+    const colon = name.indexOf(":");
+    return {
+      key: p.key,
+      origin: p.origin,
+      verb: p.origin === "synthesised" && colon > 0 ? name.slice(0, colon) : null,
+      label: where.ok ? where.label : null,
+      off: where.ok ? null : where.reason,
+    };
+  });
+}
+
 export function sourceFailure(s: State, decl: DeclPath): string | null {
   const l = s.source.last;
   return l && l.decl === decl && !l.ok ? (l.reason ?? "go-to-source failed") : null;

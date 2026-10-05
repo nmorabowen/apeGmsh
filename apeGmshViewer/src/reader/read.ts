@@ -54,7 +54,7 @@ export const NEUTRAL_TARGET = { major: 2, minor: 33 } as const;
 export const OPENSEES_TARGET = { major: 2, minor: 21 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
-export const PROVENANCE_TARGET = { major: 1, minor: 0 } as const;
+export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
 /**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check

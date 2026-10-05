@@ -24,6 +24,7 @@ export const initialState: State = {
   windows: { open: [] },
   overrides: {},
   geometry: null,
+  provenance: [],
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
 };
@@ -95,7 +96,7 @@ export function reduce(s: State, e: Event): State {
       if (e.artifact === "geometry") {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
-      const { decls, names, blocks, mesh } = e.load;
+      const { decls, names, blocks, mesh, provenance } = e.load;
       // A model read for the first time opens on the mesh. A re-read of the
       // same file (D1 rewrites it every run) keeps the phase shown only while
       // that phase is still on the axis: a re-read model with a new
@@ -111,6 +112,7 @@ export function reduce(s: State, e: Event): State {
         names,
         blocks,
         mesh,
+        provenance,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
@@ -222,7 +224,11 @@ export function reduce(s: State, e: Event): State {
     case "closeWindow":
       return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
     case "requestSource": {
-      if (!(e.decl in s.decls)) throw new Error(`requestSource: ${e.decl} is not a declaration of the loaded model`);
+      // A declaration, or a /provenance record the app has no declaration
+      // for (a synthesised series or pattern, from the sources listing).
+      if (!(e.decl in s.decls) && !s.provenance.some((p) => p.key === e.decl)) {
+        throw new Error(`requestSource: ${e.decl} is not a declaration or a /provenance record of the loaded model`);
+      }
       const seq = s.source.seq + 1;
       return { ...s, source: { seq, request: { decl: e.decl, seq }, last: null } };
     }

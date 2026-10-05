@@ -12,7 +12,7 @@ import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Looku
 import { groupAdjacency } from "./adjacency.ts";
 import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
-import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ZoneStatus } from "./types.ts";
+import type { ArtifactInfo, BlockInfo, Decl, DeclPath, DeclSource, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ProvenanceEntry, ZoneStatus } from "./types.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -262,22 +262,41 @@ export function joinProvenance(decls: Record<DeclPath, Decl>, zone: ProvenanceZo
     if (path.includes("/#")) continue;
     const d = decls[path];
     if (!d) continue;
-    const r = sourceOf(zone, path);
-    if (!r.ok) continue;
-    const at = r.site ?? r.script!;
-    decls[path] = {
-      ...d,
-      provenance: {
-        file: at.file,
-        line: at.line,
-        function: at.function,
-        sha256: at.sha256,
-        script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
-      },
-    };
+    const source = declSourceOf(zone, path);
+    if (!source) continue;
+    decls[path] = { ...d, provenance: source };
     joined++;
   }
   return joined;
+}
+
+/** Where go-to-source jumps for the record at `path`: its site, else its script line; null when it has neither. */
+function declSourceOf(zone: ProvenanceZone, path: string): DeclSource | null {
+  const r = sourceOf(zone, path);
+  if (!r.ok) return null;
+  const at = r.site ?? r.script!;
+  return {
+    file: at.file,
+    line: at.line,
+    function: at.function,
+    sha256: at.sha256,
+    script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
+  };
+}
+
+/**
+ * Every /provenance record as a listing entry, in capture order. Synthesised
+ * records are kept (the listing shows them by default); a synthesised
+ * object's source is the user's call of the verb that made it.
+ */
+export function provenanceEntries(zone: ProvenanceZone): ProvenanceEntry[] {
+  const rows = zone.records.path.map((key, i): ProvenanceEntry => ({
+    key,
+    origin: zone.records.origin[i]!,
+    seq: zone.records.seq[i]!,
+    source: declSourceOf(zone, key),
+  }));
+  return rows.sort((a, b) => a.seq - b.seq);
 }
 
 /**
@@ -324,5 +343,12 @@ export function loadModel(
       opsOnly: mesh.counts.opsOnly,
     },
   };
-  return { info, decls, names, blocks: blocksOf(model, blobs), mesh: meshInfoOf(model, mesh, blobs) };
+  return {
+    info,
+    decls,
+    names,
+    blocks: blocksOf(model, blobs),
+    mesh: meshInfoOf(model, mesh, blobs),
+    provenance: provenance ? provenanceEntries(provenance) : [],
+  };
 }
