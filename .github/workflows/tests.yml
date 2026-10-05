@@ -411,6 +411,35 @@ jobs:
           pytest tests -q -p no:cacheprovider \
             -m "not live and not subprocess and not bench and not qt"
 
+  # The `subprocess`-marked tests, which `suite` and `live-stock` both
+  # deselect. They spawn fresh interpreters (or the standalone OPENSEES
+  # binary); tests that need the binary skip cleanly when it is absent,
+  # but the K1-3 tag-determinism pin
+  # (tests/opensees/subprocess/test_tag_determinism.py) needs only
+  # Python and runs here. `-rs` lists every skip so a pin that stops
+  # running shows in the log. Not a required check (maintainer's call).
+  subprocess-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install package (no openseespy)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plot,viewer,dxf]" pytest
+
+      - name: Run subprocess-marked tests
+        run: |
+          # -m replaces pyproject's addopts marker expression, so
+          # `not qt` is repeated (a real window would hang here).
+          pytest tests -q -rs -p no:cacheprovider             -m "subprocess and not live and not qt and not bench"
+
   # The `live` surface — every test that drives an OpenSees backend
   # IN PROCESS. No other job runs a single one of them: `suite`
   # deselects `-m live`, and none of the lanes install openseespy at
