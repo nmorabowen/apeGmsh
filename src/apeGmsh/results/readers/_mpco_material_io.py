@@ -26,7 +26,7 @@ Component naming
 
 Multi-segment buckets get one canonical per segment, prefixed by the
 parent token. Known META symbols map to apeGmsh suffixes via
-:data:`apeGmsh.results._vocabulary.MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX`
+:data:`apeGmsh._vocabulary.MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX`
 (``d+`` → ``tension``, ``d-`` → ``compression``, etc.). Unknown
 symbols fall back to indexed suffixes (``damage_0``, ``damage_1``).
 A single-segment bucket maps to the bare parent canonical

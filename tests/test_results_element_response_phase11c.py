@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh.results._vocabulary import (
+from apeGmsh._vocabulary import (
     LINE_DIAGRAMS,
     LINE_STATION_DEFORMATIONS,
     expand_shorthand,

@@ -936,7 +936,7 @@ just fill modules.
 - `src/apeGmsh/results/schema/_native.py` — path builders, attr keys
 - `src/apeGmsh/results/schema/_versions.py` — `schema_version`,
   `parser_version` constants
-- `src/apeGmsh/results/_vocabulary.py` — canonical component
+- `src/apeGmsh/_vocabulary.py` — canonical component
   registry, dimension info (scalar/vector/tensor), category mapping,
   **shorthand expansion table** (one shorthand → list of canonical
   names, ndm/ndf clipping rule)

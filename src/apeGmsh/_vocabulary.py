@@ -15,8 +15,7 @@ moved it to the top-level ``apeGmsh._vocabulary`` so that both the
 OpenSees bridge (declaration-side) and the results module
 (consumer-side) can import without creating a layering inversion. The
 content is solver-neutral — future second-solver work consumes the
-same vocabulary. The legacy ``apeGmsh.results._vocabulary`` path
-continues to work via a deprecation shim for one release cycle.
+same vocabulary. The legacy ``apeGmsh.results._vocabulary`` shim has been removed.
 """
 from __future__ import annotations
 

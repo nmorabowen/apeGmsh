@@ -125,7 +125,7 @@ Recorder wiring used during a live OpenSees analysis.
 
 Canonical result names and shorthand expansion.
 
-::: apeGmsh.results._vocabulary
+::: apeGmsh._vocabulary
     options:
       members:
         - expand_shorthand

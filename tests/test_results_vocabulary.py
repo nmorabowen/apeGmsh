@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.results._vocabulary import (
+from apeGmsh._vocabulary import (
     ALL_CANONICAL,
     ALL_SHORTHANDS,
     DERIVED_SCALARS,
