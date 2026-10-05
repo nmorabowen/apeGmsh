@@ -25,6 +25,7 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -160,11 +161,10 @@ def models() -> dict[str, Callable[[], apeSees]]:
         for mode in GOLDEN_MODES:
             if golden.applicability(fixture, mode, "recording") is not None:
                 continue
-            out[f"{fixture}/{mode}"] = (
-                lambda f=fixture, m=mode: golden.build_model(f, m, "recording")
-            )
-    out["initial_stress_frame/flat"] = (
-        lambda: _build_frame(with_initial_stress=True))
+            out[f"{fixture}/{mode}"] = partial(
+                golden.build_model, fixture, mode, "recording")
+    out["initial_stress_frame/flat"] = partial(
+        _build_frame, with_initial_stress=True)
     out["two_stage_initial_stress/staged"] = _real_two_stage_bridge
     out["kitchen_sink_absorbing/staged"] = _real_kitchen_sink_bridge
     return out

@@ -12,6 +12,7 @@ interleave differently; the in-order stream across processes is pinned by
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 import pytest
 
@@ -32,17 +33,21 @@ _MINTED_KINDS = (
 )
 
 
+#: The four targets: (label, emitter class, constructor kwargs).
+_TARGETS: tuple[tuple[str, type, dict[str, Any]], ...] = (
+    ("recording", RecordingEmitter, {}),
+    ("tcl", TclEmitter, {}),
+    ("py", PyEmitter, {}),
+    ("h5", H5Emitter, {"model_name": "tag_law"}),
+)
+
+
 @pytest.mark.parametrize("name", sorted(_MODELS))
 def test_verb_tag_multiset_matches_across_targets(name: str) -> None:
     bm = _MODELS[name]().build()
     streams = {
         label: Counter(ts.emit_stream(bm, cls, **kwargs))
-        for label, cls, kwargs in (
-            ("recording", RecordingEmitter, {}),
-            ("tcl", TclEmitter, {}),
-            ("py", PyEmitter, {}),
-            ("h5", H5Emitter, {"model_name": "tag_law"}),
-        )
+        for label, cls, kwargs in _TARGETS
     }
     ref = streams["recording"]
     assert ref, f"{name}: the Recording emit drove no tagged verb"
